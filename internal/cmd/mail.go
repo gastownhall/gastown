@@ -104,6 +104,7 @@ Addresses:
   mayor/           - Send to Mayor
   <rig>/refinery   - Send to a rig's Refinery
   <rig>/<polecat>  - Send to a specific polecat
+  <rig>/<crew>     - Send to a crew member
   <rig>/           - Broadcast to a rig
   list:<name>      - Send to a mailing list (fans out to all members)
 

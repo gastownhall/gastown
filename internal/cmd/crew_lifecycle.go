@@ -394,6 +394,24 @@ func runCrewStart(cmd *cobra.Command, args []string) error {
 		} else {
 			fmt.Printf("  %s %s/%s: started\n", style.SuccessPrefix, rigName, res.name)
 			startedCount++
+
+			// Ensure agent bead exists (idempotent — only creates if missing)
+			prefix := beads.GetPrefixForRig(townRoot, rigName)
+			crewID := beads.CrewBeadIDWithPrefix(prefix, rigName, res.name)
+			bd := beads.New(beads.ResolveBeadsDir(r.Path))
+			if _, err := bd.Show(crewID); err != nil {
+				fields := &beads.AgentFields{
+					RoleType:   "crew",
+					Rig:        rigName,
+					AgentState: "working",
+				}
+				desc := fmt.Sprintf("Crew worker %s in %s - human-managed persistent workspace.", res.name, rigName)
+				if _, err := bd.CreateAgentBead(crewID, desc, fields); err != nil {
+					style.PrintWarning("could not create agent bead for %s: %v", res.name, err)
+				} else {
+					fmt.Printf("    Agent bead created: %s\n", crewID)
+				}
+			}
 		}
 	}
 
