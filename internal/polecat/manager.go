@@ -1902,16 +1902,67 @@ func (m *Manager) cleanupOrphanPolecatState() {
 
 		// Check if clone directory exists
 		if _, err := os.Stat(clonePath); os.IsNotExist(err) {
-			// Empty polecat directory without clone - remove it
+			// Empty polecat directory without clone - remove it and kill any orphan session
 			_ = os.RemoveAll(polecatDir)
+			if m.tmux != nil {
+				sessionName := session.PolecatSessionName(session.PrefixFor(m.rig.Name), name)
+				_ = m.tmux.KillSessionWithProcesses(sessionName)
+			}
 			continue
 		}
 
 		// Check if .git exists (file for worktree, or directory for full clone)
 		if _, err := os.Stat(gitPath); os.IsNotExist(err) {
-			// Clone exists but no .git - incomplete worktree, remove it
+			// Clone exists but no .git - incomplete worktree, remove it and kill any orphan session
 			_ = os.RemoveAll(polecatDir)
+			if m.tmux != nil {
+				sessionName := session.PolecatSessionName(session.PrefixFor(m.rig.Name), name)
+				_ = m.tmux.KillSessionWithProcesses(sessionName)
+			}
 			continue
+		}
+	}
+
+	// Clean up orphan branches: branches whose corresponding polecat directory no longer exists.
+	// Uses filesystem-only check (no beads query) for speed in the hot allocation path.
+	m.cleanupOrphanBranches()
+}
+
+// cleanupOrphanBranches removes polecat/* branches whose corresponding polecat
+// directory no longer exists. This handles the case where a worktree was removed
+// but the local branch wasn't cleaned up (e.g., due to git worktree remove failure).
+func (m *Manager) cleanupOrphanBranches() {
+	repoGit, err := m.repoBase()
+	if err != nil {
+		return
+	}
+
+	branches, err := repoGit.ListBranches("polecat/*")
+	if err != nil || len(branches) == 0 {
+		return
+	}
+
+	// Build set of in-use branches by reading active polecat worktrees (filesystem only, no beads).
+	polecatsDir := filepath.Join(m.rig.Path, "polecats")
+	inUseBranches := make(map[string]bool)
+	entries, err := os.ReadDir(polecatsDir)
+	if err == nil {
+		for _, entry := range entries {
+			if !entry.IsDir() || strings.HasPrefix(entry.Name(), ".") {
+				continue
+			}
+			clonePath := filepath.Join(polecatsDir, entry.Name(), m.rig.Name)
+			polecatGit := git.NewGit(clonePath)
+			if branch, err := polecatGit.CurrentBranch(); err == nil && branch != "" {
+				inUseBranches[branch] = true
+			}
+		}
+	}
+
+	// Delete branches not associated with any existing polecat worktree.
+	for _, branch := range branches {
+		if !inUseBranches[branch] {
+			_ = repoGit.DeleteBranch(branch, true)
 		}
 	}
 }

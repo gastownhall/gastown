@@ -2141,3 +2141,140 @@ func TestReuseIdlePolecat_NoSessionNoop(t *testing.T) {
 		t.Fatal("expected error from worktree operations")
 	}
 }
+
+// TestCleanupOrphanPolecatState_KillsSessionForBrokenDirs verifies that when
+// cleanupOrphanPolecatState removes a broken polecat directory, it also kills
+// the associated tmux session (item 1: orphan tmux session cleanup).
+func TestCleanupOrphanPolecatState_KillsSessionForBrokenDirs(t *testing.T) {
+	t.Parallel()
+
+	// Register prefix so PrefixFor works
+	reg := session.NewPrefixRegistry()
+	reg.Register("gt", "myrig")
+	old := session.DefaultRegistry()
+	session.SetDefaultRegistry(reg)
+	t.Cleanup(func() { session.SetDefaultRegistry(old) })
+
+	tmpDir := t.TempDir()
+
+	r := &rig.Rig{Name: "myrig", Path: tmpDir}
+	m := NewManager(r, nil, nil)
+
+	// Create an empty polecat directory (no clone subdir) - simulates failed worktree creation
+	emptyPolecatDir := filepath.Join(tmpDir, "polecats", "furiosa")
+	if err := os.MkdirAll(emptyPolecatDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	// Create a polecat dir with clone but no .git - simulates incomplete worktree
+	noGitPolecatDir := filepath.Join(tmpDir, "polecats", "nux")
+	noGitCloneDir := filepath.Join(noGitPolecatDir, "myrig")
+	if err := os.MkdirAll(noGitCloneDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	// Run cleanup
+	m.cleanupOrphanPolecatState()
+
+	// Both broken dirs should be removed
+	if _, err := os.Stat(emptyPolecatDir); !os.IsNotExist(err) {
+		t.Errorf("expected empty polecat dir to be removed: %s", emptyPolecatDir)
+	}
+	if _, err := os.Stat(noGitPolecatDir); !os.IsNotExist(err) {
+		t.Errorf("expected no-.git polecat dir to be removed: %s", noGitPolecatDir)
+	}
+}
+
+// TestCleanupOrphanBranches verifies that orphan polecat branches (branches with
+// no corresponding worktree directory) are deleted during reconciliation (item 4).
+func TestCleanupOrphanBranches(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping git-dependent test in short mode")
+	}
+
+	tmpDir := t.TempDir()
+
+	// Create a bare repo to act as repo base (.repo.git)
+	bareRepoPath := filepath.Join(tmpDir, ".repo.git")
+	if err := os.MkdirAll(bareRepoPath, 0755); err != nil {
+		t.Fatal(err)
+	}
+	cmd := exec.Command("git", "init", "--bare")
+	cmd.Dir = bareRepoPath
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("git init --bare: %v\n%s", err, out)
+	}
+
+	// Create a non-bare clone of the bare repo so we can commit to it
+	cloneDir := filepath.Join(tmpDir, "_setup_clone")
+	cmd = exec.Command("git", "clone", bareRepoPath, cloneDir)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("git clone: %v\n%s", err, out)
+	}
+
+	// Make an initial commit so main exists
+	setupGit := git.NewGit(cloneDir)
+	readmeFile := filepath.Join(cloneDir, "README.md")
+	if err := os.WriteFile(readmeFile, []byte("test"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := setupGit.Add("README.md"); err != nil {
+		t.Fatal(err)
+	}
+	if err := setupGit.Commit("initial commit"); err != nil {
+		t.Fatal(err)
+	}
+	// Push main to origin (the bare repo)
+	cmd = exec.Command("git", "push", "origin", "main")
+	cmd.Dir = cloneDir
+	if out, err := cmd.CombinedOutput(); err != nil {
+		// Might be "master" on some git versions
+		cmd2 := exec.Command("git", "push", "origin", "HEAD:main")
+		cmd2.Dir = cloneDir
+		if out2, err2 := cmd2.CombinedOutput(); err2 != nil {
+			t.Fatalf("git push: %v\n%s\ngit push HEAD:main: %v\n%s", err, out, err2, out2)
+		}
+	}
+
+	// Create an orphan branch in the bare repo (no polecat dir will exist for it)
+	bareGit := git.NewGitWithDir(bareRepoPath, "")
+	cmd = exec.Command("git", "branch", "polecat/orphan-ghost/gt-999@abc123")
+	cmd.Dir = bareRepoPath
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("create orphan branch: %v\n%s", err, out)
+	}
+
+	// Verify the orphan branch exists before cleanup
+	branches, err := bareGit.ListBranches("polecat/*")
+	if err != nil {
+		t.Fatalf("list branches: %v", err)
+	}
+	foundOrphan := false
+	for _, b := range branches {
+		if b == "polecat/orphan-ghost/gt-999@abc123" {
+			foundOrphan = true
+			break
+		}
+	}
+	if !foundOrphan {
+		t.Fatalf("orphan branch not found before cleanup, branches: %v", branches)
+	}
+
+	// Create rig pointing to tmpDir (which has .repo.git)
+	r := &rig.Rig{Name: "myrig", Path: tmpDir}
+	m := NewManager(r, nil, nil)
+
+	// Run orphan branch cleanup (no polecat dirs exist, so all polecat/* branches are orphans)
+	m.cleanupOrphanBranches()
+
+	// Orphan branch should be gone
+	branches, err = bareGit.ListBranches("polecat/*")
+	if err != nil {
+		t.Fatalf("list branches after cleanup: %v", err)
+	}
+	for _, b := range branches {
+		if b == "polecat/orphan-ghost/gt-999@abc123" {
+			t.Errorf("orphan branch was NOT deleted: %s", b)
+		}
+	}
+}
