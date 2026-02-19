@@ -17,7 +17,7 @@ permissions: {}
 jobs:
   goreleaser:
     if: ${{ github.repository == 'gastownhall/gastown' && startsWith(github.ref, 'refs/tags/v') }}
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, gt2]
     permissions:
       contents: write
     steps:
@@ -63,7 +63,7 @@ jobs:
   attest-release:
     if: ${{ github.repository == 'gastownhall/gastown' && startsWith(github.ref, 'refs/tags/v') }}
     needs: goreleaser
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, gt2]
     permissions:
       attestations: write
       contents: write
@@ -113,7 +113,7 @@ jobs:
           sbom-path: ${{ steps.assets.outputs.sbom }}
 
   update-homebrew-formula:
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, gt2]
     needs: [goreleaser, attest-release]
     if: ${{ github.repository == 'gastownhall/gastown' && startsWith(github.ref, 'refs/tags/v') }}
     permissions:
@@ -230,7 +230,7 @@ jobs:
         run: echo "No Homebrew tap credential configured; skipping tap update."
 
   publish-npm:
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, gt2]
     needs: goreleaser
     if: ${{ github.repository == 'gastownhall/gastown' && startsWith(github.ref, 'refs/tags/v') }}
     # npm publish is best-effort — don't fail the release if npm is down or

@@ -17,7 +17,7 @@ jobs:
       github.event.pull_request.head.repo.full_name == github.repository &&
       github.event.pull_request.base.ref == github.event.repository.default_branch &&
       github.actor != 'renovate[bot]'
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, gt2]
     permissions:
       issues: write
       pull-requests: write
