@@ -1,0 +1,27 @@
+{
+  "weekly_budget_usd": 1200,
+  "model_policy": {
+    "mayor": "opus",
+    "witness": "sonnet",
+    "refinery": "sonnet",
+    "polecat": "sonnet",
+    "crew": "sonnet",
+    "deacon": "sonnet",
+    "comptroller": "haiku"
+  },
+  "max_concurrent_polecats_per_rig": 3,
+  "handoff_nudge_threshold_tokens": 100000,
+  "alert_thresholds": {
+    "yellow": 0.50,
+    "orange": 0.75,
+    "red": 0.90
+  },
+  "max_opus_ratio": 0.30,
+  "patrol_interval_minutes": 30,
+  "throttle_multipliers": {
+    "green": 1.0,
+    "yellow": 2.0,
+    "orange": 3.0,
+    "red": 5.0
+  }
+}
