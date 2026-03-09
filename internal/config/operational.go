@@ -753,3 +753,27 @@ func (wt *WitnessThresholds) HeartbeatStartupGraceD() time.Duration {
 	}
 	return DefaultWitnessHeartbeatStartupGrace
 }
+
+// GetEscalationPolicy returns the escalation policy, or nil if not configured.
+func (wt *WitnessThresholds) GetEscalationPolicy() *EscalationPolicy {
+	if wt != nil {
+		return wt.Escalation
+	}
+	return nil
+}
+
+// AttemptsPerTierV returns the configured attempts per tier, falling back to the given default.
+func (ep *EscalationPolicy) AttemptsPerTierV(fallback int) int {
+	if ep != nil && ep.AttemptsPerTier != nil {
+		return *ep.AttemptsPerTier
+	}
+	return fallback
+}
+
+// EffectiveTiers returns the configured tiers or the default ["upgrade-model", "route-crew"].
+func (ep *EscalationPolicy) EffectiveTiers() []string {
+	if ep != nil && len(ep.Tiers) > 0 {
+		return ep.Tiers
+	}
+	return []string{"upgrade-model", "route-crew"}
+}

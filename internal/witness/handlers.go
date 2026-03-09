@@ -2353,6 +2353,14 @@ func resetAbandonedBead(bd *BdCli, workDir, rigName, hookBead, polecatName strin
 	// This prevents the witness→deacon→spawn feedback loop from creating
 	// unbounded polecats when a task repeatedly kills its polecat.
 	if ShouldBlockRespawn(workDir, hookBead) {
+		// Try tiered escalation before giving up.
+		policy := config.LoadOperationalConfig(trRoot).GetWitnessConfig().GetEscalationPolicy()
+		if policy != nil && policy.Enabled {
+			if escalated := tryEscalation(workDir, trRoot, rigName, hookBead, polecatName, status, policy, router); escalated {
+				return false
+			}
+		}
+		// All tiers exhausted or escalation disabled -> existing SPAWN_BLOCKED
 		if router != nil {
 			msg := &mail.Message{
 				From:     fmt.Sprintf("%s/witness", rigName),

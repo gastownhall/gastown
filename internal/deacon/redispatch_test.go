@@ -179,6 +179,95 @@ func TestBeadRedispatchState_Escalation(t *testing.T) {
 	}
 }
 
+func TestParseEscalatedBeadSubject(t *testing.T) {
+	tests := []struct {
+		subject string
+		wantID  string
+		wantOK  bool
+	}{
+		{"ESCALATED_BEAD gt-abc123", "gt-abc123", true},
+		{"ESCALATED_BEAD bd-xyz", "bd-xyz", true},
+		{"ESCALATED_BEAD   gt-abc123  ", "gt-abc123", true},
+		{"ESCALATED_BEAD", "", false},
+		{"ESCALATED_BEAD ", "", false},
+		{"RECOVERED_BEAD foo", "", false},
+		{"", "", false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.subject, func(t *testing.T) {
+			gotID, gotOK := ParseEscalatedBeadSubject(tt.subject)
+			if gotID != tt.wantID || gotOK != tt.wantOK {
+				t.Errorf("ParseEscalatedBeadSubject(%q) = (%q, %v), want (%q, %v)",
+					tt.subject, gotID, gotOK, tt.wantID, tt.wantOK)
+			}
+		})
+	}
+}
+
+func TestParseEscalatedBeadBody(t *testing.T) {
+	tests := []struct {
+		name           string
+		body           string
+		wantType       string
+		wantAgent      string
+		wantRig        string
+	}{
+		{
+			name: "upgrade-model with agent",
+			body: `Escalated bead from dead polecat via tiered escalation.
+
+Bead: gt-abc123
+Polecat: gastown/max
+Previous Status: hooked
+Escalation Type: upgrade-model
+Agent: opus
+
+The bead respawn count has been reset for the new tier.`,
+			wantType:  "upgrade-model",
+			wantAgent: "opus",
+			wantRig:   "gastown",
+		},
+		{
+			name: "route-crew no agent",
+			body: `Escalated bead from dead polecat via tiered escalation.
+
+Bead: gt-abc123
+Polecat: gymbo/worker
+Previous Status: in_progress
+Escalation Type: route-crew
+Agent:
+
+The bead respawn count has been reset for the new tier.`,
+			wantType:  "route-crew",
+			wantAgent: "",
+			wantRig:   "gymbo",
+		},
+		{
+			name:    "empty body",
+			body:    "",
+			wantType: "",
+			wantAgent: "",
+			wantRig:   "",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := ParseEscalatedBeadBody(tt.body)
+			if got.EscalationType != tt.wantType {
+				t.Errorf("EscalationType = %q, want %q", got.EscalationType, tt.wantType)
+			}
+			if got.Agent != tt.wantAgent {
+				t.Errorf("Agent = %q, want %q", got.Agent, tt.wantAgent)
+			}
+			if got.Rig != tt.wantRig {
+				t.Errorf("Rig = %q, want %q", got.Rig, tt.wantRig)
+			}
+		})
+	}
+}
+
 func TestRedispatchState_GetBeadState(t *testing.T) {
 	state := &RedispatchState{}
 

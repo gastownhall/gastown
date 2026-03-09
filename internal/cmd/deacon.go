@@ -304,6 +304,28 @@ Examples:
 	RunE: runDeaconRedispatch,
 }
 
+var deaconRedispatchEscalatedCmd = &cobra.Command{
+	Use:   "redispatch-escalated <bead-id>",
+	Short: "Re-dispatch an escalated bead with agent upgrade or crew routing",
+	Long: `Re-dispatch a bead that was escalated via tiered escalation.
+
+When the Witness exhausts respawn attempts at a tier, it sends an ESCALATED_BEAD
+mail to the Deacon with the escalation type (upgrade-model or route-crew) and
+agent override. This command handles the re-dispatch with the appropriate override.
+
+Examples:
+  gt deacon redispatch-escalated gt-abc123 --type upgrade-model --agent opus
+  gt deacon redispatch-escalated gt-abc123 --type route-crew --rig gastown`,
+	Args: cobra.ExactArgs(1),
+	RunE: runDeaconRedispatchEscalated,
+}
+
+var (
+	escalatedType  string
+	escalatedAgent string
+	escalatedRig   string
+)
+
 var deaconRedispatchStateCmd = &cobra.Command{
 	Use:   "redispatch-state",
 	Short: "Show re-dispatch state for recovered beads",
@@ -409,6 +431,7 @@ func init() {
 	deaconCmd.AddCommand(deaconCleanupOrphansCmd)
 	deaconCmd.AddCommand(deaconZombieScanCmd)
 	deaconCmd.AddCommand(deaconRedispatchCmd)
+	deaconCmd.AddCommand(deaconRedispatchEscalatedCmd)
 	deaconCmd.AddCommand(deaconRedispatchStateCmd)
 	deaconCmd.AddCommand(deaconFeedStrandedCmd)
 	deaconCmd.AddCommand(deaconFeedStrandedStateCmd)
@@ -451,6 +474,14 @@ func init() {
 		"Max re-dispatch attempts before escalating to Mayor (default: 3)")
 	deaconRedispatchCmd.Flags().DurationVar(&redispatchCooldown, "cooldown", 0,
 		"Minimum time between re-dispatches of same bead (default: 5m)")
+
+	// Flags for redispatch-escalated
+	deaconRedispatchEscalatedCmd.Flags().StringVar(&escalatedType, "type", "",
+		"Escalation type: upgrade-model or route-crew")
+	deaconRedispatchEscalatedCmd.Flags().StringVar(&escalatedAgent, "agent", "",
+		"Agent alias for upgrade-model escalation")
+	deaconRedispatchEscalatedCmd.Flags().StringVar(&escalatedRig, "rig", "",
+		"Target rig (auto-detected from bead prefix if omitted)")
 
 	// Flags for feed-stranded
 	deaconFeedStrandedCmd.Flags().IntVar(&feedStrandedMaxFeeds, "max-feeds", 0,
@@ -1535,6 +1566,47 @@ func runDeaconRedispatch(cmd *cobra.Command, args []string) error {
 			return result.Error
 		}
 		return fmt.Errorf("redispatch failed: %s", result.Message)
+
+	default:
+		return fmt.Errorf("unexpected redispatch result: %s", result.Action)
+	}
+}
+
+// runDeaconRedispatchEscalated handles re-dispatching an escalated bead.
+func runDeaconRedispatchEscalated(cmd *cobra.Command, args []string) error {
+	beadID := args[0]
+
+	townRoot, err := workspace.FindFromCwdOrError()
+	if err != nil {
+		return fmt.Errorf("not in a Gas Town workspace: %w", err)
+	}
+
+	params := deacon.EscalationParams{
+		EscalationType: escalatedType,
+		Agent:          escalatedAgent,
+		Rig:            escalatedRig,
+	}
+
+	if params.EscalationType == "" {
+		return fmt.Errorf("--type is required (upgrade-model or route-crew)")
+	}
+
+	result := deacon.RedispatchEscalated(townRoot, beadID, params)
+
+	switch result.Action {
+	case "redispatched":
+		fmt.Printf("%s %s\n", style.Bold.Render("✓"), result.Message)
+		return nil
+
+	case "skipped":
+		fmt.Printf("%s %s\n", style.Dim.Render("○"), result.Message)
+		return NewSilentExit(3)
+
+	case "error":
+		if result.Error != nil {
+			return result.Error
+		}
+		return fmt.Errorf("escalated redispatch failed: %s", result.Message)
 
 	default:
 		return fmt.Errorf("unexpected redispatch result: %s", result.Action)

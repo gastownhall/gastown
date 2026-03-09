@@ -20,9 +20,11 @@ var respawnMu sync.Mutex
 
 // beadRespawnRecord tracks how many times a single bead has been reset for re-dispatch.
 type beadRespawnRecord struct {
-	BeadID      string    `json:"bead_id"`
-	Count       int       `json:"count"`
-	LastRespawn time.Time `json:"last_respawn"`
+	BeadID         string    `json:"bead_id"`
+	Count          int       `json:"count"`
+	LastRespawn    time.Time `json:"last_respawn"`
+	EscalationTier int      `json:"escalation_tier,omitempty"` // 0 = default tier
+	LastAgent      string   `json:"last_agent,omitempty"`      // agent used at current tier
 }
 
 // beadRespawnState holds respawn counts for all tracked beads.
@@ -124,6 +126,84 @@ func RecordBeadRespawn(workDir, beadID string) int {
 	rec.LastRespawn = time.Now().UTC()
 	_ = saveBeadRespawnState(townRoot, state) // Non-fatal: tracking failure must not block respawn
 	return rec.Count
+}
+
+// GetEscalationTier returns the current escalation tier for a bead (0 = default).
+func GetEscalationTier(workDir, beadID string) int {
+	respawnMu.Lock()
+	defer respawnMu.Unlock()
+
+	townRoot, err := workspace.Find(workDir)
+	if err != nil || townRoot == "" {
+		townRoot = workDir
+	}
+
+	unlock, flockErr := lock.FlockAcquire(beadRespawnStateFile(townRoot) + ".flock")
+	if flockErr == nil {
+		defer unlock()
+	}
+
+	state := loadBeadRespawnState(townRoot)
+	rec, ok := state.Beads[beadID]
+	if !ok {
+		return 0
+	}
+	return rec.EscalationTier
+}
+
+// AdvanceEscalationTier increments the escalation tier for beadID and resets
+// the respawn Count to 0. Returns the new tier number.
+func AdvanceEscalationTier(workDir, beadID string) int {
+	respawnMu.Lock()
+	defer respawnMu.Unlock()
+
+	townRoot, err := workspace.Find(workDir)
+	if err != nil || townRoot == "" {
+		townRoot = workDir
+	}
+
+	unlock, flockErr := lock.FlockAcquire(beadRespawnStateFile(townRoot) + ".flock")
+	if flockErr == nil {
+		defer unlock()
+	}
+
+	state := loadBeadRespawnState(townRoot)
+	rec, ok := state.Beads[beadID]
+	if !ok {
+		rec = &beadRespawnRecord{BeadID: beadID}
+		state.Beads[beadID] = rec
+	}
+	rec.EscalationTier++
+	rec.Count = 0
+	rec.LastAgent = ""
+	rec.LastRespawn = time.Now().UTC()
+	_ = saveBeadRespawnState(townRoot, state)
+	return rec.EscalationTier
+}
+
+// SetLastAgent records the agent alias used for the current escalation tier.
+func SetLastAgent(workDir, beadID, agent string) {
+	respawnMu.Lock()
+	defer respawnMu.Unlock()
+
+	townRoot, err := workspace.Find(workDir)
+	if err != nil || townRoot == "" {
+		townRoot = workDir
+	}
+
+	unlock, flockErr := lock.FlockAcquire(beadRespawnStateFile(townRoot) + ".flock")
+	if flockErr == nil {
+		defer unlock()
+	}
+
+	state := loadBeadRespawnState(townRoot)
+	rec, ok := state.Beads[beadID]
+	if !ok {
+		rec = &beadRespawnRecord{BeadID: beadID}
+		state.Beads[beadID] = rec
+	}
+	rec.LastAgent = agent
+	_ = saveBeadRespawnState(townRoot, state)
 }
 
 // ResetBeadRespawnCount resets the respawn counter for beadID to zero.

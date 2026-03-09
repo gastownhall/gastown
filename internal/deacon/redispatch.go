@@ -502,6 +502,137 @@ func ParseRecoveredBeadSubject(subject string) (beadID string, ok bool) {
 	return beadID, true
 }
 
+// ParseEscalatedBeadSubject extracts the bead ID from an ESCALATED_BEAD mail subject.
+// Expected format: "ESCALATED_BEAD <bead-id>"
+func ParseEscalatedBeadSubject(subject string) (beadID string, ok bool) {
+	const prefix = "ESCALATED_BEAD "
+	if !strings.HasPrefix(subject, prefix) {
+		return "", false
+	}
+	beadID = strings.TrimSpace(strings.TrimPrefix(subject, prefix))
+	if beadID == "" {
+		return "", false
+	}
+	return beadID, true
+}
+
+// EscalationParams holds the parameters extracted from an ESCALATED_BEAD mail body.
+type EscalationParams struct {
+	EscalationType string // "upgrade-model" or "route-crew"
+	Agent          string // agent alias for upgrade-model, empty for route-crew
+	Rig            string // source rig
+}
+
+// ParseEscalatedBeadBody extracts escalation parameters from an ESCALATED_BEAD mail body.
+func ParseEscalatedBeadBody(body string) EscalationParams {
+	var params EscalationParams
+	for _, line := range strings.Split(body, "\n") {
+		line = strings.TrimSpace(line)
+		if strings.HasPrefix(line, "Escalation Type:") {
+			params.EscalationType = strings.TrimSpace(strings.TrimPrefix(line, "Escalation Type:"))
+		} else if strings.HasPrefix(line, "Agent:") {
+			params.Agent = strings.TrimSpace(strings.TrimPrefix(line, "Agent:"))
+		} else if strings.HasPrefix(line, "Polecat:") {
+			polecatAddr := strings.TrimSpace(strings.TrimPrefix(line, "Polecat:"))
+			parts := strings.SplitN(polecatAddr, "/", 2)
+			if len(parts) >= 1 {
+				params.Rig = parts[0]
+			}
+		}
+	}
+	return params
+}
+
+// RedispatchEscalated handles an ESCALATED_BEAD by re-slinging with the
+// appropriate override (agent upgrade or crew routing).
+func RedispatchEscalated(townRoot, beadID string, params EscalationParams) *RedispatchResult {
+	result := &RedispatchResult{BeadID: beadID}
+
+	// Determine target rig.
+	targetRig := params.Rig
+	if targetRig == "" {
+		targetRig = resolveRigFromBead(townRoot, beadID)
+	}
+	if targetRig == "" {
+		result.Action = "error"
+		result.Error = fmt.Errorf("cannot determine target rig for bead %s", beadID)
+		return result
+	}
+	result.TargetRig = targetRig
+
+	// Reset bead to open before re-dispatch.
+	resetCmd := exec.Command("bd", "update", beadID, "--status=open", "--assignee=")
+	resetCmd.Dir = townRoot
+	if err := resetCmd.Run(); err != nil {
+		result.Action = "error"
+		result.Error = fmt.Errorf("resetting bead status: %w", err)
+		return result
+	}
+
+	// Verify bead is open.
+	beadStatus := getBeadStatusForRedispatch(townRoot, beadID)
+	if beadStatus != "open" {
+		result.Action = "skipped"
+		result.Message = fmt.Sprintf("bead status is %q after reset (expected open)", beadStatus)
+		return result
+	}
+
+	switch params.EscalationType {
+	case "upgrade-model":
+		err := slingBeadWithAgent(townRoot, beadID, targetRig, params.Agent)
+		if err != nil {
+			result.Action = "error"
+			result.Error = fmt.Errorf("slinging with agent %s: %w", params.Agent, err)
+			return result
+		}
+		result.Action = "redispatched"
+		result.Message = fmt.Sprintf("escalated to %s with agent %s (upgrade-model)", targetRig, params.Agent)
+
+	case "route-crew":
+		err := slingBeadToCrew(townRoot, beadID, targetRig)
+		if err != nil {
+			result.Action = "error"
+			result.Error = fmt.Errorf("slinging to crew: %w", err)
+			return result
+		}
+		result.Action = "redispatched"
+		result.Message = fmt.Sprintf("escalated to %s crew (route-crew)", targetRig)
+
+	default:
+		result.Action = "error"
+		result.Error = fmt.Errorf("unknown escalation type: %s", params.EscalationType)
+		return result
+	}
+
+	return result
+}
+
+// slingBeadWithAgent dispatches a bead to a rig with a specific agent override.
+func slingBeadWithAgent(townRoot, beadID, rig, agent string) error {
+	args := []string{"sling", beadID, rig, "--force", "--no-convoy"}
+	if agent != "" {
+		args = append(args, "--agent", agent)
+	}
+	cmd := exec.Command("gt", args...)
+	cmd.Dir = townRoot
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	return cmd.Run()
+}
+
+// slingBeadToCrew dispatches a bead to a rig's crew instead of spawning a polecat.
+// Uses the default sling path which will target the rig; crew routing is
+// handled by the rig's witness/workforce allocation.
+func slingBeadToCrew(townRoot, beadID, rig string) error {
+	// Sling to crew by targeting rig with --force.
+	// The rig's witness/workforce will route to an available crew member.
+	cmd := exec.Command("gt", "sling", beadID, rig, "--force", "--no-convoy")
+	cmd.Dir = townRoot
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	return cmd.Run()
+}
+
 // ParseRecoveredBeadBody extracts the source rig from a RECOVERED_BEAD mail body.
 // Looks for "Polecat: <rig>/<name>" line.
 func ParseRecoveredBeadBody(body string) (rig string) {

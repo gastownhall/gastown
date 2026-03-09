@@ -183,6 +183,21 @@ The `redispatch` command handles:
 Exit codes: 0=dispatched, 2=cooldown, 3=skipped. Non-zero non-error codes are
 informational - archive the message regardless.
 
+**ESCALATED_BEAD messages** (from Witness, tiered escalation):
+When escalation is enabled and a bead exhausts its respawn budget at a tier,
+the Witness sends an ESCALATED_BEAD mail with the escalation type and agent override.
+Subject format: `ESCALATED_BEAD <bead-id>`
+```bash
+# For each ESCALATED_BEAD message:
+gt mail read <id>
+# Extract bead ID from subject, escalation type and agent from body
+gt deacon redispatch-escalated <bead-id> --type <escalation-type> --agent <agent> --rig <rig>
+gt mail archive <message-id>
+```
+
+The body contains `Escalation Type:` (upgrade-model or route-crew) and `Agent:` fields.
+Handle like RECOVERED_BEAD - archive the message after processing regardless of outcome.
+
 Callbacks may spawn new polecats, update issue state, or trigger other actions.
 
 **Hygiene principle**: Archive messages after they're fully processed.
