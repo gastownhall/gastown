@@ -91,8 +91,9 @@ func loadConvoys(townBeads string) ([]ConvoyItem, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), constants.BdSubprocessTimeout)
 	defer cancel()
 
-	// Get list of open issues and filter locally so legacy type=convoy beads remain visible.
-	listArgs := []string{"list", "--json", "--limit=0"}
+	// Get list of open convoys using label-based filtering; local filter below also
+	// catches legacy type=convoy beads that predate the gt:convoy label.
+	listArgs := []string{"list", "--label=gt:convoy", "--json", "--limit=0"}
 	listCmd := exec.CommandContext(ctx, "bd", listArgs...)
 	util.SetDetachedProcessGroup(listCmd)
 	listCmd.Dir = townBeads

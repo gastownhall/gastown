@@ -237,8 +237,9 @@ func (f *LiveConvoyFetcher) FetchConvoys() ([]ConvoyRow, error) {
 		return nil, nil // Backed off — return empty result silently
 	}
 
-	// List all open issues and filter locally so legacy type=convoy beads remain visible.
-	stdout, err := f.runBdCmd(f.townRoot, "list", "--status=open", "--json", "--limit=0")
+	// List all open convoy issues using label-based filtering; local filter below also
+	// catches legacy type=convoy beads that predate the gt:convoy label.
+	stdout, err := f.runBdCmd(f.townRoot, "list", "--label=gt:convoy", "--status=open", "--json", "--limit=0")
 	if err != nil {
 		f.convoyBreaker.recordFailure()
 		return nil, fmt.Errorf("listing convoys: %w", err)

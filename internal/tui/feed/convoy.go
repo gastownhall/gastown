@@ -103,7 +103,7 @@ func FetchConvoys(townRoot string) (*ConvoyState, error) {
 
 // listConvoys returns convoys with the given status
 func listConvoys(beadsDir, status string) ([]convoyListItem, error) {
-	listArgs := []string{"list", "--status=" + status, "--json", "--limit=0"}
+	listArgs := []string{"list", "--label=gt:convoy", "--status=" + status, "--json", "--limit=0"}
 
 	ctx, cancel := context.WithTimeout(context.Background(), constants.BdSubprocessTimeout)
 	defer cancel()
