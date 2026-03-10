@@ -167,8 +167,8 @@ func (c *StaleAgentBeadsCheck) Run(ctx *CheckContext) *CheckResult {
 			if issue.Status != "open" && issue.Status != "in_progress" && issue.Status != "hooked" {
 				continue
 			}
-			// Only check beads that are agent type
-			if issue.Type != "agent" {
+			// Only check beads that are agent type (label-based check: gt:agent label or legacy type=agent)
+			if !beads.IsAgentBead(issue) {
 				continue
 			}
 			// Parse the bead ID to extract its prefix

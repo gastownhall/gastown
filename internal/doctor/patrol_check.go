@@ -301,8 +301,10 @@ func (c *PatrolNotStuckCheck) Run(ctx *CheckContext) *CheckResult {
 	}
 }
 
-// stuckWispsQuery selects in_progress issues for stuck-wisp detection via Dolt.
-const stuckWispsQuery = `SELECT id, title, status, updated_at FROM issues WHERE status = 'in_progress' ORDER BY updated_at ASC`
+// stuckWispsQuery selects in_progress patrol wisps for stuck-wisp detection via Dolt.
+// Patrol molecules are ephemeral wisps created by `bd mol wisp <patrol-formula>`.
+// They live in the wisps table and use wisp_type='patrol' (set by the formula's wisp_type variable).
+const stuckWispsQuery = `SELECT id, title, status, updated_at FROM wisps WHERE status = 'in_progress' AND wisp_type = 'patrol' ORDER BY updated_at ASC`
 
 // checkStuckWispsDolt queries the Dolt database for stuck wisps using bd sql.
 // Returns an error if the query fails (caller should fall back to JSONL).
