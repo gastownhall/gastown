@@ -835,6 +835,10 @@ func runSling(cmd *cobra.Command, args []string) (retErr error) {
 		if err := unhookCmd.Run(); err != nil {
 			fmt.Printf("%s Could not unhook bead from old owner: %v\n", style.Dim.Render("Warning:"), err)
 		}
+
+		// Clear hook_bead on old polecat wisp before bonding new molecule (gt-v5x8p4).
+		// Without this, the old polecat wakes and gt hook returns the stale closed bead.
+		_ = BdCmd("slot", "set", agentIDToBeadID(info.Assignee, townRoot), "hook", "").Dir(townRoot).Run()
 	}
 
 	// --force implies --no-convoy (gt-t617u1): re-slinging a bead that already has a

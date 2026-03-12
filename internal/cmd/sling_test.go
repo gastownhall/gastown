@@ -3384,6 +3384,7 @@ exit /b 0
 	if err := os.MkdirAll(rigDir, 0755); err != nil {
 		t.Fatalf("mkdir rig: %v", err)
 	}
+
 	cwd, err := os.Getwd()
 	if err != nil {
 		t.Fatalf("getwd: %v", err)
@@ -3422,4 +3423,94 @@ exit /b 0
 		t.Fatalf("gh#3917 regression: standalone formula rejected in deferred mode: %v", err)
 	}
 	// Any other error (e.g., no polecat to spawn) is acceptable — the guard is what we're testing.
+}
+
+// TestSlingForceClearsOldPolecatHookBead verifies that gt sling --force clears
+// the hook_bead slot on the old polecat's agent bead before bonding the new
+// molecule. Without this, the old polecat wakes and gt hook returns a stale
+// closed bead, causing a crash (gt-v5x8p4).
+func TestSlingForceClearsOldPolecatHookBead(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("skipping on windows")
+	}
+
+	townRoot := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(townRoot, ".beads"), 0o755); err != nil {
+		t.Fatalf("mkdir .beads: %v", err)
+	}
+
+	binDir := filepath.Join(townRoot, "bin")
+	if err := os.MkdirAll(binDir, 0o755); err != nil {
+		t.Fatalf("mkdir binDir: %v", err)
+	}
+	logPath := filepath.Join(townRoot, "bd.log")
+
+	// bd stub: logs all commands, returns hooked bead for show
+	bdScript := `#!/bin/sh
+echo "$*" >> "${BD_LOG}"
+cmd="$1"
+shift || true
+case "$cmd" in
+  show)
+    echo '[{"title":"Test issue","status":"hooked","assignee":"gastown/polecats/toast","description":""}]'
+    ;;
+esac
+exit 0
+`
+	_ = writeBDStub(t, binDir, bdScript, "")
+
+	t.Setenv("BD_LOG", logPath)
+	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	t.Setenv(EnvGTRole, "mayor")
+	t.Setenv("GT_CREW", "")
+	t.Setenv("GT_POLECAT", "")
+	t.Setenv("TMUX_PANE", "")
+	t.Setenv("GT_TEST_NO_NUDGE", "1")
+	t.Setenv("GT_TEST_SKIP_HOOK_VERIFY", "1")
+
+	cwd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("getwd: %v", err)
+	}
+	t.Cleanup(func() { _ = os.Chdir(cwd) })
+	if err := os.MkdirAll(filepath.Join(townRoot, "mayor", "rig"), 0o755); err != nil {
+		t.Fatalf("mkdir mayor/rig: %v", err)
+	}
+	if err := os.Chdir(filepath.Join(townRoot, "mayor", "rig")); err != nil {
+		t.Fatalf("chdir: %v", err)
+	}
+
+	// Mock resolveTargetAgentFn so resolveTarget succeeds without tmux
+	prevResolveAgentFn := resolveTargetAgentFn
+	t.Cleanup(func() { resolveTargetAgentFn = prevResolveAgentFn })
+	resolveTargetAgentFn = func(target string) (string, string, string, error) {
+		return "gastown/polecats/toast", "", "", nil
+	}
+
+	prevForce := slingForce
+	prevNoConvoy := slingNoConvoy
+	prevDryRun := slingDryRun
+	t.Cleanup(func() {
+		slingForce = prevForce
+		slingNoConvoy = prevNoConvoy
+		slingDryRun = prevDryRun
+	})
+	slingForce = true
+	slingNoConvoy = true
+	slingDryRun = true // dry-run: skip actual molecule creation, but force path still runs
+
+	_ = runSling(nil, []string{"gt-testvxyz", "gastown/polecats/toast"})
+
+	// Verify bd slot set was called to clear the old polecat's hook_bead
+	logBytes, readErr := os.ReadFile(logPath)
+	if readErr != nil {
+		t.Fatalf("reading bd.log: %v", readErr)
+	}
+	bdLog := string(logBytes)
+
+	// The agent bead ID for gastown/polecats/toast with default "gt" prefix is gt-gastown-polecat-toast
+	const wantAgentBead = "gt-gastown-polecat-toast"
+	if !strings.Contains(bdLog, "slot set "+wantAgentBead+" hook") {
+		t.Errorf("expected bd.log to contain 'slot set %s hook', got:\n%s", wantAgentBead, bdLog)
+	}
 }
