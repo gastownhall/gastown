@@ -44,6 +44,13 @@ Auto-Convoy:
   gt sling gt-abc gastown              # Creates "Work: <issue-title>" convoy
   gt sling gt-abc gastown --no-convoy  # Skip auto-convoy creation
 
+  --force implies --no-convoy: re-slinging an existing bead would create a
+  phantom convoy disconnected from the real tracking on the dep graph. The
+  original convoy already tracks the work, so a second one would be noise.
+
+  gt sling gt-abc gastown --force           # No convoy (--no-convoy implied)
+  gt sling gt-abc gastown --force --no-convoy  # Same, explicit
+
 Merge Strategy (--merge):
   Controls how completed work lands. Stored on the auto-convoy.
   gt sling gt-abc gastown --merge=direct  # Push branch directly to main
@@ -828,6 +835,13 @@ func runSling(cmd *cobra.Command, args []string) (retErr error) {
 		if err := unhookCmd.Run(); err != nil {
 			fmt.Printf("%s Could not unhook bead from old owner: %v\n", style.Dim.Render("Warning:"), err)
 		}
+	}
+
+	// --force implies --no-convoy (gt-t617u1): re-slinging a bead that already has a
+	// convoy would create a phantom second convoy disconnected from the real dep graph
+	// tracking. The original convoy already tracks the work.
+	if force && !slingNoConvoy {
+		slingNoConvoy = true
 	}
 
 	// Auto-convoy: check if issue is already tracked by a convoy

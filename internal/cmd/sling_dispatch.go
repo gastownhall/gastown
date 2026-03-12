@@ -255,6 +255,12 @@ func executeSling(params SlingParams) (*SlingResult, error) {
 	hookWorkDir := spawnInfo.ClonePath
 
 	// 4. Auto-convoy (if !NoConvoy)
+	// --force implies --no-convoy (gt-t617u1): re-slinging a bead that already has a
+	// convoy would create a phantom second convoy disconnected from the real dep graph
+	// tracking. The original convoy already tracks the work.
+	if params.Force && !params.NoConvoy {
+		params.NoConvoy = true
+	}
 	convoyID := ""
 	if !params.NoConvoy {
 		existingConvoy := isTrackedByConvoy(params.BeadID)
