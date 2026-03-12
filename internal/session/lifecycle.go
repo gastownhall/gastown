@@ -389,21 +389,30 @@ func MergeRuntimeLivenessEnv(envVars map[string]string, runtimeConfig *config.Ru
 	}
 
 	if _, hasProcessNames := envVars["GT_PROCESS_NAMES"]; !hasProcessNames {
-		agentForLookup := runtimeConfig.ResolvedAgent
-		commandForLookup := runtimeConfig.Command
-		argsForLookup := runtimeConfig.Args
-		if existing, ok := envVars["GT_AGENT"]; ok && existing != "" {
-			agentForLookup = existing
-			// When GT_AGENT was set by AgentOverride (differs from the
-			// workspace-resolved agent), the runtimeConfig.Command/Args
-			// belong to the workspace agent, not the override. Pass empty
-			// command so ResolveProcessNames uses the preset's own command.
-			if existing != runtimeConfig.ResolvedAgent {
-				commandForLookup = ""
-				argsForLookup = nil
+		// Prefer explicit process names from RuntimeConfig.Tmux (set in
+		// settings/config.json agents section). This handles custom agents
+		// whose Command is a wrapper (e.g., "env") but whose actual runtime
+		// process is different (e.g., "claude"/"node").
+		var processNames []string
+		if runtimeConfig.Tmux != nil && len(runtimeConfig.Tmux.ProcessNames) > 0 {
+			processNames = runtimeConfig.Tmux.ProcessNames
+		} else {
+			agentForLookup := runtimeConfig.ResolvedAgent
+			commandForLookup := runtimeConfig.Command
+			argsForLookup := runtimeConfig.Args
+			if existing, ok := envVars["GT_AGENT"]; ok && existing != "" {
+				agentForLookup = existing
+				// When GT_AGENT was set by AgentOverride (differs from the
+				// workspace-resolved agent), the runtimeConfig.Command/Args
+				// belong to the workspace agent, not the override. Pass empty
+				// command so ResolveProcessNames uses the preset's own command.
+				if existing != runtimeConfig.ResolvedAgent {
+					commandForLookup = ""
+					argsForLookup = nil
+				}
 			}
+			processNames = config.ResolveProcessNames(agentForLookup, commandForLookup, argsForLookup...)
 		}
-		processNames := config.ResolveProcessNames(agentForLookup, commandForLookup, argsForLookup...)
 		if len(processNames) > 0 {
 			envVars["GT_PROCESS_NAMES"] = strings.Join(processNames, ",")
 		}

@@ -2275,11 +2275,16 @@ func BuildStartupCommand(envVars map[string]string, rigPath, prompt string) stri
 	if rc.ResolvedAgent != "" {
 		resolvedEnv["GT_AGENT"] = rc.ResolvedAgent
 	}
-	// Set GT_PROCESS_NAMES for accurate liveness detection. Custom agents may
-	// shadow built-in preset names (e.g., custom "codex" running "opencode"),
-	// or wrap the real binary with a launcher (e.g., `env -u VAR claude ...`).
-	// Pass rc.Args so wrapper-unwrap can find the real binary.
-	processNames := ResolveProcessNames(rc.ResolvedAgent, rc.Command, rc.Args...)
+	// Set GT_PROCESS_NAMES for accurate liveness detection. Prefer explicit
+	// Tmux.ProcessNames from settings (handles wrappers like "env" that exec
+	// into the real agent). Fall back to registry-based resolution with Args
+	// so wrapper-unwrap can find the real binary.
+	var processNames []string
+	if rc.Tmux != nil && len(rc.Tmux.ProcessNames) > 0 {
+		processNames = rc.Tmux.ProcessNames
+	} else {
+		processNames = ResolveProcessNames(rc.ResolvedAgent, rc.Command, rc.Args...)
+	}
 	resolvedEnv["GT_PROCESS_NAMES"] = strings.Join(processNames, ",")
 	// Merge agent-specific env vars (e.g., OPENCODE_PERMISSION for yolo mode)
 	for k, v := range rc.Env {
