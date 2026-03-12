@@ -210,6 +210,46 @@ func TestCollectExistingMoleculesFiltersClosedMolecules(t *testing.T) {
 	}
 }
 
+func TestExtractPolecatRig(t *testing.T) {
+	tests := []struct {
+		target  string
+		wantRig string
+		wantOK  bool
+	}{
+		// Full 3-part format
+		{"gastown/polecats/nux", "gastown", true},
+		{"gymbo/polecats/zed", "gymbo", true},
+		// Shorthand 2-part format (gt-1tkmwx: witness re-sling)
+		{"gastown/nux", "gastown", true},
+		{"gymbo/zed", "gymbo", true},
+		// Singleton roles — must NOT be treated as polecats
+		{"gastown/witness", "", false},
+		{"gastown/wit", "", false},
+		{"gastown/refinery", "", false},
+		{"gastown/ref", "", false},
+		{"gastown/crew", "", false},
+		{"gastown/polecats", "", false},
+		{"gastown/mayor", "", false},
+		{"gastown/may", "", false},
+		{"gastown/deacon", "", false},
+		{"gastown/dea", "", false},
+		// Non-polecat formats
+		{"gastown", "", false},
+		{"gastown/crew/max", "", false},
+		{"", "", false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.target, func(t *testing.T) {
+			gotRig, gotOK := extractPolecatRig(tt.target)
+			if gotOK != tt.wantOK || gotRig != tt.wantRig {
+				t.Errorf("extractPolecatRig(%q) = (%q, %v), want (%q, %v)",
+					tt.target, gotRig, gotOK, tt.wantRig, tt.wantOK)
+			}
+		})
+	}
+}
+
 func TestIsSlingConfigError(t *testing.T) {
 	tests := []struct {
 		name string

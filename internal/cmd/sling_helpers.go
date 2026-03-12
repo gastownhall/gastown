@@ -817,6 +817,32 @@ func isPolecatTarget(target string) bool {
 	return len(parts) >= 3 && parts[1] == "polecats"
 }
 
+// extractPolecatRig returns the rig name if target represents a polecat that
+// should be respawned when its session is dead. Handles both formats:
+//   - "rig/polecats/name" (full path)
+//   - "rig/name" (shorthand, where name is not a known singleton role)
+//
+// Returns ("", false) for non-polecat targets (witness, refinery, crew, etc.).
+// This enables the witness to re-sling polecats using the shorthand format
+// "rig/name" without Mayor involvement (gt-1tkmwx).
+func extractPolecatRig(target string) (string, bool) {
+	parts := strings.Split(target, "/")
+	// Full format: rig/polecats/name
+	if len(parts) == 3 && parts[1] == "polecats" {
+		return parts[0], true
+	}
+	// Shorthand format: rig/name (where name isn't a known singleton role)
+	if len(parts) == 2 {
+		switch strings.ToLower(parts[1]) {
+		case "witness", "wit", "refinery", "ref", "crew", "polecats", "mayor", "may", "deacon", "dea":
+			return "", false
+		default:
+			return parts[0], true
+		}
+	}
+	return "", false
+}
+
 // FormulaOnBeadResult contains the result of instantiating a formula on a bead.
 type FormulaOnBeadResult struct {
 	WispRootID string // The wisp root ID (compound root after bonding)

@@ -3,7 +3,6 @@ package cmd
 import (
 	"fmt"
 	"os"
-	"strings"
 
 	"github.com/steveyegge/gastown/internal/session"
 	"github.com/steveyegge/gastown/internal/tmux"
@@ -260,45 +259,41 @@ func resolveTarget(target string, opts ResolveTargetOptions) (*ResolvedTarget, e
 	// resolve here, getting their pane for nudge delivery (gt-in7b).
 	agentID, pane, workDir, err := resolveTargetAgentFn(target)
 	if err != nil {
-		if isPolecatTarget(target) {
-			parts := strings.Split(target, "/")
-			if len(parts) >= 3 && parts[1] == "polecats" {
-				rigName := parts[0]
-				if opts.BeadID != "" && !opts.Force {
-					if err := checkCrossRigGuard(opts.BeadID, rigName+"/polecats/_", opts.TownRoot); err != nil {
-						return nil, err
-					}
+		if rigName, ok := extractPolecatRig(target); ok {
+			if opts.BeadID != "" && !opts.Force {
+				if err := checkCrossRigGuard(opts.BeadID, rigName+"/polecats/_", opts.TownRoot); err != nil {
+					return nil, err
 				}
 				if opts.BeadID != "" {
 					if err := verifyBeadExistsInTargetRigDatabase(opts.BeadID, rigName, opts.TownRoot); err != nil {
 						return nil, err
 					}
 				}
-				fmt.Printf("Target polecat has no active session, spawning fresh polecat in rig '%s'...\n", rigName)
-				spawnOpts := SlingSpawnOptions{
-					TownRoot:      opts.TownRoot,
-					Force:         opts.Force,
-					Account:       opts.Account,
-					Create:        opts.Create,
-					HookBead:      opts.HookBead,
-					Agent:         opts.Agent,
-					BaseBranch:    opts.BaseBranch,
-					ResumeBranch:  opts.ResumeBranch,
-					SkipAdmission: opts.SkipPolecatAdmission,
-				}
-				spawnInfo, spawnErr := spawnPolecatForSling(rigName, spawnOpts)
-				if spawnErr != nil {
-					return nil, fmt.Errorf("spawning polecat to replace dead polecat: %w", spawnErr)
-				}
-				result.Agent = spawnInfo.AgentID()
-				result.NewPolecatInfo = spawnInfo
-				result.WorkDir = spawnInfo.ClonePath
-				result.HookSetAtomically = opts.HookBead != ""
-				if !opts.NoBoot {
-					wakeRigAgents(rigName)
-				}
-				return result, nil
 			}
+			fmt.Printf("Target polecat has no active session, spawning fresh polecat in rig '%s'...\n", rigName)
+			spawnOpts := SlingSpawnOptions{
+				TownRoot:      opts.TownRoot,
+				Force:         opts.Force,
+				Account:       opts.Account,
+				Create:        opts.Create,
+				HookBead:      opts.HookBead,
+				Agent:         opts.Agent,
+				BaseBranch:    opts.BaseBranch,
+				ResumeBranch:  opts.ResumeBranch,
+				SkipAdmission: opts.SkipPolecatAdmission,
+			}
+			spawnInfo, spawnErr := spawnPolecatForSling(rigName, spawnOpts)
+			if spawnErr != nil {
+				return nil, fmt.Errorf("spawning polecat to replace dead polecat: %w", spawnErr)
+			}
+			result.Agent = spawnInfo.AgentID()
+			result.NewPolecatInfo = spawnInfo
+			result.WorkDir = spawnInfo.ClonePath
+			result.HookSetAtomically = opts.HookBead != ""
+			if !opts.NoBoot {
+				wakeRigAgents(rigName)
+			}
+			return result, nil
 		}
 		return nil, fmt.Errorf("resolving target: %w", err)
 	}
