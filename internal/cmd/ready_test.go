@@ -226,3 +226,55 @@ func TestFilterReadyIssuesByRoute(t *testing.T) {
 		t.Fatalf("rig filtered IDs = %v, want %v", got, want)
 	}
 }
+
+func TestFilterIdentityBeads_FiltersEpics(t *testing.T) {
+	issues := []*beads.Issue{
+		{ID: "gt-abc", Title: "Real task", Type: "task"},
+		{ID: "gt-epic-1", Title: "Epic container", Type: "epic"},
+		{ID: "gt-xyz", Title: "Another task", Type: "bug"},
+		{ID: "gt-labeled-epic", Title: "Labeled epic", Type: "task", Labels: []string{"gt:epic"}},
+	}
+
+	filtered := filterIdentityBeads(issues)
+
+	if len(filtered) != 2 {
+		t.Errorf("got %d issues, want 2 (epics should be filtered)", len(filtered))
+	}
+	for _, issue := range filtered {
+		if issue.Type == "epic" || beads.HasLabel(issue, "gt:epic") {
+			t.Errorf("epic should have been filtered: %s", issue.ID)
+		}
+	}
+}
+
+func TestFilterIdentityBeads_FiltersRigRootPlaceholders(t *testing.T) {
+	issues := []*beads.Issue{
+		{ID: "gt-real-task", Title: "Real task", Type: "task"},
+		{ID: "gt-rig-gastown", Title: "gastown", Type: "task"},
+		{ID: "bd-rig-beads", Title: "beads", Type: "task"},
+		{ID: "gt-rig-labeled", Title: "Rig by label", Type: "task", Labels: []string{"gt:rig"}},
+	}
+
+	filtered := filterIdentityBeads(issues)
+
+	if len(filtered) != 1 {
+		t.Errorf("got %d issues, want 1 (rig beads should be filtered)", len(filtered))
+	}
+	if filtered[0].ID != "gt-real-task" {
+		t.Errorf("expected gt-real-task to survive, got %s", filtered[0].ID)
+	}
+}
+
+func TestFilterIdentityBeads_PreservesRealWork(t *testing.T) {
+	issues := []*beads.Issue{
+		{ID: "gt-bug-123", Title: "Fix login crash", Type: "bug"},
+		{ID: "gt-task-456", Title: "Add feature", Type: "task"},
+		{ID: "hq-789", Title: "Cross-rig work", Type: "task"},
+	}
+
+	filtered := filterIdentityBeads(issues)
+
+	if len(filtered) != 3 {
+		t.Errorf("got %d issues, want 3 (real work should not be filtered)", len(filtered))
+	}
+}

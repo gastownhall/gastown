@@ -219,3 +219,50 @@ func TestValidRigState(t *testing.T) {
 		})
 	}
 }
+
+func TestIsRigBead(t *testing.T) {
+	tests := []struct {
+		name  string
+		issue *Issue
+		want  bool
+	}{
+		{"nil", nil, false},
+		{"rig by ID pattern", &Issue{ID: "gt-rig-gastown", Type: "task"}, true},
+		{"rig by ID pattern other prefix", &Issue{ID: "bd-rig-beads", Type: "task"}, true},
+		{"rig by gt:rig label", &Issue{ID: "gt-xyz", Type: "task", Labels: []string{"gt:rig"}}, true},
+		{"real task", &Issue{ID: "gt-abc123", Type: "task"}, false},
+		{"bug", &Issue{ID: "gt-bug", Type: "bug"}, false},
+		{"epic is not a rig", &Issue{ID: "gt-epic", Type: "epic"}, false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := IsRigBead(tt.issue); got != tt.want {
+				t.Errorf("IsRigBead() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestIsEpicBead(t *testing.T) {
+	tests := []struct {
+		name  string
+		issue *Issue
+		want  bool
+	}{
+		{"nil", nil, false},
+		{"epic by type", &Issue{ID: "gt-2ejqk", Type: "epic"}, true},
+		{"epic by gt:epic label", &Issue{ID: "gt-xyz", Type: "task", Labels: []string{"gt:epic"}}, true},
+		{"real task", &Issue{ID: "gt-abc123", Type: "task"}, false},
+		{"bug", &Issue{ID: "gt-bug", Type: "bug"}, false},
+		{"rig bead is not epic", &Issue{ID: "gt-rig-gastown", Type: "task"}, false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := IsEpicBead(tt.issue); got != tt.want {
+				t.Errorf("IsEpicBead() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}

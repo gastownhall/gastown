@@ -417,37 +417,30 @@ func getWispIDs(beadsPath string) map[string]bool {
 	return wispIDs
 }
 
-// filterIdentityBeads removes agent, role, and rig identity beads from the list.
-// These are status trackers, not actionable work items.
+// filterIdentityBeads removes agent, role, rig, and epic beads from the list.
+// These are infrastructure trackers or organizational containers, not actionable work items.
 //
 // Since bd ready --json doesn't include labels, we filter by:
 //   - issue_type "agent" (agent lifecycle beads)
-//   - Labels if present (gt:agent, gt:role, gt:rig)
+//   - issue_type "epic" (organizational containers, not directly assignable)
+//   - Labels if present (gt:agent, gt:role, gt:rig, gt:epic)
 //   - ID suffix "-role" (role definition beads like hq-crew-role)
-//   - ID prefix matching "<prefix>-rig-" (rig identity beads like gt-rig-gastown)
+//   - ID pattern "<prefix>-rig-<name>" (rig identity beads like gt-rig-gastown)
 func filterIdentityBeads(issues []*beads.Issue) []*beads.Issue {
-	identityLabels := map[string]bool{
-		"gt:agent": true,
-		"gt:role":  true,
-		"gt:rig":   true,
-	}
-
 	filtered := make([]*beads.Issue, 0, len(issues))
 	for _, issue := range issues {
-		// Filter by issue_type (agent beads)
+		// Filter agent beads (lifecycle trackers)
 		if beads.IsAgentBead(issue) {
 			continue
 		}
 
-		// Filter by labels (when available)
-		skip := false
-		for _, label := range issue.Labels {
-			if identityLabels[label] {
-				skip = true
-				break
-			}
+		// Filter epics (organizational containers, not directly assignable work)
+		if beads.IsEpicBead(issue) {
+			continue
 		}
-		if skip {
+
+		// Filter rig identity beads (infrastructure placeholders)
+		if beads.IsRigBead(issue) {
 			continue
 		}
 
@@ -456,8 +449,8 @@ func filterIdentityBeads(issues []*beads.Issue) []*beads.Issue {
 			continue
 		}
 
-		// Filter rig identity beads (IDs containing "-rig-")
-		if strings.Contains(issue.ID, "-rig-") {
+		// Filter by role label when available
+		if beads.HasLabel(issue, "gt:role") {
 			continue
 		}
 

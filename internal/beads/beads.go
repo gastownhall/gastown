@@ -272,6 +272,30 @@ func IsProtectedBead(issue *Issue) bool {
 	return false
 }
 
+// IsEpicBead checks if an issue is an epic (organizational container, not actionable work).
+// Epics are identified by issue_type "epic" or the gt:epic label.
+func IsEpicBead(issue *Issue) bool {
+	if issue == nil {
+		return false
+	}
+	if issue.Type == "epic" {
+		return true
+	}
+	return HasLabel(issue, "gt:epic")
+}
+
+// IsRigBead checks if an issue is a rig identity bead (infrastructure placeholder, not actionable work).
+// Rig beads are identified by the gt:rig label or the <prefix>-rig-<name> ID pattern.
+func IsRigBead(issue *Issue) bool {
+	if issue == nil {
+		return false
+	}
+	if HasLabel(issue, "gt:rig") {
+		return true
+	}
+	return strings.Contains(issue.ID, "-rig-")
+}
+
 // IssueDep represents a dependency or dependent issue with its relation.
 type IssueDep struct {
 	ID             string `json:"id"`
