@@ -104,6 +104,11 @@ func runClose(cmd *cobra.Command, args []string) error {
 		checkConvoyCompletion(beadIDs)
 	}
 
+	// Push-based dispatch: notify the scheduler that capacity may have opened.
+	// Fires a LIFECYCLE: dispatch mail + SIGUSR1 to daemon so queued work is
+	// dispatched immediately rather than waiting for the next heartbeat (gt-9uumi0).
+	go notifyCoachDispatchFromCwd()
+
 	return nil
 }
 

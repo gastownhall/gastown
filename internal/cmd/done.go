@@ -1453,6 +1453,11 @@ notifyWitness:
 		}
 
 		fmt.Printf("%s Polecat transitioned to IDLE — ready for new work\n", style.Bold.Render("✓"))
+
+		// Push-based dispatch: notify the scheduler that a polecat slot is now free.
+		// Fires a LIFECYCLE: dispatch mail + SIGUSR1 to daemon so queued work is
+		// dispatched immediately rather than waiting for the next heartbeat (gt-9uumi0).
+		go notifyCoachDispatch(townRoot)
 	}
 
 	fmt.Println()

@@ -397,6 +397,11 @@ const (
 
 	// ActionShutdown terminates without restart.
 	ActionShutdown LifecycleAction = "shutdown"
+
+	// ActionDispatch triggers immediate scheduled-work dispatch.
+	// Sent by gt close and gt done to wake the scheduler without waiting
+	// for the next recovery heartbeat (push-based dispatch, gt-9uumi0).
+	ActionDispatch LifecycleAction = "dispatch"
 )
 
 // LifecycleRequest represents a request from an agent to the daemon.
