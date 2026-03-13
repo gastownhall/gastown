@@ -2100,6 +2100,12 @@ func (h *APIHandler) handleSSE(w http.ResponseWriter, r *http.Request) {
 	keepalive := time.NewTicker(15 * time.Second)
 	defer keepalive.Stop()
 
+	// Force refresh every 30 seconds even when hash unchanged. The htmx trigger
+	// disables "every 30s" when SSE is connected, so without this the page
+	// would never refresh when the town is idle (hash stable).
+	forceRefresh := time.NewTicker(30 * time.Second)
+	defer forceRefresh.Stop()
+
 	for {
 		select {
 		case <-ctx.Done():
@@ -2110,6 +2116,14 @@ func (h *APIHandler) handleSSE(w http.ResponseWriter, r *http.Request) {
 		case <-ticker.C:
 			hash := h.computeDashboardHash(ctx)
 			if hash != "" && hash != lastHash {
+				lastHash = hash
+				fmt.Fprintf(w, "event: dashboard-update\ndata: %s\n\n", hash)
+				flusher.Flush()
+			}
+		case <-forceRefresh.C:
+			// Always send refresh so the page updates at least every 30s
+			hash := h.computeDashboardHash(ctx)
+			if hash != "" {
 				lastHash = hash
 				fmt.Fprintf(w, "event: dashboard-update\ndata: %s\n\n", hash)
 				flusher.Flush()

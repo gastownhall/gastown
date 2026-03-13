@@ -15,6 +15,7 @@ import (
 	"github.com/steveyegge/gastown/internal/session"
 	"github.com/steveyegge/gastown/internal/style"
 	"github.com/steveyegge/gastown/internal/tmux"
+	"github.com/steveyegge/gastown/internal/wisp"
 	"github.com/steveyegge/gastown/internal/witness"
 	"github.com/steveyegge/gastown/internal/workspace"
 )
@@ -165,12 +166,25 @@ func runRigDock(cmd *cobra.Command, args []string) error {
 	if err := bd.Update(rigBead.ID, beads.UpdateOptions{
 		AddLabels: []string{RigDockedLabel},
 	}); err != nil {
-		return fmt.Errorf("setting docked label: %w", err)
+		// Bead update failed (e.g. broken local Dolt) — log but continue.
+		// The wisp layer below is the daemon's fast-path check and will
+		// still prevent agent restarts even if the bead label is missing.
+		fmt.Printf("  %s Could not set bead label (wisp fallback will apply): %v\n", style.Warning.Render("!"), err)
+	}
+
+	// Set wisp status and update daemon config (both need townRoot).
+	townRoot, twErr := workspace.FindFromCwdOrError()
+	if twErr == nil {
+		// Set wisp status so the daemon's fast-path check catches docked state
+		// without needing to query beads (LOCAL-004).
+		wispCfg := wisp.NewConfig(townRoot, rigName)
+		if err := wispCfg.Set(RigStatusKey, "docked"); err != nil {
+			fmt.Printf("  %s Could not set wisp status: %v\n", style.Warning.Render("!"), err)
+		}
 	}
 
 	// Remove rig from daemon.json patrol config so daemon stops spawning
 	// witness/refinery sessions for this rig on every heartbeat cycle.
-	townRoot, twErr := workspace.FindFromCwdOrError()
 	if twErr == nil {
 		if err := config.RemoveRigFromDaemonPatrols(townRoot, rigName); err != nil {
 			fmt.Printf("  %s Could not update daemon.json patrols: %v\n", style.Warning.Render("!"), err)
@@ -214,45 +228,52 @@ func runRigUndock(cmd *cobra.Command, args []string) error {
 		prefix = r.Config.Prefix
 	}
 
-	// Find the rig identity bead
+	// Try to remove docked label from rig identity bead (best-effort;
+	// bead may not exist for legacy rigs or rigs with broken local Dolt).
 	rigBeadID := beads.RigBeadIDWithPrefix(prefix, rigName)
 	bd := beads.New(r.BeadsPath())
+	beadUndocked := false
 
-	// Check if rig bead exists, create if not
-	rigBead, err := bd.Show(rigBeadID)
-	if err != nil {
-		// Rig identity bead doesn't exist (legacy rig) - can't be docked
-		fmt.Printf("%s Rig %s has no identity bead and is not docked\n", style.Dim.Render("•"), rigName)
-		return nil
-	}
-
-	// Check if actually docked
-	isDocked := false
-	for _, label := range rigBead.Labels {
-		if label == RigDockedLabel {
-			isDocked = true
-			break
+	if rigBead, err := bd.Show(rigBeadID); err == nil {
+		isDocked := false
+		for _, label := range rigBead.Labels {
+			if label == RigDockedLabel {
+				isDocked = true
+				break
+			}
+		}
+		if isDocked {
+			if err := bd.Update(rigBeadID, beads.UpdateOptions{
+				RemoveLabels: []string{RigDockedLabel},
+			}); err != nil {
+				fmt.Printf("  %s Could not remove bead label: %v\n", style.Warning.Render("!"), err)
+			} else {
+				beadUndocked = true
+			}
 		}
 	}
-	if !isDocked {
-		fmt.Printf("%s Rig %s is not docked\n", style.Dim.Render("•"), rigName)
-		return nil
-	}
 
-	// Remove docked label from rig identity bead
-	if err := bd.Update(rigBeadID, beads.UpdateOptions{
-		RemoveLabels: []string{RigDockedLabel},
-	}); err != nil {
-		return fmt.Errorf("removing docked label: %w", err)
-	}
-
-	// Re-add rig to daemon.json patrol config so daemon resumes spawning
-	// witness/refinery sessions for this rig.
+	// Always clear wisp docked status and re-add to daemon patrols,
+	// even if the bead operation failed (LOCAL-004).
 	townRoot, twErr := workspace.FindFromCwdOrError()
+	wispUndocked := false
 	if twErr == nil {
+		wispCfg := wisp.NewConfig(townRoot, rigName)
+		if wispCfg.GetString(RigStatusKey) == "docked" {
+			wispUndocked = true
+		}
+		if err := wispCfg.Unset(RigStatusKey); err != nil {
+			fmt.Printf("  %s Could not clear wisp status: %v\n", style.Warning.Render("!"), err)
+		}
+
 		if err := config.AddRigToDaemonPatrols(townRoot, rigName); err != nil {
 			fmt.Printf("  %s Could not update daemon.json patrols: %v\n", style.Warning.Render("!"), err)
 		}
+	}
+
+	if !beadUndocked && !wispUndocked {
+		fmt.Printf("%s Rig %s is not docked\n", style.Dim.Render("•"), rigName)
+		return nil
 	}
 
 	fmt.Printf("%s Rig %s undocked\n", style.Success.Render("✓"), rigName)

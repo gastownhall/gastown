@@ -1331,7 +1331,7 @@ func (f *LiveConvoyFetcher) FetchHealth() (*HealthRow, error) {
 	heartbeatFile := filepath.Join(f.townRoot, "deacon", "heartbeat.json")
 	if data, err := os.ReadFile(heartbeatFile); err == nil {
 		var hb struct {
-			LastHeartbeat   time.Time `json:"timestamp"`
+			LastHeartbeat   time.Time `json:"timestamp"` // Deacon writes "timestamp"
 			Cycle           int64     `json:"cycle"`
 			HealthyAgents   int       `json:"healthy_agents"`
 			UnhealthyAgents int       `json:"unhealthy_agents"`
