@@ -108,7 +108,7 @@ func runMQList(cmd *cobra.Command, args []string) error {
 		fields := beads.ParseMRFields(issue)
 
 		// Filter by rig — wisps are shared across all rigs in the Dolt server,
-		// so we must filter to only show MRs belonging to this rig (GH#o71i).
+		// so we must filter to only show MRs belonging to this rig (GH#2718).
 		if fields != nil && fields.Rig != "" && !strings.EqualFold(fields.Rig, rigName) {
 			continue
 		}
