@@ -1,0 +1,535 @@
+description = """
+Gymbo polecat workflow. Extends mol-polecat-work with design-first discipline \
+(from shiny) and project-specific quality gates. Ensures polecats read existing \
+patterns before coding and run the correct gate commands per platform.
+
+## Polecat Contract (Self-Cleaning Model)
+
+You are a self-cleaning worker. You:
+1. Receive work via your hook (pinned molecule + issue)
+2. Work through molecule steps using `bd ready` / `bd close <step>`
+3. Complete and self-clean via `gt done` (submit + nuke yourself)
+4. You are GONE - Refinery merges from MQ
+
+**Self-cleaning:** When you run `gt done`, you push your work, submit to MQ,
+nuke your sandbox, and exit. There is no idle state. Done means gone.
+
+**Important:** This formula defines the template. Your molecule already has step
+beads created from it. Use `bd ready` to find them - do NOT read this file directly.
+
+**You do NOT:**
+- Push directly to main (Refinery merges from MQ)
+- Close your own issue (Refinery closes after merge)
+- Wait for merge (you're gone after `gt done`)
+- Handle rebase conflicts (Refinery spawns fresh polecats for that)
+
+## Variables
+
+| Variable | Source | Description |
+|----------|--------|-------------|
+| issue | hook_bead | The issue ID you're assigned to work on |
+
+## Failure Modes
+
+| Situation | Action |
+|-----------|--------|
+| Tests fail | Fix them. Do not proceed with failures. |
+| Blocked on external | Mail Witness for help, mark yourself stuck |
+| Context filling | Use gt handoff to cycle to fresh session |
+| Unsure what to do | Mail Witness, don't guess |"""
+formula = "mol-gymbo-work"
+version = 2
+
+[[steps]]
+id = "load-context"
+title = "Load context and verify assignment"
+description = """
+Initialize your session and understand your assignment.
+
+**1. Prime your environment:**
+```bash
+gt prime                    # Load role context
+bd prime                    # Load beads context
+```
+
+**2. Check your hook:**
+```bash
+gt hook               # Shows your pinned molecule and hook_bead
+```
+
+The hook_bead is your assigned issue. Read it carefully:
+```bash
+bd show {{issue}}           # Full issue details
+```
+
+**3. Read project conventions:**
+```bash
+# Always read the repo-root CLAUDE.md
+cat CLAUDE.md
+
+# Read crew-specific CLAUDE.md if it exists
+# e.g., crew/android-dev/CLAUDE.md, crew/ios-dev/CLAUDE.md
+```
+
+Identify which platform this bead targets: **web**, **android**, or **ios**.
+
+**4. Check inbox for additional context:**
+```bash
+gt mail inbox
+# Read any HANDOFF or assignment messages
+```
+
+**5. Understand the requirements:**
+- What exactly needs to be done?
+- What files are likely involved?
+- Are there dependencies or blockers?
+- What does "done" look like?
+
+**6. Verify you can proceed:**
+- No unresolved blockers on the issue
+- You understand what to do
+- Required resources are available
+
+If blocked or unclear, mail Witness immediately:
+```bash
+gt mail send <rig>/witness -s "HELP: Unclear requirements" -m "Issue: {{issue}}
+Question: <what you need clarified>"
+```
+
+**Exit criteria:** You understand the work, have read CLAUDE.md, and know the target platform."""
+
+[[steps]]
+id = "branch-setup"
+title = "Set up working branch"
+needs = ["load-context"]
+description = """
+Ensure you're on a clean feature branch ready for work.
+
+**1. Check current branch state:**
+```bash
+git status
+git branch --show-current
+```
+
+**2. If not on a feature branch, create one:**
+```bash
+git checkout -b feat/<short-description>-<bead-id>
+```
+
+**3. Ensure clean working state:**
+```bash
+git status                  # Should show "working tree clean"
+git stash list              # Should be empty
+```
+
+If dirty state from previous work:
+```bash
+# If changes are relevant to this issue:
+git add -A && git commit -m "WIP: <description>"
+
+# If changes are unrelated cruft:
+git stash push -m "unrelated changes before {{issue}}"
+```
+
+**4. Sync with main:**
+```bash
+git fetch origin
+git rebase origin/main      # Get latest, rebase your branch
+```
+
+If rebase conflicts, resolve carefully or mail Witness.
+
+**Exit criteria:** You're on a clean feature branch, rebased on latest main."""
+
+[[steps]]
+id = "preflight-tests"
+title = "Verify tests pass before changes"
+needs = ["branch-setup"]
+description = """
+Run the platform gate BEFORE making any changes to confirm a green baseline.
+
+**1. Identify your platform and run the correct gate:**
+
+- **Web:** `npm ci && npm run gate`
+- **Android:** `./gradlew assembleDebug && ./gradlew test`
+- **iOS:** `xcodebuild -scheme Gymbo -sdk iphonesimulator build`
+
+**2. If preflight PASSES:** Continue to design step.
+
+**3. If preflight FAILS:**
+
+File a bead and proceed. Do NOT fix pre-existing failures yourself.
+
+```bash
+bd create --title "Pre-existing test failure: <description>" \
+  --type bug --priority 1
+
+gt mail send <rig>/witness -s "NOTICE: Main has failing tests" \
+  -m "Found pre-existing test failures on main.
+Filed: <bead-id>
+Proceeding with my assigned work ({{issue}})."
+```
+
+**Exit criteria:** Gate passes on baseline (or issue filed), ready to design."""
+
+[[steps]]
+id = "design"
+title = "Design before coding"
+needs = ["preflight-tests"]
+description = """
+MANDATORY. Before writing any implementation code, understand what exists and plan your approach.
+
+**1. Read existing patterns.**
+Find 2-3 similar features in the codebase and note how they are structured:
+- File organization (where do similar things live?)
+- State management (client vs server, hooks, context)
+- API patterns (route handlers, error handling, response shape)
+- UI patterns (component composition, styling approach)
+
+**2. Identify reuse.**
+List existing components, hooks, utilities, and API routes that can be reused.
+Do NOT create new abstractions when suitable ones exist.
+
+**3. Write a brief design** (3-5 bullet points):
+- What files will be modified/created
+- Which existing patterns are being followed
+- Any edge cases or gotchas identified
+- Note this in your commit message or PR description later
+
+**4. Check design tokens** (UI changes only).
+Verify colors, fonts, spacing, and component styles match the design system:
+- **Web:** `app/globals.css` — hex color tokens, theme selectors, animation classes
+- **Android:** theme files in `android/` — Material theme, colors.xml
+- **iOS:** asset catalogs + SwiftUI theme in `ios/`
+
+**Skip this step ONLY** for pure one-line config changes (e.g., URL swap, env var update).
+
+**Exit criteria:** You have a clear design, know which patterns to follow, and identified reuse opportunities."""
+
+[[steps]]
+id = "write-tests"
+title = "Write failing tests before implementation (TDD)"
+needs = ["design"]
+description = """
+MANDATORY. Write tests for the feature BEFORE writing any implementation code.
+This is TDD — the tests must FAIL first. If they pass before you write code, the test is wrong.
+
+**This step enforces the SDD → TDD contract:**
+The spec (bead description + acceptance criteria) drives what tests to write.
+The tests drive what code to write. Code never comes first.
+
+**1. Identify what to test from the bead spec.**
+Re-read `bd show {{issue}}` — the description and acceptance criteria ARE your test spec.
+Map each acceptance criterion to at least one test case.
+
+**2. Write the UI test (`tests/ui/<feature>.spec.ts`) for web beads:**
+```typescript
+import { test, expect } from '../fixtures/auth'
+// auth fixture provides: trainerId, clientId, authedRequest
+// storageState is pre-loaded — no login steps needed
+
+test.describe('<Feature> UI', () => {
+  test.describe.configure({ mode: 'serial' })
+
+  test('page loads expected content', async ({ page }) => {
+    await page.goto('/<route>')
+    await expect(page.locator('[data-testid="<key-element>"]')).toBeVisible()
+  })
+
+  test('happy path: <acceptance criterion>', async ({ page }) => {
+    await page.goto('/<route>')
+    // simulate the action, assert the result
+  })
+})
+```
+
+**3. Write the API test (`tests/api/<feature>.spec.ts`) for web beads:**
+Cover every endpoint the feature touches. Follow the pattern in `tests/api/clients.spec.ts`.
+
+**4. Run tests to confirm they FAIL:**
+```bash
+# Web:
+npm run test:ui -- --grep "<feature>"
+npm run test:api -- --grep "<endpoint>"
+# Android/iOS: write unit tests in the appropriate test directories
+```
+Expected: FAIL or "no tests found for new test IDs". If they PASS, your test isn't testing the right thing yet.
+
+**5. Commit the failing tests:**
+```bash
+git add tests/
+git commit -m "test({{issue}}): write failing tests for <feature>"
+```
+
+**Rules:**
+- Tests must NOT be skipped (`.skip`) or isolated (`.only`)
+- Tests must NOT call Supabase directly — go through API routes
+- If test files already exist (re-slung polecat returning after UAT failure): review + update for the failure case, do NOT rewrite from scratch
+
+**Exit criteria:** Failing tests committed. No implementation code written yet."""
+
+[[steps]]
+id = "implement"
+title = "Implement the solution"
+needs = ["write-tests"]
+description = """
+Implement following the design from the previous step.
+
+**Key gymbo conventions (web):**
+- All text lowercase, wide letter-spacing
+- Currency in paise — use `lib/utils/currency.ts` (`formatCurrency`, `formatRate`)
+- Soft deletes via `is_deleted` flag (EXCEPT payments table — no `is_deleted`)
+- Date columns use `YYYY-MM-DD` strings, not ISO timestamps
+- Auth proxy is `proxy.ts`, NOT middleware.ts
+- Production build requires `--webpack` flag
+- Font: Space Mono everywhere
+- Action buttons: `bg-foreground text-background h-14 rounded-full font-bold text-sm lowercase tracking-wider`
+
+**Key gymbo conventions (all platforms):**
+- Balance = (classes from payments) - (active punches)
+- All monetary amounts in paise (₹800 = 80000)
+- RLS policies: `trainer_id = auth.uid()` on all tables
+
+**Working principles:**
+- Follow existing codebase conventions identified in the design step
+- Make atomic, focused commits
+- Keep changes scoped to the assigned issue
+- Don't gold-plate or scope-creep
+
+**Commit frequently:**
+```bash
+git add <files>
+git commit -m "<type>(<scope>): <description> ({{issue}})"
+```
+Types: feat, fix, refactor, test, docs, chore
+
+**Discovered work:** File a bead, don't fix unrelated issues in this branch.
+
+**If stuck:** Don't spin for more than 15 minutes. Mail Witness.
+
+**Exit criteria:** Implementation complete, all changes committed."""
+
+[[steps]]
+id = "self-review"
+title = "Self-review changes"
+needs = ["implement"]
+description = """
+Review your own changes before running tests.
+
+**1. Review the diff:**
+```bash
+git diff origin/main...HEAD     # All changes vs main
+git log --oneline origin/main..HEAD  # All commits
+```
+
+**2. Check for common issues:**
+
+| Category | Look For |
+|----------|----------|
+| Bugs | Off-by-one, null handling, edge cases |
+| Security | Injection, auth bypass, exposed secrets, XSS |
+| Style | Naming, formatting, code organization |
+| Completeness | Missing error handling at system boundaries |
+| Cruft | Debug prints, console.log, commented code, TODOs |
+| Hardcoded values | Should be design tokens or constants? |
+| Unused imports | Clean them up |
+
+**3. Verify the change follows the pattern identified in the design step.**
+If it drifted, consider whether the drift is justified or if you should refactor.
+
+**4. Fix issues found now** — don't just note them.
+
+**5. Verify no unintended changes:**
+```bash
+git diff --stat origin/main...HEAD
+# Only files relevant to {{issue}} should appear
+```
+
+**Exit criteria:** Changes are clean, reviewed, and ready for testing."""
+
+[[steps]]
+id = "run-tests"
+title = "Run quality gate"
+needs = ["self-review"]
+description = """
+Run the full quality gate for the target platform.
+
+**1. Run the correct gate:**
+
+- **Web:** `npm run gate` (lint + typecheck + API tests + UI tests, 4 parallel workers)
+- **Android:** `./gradlew assembleDebug && ./gradlew test`
+- **iOS:** `xcodebuild -scheme Gymbo -sdk iphonesimulator build`
+
+**ALL TESTS MUST PASS.** Do not proceed with failures.
+
+**2. If tests fail:**
+- Read the failure output carefully
+- Determine if your change caused it
+- If yes: Fix it. Return to implement step if needed.
+- If no (pre-existing): File a bead, but your PR must still pass
+
+**3. After fixing, re-run the full gate.**
+Do not skip or partially run. The full gate must pass.
+
+**Exit criteria:** All gate checks pass — lint, typecheck, and tests green."""
+
+[[steps]]
+id = "sign-off"
+title = "Sign off on spec acceptance criteria (SDD gate)"
+needs = ["run-tests"]
+description = """
+Formally verify that what you built matches the spec. This is the SDD gate —
+code only merges when it demonstrably satisfies the original acceptance criteria.
+
+**1. Confirm the full gate is green:**
+```bash
+npm run gate   # Web
+# Android/iOS: run your platform gate
+```
+Must be 0 failures. If anything fails, return to run-tests and fix.
+
+**2. Verify each acceptance criterion is covered by a test.**
+Re-read `bd show {{issue}}` — look at the description and any notes added during design/implement.
+For each criterion, confirm there is a corresponding passing test.
+
+**3. Add the `acceptance:verified` label to the bead:**
+```bash
+bd update {{issue}} --label acceptance:verified
+```
+This label is checked by the refinery's acceptance-check gate before staging UAT runs.
+A PR without this label will be rejected at the refinery.
+
+**4. Record test coverage in bead notes:**
+```bash
+bd update {{issue}} --notes "Gate: PASS. Tests: <list test files> — all acceptance criteria covered."
+```
+
+**Exit criteria:** Gate green, all acceptance criteria covered by tests, `acceptance:verified` label on bead."""
+
+[[steps]]
+id = "commit-changes"
+title = "Commit all implementation changes"
+needs = ["sign-off"]
+description = """
+Ensure ALL implementation work is committed.
+
+**CRITICAL: You MUST commit all changes from implementation.**
+NEVER use `git checkout -- .` or `git restore .` to discard implementation work.
+
+**1. Check for uncommitted changes:**
+```bash
+git status
+```
+
+**2. If there are ANY uncommitted changes, commit them now:**
+```bash
+git add -A && git commit -m "<type>(<scope>): <descriptive message> ({{issue}})"
+```
+
+Format: `feat|fix|refactor(<scope>): <description> (<bead-id>)`
+Example: `feat(android): add SSE streaming to AI chat (gy-8ib)`
+
+Do not use --no-verify. If pre-commit hooks fail, fix the issue.
+
+**3. VERIFY:**
+```bash
+git status                          # Must show "working tree clean"
+git log origin/main..HEAD --oneline # Must show at least 1 commit
+```
+
+**Exit criteria:** All changes committed. Working tree clean."""
+
+[[steps]]
+id = "cleanup-workspace"
+title = "Clean up workspace"
+needs = ["commit-changes"]
+description = """
+Ensure workspace is pristine before handoff.
+
+**IMPORTANT: Do NOT run `git push`. That is `gt done`'s job (next step).**
+**IMPORTANT: Do NOT discard implementation changes. They must already be committed.**
+
+**1. Check for untracked files:**
+```bash
+git status --porcelain
+```
+Remove temporary files, test artifacts, debug outputs.
+
+**2. Check stash:**
+```bash
+git stash list
+```
+Should be empty.
+
+**3. Verify clean state:**
+```bash
+git status                  # Must show "working tree clean"
+git log origin/main..HEAD   # Your commits (should show your work)
+```
+
+**Exit criteria:** Workspace clean, all work committed. Do NOT push."""
+
+[[steps]]
+id = "prepare-for-review"
+title = "Prepare for coach review"
+needs = ["cleanup-workspace"]
+description = """
+Verify work is complete and notify coach.
+
+**Note:** Do NOT close the issue. The Refinery will close it after successful merge.
+
+**1. Update the issue with completion notes:**
+```bash
+bd update {{issue}} --notes "Implemented: <brief summary of what was done>"
+```
+
+**2. Sync beads:**
+```bash
+bd sync
+```
+
+**3. Mail coach with summary:**
+```bash
+gt mail send gymbo/coach -s "{{issue}} done" -m "Bead: {{issue}}
+Summary: <what changed>
+Files: <key files modified>
+Gate: <PASS/FAIL + which platform gate>
+Design: <brief design notes from design step>"
+```
+
+Include: bead ID, what changed, gate results, design decisions.
+
+**Exit criteria:** Issue updated, coach notified with summary."""
+
+[[steps]]
+id = "submit-and-exit"
+title = "Submit and self-clean"
+needs = ["prepare-for-review"]
+description = """
+Submit your work and clean up. You cease to exist after this step.
+
+**Run gt done:**
+```bash
+gt done
+```
+
+This command:
+1. Pushes your branch to origin
+2. Creates an MR bead in the merge queue
+3. Nukes your sandbox (worktree removal)
+4. Exits your session immediately
+
+**What happens next (not your concern):**
+- Refinery processes your MR from the queue
+- Coach reviews the PR
+- Refinery rebases and merges to main
+- If conflicts: Refinery spawns a FRESH polecat
+
+You are NOT involved in any of that. Done means gone.
+
+**Exit criteria:** Work submitted, sandbox nuked, session exited."""
+
+[vars]
+[vars.issue]
+description = "The bead ID assigned to this polecat"
+required = true
