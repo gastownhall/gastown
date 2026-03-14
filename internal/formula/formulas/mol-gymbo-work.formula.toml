@@ -17,25 +17,17 @@ nuke your sandbox, and exit. There is no idle state. Done means gone.
 **Important:** This formula defines the template. Your molecule already has step
 beads created from it. Use `bd ready` to find them - do NOT read this file directly.
 
-**Speed principle:** You run the full gate suite AFTER rebasing onto the target
-branch (pre-verify step). This enables the refinery to fast-path merge your MR
-in ~5 seconds instead of re-running gates. If pre-verification is skipped or
-stale, the refinery falls through to normal gate execution.
-
 **You do NOT:**
 - Push directly to main (Refinery merges from MQ)
 - Close your own issue (Refinery closes after merge)
 - Wait for merge (you're gone after `gt done`)
 - Handle rebase conflicts (Refinery spawns fresh polecats for that)
-- Fix pre-existing failures on main (Refinery owns main health)
 
 ## Variables
 
 | Variable | Source | Description |
 |----------|--------|-------------|
 | issue | hook_bead | The issue ID you're assigned to work on |
-| base_branch | sling vars | The base branch to rebase on (default: main) |
-| gate_command | rig config | Platform gate command (e.g., `npm run gate`) |
 
 ## Failure Modes
 
@@ -46,51 +38,11 @@ stale, the refinery falls through to normal gate execution.
 | Context filling | Use gt handoff to cycle to fresh session |
 | Unsure what to do | Mail Witness, don't guess |"""
 formula = "mol-gymbo-work"
-version = 4
-
-[squash]
-trigger = "on_complete"
-template_type = "work"
-
-[[steps]]
-id = "validate-assignment"
-title = "Validate role and assignment"
-description = """
-Check that this work was assigned through the proper hierarchy.
-
-**1. Check your role:**
-```bash
-echo $GT_ROLE
-```
-
-**2. Verify the dispatcher is your superior in hierarchy:**
-Polecats accept work from: trainer, coach (via gt sling).
-Polecats do NOT accept direct assignments from mayor.
-
-Check the bead's assignment history:
-```bash
-bd show {{issue}}    # Look at owner/assignee and dispatch history
-gt mail inbox        # Check who sent the assignment
-```
-
-**3. If hierarchy violation (e.g., mayor assigned directly to polecat):**
-Do NOT proceed. Mail the dispatcher about the violation:
-```bash
-gt mail send <dispatcher> -s "HIERARCHY: {{issue}} assignment rejected" \
-  -m "I received {{issue}} but polecats should not accept work directly from you.
-Please route through the proper hierarchy:
-  Mayor → Coach → Trainer → Trainee/Polecat"
-```
-Then exit: `gt done --status REJECTED`
-
-**4. If valid:** Proceed to load-context.
-
-**Exit criteria:** Assignment validated — dispatcher is trainer or coach."""
+version = 2
 
 [[steps]]
 id = "load-context"
 title = "Load context and verify assignment"
-needs = ["validate-assignment"]
 description = """
 Initialize your session and understand your assignment.
 
@@ -161,8 +113,7 @@ git branch --show-current
 
 **2. If not on a feature branch, create one:**
 ```bash
-git fetch origin
-git checkout -b feat/<short-description>-<bead-id> origin/{{base_branch}}
+git checkout -b feat/<short-description>-<bead-id>
 ```
 
 **3. Ensure clean working state:**
@@ -180,20 +131,15 @@ git add -A && git commit -m "WIP: <description>"
 git stash push -m "unrelated changes before {{issue}}"
 ```
 
-**4. Sync with {{base_branch}}:**
+**4. Sync with main:**
 ```bash
 git fetch origin
-git rebase origin/{{base_branch}}      # Get latest, rebase your branch
+git rebase origin/main      # Get latest, rebase your branch
 ```
 
 If rebase conflicts, resolve carefully or mail Witness.
 
-**5. Run project setup:**
-```bash
-npm ci
-```
-
-**Exit criteria:** You're on a clean feature branch, rebased on latest {{base_branch}}, dependencies installed."""
+**Exit criteria:** You're on a clean feature branch, rebased on latest main."""
 
 [[steps]]
 id = "preflight-tests"
@@ -202,13 +148,9 @@ needs = ["branch-setup"]
 description = """
 Run the platform gate BEFORE making any changes to confirm a green baseline.
 
-**1. Run the gate:**
-```bash
-{{gate_command}}
-```
+**1. Identify your platform and run the correct gate:**
 
-Platform-specific gates for reference:
-- **Web:** `npm run gate`
+- **Web:** `npm ci && npm run gate`
 - **Android:** `./gradlew assembleDebug && ./gradlew test`
 - **iOS:** `xcodebuild -scheme Gymbo -sdk iphonesimulator build`
 
@@ -222,8 +164,8 @@ File a bead and proceed. Do NOT fix pre-existing failures yourself.
 bd create --title "Pre-existing test failure: <description>" \
   --type bug --priority 1
 
-gt mail send <rig>/witness -s "NOTICE: {{base_branch}} has failing tests" \
-  -m "Found pre-existing test failures on {{base_branch}}.
+gt mail send <rig>/witness -s "NOTICE: Main has failing tests" \
+  -m "Found pre-existing test failures on main.
 Filed: <bead-id>
 Proceeding with my assigned work ({{issue}})."
 ```
@@ -265,58 +207,71 @@ Verify colors, fonts, spacing, and component styles match the design system:
 **Exit criteria:** You have a clear design, know which patterns to follow, and identified reuse opportunities."""
 
 [[steps]]
-id = "test-plan"
-title = "Write test plan before implementation"
+id = "write-tests"
+title = "Write failing tests before implementation (TDD)"
 needs = ["design"]
 description = """
-Based on the design, write a test plan BEFORE coding.
+MANDATORY. Write tests for the feature BEFORE writing any implementation code.
+This is TDD — the tests must FAIL first. If they pass before you write code, the test is wrong.
 
-1. List acceptance criteria from the bead:
-```bash
-bd show {{issue}}    # Check labels, description, acceptance criteria
+**This step enforces the SDD → TDD contract:**
+The spec (bead description + acceptance criteria) drives what tests to write.
+The tests drive what code to write. Code never comes first.
+
+**1. Identify what to test from the bead spec.**
+Re-read `bd show {{issue}}` — the description and acceptance criteria ARE your test spec.
+Map each acceptance criterion to at least one test case.
+
+**2. Write the UI test (`tests/ui/<feature>.spec.ts`) for web beads:**
+```typescript
+import { test, expect } from '../fixtures/auth'
+// auth fixture provides: trainerId, clientId, authedRequest
+// storageState is pre-loaded — no login steps needed
+
+test.describe('<Feature> UI', () => {
+  test.describe.configure({ mode: 'serial' })
+
+  test('page loads expected content', async ({ page }) => {
+    await page.goto('/<route>')
+    await expect(page.locator('[data-testid="<key-element>"]')).toBeVisible()
+  })
+
+  test('happy path: <acceptance criterion>', async ({ page }) => {
+    await page.goto('/<route>')
+    // simulate the action, assert the result
+  })
+})
 ```
 
-2. For each criterion, write the test scenario:
-   - Input / precondition
-   - Expected behavior
-   - How to verify (unit test, E2E, manual)
+**3. Write the API test (`tests/api/<feature>.spec.ts`) for web beads:**
+Cover every endpoint the feature touches. Follow the pattern in `tests/api/clients.spec.ts`.
 
-3. Identify which tests already exist (reuse):
+**4. Run tests to confirm they FAIL:**
 ```bash
-# Search for existing test coverage in the gymbo project
-grep -r "test\\|describe\\|it(" tests/ --include="*.test.*" -l 2>/dev/null || true
+# Web:
+npm run test:ui -- --grep "<feature>"
+npm run test:api -- --grep "<endpoint>"
+# Android/iOS: write unit tests in the appropriate test directories
+```
+Expected: FAIL or "no tests found for new test IDs". If they PASS, your test isn't testing the right thing yet.
+
+**5. Commit the failing tests:**
+```bash
+git add tests/
+git commit -m "test({{issue}}): write failing tests for <feature>"
 ```
 
-4. Identify which tests need to be written
+**Rules:**
+- Tests must NOT be skipped (`.skip`) or isolated (`.only`)
+- Tests must NOT call Supabase directly — go through API routes
+- If test files already exist (re-slung polecat returning after UAT failure): review + update for the failure case, do NOT rewrite from scratch
 
-5. Persist test plan to bead:
-```bash
-bd update {{issue}} --design "Test plan:
-- Criterion: <acceptance criterion 1>
-  Test: <test scenario>
-  Type: <unit|E2E|manual>
-  Exists: <yes/no>
-- Criterion: <acceptance criterion 2>
-  ..."
-```
-
-For UI work: identify which Playwright E2E test covers the flow.
-For API work: identify which API test covers the endpoint.
-For bug fixes: write the regression test first.
-
-Platform-specific test locations:
-- **Web:** `tests/` (Playwright E2E — `tests/api/` for API, `tests/ui/` for UI)
-- **Android:** `android/app/src/test/` (JUnit)
-- **iOS:** `ios/GymboTests/` (XCTest)
-
-**Skip for:** one-line config changes, documentation-only tasks.
-
-**Exit criteria:** Test plan persisted to bead, covering all acceptance criteria."""
+**Exit criteria:** Failing tests committed. No implementation code written yet."""
 
 [[steps]]
 id = "implement"
 title = "Implement the solution"
-needs = ["test-plan"]
+needs = ["write-tests"]
 description = """
 Implement following the design from the previous step.
 
@@ -335,24 +290,6 @@ Implement following the design from the previous step.
 - All monetary amounts in paise (₹800 = 80000)
 - RLS policies: `trainer_id = auth.uid()` on all tables
 
-**Persist findings as you go (CRITICAL for session survival):**
-Your session can die at any time (context limit, crash, SIGKILL). Code changes
-survive in git, but analysis, findings, and decisions exist only in your context
-window. Persist them to the bead so they survive session death:
-```bash
-# After completing significant analysis or reaching conclusions:
-bd update {{issue}} --notes "Findings so far: <what you discovered>"
-# For detailed reports, use --design:
-bd update {{issue}} --design "<structured findings>"
-```
-Do this BEFORE closing molecule steps, not after. If your session dies between
-persisting and closing, the findings survive. If you close first, they're lost.
-
-**For report-only tasks** (audits, reviews, research): your findings ARE the
-deliverable. There are no code changes to commit. You MUST persist all findings
-to the bead via --notes or --design. Without this, your entire work product is
-lost when the session ends.
-
 **Working principles:**
 - Follow existing codebase conventions identified in the design step
 - Make atomic, focused commits
@@ -370,7 +307,7 @@ Types: feat, fix, refactor, test, docs, chore
 
 **If stuck:** Don't spin for more than 15 minutes. Mail Witness.
 
-**Exit criteria:** Implementation complete, all changes committed, findings persisted to bead."""
+**Exit criteria:** Implementation complete, all changes committed."""
 
 [[steps]]
 id = "self-review"
@@ -381,8 +318,8 @@ Review your own changes before running tests.
 
 **1. Review the diff:**
 ```bash
-git diff origin/{{base_branch}}...HEAD     # All changes vs {{base_branch}}
-git log --oneline origin/{{base_branch}}..HEAD  # All commits
+git diff origin/main...HEAD     # All changes vs main
+git log --oneline origin/main..HEAD  # All commits
 ```
 
 **2. Check for common issues:**
@@ -404,82 +341,21 @@ If it drifted, consider whether the drift is justified or if you should refactor
 
 **5. Verify no unintended changes:**
 ```bash
-git diff --stat origin/{{base_branch}}...HEAD
+git diff --stat origin/main...HEAD
 # Only files relevant to {{issue}} should appear
 ```
 
 **Exit criteria:** Changes are clean, reviewed, and ready for testing."""
 
 [[steps]]
-id = "eslint-hooks-precheck"
-title = "ESLint react-hooks pre-validation"
-needs = ["self-review"]
-description = """
-**HARD GATE** — Targeted ESLint check for React hooks violations before the full gate.
-
-This step exists because `gy-yt4a` failed in the merge queue twice due to a
-`setState` call inside `useEffect` — a known ESLint violation that polecats have
-missed in full gate output. Catching it early here saves refinery cycles.
-
-**The pattern to avoid:**
-```tsx
-// ❌ BAD — initializing state inside useEffect (ESLint error)
-const [value, setValue] = useState(null);
-useEffect(() => {
-  setValue(expensiveInit());  // react-hooks/exhaustive-deps or no-direct-mutation-state
-}, []);
-
-// ✅ GOOD — useState lazy initializer (runs once, no lint error)
-const [value, setValue] = useState(() => expensiveInit());
-```
-
-**1. Run ESLint targeting hooks rules only:**
-```bash
-npx eslint . --ext .ts,.tsx \
-  --rule '{"react-hooks/rules-of-hooks": "error", "react-hooks/exhaustive-deps": "error"}' \
-  --no-eslintrc -c .eslintrc.json 2>&1 | grep -E "react-hooks|useEffect|exhaustive-deps|Warning|Error" || true
-```
-
-Or use the project lint command and filter:
-```bash
-npm run lint 2>&1 | grep -E "react-hooks|useEffect|exhaustive-deps" || true
-```
-
-**2. Also quick-grep for the specific setState-in-useEffect pattern:**
-```bash
-# Find files with both useEffect and setState (potential violations)
-grep -rn "useEffect" app/ --include="*.tsx" --include="*.ts" -l 2>/dev/null | \
-  xargs grep -l "set[A-Z][a-zA-Z]*(" 2>/dev/null | head -10
-```
-
-Review each file found. Not every hit is a violation — look for `setState` calls
-that run unconditionally inside `useEffect` with an empty or missing dep array.
-
-**3. If violations found:** Fix them before proceeding.
-
-Common fix:
-- `useEffect(() => { setFoo(init()); }, [])` → `useState(() => init())`
-- `useEffect(() => { setFoo(x); }, [x])` → usually fine, add `x` to dep array
-
-Return to the implement step if fixes are substantial.
-
-**4. If clean:** Log "ESLint hooks precheck: PASS" and close this step.
-
-**Exit criteria:** No react-hooks ESLint errors in modified files."""
-
-[[steps]]
 id = "run-tests"
 title = "Run quality gate"
-needs = ["eslint-hooks-precheck"]
+needs = ["self-review"]
 description = """
 Run the full quality gate for the target platform.
 
-**1. Run the gate:**
-```bash
-{{gate_command}}
-```
+**1. Run the correct gate:**
 
-Platform-specific gates for reference:
 - **Web:** `npm run gate` (lint + typecheck + API tests + UI tests, 4 parallel workers)
 - **Android:** `./gradlew assembleDebug && ./gradlew test`
 - **iOS:** `xcodebuild -scheme Gymbo -sdk iphonesimulator build`
@@ -498,62 +374,42 @@ Do not skip or partially run. The full gate must pass.
 **Exit criteria:** All gate checks pass — lint, typecheck, and tests green."""
 
 [[steps]]
-id = "staging-preflight"
-title = "Staging preflight smoke check"
+id = "sign-off"
+title = "Sign off on spec acceptance criteria (SDD gate)"
 needs = ["run-tests"]
 description = """
-**SOFT GATE** — warns but does not block submission. Catches obvious E2E
-failures before consuming refinery time.
+Formally verify that what you built matches the spec. This is the SDD gate —
+code only merges when it demonstrably satisfies the original acceptance criteria.
 
-**Config: staging_enabled = {{staging_enabled}}**
-**Config: staging_deploy_command = {{staging_deploy_command}}**
-**Config: staging_smoke_command = {{staging_smoke_command}}**
-**Config: staging_teardown_command = {{staging_teardown_command}}**
-
-**Step 1: Check if staging preflight is enabled**
-
-If staging_enabled is not "true", skip this step entirely. Log:
-"Staging preflight skipped (staging_enabled=false)"
-
-**Step 2: Deploy to staging**
-
+**1. Confirm the full gate is green:**
 ```bash
-{{staging_deploy_command}}
+npm run gate   # Web
+# Android/iOS: run your platform gate
+```
+Must be 0 failures. If anything fails, return to run-tests and fix.
+
+**2. Verify each acceptance criterion is covered by a test.**
+Re-read `bd show {{issue}}` — look at the description and any notes added during design/implement.
+For each criterion, confirm there is a corresponding passing test.
+
+**3. Add the `acceptance:verified` label to the bead:**
+```bash
+bd update {{issue}} --label acceptance:verified
+```
+This label is checked by the refinery's acceptance-check gate before staging UAT runs.
+A PR without this label will be rejected at the refinery.
+
+**4. Record test coverage in bead notes:**
+```bash
+bd update {{issue}} --notes "Gate: PASS. Tests: <list test files> — all acceptance criteria covered."
 ```
 
-If empty, skip with: "No staging deploy command — skipping preflight"
-
-**Step 3: Run smoke tests only**
-
-```bash
-{{staging_smoke_command}}
-```
-
-This runs `smoke` rigor only — quick sanity check (~2 min).
-
-**Step 4: Tear down staging**
-
-If staging_teardown_command is set:
-```bash
-{{staging_teardown_command}}
-```
-
-**Step 5: Handle result (SOFT — warn only)**
-
-If smoke tests PASS: Log success, continue to commit-changes.
-
-If smoke tests FAIL:
-- Log warning: "⚠ Staging preflight FAILED — smoke tests did not pass"
-- Include failure output in commit message or bead notes
-- **DO NOT BLOCK** — this is a soft gate, proceed to commit-changes
-- The refinery's staging-verify (HARD gate) will catch this definitively
-
-**Exit criteria:** Staging smoke tests run (if configured), results logged. Proceed regardless."""
+**Exit criteria:** Gate green, all acceptance criteria covered by tests, `acceptance:verified` label on bead."""
 
 [[steps]]
 id = "commit-changes"
 title = "Commit all implementation changes"
-needs = ["staging-preflight"]
+needs = ["sign-off"]
 description = """
 Ensure ALL implementation work is committed.
 
@@ -575,81 +431,18 @@ Example: `feat(android): add SSE streaming to AI chat (gy-8ib)`
 
 Do not use --no-verify. If pre-commit hooks fail, fix the issue.
 
-**3. VERIFY commits exist (HARD GATE — do NOT close this step without passing):**
-```bash
-git log origin/{{base_branch}}..HEAD --oneline
-```
-
-This MUST show at least 1 commit. If it shows NOTHING:
-- You have NOT completed your implementation. Do NOT close this step.
-- Go back to the implement step and do the work.
-- If the task genuinely requires no code changes (already fixed upstream, etc.),
-  run `gt done --status DEFERRED` and skip remaining steps.
-- Do NOT proceed to cleanup or submit with zero commits.
-
-**4. VERIFY clean working tree:**
+**3. VERIFY:**
 ```bash
 git status                          # Must show "working tree clean"
+git log origin/main..HEAD --oneline # Must show at least 1 commit
 ```
 
-**Report-only tasks (audits, reviews, research — no code changes):**
-If your task produced no code changes, verify your findings are persisted to the bead:
-```bash
-bd show {{issue}}    # Check notes/design fields have your findings
-```
-If findings are persisted, proceed to cleanup. `gt done --cleanup-status clean`
-handles the no-commit case for report-only tasks.
-
-**Exit criteria:** Working tree clean AND either (a) at least 1 commit ahead of origin/{{base_branch}}, or (b) report-only task with findings persisted to bead."""
-
-[[steps]]
-id = "pre-verify"
-title = "Pre-merge rebase verification"
-needs = ["commit-changes"]
-description = """
-Rebase onto the target branch and run the full gate suite. This enables the
-refinery to fast-path merge your MR without re-running gates (~5s merge
-instead of minutes).
-
-**1. Fetch and rebase onto target:**
-```bash
-git fetch origin {{base_branch}}
-git rebase origin/{{base_branch}}
-```
-
-If rebase conflicts:
-- Resolve them carefully
-- Re-run the build to ensure the resolution is correct
-- If stuck, mail Witness
-
-**2. Run the full gate suite on the rebased result:**
-```bash
-{{gate_command}}
-```
-
-Platform-specific gates for reference:
-- **Web:** `npm run gate`
-- **Android:** `./gradlew assembleDebug && ./gradlew test`
-- **iOS:** `xcodebuild -scheme Gymbo -sdk iphonesimulator build`
-
-**3. If any gate fails after rebase:**
-- Fix the issue, commit, and re-run from step 1
-- Do NOT proceed with --pre-verified if gates failed
-
-**4. If all gates pass:**
-You will use `gt done --pre-verified` in the next step. This tells the refinery
-that you ran the full gate suite on a rebased branch, enabling fast-path merge.
-
-**Note:** If this step takes too long or the gates are not configured for this
-project, you may skip this step and use `gt done` without --pre-verified.
-The refinery will run gates normally (slower but still correct).
-
-**Exit criteria:** Branch rebased onto latest origin/{{base_branch}}, all configured gates pass."""
+**Exit criteria:** All changes committed. Working tree clean."""
 
 [[steps]]
 id = "cleanup-workspace"
 title = "Clean up workspace"
-needs = ["pre-verify"]
+needs = ["commit-changes"]
 description = """
 Ensure workspace is pristine before handoff.
 
@@ -671,7 +464,7 @@ Should be empty.
 **3. Verify clean state:**
 ```bash
 git status                  # Must show "working tree clean"
-git log origin/{{base_branch}}..HEAD   # Your commits (should show your work)
+git log origin/main..HEAD   # Your commits (should show your work)
 ```
 
 **Exit criteria:** Workspace clean, all work committed. Do NOT push."""
@@ -706,17 +499,7 @@ Design: <brief design notes from design step>"
 
 Include: bead ID, what changed, gate results, design decisions.
 
-**4. Trainer approval gate (REQUIRED before submit):**
-This bead must have trainer acknowledgment before submitting to MQ.
-If the bead was slung by trainer, this is implicit (trainer dispatched = trainer approved).
-If you are unsure, mail trainer for confirmation before proceeding to submit-and-exit:
-```bash
-gt mail send gymbo/trainer -s "{{issue}} ready for approval" \
-  -m "Pre-verify passed. Ready to submit to MQ. Please confirm."
-```
-Do NOT proceed to submit-and-exit without trainer approval.
-
-**Exit criteria:** Issue updated, coach notified with summary, trainer approval confirmed."""
+**Exit criteria:** Issue updated, coach notified with summary."""
 
 [[steps]]
 id = "submit-and-exit"
@@ -725,23 +508,9 @@ needs = ["prepare-for-review"]
 description = """
 Submit your work and clean up. You cease to exist after this step.
 
-**Pre-flight: Verify you have actual work to submit (HARD GATE):**
-```bash
-git log origin/{{base_branch}}..HEAD --oneline
-```
-This MUST show at least 1 commit. If it shows nothing, do NOT run `gt done`.
-`gt done` will reject zero-commit branches for polecats.
-
 **Run gt done:**
 ```bash
-# For code tasks with pre-verification (recommended — enables fast-path merge):
-gt done --pre-verified
-
-# For code tasks without pre-verification (gates skipped or failed):
 gt done
-
-# For report-only tasks (no commits — audits, reviews, research):
-gt done --cleanup-status clean
 ```
 
 This command:
@@ -753,7 +522,7 @@ This command:
 **What happens next (not your concern):**
 - Refinery processes your MR from the queue
 - Coach reviews the PR
-- Refinery rebases and merges to {{base_branch}}
+- Refinery rebases and merges to main
 - If conflicts: Refinery spawns a FRESH polecat
 
 You are NOT involved in any of that. Done means gone.
@@ -764,27 +533,3 @@ You are NOT involved in any of that. Done means gone.
 [vars.issue]
 description = "The bead ID assigned to this polecat"
 required = true
-
-[vars.base_branch]
-description = "The base branch to rebase on and compare against (e.g., main, integration/epic-id)"
-default = "main"
-
-[vars.gate_command]
-description = "Platform gate command (e.g., npm run gate, ./gradlew test). Auto-detected from platform."
-default = "npm run gate"
-
-[vars.staging_enabled]
-description = "Whether staging preflight is enabled for this rig (rig opts in)"
-default = "false"
-
-[vars.staging_deploy_command]
-description = "Deploy to per-rig staging environment. Empty = skip preflight."
-default = ""
-
-[vars.staging_smoke_command]
-description = "Smoke E2E tests against staging (~2 min). Empty = skip."
-default = ""
-
-[vars.staging_teardown_command]
-description = "Tear down staging environment after preflight. Empty = skip."
-default = ""
