@@ -1653,7 +1653,8 @@ func (e *Engineer) ListReadyMRs() ([]*MRInfo, error) {
 			continue // Skip issues without MR fields
 		}
 
-		// Filter by rig — wisps are shared across all rigs (GH#2718).
+		// Filter by rig — wisps are shared across all rigs in the Dolt server,
+		// so we must filter to only show MRs belonging to this rig (GH#2718).
 		if fields.Rig != "" && !strings.EqualFold(fields.Rig, e.rig.Name) {
 			continue
 		}
