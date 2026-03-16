@@ -1711,10 +1711,18 @@ func (t *Tmux) NudgeSessionWithOpts(session, message string, opts NudgeOpts) err
 		time.Sleep(50 * time.Millisecond)
 	}
 
-	// 2. Sanitize control characters that corrupt delivery
+	// 2. Clear any pending input before sending. This closes the TOCTOU race
+	//    between deliverNudge's IsInputEmpty check and the actual send-keys:
+	//    the user (or another nudge) may have added text to the input field
+	//    in the gap. Ctrl-U clears the current line in Claude Code's TUI
+	//    (same approach used by SendKeysReplace). It's a no-op if empty.
+	_, _ = t.run("send-keys", "-t", target, "C-u")
+	time.Sleep(50 * time.Millisecond)
+
+	// 3. Sanitize control characters that corrupt delivery
 	sanitized := sanitizeNudgeMessage(message)
 
-	// 3. Send text via send-keys -l. Messages > 512 bytes are chunked
+	// 4. Send text via send-keys -l. Messages > 512 bytes are chunked
 	//    with 10ms inter-chunk delays to avoid argument length limits.
 	if err := t.sendMessageToTarget(target, sanitized); err != nil {
 		return err
@@ -1794,10 +1802,14 @@ func (t *Tmux) NudgePane(pane, message string) error {
 		time.Sleep(50 * time.Millisecond)
 	}
 
-	// 2. Sanitize control characters that corrupt delivery
+	// 2. Clear any pending input (same TOCTOU fix as NudgeSession).
+	_, _ = t.run("send-keys", "-t", pane, "C-u")
+	time.Sleep(50 * time.Millisecond)
+
+	// 3. Sanitize control characters that corrupt delivery
 	sanitized := sanitizeNudgeMessage(message)
 
-	// 3. Send text via send-keys -l. Messages > 512 bytes are chunked
+	// 4. Send text via send-keys -l. Messages > 512 bytes are chunked
 	//    with 10ms inter-chunk delays to avoid argument length limits.
 	if err := t.sendMessageToTarget(pane, sanitized); err != nil {
 		return err
@@ -1806,11 +1818,11 @@ func (t *Tmux) NudgePane(pane, message string) error {
 	// 4. Adaptive post-text delay: scales with message length. (GH#gt-0b5)
 	time.Sleep(adaptiveTextDelay(len(sanitized)))
 
-	// 5. Send Escape to exit vim INSERT mode if enabled (harmless in normal mode)
+	// 6. Send Escape to exit vim INSERT mode if enabled (harmless in normal mode)
 	// See: https://github.com/anthropics/gastown/issues/307
 	_, _ = t.run("send-keys", "-t", pane, "Escape")
 
-	// 6. Wait 600ms — must exceed bash readline's keyseq-timeout (500ms default)
+	// 7. Wait 600ms — must exceed bash readline's keyseq-timeout (500ms default)
 	time.Sleep(600 * time.Millisecond)
 
 	// 6.5. Post-Escape: check if our Escape triggered Rewind mode. (GH#gt-8el)
