@@ -3,9 +3,9 @@
 This document describes all local patches applied on top of upstream Gas Town
 (`origin/main`). Use it when merging upstream to ensure patches are re-applied.
 
-**Last updated:** 2026-03-12
+**Last updated:** 2026-03-16
 **Upstream HEAD:** `3bfb3b71` (fix: spider SQL compatibility with Dolt only_full_group_by mode)
-**Patch surface:** 4 files, +89/-52 lines
+**Patch surface:** 7 files, +137/-66 lines
 
 ---
 
@@ -17,6 +17,8 @@ This document describes all local patches applied on top of upstream Gas Town
 | LOCAL-002b | `internal/web/fetcher.go` | Heartbeat JSON field name mismatch |
 | LOCAL-004a | `internal/cmd/rig_dock.go` | Wisp write on dock/undock |
 | LOCAL-004b | `internal/cmd/rig_helpers.go` | Fail-safe: treat as docked when can't verify |
+| LOCAL-005 | `internal/refinery/engineer.go`, `internal/refinery/manager.go` | Refinery MR listings filter by rig |
+| LOCAL-006 | `internal/tmux/tmux.go`, `internal/cmd/mq_list.go` | Nudge Ctrl-U TOCTOU race + mq_list rig filter cherry-pick |
 
 ---
 
@@ -109,6 +111,53 @@ helper that falls back to `config.json` (which doesn't exist for most rigs).
 **Upstream candidate:** Yes — defensive improvement. The daemon path already
 has fail-safe via `cf3bdbee`, but the CLI paths (`gt sling`, `gt convoy`)
 used by `IsRigParkedOrDocked` do not.
+
+---
+
+## LOCAL-005: Refinery MR Listings Filter by Rig
+
+**Problem:** Upstream GH#2718 / PR#2719 fixed `gt mq list` (CLI) to filter
+MRs by rig, but the refinery's own Go code was never patched. Four methods
+in `engineer.go` (`ListReadyMRs`, `ListBlockedMRs`, `ListAllOpenMRs`,
+`ListQueueAnomalies`) and one in `manager.go` (`Queue`) query all open
+merge-request wisps without filtering by rig field. In multi-rig setups,
+refineries see MRs from other rigs and attempt to merge branches that
+don't exist in their repo.
+
+**Impact:** Caused routing stall hq-u2o9.19 — dashboard polecats' MRs
+were picked up by navigation_server refinery, rejected 5+ times.
+
+**Fix:** After `ParseMRFields()`, add:
+```go
+if fields.Rig != "" && !strings.EqualFold(fields.Rig, e.rig.Name) {
+    continue
+}
+```
+
+**Files:** `internal/refinery/engineer.go` (+16), `internal/refinery/manager.go` (+6)
+
+**Upstream candidate:** Yes — PR submitted. Completes the fix from GH#2718.
+
+---
+
+## LOCAL-006: Nudge Ctrl-U TOCTOU Race + MQ List Rig Filter
+
+**Problem (nudge):** `NudgeSession` and `NudgePane` blindly inject text via
+`send-keys`. If text was already in the input field (user typing, another
+nudge), it gets concatenated and corrupted. This is the TOCTOU race between
+`deliverNudge`'s `IsInputEmpty` check and the actual `send-keys`.
+
+**Fix (nudge):** Send `Ctrl-U` before injecting nudge text. Ctrl-U clears
+the current input line in Claude Code's TUI. No-op if already empty.
+Source: `DreadPirateRobertz/gastown@cdcc385`.
+
+**Problem (mq_list):** Cherry-pick of upstream `ab0cbc01` (PR#2719) —
+`gt mq list` shows MRs from other rigs when using shared Dolt wisps.
+
+**Files:** `internal/tmux/tmux.go` (+26/-14), `internal/cmd/mq_list.go` (+1/-1)
+
+**Upstream candidate:** Nudge fix: yes (addresses GH#1216 stall pattern).
+MQ list fix: already upstream (PR#2719).
 
 ---
 
