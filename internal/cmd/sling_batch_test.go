@@ -179,6 +179,14 @@ exit 0
 	}
 	logContent := string(logBytes)
 
+	// The first line starting with CMD: is the create command (NUL-delimited args).
+	// Check that gt:convoy and gt:owned labels are both set on the create call.
+	if !strings.Contains(logContent, "gt:convoy") {
+		t.Errorf("create command missing gt:convoy label in log:\n%q", logContent)
+	}
+	if !strings.Contains(logContent, "gt:owned") {
+		t.Errorf("create command missing gt:owned label in log:\n%q", logContent)
+	}
 	if !strings.Contains(logContent, "--labels=gt:convoy,gt:owned") {
 		t.Errorf("create command missing convoy/owned labels in log:\n%q", logContent)
 	}
@@ -957,8 +965,15 @@ exit 0
 	if err != nil {
 		t.Fatalf("read log: %v", err)
 	}
-	if !strings.Contains(string(logBytes), "--labels=gt:convoy,gt:owned") {
-		t.Errorf("create should include convoy/owned labels:\n%q", string(logBytes))
+	logContent := string(logBytes)
+	if !strings.Contains(logContent, "gt:convoy") {
+		t.Errorf("create should include gt:convoy label:\n%q", logContent)
+	}
+	if !strings.Contains(logContent, "gt:owned") {
+		t.Errorf("create should include gt:owned label:\n%q", logContent)
+	}
+	if !strings.Contains(logContent, "--labels=gt:convoy,gt:owned") {
+		t.Errorf("create should include convoy/owned labels:\n%q", logContent)
 	}
 }
 

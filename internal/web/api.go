@@ -758,7 +758,7 @@ func (h *APIHandler) handleOptions(w http.ResponseWriter, r *http.Request) {
 	// Fetch convoys
 	go func() {
 		defer wg.Done()
-		if output, err := h.runBdCommand(r.Context(), 3*time.Second, []string{"list", "--json", "--limit=0"}); err == nil {
+		if output, err := h.runBdCommand(r.Context(), 3*time.Second, []string{"list", "--label=gt:convoy", "--json", "--limit=0"}); err == nil {
 			mu.Lock()
 			resp.Convoys = parseConvoyListJSON(output)
 			mu.Unlock()
@@ -940,7 +940,7 @@ func parseRigListJSON(jsonStr string) []string {
 	return rigs
 }
 
-// parseConvoyListJSON extracts convoy IDs from JSON output of "bd list --json".
+// parseConvoyListJSON extracts convoy IDs from JSON output of "bd list --label=gt:convoy --json".
 func parseConvoyListJSON(jsonStr string) []string {
 	var convoys []struct {
 		ID        string   `json:"id"`

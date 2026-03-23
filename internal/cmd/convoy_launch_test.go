@@ -736,7 +736,7 @@ func TestCollectConvoyBeads_ExternalTrackedIDs(t *testing.T) {
 	bdScript := `#!/bin/sh
 case "$*" in
   "show hq-cv-ext --json")
-    echo '[{"id":"hq-cv-ext","title":"Ext convoy","status":"staged_ready","issue_type":"convoy"}]'
+    echo '[{"id":"hq-cv-ext","title":"Ext convoy","status":"staged_ready","issue_type":"convoy","labels":["gt:convoy"]}]'
     ;;
   sql\ *"issue_id = 'hq-cv-ext'"*)
     # bdDepListRawIDs down: return tracked bead IDs

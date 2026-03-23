@@ -239,10 +239,16 @@ func addBeadDependencyOfType(t *testing.T, from, to, depType, dir string) {
 
 // createTestBeadOfType creates a bead with the given title and issue type (e.g.,
 // "epic", "convoy", "task") and returns the auto-generated bead ID.
+// Also sets the gt:<issueType> label for types that use label-based querying.
 func createTestBeadOfType(t *testing.T, dir, title, issueType string) string {
 	t.Helper()
 	args := []string{"create", "--title=" + title, "--type=" + issueType,
 		"--description=Integration test bead", "--json"}
+	// Add gt:<type> label for types that are queried by label in production code.
+	switch issueType {
+	case "convoy", "agent", "rig", "role", "epic", "task":
+		args = append(args, "--labels=gt:"+issueType)
+	}
 	cmd := exec.Command("bd", args...)
 	cmd.Dir = dir
 	out, err := cmd.Output()

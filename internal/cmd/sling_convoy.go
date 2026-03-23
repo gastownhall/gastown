@@ -67,6 +67,7 @@ func isTrackedByConvoy(beadID string) string {
 func findConvoyByDescription(townRoot, beadID string) string {
 	townBeads := filepath.Join(townRoot, ".beads")
 
+	// Query all open convoys from HQ (using label-based filtering for label-migration support)
 	convoys, err := listConvoyIssues(townBeads, "open", false)
 	if err != nil {
 		return ""
@@ -312,13 +313,18 @@ func createBatchConvoy(beadIDs []string, rigName string, owned bool, mergeStrate
 		BaseBranch: baseBranch,
 	})
 
+	batchLabels := []string{"gt:convoy"}
+	if owned {
+		batchLabels = append(batchLabels, "gt:owned")
+	}
 	createArgs := []string{
 		"create",
-		"--type=task",
+		"--type=convoy",
+		"--labels=" + strings.Join(batchLabels, ","),
+		"--labels=" + convoyLabels(owned),
 		"--id=" + convoyID,
 		"--title=" + convoyTitle,
 		"--description=" + description,
-		"--labels=" + convoyLabels(owned),
 	}
 	if beads.NeedsForceForID(convoyID) {
 		createArgs = append(createArgs, "--force")
@@ -375,13 +381,18 @@ func createAutoConvoy(beadID, beadTitle string, owned bool, mergeStrategy, baseB
 		BaseBranch: baseBranch,
 	})
 
+	singleLabels := []string{"gt:convoy"}
+	if owned {
+		singleLabels = append(singleLabels, "gt:owned")
+	}
 	createArgs := []string{
 		"create",
-		"--type=task",
+		"--type=convoy",
+		"--labels=" + strings.Join(singleLabels, ","),
+		"--labels=" + convoyLabels(owned),
 		"--id=" + convoyID,
 		"--title=" + convoyTitle,
 		"--description=" + description,
-		"--labels=" + convoyLabels(owned),
 	}
 	if beads.NeedsForceForID(convoyID) {
 		createArgs = append(createArgs, "--force")

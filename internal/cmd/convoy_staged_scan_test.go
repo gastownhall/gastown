@@ -131,7 +131,7 @@ exit 0
 }
 
 // TestStrandedScanQueryShape verifies the exact arguments passed to bd
-// by findStrandedConvoys, ensuring the gt:convoy label and --status=open
+// by findStrandedConvoys, ensuring the --label=gt:convoy and --status=open
 // flags are both present. This guards against flag drift in refactors.
 func TestStrandedScanQueryShape(t *testing.T) {
 	if runtime.GOOS == "windows" {

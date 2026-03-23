@@ -708,7 +708,7 @@ func createStagedConvoy(dag *ConvoyDAG, waves []Wave, status string, title strin
 	// Create the convoy via bd create in town beads, then set status via bd update.
 	createArgs := []string{
 		"create",
-		"--type=task",
+		"--type=convoy",
 		"--id=" + convoyID,
 		"--title=" + title,
 		"--description=" + description,

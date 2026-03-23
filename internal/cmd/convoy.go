@@ -686,9 +686,13 @@ func runConvoyCreate(cmd *cobra.Command, args []string) error {
 	// Generate convoy ID with cv- prefix
 	convoyID := fmt.Sprintf("hq-cv-%s", generateShortID())
 
+	labels := []string{"gt:convoy"}
+	if convoyOwned {
+		labels = append(labels, "gt:owned")
+	}
 	createArgs := []string{
 		"create",
-		"--type=task",
+		"--type=convoy",
 		"--id=" + convoyID,
 		"--title=" + name,
 		"--description=" + description,
