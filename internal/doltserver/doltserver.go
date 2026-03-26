@@ -1348,7 +1348,7 @@ behavior:
   dolt_transaction_commit: false
   auto_gc_behavior:
     enable: true
-    archive_level: 1
+    archive_level: 0
 `,
 		config.LogLevel,
 		config.Port,

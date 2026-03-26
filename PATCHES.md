@@ -3,9 +3,9 @@
 This document describes all local patches applied on top of upstream Gas Town
 (`origin/main`). Use it when merging upstream to ensure patches are re-applied.
 
-**Last updated:** 2026-03-16
+**Last updated:** 2026-03-26
 **Upstream HEAD:** `3bfb3b71` (fix: spider SQL compatibility with Dolt only_full_group_by mode)
-**Patch surface:** 7 files, +137/-66 lines
+**Patch surface:** 8 files, +138/-67 lines
 
 ---
 
@@ -19,6 +19,7 @@ This document describes all local patches applied on top of upstream Gas Town
 | LOCAL-004b | `internal/cmd/rig_helpers.go` | Fail-safe: treat as docked when can't verify |
 | LOCAL-005 | `internal/refinery/engineer.go`, `internal/refinery/manager.go` | Refinery MR listings filter by rig |
 | LOCAL-006 | `internal/tmux/tmux.go`, `internal/cmd/mq_list.go` | Nudge Ctrl-U TOCTOU race + mq_list rig filter cherry-pick |
+| LOCAL-007 | `internal/doltserver/doltserver.go` | Disable archive_level GC to prevent Dolt shutdown panic |
 
 ---
 
@@ -158,6 +159,18 @@ Source: `DreadPirateRobertz/gastown@cdcc385`.
 
 **Upstream candidate:** Nudge fix: yes (addresses GH#1216 stall pattern).
 MQ list fix: already upstream (PR#2719).
+
+---
+
+## LOCAL-007: Disable archive_level GC (Dolt shutdown panic fix)
+
+**Problem:** Dolt panics at shutdown with `open .dolt-data/pr/.dolt/noms/nbs_manifest_...: no such file or directory` in `CloseAllLocalDatabases()`. With `archive_level: 1`, the GC archiver can register ephemeral database names (e.g., short-name `pr`) in Dolt's internal state without creating the corresponding directory. On shutdown, Dolt tries to close all registered databases and panics when it can't find the directory. Caused 6+ crashes in one day (escalation hq-wisp-zu4b).
+
+**Fix:** Set `archive_level: 0` in the generated Dolt config template. This disables GC archiving, preventing the phantom database registration that triggers the panic.
+
+**File:** `internal/doltserver/doltserver.go` (+1/-1)
+
+**Upstream candidate:** Yes — the archive_level GC is causing data-less panics that corrupt the shutdown sequence. Upstream should consider guarding `CloseAllLocalDatabases()` against missing directories.
 
 ---
 
