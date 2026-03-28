@@ -195,6 +195,11 @@ const noTownSocket = "gt-no-town-socket"
 // agents (where pane_current_command remains a shell). See gt-sk5u.
 const EnvAgentReady = "GT_AGENT_READY"
 
+// EnvSessionProtected is the tmux session environment variable set when a
+// session enters a protected state (e.g., plan mode). Handoff checks this
+// var before respawning. Format: "reason|unix-timestamp".
+const EnvSessionProtected = "GT_SESSION_PROTECTED"
+
 // NewTmux creates a new Tmux wrapper using the initialized town socket.
 // Falls back to GT_TOWN_SOCKET env var (set by cross-socket tmux bindings).
 // Empty socket means use the default tmux server.
@@ -3981,4 +3986,47 @@ func buildAutoRespawnHookCmd(tmuxCmd, session string) string {
 	return fmt.Sprintf(
 		`run-shell -b "sleep 3 && %s list-panes -t '%s' -F '##{pane_dead}' 2>/dev/null | grep -q 1 && %s respawn-pane -k -t '%s' && %s set-option -t '%s' remain-on-exit on || true"`,
 		tmuxCmd, session, tmuxCmd, session, tmuxCmd, session)
+}
+
+// SetSessionProtected marks a session as protected with a reason and timestamp.
+// The value format is "reason|unix-timestamp" to support expiry checks.
+func (t *Tmux) SetSessionProtected(session, reason string) error {
+	value := fmt.Sprintf("%s|%d", reason, time.Now().Unix())
+	return t.SetEnvironment(session, EnvSessionProtected, value)
+}
+
+// ClearSessionProtected removes the protection marker from a session.
+func (t *Tmux) ClearSessionProtected(session string) error {
+	_, err := t.run("set-environment", "-u", "-t", session, EnvSessionProtected)
+	return err
+}
+
+// IsSessionProtected checks whether a session is protected and the protection
+// has not expired. Returns (true, reason) if protected, (false, "") otherwise.
+// On any tmux error, returns unprotected to avoid blocking on failures.
+func (t *Tmux) IsSessionProtected(session string, maxAge time.Duration) (bool, string) {
+	val, err := t.GetEnvironment(session, EnvSessionProtected)
+	if err != nil || val == "" {
+		return false, ""
+	}
+
+	// Parse "reason|unix-timestamp"
+	parts := strings.SplitN(val, "|", 2)
+	if len(parts) != 2 {
+		return false, ""
+	}
+
+	reason := parts[0]
+	ts, err := strconv.ParseInt(parts[1], 10, 64)
+	if err != nil {
+		return false, ""
+	}
+
+	// Check expiry
+	setTime := time.Unix(ts, 0)
+	if time.Since(setTime) > maxAge {
+		return false, ""
+	}
+
+	return true, reason
 }

@@ -70,6 +70,8 @@ var beadsExemptCommands = map[string]bool{
 	"dnd":           true,
 	"estop":         true, // E-stop must work when Dolt is down
 	"thaw":          true, // Thaw must work when Dolt is down
+	"protect":       true, // Session protection must be fast, no beads needed
+	"unprotect":     true, // Session unprotection must be fast, no beads needed
 	"signal":        true, // Hook signal handlers must be fast, handle beads internally
 	"metrics":       true, // Metrics reads local JSONL, no beads needed
 	"krc":           true, // KRC doesn't require beads

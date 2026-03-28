@@ -78,6 +78,7 @@ var (
 	handoffReason     string
 	handoffNoGitCheck bool
 	handoffYes        bool
+	handoffForce      bool
 )
 
 func init() {
@@ -92,6 +93,7 @@ func init() {
 	handoffCmd.Flags().StringVar(&handoffReason, "reason", "", "Reason for handoff (e.g., 'compaction', 'idle')")
 	handoffCmd.Flags().BoolVar(&handoffNoGitCheck, "no-git-check", false, "Skip git workspace cleanliness check")
 	handoffCmd.Flags().BoolVarP(&handoffYes, "yes", "y", false, "Skip confirmation prompt (for automation and scripting)")
+	handoffCmd.Flags().BoolVarP(&handoffForce, "force", "f", false, "Override session protection")
 	rootCmd.AddCommand(handoffCmd)
 }
 
@@ -259,6 +261,15 @@ func runHandoff(cmd *cobra.Command, args []string) error {
 		// Update tmux session env before respawn (not during dry-run — see below)
 		updateSessionEnvForHandoff(townTmux, targetSession, "")
 		return handoffRemoteSession(townTmux, targetSession, restartCmd)
+	}
+
+	// Check session protection before self-handoff
+	if protected, reason := checkSessionProtected(t, currentSession); protected {
+		if !handoffForce {
+			return fmt.Errorf("session is protected (%s) - use --force or gt unprotect first", reason)
+		}
+		style.PrintWarning("overriding session protection (%s)", reason)
+		_ = t.ClearSessionProtected(currentSession)
 	}
 
 	// Close any in-progress molecule steps before cycling (gt-e26g).
@@ -497,6 +508,14 @@ func runHandoffCycle() error {
 	// Use the caller's socket for pane operations (same as runHandoff).
 	callerSocket := tmux.SocketFromEnv()
 	t := tmux.NewTmuxWithSocket(callerSocket)
+
+	// Check session protection before cycling
+	if protected, reason := checkSessionProtected(t, currentSession); protected {
+		fmt.Fprintf(os.Stderr, "handoff --cycle: session protected (%s), falling back to state-save only\n", reason)
+		handoffMessage = message
+		handoffSubject = subject
+		return runHandoffAuto()
+	}
 
 	if handoffDryRun {
 		fmt.Printf("[cycle] Would send handoff mail: subject=%q\n", subject)
@@ -1158,6 +1177,12 @@ func detectTownRootFromCwd() string {
 	return ""
 }
 
+// checkSessionProtected checks if a session has active protection.
+// Returns (true, reason) if protected, (false, "") otherwise.
+func checkSessionProtected(t *tmux.Tmux, session string) (bool, string) {
+	return t.IsSessionProtected(session, constants.MaxSessionProtectionDuration)
+}
+
 // handoffRemoteSession respawns a different session and optionally switches to it.
 func handoffRemoteSession(t *tmux.Tmux, targetSession, restartCmd string) error {
 	// Check if target session exists
@@ -1167,6 +1192,13 @@ func handoffRemoteSession(t *tmux.Tmux, targetSession, restartCmd string) error 
 	}
 	if !exists {
 		return fmt.Errorf("session '%s' not found - is the agent running?", targetSession)
+	}
+
+	// Check session protection before respawning
+	if !handoffForce {
+		if protected, reason := checkSessionProtected(t, targetSession); protected {
+			return fmt.Errorf("session '%s' is protected (%s) - use --force to override", targetSession, reason)
+		}
 	}
 
 	// Get the pane ID for the target session

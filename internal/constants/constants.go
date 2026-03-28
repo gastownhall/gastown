@@ -104,6 +104,11 @@ const (
 	// it's considered hung. Overridable per-role via RoleHealthConfig.
 	// Configurable via operational.session.hung_session_threshold.
 	HungSessionThreshold = 30 * time.Minute
+
+	// MaxSessionProtectionDuration is the maximum time a session protection
+	// lock remains valid. After this duration, the protection expires
+	// automatically to prevent stale locks from blocking handoffs forever.
+	MaxSessionProtectionDuration = 60 * time.Minute
 )
 
 // Directory names within a Gas Town workspace.
