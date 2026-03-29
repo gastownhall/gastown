@@ -6,15 +6,11 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"runtime"
 	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
-	"golang.org/x/term"
-
 	"github.com/steveyegge/gastown/internal/beads"
-	"github.com/steveyegge/gastown/internal/cli"
 	"github.com/steveyegge/gastown/internal/config"
 	"github.com/steveyegge/gastown/internal/constants"
 	"github.com/steveyegge/gastown/internal/events"
@@ -77,7 +73,6 @@ var (
 	handoffCycle      bool
 	handoffReason     string
 	handoffNoGitCheck bool
-	handoffYes        bool
 	handoffForce      bool
 )
 
@@ -92,7 +87,6 @@ func init() {
 	handoffCmd.Flags().BoolVar(&handoffCycle, "cycle", false, "Auto-cycle session (for PreCompact hooks that want full session replacement)")
 	handoffCmd.Flags().StringVar(&handoffReason, "reason", "", "Reason for handoff (e.g., 'compaction', 'idle')")
 	handoffCmd.Flags().BoolVar(&handoffNoGitCheck, "no-git-check", false, "Skip git workspace cleanliness check")
-	handoffCmd.Flags().BoolVarP(&handoffYes, "yes", "y", false, "Skip confirmation prompt (for automation and scripting)")
 	handoffCmd.Flags().BoolVarP(&handoffForce, "force", "f", false, "Override session protection")
 	rootCmd.AddCommand(handoffCmd)
 }
@@ -160,16 +154,6 @@ func runHandoff(cmd *cobra.Command, args []string) error {
 		doneCmd.Stdout = os.Stdout
 		doneCmd.Stderr = os.Stderr
 		return doneCmd.Run()
-	}
-
-	// Prompt for confirmation unless --yes/-y was passed or stdin is not a TTY.
-	// Only interactive (human) sessions get prompted; agent automation proceeds
-	// without blocking on stdin (gas-6z0).
-	if !handoffYes && !handoffDryRun && term.IsTerminal(int(os.Stdin.Fd())) {
-		if !promptYesNo("Ready to hand off? This will restart the session.") {
-			fmt.Println("Handoff canceled.")
-			return nil
-		}
 	}
 
 	// Enforce minimum handoff cooldown to prevent tight restart loops (gt-058d).
@@ -279,10 +263,15 @@ func runHandoff(cmd *cobra.Command, args []string) error {
 	// Handing off ourselves - print feedback then respawn
 	fmt.Printf("%s Handing off %s...\n", style.Bold.Render("🤝"), currentSession)
 
-	// Resolve agent identity once for both success and failure paths.
-	agent := sessionToGTRole(currentSession)
-	if agent == "" {
-		agent = currentSession
+	// Log handoff event (both townlog and events feed)
+	if townRoot, err := workspace.FindFromCwd(); err == nil && townRoot != "" {
+		agent := sessionToGTRole(currentSession)
+		if agent == "" {
+			agent = currentSession
+		}
+		_ = LogHandoff(townRoot, agent, handoffSubject)
+		// Also log to activity feed
+		_ = events.LogFeed(events.TypeHandoff, agent, events.HandoffPayload(handoffSubject, true))
 	}
 
 	// Dry run mode - show what would happen (BEFORE any side effects)
@@ -304,27 +293,12 @@ func runHandoff(cmd *cobra.Command, args []string) error {
 
 	// Send handoff mail to self (defaults applied inside sendHandoffMail).
 	// The mail is auto-hooked so the next session picks it up.
-	// CRITICAL: Mail must persist to Dolt BEFORE logging to town.log.
-	// If Dolt is down, we must NOT log a false handoff to town.log.
 	beadID, err := sendHandoffMail(handoffSubject, handoffMessage)
 	if err != nil {
-		// Handoff persistence failure is fatal — do not silently continue.
-		// A silent failure causes the next session to find an empty hook,
-		// losing all handoff context.
-		if townRoot, trErr := workspace.FindFromCwd(); trErr == nil && townRoot != "" {
-			_ = LogHandoffNoPersist(townRoot, agent, handoffSubject, err)
-		}
-		fmt.Fprintf(os.Stderr, "The session was NOT respawned. Fix the issue and retry 'gt handoff'.\n")
-		return fmt.Errorf("handoff mail failed to persist (Dolt may be down): %w", err)
-	}
-	fmt.Printf("%s Sent handoff mail %s (auto-hooked)\n", style.Bold.Render("📬"), beadID)
-
-	// Log handoff event AFTER Dolt persistence succeeds.
-	// Previously this logged BEFORE sendHandoffMail, causing false entries
-	// in town.log when Dolt was down.
-	if townRoot, err := workspace.FindFromCwd(); err == nil && townRoot != "" {
-		_ = LogHandoff(townRoot, agent, handoffSubject)
-		_ = events.LogFeed(events.TypeHandoff, agent, events.HandoffPayload(handoffSubject, true))
+		style.PrintWarning("could not send handoff mail: %v", err)
+		// Continue anyway - the respawn is more important
+	} else {
+		fmt.Printf("%s Sent handoff mail %s (auto-hooked)\n", style.Bold.Render("📬"), beadID)
 	}
 
 	// NOTE: reportAgentState("stopped") removed (gt-zecmc)
@@ -528,22 +502,14 @@ func runHandoffCycle() error {
 	// Close any in-progress molecule steps before cycling (gt-e26g).
 	cleanupMoleculeOnHandoff()
 
-	// Send handoff mail to self (auto-hooked for successor).
-	// Fatal on failure — same rationale as runHandoff: silent failure causes
-	// the next session to find an empty hook and lose all context.
+	// Send handoff mail to self (auto-hooked for successor)
 	beadID, err := sendHandoffMail(subject, message)
 	if err != nil {
-		agent := sessionToGTRole(currentSession)
-		if agent == "" {
-			agent = currentSession
-		}
-		if townRoot, trErr := workspace.FindFromCwd(); trErr == nil && townRoot != "" {
-			_ = LogHandoffNoPersist(townRoot, agent, subject, err)
-		}
-		fmt.Fprintf(os.Stderr, "The session was NOT respawned. Fix the issue and retry.\n")
-		return fmt.Errorf("handoff --cycle: mail failed to persist: %w", err)
+		fmt.Fprintf(os.Stderr, "handoff --cycle: could not send mail: %v\n", err)
+		// Continue — respawn is more important than mail
+	} else {
+		fmt.Fprintf(os.Stderr, "handoff --cycle: saved state to %s\n", beadID)
 	}
-	fmt.Fprintf(os.Stderr, "handoff --cycle: saved state to %s\n", beadID)
 
 	// Write handoff marker so post-cycle prime knows it's post-handoff.
 	// Format: "session_id\nreason" — the reason enables isCompactResume()
@@ -563,7 +529,7 @@ func runHandoffCycle() error {
 	// Record handoff time for cooldown enforcement (gt-058d).
 	recordHandoffTime()
 
-	// Log cycle event AFTER persistence succeeds.
+	// Log cycle event
 	if townRoot, err := workspace.FindFromCwd(); err == nil && townRoot != "" {
 		agent := sessionToGTRole(currentSession)
 		if agent == "" {
@@ -843,17 +809,6 @@ func buildRestartCommandWithOpts(sessionName string, opts buildRestartCommandOpt
 		} else {
 			beacon = "Your account was rotated to avoid a rate limit. Continue your previous task."
 		}
-	} else if isPatrolRole(simpleRole) {
-		// Patrol roles (refinery, witness, deacon) must re-enter their patrol
-		// loop on handoff, not "wait for instructions." Without this, idle
-		// patrol agents cycle through handoff→prime→no-work→handoff burning
-		// CPU and tokens indefinitely. The patrol instruction ensures they
-		// reach the await-event idle state in their burn-or-loop step.
-		beacon = session.BuildStartupPrompt(session.BeaconConfig{
-			Recipient: identity.BeaconAddress(),
-			Sender:    "self",
-			Topic:     "patrol",
-		}, "Run `"+cli.Name()+" prime --hook` and begin patrol.")
 	} else {
 		beacon = session.FormatStartupBeacon(session.BeaconConfig{
 			Recipient: identity.BeaconAddress(),
@@ -869,10 +824,13 @@ func buildRestartCommandWithOpts(sessionName string, opts buildRestartCommandOpt
 	// 4. run claude with the startup beacon (triggers immediate context loading)
 	// Use exec to ensure clean process replacement.
 	//
-	// Check if current session is using a non-default agent (GT_AGENT env var).
-	// If so, preserve it across handoff by using the override variant.
-	// Fall back to tmux session environment if process env doesn't have it,
-	// since exec env vars may not propagate through all agent runtimes.
+	// Agent resolution priority:
+	// 1. role_agents config (authoritative — config changes take effect on next handoff)
+	// 2. GT_AGENT env var (only if role has no config mapping — manual override case)
+	// 3. default_agent fallback
+	//
+	// Previously GT_AGENT took unconditional priority, which meant config changes
+	// to role_agents were invisible until sessions were manually restarted.
 	currentAgent, agentInEnv := os.LookupEnv("GT_AGENT")
 	if !agentInEnv {
 		// GT_AGENT not in process env at all — try tmux session environment
@@ -883,16 +841,31 @@ func buildRestartCommandWithOpts(sessionName string, opts buildRestartCommandOpt
 		}
 	}
 	var runtimeCmd string
-	if currentAgent != "" {
+	if simpleRole != "" {
+		// Check if role_agents has a mapping for this role — if so, use it
+		// (config is authoritative over stale GT_AGENT env vars).
+		configAgent, isRoleSpecific := config.ResolveRoleAgentName(simpleRole, townRoot, rigPath)
+		if isRoleSpecific {
+			// Config has an explicit mapping — use it even if GT_AGENT differs.
+			// This ensures config changes (e.g., crew→opus) take effect on handoff.
+			runtimeCmd = config.ResolveRoleAgentConfig(simpleRole, townRoot, rigPath).BuildCommandWithPrompt(beacon)
+			_ = configAgent // used by ResolveRoleAgentConfig internally
+		} else if currentAgent != "" {
+			// No role-specific config but GT_AGENT is set (manual override) — preserve it.
+			var err error
+			runtimeCmd, err = config.GetRuntimeCommandWithPromptAndAgentOverride(rigPath, beacon, currentAgent)
+			if err != nil {
+				return "", fmt.Errorf("resolving agent config: %w", err)
+			}
+		} else {
+			runtimeCmd = config.ResolveRoleAgentConfig(simpleRole, townRoot, rigPath).BuildCommandWithPrompt(beacon)
+		}
+	} else if currentAgent != "" {
 		var err error
 		runtimeCmd, err = config.GetRuntimeCommandWithPromptAndAgentOverride(rigPath, beacon, currentAgent)
 		if err != nil {
 			return "", fmt.Errorf("resolving agent config: %w", err)
 		}
-	} else if simpleRole != "" {
-		// Preserve role_agents model selection across self-handoff by resolving
-		// runtime command via role-aware config (instead of default-agent lookup).
-		runtimeCmd = config.ResolveRoleAgentConfig(simpleRole, townRoot, rigPath).BuildCommandWithPrompt(beacon)
 	} else {
 		runtimeCmd = config.GetRuntimeCommandWithPrompt(rigPath, beacon)
 	}
@@ -901,52 +874,63 @@ func buildRestartCommandWithOpts(sessionName string, opts buildRestartCommandOpt
 	// Note: runtimeCmd starts with the command name (e.g., "claude --settings ..."),
 	// not "exec claude" — the "exec" prefix is added later in the Sprintf.
 	if opts.ContinueSession {
-		// Handle both Unix ("claude ") and Windows ("claude.exe ") binary names
-		if n := strings.Replace(runtimeCmd, "claude.exe ", "claude.exe --continue ", 1); n != runtimeCmd {
-			runtimeCmd = n
-		} else {
-			runtimeCmd = strings.Replace(runtimeCmd, "claude ", "claude --continue ", 1)
-		}
+		runtimeCmd = strings.Replace(runtimeCmd, "claude ", "claude --continue ", 1)
 	}
 
-	// Build environment variables map — role vars first, then Claude vars.
-	// Uses config.PrependEnv for OS-aware export syntax (bash export on
-	// Unix, $env: on Windows).
-	envMap := make(map[string]string)
+	// Build environment exports - role vars first, then Claude vars
+	var exports []string
 	var agentEnv map[string]string // agent config Env (rc.toml [agents.X.env])
 	if gtRole != "" {
-		// When GT_AGENT is set, resolve config with the override so we pick up
-		// the active agent's env (e.g., NODE_OPTIONS from [agents.X.env]).
-		// Otherwise, fall back to role-based resolution.
+		// Resolve agent config for environment variables (NODE_OPTIONS, etc.).
+		// When role_agents is authoritative, use role config; otherwise use GT_AGENT override.
 		var runtimeConfig *config.RuntimeConfig
-		if currentAgent != "" {
+		if simpleRole != "" {
+			if _, isRoleSpecific := config.ResolveRoleAgentName(simpleRole, townRoot, rigPath); isRoleSpecific {
+				runtimeConfig = config.ResolveRoleAgentConfig(simpleRole, townRoot, rigPath)
+			} else if currentAgent != "" {
+				rc, _, err := config.ResolveAgentConfigWithOverride(townRoot, rigPath, currentAgent)
+				if err == nil {
+					runtimeConfig = rc
+				} else {
+					runtimeConfig = config.ResolveRoleAgentConfig(simpleRole, townRoot, rigPath)
+				}
+			} else {
+				runtimeConfig = config.ResolveRoleAgentConfig(simpleRole, townRoot, rigPath)
+			}
+		} else if currentAgent != "" {
 			rc, _, err := config.ResolveAgentConfigWithOverride(townRoot, rigPath, currentAgent)
 			if err == nil {
 				runtimeConfig = rc
 			} else {
-				runtimeConfig = config.ResolveRoleAgentConfig(simpleRole, townRoot, rigPath)
+				runtimeConfig = config.ResolveAgentConfig(townRoot, rigPath)
 			}
-		} else if simpleRole != "" {
-			runtimeConfig = config.ResolveRoleAgentConfig(simpleRole, townRoot, rigPath)
 		} else {
 			runtimeConfig = config.ResolveAgentConfig(townRoot, rigPath)
 		}
 		agentEnv = runtimeConfig.Env
-		envMap["GT_ROLE"] = gtRole
-		envMap["BD_ACTOR"] = gtRole
-		envMap["GIT_AUTHOR_NAME"] = gtRole
+		exports = append(exports, "GT_ROLE="+gtRole)
+		exports = append(exports, "BD_ACTOR="+gtRole)
+		exports = append(exports, "GIT_AUTHOR_NAME="+gtRole)
 		if runtimeConfig.Session != nil && runtimeConfig.Session.SessionIDEnv != "" {
-			envMap["GT_SESSION_ID_ENV"] = runtimeConfig.Session.SessionIDEnv
+			exports = append(exports, "GT_SESSION_ID_ENV="+runtimeConfig.Session.SessionIDEnv)
 		}
 	}
 
 	// Propagate GT_ROOT so subsequent handoffs can use it as fallback
 	// when cwd-based detection fails (broken state recovery)
-	envMap["GT_ROOT"] = townRoot
+	exports = append(exports, "GT_ROOT="+townRoot)
 
-	// Preserve GT_AGENT across handoff so agent override persists
-	if currentAgent != "" {
-		envMap["GT_AGENT"] = currentAgent
+	// Preserve GT_AGENT across handoff so agent override persists.
+	// When role_agents config is authoritative (isRoleSpecific), export the
+	// config-resolved agent name so GT_AGENT stays in sync with the actual model.
+	if simpleRole != "" {
+		if configAgent, isRoleSpecific := config.ResolveRoleAgentName(simpleRole, townRoot, rigPath); isRoleSpecific {
+			exports = append(exports, "GT_AGENT="+configAgent)
+		} else if currentAgent != "" {
+			exports = append(exports, "GT_AGENT="+currentAgent)
+		}
+	} else if currentAgent != "" {
+		exports = append(exports, "GT_AGENT="+currentAgent)
 	}
 
 	// Preserve GT_PROCESS_NAMES across handoff for accurate liveness detection.
@@ -954,16 +938,19 @@ func buildRestartCommandWithOpts(sessionName string, opts buildRestartCommandOpt
 	// "codex" running "opencode") would revert to GT_AGENT-based lookup after
 	// handoff, causing false liveness failures.
 	if processNames := os.Getenv("GT_PROCESS_NAMES"); processNames != "" {
-		envMap["GT_PROCESS_NAMES"] = processNames
+		// Preserve existing process names from environment
+		exports = append(exports, "GT_PROCESS_NAMES="+processNames)
 	} else if currentAgent != "" {
+		// First boot or missing GT_PROCESS_NAMES — compute from agent config
 		resolved := config.ResolveProcessNames(currentAgent, "")
-		envMap["GT_PROCESS_NAMES"] = strings.Join(resolved, ",")
+		exports = append(exports, "GT_PROCESS_NAMES="+strings.Join(resolved, ","))
 	}
 
 	// Add Claude-related env vars from current environment
 	for _, name := range claudeEnvVars {
 		if val := os.Getenv(name); val != "" {
-			envMap[name] = val
+			// Shell-escape the value in case it contains special chars
+			exports = append(exports, fmt.Sprintf("%s=%q", name, val))
 		}
 	}
 
@@ -973,37 +960,38 @@ func buildRestartCommandWithOpts(sessionName string, opts buildRestartCommandOpt
 	// This mirrors the first-spawn path in config/loader.go where preset.Env is
 	// merged into RuntimeConfig.Env. Existing keys (GT_ROLE, BD_ACTOR, etc.) take
 	// precedence over agent-defined keys.
+	exportedKeys := make(map[string]bool)
+	for _, e := range exports {
+		if idx := strings.Index(e, "="); idx > 0 {
+			exportedKeys[e[:idx]] = true
+		}
+	}
 	for k, v := range agentEnv {
-		if _, exists := envMap[k]; !exists {
-			envMap[k] = v
+		if k == "NODE_OPTIONS" {
+			continue // handled separately below
+		}
+		if !exportedKeys[k] {
+			exports = append(exports, fmt.Sprintf("%s=%q", k, v))
 		}
 	}
 
-	// Special case: clear NODE_OPTIONS when not explicitly set in the agent
-	// config, to prevent debugger flags (e.g., --inspect from VSCode) from
-	// being inherited through tmux into Claude's Node.js runtime.
-	// Note: agentEnv is intentionally nil when gtRole is empty (non-role
-	// handoffs), which causes the nil map lookup to return ("", false) —
-	// clearing NODE_OPTIONS.
-	if _, hasNodeOpts := agentEnv["NODE_OPTIONS"]; !hasNodeOpts {
-		envMap["NODE_OPTIONS"] = ""
-	}
-
-	// Build the full command with OS-appropriate env prefix
-	var cdPrefix string
-	if runtime.GOOS == "windows" {
-		cdPrefix = fmt.Sprintf("cd %s; ", workDir)
+	// Clear NODE_OPTIONS to prevent debugger flags (e.g., --inspect from VSCode)
+	// from being inherited through tmux into Claude's Node.js runtime.
+	// When the agent's runtime config explicitly sets NODE_OPTIONS (e.g., for
+	// memory tuning via --max-old-space-size in rc.toml [agents.X.env]), export
+	// that value so it survives handoff. Otherwise clear it.
+	// Note: agentEnv is intentionally nil when gtRole is empty (non-role handoffs),
+	// which causes the nil map lookup to return ("", false) — clearing NODE_OPTIONS.
+	if val, hasNodeOpts := agentEnv["NODE_OPTIONS"]; hasNodeOpts {
+		exports = append(exports, fmt.Sprintf("NODE_OPTIONS=%q", val))
 	} else {
-		cdPrefix = fmt.Sprintf("cd %s && ", workDir)
+		exports = append(exports, "NODE_OPTIONS=")
 	}
 
-	var execPrefix string
-	if runtime.GOOS != "windows" {
-		execPrefix = "exec "
+	if len(exports) > 0 {
+		return fmt.Sprintf("cd %s && export %s && exec %s", workDir, strings.Join(exports, " "), runtimeCmd), nil
 	}
-
-	envCmd := config.PrependEnv(execPrefix+runtimeCmd, envMap)
-	return cdPrefix + envCmd, nil
+	return fmt.Sprintf("cd %s && exec %s", workDir, runtimeCmd), nil
 }
 
 // updateSessionEnvForHandoff updates the tmux session environment with the
@@ -1046,7 +1034,7 @@ func updateSessionEnvForHandoff(t *tmux.Tmux, sessionName, agentOverride string)
 			}
 			rc, _, err := config.ResolveAgentConfigWithOverride(townRoot, rigPath, currentAgent)
 			if err == nil {
-				resolved := config.ResolveProcessNames(currentAgent, rc.Command, rc.Args...)
+				resolved := config.ResolveProcessNames(currentAgent, rc.Command)
 				processNames = strings.Join(resolved, ",")
 			}
 		}
@@ -1114,8 +1102,6 @@ func sessionWorkDir(sessionName, townRoot string) (string, error) {
 			return fmt.Sprintf("%s/%s/refinery/rig", townRoot, identity.Rig), nil
 		case session.RolePolecat:
 			return fmt.Sprintf("%s/%s/polecats/%s", townRoot, identity.Rig, identity.Name), nil
-		case session.RoleDog:
-			return fmt.Sprintf("%s/deacon/dogs/%s", townRoot, identity.Name), nil
 		default:
 			return "", fmt.Errorf("unknown session type: %s (role %s, try specifying role explicitly)", sessionName, identity.Role)
 		}
@@ -1437,18 +1423,9 @@ func looksLikeBeadID(s string) bool {
 	}
 
 	// Check rest starts with alphanumeric and contains only alphanumeric, dots, hyphens
-	for i, c := range rest {
-		if i == 0 {
-			// First char must be alphanumeric
-			if !((c >= 'a' && c <= 'z') || (c >= '0' && c <= '9')) {
-				return false
-			}
-		} else {
-			// Subsequent chars: alphanumeric, dots, hyphens
-			if !((c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '.' || c == '-') {
-				return false
-			}
-		}
+	first := rest[0]
+	if !((first >= 'a' && first <= 'z') || (first >= '0' && first <= '9')) {
+		return false
 	}
 
 	return true
@@ -1756,15 +1733,4 @@ func recordHandoffTime() {
 	_ = os.MkdirAll(runtimeDir, 0755)
 	tsPath := filepath.Join(runtimeDir, constants.FileLastHandoffTS)
 	_ = os.WriteFile(tsPath, []byte(fmt.Sprintf("%d", time.Now().Unix())), 0644)
-}
-
-// isPatrolRole returns true if the role runs a patrol loop (refinery, witness, deacon).
-// Patrol roles must re-enter their patrol molecule on handoff rather than
-// "waiting for instructions," which leads to idle CPU burn.
-func isPatrolRole(role string) bool {
-	switch role {
-	case "refinery", "witness", "deacon":
-		return true
-	}
-	return false
 }
