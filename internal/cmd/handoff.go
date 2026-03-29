@@ -1000,15 +1000,36 @@ func buildRestartCommandWithOpts(sessionName string, opts buildRestartCommandOpt
 // from shell exports in the pane. Without this, post-handoff liveness checks
 // would use stale values from the previous agent.
 func updateSessionEnvForHandoff(t *tmux.Tmux, sessionName, agentOverride string) {
-	// Resolve current agent using the same priority as buildRestartCommandWithAgent
+	// Resolve current agent with same priority as buildRestartCommandWithOpts:
+	// 1. Explicit override (passed by caller)
+	// 2. role_agents config (authoritative for roles with a mapping)
+	// 3. GT_AGENT env var (manual override / fallback)
 	var currentAgent string
 	if agentOverride != "" {
 		currentAgent = agentOverride
 	} else {
-		currentAgent = os.Getenv("GT_AGENT")
+		// Check role_agents config first — it's authoritative over stale GT_AGENT
+		identity, parseErr := session.ParseSessionName(sessionName)
+		if parseErr == nil {
+			simpleRole := config.ExtractSimpleRole(identity.GTRole())
+			if simpleRole != "" {
+				townRoot := detectTownRootFromCwd()
+				rigPath := ""
+				if identity.Rig != "" && townRoot != "" {
+					rigPath = filepath.Join(townRoot, identity.Rig)
+				}
+				if configAgent, isRoleSpecific := config.ResolveRoleAgentName(simpleRole, townRoot, rigPath); isRoleSpecific {
+					currentAgent = configAgent
+				}
+			}
+		}
+		// Fall back to GT_AGENT if no role-specific config
 		if currentAgent == "" {
-			if val, err := t.GetEnvironment(sessionName, "GT_AGENT"); err == nil && val != "" {
-				currentAgent = val
+			currentAgent = os.Getenv("GT_AGENT")
+			if currentAgent == "" {
+				if val, err := t.GetEnvironment(sessionName, "GT_AGENT"); err == nil && val != "" {
+					currentAgent = val
+				}
 			}
 		}
 	}
