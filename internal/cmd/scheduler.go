@@ -481,7 +481,10 @@ func beadsSearchDirs(townRoot string) []string {
 	return dirs
 }
 
-// countActivePolecats counts all running polecats across all rigs in the town.
+// countActivePolecats counts all running polecat tmux sessions across all rigs.
+// This includes idle polecats (completed work, no hook bead) which still occupy
+// tmux sessions under the persistent polecat model. For capacity gating, use
+// countWorkingPolecats which excludes idle sessions.
 func countActivePolecats() int {
 	listCmd := tmux.BuildCommand("list-sessions", "-F", "#{session_name}")
 	out, err := listCmd.Output()
@@ -501,6 +504,54 @@ func countActivePolecats() int {
 		if identity.Role == session.RolePolecat {
 			count++
 		}
+	}
+	return count
+}
+
+// countWorkingPolecats counts polecat sessions that are actively working.
+// A polecat is "working" if its agent bead has a non-null hook_bead.
+// Idle polecats (completed work, hook_bead=null) don't count toward capacity
+// since they're available for re-sling under the persistent polecat model.
+func countWorkingPolecats() int {
+	townRoot, err := workspace.FindFromCwd()
+	if err != nil {
+		return countActivePolecats() // Fallback to total count
+	}
+
+	listCmd := tmux.BuildCommand("list-sessions", "-F", "#{session_name}")
+	out, err := listCmd.Output()
+	if err != nil {
+		return 0
+	}
+
+	bd := beads.New(townRoot)
+	count := 0
+	for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+		if line == "" {
+			continue
+		}
+		identity, err := session.ParseSessionName(line)
+		if err != nil || identity.Role != session.RolePolecat {
+			continue
+		}
+
+		// Check if this polecat has hooked work
+		prefix := identity.Prefix
+		if prefix == "" {
+			prefix = session.PrefixFor(identity.Rig)
+		}
+		agentBeadID := beads.PolecatBeadIDWithPrefix(prefix, identity.Rig, identity.Name)
+		issue, err := bd.Show(agentBeadID)
+		if err != nil || issue == nil {
+			count++ // Can't verify — count conservatively
+			continue
+		}
+
+		fields := beads.ParseAgentFields(issue.Description)
+		if fields.HookBead == "" {
+			continue // Idle — don't count toward cap
+		}
+		count++
 	}
 	return count
 }

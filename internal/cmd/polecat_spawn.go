@@ -99,16 +99,18 @@ func SpawnPolecatForSling(rigName string, opts SlingSpawnOptions) (*SpawnedPolec
 	}
 
 	// Polecat count cap (clown show #22): refuse to spawn if there are already
-	// too many active polecats. This is a last-resort safety net for the direct-dispatch
+	// too many working polecats. This is a last-resort safety net for the direct-dispatch
 	// path. For configurable capacity gating, use scheduler.max_polecats in town settings
 	// (see internal/scheduler/capacity/).
+	// Uses countWorkingPolecats to exclude idle polecats (completed work, no hook bead)
+	// that are available for re-sling under the persistent polecat model.
 	const defaultMaxActivePolecats = 25
-	activeCount := countActivePolecats()
-	if activeCount >= defaultMaxActivePolecats {
-		return nil, fmt.Errorf("polecat cap reached: %d active polecats (max %d). "+
+	workingCount := countWorkingPolecats()
+	if workingCount >= defaultMaxActivePolecats {
+		return nil, fmt.Errorf("polecat cap reached: %d working polecats (max %d). "+
 			"This is a safety limit to prevent spawn storms. "+
 			"Investigate why polecats are accumulating before spawning more",
-			activeCount, defaultMaxActivePolecats)
+			workingCount, defaultMaxActivePolecats)
 	}
 
 	// Per-bead respawn circuit breaker (clown show #22):

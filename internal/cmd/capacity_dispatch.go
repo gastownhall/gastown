@@ -98,7 +98,7 @@ func dispatchScheduledWork(townRoot, actor string, batchOverride int, dryRun boo
 	polecatNames := make(map[string]string)
 	cycle := &capacity.DispatchCycle{
 		AvailableCapacity: func() (int, error) {
-			active := countActivePolecats()
+			active := countWorkingPolecats()
 			cap := maxPolecats - active
 			if cap <= 0 {
 				return 0, nil // No free slots — PlanDispatch treats <= 0 as no capacity
