@@ -230,8 +230,12 @@ Examples:
 	RunE: runMailArchive,
 }
 
+var (
+	mailMarkReadAll bool
+)
+
 var mailMarkReadCmd = &cobra.Command{
-	Use:     "mark-read <message-id> [message-id...]",
+	Use:     "mark-read [message-id...]",
 	Aliases: []string{"ack"},
 	Short:   "Mark messages as read without archiving",
 	Long: `Mark one or more messages as read without removing them from inbox.
@@ -239,13 +243,12 @@ var mailMarkReadCmd = &cobra.Command{
 This adds a 'read' label to the message, which is reflected in the inbox display.
 The message remains in your inbox (unlike archive which closes/removes it).
 
-Use case: You've read a message but want to keep it visible in your inbox
-for reference or follow-up.
+Use --all to mark all unread messages as read (silences hook re-notifications).
 
 Examples:
   gt mail mark-read hq-abc123
-  gt mail mark-read hq-abc123 hq-def456`,
-	Args: cobra.MinimumNArgs(1),
+  gt mail mark-read hq-abc123 hq-def456
+  gt mail mark-read --all`,
 	RunE: runMailMarkRead,
 }
 
@@ -524,6 +527,7 @@ func init() {
 	mailCmd.AddCommand(mailPeekCmd)
 	mailCmd.AddCommand(mailDeleteCmd)
 	mailCmd.AddCommand(mailArchiveCmd)
+	mailMarkReadCmd.Flags().BoolVar(&mailMarkReadAll, "all", false, "Mark all unread messages as read")
 	mailCmd.AddCommand(mailMarkReadCmd)
 	mailCmd.AddCommand(mailMarkUnreadCmd)
 	mailCmd.AddCommand(mailCheckCmd)

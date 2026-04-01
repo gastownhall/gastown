@@ -461,6 +461,35 @@ func runMailMarkRead(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
+	// --all: mark all unread messages as read
+	if mailMarkReadAll {
+		if len(args) > 0 {
+			return fmt.Errorf("--all cannot be combined with explicit message IDs")
+		}
+		messages, err := mailbox.ListUnread()
+		if err != nil {
+			return fmt.Errorf("listing unread messages: %w", err)
+		}
+		if len(messages) == 0 {
+			fmt.Printf("%s No unread messages\n", style.Bold.Render("✓"))
+			return nil
+		}
+		marked := 0
+		for _, msg := range messages {
+			if err := mailbox.MarkReadOnly(msg.ID); err != nil {
+				style.PrintWarning("could not mark %s as read: %v", msg.ID, err)
+			} else {
+				marked++
+			}
+		}
+		fmt.Printf("%s Marked %d messages as read\n", style.Bold.Render("✓"), marked)
+		return nil
+	}
+
+	if len(args) == 0 {
+		return fmt.Errorf("message ID required (or use --all to mark all as read)")
+	}
+
 	// Mark all specified messages as read
 	marked := 0
 	var errors []string
