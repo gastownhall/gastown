@@ -1250,7 +1250,7 @@ func detectZombieLiveSession(bd *BdCli, workDir, townRoot, rigName, polecatName,
 	// Agent alive but hooked bead closed — occupying slot without work (gt-h1l6i).
 	// gt-dsgp: Restart instead of nuke — the fresh session will pick up its hook
 	// and run gt done properly, or go idle waiting for new work.
-	if snapHook != "" && getBeadStatus(bd, workDir, snapHook) == "closed" {
+	if hookSt, hookOk := getBeadStatus(bd, workDir, snapHook); snapHook != "" && hookOk && hookSt == "closed" {
 		zombie := ZombieResult{
 			PolecatName:    polecatName,
 			AgentState:     snapState,
@@ -1309,7 +1309,8 @@ func detectZombieDeadSession(bd *BdCli, workDir, townRoot, rigName, polecatName,
 
 		// If bead is already closed, the polecat completed successfully.
 		// The dead session is expected (gt done kills it). Leave it alone. (gt-sy8)
-		beadAlreadyClosed := snapHook != "" && getBeadStatus(bd, workDir, snapHook) == "closed"
+		hookSt, hookFound := getBeadStatus(bd, workDir, snapHook)
+		beadAlreadyClosed := snapHook != "" && hookFound && (hookSt == "closed" || hookSt == "")
 		if beadAlreadyClosed {
 			// gt-dsgp: Polecat completed its work. Don't nuke, don't restart.
 			// The sandbox is preserved for reuse by future slings.
@@ -1373,12 +1374,14 @@ func detectZombieDeadSession(bd *BdCli, workDir, townRoot, rigName, polecatName,
 	// work successfully. The dead session is expected (gt done kills it).
 	// Don't flag as zombie or trigger re-dispatch. (gt-sy8)
 	// gt-dsgp: Don't nuke — sandbox preserved for reuse.
-	// gt-qbh: Treat missing beads (empty status) as closed. Wisp beads get
-	// reaped after completion, so getBeadStatus returns "" for reaped wisps.
-	// A missing bead is not evidence of a crash.
+	// gt-qbh: Treat missing beads (empty status from successful lookup) as closed.
+	// Wisp beads get reaped after completion, so getBeadStatus returns ("", true)
+	// for reaped wisps. A missing bead is not evidence of a crash.
+	// But a FAILED lookup ("", false) — e.g., cross-rig routing error — must
+	// NOT be treated as closed. Default to restart (safe). (hq-wisp-n530)
 	if snapHook != "" {
-		hookStatus := getBeadStatus(bd, workDir, snapHook)
-		if hookStatus == "closed" || hookStatus == "" {
+		hookStatus, hookFound := getBeadStatus(bd, workDir, snapHook)
+		if hookFound && (hookStatus == "closed" || hookStatus == "") {
 			return ZombieResult{}, false
 		}
 	}
@@ -2006,22 +2009,25 @@ func getAgentBeadAge(bd *BdCli, workDir, agentBeadID string) time.Duration {
 }
 
 // getBeadStatus returns the status of a bead (e.g., "open", "closed", "hooked").
-// Returns empty string if the bead doesn't exist or can't be queried.
-func getBeadStatus(bd *BdCli, workDir, beadID string) string {
+// Returns the status string and true if the lookup succeeded, or ("", false) if
+// the bead couldn't be queried (network error, cross-rig routing failure, etc.).
+// Callers must check the bool to distinguish "bead not found/reaped" from "lookup error."
+func getBeadStatus(bd *BdCli, workDir, beadID string) (string, bool) {
 	if beadID == "" {
-		return ""
+		return "", false
 	}
 	output, err := bd.Exec(workDir, "show", beadID, "--json")
 	if err != nil || output == "" {
-		return ""
+		return "", false
 	}
 	var issues []struct {
 		Status string `json:"status"`
 	}
 	if err := json.Unmarshal([]byte(output), &issues); err != nil || len(issues) == 0 {
-		return ""
+		// Valid response but no results — bead was reaped/deleted.
+		return "", true
 	}
-	return issues[0].Status
+	return issues[0].Status, true
 }
 
 // resetAbandonedBead resets a dead polecat's hooked bead so it can be re-dispatched.
@@ -2039,8 +2045,8 @@ func resetAbandonedBead(bd *BdCli, workDir, rigName, hookBead, polecatName strin
 	if hookBead == "" {
 		return false
 	}
-	status := getBeadStatus(bd, workDir, hookBead)
-	if status != "hooked" && status != "in_progress" {
+	status, ok := getBeadStatus(bd, workDir, hookBead)
+	if !ok || (status != "hooked" && status != "in_progress") {
 		return false
 	}
 
@@ -2400,9 +2406,10 @@ func DetectOrphanedMolecules(bd *BdCli, workDir, rigName string, router *mail.Ro
 			continue // No molecule attached
 		}
 
-		// Check molecule status — skip if already closed
-		molStatus := getBeadStatus(bd, workDir, attachedMol)
-		if molStatus == "closed" || molStatus == "" {
+		// Check molecule status — skip if already closed or reaped.
+		// On lookup failure, skip (safe — don't close what we can't verify).
+		molStatus, molFound := getBeadStatus(bd, workDir, attachedMol)
+		if !molFound || molStatus == "closed" || molStatus == "" {
 			continue
 		}
 

@@ -747,19 +747,19 @@ func TestExtractPolecatFromJSON_InvalidInputs(t *testing.T) {
 func TestGetBeadStatus_NoBdAvailable(t *testing.T) {
 	t.Parallel()
 	// When bd is not available (test environment), getBeadStatus
-	// should return empty string without panicking
-	result := getBeadStatus(DefaultBdCli(), "/nonexistent", "gt-abc123")
-	if result != "" {
-		t.Errorf("getBeadStatus = %q, want empty when bd unavailable", result)
+	// should return ("", false) without panicking
+	result, ok := getBeadStatus(DefaultBdCli(), "/nonexistent", "gt-abc123")
+	if result != "" || ok {
+		t.Errorf("getBeadStatus = (%q, %v), want (\"\", false) when bd unavailable", result, ok)
 	}
 }
 
 func TestGetBeadStatus_EmptyBeadID(t *testing.T) {
 	t.Parallel()
-	// Empty bead ID should return empty string immediately
-	result := getBeadStatus(DefaultBdCli(), "/nonexistent", "")
-	if result != "" {
-		t.Errorf("getBeadStatus(\"\") = %q, want empty", result)
+	// Empty bead ID should return ("", false) immediately
+	result, ok := getBeadStatus(DefaultBdCli(), "/nonexistent", "")
+	if result != "" || ok {
+		t.Errorf("getBeadStatus(\"\") = (%q, %v), want (\"\", false)", result, ok)
 	}
 }
 
