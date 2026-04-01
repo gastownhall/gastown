@@ -112,6 +112,47 @@ type DoltServerStatus struct {
 	Error     string    `json:"error,omitempty"`
 }
 
+// doltAlertCooldown is the minimum interval between alerts of the same type.
+// Alerts within the cooldown window are suppressed to prevent wisp storms.
+const doltAlertCooldown = 5 * time.Minute
+
+// doltAlertTracker deduplicates Dolt alerts using fingerprint-based cooldowns.
+// Each alert type has a fingerprint; if the same fingerprint fires within the
+// cooldown window, the alert is suppressed.
+type doltAlertTracker struct {
+	mu       sync.Mutex
+	sent     map[string]time.Time // fingerprint → last sent time
+	cooldown time.Duration
+}
+
+func newDoltAlertTracker(cooldown time.Duration) *doltAlertTracker {
+	return &doltAlertTracker{
+		sent:     make(map[string]time.Time),
+		cooldown: cooldown,
+	}
+}
+
+// shouldSend returns true if the alert fingerprint has not been sent within
+// the cooldown window. If true, it records the current time for the fingerprint.
+func (t *doltAlertTracker) shouldSend(fingerprint string) bool {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if last, ok := t.sent[fingerprint]; ok {
+		if time.Since(last) < t.cooldown {
+			return false
+		}
+	}
+	t.sent[fingerprint] = time.Now()
+	return true
+}
+
+// reset clears all recorded alert times, allowing fresh alerts after recovery.
+func (t *doltAlertTracker) reset() {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.sent = make(map[string]time.Time)
+}
+
 // DoltServerManager manages the Dolt SQL server lifecycle.
 type DoltServerManager struct {
 	config   *DoltServerConfig
@@ -129,6 +170,9 @@ type DoltServerManager struct {
 	lastHealthyTime time.Time     // Last time the server was confirmed healthy
 	escalated       bool          // Whether we've already escalated (avoid spamming)
 	restarting      bool          // Whether a restart is in progress (guards against concurrent restarts)
+
+	// Alert deduplication — prevents wisp storms during crash loops
+	alertTracker *doltAlertTracker
 
 	// Identity verification state
 	lastIdentityCheck time.Time // Last time we ran the database identity check
@@ -165,9 +209,10 @@ func NewDoltServerManager(townRoot string, config *DoltServerConfig, logger func
 		config = DefaultDoltServerConfig(townRoot)
 	}
 	return &DoltServerManager{
-		config:   config,
-		townRoot: townRoot,
-		logger:   logger,
+		config:       config,
+		townRoot:     townRoot,
+		logger:       logger,
+		alertTracker: newDoltAlertTracker(doltAlertCooldown),
 	}
 }
 
@@ -565,6 +610,9 @@ func (m *DoltServerManager) maybeResetBackoff() {
 			m.currentDelay = 0
 			m.restartTimes = nil
 			m.escalated = false
+			if m.alertTracker != nil {
+				m.alertTracker.reset()
+			}
 		}
 		// Reset the healthy timestamp after a successful reset so the next
 		// reset interval is measured from now, not from the original detection.
@@ -606,7 +654,7 @@ Action needed: Investigate and fix the root cause, then restart the daemon or th
 	go func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
-		cmd := exec.CommandContext(ctx, "gt", "mail", "send", "mayor/", "-s", subject, "-m", body) //nolint:gosec // G204: args are constructed internally
+		cmd := exec.CommandContext(ctx, "gt", "mail", "send", "mayor/", "-s", subject, "-m", body, "--wisp-type", "escalation") //nolint:gosec // G204: args are constructed internally
 		setSysProcAttr(cmd)
 		cmd.Dir = townRoot
 		cmd.Env = os.Environ()
@@ -616,60 +664,25 @@ Action needed: Investigate and fix the root cause, then restart the daemon or th
 		} else {
 			logger("Sent escalation mail to mayor about Dolt server crash-loop")
 		}
-
-		// Also notify all witnesses so they can react to degraded Dolt state
-		sendDoltAlertToWitnesses(townRoot, subject, body, logger)
 	}()
 }
 
-// sendCrashAlert sends a mail to the mayor when the Dolt server is found dead.
+// sendCrashAlert nudges the mayor when the Dolt server is found dead.
 // This is for single crash detection — distinct from crash-loop escalation.
+// Uses nudge (not mail) to avoid creating wisps, and applies a cooldown
+// to prevent alert storms during crash loops.
 // Runs asynchronously to avoid blocking.
 func (m *DoltServerManager) sendCrashAlert(deadPID int) {
 	if m.crashAlertFn != nil {
 		m.crashAlertFn(deadPID)
 		return
 	}
-	subject := "ALERT: Dolt server crashed"
-	body := fmt.Sprintf(`The Dolt server (PID %d) was found dead. The daemon is restarting it.
-
-Data dir: %s
-Log file: %s
-Host: %s:%d
-
-Check the log file for crash details. If crashes recur, the daemon will escalate after %d restarts in %v.`,
-		deadPID,
-		m.config.DataDir, m.config.LogFile,
-		m.config.Host, m.config.Port,
-		m.config.MaxRestartsInWindow, m.config.RestartWindow)
-
-	townRoot := m.townRoot
-	logger := m.logger
-
-	go func() {
-		sendDoltAlertMail(townRoot, "mayor/", subject, body, logger)
-		sendDoltAlertToWitnesses(townRoot, subject, body, logger)
-	}()
-}
-
-// sendUnhealthyAlert sends a mail to the mayor when the Dolt server fails health checks.
-// The server is running but not responding to queries. Runs asynchronously.
-func (m *DoltServerManager) sendUnhealthyAlert(healthErr error) {
-	if m.unhealthyAlertFn != nil {
-		m.unhealthyAlertFn(healthErr)
+	if !m.alertTracker.shouldSend("dolt-crash") {
+		m.logger("Dolt crash alert suppressed (cooldown active)")
 		return
 	}
-	subject := "ALERT: Dolt server unhealthy"
-	body := fmt.Sprintf(`The Dolt server is running but failing health checks. The daemon is restarting it.
-
-Health check error: %v
-
-Data dir: %s
-Log file: %s
-Host: %s:%d
-
-This may indicate high load, connection exhaustion, or internal server errors.`,
-		healthErr,
+	message := fmt.Sprintf(`ALERT: Dolt server crashed. PID %d found dead, daemon is restarting. Data dir: %s, Log: %s, Host: %s:%d`,
+		deadPID,
 		m.config.DataDir, m.config.LogFile,
 		m.config.Host, m.config.Port)
 
@@ -677,9 +690,51 @@ This may indicate high load, connection exhaustion, or internal server errors.`,
 	logger := m.logger
 
 	go func() {
-		sendDoltAlertMail(townRoot, "mayor/", subject, body, logger)
-		sendDoltAlertToWitnesses(townRoot, subject, body, logger)
+		sendDoltAlertNudge(townRoot, "mayor/", message, logger)
 	}()
+}
+
+// sendUnhealthyAlert nudges the mayor when the Dolt server fails health checks.
+// The server is running but not responding to queries.
+// Uses nudge (not mail) to avoid creating wisps, and applies a cooldown
+// to prevent alert storms. Witnesses detect degraded state via the
+// DOLT_UNHEALTHY signal file.
+// Runs asynchronously.
+func (m *DoltServerManager) sendUnhealthyAlert(healthErr error) {
+	if m.unhealthyAlertFn != nil {
+		m.unhealthyAlertFn(healthErr)
+		return
+	}
+	if !m.alertTracker.shouldSend("dolt-unhealthy") {
+		m.logger("Dolt unhealthy alert suppressed (cooldown active)")
+		return
+	}
+	message := fmt.Sprintf(`ALERT: Dolt server unhealthy — failing health checks, daemon is restarting. Error: %v. Data dir: %s, Host: %s:%d`,
+		healthErr,
+		m.config.DataDir,
+		m.config.Host, m.config.Port)
+
+	townRoot := m.townRoot
+	logger := m.logger
+
+	go func() {
+		sendDoltAlertNudge(townRoot, "mayor/", message, logger)
+	}()
+}
+
+// sendDoltAlertNudge sends a Dolt alert as a nudge (ephemeral, no wisp created).
+// Used for transient alerts (crash, unhealthy) that don't need to survive session death.
+func sendDoltAlertNudge(townRoot, recipient, message string, logger func(format string, v ...interface{})) {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "gt", "nudge", recipient, message) //nolint:gosec // G204: args are constructed internally
+	setSysProcAttr(cmd)
+	cmd.Dir = townRoot
+	cmd.Env = os.Environ()
+
+	if err := cmd.Run(); err != nil {
+		logger("Warning: failed to nudge %s about Dolt alert: %v", recipient, err)
+	}
 }
 
 // sendDoltAlertMail sends a Dolt alert mail to a specific recipient.
