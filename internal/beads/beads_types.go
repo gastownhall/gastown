@@ -34,17 +34,21 @@ var (
 
 // FindTownRoot walks up from startDir to find the Gas Town root directory.
 // The town root is identified by the presence of mayor/town.json.
+// Returns the outermost town root found, so that rig repos which were
+// originally standalone towns (and still contain mayor/town.json) don't
+// shadow the real town root above them.
 // Returns empty string if not found (reached filesystem root).
 func FindTownRoot(startDir string) string {
 	dir := startDir
+	candidate := ""
 	for {
 		townFile := filepath.Join(dir, "mayor", "town.json")
 		if _, err := os.Stat(townFile); err == nil {
-			return dir
+			candidate = dir
 		}
 		parent := filepath.Dir(dir)
 		if parent == dir {
-			return "" // Reached filesystem root
+			return candidate // Reached filesystem root — return outermost found
 		}
 		dir = parent
 	}

@@ -149,6 +149,21 @@ func TestFindTownRoot(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	// Create a nested rig that was originally a standalone town
+	// (has its own mayor/town.json inside the outer town)
+	rigDir := filepath.Join(tmpDir, "myrig", "mayor", "rig")
+	rigMayorDir := filepath.Join(rigDir, "mayor")
+	if err := os.MkdirAll(rigMayorDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(rigMayorDir, "town.json"), []byte("{}"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	rigBeadsDir := filepath.Join(rigDir, ".beads")
+	if err := os.MkdirAll(rigBeadsDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+
 	tests := []struct {
 		name     string
 		startDir string
@@ -158,6 +173,8 @@ func TestFindTownRoot(t *testing.T) {
 		{"from mayor dir", mayorDir, tmpDir},
 		{"from deep nested dir", deepDir, tmpDir},
 		{"from non-town dir", t.TempDir(), ""},
+		{"nested town prefers outermost", rigBeadsDir, tmpDir},
+		{"nested rig dir prefers outermost", rigDir, tmpDir},
 	}
 
 	for _, tc := range tests {
