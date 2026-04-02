@@ -679,6 +679,10 @@ func overrideDoltEnvFromBeadsDir(env []string, beadsDir string) []string {
 		env = stripEnvPrefixes(env, "BEADS_DOLT_SERVER_HOST=")
 		env = append(env, "BEADS_DOLT_SERVER_HOST="+host)
 	}
+	if dbEnv := DatabaseEnv(beadsDir); dbEnv != "" {
+		env = stripEnvPrefixes(env, "BEADS_DOLT_SERVER_DATABASE=")
+		env = append(env, dbEnv)
+	}
 	return env
 }
 
