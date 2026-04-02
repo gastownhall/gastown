@@ -571,11 +571,8 @@ func executeConvoyFormula(f *formula.Formula, formulaName, targetRig string) err
 			continue
 		}
 
-		// Track the leg with the convoy
-		if err := BdCmd("dep", "add", convoyID, legBeadID, "--type=tracks").
-			WithAutoCommit().
-			Dir(townBeads).
-			Run(); err != nil {
+		// Track the leg with the convoy (raw SQL for cross-database support).
+		if err := bdDepAddRawSQL(townBeads, convoyID, legBeadID, "tracks"); err != nil {
 			fmt.Printf("%s Failed to track leg %s: %v\n",
 				style.Dim.Render("Warning:"), leg.ID, err)
 		}
@@ -613,18 +610,12 @@ func executeConvoyFormula(f *formula.Formula, formulaName, targetRig string) err
 			fmt.Printf("%s Failed to create synthesis bead: %v\n",
 				style.Dim.Render("Warning:"), err)
 		} else {
-			// Track synthesis with convoy
-			_ = BdCmd("dep", "add", convoyID, synthesisBeadID, "--type=tracks").
-				WithAutoCommit().
-				Dir(townBeads).
-				Run()
+			// Track synthesis with convoy (raw SQL for cross-database support).
+			_ = bdDepAddRawSQL(townBeads, convoyID, synthesisBeadID, "tracks")
 
 			// Add dependencies: synthesis depends on all legs
 			for _, legBeadID := range legBeads {
-				_ = BdCmd("dep", "add", synthesisBeadID, legBeadID).
-					WithAutoCommit().
-					Dir(townBeads).
-					Run()
+				_ = bdDepAddRawSQL(townBeads, synthesisBeadID, legBeadID, "blocks")
 			}
 
 			fmt.Printf("  %s Created synthesis: %s\n", style.Dim.Render("★"), synthesisBeadID)

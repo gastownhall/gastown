@@ -1091,6 +1091,11 @@ func restorePinnedBead(townRoot, beadID, assignee string) {
 	}
 }
 
+// slingLockTTL is the maximum age of a sling lock before it's considered stale.
+// If a lock file is older than this, it was likely left by a crashed process and
+// can be safely removed to unblock dispatch.
+const slingLockTTL = 60 * time.Second
+
 func tryAcquireSlingBeadLock(townRoot, beadID string) (func(), error) {
 	lockDir := filepath.Join(townRoot, ".runtime", "locks", "sling")
 	if err := os.MkdirAll(lockDir, 0755); err != nil {
@@ -1104,6 +1109,18 @@ func tryAcquireSlingBeadLock(townRoot, beadID string) (func(), error) {
 		return nil, fmt.Errorf("acquiring sling lock for bead %s: %w", beadID, err)
 	}
 	if !locked {
+		// Check if the lock is stale (older than TTL). Stale locks are left by
+		// crashed processes or Dolt write failures that killed the sling mid-flight.
+		if info, statErr := os.Stat(lockPath); statErr == nil && time.Since(info.ModTime()) > slingLockTTL {
+			os.Remove(lockPath)
+			release, locked, err = lock.FlockTryAcquire(lockPath)
+			if err != nil {
+				return nil, fmt.Errorf("acquiring sling lock for bead %s after stale cleanup: %w", beadID, err)
+			}
+			if locked {
+				return release, nil
+			}
+		}
 		return nil, fmt.Errorf("bead %s is already being slung; retry after the current assignment completes", beadID)
 	}
 

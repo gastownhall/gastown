@@ -1870,10 +1870,10 @@ func TestCreateStagedConvoy_CleanReady(t *testing.T) {
 		t.Errorf("bd.log should contain '--status=staged_ready', got:\n%s", logContent)
 	}
 
-	// Verify bd dep add was called for each slingable bead.
+	// Verify bd sql INSERT was called for each slingable bead (raw SQL path).
 	for _, beadID := range []string{"gt-a", "gt-b", "gt-c"} {
-		if !strings.Contains(logContent, "dep add "+convoyID+" "+beadID) {
-			t.Errorf("bd.log should contain 'dep add %s %s', got:\n%s", convoyID, beadID, logContent)
+		if !strings.Contains(logContent, "sql") || !strings.Contains(logContent, beadID) {
+			t.Errorf("bd.log should contain sql INSERT for %s, got:\n%s", beadID, logContent)
 		}
 	}
 }
@@ -1906,7 +1906,7 @@ func TestCreateStagedConvoy_TracksOnlySlingable(t *testing.T) {
 		t.Fatalf("computeWaves: %v", err)
 	}
 
-	convoyID, err := createStagedConvoy(convoyDAG, waves, "staged_ready", "")
+	_, err = createStagedConvoy(convoyDAG, waves, "staged_ready", "")
 	if err != nil {
 		t.Fatalf("createStagedConvoy: %v", err)
 	}
@@ -1918,18 +1918,18 @@ func TestCreateStagedConvoy_TracksOnlySlingable(t *testing.T) {
 	}
 	logContent := string(logBytes)
 
-	// Slingable beads (tasks and bugs) should be tracked.
+	// Slingable beads (tasks and bugs) should be tracked via sql INSERT.
 	for _, beadID := range []string{"gt-t1", "gt-b1", "gt-t2"} {
-		if !strings.Contains(logContent, "dep add "+convoyID+" "+beadID) {
-			t.Errorf("bd.log should contain 'dep add %s %s' for slingable bead, got:\n%s", convoyID, beadID, logContent)
+		if !strings.Contains(logContent, "sql") || !strings.Contains(logContent, beadID) {
+			t.Errorf("bd.log should contain sql INSERT for slingable bead %s, got:\n%s", beadID, logContent)
 		}
 	}
 
 	// Epics should NOT be tracked.
 	lines := strings.Split(logContent, "\n")
 	for _, line := range lines {
-		if strings.Contains(line, "dep add") && strings.Contains(line, "gt-epic") {
-			t.Errorf("epic gt-epic should NOT be tracked via dep add, but found: %s", line)
+		if strings.Contains(line, "sql") && strings.Contains(line, "gt-epic") {
+			t.Errorf("epic gt-epic should NOT be tracked via sql INSERT, but found: %s", line)
 		}
 	}
 }

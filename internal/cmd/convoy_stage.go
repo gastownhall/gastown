@@ -732,16 +732,10 @@ func createStagedConvoy(dag *ConvoyDAG, waves []Wave, status string, title strin
 		return "", fmt.Errorf("bd update convoy status: %w\noutput: %s", err, out)
 	}
 
-	// Track each slingable bead via bd dep add.
-	// Cross-rig tracking may fail because bd validates both IDs exist in the
-	// same database (beads v0.62 removed cross-rig routing). Non-fatal: the
-	// convoy still works without tracking deps.
+	// Track each slingable bead via raw SQL (cross-database safe).
 	for _, beadID := range slingableIDs {
-		if out, err := BdCmd("dep", "add", convoyID, beadID, "--type=tracks").
-			Dir(townBeads).WithAutoCommit().StripBeadsDir().
-			CombinedOutput(); err != nil {
+		if err := bdDepAddRawSQL(townBeads, convoyID, beadID, "tracks"); err != nil {
 			fmt.Printf("  Warning: could not track %s in convoy: %v\n", beadID, err)
-			_ = out
 		}
 	}
 
@@ -773,15 +767,11 @@ func updateStagedConvoy(existingConvoyID string, dag *ConvoyDAG, waves []Wave, s
 		return fmt.Errorf("reading tracked beads for %s: %w", existingConvoyID, err)
 	}
 
-	// Add new beads not currently tracked.
-	// Cross-rig tracking may fail (bd validates both IDs in same DB). Non-fatal.
+	// Add new beads not currently tracked (raw SQL for cross-database support).
 	for _, id := range desiredIDs {
 		if !currentIDs[id] {
-			if out, err := BdCmd("dep", "add", existingConvoyID, id, "--type=tracks").
-				Dir(townBeads).WithAutoCommit().StripBeadsDir().
-				CombinedOutput(); err != nil {
+			if err := bdDepAddRawSQL(townBeads, existingConvoyID, id, "tracks"); err != nil {
 				fmt.Printf("  Warning: could not track %s in convoy: %v\n", id, err)
-				_ = out
 			}
 		}
 	}
@@ -1104,20 +1094,14 @@ func appendValidationWave(dag *ConvoyDAG, waves []Wave, epicID string) ([]Wave, 
 	}
 
 	// Set the validation bead as a child of the epic.
-	if out, err := BdCmd("dep", "add", epicID, validationID, "--type=parent-child").
-		Dir(townBeads).WithAutoCommit().StripBeadsDir().
-		CombinedOutput(); err != nil {
-		return waves, "", fmt.Errorf("bd dep add parent-child %s %s: %w\noutput: %s", epicID, validationID, err, out)
+	if err := bdDepAddRawSQL(townBeads, epicID, validationID, "parent-child"); err != nil {
+		return waves, "", fmt.Errorf("dep add parent-child %s %s: %w", epicID, validationID, err)
 	}
 
 	// Add blocking edges: every slingable bead blocks the validation bead.
-	// Cross-rig deps may fail (bd validates both IDs in same DB). Non-fatal.
 	for _, beadID := range slingableIDs {
-		if out, err := BdCmd("dep", "add", beadID, validationID, "--type=blocks").
-			Dir(townBeads).WithAutoCommit().StripBeadsDir().
-			CombinedOutput(); err != nil {
+		if err := bdDepAddRawSQL(townBeads, beadID, validationID, "blocks"); err != nil {
 			fmt.Printf("  Warning: could not add blocking dep %s → %s: %v\n", beadID, validationID, err)
-			_ = out
 		}
 	}
 

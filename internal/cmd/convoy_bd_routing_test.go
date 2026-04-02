@@ -247,6 +247,15 @@ case "$1" in
       exit 1
     fi
     ;;
+  sql)
+    # Log the working directory for sql calls (used by bdDepAddRawSQL)
+    echo "$PWD" >> %s
+    if [ "$PWD" != "%s" ]; then
+      echo "sql: expected town root %s, got $PWD" >&2
+      exit 1
+    fi
+    echo '[]'
+    ;;
   init|config)
     exit 0
     ;;
@@ -254,7 +263,7 @@ case "$1" in
     echo '[]'
     ;;
 esac
-`, depLogPath, expectedWD, expectedWD)
+`, depLogPath, expectedWD, expectedWD, depLogPath, expectedWD, expectedWD)
 	writeRoutingBdStub(t, scriptBody)
 
 	// Override the entropy source for deterministic convoy IDs.
