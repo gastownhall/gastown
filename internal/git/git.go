@@ -426,9 +426,11 @@ func (g *Git) Checkout(ref string) error {
 }
 
 // CheckoutNewBranch creates a new branch from startPoint and checks it out.
-// Equivalent to: git checkout -b <branch> <startPoint>
+// Uses --no-track to prevent the new branch from inheriting the upstream
+// tracking config of startPoint (e.g., origin/main). Without this, a bare
+// "git push" from the new branch pushes to main, bypassing the merge queue.
 func (g *Git) CheckoutNewBranch(branch, startPoint string) error {
-	_, err := g.run("checkout", "-b", branch, startPoint)
+	_, err := g.run("checkout", "-b", branch, "--no-track", startPoint)
 	return err
 }
 
