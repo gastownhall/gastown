@@ -4,9 +4,11 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/spf13/cobra"
+	"github.com/steveyegge/gastown/internal/constants"
 	"github.com/steveyegge/gastown/internal/estop"
 	"github.com/steveyegge/gastown/internal/mail"
 	"github.com/steveyegge/gastown/internal/nudge"
@@ -89,22 +91,28 @@ func runMailCheck(cmd *cobra.Command, args []string) error {
 			}
 		}
 
+		sessionName := tmux.CurrentSessionName()
+
 		if unread > 0 {
 			messages, listErr := mailbox.ListUnread()
 			if listErr != nil {
 				fmt.Fprintf(os.Stderr, "gt mail check: could not list unread for %s: %v\n", address, listErr)
 				return nil
 			}
-			fmt.Print(formatInjectOutput(messages))
-			// Ack after output so message is delivered before being marked acked.
-			if ackErr := mailbox.AcknowledgeDeliveries(address, messages); ackErr != nil {
-				fmt.Fprintf(os.Stderr, "gt mail check: delivery ack update failed for %s: %v\n", address, ackErr)
+			// Filter out messages already injected this session to avoid
+			// re-notifying the agent about the same unread mail every turn.
+			messages = filterAlreadyInjected(workDir, sessionName, messages)
+			if len(messages) > 0 {
+				fmt.Print(formatInjectOutput(messages))
+				// Ack after output so message is delivered before being marked acked.
+				if ackErr := mailbox.AcknowledgeDeliveries(address, messages); ackErr != nil {
+					fmt.Fprintf(os.Stderr, "gt mail check: delivery ack update failed for %s: %v\n", address, ackErr)
+				}
+				recordInjected(workDir, sessionName, messages)
 			}
 		}
 
 		// Also drain queued nudges (from --mode=queue or --mode=wait-idle fallback).
-		// The nudge queue is per-session; detect our session name.
-		sessionName := tmux.CurrentSessionName()
 		if sessionName != "" {
 			queuedNudges, drainErr := nudge.Drain(workDir, sessionName)
 			if drainErr != nil {
@@ -190,4 +198,57 @@ func formatInjectOutput(messages []*mail.Message) string {
 	}
 
 	return b.String()
+}
+
+// injectedFile returns the path to the per-session file tracking which mail IDs
+// have already been injected. Stored in .runtime/mail_injected/<session>.
+func injectedFile(townRoot, session string) string {
+	safe := strings.ReplaceAll(session, "/", "_")
+	return filepath.Join(townRoot, constants.DirRuntime, "mail_injected", safe)
+}
+
+// filterAlreadyInjected removes messages that were already injected in this
+// session, so agents aren't re-notified about the same unread mail every turn.
+func filterAlreadyInjected(townRoot, session string, messages []*mail.Message) []*mail.Message {
+	if session == "" {
+		return messages
+	}
+	data, err := os.ReadFile(injectedFile(townRoot, session))
+	if err != nil {
+		return messages
+	}
+	seen := make(map[string]bool)
+	for _, line := range strings.Split(string(data), "\n") {
+		if id := strings.TrimSpace(line); id != "" {
+			seen[id] = true
+		}
+	}
+	var fresh []*mail.Message
+	for _, msg := range messages {
+		if !seen[msg.ID] {
+			fresh = append(fresh, msg)
+		}
+	}
+	return fresh
+}
+
+// recordInjected appends the given message IDs to the session's injected file.
+func recordInjected(townRoot, session string, messages []*mail.Message) {
+	if session == "" || len(messages) == 0 {
+		return
+	}
+	path := injectedFile(townRoot, session)
+	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+		return
+	}
+	var ids []string
+	for _, msg := range messages {
+		ids = append(ids, msg.ID)
+	}
+	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	if err != nil {
+		return
+	}
+	defer f.Close()
+	f.WriteString(strings.Join(ids, "\n") + "\n")
 }
