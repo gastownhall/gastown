@@ -1,11 +1,15 @@
 package cmd
 
 import (
+	"bytes"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
+	"time"
 
 	"github.com/spf13/cobra"
 	"github.com/steveyegge/gastown/internal/config"
@@ -13,6 +17,11 @@ import (
 	"github.com/steveyegge/gastown/internal/session"
 	"github.com/steveyegge/gastown/internal/tmux"
 	"github.com/steveyegge/gastown/internal/workspace"
+)
+
+const (
+	statusLineCacheTTL = 15 * time.Second
+	statusLineCacheDir = "/tmp/gt"
 )
 
 var (
@@ -34,6 +43,56 @@ to specify which tmux session to query.`,
 func init() {
 	rootCmd.AddCommand(statusLineCmd)
 	statusLineCmd.Flags().StringVar(&statusLineSession, "session", "", "Tmux session name")
+}
+
+func statusLineCachePath(sess string) string {
+	safe := strings.NewReplacer("/", "_", " ", "_", ":", "_").Replace(sess)
+	return filepath.Join(statusLineCacheDir, "sl-"+safe+".cache")
+}
+
+func readStatusLineCache(sess string) (string, bool) {
+	data, err := os.ReadFile(statusLineCachePath(sess))
+	if err != nil {
+		return "", false
+	}
+	parts := strings.SplitN(string(data), "\n", 2)
+	if len(parts) < 2 {
+		return "", false
+	}
+	ts, err := strconv.ParseInt(parts[0], 10, 64)
+	if err != nil {
+		return "", false
+	}
+	if time.Now().Unix()-ts >= int64(statusLineCacheTTL.Seconds()) {
+		return "", false
+	}
+	return parts[1], true
+}
+
+func writeStatusLineCache(sess, output string) {
+	if err := os.MkdirAll(statusLineCacheDir, 0o755); err != nil {
+		return
+	}
+	content := fmt.Sprintf("%d\n%s", time.Now().Unix(), output)
+	_ = os.WriteFile(statusLineCachePath(sess), []byte(content), 0o644)
+}
+
+// captureStatusLineOutput runs fn and captures whatever it writes to os.Stdout.
+// If pipe creation fails, fn runs normally (no caching) and an empty string is returned.
+func captureStatusLineOutput(fn func() error) (string, error) {
+	r, w, err := os.Pipe()
+	if err != nil {
+		return "", fn()
+	}
+	old := os.Stdout
+	os.Stdout = w
+	runErr := fn()
+	w.Close()
+	os.Stdout = old
+	var buf bytes.Buffer
+	_, _ = io.Copy(&buf, r)
+	r.Close()
+	return buf.String(), runErr
 }
 
 func runStatusLine(cmd *cobra.Command, args []string) error {
@@ -86,28 +145,42 @@ func runStatusLine(cmd *cobra.Command, args []string) error {
 	mayorSession := getMayorSessionName()
 	deaconSession := getDeaconSessionName()
 
-	// Determine identity and output based on role
-	if role == "mayor" || statusLineSession == mayorSession {
-		return runMayorStatusLine(t)
+	// Check per-session output cache before running expensive bd queries
+	cacheKey := statusLineSession
+	if cacheKey == "" {
+		cacheKey = "_default"
+	}
+	if cached, ok := readStatusLineCache(cacheKey); ok {
+		fmt.Print(cached)
+		return nil
 	}
 
-	// Deacon status line
-	if role == "deacon" || statusLineSession == deaconSession {
-		return runDeaconStatusLine(t)
+	// Run, capture output, write cache
+	output, err := captureStatusLineOutput(func() error {
+		// Determine identity and output based on role
+		if role == "mayor" || statusLineSession == mayorSession {
+			return runMayorStatusLine(t)
+		}
+		// Deacon status line
+		if role == "deacon" || statusLineSession == deaconSession {
+			return runDeaconStatusLine(t)
+		}
+		// Witness status line (session naming: gt-<rig>-witness)
+		if role == "witness" || strings.HasSuffix(statusLineSession, "-witness") {
+			return runWitnessStatusLine(t, rigName)
+		}
+		// Refinery status line
+		if role == "refinery" || strings.HasSuffix(statusLineSession, "-refinery") {
+			return runRefineryStatusLine(t, rigName)
+		}
+		// Crew/Polecat status line
+		return runWorkerStatusLine(t, statusLineSession, rigName, polecat, crew, issue)
+	})
+	if err == nil && output != "" {
+		writeStatusLineCache(cacheKey, output)
 	}
-
-	// Witness status line (session naming: gt-<rig>-witness)
-	if role == "witness" || strings.HasSuffix(statusLineSession, "-witness") {
-		return runWitnessStatusLine(t, rigName)
-	}
-
-	// Refinery status line
-	if role == "refinery" || strings.HasSuffix(statusLineSession, "-refinery") {
-		return runRefineryStatusLine(rigName)
-	}
-
-	// Crew/Polecat status line
-	return runWorkerStatusLine(polecat, crew, issue)
+	fmt.Print(output)
+	return err
 }
 
 // runWorkerStatusLine outputs status for crew or polecat sessions.
