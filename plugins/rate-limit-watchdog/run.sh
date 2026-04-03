@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# rate-limit-watchdog/run.sh — Auto-estop on API rate limit, auto-thaw when clear.
+# rate-limit-watchdog/run.sh — Rotate credentials on rate limit, estop only as last resort.
 #
 # No LLM calls — just a minimal API probe and shell commands.
 
@@ -34,14 +34,31 @@ echo "API probe: HTTP $HTTP_CODE"
 # --- Decision ----------------------------------------------------------------
 case "$HTTP_CODE" in
     429)
-        # Rate limited — freeze if not already frozen.
-        if [ ! -f "$ESTOP_FILE" ]; then
-            echo "Rate limit detected — triggering estop"
-            gt estop -r "$RATE_LIMIT_REASON"
-            echo "result:estop-triggered"
+        # Rate limited — try credential rotation first, estop only as last resort.
+        echo "Rate limit detected — attempting credential rotation"
+        ROTATE_OUTPUT=$(gt quota rotate --json 2>&1) && ROTATE_EXIT=0 || ROTATE_EXIT=$?
+
+        # Check if rotation actually swapped any sessions.
+        # A successful rotation returns a JSON array with "rotated":true entries.
+        ROTATED_COUNT=0
+        if [ "$ROTATE_EXIT" -eq 0 ] && echo "$ROTATE_OUTPUT" | grep -q '"rotated":true' 2>/dev/null; then
+            ROTATED_COUNT=$(echo "$ROTATE_OUTPUT" | grep -c '"rotated":true' 2>/dev/null || echo "0")
+        fi
+
+        if [ "$ROTATED_COUNT" -gt 0 ]; then
+            echo "Rotated $ROTATED_COUNT session(s) to fresh accounts — no estop needed"
+            echo "result:rotated"
         else
-            echo "Rate limit detected — estop already active"
-            echo "result:already-frozen"
+            # Rotation failed or no accounts available — fall back to estop.
+            echo "Rotation failed or no available accounts"
+            if [ ! -f "$ESTOP_FILE" ]; then
+                echo "Triggering estop (all accounts exhausted)"
+                gt estop -r "$RATE_LIMIT_REASON"
+                echo "result:estop-triggered"
+            else
+                echo "Estop already active"
+                echo "result:already-frozen"
+            fi
         fi
         ;;
     200|201)
