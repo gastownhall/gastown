@@ -1,14 +1,11 @@
 package cmd
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
 	"maps"
 	"os"
-	"os/exec"
 	"os/signal"
-	"regexp"
 	"slices"
 	"strings"
 	"syscall"
@@ -86,83 +83,13 @@ type QuotaStatusItem struct {
 	ProbeError string `json:"probe_error,omitempty"`
 }
 
-// probeAccount makes a lightweight Claude API call using an account's config dir
-// to verify the account can actually make API calls. Returns nil if the account
-// works, or an error describing why it doesn't (rate-limited, auth failure, etc.).
+// probeAccount validates an account using a lightweight HTTP probe against the
+// Anthropic API. No LLM inference is performed — the probe sends an intentionally
+// invalid request body and interprets the HTTP status code to determine auth and
+// rate-limit status.
 func probeAccount(handle string, configDir string) (probeErr error, resetsAt string) {
 	expandedDir := util.ExpandHome(configDir)
-
-	// Use claude CLI with --bare --print for a minimal API call using haiku (cheapest model)
-	probeCmd := exec.Command("claude",
-		"--bare",
-		"-p", "hi",
-		"--max-turns", "1",
-		"--model", "haiku",
-	)
-	probeCmd.Env = append(os.Environ(), "CLAUDE_CONFIG_DIR="+expandedDir)
-
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-	probeCmd = exec.CommandContext(ctx, probeCmd.Path, probeCmd.Args[1:]...)
-	probeCmd.Env = append(os.Environ(), "CLAUDE_CONFIG_DIR="+expandedDir)
-
-	output, err := probeCmd.CombinedOutput()
-	if err == nil {
-		return nil, "" // Account works fine
-	}
-
-	// Parse output for rate limit or auth errors
-	text := string(output)
-
-	// Check for rate limit patterns
-	rateLimitPatterns := []string{
-		"You've hit your",
-		"limit",
-		"resets",
-		"rate limit",
-		"Add funds",
-		"Stop and wait",
-	}
-	for _, pat := range rateLimitPatterns {
-		if strings.Contains(strings.ToLower(text), strings.ToLower(pat)) {
-			// Try to extract reset time from output
-			reset := extractResetTime(text)
-			return fmt.Errorf("rate-limited: %s", strings.TrimSpace(firstLine(text))), reset
-		}
-	}
-
-	// Check for auth errors
-	if strings.Contains(text, "OAuth") || strings.Contains(text, "unauthorized") ||
-		strings.Contains(text, "401") || strings.Contains(text, "authentication") {
-		return fmt.Errorf("auth error: %s", strings.TrimSpace(firstLine(text))), ""
-	}
-
-	// Generic failure
-	return fmt.Errorf("probe failed: %s", strings.TrimSpace(firstLine(text))), ""
-}
-
-// extractResetTime attempts to pull a reset time from rate-limit output text.
-// Looks for patterns like "resets 7:00pm" or "resets at 12pm".
-func extractResetTime(text string) string {
-	resetPattern := regexp.MustCompile(`(?i)resets?\s+(?:at\s+)?(\d{1,2}(?::\d{2})?\s*(?:am|pm))`)
-	if m := resetPattern.FindStringSubmatch(text); len(m) > 1 {
-		return m[1] + " (America/Los_Angeles)"
-	}
-	return ""
-}
-
-// firstLine returns the first non-empty line of text, truncated to 120 chars.
-func firstLine(text string) string {
-	for _, line := range strings.Split(text, "\n") {
-		line = strings.TrimSpace(line)
-		if line != "" {
-			if len(line) > 120 {
-				return line[:120] + "..."
-			}
-			return line
-		}
-	}
-	return text
+	return quota.ProbeAccountHTTP(expandedDir)
 }
 
 func runQuotaStatus(cmd *cobra.Command, args []string) error {

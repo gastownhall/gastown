@@ -7,10 +7,12 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"time"
 )
@@ -321,6 +323,113 @@ func SyncSwappedTokens(swapDirs map[string]string) int {
 		updated++
 	}
 	return updated
+}
+
+// ProbeAccountHTTP validates an account by making a lightweight HTTP request to
+// the Anthropic API without invoking the LLM. It sends a deliberately invalid
+// request body to /v1/messages — the API validates auth and rate limits before
+// parsing the body, so:
+//   - 400 = auth OK, not rate-limited (body invalid but account works)
+//   - 401/403 = auth failure
+//   - 429 = rate-limited
+//
+// This replaces the previous approach of spawning `claude --bare -p "hi"` which
+// made an actual LLM inference call per account.
+func ProbeAccountHTTP(configDir string) (probeErr error, resetsAt string) {
+	svc := KeychainServiceName(configDir)
+	raw, err := ReadKeychainToken(svc)
+	if err != nil {
+		return fmt.Errorf("cannot read keychain token: %w", err), ""
+	}
+	if raw == "" {
+		return fmt.Errorf("empty keychain token"), ""
+	}
+
+	token := extractBearerToken(raw)
+
+	// Send minimal request — intentionally invalid body so no LLM inference occurs.
+	req, err := http.NewRequest("POST", "https://api.anthropic.com/v1/messages",
+		strings.NewReader("{}"))
+	if err != nil {
+		return fmt.Errorf("creating probe request: %w", err), ""
+	}
+
+	// Use x-api-key for API keys, Bearer for OAuth tokens.
+	if strings.HasPrefix(token, "sk-ant-") {
+		req.Header.Set("x-api-key", token)
+	} else {
+		req.Header.Set("Authorization", "Bearer "+token)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("anthropic-version", "2023-06-01")
+
+	client := &http.Client{Timeout: 15 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return fmt.Errorf("probe request failed: %w", err), ""
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	switch {
+	case resp.StatusCode == http.StatusBadRequest, resp.StatusCode == http.StatusOK:
+		// 400 = auth valid, not rate-limited (expected with empty body)
+		// 200 = shouldn't happen with {} body, but account works
+		return nil, ""
+	case resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden:
+		return fmt.Errorf("auth error (HTTP %d)", resp.StatusCode), ""
+	case resp.StatusCode == http.StatusTooManyRequests:
+		reset := parseRateLimitReset(resp)
+		return fmt.Errorf("rate-limited (HTTP 429)"), reset
+	default:
+		return fmt.Errorf("unexpected HTTP %d from probe", resp.StatusCode), ""
+	}
+}
+
+// extractBearerToken extracts the usable token from a raw keychain value.
+// Claude Code may store the full OAuth response as JSON with an access_token field,
+// or just the raw token string.
+func extractBearerToken(raw string) string {
+	var cred struct {
+		AccessToken string `json:"access_token"`
+	}
+	if json.Unmarshal([]byte(raw), &cred) == nil && cred.AccessToken != "" {
+		return cred.AccessToken
+	}
+	return raw
+}
+
+// parseRateLimitReset extracts the rate limit reset time from a 429 response.
+// Checks standard headers first, then falls back to parsing the response body.
+func parseRateLimitReset(resp *http.Response) string {
+	// Check Retry-After header (seconds until reset)
+	if ra := resp.Header.Get("Retry-After"); ra != "" {
+		return ra + "s"
+	}
+	// Check anthropic rate limit reset headers
+	if reset := resp.Header.Get("x-ratelimit-limit-tokens-reset"); reset != "" {
+		return reset
+	}
+	if reset := resp.Header.Get("x-ratelimit-limit-requests-reset"); reset != "" {
+		return reset
+	}
+
+	// Try parsing response body for reset time
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 4096))
+	if err != nil {
+		return ""
+	}
+	var errResp struct {
+		Error struct {
+			Message string `json:"message"`
+		} `json:"error"`
+	}
+	if json.Unmarshal(body, &errResp) == nil && errResp.Error.Message != "" {
+		resetPattern := regexp.MustCompile(`(?i)resets?\s+(?:at\s+)?(\d{1,2}(?::\d{2})?\s*(?:am|pm))`)
+		if m := resetPattern.FindStringSubmatch(errResp.Error.Message); len(m) > 1 {
+			return m[1] + " (America/Los_Angeles)"
+		}
+	}
+	return ""
 }
 
 // expandTilde expands a leading ~/ to the user's home directory.
