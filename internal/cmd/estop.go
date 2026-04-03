@@ -176,7 +176,11 @@ func runThaw(cmd *cobra.Command, args []string) error {
 		thawed := thawAllSessions(t, townRoot, "")
 		fmt.Printf("%s %d session(s) resumed\n", style.Success.Render("✓"), thawed)
 
-		nudged := nudgeAllSessions(t, townRoot, "")
+		reason := ""
+		if info != nil {
+			reason = info.Reason
+		}
+		nudged := nudgeAllSessions(t, townRoot, "", reason)
 		if nudged > 0 {
 			fmt.Printf("   Nudged %d session(s)\n", nudged)
 		}
@@ -207,7 +211,11 @@ func runThawRig(townRoot, rigName string) error {
 		thawed := thawAllSessions(t, townRoot, rigName)
 		fmt.Printf("%s %d session(s) resumed in %s\n", style.Success.Render("✓"), thawed, rigName)
 
-		nudged := nudgeAllSessions(t, townRoot, rigName)
+		reason := ""
+		if info != nil {
+			reason = info.Reason
+		}
+		nudged := nudgeAllSessions(t, townRoot, rigName, reason)
 		if nudged > 0 {
 			fmt.Printf("   Nudged %d session(s)\n", nudged)
 		}
@@ -294,13 +302,19 @@ func thawAllSessions(t *tmux.Tmux, townRoot string, rigFilter string) int {
 
 // nudgeAllSessions sends a nudge to all GT sessions to alert them of resume.
 // If rigFilter is non-empty, only sessions for that rig are nudged.
-func nudgeAllSessions(t *tmux.Tmux, townRoot string, rigFilter string) int {
+// If estopReason is non-empty, it is included in the nudge message.
+func nudgeAllSessions(t *tmux.Tmux, townRoot string, rigFilter string, estopReason string) int {
 	sessions := collectGTSessions(t, townRoot)
 	nudged := 0
 
 	var rigPrefix string
 	if rigFilter != "" {
 		rigPrefix = session.PrefixFor(rigFilter)
+	}
+
+	msg := "E-stop cleared. Work may resume."
+	if estopReason != "" {
+		msg = fmt.Sprintf("E-stop cleared (was: %s). Work may resume.", estopReason)
 	}
 
 	for _, sess := range sessions {
@@ -310,7 +324,7 @@ func nudgeAllSessions(t *tmux.Tmux, townRoot string, rigFilter string) int {
 		if rigFilter != "" && !isRigSession(sess, rigPrefix) {
 			continue
 		}
-		if err := t.NudgeSession(sess, "E-stop cleared. Work may resume."); err == nil {
+		if err := t.NudgeSession(sess, msg); err == nil {
 			nudged++
 		}
 	}
