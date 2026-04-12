@@ -83,8 +83,15 @@ function downloadFile(url, dest) {
 
       file.on('finish', () => {
         file.close((err) => {
-          if (err) reject(err);
-          else resolve();
+          if (err) {
+            reject(err);
+            return;
+          }
+          // On Windows, the HTTPS response stream still holds a file handle
+          // lock after the write stream closes. If we don't destroy it here,
+          // PowerShell's Expand-Archive can't open the ZIP for extraction.
+          response.destroy();
+          resolve();
         });
       });
     });
