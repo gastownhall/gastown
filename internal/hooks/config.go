@@ -1062,7 +1062,7 @@ func DefaultBase() *HooksConfig {
 					},
 					{
 						Type:    "command",
-						Command: fmt.Sprintf("%s && gt session-diary 2>/dev/null || true", pathSetup),
+						Command: gtCommand("gt session-diary 2>/dev/null || true"),
 					},
 				},
 			},

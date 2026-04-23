@@ -184,12 +184,25 @@ bd close <id>         # Complete work
 - If push fails, resolve and retry until it succeeds
 <!-- END BEADS INTEGRATION -->
 
-## Codebase Knowledge Graph
+## Codebase Knowledge Graph (MANDATORY GATE)
 
-Before writing new code, consider running `/graphify` to understand existing patterns,
-utilities, and conventions. The generated graph helps avoid reinventing existing utilities
-and ensures consistency with established patterns.
+Before writing new code, you MUST run `/graphify` to understand existing patterns,
+utilities, and conventions. This is a quality gate — not optional.
 
-- Run `/graphify .` to build a full knowledge graph of the codebase
-- Run `/graphify . --mode deep` for richer relationship inference
-- Run `/graphify query "concept"` to explore specific patterns
+```bash
+# First time in a codebase (no graphify-out/graph.json):
+/graphify .
+
+# Subsequent sessions (incremental update):
+/graphify . --update
+
+# Query before implementing:
+/graphify query "<concept related to your task>"
+```
+
+**Why mandatory:** The graph reveals cross-file patterns, shared utilities, and
+architectural decisions invisible from reading individual files. Without it, agents
+reinvent existing code, violate conventions, and introduce inconsistencies.
+
+**If graphify is unavailable:** Note it in your bead and proceed, but flag it so
+the Mayor can investigate.

@@ -276,11 +276,32 @@ a permanent Dolt commit. You contribute to Dolt health by:
 
 See `docs/dolt-health-guide.md` for the full picture.
 
+## Codebase Knowledge Graph (MANDATORY)
+
+Before implementing ANY code changes, you MUST build or query the codebase knowledge graph
+using `/graphify`. This is a quality gate in your formula — not optional.
+
+```bash
+# If no graph exists yet:
+/graphify .
+
+# If graph exists, update it:
+/graphify . --update
+
+# Query for concepts related to your issue:
+/graphify query "<concept>"
+```
+
+**Why:** The graph reveals existing patterns, utilities, and architectural decisions that
+are invisible from reading individual files. Skipping this leads to reinvented utilities,
+violated conventions, and inconsistent code.
+
 ## Do NOT
 
 - Push to main (Refinery does this)
 - Work on unrelated issues (file beads instead)
 - Skip tests or self-review
+- Skip graphify (understand before implementing)
 - Guess when confused (ask Witness)
 - Leave dirty state behind
 

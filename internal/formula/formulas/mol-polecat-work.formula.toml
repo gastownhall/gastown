@@ -191,9 +191,45 @@ Empty setup_command means "not configured" — skip this step.
 **Exit criteria:** You're on a clean feature branch, rebased on latest {{base_branch}}, dependencies installed."""
 
 [[steps]]
+id = "graphify-context"
+title = "Build codebase knowledge graph"
+needs = ["branch-setup"]
+description = """
+Understand the codebase architecture before writing code. This is MANDATORY.
+
+**1. Check if a graph already exists:**
+```bash
+ls graphify-out/graph.json 2>/dev/null && echo "Graph exists" || echo "No graph"
+```
+
+**2. If no graph exists, build one:**
+```bash
+/graphify .
+```
+
+**3. If graph exists, check for updates:**
+```bash
+/graphify . --update
+```
+
+**4. Query the graph for concepts related to your issue:**
+```bash
+/graphify query "<key concept from your issue>"
+```
+
+Review the graph output — god nodes, community structure, and connections — to understand
+what code already exists before implementing anything. This prevents reinventing utilities,
+violating patterns, and introducing inconsistencies.
+
+**If graphify is not installed or fails:** proceed to implementation, but note in your
+bead that graphify was unavailable (`bd update {{issue}} --notes "graphify unavailable"`).
+
+**Exit criteria:** You have reviewed the codebase graph and understand existing patterns relevant to your issue."""
+
+[[steps]]
 id = "implement"
 title = "Implement the solution"
-needs = ["branch-setup"]
+needs = ["graphify-context"]
 description = """
 Do the actual implementation work.
 
