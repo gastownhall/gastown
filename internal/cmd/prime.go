@@ -730,14 +730,33 @@ except SystemExit:
 		content = append(content, line)
 	}
 
-	if len(content) > 0 {
-		result := strings.TrimSpace(strings.Join(content, "\n"))
-		if result != "" {
-			fmt.Println()
-			fmt.Println("# Contextual Knowledge (MemPalace)")
-			fmt.Println()
-			fmt.Println(result)
-		}
+	if len(content) == 0 {
+		return
+	}
+
+	// Role-based line limits to control token usage:
+	// Polecats are ephemeral — keep injection minimal.
+	// Mayor/crew get full context.
+	maxLines := 0 // unlimited
+	role := os.Getenv("GT_ROLE")
+	switch {
+	case strings.Contains(role, "polecat"):
+		maxLines = 15
+	case role == "witness" || role == "refinery":
+		maxLines = 10
+	}
+
+	if maxLines > 0 && len(content) > maxLines {
+		content = content[:maxLines]
+		content = append(content, "  ... (truncated for "+role+" role)")
+	}
+
+	result := strings.TrimSpace(strings.Join(content, "\n"))
+	if result != "" {
+		fmt.Println()
+		fmt.Println("# Contextual Knowledge (MemPalace)")
+		fmt.Println()
+		fmt.Println(result)
 	}
 }
 
