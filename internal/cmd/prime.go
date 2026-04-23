@@ -661,47 +661,83 @@ func bdKvListJSONForPrime(workDir string) (map[string]string, error) {
 	return kvs, nil
 }
 
-// runMemPalaceRecall calls `mempalace wake-up` to inject contextual memories from MemPalace.
-// This adds structured, semantically-relevant memories on top of the flat KV injection.
-// Falls back silently if MemPalace is unavailable or the CLI fails.
+// runMemPalaceRecall invokes mempalace wake-up via Python import to inject
+// contextual memories. Uses Python import instead of CLI binary to avoid
+// segfault in the CLI entry point's ChromaDB initialization.
+// Falls back silently if MemPalace is unavailable.
 func runMemPalaceRecall() {
-	// Determine the mempalace venv binary path
 	townRoot := os.Getenv("GT_TOWN_ROOT")
 	if townRoot == "" {
 		townRoot = filepath.Join(os.Getenv("HOME"), "gt")
 	}
-	mpBin := filepath.Join(townRoot, ".mempalace-env", "bin", "mempalace")
+	pythonBin := filepath.Join(townRoot, ".mempalace-env", "bin", "python")
 
-	// Check if mempalace is installed
-	if _, err := os.Stat(mpBin); err != nil {
-		return // MemPalace not installed, skip silently
+	// Check if mempalace venv is installed
+	if _, err := os.Stat(pythonBin); err != nil {
+		return
 	}
 
-	// Build wake-up command with optional wing scoping
-	args := []string{"wake-up"}
+	// Build wake-up script with optional wing scoping
+	wingArg := ""
 	if rig := os.Getenv("GT_RIG"); rig != "" {
-		args = append(args, "--wing", rig)
+		wingArg = fmt.Sprintf("--wing %s", rig)
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	script := fmt.Sprintf(`
+import sys
+sys.argv = ['mempalace', 'wake-up'%s]
+try:
+    from mempalace.cli import main
+    main()
+except SystemExit:
+    pass
+`, func() string {
+		if wingArg != "" {
+			return fmt.Sprintf(", '--wing', '%s'", os.Getenv("GT_RIG"))
+		}
+		return ""
+	}())
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	cmd := exec.CommandContext(ctx, mpBin, args...)
+	cmd := exec.CommandContext(ctx, pythonBin, "-c", script)
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
 
 	if err := cmd.Run(); err != nil {
-		// Skip silently on failure (CLI may segfault due to ChromaDB issues)
+		return // Skip silently
+	}
+
+	// Extract just the wake-up text (skip the header line and separator)
+	output := strings.TrimSpace(stdout.String())
+	if output == "" {
 		return
 	}
 
-	output := strings.TrimSpace(stdout.String())
-	if output != "" {
-		fmt.Println()
-		fmt.Println("# Contextual Knowledge (MemPalace)")
-		fmt.Println()
-		fmt.Println(output)
+	// Parse: skip "Wake-up text (~N tokens):" and "==" separator lines
+	lines := strings.Split(output, "\n")
+	var content []string
+	pastHeader := false
+	for _, line := range lines {
+		if !pastHeader {
+			if strings.HasPrefix(line, "==") {
+				pastHeader = true
+			}
+			continue
+		}
+		content = append(content, line)
+	}
+
+	if len(content) > 0 {
+		result := strings.TrimSpace(strings.Join(content, "\n"))
+		if result != "" {
+			fmt.Println()
+			fmt.Println("# Contextual Knowledge (MemPalace)")
+			fmt.Println()
+			fmt.Println(result)
+		}
 	}
 }
 
