@@ -541,10 +541,12 @@ func outputRoleContext(ctx RoleContext) (string, error) {
 func runPrimeExternalTools(ctx RoleContext, cwd string) {
 	if primeDryRun {
 		explain(true, "memory injection: skipped in dry-run mode")
+		explain(true, "mempalace recall: skipped in dry-run mode")
 		explain(true, "gt mail check --inject: skipped in dry-run mode")
 		return
 	}
 	runMemoryInject(cwd)
+	runMemPalaceRecall()
 	if shouldSkipStartupMailInject(string(ctx.Role)) {
 		explain(true, fmt.Sprintf("gt mail check --inject: skipped for patrol role %s", ctx.Role))
 		return
@@ -657,6 +659,50 @@ func bdKvListJSONForPrime(workDir string) (map[string]string, error) {
 		return nil, fmt.Errorf("parsing kv list: %w", err)
 	}
 	return kvs, nil
+}
+
+// runMemPalaceRecall calls `mempalace wake-up` to inject contextual memories from MemPalace.
+// This adds structured, semantically-relevant memories on top of the flat KV injection.
+// Falls back silently if MemPalace is unavailable or the CLI fails.
+func runMemPalaceRecall() {
+	// Determine the mempalace venv binary path
+	townRoot := os.Getenv("GT_TOWN_ROOT")
+	if townRoot == "" {
+		townRoot = filepath.Join(os.Getenv("HOME"), "gt")
+	}
+	mpBin := filepath.Join(townRoot, ".mempalace-env", "bin", "mempalace")
+
+	// Check if mempalace is installed
+	if _, err := os.Stat(mpBin); err != nil {
+		return // MemPalace not installed, skip silently
+	}
+
+	// Build wake-up command with optional wing scoping
+	args := []string{"wake-up"}
+	if rig := os.Getenv("GT_RIG"); rig != "" {
+		args = append(args, "--wing", rig)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	cmd := exec.CommandContext(ctx, mpBin, args...)
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+
+	if err := cmd.Run(); err != nil {
+		// Skip silently on failure (CLI may segfault due to ChromaDB issues)
+		return
+	}
+
+	output := strings.TrimSpace(stdout.String())
+	if output != "" {
+		fmt.Println()
+		fmt.Println("# Contextual Knowledge (MemPalace)")
+		fmt.Println()
+		fmt.Println(output)
+	}
 }
 
 // runMailCheckInject runs `gt mail check --inject` and outputs the result.

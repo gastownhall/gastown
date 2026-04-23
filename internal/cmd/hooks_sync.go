@@ -290,6 +290,18 @@ func syncTarget(target hooks.Target, dryRun bool) (syncResult, error) {
 	}
 	current.EnabledPlugins["beads@beads-marketplace"] = false
 
+	// Inject default MCP servers (mempalace) if not already configured
+	if defaultMCP := hooks.DefaultMCPServers(); defaultMCP != nil {
+		if current.MCPServers == nil {
+			current.MCPServers = make(map[string]hooks.MCPServer)
+		}
+		for name, server := range defaultMCP {
+			if _, exists := current.MCPServers[name]; !exists {
+				current.MCPServers[name] = server
+			}
+		}
+	}
+
 	// Create .claude directory if needed
 	claudeDir := filepath.Dir(target.Path)
 	if err := os.MkdirAll(claudeDir, 0755); err != nil {

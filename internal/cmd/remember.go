@@ -1,13 +1,17 @@
 package cmd
 
 import (
+	"bytes"
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/spf13/cobra"
 	"github.com/steveyegge/gastown/internal/style"
@@ -32,10 +36,12 @@ var memoryTypeOrder = []string{"feedback", "user", "project", "reference", "gene
 
 var rememberKey string
 var rememberType string
+var rememberPalace bool
 
 func init() {
 	rememberCmd.Flags().StringVar(&rememberKey, "key", "", "Explicit key slug (default: auto-generated from content)")
 	rememberCmd.Flags().StringVar(&rememberType, "type", "", "Memory type: feedback, project, user, reference (default: general)")
+	rememberCmd.Flags().BoolVar(&rememberPalace, "palace", false, "Also store in MemPalace (structured memory)")
 	rememberCmd.GroupID = GroupWork
 	rootCmd.AddCommand(rememberCmd)
 }
@@ -109,6 +115,17 @@ func runRemember(cmd *cobra.Command, args []string) error {
 		displayKey = memType + "/" + key
 	}
 	fmt.Printf("%s %s memory: %s\n", style.Success.Render("✓"), verb, style.Bold.Render(displayKey))
+
+	// Optionally also store in MemPalace for structured, semantic memory
+	if rememberPalace {
+		if err := storeInMemPalace(key, content); err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: MemPalace store failed: %v\n", err)
+		} else {
+			fmt.Printf("%s Also stored in MemPalace\n", style.Success.Render("✓"))
+		}
+	}
+
+
 	return nil
 }
 
@@ -228,4 +245,54 @@ func bdKvListJSON() (map[string]string, error) {
 		return nil, fmt.Errorf("parsing kv list: %w", err)
 	}
 	return kvs, nil
+}
+
+// storeInMemPalace stores a memory in MemPalace via a Python one-liner that
+// calls the mempalace add_drawer functionality. Auto-detects wing from GT_RIG
+// and uses "general" room for agent memories.
+func storeInMemPalace(key, content string) error {
+	townRoot := os.Getenv("GT_TOWN_ROOT")
+	if townRoot == "" {
+		townRoot = filepath.Join(os.Getenv("HOME"), "gt")
+	}
+	pythonBin := filepath.Join(townRoot, ".mempalace-env", "bin", "python")
+
+	// Check if venv exists
+	if _, err := os.Stat(pythonBin); err != nil {
+		return fmt.Errorf("mempalace venv not found at %s", pythonBin)
+	}
+
+	wing := "gt"
+	room := "general"
+	if rig := os.Getenv("GT_RIG"); rig != "" {
+		room = rig
+	}
+
+	// Use mempalace's add_drawer via Python script
+	script := fmt.Sprintf(`
+import sys
+sys.path.insert(0, '')
+from mempalace.mcp_server import palace_instance
+p = palace_instance()
+p.add_drawer(wing=%q, room=%q, content=%q, added_by="gt-remember")
+print("ok")
+`, wing, room, fmt.Sprintf("[%s] %s", key, content))
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	cmd := exec.CommandContext(ctx, pythonBin, "-c", script)
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+
+	if err := cmd.Run(); err != nil {
+		errMsg := strings.TrimSpace(stderr.String())
+		if errMsg != "" {
+			return fmt.Errorf("%s: %s", err, errMsg)
+		}
+		return err
+	}
+
+	return nil
 }

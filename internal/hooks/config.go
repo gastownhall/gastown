@@ -37,12 +37,21 @@ type HooksConfig struct {
 	WorktreeRemove   []HookEntry `json:"WorktreeRemove,omitempty"`
 }
 
+// MCPServer represents a single MCP server configuration in settings.json.
+type MCPServer struct {
+	Type    string            `json:"type,omitempty"`
+	Command string            `json:"command"`
+	Args    []string          `json:"args"`
+	Env     map[string]string `json:"env,omitempty"`
+}
+
 // SettingsJSON represents the full Claude Code settings.json structure.
 // Unknown fields are preserved during sync via the Extra map.
 type SettingsJSON struct {
-	EditorMode     string          `json:"-"`
-	EnabledPlugins map[string]bool `json:"-"`
-	Hooks          HooksConfig     `json:"-"`
+	EditorMode     string               `json:"-"`
+	EnabledPlugins map[string]bool      `json:"-"`
+	Hooks          HooksConfig          `json:"-"`
+	MCPServers     map[string]MCPServer `json:"-"`
 	// Extra holds all raw fields for roundtrip preservation.
 	Extra map[string]json.RawMessage `json:"-"`
 }
@@ -96,6 +105,11 @@ func UnmarshalSettings(data []byte) (*SettingsJSON, error) {
 			return nil, fmt.Errorf("unmarshaling hooks: %w", err)
 		}
 	}
+	if raw, ok := s.Extra["mcpServers"]; ok {
+		if err := json.Unmarshal(raw, &s.MCPServers); err != nil {
+			return nil, fmt.Errorf("unmarshaling mcpServers: %w", err)
+		}
+	}
 
 	return s, nil
 }
@@ -130,6 +144,15 @@ func MarshalSettings(s *SettingsJSON) ([]byte, error) {
 		return nil, err
 	}
 	out["hooks"] = raw
+
+	// Write mcpServers if present
+	if s.MCPServers != nil && len(s.MCPServers) > 0 {
+		raw, err := json.Marshal(s.MCPServers)
+		if err != nil {
+			return nil, err
+		}
+		out["mcpServers"] = raw
+	}
 
 	return json.MarshalIndent(out, "", "  ")
 }
@@ -1037,8 +1060,35 @@ func DefaultBase() *HooksConfig {
 						Type:    "command",
 						Command: gtCommand("gt costs record &"),
 					},
+					{
+						Type:    "command",
+						Command: fmt.Sprintf("%s && gt session-diary 2>/dev/null || true", pathSetup),
+					},
 				},
 			},
+		},
+	}
+}
+
+// DefaultMCPServers returns the default MCP server configuration for Gas Town.
+// Returns nil if MemPalace is not installed (graceful degradation).
+func DefaultMCPServers() map[string]MCPServer {
+	// Check for mempalace venv — installation indicator
+	townRoot := os.Getenv("GT_TOWN_ROOT")
+	if townRoot == "" {
+		townRoot = filepath.Join(os.Getenv("HOME"), "gt")
+	}
+	pythonBin := filepath.Join(townRoot, ".mempalace-env", "bin", "python")
+	if _, err := os.Stat(pythonBin); err != nil {
+		return nil // MemPalace not installed
+	}
+
+	return map[string]MCPServer{
+		"mempalace": {
+			Type:    "stdio",
+			Command: pythonBin,
+			Args:    []string{"-m", "mempalace.mcp_server"},
+			Env:     map[string]string{},
 		},
 	}
 }

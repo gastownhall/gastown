@@ -183,3 +183,13 @@ bd close <id>         # Complete work
 - NEVER say "ready to push when you are" - YOU must push
 - If push fails, resolve and retry until it succeeds
 <!-- END BEADS INTEGRATION -->
+
+## Codebase Knowledge Graph
+
+Before writing new code, consider running `/graphify` to understand existing patterns,
+utilities, and conventions. The generated graph helps avoid reinventing existing utilities
+and ensures consistency with established patterns.
+
+- Run `/graphify .` to build a full knowledge graph of the codebase
+- Run `/graphify . --mode deep` for richer relationship inference
+- Run `/graphify query "concept"` to explore specific patterns
