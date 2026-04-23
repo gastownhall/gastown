@@ -268,9 +268,13 @@ func syncTarget(target hooks.Target, dryRun bool) (syncResult, error) {
 	_, statErr := os.Stat(target.Path)
 	fileExists := statErr == nil
 
-	// Compare hooks sections and the Claude startup defaults. Existing settings
-	// from older versions may have current hooks but still miss prompt defaults.
-	if fileExists && hooks.HooksEqual(expected, &current.Hooks) && hooks.HasClaudePromptDefaults(current) {
+	// Check if MCP servers need injection
+	mcpNeedsUpdate := needsMCPUpdate(current.MCPServers)
+
+	// Compare hooks sections, Claude startup defaults, and MCP server state.
+	// Existing settings from older versions may have current hooks but still
+	// miss prompt defaults or required MCP servers.
+	if fileExists && hooks.HooksEqual(expected, &current.Hooks) && hooks.HasClaudePromptDefaults(current) && !mcpNeedsUpdate {
 		return syncUnchanged, nil
 	}
 
@@ -323,4 +327,21 @@ func syncTarget(target hooks.Target, dryRun bool) (syncResult, error) {
 		return syncUpdated, nil
 	}
 	return syncCreated, nil
+}
+
+// needsMCPUpdate returns true if any default MCP servers are missing from current config.
+func needsMCPUpdate(current map[string]hooks.MCPServer) bool {
+	defaultMCP := hooks.DefaultMCPServers()
+	if defaultMCP == nil {
+		return false
+	}
+	for name := range defaultMCP {
+		if current == nil {
+			return true
+		}
+		if _, exists := current[name]; !exists {
+			return true
+		}
+	}
+	return false
 }

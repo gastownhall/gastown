@@ -129,6 +129,7 @@ func TestSyncTargetUpdatesExisting(t *testing.T) {
 func TestSyncTargetUnchanged(t *testing.T) {
 	tmpDir := t.TempDir()
 	t.Setenv("HOME", tmpDir)
+	t.Setenv("GT_TOWN_ROOT", tmpDir) // Prevent DefaultMCPServers from finding real mempalace
 
 	// Save a base config
 	base := &hooks.HooksConfig{
