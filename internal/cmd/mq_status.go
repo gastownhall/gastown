@@ -31,8 +31,15 @@ type MRStatusOutput struct {
 	SourceIssue string `json:"source_issue,omitempty"`
 	Worker      string `json:"worker,omitempty"`
 	Rig         string `json:"rig,omitempty"`
+	CommitSHA   string `json:"commit_sha,omitempty"`
 	MergeCommit string `json:"merge_commit,omitempty"`
 	CloseReason string `json:"close_reason,omitempty"`
+	AgentBead   string `json:"agent_bead,omitempty"`
+	ConvoyID    string `json:"convoy_id,omitempty"`
+
+	// Native source-link fields used by external systems such as System Core.
+	// For wisp-backed merge requests, the MR bead id is also the stable wisp id.
+	WispID string `json:"wisp_id,omitempty"`
 
 	// Dependencies
 	DependsOn []DependencyInfo `json:"depends_on,omitempty"`
@@ -93,8 +100,14 @@ func runMqStatus(cmd *cobra.Command, args []string) error {
 		output.SourceIssue = mrFields.SourceIssue
 		output.Worker = mrFields.Worker
 		output.Rig = mrFields.Rig
+		output.CommitSHA = mrFields.CommitSHA
 		output.MergeCommit = mrFields.MergeCommit
 		output.CloseReason = mrFields.CloseReason
+		output.AgentBead = mrFields.AgentBead
+		output.ConvoyID = mrFields.ConvoyID
+		if issue.Ephemeral {
+			output.WispID = issue.ID
+		}
 	}
 
 	// Add dependency info from the issue's Dependencies field
