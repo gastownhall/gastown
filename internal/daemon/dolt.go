@@ -808,8 +808,15 @@ func writeDaemonDoltConfig(cfg *DoltServerConfig, configPath string) error {
 	if cfg.Host != "" {
 		hostLine = fmt.Sprintf("\n  host: %s", cfg.Host)
 	}
+	autoGC := true
+	if agc := os.Getenv("GT_DOLT_AUTO_GC"); agc != "" {
+		if v, err := strconv.ParseBool(agc); err == nil {
+			autoGC = v
+		}
+	}
 	content := fmt.Sprintf(`# Dolt SQL server configuration — managed by Gas Town daemon
 # Do not edit manually; overwritten on each daemon-managed server start.
+# To disable auto GC, set GT_DOLT_AUTO_GC=false
 
 log_level: info
 
@@ -824,12 +831,13 @@ data_dir: %q
 behavior:
   dolt_transaction_commit: false
   auto_gc_behavior:
-    enable: true
+    enable: %v
     archive_level: 1
 `,
 		cfg.Port,
 		hostLine,
 		cfg.DataDir,
+		autoGC,
 	)
 	return os.WriteFile(configPath, []byte(content), 0600)
 }
