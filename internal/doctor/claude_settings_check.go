@@ -528,8 +528,7 @@ func (c *ClaudeSettingsCheck) findSettingsFiles(townRoot string) []staleSettings
 
 // checkSettings compares a settings file against the expected template.
 // Returns a list of what's missing.
-// agentType is reserved for future role-specific validation.
-func (c *ClaudeSettingsCheck) checkSettings(path, _ string) []string {
+func (c *ClaudeSettingsCheck) checkSettings(path, agentType string) []string {
 	var missing []string
 
 	// Read the actual settings
@@ -547,7 +546,7 @@ func (c *ClaudeSettingsCheck) checkSettings(path, _ string) []string {
 	// All templates should have:
 	// 1. enabledPlugins
 	// 2. SessionStart hook with prime --hook
-	// 3. Stop hook with gt costs record (for autonomous)
+	// 3. Stop hook — command varies by role (see hooks.DefaultOverrides)
 	// Check enabledPlugins
 	if _, ok := actual["enabledPlugins"]; !ok {
 		missing = append(missing, "enabledPlugins")
@@ -564,8 +563,14 @@ func (c *ClaudeSettingsCheck) checkSettings(path, _ string) []string {
 		missing = append(missing, "SessionStart hook (prime --hook)")
 	}
 
-	// Check Stop hook exists with costs record (for all roles)
-	if !c.hookHasPattern(hooks, "Stop", "costs record") {
+	// Check Stop hook exists. Command varies by role: polecats auto-run gt done
+	// on session Stop via "gt tap polecat-stop-check"; other roles record costs.
+	// This must stay in sync with hooks.DefaultOverrides() in internal/hooks/config.go.
+	expectedStop := "costs record"
+	if agentType == "polecat" {
+		expectedStop = "polecat-stop-check"
+	}
+	if !c.hookHasPattern(hooks, "Stop", expectedStop) {
 		missing = append(missing, "Stop hook")
 	}
 

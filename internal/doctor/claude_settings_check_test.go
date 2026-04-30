@@ -81,6 +81,55 @@ func createValidSettings(t *testing.T, path string) {
 	}
 }
 
+// createValidPolecatSettings creates a valid polecat settings file. Polecats
+// use a role-specific Stop hook (`gt tap polecat-stop-check`) that auto-runs
+// `gt done` when the session ends — different from the `gt costs record`
+// command used by other autonomous roles.
+func createValidPolecatSettings(t *testing.T, path string) {
+	t.Helper()
+
+	settings := map[string]any{
+		"enabledPlugins": []string{"plugin1"},
+		"hooks": map[string]any{
+			"SessionStart": []any{
+				map[string]any{
+					"matcher": "**",
+					"hooks": []any{
+						map[string]any{
+							"type":    "command",
+							"command": "/usr/local/bin/gt prime --hook",
+						},
+					},
+				},
+			},
+			"Stop": []any{
+				map[string]any{
+					"matcher": "**",
+					"hooks": []any{
+						map[string]any{
+							"type":    "command",
+							"command": "gt tap polecat-stop-check",
+						},
+					},
+				},
+			},
+		},
+	}
+
+	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	data, err := json.MarshalIndent(settings, "", "  ")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := os.WriteFile(path, data, 0644); err != nil {
+		t.Fatal(err)
+	}
+}
+
 // createStaleSettings creates a settings file missing required elements.
 func createStaleSettings(t *testing.T, path string, missingElements ...string) {
 	t.Helper()
@@ -252,8 +301,10 @@ func TestClaudeSettingsCheck_ValidPolecatSettings(t *testing.T) {
 
 	// Create valid polecat settings in correct location (polecats/.claude/settings.json)
 	// Settings are now shared at the polecats parent directory, passed via --settings flag.
+	// Polecats have a role-specific Stop hook (`gt tap polecat-stop-check`) that
+	// auto-runs `gt done` on session Stop — see hooks.DefaultOverrides().
 	pcSettings := filepath.Join(tmpDir, rigName, "polecats", ".claude", "settings.json")
-	createValidSettings(t, pcSettings)
+	createValidPolecatSettings(t, pcSettings)
 
 	check := NewClaudeSettingsCheck()
 	ctx := &CheckContext{TownRoot: tmpDir}
@@ -262,6 +313,33 @@ func TestClaudeSettingsCheck_ValidPolecatSettings(t *testing.T) {
 
 	if result.Status != StatusOK {
 		t.Errorf("expected StatusOK for valid polecat settings, got %v: %s", result.Status, result.Message)
+	}
+}
+
+// TestClaudeSettingsCheck_PolecatWithCostsRecordRejected is a regression test
+// for https://github.com/gastownhall/gastown/issues/3648. Before the fix, the
+// check hardcoded "costs record" as the expected Stop hook for every role —
+// which passed for polecat files that happened to have the non-polecat
+// command, and conversely flagged correctly-provisioned polecat files
+// (with `gt tap polecat-stop-check`) as stale. The check must now validate
+// the role-appropriate command.
+func TestClaudeSettingsCheck_PolecatWithCostsRecordRejected(t *testing.T) {
+	tmpDir := t.TempDir()
+	rigName := "testrig"
+
+	// Polecat settings with the WRONG Stop hook (costs record instead of
+	// polecat-stop-check). This would previously pass because the check
+	// accepted "costs record" for all roles.
+	pcSettings := filepath.Join(tmpDir, rigName, "polecats", ".claude", "settings.json")
+	createValidSettings(t, pcSettings)
+
+	check := NewClaudeSettingsCheck()
+	ctx := &CheckContext{TownRoot: tmpDir}
+
+	result := check.Run(ctx)
+
+	if result.Status != StatusError {
+		t.Errorf("expected StatusError for polecat settings with wrong Stop hook, got %v: %s", result.Status, result.Message)
 	}
 }
 
