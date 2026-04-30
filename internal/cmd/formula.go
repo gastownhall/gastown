@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"text/template"
@@ -797,12 +798,16 @@ func executeWorkflowFormula(f *formula.Formula, formulaName, targetRig string) e
 	// Step 2: Create step beads and wire dependencies
 	stepBeads := make(map[string]string) // step.ID -> bead ID
 
+	// Parse --set key=value pairs so {{var}} placeholders in step descriptions
+	// (e.g., {{problem}}, {{context}}) are filled before the bead is written.
+	// Placeholders for keys not provided via --set (e.g., {{review_id}} which
+	// is computed by the executing agent at runtime) are left intact.
+	setVars := parseSetVars(formulaRunSet)
+
 	for _, step := range f.Steps {
 		stepBeadID := fmt.Sprintf("%s-wfs-%s", rigPrefix, generateFormulaShortID())
 
-		// Step descriptions contain {{var}} placeholders (e.g., {{problem}},
-		// {{context}}) that are instructions for the executing AGENT, not Go
-		// template vars. Do not render them — pass through verbatim.
+		stepDescription := substituteFormulaVars(step.Description, setVars)
 
 		// Use --body-file=- (stdin) for the description to avoid CLI arg
 		// length limits and quoting issues with large markdown descriptions.
@@ -822,7 +827,7 @@ func executeWorkflowFormula(f *formula.Formula, formulaName, targetRig string) e
 			Dir(rigBeadsDir).
 			Stderr(os.Stderr).
 			Build()
-		createCmd.Stdin = strings.NewReader(step.Description)
+		createCmd.Stdin = strings.NewReader(stepDescription)
 		if err := createCmd.Run(); err != nil {
 			fmt.Printf("%s Failed to create step bead for %s: %v\n",
 				style.Dim.Render("Warning:"), step.ID, err)
@@ -906,7 +911,7 @@ func executeWorkflowFormula(f *formula.Formula, formulaName, targetRig string) e
 
 		slingArgs := []string{
 			"sling", stepBeadID, targetRig,
-			"-a", step.Description,
+			"-a", substituteFormulaVars(step.Description, setVars),
 			"-s", step.Title,
 		}
 		if stepAgent != "" {
@@ -969,6 +974,32 @@ func parseSetVars(setArgs []string) map[string]interface{} {
 		}
 	}
 	return vars
+}
+
+// formulaVarPlaceholder matches {{key}} placeholders with optional whitespace,
+// where key is a Go-style identifier. Used by substituteFormulaVars to fill
+// in formula step descriptions without invoking Go's text/template (which
+// rejects bare {{name}} syntax — it expects {{.name}}).
+var formulaVarPlaceholder = regexp.MustCompile(`\{\{\s*([a-zA-Z_][a-zA-Z0-9_]*)\s*\}\}`)
+
+// substituteFormulaVars replaces {{key}} placeholders in text with values
+// from vars. Placeholders whose key is absent from vars are left intact, so
+// downstream rendering (or the executing agent) can fill them in later.
+func substituteFormulaVars(text string, vars map[string]interface{}) string {
+	if len(vars) == 0 {
+		return text
+	}
+	return formulaVarPlaceholder.ReplaceAllStringFunc(text, func(match string) string {
+		sub := formulaVarPlaceholder.FindStringSubmatch(match)
+		if len(sub) < 2 {
+			return match
+		}
+		v, ok := vars[sub[1]]
+		if !ok {
+			return match
+		}
+		return fmt.Sprint(v)
+	})
 }
 
 // findFormulaFile searches for a formula file by name
