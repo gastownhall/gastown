@@ -167,8 +167,7 @@ func dispatchScheduledWork(townRoot, actor string, batchOverride int, dryRun boo
 			if b.TargetRig == "" {
 				return nil
 			}
-			rigPath := filepath.Join(townRoot, b.TargetRig)
-			rigPrefix := rigBeadsPrefix(townRoot, rigPath, b.TargetRig)
+			rigPrefix := config.GetRigPrefix(townRoot, b.TargetRig)
 			if capacity.AcceptsPrefix(rigPrefix, b.WorkBeadID) {
 				return nil
 			}
