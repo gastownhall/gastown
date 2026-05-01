@@ -561,7 +561,7 @@ func writeJSON(path string, data interface{}) error {
 func buildBdInitArgs(townPath string) []string {
 	cfg := doltserver.DefaultConfig(townPath)
 	return []string{"init", "--prefix", "hq", "--server",
-		"--server-port", strconv.Itoa(cfg.Port)}
+		"--server-port", strconv.Itoa(cfg.Port), "--force"}
 }
 
 // initTownBeads initializes town-level beads database using bd init.
@@ -642,11 +642,16 @@ func initTownBeads(townPath string) error {
 	}
 
 	// Explicitly set issue_prefix config (bd init --prefix may not persist it in newer versions).
+	// bd >= 1.0.0 rejects this with "cannot be set via 'bd config set'" because init persists
+	// it directly; treat that as already-set rather than a failure.
 	prefixSetCmd := exec.Command("bd", "config", "set", "issue_prefix", "hq")
 	prefixSetCmd.Dir = townPath
 	prefixSetCmd.Env = beadsEnv
 	if prefixOutput, prefixErr := prefixSetCmd.CombinedOutput(); prefixErr != nil {
-		return fmt.Errorf("bd config set issue_prefix failed: %s", strings.TrimSpace(string(prefixOutput)))
+		out := strings.TrimSpace(string(prefixOutput))
+		if !strings.Contains(out, "cannot be set via") {
+			return fmt.Errorf("bd config set issue_prefix failed: %s", out)
+		}
 	}
 
 	// Configure custom types for Gas Town (agent, role, rig, convoy, slot).

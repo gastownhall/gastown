@@ -1136,6 +1136,8 @@ func (m *Manager) InitBeads(rigPath, prefix, rigName string) error {
 	// Without this, bd auto-starts its own server on a random port. (GH #2405)
 	doltCfg := doltserver.DefaultConfig(m.townRoot)
 	initArgs = append(initArgs, "--server-port", strconv.Itoa(doltCfg.Port))
+	// --force ensures bd 1.0+ persists issue_prefix on existing server-side DBs.
+	initArgs = append(initArgs, "--force")
 	cmd := exec.Command("bd", initArgs...)
 	cmd.Dir = rigPath
 	cmd.Env = filteredEnv
@@ -1156,11 +1158,16 @@ func (m *Manager) InitBeads(rigPath, prefix, rigName string) error {
 
 		// Explicitly set issue_prefix config (bd init --prefix may not persist it in newer versions).
 		// Without this, bd create and gt sling fail with "issue_prefix config is missing".
+		// bd >= 1.0.0 rejects this with "cannot be set via 'bd config set'" because init persists
+		// it directly; treat that as already-set rather than a failure.
 		prefixSetCmd := exec.Command("bd", "config", "set", "issue_prefix", prefix)
 		prefixSetCmd.Dir = rigPath
 		prefixSetCmd.Env = filteredEnv
 		if prefixOutput, prefixErr := prefixSetCmd.CombinedOutput(); prefixErr != nil {
-			return fmt.Errorf("bd config set issue_prefix failed: %s", strings.TrimSpace(string(prefixOutput)))
+			out := strings.TrimSpace(string(prefixOutput))
+			if !strings.Contains(out, "cannot be set via") {
+				return fmt.Errorf("bd config set issue_prefix failed: %s", out)
+			}
 		}
 
 		// Drop the orphaned beads_<prefix> database created by bd init (gt-sv1h).
