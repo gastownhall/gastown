@@ -3095,6 +3095,29 @@ func TestFindOrphanedDatabases_DetectsOrphans(t *testing.T) {
 	}
 }
 
+func TestFindOrphanedDatabases_ProtectsBeadsGlobal(t *testing.T) {
+	townRoot := t.TempDir()
+	dataDir := filepath.Join(townRoot, ".dolt-data")
+
+	setupDoltDB(t, dataDir, "hq")
+	setupDoltDB(t, dataDir, "beads_global")
+	setupDoltDB(t, dataDir, "orphan_db")
+
+	setupRigsJSON(t, townRoot, []string{})
+	setupRigMetadata(t, townRoot, "hq", "hq")
+
+	orphans, err := FindOrphanedDatabases(townRoot)
+	if err != nil {
+		t.Fatalf("FindOrphanedDatabases: %v", err)
+	}
+	if len(orphans) != 1 {
+		t.Fatalf("expected 1 orphan, got %d: %v", len(orphans), orphans)
+	}
+	if orphans[0].Name != "orphan_db" {
+		t.Errorf("expected orphan name 'orphan_db', got %q", orphans[0].Name)
+	}
+}
+
 func TestFindOrphanedDatabases_MultipleOrphans(t *testing.T) {
 	townRoot := t.TempDir()
 	dataDir := filepath.Join(townRoot, ".dolt-data")
@@ -3280,6 +3303,23 @@ func TestRemoveDatabase_ErrorOnMissing(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "not found") {
 		t.Errorf("expected 'not found' in error, got: %v", err)
+	}
+}
+
+func TestRemoveDatabase_RefusesProtectedSharedServerDatabase(t *testing.T) {
+	townRoot := t.TempDir()
+	dataDir := filepath.Join(townRoot, ".dolt-data")
+	dbPath := setupDoltDB(t, dataDir, "beads_global")
+
+	err := RemoveDatabase(townRoot, "beads_global", true)
+	if err == nil {
+		t.Fatal("expected error for protected shared-server database")
+	}
+	if !strings.Contains(err.Error(), "protected shared-server database") {
+		t.Errorf("expected protected database error, got: %v", err)
+	}
+	if _, statErr := os.Stat(dbPath); statErr != nil {
+		t.Errorf("expected beads_global to remain on disk, got stat error: %v", statErr)
 	}
 }
 

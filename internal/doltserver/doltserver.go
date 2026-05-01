@@ -47,10 +47,10 @@ import (
 
 	_ "github.com/go-sql-driver/mysql"
 	"github.com/gofrs/flock"
+	"github.com/steveyegge/gastown/internal/atomicfile"
 	"github.com/steveyegge/gastown/internal/beads"
 	"github.com/steveyegge/gastown/internal/config"
 	"github.com/steveyegge/gastown/internal/style"
-	"github.com/steveyegge/gastown/internal/atomicfile"
 	"gopkg.in/yaml.v3"
 )
 
@@ -2563,6 +2563,17 @@ type OrphanedDatabase struct {
 	SizeBytes int64
 }
 
+// isProtectedSharedServerDatabase reports databases that are intentionally
+// hosted by the shared Dolt server but are not referenced by rig metadata.
+func isProtectedSharedServerDatabase(dbName string) bool {
+	switch dbName {
+	case "beads_global":
+		return true
+	default:
+		return false
+	}
+}
+
 // FindOrphanedDatabases scans .dolt-data/ for databases that are not referenced
 // by any rig's metadata.json dolt_database field. These orphans consume disk space
 // and are served by the Dolt server unnecessarily.
@@ -2582,7 +2593,7 @@ func FindOrphanedDatabases(townRoot string) ([]OrphanedDatabase, error) {
 	config := DefaultConfig(townRoot)
 	var orphans []OrphanedDatabase
 	for _, dbName := range databases {
-		if referenced[dbName] {
+		if referenced[dbName] || isProtectedSharedServerDatabase(dbName) {
 			continue
 		}
 		dbPath := filepath.Join(config.DataDir, dbName)
@@ -2790,6 +2801,10 @@ func CollectDatabaseOwners(townRoot string) map[string]string {
 // If the Dolt server is running, it will DROP the database first.
 // If force is false and the database has real user tables, it refuses to remove. (gt-q8f6n)
 func RemoveDatabase(townRoot, dbName string, force bool) error {
+	if isProtectedSharedServerDatabase(dbName) {
+		return fmt.Errorf("database %q is a protected shared-server database", dbName)
+	}
+
 	config := DefaultConfig(townRoot)
 	dbPath := filepath.Join(config.DataDir, dbName)
 
@@ -3906,7 +3921,8 @@ func serverExecSQL(townRoot, query string) error {
 //
 // Dolt requires --host, --port, --user, --no-tls as global flags (before the
 // subcommand), not as subcommand flags. The order is:
-//   dolt --host=H --port=P --user=U --no-tls sql -q "..."
+//
+//	dolt --host=H --port=P --user=U --no-tls sql -q "..."
 func buildServerSQLCmd(ctx context.Context, config *Config, args ...string) *exec.Cmd {
 	// Global connection flags must come before the "sql" subcommand.
 	// Always pass --password to prevent dolt from prompting on stdin
