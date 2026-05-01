@@ -171,8 +171,13 @@ func init() {
 	formulaRunCmd.Flags().StringVar(&formulaRunRig, "rig", "", "Target rig (default: current or gastown)")
 	formulaRunCmd.Flags().BoolVar(&formulaRunDryRun, "dry-run", false, "Preview execution without running")
 	formulaRunCmd.Flags().StringVar(&formulaRunAgent, "agent", "", "Override agent/runtime for all legs (e.g., gemini, codex, claude-haiku)")
-	formulaRunCmd.Flags().StringSliceVar(&formulaRunFiles, "files", nil, "Files to pass to formula legs (available as {{.files}} in templates)")
-	formulaRunCmd.Flags().StringSliceVar(&formulaRunSet, "set", nil, "Set input variables as key=value pairs (available as {{.key}} in templates)")
+	formulaRunCmd.Flags().StringArrayVar(&formulaRunFiles, "files", nil, "Files to pass to formula legs (available as {{.files}} in templates)")
+	// StringArrayVar (not StringSliceVar): pflag's StringSliceVar runs the value
+	// through csv.Reader, which treats '\n' as a record separator and silently
+	// drops everything after the first newline. That truncated multi-line --set
+	// values like --set "problem=$(cat brief.md)" to just the first line by the
+	// time they reached substituteFormulaVars. (issue gastownhall/gastown#3798)
+	formulaRunCmd.Flags().StringArrayVar(&formulaRunSet, "set", nil, "Set input variables as key=value pairs (available as {{.key}} in templates)")
 
 	// Create flags
 	formulaCreateCmd.Flags().StringVar(&formulaCreateType, "type", "task", "Formula type: task, workflow, or patrol")
@@ -747,6 +752,34 @@ func executeWorkflowFormula(f *formula.Formula, formulaName, targetRig string) e
 	}
 	townBeads := filepath.Join(townRoot, ".beads")
 
+	// Detect orchestrator identity for interactive workflows. When any step is
+	// interactive, all step beads are pre-assigned to this agent so the daemon's
+	// stranded-convoy scan won't slings them to a polecat between steps. The
+	// orchestrator advances through them via `gt mol step done`. Steps that
+	// pour sub-convoys or call `gt formula run` MUST run in a non-polecat role
+	// (polecats are blocked from those calls), so this routing is required for
+	// workflows like mol-idea-to-plan. (issue gastownhall/gastown#3798)
+	hasInteractive := false
+	for _, step := range f.Steps {
+		if step.Interactive {
+			hasInteractive = true
+			break
+		}
+	}
+	var orchestratorID string
+	if hasInteractive {
+		cwd, _ := os.Getwd()
+		if roleInfo, rerr := GetRoleWithContext(cwd, townRoot); rerr == nil {
+			orchestratorID = buildAgentIdentity(RoleContext{
+				Role:     roleInfo.Role,
+				Rig:      roleInfo.Rig,
+				Polecat:  roleInfo.Polecat,
+				TownRoot: townRoot,
+				WorkDir:  cwd,
+			})
+		}
+	}
+
 	// Resolve the target rig's beads prefix and directory
 	rigPrefix := beads.GetPrefixForRig(townRoot, targetRig)
 	rigBeadsDir := townBeads
@@ -816,6 +849,13 @@ func executeWorkflowFormula(f *formula.Formula, formulaName, targetRig string) e
 		if beads.NeedsForceForID(stepBeadID) {
 			stepArgs = append(stepArgs, "--force")
 		}
+		// Pre-assign step beads to the orchestrator for interactive workflows.
+		// isReadyIssue treats beads with a live-session assignee as not stranded,
+		// so the daemon's auto-dispatch won't poach steps from the orchestrator
+		// between `gt mol step done` calls. (gastownhall/gastown#3798)
+		if hasInteractive && orchestratorID != "" {
+			stepArgs = append(stepArgs, "--assignee="+orchestratorID)
+		}
 
 		createCmd := BdCmd(stepArgs...).
 			WithAutoCommit().
@@ -857,17 +897,8 @@ func executeWorkflowFormula(f *formula.Formula, formulaName, targetRig string) e
 
 	// Step 3: Identify and dispatch ready steps (those with no dependencies)
 	// Interactive steps are hooked to the current session; others are slung to polecats.
+	// hasInteractive was computed at function entry alongside orchestratorID.
 	fmt.Printf("\n%s Dispatching ready steps...\n\n", style.Bold.Render("→"))
-
-	// Check if any step in the workflow is interactive — if so, we'll need
-	// to handle the molecule lifecycle in the current session.
-	hasInteractive := false
-	for _, step := range f.Steps {
-		if step.Interactive {
-			hasInteractive = true
-			break
-		}
-	}
 
 	slingCount := 0
 	interactiveCount := 0

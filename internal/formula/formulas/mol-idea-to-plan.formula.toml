@@ -55,10 +55,11 @@ each, await their findings, apply fixes to the plan, then proceed to the next ro
 """
 formula = "mol-idea-to-plan"
 type = "workflow"
-version = 2
+version = 3
 
 [[steps]]
 id = "intake"
+interactive = true
 title = "Structure idea into draft PRD"
 description = """
 Read the conversation context and produce a structured PRD draft.
@@ -113,6 +114,7 @@ echo "prd_draft=.prd-reviews/{{review_id}}/prd-draft.md" >> .prd-reviews/{{revie
 
 [[steps]]
 id = "prd-review"
+interactive = true
 title = "Run parallel PRD review (6 legs)"
 needs = ["intake"]
 description = """
@@ -151,6 +153,7 @@ cat .prd-reviews/<review-id>/prd-review.md
 
 [[steps]]
 id = "human-clarify"
+interactive = true
 title = "Gather human clarifications on PRD"
 needs = ["prd-review"]
 description = """
@@ -203,6 +206,7 @@ A: <human's answer>
 
 [[steps]]
 id = "generate-plan"
+interactive = true
 title = "Generate implementation plan (6 design dimensions)"
 needs = ["human-clarify"]
 description = """
@@ -252,6 +256,7 @@ Pay attention to:
 
 [[steps]]
 id = "prd-align-1"
+interactive = true
 title = "PRD alignment round 1: requirements + goals"
 needs = ["generate-plan"]
 description = """
@@ -313,6 +318,7 @@ Read both reports. For each must-fix and should-fix finding:
 
 [[steps]]
 id = "prd-align-2"
+interactive = true
 title = "PRD alignment round 2: constraints + non-goals"
 needs = ["prd-align-1"]
 description = """
@@ -376,6 +382,7 @@ Cut scope-creep items. Add constraint-respecting guardrails. Log changes in
 
 [[steps]]
 id = "prd-align-3"
+interactive = true
 title = "PRD alignment round 3: user-stories + open-questions"
 needs = ["prd-align-2"]
 description = """
@@ -459,6 +466,7 @@ Proceeding to plan self-review...
 
 [[steps]]
 id = "plan-review-1"
+interactive = true
 title = "Plan self-review round 1: completeness + sequencing"
 needs = ["prd-align-3"]
 description = """
@@ -525,6 +533,7 @@ Read both reports. Apply all must-fix and should-fix changes to
 
 [[steps]]
 id = "plan-review-2"
+interactive = true
 title = "Plan self-review round 2: risk + scope-creep"
 needs = ["plan-review-1"]
 description = """
@@ -594,6 +603,7 @@ Log in `.plan-reviews/{{review_id}}/review-round-2.md`.
 
 [[steps]]
 id = "plan-review-3"
+interactive = true
 title = "Plan self-review round 3: testability + coherence"
 needs = ["plan-review-2"]
 description = """
@@ -683,6 +693,7 @@ Proceeding to bead creation...
 
 [[steps]]
 id = "create-beads"
+interactive = true
 title = "Convert approved plan to beads"
 needs = ["plan-review-3"]
 description = """
@@ -762,6 +773,7 @@ Epic created. Human notified."""
 
 [[steps]]
 id = "verify-beads-pass-1"
+interactive = true
 title = "Verify beads coverage against plan (pass 1)"
 needs = ["create-beads"]
 description = """
@@ -821,6 +833,7 @@ Log what you found and created. If no gaps: say so explicitly.
 
 [[steps]]
 id = "verify-beads-pass-2"
+interactive = true
 title = "Verify beads coverage against plan (pass 2)"
 needs = ["verify-beads-pass-1"]
 description = """
@@ -850,6 +863,7 @@ requirements that only become visible after the first pass filled gaps.
 
 [[steps]]
 id = "verify-beads-pass-3"
+interactive = true
 title = "Final verification pass"
 needs = ["verify-beads-pass-2"]
 description = """
