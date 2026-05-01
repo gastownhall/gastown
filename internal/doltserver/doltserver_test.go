@@ -3095,6 +3095,39 @@ func TestFindOrphanedDatabases_DetectsOrphans(t *testing.T) {
 	}
 }
 
+func TestFindOrphanedDatabases_ProtectsBeadsGlobal(t *testing.T) {
+	townRoot := t.TempDir()
+	dataDir := filepath.Join(townRoot, ".dolt-data")
+
+	// Create referenced databases plus the shared Beads global database.
+	setupDoltDB(t, dataDir, "hq")
+	setupDoltDB(t, dataDir, "gastown")
+	setupDoltDB(t, dataDir, "beads_global")
+
+	// Keep a real orphan present to prove cleanup behavior is preserved.
+	setupDoltDB(t, dataDir, "old_setup")
+
+	setupRigsJSON(t, townRoot, []string{"gastown"})
+	setupRigMetadata(t, townRoot, "hq", "hq")
+	setupRigMetadata(t, townRoot, "gastown", "gastown")
+
+	orphans, err := FindOrphanedDatabases(townRoot)
+	if err != nil {
+		t.Fatalf("FindOrphanedDatabases: %v", err)
+	}
+	if len(orphans) != 1 {
+		t.Fatalf("expected only the real orphan, got %d: %v", len(orphans), orphans)
+	}
+	if orphans[0].Name != "old_setup" {
+		t.Fatalf("expected orphan old_setup, got %q", orphans[0].Name)
+	}
+
+	owners := CollectDatabaseOwners(townRoot)
+	if owner := owners["beads_global"]; owner != "Beads shared-server global database" {
+		t.Fatalf("expected beads_global owner label, got %q", owner)
+	}
+}
+
 func TestFindOrphanedDatabases_MultipleOrphans(t *testing.T) {
 	townRoot := t.TempDir()
 	dataDir := filepath.Join(townRoot, ".dolt-data")

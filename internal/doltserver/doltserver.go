@@ -47,10 +47,10 @@ import (
 
 	_ "github.com/go-sql-driver/mysql"
 	"github.com/gofrs/flock"
+	"github.com/steveyegge/gastown/internal/atomicfile"
 	"github.com/steveyegge/gastown/internal/beads"
 	"github.com/steveyegge/gastown/internal/config"
 	"github.com/steveyegge/gastown/internal/style"
-	"github.com/steveyegge/gastown/internal/atomicfile"
 	"gopkg.in/yaml.v3"
 )
 
@@ -2563,6 +2563,17 @@ type OrphanedDatabase struct {
 	SizeBytes int64
 }
 
+const beadsGlobalDatabaseName = "beads_global"
+
+func protectedSharedServerDatabaseOwner(dbName string) (string, bool) {
+	switch dbName {
+	case beadsGlobalDatabaseName:
+		return "Beads shared-server global database", true
+	default:
+		return "", false
+	}
+}
+
 // FindOrphanedDatabases scans .dolt-data/ for databases that are not referenced
 // by any rig's metadata.json dolt_database field. These orphans consume disk space
 // and are served by the Dolt server unnecessarily.
@@ -2583,6 +2594,9 @@ func FindOrphanedDatabases(townRoot string) ([]OrphanedDatabase, error) {
 	var orphans []OrphanedDatabase
 	for _, dbName := range databases {
 		if referenced[dbName] {
+			continue
+		}
+		if _, ok := protectedSharedServerDatabaseOwner(dbName); ok {
 			continue
 		}
 		dbPath := filepath.Join(config.DataDir, dbName)
@@ -2709,6 +2723,11 @@ func collectReferencedDatabases(townRoot string) map[string]bool {
 // accidental drops of production databases. (GH#2252)
 func CollectDatabaseOwners(townRoot string) map[string]string {
 	owners := make(map[string]string)
+
+	if DatabaseExists(townRoot, beadsGlobalDatabaseName) {
+		owner, _ := protectedSharedServerDatabaseOwner(beadsGlobalDatabaseName)
+		owners[beadsGlobalDatabaseName] = owner
+	}
 
 	// Check town-level beads (hq)
 	townBeadsDir := filepath.Join(townRoot, ".beads")
@@ -3906,7 +3925,8 @@ func serverExecSQL(townRoot, query string) error {
 //
 // Dolt requires --host, --port, --user, --no-tls as global flags (before the
 // subcommand), not as subcommand flags. The order is:
-//   dolt --host=H --port=P --user=U --no-tls sql -q "..."
+//
+//	dolt --host=H --port=P --user=U --no-tls sql -q "..."
 func buildServerSQLCmd(ctx context.Context, config *Config, args ...string) *exec.Cmd {
 	// Global connection flags must come before the "sql" subcommand.
 	// Always pass --password to prevent dolt from prompting on stdin
