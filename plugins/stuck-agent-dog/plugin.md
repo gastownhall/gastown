@@ -58,7 +58,7 @@ Gather all polecats and the deacon session. We check both crashed sessions
 ```bash
 echo "=== Stuck Agent Dog: Checking agent health ==="
 
-TOWN_ROOT="$HOME/gt"
+TOWN_ROOT="${GT_ROOT:-$HOME/gt}"
 RIGS_JSON_PATH="${TOWN_ROOT}/rigs.json"
 
 # Fallback for older/runtime-copied layouts that still expose rigs.json under mayor/.

@@ -11,8 +11,8 @@ set -euo pipefail
 
 # --- Configuration -----------------------------------------------------------
 
-DOLT_DATA_DIR="${DOLT_DATA_DIR:-$HOME/gt/.dolt-data}"
-BACKUP_DIR="${DOLT_BACKUP_DIR:-$HOME/gt/.dolt-backup}"
+DOLT_DATA_DIR="${DOLT_DATA_DIR:-${GT_ROOT:-${GT_TOWN_ROOT:-$HOME/gt}}/.dolt-data}"
+BACKUP_DIR="${DOLT_BACKUP_DIR:-${GT_ROOT:-${GT_TOWN_ROOT:-$HOME/gt}}/.dolt-backup}"
 BACKUP_TIMEOUT=60
 
 # --- Argument parsing ---------------------------------------------------------
