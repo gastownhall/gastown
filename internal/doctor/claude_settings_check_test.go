@@ -81,6 +81,52 @@ func createValidSettings(t *testing.T, path string) {
 	}
 }
 
+// createValidPolecatSettings creates a polecat settings file whose Stop hook
+// invokes `gt tap polecat-stop-check`, matching the canonical template in
+// internal/hooks/config.go DefaultOverrides()["polecats"].
+func createValidPolecatSettings(t *testing.T, path string) {
+	t.Helper()
+
+	settings := map[string]any{
+		"enabledPlugins": []string{"plugin1"},
+		"hooks": map[string]any{
+			"SessionStart": []any{
+				map[string]any{
+					"matcher": "**",
+					"hooks": []any{
+						map[string]any{
+							"type":    "command",
+							"command": "/usr/local/bin/gt prime --hook",
+						},
+					},
+				},
+			},
+			"Stop": []any{
+				map[string]any{
+					"matcher": "",
+					"hooks": []any{
+						map[string]any{
+							"type":    "command",
+							"command": `export PATH="$HOME/go/bin:$HOME/.local/bin:$PATH" && gt tap polecat-stop-check`,
+						},
+					},
+				},
+			},
+		},
+	}
+
+	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+		t.Fatal(err)
+	}
+	data, err := json.MarshalIndent(settings, "", "  ")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, data, 0644); err != nil {
+		t.Fatal(err)
+	}
+}
+
 // createStaleSettings creates a settings file missing required elements.
 func createStaleSettings(t *testing.T, path string, missingElements ...string) {
 	t.Helper()
@@ -251,9 +297,11 @@ func TestClaudeSettingsCheck_ValidPolecatSettings(t *testing.T) {
 	rigName := "testrig"
 
 	// Create valid polecat settings in correct location (polecats/.claude/settings.json)
-	// Settings are now shared at the polecats parent directory, passed via --settings flag.
+	// with the polecat-specific Stop hook (`gt tap polecat-stop-check`) — see
+	// internal/hooks/config.go DefaultOverrides()["polecats"]. The check
+	// recognizes role-specific Stop patterns (#3648).
 	pcSettings := filepath.Join(tmpDir, rigName, "polecats", ".claude", "settings.json")
-	createValidSettings(t, pcSettings)
+	createValidPolecatSettings(t, pcSettings)
 
 	check := NewClaudeSettingsCheck()
 	ctx := &CheckContext{TownRoot: tmpDir}
@@ -262,6 +310,67 @@ func TestClaudeSettingsCheck_ValidPolecatSettings(t *testing.T) {
 
 	if result.Status != StatusOK {
 		t.Errorf("expected StatusOK for valid polecat settings, got %v: %s", result.Status, result.Message)
+	}
+}
+
+// TestClaudeSettingsCheck_PolecatStopHookRecognized is the regression test for
+// #3648: doctor's claude-settings check used to expect `costs record` in the
+// Stop hook for *all* roles, but the polecat hooks template installs
+// `gt tap polecat-stop-check`. Result: doctor reported polecat settings as
+// stale, --fix deleted them, the daemon recreated the same file, and the
+// check never converged. The fix recognizes role-specific Stop patterns.
+func TestClaudeSettingsCheck_PolecatStopHookRecognized(t *testing.T) {
+	tmpDir := t.TempDir()
+	rigName := "testrig"
+
+	pcSettings := filepath.Join(tmpDir, rigName, "polecats", ".claude", "settings.json")
+	createValidPolecatSettings(t, pcSettings)
+
+	check := NewClaudeSettingsCheck()
+	ctx := &CheckContext{TownRoot: tmpDir}
+
+	result := check.Run(ctx)
+
+	if result.Status != StatusOK {
+		t.Fatalf("polecat settings with `gt tap polecat-stop-check` should pass; got %v: %s\nDetails: %v",
+			result.Status, result.Message, result.Details)
+	}
+
+	// Witness role should still expect `costs record` — verify the role-aware
+	// pattern didn't break the canonical case.
+	witnessSettings := filepath.Join(tmpDir, rigName, "witness", ".claude", "settings.json")
+	createValidSettings(t, witnessSettings) // uses `gt costs record`
+
+	result = check.Run(ctx)
+	if result.Status != StatusOK {
+		t.Fatalf("witness settings with `gt costs record` should still pass; got %v: %s\nDetails: %v",
+			result.Status, result.Message, result.Details)
+	}
+}
+
+// TestExpectedStopPattern documents the role → expected-Stop-pattern mapping.
+// If the canonical hooks template in internal/hooks/config.go changes, this
+// test will fail and remind whoever's editing it to keep the doctor check
+// in sync.
+func TestExpectedStopPattern(t *testing.T) {
+	cases := []struct {
+		role string
+		want string
+	}{
+		{"polecat", "polecat-stop-check"},
+		{"polecats", "polecat-stop-check"}, // both singular and plural in use
+		{"witness", "costs record"},
+		{"refinery", "costs record"},
+		{"crew", "costs record"},
+		{"mayor", "costs record"},
+		{"deacon", "costs record"},
+		{"", "costs record"},
+	}
+	for _, c := range cases {
+		got := expectedStopPattern(c.role)
+		if got != c.want {
+			t.Errorf("expectedStopPattern(%q) = %q, want %q", c.role, got, c.want)
+		}
 	}
 }
 

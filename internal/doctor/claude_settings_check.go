@@ -527,9 +527,16 @@ func (c *ClaudeSettingsCheck) findSettingsFiles(townRoot string) []staleSettings
 }
 
 // checkSettings compares a settings file against the expected template.
-// Returns a list of what's missing.
-// agentType is reserved for future role-specific validation.
-func (c *ClaudeSettingsCheck) checkSettings(path, _ string) []string {
+// Returns a list of what's missing. Stop-hook expectations are role-specific
+// to match the canonical hook templates in internal/hooks/config.go (#3648):
+//
+//   - polecat → `gt tap polecat-stop-check` (idle-polecat catcher)
+//   - everyone else → `gt costs record` (autonomous cost accounting)
+//
+// Without this, doctor never converged for polecats: hooks sync wrote
+// polecat-stop-check, doctor demanded costs record, fix deleted the file,
+// the daemon recreated the same polecat-stop-check file, repeat forever.
+func (c *ClaudeSettingsCheck) checkSettings(path, agentType string) []string {
 	var missing []string
 
 	// Read the actual settings
@@ -547,7 +554,7 @@ func (c *ClaudeSettingsCheck) checkSettings(path, _ string) []string {
 	// All templates should have:
 	// 1. enabledPlugins
 	// 2. SessionStart hook with prime --hook
-	// 3. Stop hook with gt costs record (for autonomous)
+	// 3. Stop hook (role-specific pattern — see expectedStopPattern)
 	// Check enabledPlugins
 	if _, ok := actual["enabledPlugins"]; !ok {
 		missing = append(missing, "enabledPlugins")
@@ -564,12 +571,25 @@ func (c *ClaudeSettingsCheck) checkSettings(path, _ string) []string {
 		missing = append(missing, "SessionStart hook (prime --hook)")
 	}
 
-	// Check Stop hook exists with costs record (for all roles)
-	if !c.hookHasPattern(hooks, "Stop", "costs record") {
-		missing = append(missing, "Stop hook")
+	// Check Stop hook against the expected pattern for this role.
+	expected := expectedStopPattern(agentType)
+	if !c.hookHasPattern(hooks, "Stop", expected) {
+		missing = append(missing, fmt.Sprintf("Stop hook (%s)", expected))
 	}
 
 	return missing
+}
+
+// expectedStopPattern returns the substring that should appear in the role's
+// Stop hook command. Mirrors the templates in internal/hooks/config.go's
+// DefaultOverrides — when those change, this must change too.
+func expectedStopPattern(agentType string) string {
+	switch agentType {
+	case "polecat", "polecats":
+		return "polecat-stop-check"
+	default:
+		return "costs record"
+	}
 }
 
 // getGitFileStatus determines the git status of a file.
