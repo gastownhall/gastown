@@ -135,7 +135,7 @@ fi
 # --- Take action --------------------------------------------------------------
 
 # Crashed polecats: notify witness to restart
-for ENTRY in "${CRASHED[@]}"; do
+for ENTRY in "${CRASHED[@]:-}"; do
   IFS='|' read -r SESSION RIG PCAT HOOK <<< "$ENTRY"
   log "Requesting restart for $RIG/polecats/$PCAT (hook=$HOOK)"
   gt mail send "$RIG/witness" -s "RESTART_POLECAT: $RIG/$PCAT" --stdin <<BODY
@@ -146,7 +146,7 @@ BODY
 done
 
 # Zombie polecats: kill zombie session, then request restart
-for ENTRY in "${STUCK[@]}"; do
+for ENTRY in "${STUCK[@]:-}"; do
   IFS='|' read -r SESSION RIG PCAT HOOK REASON <<< "$ENTRY"
   log "Killing zombie session $SESSION and requesting restart"
   tmux kill-session -t "$SESSION" 2>/dev/null || true
