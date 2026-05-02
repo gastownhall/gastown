@@ -45,8 +45,9 @@ func runMailCheck(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("getting mailbox: %w", err)
 	}
 
-	// Count unread
-	_, unread, err := mailbox.Count()
+	// Load the inbox once. The inject path needs unread messages later, and
+	// calling Count() followed by ListUnread() doubles bd/Dolt reads.
+	messages, _, unread, err := loadInboxSnapshot(mailbox, false)
 	if err != nil {
 		if mailCheckInject {
 			fmt.Fprintf(os.Stderr, "gt mail check: count error for %s: %v\n", address, err)
@@ -90,11 +91,7 @@ func runMailCheck(cmd *cobra.Command, args []string) error {
 		}
 
 		if unread > 0 {
-			messages, listErr := mailbox.ListUnread()
-			if listErr != nil {
-				fmt.Fprintf(os.Stderr, "gt mail check: could not list unread for %s: %v\n", address, listErr)
-				return nil
-			}
+			messages = filterUnreadMessages(messages)
 			fmt.Print(formatInjectOutput(messages))
 			// Ack after output so message is delivered before being marked acked.
 			if ackErr := mailbox.AcknowledgeDeliveries(address, messages); ackErr != nil {

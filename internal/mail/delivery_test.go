@@ -180,3 +180,33 @@ func TestDeliveryAckLabelSequenceIdempotent(t *testing.T) {
 		}
 	})
 }
+
+func TestDeliveryAckLabelsToWriteSkipsExistingLabels(t *testing.T) {
+	at := time.Date(2026, 2, 17, 14, 0, 0, 0, time.UTC)
+
+	t.Run("partial retry only writes missing ack label", func(t *testing.T) {
+		existing := []string{
+			"delivery:pending",
+			"delivery-acked-by:gastown/worker",
+			"delivery-acked-at:2026-02-17T12:00:00Z",
+		}
+		got := DeliveryAckLabelsToWrite("gastown/worker", at, existing)
+		want := []string{"delivery:acked"}
+		if !reflect.DeepEqual(got, want) {
+			t.Fatalf("got %v, want %v", got, want)
+		}
+	})
+
+	t.Run("complete retry writes nothing", func(t *testing.T) {
+		existing := []string{
+			"delivery:pending",
+			"delivery-acked-by:gastown/worker",
+			"delivery-acked-at:2026-02-17T12:00:00Z",
+			"delivery:acked",
+		}
+		got := DeliveryAckLabelsToWrite("gastown/worker", at, existing)
+		if len(got) != 0 {
+			t.Fatalf("got %v, want no labels", got)
+		}
+	})
+}

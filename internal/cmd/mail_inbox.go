@@ -53,20 +53,11 @@ func runMailInbox(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	// Get messages
-	// --all is the default behavior (shows all messages)
-	// --unread filters to only unread messages
-	var messages []*mail.Message
-	if mailInboxUnread {
-		messages, err = mailbox.ListUnread()
-	} else {
-		messages, err = mailbox.List()
-	}
+	// Load the inbox once. Count() and ListUnread() both call List(), so using
+	// them here doubles the bd/Dolt reads on the hot patrol path.
+	messages, total, unread, err := loadInboxSnapshot(mailbox, mailInboxUnread)
 	if err != nil {
 		return fmt.Errorf("listing messages: %w", err)
-	}
-	if messages == nil {
-		messages = make([]*mail.Message, 0)
 	}
 
 	// JSON output
@@ -76,18 +67,10 @@ func runMailInbox(cmd *cobra.Command, args []string) error {
 		if err := enc.Encode(messages); err != nil {
 			return err
 		}
-		// Ack after output so JSON reflects accurate read-time state.
-		if ackErr := mailbox.AcknowledgeDeliveries(address, messages); ackErr != nil {
-			fmt.Fprintf(os.Stderr, "gt mail inbox: delivery ack failed: %v\n", ackErr)
-		}
 		return nil
 	}
 
 	// Human-readable output
-	total, unread, err := mailbox.Count()
-	if err != nil {
-		style.PrintWarning("could not count messages: %v", err)
-	}
 	fmt.Printf("%s Inbox: %s (%d messages, %d unread)\n\n",
 		style.Bold.Render("📬"), address, total, unread)
 
@@ -124,12 +107,47 @@ func runMailInbox(cmd *cobra.Command, args []string) error {
 			style.Dim.Render(msg.Timestamp.Local().Format("2006-01-02 15:04")))
 	}
 
-	// Ack after output so human-readable display is not delayed by bd subprocesses.
-	if ackErr := mailbox.AcknowledgeDeliveries(address, messages); ackErr != nil {
-		fmt.Fprintf(os.Stderr, "gt mail inbox: delivery ack failed: %v\n", ackErr)
+	return nil
+}
+
+type inboxLister interface {
+	List() ([]*mail.Message, error)
+}
+
+func loadInboxSnapshot(mailbox inboxLister, unreadOnly bool) ([]*mail.Message, int, int, error) {
+	allMessages, err := mailbox.List()
+	if err != nil {
+		return nil, 0, 0, err
+	}
+	if allMessages == nil {
+		allMessages = make([]*mail.Message, 0)
 	}
 
-	return nil
+	total, unread := countInboxMessages(allMessages)
+	if unreadOnly {
+		return filterUnreadMessages(allMessages), total, unread, nil
+	}
+	return allMessages, total, unread, nil
+}
+
+func countInboxMessages(messages []*mail.Message) (total, unread int) {
+	total = len(messages)
+	for _, msg := range messages {
+		if msg != nil && !msg.Read {
+			unread++
+		}
+	}
+	return total, unread
+}
+
+func filterUnreadMessages(messages []*mail.Message) []*mail.Message {
+	unreadMessages := make([]*mail.Message, 0)
+	for _, msg := range messages {
+		if msg != nil && !msg.Read {
+			unreadMessages = append(unreadMessages, msg)
+		}
+	}
+	return unreadMessages
 }
 
 func runMailRead(cmd *cobra.Command, args []string) error {
