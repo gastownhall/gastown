@@ -95,7 +95,7 @@ func AcknowledgeDeliveryBead(workDir, beadsDir, beadID, recipientIdentity string
 		fmt.Fprintf(os.Stderr, "delivery ack: could not read labels for %s: %v (proceeding with fresh timestamp)\n", beadID, readErr)
 	}
 
-	for _, label := range DeliveryAckLabelsToWrite(recipientIdentity, timeNow().UTC(), existingLabels) {
+	for _, label := range deliveryAckLabelsToWrite(recipientIdentity, timeNow().UTC(), existingLabels) {
 		args := []string{"label", "add", beadID, label}
 		ctx, cancel := bdWriteCtx()
 		_, err := runBdCommand(ctx, args, workDir, beadsDir)
@@ -111,10 +111,10 @@ func AcknowledgeDeliveryBead(workDir, beadsDir, beadID, recipientIdentity string
 	return nil
 }
 
-// DeliveryAckLabelsToWrite returns the idempotent ack labels that are not
+// deliveryAckLabelsToWrite returns the idempotent ack labels that are not
 // already present. This avoids duplicate bd label-add calls, which otherwise
 // attempt a Dolt commit and produce "nothing to commit" warnings.
-func DeliveryAckLabelsToWrite(recipientIdentity string, at time.Time, existingLabels []string) []string {
+func deliveryAckLabelsToWrite(recipientIdentity string, at time.Time, existingLabels []string) []string {
 	sequence := DeliveryAckLabelSequenceIdempotent(recipientIdentity, at, existingLabels)
 	if len(existingLabels) == 0 {
 		return sequence

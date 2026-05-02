@@ -50,10 +50,10 @@ func runMailCheck(cmd *cobra.Command, args []string) error {
 	messages, _, unread, err := loadInboxSnapshot(mailbox, false)
 	if err != nil {
 		if mailCheckInject {
-			fmt.Fprintf(os.Stderr, "gt mail check: count error for %s: %v\n", address, err)
+			fmt.Fprintf(os.Stderr, "gt mail check: inbox load error for %s: %v\n", address, err)
 			return nil
 		}
-		return fmt.Errorf("counting messages: %w", err)
+		return fmt.Errorf("loading inbox: %w", err)
 	}
 
 	// JSON output

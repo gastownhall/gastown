@@ -190,7 +190,7 @@ func TestDeliveryAckLabelsToWriteSkipsExistingLabels(t *testing.T) {
 			"delivery-acked-by:gastown/worker",
 			"delivery-acked-at:2026-02-17T12:00:00Z",
 		}
-		got := DeliveryAckLabelsToWrite("gastown/worker", at, existing)
+		got := deliveryAckLabelsToWrite("gastown/worker", at, existing)
 		want := []string{"delivery:acked"}
 		if !reflect.DeepEqual(got, want) {
 			t.Fatalf("got %v, want %v", got, want)
@@ -204,7 +204,7 @@ func TestDeliveryAckLabelsToWriteSkipsExistingLabels(t *testing.T) {
 			"delivery-acked-at:2026-02-17T12:00:00Z",
 			"delivery:acked",
 		}
-		got := DeliveryAckLabelsToWrite("gastown/worker", at, existing)
+		got := deliveryAckLabelsToWrite("gastown/worker", at, existing)
 		if len(got) != 0 {
 			t.Fatalf("got %v, want no labels", got)
 		}
