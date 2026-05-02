@@ -201,22 +201,51 @@ func (d *Daemon) runScheduledMaintenance() {
 		return
 	}
 
-	// Run gt maintain --force --threshold <threshold>
+	// Pre-check: verify Dolt is healthy before attempting maintenance.
+	// If Dolt is in a crash/restart cycle, skip without escalating —
+	// the 5-minute check loop will retry within the 1-hour window.
+	statusCmd := exec.CommandContext(d.ctx, d.gtPath, "dolt", "status")
+	statusCmd.Dir = d.config.TownRoot
+	if err := statusCmd.Run(); err != nil {
+		d.logger.Printf("scheduled_maintenance: Dolt not healthy, deferring: %v", err)
+		return // don't set lastMaintenanceRun — retry on next 5-min tick
+	}
+
+	// Run gt maintain --force --threshold <threshold>, with retries.
+	const maxAttempts = 3
+	const retryGap = 30 * time.Second
 	d.logger.Printf("scheduled_maintenance: running gt maintain --force --threshold %d", threshold)
 
-	cmd := exec.CommandContext(d.ctx, d.gtPath, "maintain", "--force",
-		"--threshold", strconv.Itoa(threshold))
-	cmd.Dir = d.config.TownRoot
-	util.SetDetachedProcessGroup(cmd)
-	output, err := cmd.CombinedOutput()
-	if err != nil {
-		d.logger.Printf("scheduled_maintenance: gt maintain failed: %v\nOutput: %s", err, string(output))
-		d.escalate("scheduled_maintenance", fmt.Sprintf("gt maintain --force failed: %v", err))
+	var lastOutput []byte
+	var lastErr error
+	for attempt := range maxAttempts {
+		if attempt > 0 {
+			d.logger.Printf("scheduled_maintenance: retrying in %s (attempt %d/%d)", retryGap, attempt+1, maxAttempts)
+			select {
+			case <-d.ctx.Done():
+				return
+			case <-time.After(retryGap):
+			}
+		}
+		cmd := exec.CommandContext(d.ctx, d.gtPath, "maintain", "--force",
+			"--threshold", strconv.Itoa(threshold))
+		cmd.Dir = d.config.TownRoot
+		util.SetDetachedProcessGroup(cmd)
+		lastOutput, lastErr = cmd.CombinedOutput()
+		if lastErr == nil {
+			break
+		}
+		d.logger.Printf("scheduled_maintenance: attempt %d failed: %v", attempt+1, lastErr)
+	}
+
+	if lastErr != nil {
+		d.logger.Printf("scheduled_maintenance: gt maintain failed after %d attempts: %v\nOutput: %s",
+			maxAttempts, lastErr, string(lastOutput))
+		d.escalate("scheduled_maintenance", fmt.Sprintf("gt maintain --force failed: %v", lastErr))
 	} else {
 		d.logger.Printf("scheduled_maintenance: gt maintain completed successfully")
-		if len(output) > 0 {
-			// Log last few lines of output
-			lines := strings.Split(strings.TrimSpace(string(output)), "\n")
+		if len(lastOutput) > 0 {
+			lines := strings.Split(strings.TrimSpace(string(lastOutput)), "\n")
 			tail := lines
 			if len(tail) > 5 {
 				tail = tail[len(tail)-5:]
