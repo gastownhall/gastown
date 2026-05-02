@@ -1808,9 +1808,9 @@ func addressToAgentBeadID(address string) string {
 	switch {
 	case address == "overseer":
 		return "" // Overseer is a human, no agent bead
-	case strings.HasPrefix(address, constants.RoleMayor):
+	case address == constants.RoleMayor || address == constants.RoleMayor+"/":
 		return session.MayorSessionName()
-	case strings.HasPrefix(address, constants.RoleDeacon):
+	case address == constants.RoleDeacon || address == constants.RoleDeacon+"/":
 		return session.DeaconSessionName()
 	}
 
@@ -1858,8 +1858,8 @@ func AddressToSessionIDs(address string) []string {
 		return []string{session.MayorSessionName()}
 	}
 
-	// Deacon address: "deacon/" or "deacon"
-	if strings.HasPrefix(address, constants.RoleDeacon) {
+	// Deacon address: "deacon/" or "deacon" (exact match only — not deacon/dogs/*)
+	if address == constants.RoleDeacon || address == constants.RoleDeacon+"/" {
 		return []string{session.DeaconSessionName()}
 	}
 
