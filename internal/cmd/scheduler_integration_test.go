@@ -1247,3 +1247,90 @@ func TestSchedulerDirectConvoyDispatch(t *testing.T) {
 		t.Errorf("direct mode should NOT show 'Would schedule'\noutput: %s", out)
 	}
 }
+
+// TestScheduleBead_RefusesClosed verifies that scheduleBead (deferred dispatch
+// path) refuses to schedule a closed bead. Mirrors the closed-bead guards in
+// runSling and executeSling. Regression test for hq-ki2: the daemon's stranded
+// scan was creating ghost convoys for already-closed cross-prefix beads via
+// scheduleBead → CreateSlingContext, because scheduleBead was the only sling
+// entry point missing the closed-bead guard.
+func TestScheduleBead_RefusesClosed(t *testing.T) {
+	hqPath, rigPath, gtBinary, env := setupSchedulerIntegrationTown(t)
+
+	beadID := createTestBead(t, rigPath, "Closed bead refused by scheduleBead")
+
+	// Close the bead before attempting to schedule.
+	closeCmd := exec.Command("bd", "close", beadID)
+	closeCmd.Dir = rigPath
+	if out, err := closeCmd.CombinedOutput(); err != nil {
+		t.Fatalf("bd close %s failed: %v\n%s", beadID, err, out)
+	}
+
+	// Attempt to sling (deferred mode → scheduleBead) — should fail with
+	// "work already completed".
+	out, err := runGTCmdMayFail(t, gtBinary, hqPath, env,
+		"sling", beadID, "testrig", "--hook-raw-bead")
+	if err == nil {
+		t.Fatalf("expected gt sling to fail for closed bead, got success\noutput: %s", out)
+	}
+	if !strings.Contains(out, "closed") || !strings.Contains(out, "work already completed") {
+		t.Errorf("expected error to mention closed/work already completed, got: %s", out)
+	}
+
+	// Verify no sling context was created for the closed bead.
+	if hasSlingContext(t, hqPath, beadID) {
+		t.Errorf("scheduleBead should not have created a sling context for closed bead %s", beadID)
+	}
+}
+
+// TestScheduleBead_RefusesTombstone verifies that scheduleBead refuses to
+// schedule a tombstoned bead. Companion to TestScheduleBead_RefusesClosed.
+func TestScheduleBead_RefusesTombstone(t *testing.T) {
+	hqPath, rigPath, gtBinary, env := setupSchedulerIntegrationTown(t)
+
+	beadID := createTestBead(t, rigPath, "Tombstone bead refused by scheduleBead")
+
+	// Tombstone the bead. bd uses `bd close --tombstone` for terminal removal.
+	closeCmd := exec.Command("bd", "close", beadID, "--tombstone")
+	closeCmd.Dir = rigPath
+	if out, err := closeCmd.CombinedOutput(); err != nil {
+		t.Fatalf("bd close --tombstone %s failed: %v\n%s", beadID, err, out)
+	}
+
+	out, err := runGTCmdMayFail(t, gtBinary, hqPath, env,
+		"sling", beadID, "testrig", "--hook-raw-bead")
+	if err == nil {
+		t.Fatalf("expected gt sling to fail for tombstone bead, got success\noutput: %s", out)
+	}
+	if !strings.Contains(out, "tombstone") || !strings.Contains(out, "work already completed") {
+		t.Errorf("expected error to mention tombstone/work already completed, got: %s", out)
+	}
+
+	if hasSlingContext(t, hqPath, beadID) {
+		t.Errorf("scheduleBead should not have created a sling context for tombstone bead %s", beadID)
+	}
+}
+
+// TestScheduleBead_ClosedForceDoesNotBypass verifies that --force does NOT
+// bypass the closed-bead guard in scheduleBead. To re-dispatch a closed bead,
+// the bead must be reopened first (matching runSling/executeSling semantics).
+func TestScheduleBead_ClosedForceDoesNotBypass(t *testing.T) {
+	hqPath, rigPath, gtBinary, env := setupSchedulerIntegrationTown(t)
+
+	beadID := createTestBead(t, rigPath, "Closed bead --force does not bypass")
+
+	closeCmd := exec.Command("bd", "close", beadID)
+	closeCmd.Dir = rigPath
+	if out, err := closeCmd.CombinedOutput(); err != nil {
+		t.Fatalf("bd close %s failed: %v\n%s", beadID, err, out)
+	}
+
+	out, err := runGTCmdMayFail(t, gtBinary, hqPath, env,
+		"sling", beadID, "testrig", "--hook-raw-bead", "--force")
+	if err == nil {
+		t.Fatalf("expected gt sling --force to still fail for closed bead, got success\noutput: %s", out)
+	}
+	if !strings.Contains(out, "closed") || !strings.Contains(out, "work already completed") {
+		t.Errorf("--force should not bypass closed guard; got: %s", out)
+	}
+}
