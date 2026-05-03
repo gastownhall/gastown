@@ -5741,7 +5741,14 @@ func TestBuildStartupCommandWithAgentOverrideSetsGTAgentForOpenCode(t *testing.T
 	if !strings.Contains(cmd, "GT_PROCESS_NAMES=opencode") {
 		t.Errorf("expected GT_PROCESS_NAMES=opencode in command, got: %q", cmd)
 	}
+	if !strings.Contains(cmd, "OPENCODE_PERMISSION=") {
+		t.Errorf("expected OPENCODE_PERMISSION in command, got: %q", cmd)
+	}
 	if strings.Contains(cmd, "--settings") {
 		t.Errorf("opencode should not get Claude --settings, got: %q", cmd)
+	}
+	cmdLower := strings.ToLower(cmd)
+	if !strings.Contains(cmdLower, "opencode") {
+		t.Errorf("expected opencode binary in command, got: %q", cmd)
 	}
 }

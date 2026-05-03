@@ -1283,3 +1283,162 @@ func TestMarshalConfig(t *testing.T) {
 		t.Errorf("round-trip lost SessionStart hooks")
 	}
 }
+
+func TestProviderBase_Opencode(t *testing.T) {
+	t.Parallel()
+
+	base := ProviderBase("opencode")
+	if base == nil {
+		t.Fatal("ProviderBase returned nil")
+	}
+
+	if len(base.PreToolUse) == 0 {
+		t.Error("opencode ProviderBase should include PreToolUse guards")
+	}
+	if len(base.SessionStart) != 0 {
+		t.Error("opencode ProviderBase should NOT include SessionStart (handled by gastown.js)")
+	}
+	if len(base.Stop) != 0 {
+		t.Error("opencode ProviderBase should NOT include Stop (handled by gastown.js)")
+	}
+	if len(base.PreCompact) != 0 {
+		t.Error("opencode ProviderBase should NOT include PreCompact (handled by gastown.js)")
+	}
+}
+
+func TestProviderBase_Claude(t *testing.T) {
+	t.Parallel()
+
+	base := ProviderBase("claude")
+	if base == nil {
+		t.Fatal("ProviderBase returned nil")
+	}
+
+	if len(base.SessionStart) == 0 {
+		t.Error("claude ProviderBase should include SessionStart")
+	}
+	if len(base.PreCompact) == 0 {
+		t.Error("claude ProviderBase should include PreCompact")
+	}
+	if len(base.Stop) == 0 {
+		t.Error("claude ProviderBase should include Stop")
+	}
+	if len(base.PreToolUse) == 0 {
+		t.Error("claude ProviderBase should include PreToolUse guards")
+	}
+}
+
+func TestProviderBase_Gemini(t *testing.T) {
+	t.Parallel()
+
+	base := ProviderBase("gemini")
+	if base == nil {
+		t.Fatal("ProviderBase returned nil")
+	}
+
+	if len(base.SessionStart) == 0 {
+		t.Error("gemini ProviderBase should include SessionStart")
+	}
+	if len(base.Stop) == 0 {
+		t.Error("gemini ProviderBase should include Stop")
+	}
+	if len(base.PreCompact) == 0 {
+		t.Error("gemini ProviderBase should include PreCompact")
+	}
+}
+
+func TestProviderBase_Unknown(t *testing.T) {
+	t.Parallel()
+
+	base := ProviderBase("unknown-agent-v3")
+	if base == nil {
+		t.Fatal("ProviderBase returned nil for unknown provider")
+	}
+
+	if len(base.SessionStart) != 0 || len(base.Stop) != 0 || len(base.PreCompact) != 0 {
+		t.Error("unknown provider should return empty config")
+	}
+}
+
+func TestProviderHasHooks(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		provider string
+		want     bool
+	}{
+		{"claude", true},
+		{"opencode", true},
+		{"gemini", true},
+		{"copilot", true},
+		{"cursor", true},
+		{"codex", false},
+		{"unknown", false},
+		{"", false},
+	}
+	for _, tt := range tests {
+		got := ProviderHasHooks(tt.provider)
+		if got != tt.want {
+			t.Errorf("ProviderHasHooks(%q) = %v, want %v", tt.provider, got, tt.want)
+		}
+	}
+}
+
+func TestClaudeToProviderEvent(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		claudeEvent string
+		provider    string
+		want        string
+	}{
+		{"PreCompact", "opencode", "session.compacted"},
+		{"SessionStart", "opencode", "session.created"},
+		{"Stop", "opencode", "session.deleted"},
+		{"PreCompact", "claude", "PreCompact"},
+		{"SessionStart", "claude", "SessionStart"},
+		{"PreToolUse", "opencode", ""},
+		{"UserPromptSubmit", "opencode", ""},
+		{"UnknownEvent", "opencode", ""},
+		{"PreCompact", "codex", ""},
+	}
+	for _, tt := range tests {
+		got := ClaudeToProviderEvent(tt.claudeEvent, tt.provider)
+		if got != tt.want {
+			t.Errorf("ClaudeToProviderEvent(%q, %q) = %q, want %q", tt.claudeEvent, tt.provider, got, tt.want)
+		}
+	}
+}
+
+func TestProviderLifecycleEvents_HasAllCoreEvents(t *testing.T) {
+	t.Parallel()
+
+	events := ProviderLifecycleEvents()
+
+	required := []ProviderEvent{
+		HookEventSessionInit,
+		HookEventSessionStop,
+		HookEventCompaction,
+		HookEventTurnBoundary,
+		HookEventToolUseGuard,
+	}
+	for _, ev := range required {
+		if _, ok := events[ev]; !ok {
+			t.Errorf("ProviderLifecycleEvents missing required event: %s", ev)
+		}
+	}
+}
+
+func TestProviderLifecycleEvents_AllHaveDescriptions(t *testing.T) {
+	t.Parallel()
+
+	events := ProviderLifecycleEvents()
+	for key, cfg := range events {
+		if cfg.Description == "" {
+			t.Errorf("ProviderLifecycleEvents[%s] missing Description", key)
+		}
+		if cfg.ClaudeHook == "" {
+			t.Errorf("ProviderLifecycleEvents[%s] missing ClaudeHook", key)
+		}
+	}
+}

@@ -2,6 +2,11 @@
 //
 // It manages a base hook configuration and per-role/per-rig overrides,
 // generating .claude/settings.json files for all agents in the workspace.
+//
+// For non-Claude agents (opencode, gemini, codex, copilot), hook configuration
+// is provided through each agent's native plugin/configuration format.
+// Use ProviderEventMap and ProviderBase() to translate Claude-style hook configs
+// to provider-specific equivalents.
 package hooks
 
 import (
@@ -719,8 +724,159 @@ func isRig(path string) bool {
 	return false
 }
 
-// EventTypes returns the known hook event type names in display order.
+// EventTypes returns the known hook event type names in display order (Claude-specific).
 var EventTypes = []string{"PreToolUse", "PostToolUse", "SessionStart", "Stop", "PreCompact", "UserPromptSubmit", "WorktreeCreate", "WorktreeRemove"}
+
+// ProviderEvent represents a lifecycle event in a provider-agnostic way.
+// Maps Claude event names to provider-specific equivalents for non-Claude agents.
+type ProviderEvent string
+
+const (
+	// HookEventToolUseGuard fires before tool execution (PreToolUse).
+	HookEventToolUseGuard ProviderEvent = "tool_use_guard"
+	// HookEventSessionInit fires when a session starts (SessionStart).
+	HookEventSessionInit ProviderEvent = "session_init"
+	// HookEventSessionStop fires when a session ends (Stop).
+	HookEventSessionStop ProviderEvent = "session_stop"
+	// HookEventCompaction fires before/during context compaction (PreCompact).
+	HookEventCompaction ProviderEvent = "compaction"
+	// HookEventTurnBoundary fires between user turns (UserPromptSubmit).
+	HookEventTurnBoundary ProviderEvent = "turn_boundary"
+)
+
+// ProviderEventMap maps Claude-specific event names to provider-agnostic lifecycle
+// events. Used to translate overrides and base configs across agent runtimes.
+var ProviderEventMap = map[string]ProviderEvent{
+	"PreToolUse":       HookEventToolUseGuard,
+	"SessionStart":     HookEventSessionInit,
+	"Stop":             HookEventSessionStop,
+	"PreCompact":       HookEventCompaction,
+	"UserPromptSubmit": HookEventTurnBoundary,
+	// PostToolUse, WorktreeCreate, WorktreeRemove have no direct opencode equivalents
+}
+
+// ProviderEventConfig maps a provider-agnostic event to a runtime-specific hook
+// configuration. For Claude, this is a settings.json hook entry. For OpenCode,
+// this is implemented in the gastown.js plugin. For other agents, this is the
+// equivalent nudge/fallback behavior.
+type ProviderEventConfig struct {
+	// ClaudeHook is the Claude settings.json hook type (e.g., "PreCompact").
+	ClaudeHook string
+	// OpenCodeEvent is the opencode plugin event name (e.g., "session.compacted").
+	OpenCodeEvent string
+	// Description is a human-readable description of the lifecycle event.
+	Description string
+}
+
+// ProviderLifecycleEvents returns the lifecycle event configuration for all
+// supported providers. This is the single source of truth for mapping hook
+// behavior across agent runtimes.
+func ProviderLifecycleEvents() map[ProviderEvent]ProviderEventConfig {
+	return map[ProviderEvent]ProviderEventConfig{
+		HookEventSessionInit: {
+			ClaudeHook:    "SessionStart",
+			OpenCodeEvent: "session.created",
+			Description:   "Session starts. Gas Town injects role context via gt prime.",
+		},
+		HookEventSessionStop: {
+			ClaudeHook:    "Stop",
+			OpenCodeEvent: "session.deleted",
+			Description:   "Session ends. Gas Town records costs and cleans up state.",
+		},
+		HookEventCompaction: {
+			ClaudeHook:    "PreCompact",
+			OpenCodeEvent: "session.compacted",
+			Description:   "Context compaction. Gas Town reloads prime context and tracks cycle count.",
+		},
+		HookEventTurnBoundary: {
+			ClaudeHook:    "UserPromptSubmit",
+			OpenCodeEvent: "", // No direct equivalent; mail is checked inline in loadPrime()
+			Description:   "Between user turns. Gas Town injects pending mail.",
+		},
+		HookEventToolUseGuard: {
+			ClaudeHook:    "PreToolUse",
+			OpenCodeEvent: "", // No direct equivalent; guards run via nudge poller or daemon
+			Description:   "Before tool execution. Gas Town validates tool use against safety policies.",
+		},
+	}
+}
+
+// ProviderBase returns the base hook configuration for a given provider.
+// For Claude, this returns the full DefaultBase() with SessionStart, PreCompact,
+// UserPromptSubmit, Stop, and PreToolUse hooks.
+// For non-Claude agents, most hook behavior is implemented in the agent's native
+// plugin format (gastown.js for opencode, gastown.json for copilot, etc.).
+// This function returns the subset of Claude hook behavior that can be applied
+// to a given provider via its native configuration.
+func ProviderBase(provider string) *HooksConfig {
+	base := &HooksConfig{}
+
+	switch provider {
+	case "claude", "":
+		return DefaultBase()
+	case "gemini":
+		// Gemini supports hooks.json with SessionStart/Stop/PreCompact.
+		// PreToolUse is not configured here; it's handled via Gemini's
+		// approval-mode=yolo + daemon-side patrol guards.
+		base.SessionStart = DefaultBase().SessionStart
+		base.Stop = DefaultBase().Stop
+		base.PreCompact = DefaultBase().PreCompact
+		return base
+	case "opencode":
+		// OpenCode implements hook behavior in gastown.js plugin:
+		// - session.created → loadPrime() (SessionStart equivalent)
+		// - session.compacted → loadPrime() + cycle tracking (PreCompact equivalent)
+		// - session.deleted → costs record (Stop equivalent)
+		// - Mail check runs inline in loadPrime() for autonomous roles
+		// PreToolUse guards are handled by the daemon's patrol (nudge poller).
+		// Return the PreToolUse guards so they can be injected into the plugin
+		// or enforced via daemon-side validation.
+		base.PreToolUse = DefaultBase().PreToolUse
+		return base
+	case "copilot":
+		// Copilot supports .github/hooks/gastown.json with lifecycle hooks.
+		base.SessionStart = DefaultBase().SessionStart
+		base.Stop = DefaultBase().Stop
+		return base
+	case "codex":
+		// Codex has no hook system. Everything is via nudge poller.
+		return base
+	default:
+		// Unknown provider — return empty. All hook behavior is daemon-side
+		// (nudge poller, patrol, fallback commands).
+		return base
+	}
+}
+
+// ProviderHasHooks returns true if the provider supports a native hook/plugin
+// system that can execute lifecycle commands automatically (not informational-only).
+func ProviderHasHooks(provider string) bool {
+	switch provider {
+	case "claude", "gemini", "opencode", "copilot", "cursor":
+		return true
+	default:
+		return false
+	}
+}
+
+// ClaudeToProviderEvent converts a Claude hook event name to the equivalent
+// opencode event name. Returns empty string if no mapping exists.
+func ClaudeToProviderEvent(claudeEvent, provider string) string {
+	event, ok := ProviderEventMap[claudeEvent]
+	if !ok {
+		return ""
+	}
+	lifecycle := ProviderLifecycleEvents()
+	if cfg, ok := lifecycle[event]; ok {
+		switch provider {
+		case "opencode":
+			return cfg.OpenCodeEvent
+		case "claude", "":
+			return cfg.ClaudeHook
+		}
+	}
+	return ""
+}
 
 // GetEntries returns the hook entries for a given event type.
 func (c *HooksConfig) GetEntries(eventType string) []HookEntry {
