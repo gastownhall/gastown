@@ -197,7 +197,7 @@ type freshBranchMeta struct {
 }
 
 // parseFreshBranchName is the structural inverse of freshBranchName. It
-// does not consult git or the filesystem; it recognises the two formats
+// does not consult git or the filesystem; it recognizes the two formats
 // the formatter emits. Used in place of substring heuristics so that
 // branch-naming changes can be made in a single place.
 func parseFreshBranchName(branch string) freshBranchMeta {

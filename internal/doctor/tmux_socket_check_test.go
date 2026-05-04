@@ -29,7 +29,7 @@ func (m *mockSocketLister) KillSessionWithProcesses(name string) error {
 }
 
 // setupSocketTestRegistry registers the "ga" prefix so session.IsKnownSession
-// recognises "ga-*" names, and returns a cleanup function.
+// recognizes "ga-*" names, and returns a cleanup function.
 func setupSocketTestRegistry(t *testing.T) {
 	t.Helper()
 	oldRegistry := session.DefaultRegistry()
