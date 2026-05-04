@@ -1,0 +1,14 @@
+{
+  "type": "rig-settings",
+  "version": 1,
+  "namepool": {
+    "style": "mad-max"
+  },
+  "merge_queue": {
+    "secret_scan": {
+      "enabled": true,
+      "tool": "gitleaks",
+      "timeout": "30s"
+    }
+  }
+}
