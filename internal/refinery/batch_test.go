@@ -100,6 +100,8 @@ func newTestEngineer(t *testing.T, workDir string, g *gitpkg.Git) *Engineer {
 		return &beads.MergeSlotStatus{Available: true, Holder: holder}, nil
 	}
 	e.mergeSlotRelease = func(holder string) error { return nil }
+	// Disable secret scan for tests (gitleaks may not be installed)
+	e.config.SecretScan = &SecretScanConfig{Enabled: false}
 	return e
 }
 

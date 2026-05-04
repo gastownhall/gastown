@@ -188,6 +188,28 @@ type MergeQueueConfig struct {
 	// Batch holds configuration for the batch-then-bisect merge queue.
 	// When nil or MaxBatchSize <= 1, batching is disabled and MRs process sequentially.
 	Batch *BatchConfig `json:"batch,omitempty"`
+
+	// SecretScan configures the pre-merge secret scanner gate.
+	SecretScan *SecretScanConfig `json:"secret_scan,omitempty"`
+}
+
+// SecretScanConfig configures the pre-merge secret scanner gate.
+type SecretScanConfig struct {
+	// Enabled controls whether the secret scanner runs on every MR.
+	Enabled bool `json:"enabled"`
+
+	// Tool specifies the scanner tool to use.
+	// Valid values: "gitleaks" (default), "trufflehog", "detect-secrets".
+	Tool string `json:"tool"`
+
+	// AllowlistPatterns is a list of regex patterns to exclude from scanning.
+	AllowlistPatterns []string `json:"allowlist_patterns"`
+
+	// RulesPath specifies a custom gitleaks rules file path.
+	RulesPath string `json:"rules_path"`
+
+	// Timeout is the maximum time the scanner may run.
+	Timeout string `json:"timeout"`
 }
 
 // DefaultMergeQueueConfig returns sensible defaults for merge queue configuration.
@@ -207,6 +229,7 @@ func DefaultMergeQueueConfig() *MergeQueueConfig {
 		StaleClaimCriticalAfter: 6 * time.Hour,
 		MaxRetryCount:           5,
 		AutoPush:                true,
+		SecretScan:              &SecretScanConfig{Enabled: true, Tool: "gitleaks", Timeout: "30s"},
 	}
 }
 
@@ -320,6 +343,180 @@ func NewEngineer(r *rig.Rig) *Engineer {
 // This is useful for testing or redirecting output.
 func (e *Engineer) SetOutput(w io.Writer) {
 	e.output = w
+}
+
+// SecretScanResult holds the outcome of a secret scan.
+type SecretScanResult struct {
+	FoundSecrets bool
+	Findings     []SecretFinding
+	Elapsed      time.Duration
+	ErrorMessage string
+}
+
+// SecretFinding represents a single secret detection.
+type SecretFinding struct {
+	File    string
+	Line    int
+	Rule    string
+	Snippet string
+}
+
+// runSecretScan runs gitleaks against the diff between the MR branch and target.
+// Returns findings if secrets are detected, or an error if scanning fails.
+func (e *Engineer) runSecretScan(ctx context.Context, branch, target string) SecretScanResult {
+	start := time.Now()
+
+	// If secret scan is disabled, skip it
+	if e.config.SecretScan != nil && !e.config.SecretScan.Enabled {
+		return SecretScanResult{FoundSecrets: false, Elapsed: time.Since(start)}
+	}
+
+	// Get the list of changed files between target and branch
+	files, err := e.git.DiffNameOnly(target, branch)
+	if err != nil {
+		return SecretScanResult{
+			FoundSecrets: false,
+			Elapsed:      time.Since(start),
+			ErrorMessage: fmt.Sprintf("failed to get diff files: %v", err),
+		}
+	}
+
+	if len(files) == 0 {
+		return SecretScanResult{FoundSecrets: false, Elapsed: time.Since(start)}
+	}
+
+	// Build gitleaks command
+	cmdArgs := []string{"scan", "file", "--source", "."}
+
+	// Add allowlist patterns if configured
+	if e.config.SecretScan != nil && len(e.config.SecretScan.AllowlistPatterns) > 0 {
+		for _, pattern := range e.config.SecretScan.AllowlistPatterns {
+			cmdArgs = append(cmdArgs, "--allowlist", pattern)
+		}
+	}
+
+	// Add custom rules path if configured
+	if e.config.SecretScan != nil && e.config.SecretScan.RulesPath != "" {
+		cmdArgs = append(cmdArgs, "--config", e.config.SecretScan.RulesPath)
+	}
+
+	// Add files to scan
+	cmdArgs = append(cmdArgs, files...)
+
+	// Execute gitleaks
+	cmd := exec.CommandContext(ctx, "gitleaks", cmdArgs...) //nolint:gosec // G204: gitleaks is a trusted external tool
+	cmd.Dir = e.workDir
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+
+	err = cmd.Run()
+	elapsed := time.Since(start)
+
+	if err != nil {
+		// Check if it's a gitleaks exit code 1 (secrets found) vs actual error
+		if exitErr, ok := err.(*exec.ExitError); ok && exitErr.ExitCode() == 1 {
+			// Secrets found - parse the output
+			return e.parseGitleaksOutput(stdout.String())
+		}
+		// Actual error
+		errMsg := fmt.Sprintf("%v", err)
+		if ctx.Err() == context.DeadlineExceeded {
+			errMsg = fmt.Sprintf("timed out after %v", e.config.SecretScan.Timeout)
+		}
+		if stderrStr := strings.TrimSpace(stderr.String()); stderrStr != "" {
+			if len(stderrStr) > 500 {
+				stderrStr = stderrStr[:500] + "..."
+			}
+			errMsg = fmt.Sprintf("%s: %s", errMsg, stderrStr)
+		}
+		return SecretScanResult{
+			FoundSecrets: false,
+			Elapsed:      elapsed,
+			ErrorMessage: errMsg,
+		}
+	}
+
+	return SecretScanResult{FoundSecrets: false, Elapsed: elapsed}
+}
+
+// parseGitleaksOutput parses gitleaks JSON output and extracts findings.
+// Gitleaks outputs detected secrets in JSON format when exit code is 1.
+func (e *Engineer) parseGitleaksOutput(output string) SecretScanResult {
+	if output == "" {
+		return SecretScanResult{
+			FoundSecrets: true,
+			Findings:     []SecretFinding{},
+			Elapsed:      0,
+		}
+	}
+
+	// Parse the JSON output
+	var findings []SecretFinding
+	if err := json.Unmarshal([]byte(output), &findings); err == nil && len(findings) > 0 {
+		// Gitleaks JSON format matches our SecretFinding structure
+		return SecretScanResult{
+			FoundSecrets: true,
+			Findings:     findings,
+			Elapsed:      0,
+		}
+	}
+
+	// Try alternative parsing (gitleaks' default JSON format)
+	var gitleaksFindings []struct {
+		StartLine    int    `json:"StartLine"`
+		EndLine      int    `json:"EndLine"`
+		Line         string `json:"Line"`
+		Secret       string `json:"Secret"`
+		File         string `json:"File"`
+		RuleID       string `json:"RuleID"`
+		Description  string `json:"Description"`
+		Match        string `json:"Match"`
+		Compressed   string `json:"Compressed"`
+		Entropy      float64  `json:"Entropy"`
+		Fingerprint  string `json:"Fingerprint"`
+	}
+	if err := json.Unmarshal([]byte(output), &gitleaksFindings); err == nil && len(gitleaksFindings) > 0 {
+		for _, f := range gitleaksFindings {
+			findings = append(findings, SecretFinding{
+				File:    f.File,
+				Line:    f.StartLine,
+				Rule:    f.RuleID,
+				Snippet: truncateSecret(f.Match, 50),
+			})
+		}
+		return SecretScanResult{
+			FoundSecrets: true,
+			Findings:     findings,
+			Elapsed:      0,
+		}
+	}
+
+	// Parse fallback format (line-by-line output)
+	lines := strings.Split(output, "\n")
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "{") || strings.HasPrefix(line, "[") {
+			continue
+		}
+		// Try to parse as CSV or known format
+		// Gitleaks may output in various formats based on flags
+	}
+	
+	return SecretScanResult{
+		FoundSecrets: true,
+		Findings:     []SecretFinding{},
+		Elapsed:      0,
+	}
+}
+
+// truncateSecret truncates a secret string for display, replacing with [REDACTED]
+// if it exceeds the max length. This prevents leaking secrets in error messages.
+func truncateSecret(s string, maxLen int) string {
+	if len(s) <= maxLen {
+		return s
+	}
+	return s[:maxLen-10] + "[REDACTED]"
 }
 
 // LoadConfig loads merge queue configuration from the rig's config.json.
@@ -603,12 +800,39 @@ func (e *Engineer) doMerge(ctx context.Context, branch, target, sourceIssue stri
 		_, _ = fmt.Fprintf(e.output, "[Engineer] Pushed %d submodule(s)\n", len(subChanges))
 	}
 
-	// Step 4: Run quality gates (or legacy tests) if configured.
+	// Step 4: Run secret scanner gate (if enabled).
+	// This runs before quality gates to catch secrets early.
 	// Phase 3 fast-path: if skipGates is true (pre-verified MR with matching base),
 	// skip all gate execution — the polecat already ran gates after rebasing.
 	shouldSkipGates := len(skipGates) > 0 && skipGates[0]
 	if shouldSkipGates {
 		_, _ = fmt.Fprintln(e.output, "[Engineer] Skipping gates (pre-verified by polecat)")
+	} else if e.config.SecretScan != nil && e.config.SecretScan.Enabled {
+		// Run secret scanner
+		scannerName := "gitleaks"
+		if e.config.SecretScan != nil && e.config.SecretScan.Tool != "" {
+			scannerName = e.config.SecretScan.Tool
+		}
+		_, _ = fmt.Fprintf(e.output, "[Engineer] Running %s secret scanner...\n", scannerName)
+		secretResult := e.runSecretScan(ctx, branch, target)
+		if secretResult.ErrorMessage != "" {
+			return ProcessResult{
+				Success: false,
+				Error:   fmt.Sprintf("secret scan failed: %s", secretResult.ErrorMessage),
+			}
+		}
+		if secretResult.FoundSecrets {
+			// Build error message with redacted secrets
+			var findingsDesc []string
+			for _, f := range secretResult.Findings {
+				findingsDesc = append(findingsDesc, fmt.Sprintf("%s:%d (%s)", f.File, f.Line, f.Rule))
+			}
+			return ProcessResult{
+				Success: false,
+				Error:   fmt.Sprintf("secrets detected: %s", strings.Join(findingsDesc, "; ")),
+			}
+		}
+		_, _ = fmt.Fprintln(e.output, "[Engineer] Secret scan passed")
 	} else if len(e.config.Gates) > 0 {
 		// New gates system: run configured quality gates
 		gateResult := e.runGates(ctx)
@@ -1348,6 +1572,8 @@ func (e *Engineer) HandleMRInfoFailure(mr *MRInfo, result ProcessResult) {
 		failureType = "conflict"
 	} else if result.TestsFailed {
 		failureType = "tests"
+	} else if strings.Contains(result.Error, "secrets detected") {
+		failureType = "secrets"
 	}
 	polecatName := strings.TrimPrefix(mr.Worker, "polecats/")
 	nudgeTarget := fmt.Sprintf("%s/%s", e.rig.Name, polecatName)

@@ -1,6 +1,7 @@
 package refinery
 
 import (
+	"strings"
 	"testing"
 )
 
@@ -80,5 +81,49 @@ func TestRunTests_WhitespaceCommand(t *testing.T) {
 	result := e.runTests(nil)
 	if result.Success {
 		t.Error("expected failure for whitespace-only test command, got success")
+	}
+}
+
+func TestDefaultMergeQueueConfig_SecretScan(t *testing.T) {
+	cfg := DefaultMergeQueueConfig()
+	if cfg.SecretScan == nil {
+		t.Error("expected SecretScan to be non-nil")
+	}
+	if !cfg.SecretScan.Enabled {
+		t.Error("expected SecretScan.Enabled to be true by default")
+	}
+	if cfg.SecretScan.Tool != "gitleaks" {
+		t.Errorf("expected SecretScan.Tool to be 'gitleaks', got '%s'", cfg.SecretScan.Tool)
+	}
+	if cfg.SecretScan.Timeout != "30s" {
+		t.Errorf("expected SecretScan.Timeout to be '30s', got '%s'", cfg.SecretScan.Timeout)
+	}
+}
+
+func TestTruncateSecret(t *testing.T) {
+	// Test that short secrets are returned unchanged
+	short := "abc123"
+	result := truncateSecret(short, 50)
+	if result != short {
+		t.Errorf("expected '%s', got '%s'", short, result)
+	}
+
+	// Test that long secrets are truncated
+	long := "thisisaverylongsecretkeythatshouldbetruncatedtominimalelementsofdisplay"
+	result = truncateSecret(long, 20)
+	if len(result) > 20 {
+		t.Errorf("result length %d exceeds max 20", len(result))
+	}
+	if !strings.Contains(result, "[REDACTED]") {
+		t.Error("expected [REDACTED] in truncated secret")
+	}
+
+	// Test truncation with [REDACTED] marker
+	result = truncateSecret(long, 30)
+	if len(result) != 30 {
+		t.Errorf("expected length 30, got %d", len(result))
+	}
+	if !strings.Contains(result, "[REDACTED]") {
+		t.Error("expected [REDACTED] in truncated secret")
 	}
 }

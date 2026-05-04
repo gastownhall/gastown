@@ -1339,6 +1339,9 @@ type MergeQueueConfig struct {
 	// is enabled. Valid values: "quick", "standard", "deep".
 	// Nil defaults to "standard".
 	ReviewDepth string `json:"review_depth,omitempty"`
+
+	// SecretScan configures the pre-merge secret scanner gate.
+	SecretScan *SecretScanConfig `json:"secret_scan,omitempty"`
 }
 
 // OnConflict strategy constants.
@@ -1439,6 +1442,7 @@ func DefaultMergeQueueConfig() *MergeQueueConfig {
 		PollInterval:                     "30s",
 		MaxConcurrent:                    1,
 		StaleClaimTimeout:                "30m",
+		SecretScan:                       DefaultSecretScanConfig(),
 	}
 }
 
@@ -1701,4 +1705,56 @@ func NewEscalationConfig() *EscalationConfig {
 		StaleThreshold:   "4h",
 		MaxReescalations: intPtr(2),
 	}
+}
+
+// SecretScanConfig configures the pre-merge secret scanner gate.
+type SecretScanConfig struct {
+	// Enabled controls whether the secret scanner runs on every MR.
+	// Nil defaults to true (secret scanning is enabled by default).
+	Enabled *bool `json:"enabled,omitempty"`
+
+	// Tool specifies the scanner tool to use.
+	// Valid values: "gitleaks" (default), "trufflehog", "detect-secrets".
+	// Nil defaults to "gitleaks".
+	Tool string `json:"tool,omitempty"`
+
+	// AllowlistPatterns is a list of regex patterns to exclude from scanning.
+	// Files/lines matching these patterns will not be flagged as secrets.
+	// Example: []string{`.*_test\\.go$`, `password = "mock.*"`}
+	AllowlistPatterns []string `json:"allowlist_patterns,omitempty"`
+
+	// RulesPath specifies a custom gitleaks rules file path.
+	// If empty, the default gitleaks ruleset is used.
+	RulesPath string `json:"rules_path,omitempty"`
+
+	// Timeout is the maximum time the scanner may run.
+	// Empty means no timeout (inherits context deadline).
+	Timeout string `json:"timeout,omitempty"`
+}
+
+// DefaultSecretScanConfig returns a SecretScanConfig with sensible defaults.
+func DefaultSecretScanConfig() *SecretScanConfig {
+	return &SecretScanConfig{
+		Enabled:  boolPtr(true),
+		Tool:     "gitleaks",
+		Timeout:  "30s",
+	}
+}
+
+// IsEnabled returns whether secret scanning is enabled.
+// Nil-safe, defaults to true.
+func (c *SecretScanConfig) IsEnabled() bool {
+	if c.Enabled == nil {
+		return true
+	}
+	return *c.Enabled
+}
+
+// GetTool returns the scanner tool name.
+// Nil-safe, defaults to "gitleaks".
+func (c *SecretScanConfig) GetTool() string {
+	if c.Tool == "" {
+		return "gitleaks"
+	}
+	return c.Tool
 }
