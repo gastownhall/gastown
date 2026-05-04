@@ -13,6 +13,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -1220,7 +1221,8 @@ func runAgentCleanTest(t *testing.T, hasTrackedBeads bool) {
 	}
 
 	// Step 2: Run gt install
-	cmd := exec.Command(gtBinary, "install", hqPath, "--name", "test-town")
+	port := getFreePort(t)
+	cmd := exec.Command(gtBinary, "install", hqPath, "--name", "test-town", "--dolt-port", strconv.Itoa(port))
 	cmd.Env = append(os.Environ(), "HOME="+tmpDir)
 	output, err := cmd.CombinedOutput()
 	if err != nil {

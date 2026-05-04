@@ -12,12 +12,27 @@ package cmd
 import (
 	"encoding/json"
 	"fmt"
+	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 )
+
+// getFreePort returns a free TCP port by binding to 127.0.0.1:0.
+// Used so each subtest's gt install gets a unique --dolt-port and they
+// don't collide on a shared default.
+func getFreePort(t *testing.T) int {
+	t.Helper()
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("getFreePort: failed to bind: %v", err)
+	}
+	defer ln.Close()
+	return ln.Addr().(*net.TCPAddr).Port
+}
 
 // extractJSON finds the first JSON object in output that may contain non-JSON warnings.
 // bd --json -q can still emit warnings to stdout before the JSON payload.
@@ -144,7 +159,8 @@ func TestBeadsDbInitAfterClone(t *testing.T) {
 		townRoot := filepath.Join(tmpDir, "town-prefix-test")
 
 		// Install town
-		cmd := exec.Command(gtBinary, "install", townRoot, "--name", "prefix-test")
+		port := getFreePort(t)
+		cmd := exec.Command(gtBinary, "install", townRoot, "--name", "prefix-test", "--dolt-port", strconv.Itoa(port))
 		cmd.Env = append(os.Environ(), "HOME="+tmpDir)
 		if output, err := cmd.CombinedOutput(); err != nil {
 			t.Fatalf("gt install failed: %v\nOutput: %s", err, output)
@@ -206,7 +222,8 @@ func TestBeadsDbInitAfterClone(t *testing.T) {
 		townRoot := filepath.Join(tmpDir, "town-no-issues")
 
 		// Install town
-		cmd := exec.Command(gtBinary, "install", townRoot, "--name", "no-issues-test")
+		port := getFreePort(t)
+		cmd := exec.Command(gtBinary, "install", townRoot, "--name", "no-issues-test", "--dolt-port", strconv.Itoa(port))
 		cmd.Env = append(os.Environ(), "HOME="+tmpDir)
 		if output, err := cmd.CombinedOutput(); err != nil {
 			t.Fatalf("gt install failed: %v\nOutput: %s", err, output)
@@ -267,7 +284,8 @@ func TestBeadsDbInitAfterClone(t *testing.T) {
 		townRoot := filepath.Join(tmpDir, "town-mismatch")
 
 		// Install town
-		cmd := exec.Command(gtBinary, "install", townRoot, "--name", "mismatch-test")
+		port := getFreePort(t)
+		cmd := exec.Command(gtBinary, "install", townRoot, "--name", "mismatch-test", "--dolt-port", strconv.Itoa(port))
 		cmd.Env = append(os.Environ(), "HOME="+tmpDir)
 		if output, err := cmd.CombinedOutput(); err != nil {
 			t.Fatalf("gt install failed: %v\nOutput: %s", err, output)
@@ -311,7 +329,8 @@ func TestBeadsDbInitAfterClone(t *testing.T) {
 		townRoot := filepath.Join(tmpDir, "town-derived")
 
 		// Install town
-		cmd := exec.Command(gtBinary, "install", townRoot, "--name", "derived-test")
+		port := getFreePort(t)
+		cmd := exec.Command(gtBinary, "install", townRoot, "--name", "derived-test", "--dolt-port", strconv.Itoa(port))
 		cmd.Env = append(os.Environ(), "HOME="+tmpDir)
 		if output, err := cmd.CombinedOutput(); err != nil {
 			t.Fatalf("gt install failed: %v\nOutput: %s", err, output)
@@ -366,7 +385,8 @@ func TestBeadsDbInitAfterClone(t *testing.T) {
 		townRoot := filepath.Join(tmpDir, "town-reinit")
 
 		// Install town
-		cmd := exec.Command(gtBinary, "install", townRoot, "--name", "reinit-test")
+		port := getFreePort(t)
+		cmd := exec.Command(gtBinary, "install", townRoot, "--name", "reinit-test", "--dolt-port", strconv.Itoa(port))
 		cmd.Env = append(os.Environ(), "HOME="+tmpDir)
 		if output, err := cmd.CombinedOutput(); err != nil {
 			t.Fatalf("gt install failed: %v\nOutput: %s", err, output)

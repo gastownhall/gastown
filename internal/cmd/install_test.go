@@ -23,14 +23,17 @@ func TestBuildBdInitArgs_AlwaysIncludesServerPort(t *testing.T) {
 
 	args := buildBdInitArgs(townDir)
 
-	if len(args) != 6 {
-		t.Fatalf("expected 6 args, got %d: %v", len(args), args)
+	if len(args) != 7 {
+		t.Fatalf("expected 7 args, got %d: %v", len(args), args)
 	}
 	if args[4] != "--server-port" {
 		t.Fatalf("expected args[4] = --server-port, got %q", args[4])
 	}
 	if args[5] != "3307" {
 		t.Fatalf("expected default port 3307, got %q", args[5])
+	}
+	if args[6] != "--force" {
+		t.Fatalf("expected args[6] = --force, got %q", args[6])
 	}
 }
 
