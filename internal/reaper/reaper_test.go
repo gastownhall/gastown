@@ -246,3 +246,25 @@ func TestScanExcludesAgentBeads(t *testing.T) {
 		t.Fatalf("expected Scan() eligibility to exclude agent beads, scan body was:\n%s", scanBody)
 	}
 }
+
+// TestAutoCloseExcludesAgentBeads verifies that AutoClose() excludes agent beads
+// from auto-closure, preventing accidental deletion of persistent agent state
+// (polecat agents, deacon witness, refinery, etc.).
+// See hq-qeae: 5 raybar polecat agent beads were incorrectly auto-closed.
+func TestAutoCloseExcludesAgentBeads(t *testing.T) {
+	sourcePath := "reaper.go"
+	data, err := os.ReadFile(sourcePath)
+	if err != nil {
+		t.Fatalf("read %s: %v", sourcePath, err)
+	}
+	source := string(data)
+	autoCloseStart := strings.Index(source, "func AutoClose(")
+	batchDeleteStart := strings.Index(source, "func batchDeleteRows(")
+	if autoCloseStart == -1 || batchDeleteStart == -1 || batchDeleteStart <= autoCloseStart {
+		t.Fatalf("could not isolate AutoClose() body in %s", sourcePath)
+	}
+	autoCloseBody := source[autoCloseStart:batchDeleteStart]
+	if !strings.Contains(autoCloseBody, "i.issue_type != 'agent'") {
+		t.Fatalf("expected AutoClose() to exclude agent beads, AutoClose body was:\n%s", autoCloseBody)
+	}
+}
