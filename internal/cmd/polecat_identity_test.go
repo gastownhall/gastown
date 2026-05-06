@@ -4,6 +4,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/steveyegge/gastown/internal/git"
 	"github.com/steveyegge/gastown/internal/style"
 )
 
@@ -54,6 +55,31 @@ func TestExtractWorkType(t *testing.T) {
 				t.Errorf("extractWorkType(%q, %q) = %q, want %q", tt.title, tt.issueType, got, tt.expect)
 			}
 		})
+	}
+}
+
+func TestFilterPrunableRemoteBranchesSkipsActiveBranches(t *testing.T) {
+	candidates := []git.PrunedBranch{
+		{Name: "polecat/obsidian/stale@abc", Reason: "merged"},
+		{Name: "polecat/quartz/active@def", Reason: "merged"},
+	}
+	active := map[string]bool{
+		"polecat/quartz/active@def": true,
+	}
+
+	prunable, inUse := filterPrunableRemoteBranches(candidates, active)
+
+	if len(prunable) != 1 {
+		t.Fatalf("expected 1 prunable branch, got %d", len(prunable))
+	}
+	if prunable[0].Name != "polecat/obsidian/stale@abc" {
+		t.Errorf("prunable branch = %q, want polecat/obsidian/stale@abc", prunable[0].Name)
+	}
+	if len(inUse) != 1 {
+		t.Fatalf("expected 1 in-use branch, got %d", len(inUse))
+	}
+	if inUse[0].Name != "polecat/quartz/active@def" {
+		t.Errorf("in-use branch = %q, want polecat/quartz/active@def", inUse[0].Name)
 	}
 }
 
@@ -208,4 +234,3 @@ func TestFormatCountStyled(t *testing.T) {
 		t.Errorf("formatCountStyled(42) = %q, does not contain '42'", got)
 	}
 }
-

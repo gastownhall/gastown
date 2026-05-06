@@ -1148,10 +1148,16 @@ func (g *Git) BitbucketPRMerge(workspace, repoSlug string, prID int, strategy st
 	return sha, nil
 }
 
-// ListRemoteRefs returns remote ref names matching a prefix using ls-remote.
+// RemoteRef is a ref observed through ls-remote.
+type RemoteRef struct {
+	Hash string
+	Name string
+}
+
+// ListRemoteRefsWithHashes returns remote refs matching a prefix using ls-remote.
 // The prefix filters refs (e.g., "refs/heads/polecat/" for all polecat branches).
 // Returns full ref names like "refs/heads/polecat/furiosa-abc123".
-func (g *Git) ListRemoteRefs(remote, prefix string) ([]string, error) {
+func (g *Git) ListRemoteRefsWithHashes(remote, prefix string) ([]RemoteRef, error) {
 	out, err := g.run("ls-remote", "--refs", remote, prefix+"*")
 	if err != nil {
 		return nil, err
@@ -1159,7 +1165,7 @@ func (g *Git) ListRemoteRefs(remote, prefix string) ([]string, error) {
 	if out == "" {
 		return nil, nil
 	}
-	var refs []string
+	var refs []RemoteRef
 	for _, line := range strings.Split(out, "\n") {
 		line = strings.TrimSpace(line)
 		if line == "" {
@@ -1168,8 +1174,21 @@ func (g *Git) ListRemoteRefs(remote, prefix string) ([]string, error) {
 		// ls-remote output format: <sha>\t<refname>
 		parts := strings.Fields(line)
 		if len(parts) >= 2 {
-			refs = append(refs, parts[1])
+			refs = append(refs, RemoteRef{Hash: parts[0], Name: parts[1]})
 		}
+	}
+	return refs, nil
+}
+
+// ListRemoteRefs returns remote ref names matching a prefix using ls-remote.
+func (g *Git) ListRemoteRefs(remote, prefix string) ([]string, error) {
+	refsWithHashes, err := g.ListRemoteRefsWithHashes(remote, prefix)
+	if err != nil {
+		return nil, err
+	}
+	refs := make([]string, 0, len(refsWithHashes))
+	for _, ref := range refsWithHashes {
+		refs = append(refs, ref.Name)
 	}
 	return refs, nil
 }
@@ -1187,6 +1206,16 @@ func (g *Git) ListPushRemoteRefs(remote, prefix string) ([]string, error) {
 	}
 	// Query the push URL directly
 	return g.ListRemoteRefs(pushURL, prefix)
+}
+
+// ListPushRemoteRefsWithHashes is ListPushRemoteRefs with commit hashes.
+func (g *Git) ListPushRemoteRefsWithHashes(remote, prefix string) ([]RemoteRef, error) {
+	fetchURL, fetchErr := g.RemoteURL(remote)
+	pushURL, pushErr := g.GetPushURL(remote)
+	if fetchErr != nil || pushErr != nil || pushURL == fetchURL {
+		return g.ListRemoteRefsWithHashes(remote, prefix)
+	}
+	return g.ListRemoteRefsWithHashes(pushURL, prefix)
 }
 
 // Rebase rebases the current branch onto the given ref.
@@ -2243,6 +2272,65 @@ func (g *Git) BranchPushedToRemote(localBranch, remote string) (bool, int, error
 type PrunedBranch struct {
 	Name   string // Branch name (e.g., "polecat/rictus-mkb0vq9f")
 	Reason string // Why it was pruned: "merged", "no-remote", "no-remote-merged"
+}
+
+// PruneMergedRemoteBranches finds and deletes remote branches whose tips are
+// already reachable from target. In dry-run mode it reports what would be
+// deleted without modifying the remote.
+func (g *Git) PruneMergedRemoteBranches(remote, prefix, target string, dryRun bool) ([]PrunedBranch, error) {
+	if remote == "" {
+		remote = "origin"
+	}
+	if prefix == "" {
+		prefix = "refs/heads/polecat/"
+	}
+	if target == "" {
+		target = remote + "/" + g.RemoteDefaultBranch()
+	}
+
+	remoteRefs, err := g.ListPushRemoteRefsWithHashes(remote, prefix)
+	if err != nil {
+		return nil, err
+	}
+
+	var pruned []PrunedBranch
+	for _, ref := range remoteRefs {
+		if !strings.HasPrefix(ref.Name, "refs/heads/") {
+			continue
+		}
+		branch := strings.TrimPrefix(ref.Name, "refs/heads/")
+		if branch == "" {
+			continue
+		}
+
+		ancestor := ref.Hash
+		if hasTracking, err := g.RemoteTrackingBranchExists(remote, branch); err != nil {
+			return nil, err
+		} else if hasTracking {
+			ancestor = remote + "/" + branch
+		}
+
+		merged, err := g.IsAncestor(ancestor, target)
+		if err != nil {
+			continue
+		}
+		if !merged {
+			continue
+		}
+
+		if !dryRun {
+			if err := g.DeleteRemoteBranch(remote, branch); err != nil {
+				return nil, err
+			}
+		}
+
+		pruned = append(pruned, PrunedBranch{
+			Name:   branch,
+			Reason: "merged",
+		})
+	}
+
+	return pruned, nil
 }
 
 // PruneStaleBranches finds and deletes local branches matching a pattern that are

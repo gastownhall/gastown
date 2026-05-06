@@ -1633,7 +1633,7 @@ func runPolecatStale(cmd *cobra.Command, args []string) error {
 func runPolecatPrune(cmd *cobra.Command, args []string) error {
 	rigName := args[0]
 
-	_, r, err := getPolecatManager(rigName)
+	mgr, r, err := getPolecatManager(rigName)
 	if err != nil {
 		return err
 	}
@@ -1679,47 +1679,65 @@ func runPolecatPrune(cmd *cobra.Command, args []string) error {
 		fmt.Println("Pruning remote polecat branches...")
 
 		defaultBranch := repoGit.RemoteDefaultBranch()
-		remoteRefs, lsErr := repoGit.ListPushRemoteRefs("origin", "refs/heads/polecat/")
-		if lsErr != nil {
-			return fmt.Errorf("listing remote refs: %w", lsErr)
+		remoteCandidates, pruneErr := repoGit.PruneMergedRemoteBranches("origin", "refs/heads/polecat/", "origin/"+defaultBranch, true)
+		if pruneErr != nil {
+			return fmt.Errorf("pruning remote refs: %w", pruneErr)
 		}
 
-		remotePruned := 0
-		for _, ref := range remoteRefs {
-			branch := strings.TrimPrefix(ref, "refs/heads/")
-			// Check if merged to main
-			merged, mergeErr := repoGit.IsAncestor(branch, "origin/"+defaultBranch)
-			if mergeErr != nil {
-				continue
-			}
-			if !merged {
-				continue
-			}
-
-			if polecatPruneDryRun {
-				fmt.Printf("  Would delete remote: %s\n", style.Dim.Render(branch))
-			} else {
-				if delErr := repoGit.DeleteRemoteBranch("origin", branch); delErr != nil {
-					fmt.Printf("  %s remote %s: %v\n", style.Warning.Render("⚠"), branch, delErr)
-				} else {
-					fmt.Printf("  %s deleted remote %s\n", style.Success.Render("✓"), branch)
+		activeBranches := make(map[string]bool)
+		polecats, listErr := mgr.List()
+		if listErr != nil {
+			fmt.Printf("  %s listing polecats: %v (continuing without in-use filter)\n", style.Warning.Render("⚠"), listErr)
+		} else {
+			for _, p := range polecats {
+				if p.Branch != "" {
+					activeBranches[p.Branch] = true
 				}
 			}
-			remotePruned++
 		}
 
-		if remotePruned == 0 {
+		remotePrunedBranches, inUseBranches := filterPrunableRemoteBranches(remoteCandidates, activeBranches)
+		for _, b := range inUseBranches {
+			fmt.Printf("  Keep remote (in use): %s\n", style.Success.Render(b.Name))
+		}
+
+		for _, b := range remotePrunedBranches {
+			if polecatPruneDryRun {
+				fmt.Printf("  Would delete remote: %s\n", style.Dim.Render(b.Name))
+			} else {
+				if delErr := repoGit.DeleteRemoteBranch("origin", b.Name); delErr != nil {
+					fmt.Printf("  %s remote %s: %v\n", style.Warning.Render("⚠"), b.Name, delErr)
+				} else {
+					fmt.Printf("  %s deleted remote %s\n", style.Success.Render("✓"), b.Name)
+				}
+			}
+		}
+
+		if len(remotePrunedBranches) == 0 {
 			fmt.Println("No stale remote polecat branches found.")
 		} else {
 			verb := "Pruned"
 			if polecatPruneDryRun {
 				verb = "Would prune"
 			}
-			fmt.Printf("\n%s %d remote branch(es).\n", verb, remotePruned)
+			fmt.Printf("\n%s %d remote branch(es).\n", verb, len(remotePrunedBranches))
 		}
 	}
 
 	return nil
+}
+
+func filterPrunableRemoteBranches(candidates []git.PrunedBranch, activeBranches map[string]bool) ([]git.PrunedBranch, []git.PrunedBranch) {
+	prunable := make([]git.PrunedBranch, 0, len(candidates))
+	inUse := make([]git.PrunedBranch, 0)
+	for _, branch := range candidates {
+		if activeBranches[branch.Name] {
+			inUse = append(inUse, branch)
+			continue
+		}
+		prunable = append(prunable, branch)
+	}
+	return prunable, inUse
 }
 
 // runPolecatPoolInit creates a persistent polecat pool for a rig.

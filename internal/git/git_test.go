@@ -974,6 +974,70 @@ func TestPruneStaleBranches_SkipsUnmerged(t *testing.T) {
 	}
 }
 
+func TestPruneMergedRemoteBranches_DetectsRemoteTrackingBranchWithoutLocalBranch(t *testing.T) {
+	localDir, _, mainBranch := initTestRepoWithRemote(t)
+	g := NewGit(localDir)
+
+	if err := g.CreateBranch("polecat/remote-merged"); err != nil {
+		t.Fatalf("CreateBranch: %v", err)
+	}
+	if err := g.Checkout("polecat/remote-merged"); err != nil {
+		t.Fatalf("Checkout: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(localDir, "remote.txt"), []byte("remote"), 0644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	if err := g.Add("remote.txt"); err != nil {
+		t.Fatalf("Add: %v", err)
+	}
+	if err := g.Commit("remote merged work"); err != nil {
+		t.Fatalf("Commit: %v", err)
+	}
+
+	cmd := exec.Command("git", "push", "origin", "polecat/remote-merged")
+	cmd.Dir = localDir
+	if err := cmd.Run(); err != nil {
+		t.Fatalf("push polecat branch: %v", err)
+	}
+
+	if err := g.Checkout(mainBranch); err != nil {
+		t.Fatalf("Checkout main: %v", err)
+	}
+	if err := g.Merge("polecat/remote-merged"); err != nil {
+		t.Fatalf("Merge: %v", err)
+	}
+	cmd = exec.Command("git", "push", "origin", mainBranch)
+	cmd.Dir = localDir
+	if err := cmd.Run(); err != nil {
+		t.Fatalf("push main: %v", err)
+	}
+
+	if err := g.DeleteBranch("polecat/remote-merged", false); err != nil {
+		t.Fatalf("DeleteBranch: %v", err)
+	}
+	exists, err := g.BranchExists("polecat/remote-merged")
+	if err != nil {
+		t.Fatalf("BranchExists: %v", err)
+	}
+	if exists {
+		t.Fatal("expected local polecat branch to be absent")
+	}
+
+	pruned, err := g.PruneMergedRemoteBranches("origin", "refs/heads/polecat/", "origin/"+mainBranch, true)
+	if err != nil {
+		t.Fatalf("PruneMergedRemoteBranches: %v", err)
+	}
+	if len(pruned) != 1 {
+		t.Fatalf("expected 1 remote branch in dry-run, got %d", len(pruned))
+	}
+	if pruned[0].Name != "polecat/remote-merged" {
+		t.Errorf("pruned name = %q, want polecat/remote-merged", pruned[0].Name)
+	}
+	if pruned[0].Reason != "merged" {
+		t.Errorf("pruned reason = %q, want merged", pruned[0].Reason)
+	}
+}
+
 func TestPushWithEnv(t *testing.T) {
 	localDir, _, mainBranch := initTestRepoWithRemote(t)
 	g := NewGit(localDir)
