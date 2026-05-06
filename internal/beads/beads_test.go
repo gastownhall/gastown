@@ -86,6 +86,46 @@ func TestCreateOptionsRig(t *testing.T) {
 	}
 }
 
+func TestCreateUsesRepoFlagForRig(t *testing.T) {
+	ResetBdAllowStaleCacheForTest()
+
+	binDir := t.TempDir()
+	logPath := filepath.Join(t.TempDir(), "bd-args.log")
+	writeCreateBDStub(t, binDir, logPath)
+
+	origPath := os.Getenv("PATH")
+	t.Setenv("PATH", binDir+string(os.PathListSeparator)+origPath)
+
+	beadsDir := t.TempDir()
+	b := NewWithBeadsDir(t.TempDir(), beadsDir)
+	issue, err := b.Create(CreateOptions{
+		Title:       "Merge: co-egb",
+		Labels:      []string{"gt:merge-request"},
+		Priority:    1,
+		Description: "branch: polecat/onyx-mo7islhv",
+		Ephemeral:   true,
+		Rig:         "comunbackend",
+	})
+	if err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+	if issue.ID != "co-wisp-test" {
+		t.Fatalf("Create() ID = %q, want co-wisp-test", issue.ID)
+	}
+
+	logBytes, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatalf("read bd args log: %v", err)
+	}
+	log := string(logBytes)
+	if !strings.Contains(log, "--repo=comunbackend") {
+		t.Fatalf("bd create args missing --repo=comunbackend:\n%s", log)
+	}
+	if strings.Contains(log, "--rig=comunbackend") {
+		t.Fatalf("bd create args used unsupported --rig flag:\n%s", log)
+	}
+}
+
 // TestIsFlagLikeTitle verifies flag-like title detection (gt-e0kx5).
 func TestIsFlagLikeTitle(t *testing.T) {
 	tests := []struct {
@@ -115,6 +155,47 @@ func TestIsFlagLikeTitle(t *testing.T) {
 		if got != tt.want {
 			t.Errorf("IsFlagLikeTitle(%q) = %v, want %v", tt.title, got, tt.want)
 		}
+	}
+}
+
+func writeCreateBDStub(t *testing.T, dir, logPath string) {
+	t.Helper()
+
+	var scriptPath, script string
+	if runtime.GOOS == "windows" {
+		scriptPath = filepath.Join(dir, "bd.bat")
+		script = fmt.Sprintf(`@echo off
+echo %%*>>%q
+if "%%1"=="--allow-stale" (
+  if "%%2"=="version" exit /b 0
+  shift
+)
+if "%%1"=="create" (
+  echo {"id":"co-wisp-test","title":"Merge: co-egb","priority":1,"labels":["gt:merge-request"],"ephemeral":true}
+  exit /b 0
+)
+exit /b 1
+`, logPath)
+	} else {
+		scriptPath = filepath.Join(dir, "bd")
+		script = fmt.Sprintf(`#!/bin/sh
+printf '%%s\n' "$*" >> %q
+if [ "$1" = "--allow-stale" ] && [ "$2" = "version" ]; then
+  exit 0
+fi
+if [ "$1" = "--allow-stale" ]; then
+  shift
+fi
+if [ "$1" = "create" ]; then
+  printf '%%s\n' '{"id":"co-wisp-test","title":"Merge: co-egb","priority":1,"labels":["gt:merge-request"],"ephemeral":true}'
+  exit 0
+fi
+exit 1
+`, logPath)
+	}
+
+	if err := os.WriteFile(scriptPath, []byte(script), 0755); err != nil {
+		t.Fatalf("write fake bd: %v", err)
 	}
 }
 
