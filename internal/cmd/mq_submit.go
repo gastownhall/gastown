@@ -232,10 +232,13 @@ func runMqSubmit(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	// GH#3032: Resolve HEAD commit SHA for MR dedup.
-	commitSHA, shaErr := g.Rev("HEAD")
+	// GH#3032: Resolve commit SHA for MR dedup. ps-7v7 / co-toog: when
+	// --branch is explicit and differs from cwd's current branch (mayor-
+	// driven submit from a non-polecat worktree), use the remote branch
+	// tip — not cwd HEAD, which records the wrong SHA on the MR bead.
+	commitSHA, shaErr := resolveCommitSHA(g, mqSubmitBranch)
 	if shaErr != nil {
-		style.PrintWarning("could not resolve HEAD SHA: %v (falling back to branch-only dedup)", shaErr)
+		style.PrintWarning("could not resolve commit SHA: %v (falling back to branch-only dedup)", shaErr)
 	}
 
 	// Build MR bead title and description
@@ -313,15 +316,21 @@ func runMqSubmit(cmd *cobra.Command, args []string) error {
 
 					// Delete the old remote branch to auto-close the GitHub PR.
 					// Only polecat branches — non-polecat branches may belong to
-					// contributor forks; deleting them closes upstream PRs. (GH#2669)
+					// contributor forks; deleting them closes upstream PRs (GH#2669).
+					// Skip same-branch supersede (ps-7v7 / co-toog): when the new
+					// MR points at the same branch (mayor's resubmit pattern),
+					// deleting would leave the new MR pointing at a phantom ref.
 					oldFields := beads.ParseMRFields(old)
-					if oldFields != nil && strings.HasPrefix(oldFields.Branch, "polecat/") {
+					if oldFields != nil && shouldDeleteSupersededBranch(oldFields.Branch, branch) {
 						g := git.NewGit(cwd)
 						if err := g.DeleteRemoteBranch("origin", oldFields.Branch); err != nil {
 							style.PrintWarning("could not delete superseded branch %s: %v", oldFields.Branch, err)
 						} else {
 							fmt.Printf("  %s Deleted remote branch: %s\n", style.Dim.Render("○"), oldFields.Branch)
 						}
+					} else if oldFields != nil && oldFields.Branch == branch {
+						fmt.Printf("  %s Same-branch supersede; preserving remote branch: %s\n",
+							style.Dim.Render("○"), oldFields.Branch)
 					}
 				}
 			}
