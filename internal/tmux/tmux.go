@@ -1725,18 +1725,12 @@ func (t *Tmux) NudgeSessionWithOpts(session, message string, opts NudgeOpts) err
 	time.Sleep(adaptiveTextDelay(len(sanitized)))
 
 	if !opts.SkipEscape {
-		// Auto-skip Escape for Copilot CLI sessions. Escape cancels in-flight
-		// generation in Copilot CLI (like Gemini), leaving the nudge text
-		// stranded in the input field without Enter being processed. (hq-isz)
-		agentType, _ := t.GetEnvironment(session, "GT_AGENT")
-		if agentType == "copilot" {
-			opts.SkipEscape = true
-		}
-	}
-
-	if !opts.SkipEscape {
 		// 5. Send Escape to exit vim INSERT mode if enabled (harmless in normal mode)
 		// See: https://github.com/anthropics/gastown/issues/307
+		// Per-agent gating lives in the registry (`EscapeCancelsRequest`); callers
+		// that route through the registry (`gt nudge`, `nudge-poller`) set
+		// `SkipEscape` upstream, so this branch is unreachable for agents whose
+		// preset has `EscapeCancelsRequest: true` (Claude, Copilot, Gemini, ...).
 		_, _ = t.run("send-keys", "-t", target, "Escape")
 
 		// 6. Wait 600ms — must exceed bash readline's keyseq-timeout (500ms default)

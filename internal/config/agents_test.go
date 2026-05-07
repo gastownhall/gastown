@@ -568,6 +568,46 @@ func TestAgentPresetApprovalFlags(t *testing.T) {
 	}
 }
 
+func TestAgentPresetEscapeCancelsRequest(t *testing.T) {
+	t.Parallel()
+	// Per-preset truth for whether sending Escape cancels in-flight generation.
+	// Callers that route through the registry (`gt nudge`, `nudge-poller`) read
+	// this flag and set `tmux.NudgeOpts.SkipEscape` so the destructive Escape
+	// keystroke is suppressed during delivery. ps-4vb / co-mhh5: misconfiguring
+	// Claude here produced fabricated `[Request interrupted by user]` events
+	// every poll cycle. (hq-isz: same root cause, narrower fix for Copilot.)
+	tests := []struct {
+		preset AgentPreset
+		want   bool
+	}{
+		{AgentClaude, true},       // Claude Code: Escape interrupts active request
+		{AgentGroqCompound, true}, // Routes through Claude binary
+		{AgentGemini, true},       // Gemini CLI: Escape aborts active generation
+		{AgentCopilot, true},      // Copilot CLI: Escape cancels (was hardcoded carve-out in tmux.go)
+		{AgentCodex, false},       // Codex: Escape is safe (no cancel binding)
+		{AgentCursor, false},      // Cursor: Escape is safe
+		{AgentAuggie, false},      // Auggie: Escape is safe
+		{AgentAmp, false},         // Amp: Escape is safe
+		{AgentOpenCode, false},    // OpenCode: Escape is safe
+		{AgentPi, false},          // Pi: Escape is safe
+		{AgentOmp, false},         // Omp: Escape is safe
+		{AgentMistral, false},     // Vibe: Escape is safe
+	}
+
+	for _, tt := range tests {
+		t.Run(string(tt.preset), func(t *testing.T) {
+			info := GetAgentPreset(tt.preset)
+			if info == nil {
+				t.Fatalf("preset %s not found", tt.preset)
+			}
+			if info.EscapeCancelsRequest != tt.want {
+				t.Errorf("preset %s EscapeCancelsRequest = %v, want %v",
+					tt.preset, info.EscapeCancelsRequest, tt.want)
+			}
+		})
+	}
+}
+
 func TestMergeWithPreset(t *testing.T) {
 	t.Parallel()
 	// Test that user config overrides preset defaults

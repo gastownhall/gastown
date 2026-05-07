@@ -251,6 +251,7 @@ var builtinPresets = map[AgentPreset]*AgentPresetInfo{
 		InstructionsFile:       "CLAUDE.md",
 		EmitsPermissionWarning: true,
 		HasTurnBoundaryDrain:   true,
+		EscapeCancelsRequest:   true, // Claude Code: Escape cancels in-flight generation (ps-4vb / co-mhh5)
 	},
 	AgentGemini: {
 		Name:                AgentGemini,
@@ -403,10 +404,11 @@ var builtinPresets = map[AgentPreset]*AgentPresetInfo{
 		HooksProvider:      "copilot",
 		HooksDir:           ".github/hooks",
 		HooksSettingsFile:  "gastown.json",
-		HooksInformational: false,
-		ReadyPromptPrefix:  "",   // GA: no ❯ prompt; Copilot uses hint text, not a detectable prefix
-		ReadyDelayMs:       5000, // Delay-based readiness detection (no prompt prefix)
-		InstructionsFile:   "AGENTS.md",
+		HooksInformational:   false,
+		ReadyPromptPrefix:    "",   // GA: no ❯ prompt; Copilot uses hint text, not a detectable prefix
+		ReadyDelayMs:         5000, // Delay-based readiness detection (no prompt prefix)
+		InstructionsFile:     "AGENTS.md",
+		EscapeCancelsRequest: true, // Copilot CLI: Escape cancels in-flight generation (hq-isz)
 	},
 	AgentPi: {
 		Name:                AgentPi,
@@ -514,6 +516,7 @@ var builtinPresets = map[AgentPreset]*AgentPresetInfo{
 		ReadyDelayMs:         10000,
 		InstructionsFile:     "CLAUDE.md",
 		HasTurnBoundaryDrain: true,
+		EscapeCancelsRequest: true, // Routes to Claude binary: same Escape semantics (ps-4vb / co-mhh5)
 	},
 }
 
