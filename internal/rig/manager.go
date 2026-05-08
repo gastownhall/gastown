@@ -319,7 +319,7 @@ func runWithProgressTicker(label string, fn func() error) error {
 		case err := <-done:
 			return err
 		case <-ticker.C:
-			fmt.Printf("  ... %.0fs\n", time.Since(start).Seconds())
+			fmt.Printf("  ... %s (%.0fs)\n", strings.ToLower(label), time.Since(start).Seconds())
 		}
 	}
 }
