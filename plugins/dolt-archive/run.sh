@@ -66,7 +66,12 @@ dolt_query_json() {
 
 # Auto-discover production databases or use the explicit list.
 if [[ "$DEFAULT_DBS" == "auto" ]]; then
-  mapfile -t PROD_DBS < <(
+  # `mapfile` would be cleaner here, but it requires bash 4+ and macOS still
+  # ships bash 3.2 by default — fall back to a portable read loop.
+  PROD_DBS=()
+  while IFS= read -r line; do
+    PROD_DBS+=("$line")
+  done < <(
     dolt_query "" "SHOW DATABASES" \
       | grep -v -E '^(information_schema|mysql|dolt_cluster)$' \
       | grep -v -E '^(testdb_|beads_t|beads_pt|doctest_)'
