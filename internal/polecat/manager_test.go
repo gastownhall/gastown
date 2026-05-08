@@ -1224,6 +1224,54 @@ func TestReuseIdlePolecat_UsesCanonicalOriginDefaultBranch(t *testing.T) {
 	}
 }
 
+// TestAddWithOptions_ResumeBranch verifies gh#3602: when ResumeBranch is set,
+// AddWithOptions checks out the named existing branch instead of creating a
+// fresh polecat/<name>/<bead>@<ts> branch. This lets `gt sling --branch/--pr`
+// resume work on an existing PR branch without creating duplicates.
+func TestAddWithOptions_ResumeBranch(t *testing.T) {
+	mgr, mayorRig := setupCanonicalBranchManagerTest(t)
+
+	// Create a "PR branch" on origin with a marker commit, mimicking an existing
+	// open PR that a polecat needs to resume.
+	prBranch := "polecat/example/gh-1234@abcdef"
+	prCommit := createStalePolecatCommit(t, mayorRig, "main", prBranch)
+
+	// Push the branch to the remote-tracking ref so the bare repo can resolve it.
+	cmd := exec.Command("git", "update-ref", "refs/remotes/origin/"+prBranch, "HEAD")
+	cmd.Dir = mayorRig
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("update-ref origin/%s: %v\n%s", prBranch, err, out)
+	}
+
+	polecat, err := mgr.AddWithOptions("toast", AddOptions{ResumeBranch: prBranch})
+	if err != nil {
+		t.Fatalf("AddWithOptions with ResumeBranch: %v", err)
+	}
+
+	if polecat.Branch != prBranch {
+		t.Fatalf("polecat.Branch = %q, want %q (ResumeBranch should override fresh-branch naming)", polecat.Branch, prBranch)
+	}
+
+	worktreeGit := git.NewGit(polecat.ClonePath)
+	current, err := worktreeGit.CurrentBranch()
+	if err != nil {
+		t.Fatalf("CurrentBranch: %v", err)
+	}
+	if current != prBranch {
+		t.Fatalf("worktree HEAD on branch %q, want %q", current, prBranch)
+	}
+
+	// The PR commit must be reachable from HEAD — proves we attached to the
+	// existing branch rather than starting fresh from main.
+	reachable, err := worktreeGit.IsAncestor(prCommit, "HEAD")
+	if err != nil {
+		t.Fatalf("IsAncestor: %v", err)
+	}
+	if !reachable {
+		t.Fatalf("PR commit %s should be reachable from HEAD on resumed branch", prCommit)
+	}
+}
+
 func TestAddWithOptions_NoFilesAddedToRepo(t *testing.T) {
 	// This test verifies the invariant that polecat creation does NOT add any
 	// TRACKED files to the repo's directory structure. The user's code should stay pure.

@@ -496,6 +496,15 @@ func (g *Git) CheckoutNewBranch(branch, startPoint string) error {
 	return err
 }
 
+// CheckoutResetBranch creates or resets a branch to startPoint and checks it out.
+// Equivalent to: git checkout -B <branch> <startPoint>. Unlike CheckoutNewBranch
+// this does not fail when the branch already exists locally — useful when reusing
+// a worktree that previously had the same branch checked out.
+func (g *Git) CheckoutResetBranch(branch, startPoint string) error {
+	_, err := g.run("checkout", "-B", branch, startPoint)
+	return err
+}
+
 // Fetch fetches from the remote.
 func (g *Git) Fetch(remote string) error {
 	_, err := g.run("fetch", remote)

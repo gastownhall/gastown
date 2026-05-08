@@ -2728,3 +2728,63 @@ func TestSlingRejectsDeferredBead(t *testing.T) {
 		})
 	}
 }
+
+// TestRunSlingResumeFlagValidation verifies the gh#3602 mutual-exclusion rules
+// for --branch / --pr / --base-branch. The validation block runs before any
+// I/O, so we can exercise it without a live workspace.
+func TestRunSlingResumeFlagValidation(t *testing.T) {
+	tests := []struct {
+		name         string
+		resumeBranch string
+		resumePR     int
+		baseBranch   string
+		wantError    string
+	}{
+		{
+			name:         "branch and pr together is rejected",
+			resumeBranch: "feature/foo",
+			resumePR:     42,
+			wantError:    "--branch and --pr are mutually exclusive",
+		},
+		{
+			name:         "branch with base-branch is rejected",
+			resumeBranch: "feature/foo",
+			baseBranch:   "develop",
+			wantError:    "--base-branch cannot be combined with --branch or --pr",
+		},
+		{
+			name:       "pr with base-branch is rejected",
+			resumePR:   42,
+			baseBranch: "develop",
+			wantError:  "--base-branch cannot be combined with --branch or --pr",
+		},
+	}
+
+	t.Setenv(EnvGTRole, "")
+	t.Setenv("GT_POLECAT", "")
+
+	prevResumeBranch := slingResumeBranch
+	prevResumePR := slingResumePR
+	prevBaseBranch := slingBaseBranch
+	t.Cleanup(func() {
+		slingResumeBranch = prevResumeBranch
+		slingResumePR = prevResumePR
+		slingBaseBranch = prevBaseBranch
+	})
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			slingResumeBranch = tt.resumeBranch
+			slingResumePR = tt.resumePR
+			slingBaseBranch = tt.baseBranch
+
+			err := runSling(nil, []string{"gt-test"})
+			if err == nil {
+				t.Fatalf("expected error containing %q but got nil", tt.wantError)
+			}
+			if !strings.Contains(err.Error(), tt.wantError) {
+				t.Fatalf("expected error containing %q, got: %v", tt.wantError, err)
+			}
+		})
+	}
+}

@@ -72,3 +72,30 @@ gt prime --explain
 If your rig needs additional PR-flow constraints (required reviewers, specific
 labels, CODEOWNERS enforcement, CI checks before `gt done`), copy this harness
 and adapt it. The point is a starting template, not a drop-in product.
+
+## Fixing an existing PR (gh#3602)
+
+By default `gt sling` creates a fresh `polecat/<name>/<bead>@<ts>` branch from
+`main`, which means re-slinging a bead with an existing open PR opens a
+**duplicate** PR rather than reusing the original. To resume an existing PR
+branch, use `--branch` or `--pr`:
+
+```bash
+# Resume by branch name (works for any open or stashed branch)
+gt sling <bead> <rig> --branch polecat/example/gh-1234@abcdef
+
+# Resume by PR number (resolves the head ref via `gh pr view`)
+gt sling <bead> <rig> --pr 1234
+```
+
+The polecat's worktree HEAD will land on the named branch, so its commits
+extend the existing PR's history and `gt done` pushes back to the same ref.
+
+**Constraints:**
+
+- `--branch` and `--pr` are mutually exclusive.
+- Neither can be combined with `--base-branch` (resume implies its own start point).
+- The `--pr` form requires the `gh` CLI to be authenticated against the repo.
+
+The resume branch name is also exposed to formulas as the `resume_branch`
+variable, alongside the existing `base_branch`, so overlays can react to it.

@@ -724,6 +724,12 @@ func runSling(cmd *cobra.Command, args []string) (retErr error) {
 	if newPolecatInfo != nil && newPolecatInfo.BaseBranch != "" && newPolecatInfo.BaseBranch != "main" {
 		slingVars = append(slingVars, fmt.Sprintf("base_branch=%s", newPolecatInfo.BaseBranch))
 	}
+	// Inject resume_branch var when the polecat was attached to an existing branch
+	// (gh#3602: gt sling --branch / --pr). Lets formulas tell the polecat it is
+	// resuming an existing PR instead of creating a fresh branch.
+	if slingResumeBranch != "" {
+		slingVars = append(slingVars, fmt.Sprintf("resume_branch=%s", slingResumeBranch))
+	}
 
 	// Cross-rig guard: prevent slinging beads to polecats in the wrong rig (gt-myecw).
 	// Polecats work in their rig's worktree and cannot fix code owned by another rig.
