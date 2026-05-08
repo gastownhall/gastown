@@ -640,7 +640,15 @@ func runDone(cmd *cobra.Command, args []string) (retErr error) {
 		// Branch contamination preflight: check if branch is significantly behind
 		// the effective target branch, which indicates the branch may contain stale merge-base
 		// artifacts that will pollute the PR diff. (GH#2220)
+		//
+		// gh#3400: Refresh remote tracking refs first so contamination check (and
+		// the auto-rebase below) sees the current state of origin. Without this,
+		// the local view of origin/<base> may be stale and we'd skip a rebase that
+		// is actually needed.
 		contaminationBase := doneContaminationBaseRef(defaultBranch, doneTarget)
+		if fetchErr := g.Fetch("origin"); fetchErr != nil {
+			style.PrintWarning("could not fetch origin before contamination check: %v (proceeding with local refs)", fetchErr)
+		}
 		contam, err := g.CheckBranchContamination(contaminationBase)
 		if err == nil && contam.Behind > 0 {
 			const warnThreshold = 50
@@ -652,6 +660,21 @@ func runDone(cmd *cobra.Command, args []string) (retErr error) {
 					contam.Behind, contaminationBase, blockThreshold, contaminationBase)
 			} else if contam.Behind >= warnThreshold {
 				style.PrintWarning("branch is %d commits behind %s — consider rebasing to avoid PR contamination", contam.Behind, contaminationBase)
+			}
+
+			// gh#3400: Auto-rebase the polecat branch onto the latest target before
+			// push, so the resulting MR/PR has a current base.
+			alreadyPushed := checkpoints[CheckpointPushed] == branch
+			rebased, skipReason, rebaseErr := autoRebaseOnTarget(g, contaminationBase, contam.Behind, donePreVerified, alreadyPushed)
+			if rebaseErr != nil {
+				return rebaseErr
+			}
+			if rebased {
+				fmt.Printf("%s Branch rebased onto %s\n", style.Bold.Render("✓"), contaminationBase)
+				// Recompute commits ahead since rebase rewrote history.
+				aheadCount, _ = g.CommitsAhead("origin/"+defaultBranch, "HEAD")
+			} else if skipReason != "" {
+				style.PrintWarning("branch is %d commits behind %s but %s; skipping auto-rebase", contam.Behind, contaminationBase, skipReason)
 			}
 		}
 
