@@ -21,6 +21,30 @@ import (
 // defaultIntegrationBranchTemplate is kept for local backward compat references.
 var defaultIntegrationBranchTemplate = beads.DefaultIntegrationBranchTemplate
 
+// LandConflictError is returned by `gt mq integration land` when the merge of
+// an integration branch into its target branch fails due to conflicts. Callers
+// (notably the refinery patrol formula) can detect this typed error to drive a
+// structured recovery path — escalate to mayor, file a conflict-resolution
+// bead, and stop the patrol cycle for the epic — instead of parsing message
+// text. The temp .land-worktree is always cleaned up before this is returned.
+type LandConflictError struct {
+	EpicID        string
+	Branch        string
+	TargetBranch  string
+	ConflictPaths []string
+	Underlying    error
+}
+
+func (e *LandConflictError) Error() string {
+	if len(e.ConflictPaths) == 0 {
+		return fmt.Sprintf("merge of %s into %s failed with conflict: %v", e.Branch, e.TargetBranch, e.Underlying)
+	}
+	return fmt.Sprintf("merge of %s into %s failed with conflict in %d file(s): %s",
+		e.Branch, e.TargetBranch, len(e.ConflictPaths), strings.Join(e.ConflictPaths, ", "))
+}
+
+func (e *LandConflictError) Unwrap() error { return e.Underlying }
+
 // invalidBranchCharsRegex matches characters that are invalid in git branch names.
 // Git branch names cannot contain: ~ ^ : \ ? * [ space, .., @{, or end with .lock
 var invalidBranchCharsRegex = regexp.MustCompile(`[~^:\s\\?*\[]|\.\.|\.\.|@\{`)
@@ -630,8 +654,34 @@ func runMqIntegrationLand(cmd *cobra.Command, args []string) error {
 	fmt.Printf("Merging %s to %s...\n", branchName, targetBranch)
 	mergeMsg := fmt.Sprintf("Merge %s: %s\n\nEpic: %s", branchName, epic.Title, epicID)
 	if err := landGit.MergeNoFF("origin/"+branchName, mergeMsg); err != nil {
-		// Abort merge on failure (cleanup handles worktree removal)
+		// Capture conflicting files BEFORE aborting (abort wipes them).
+		// Best-effort: if GetConflictingFiles fails, we still want to abort and return.
+		conflictPaths, _ := landGit.GetConflictingFiles()
+
+		// Abort merge and reset worktree defensively. cleanup() will remove
+		// the entire .land-worktree dir on defer, but if AbortMerge somehow
+		// partially fails we still want HEAD pointing at a clean state for
+		// any debug inspection that happens before cleanup runs.
 		_ = landGit.AbortMerge()
+		_ = landGit.ResetHard("HEAD")
+
+		if len(conflictPaths) > 0 {
+			// Structured marker line — refinery patrol formula greps for
+			// "LAND_FAILED:" to drive its consolidation-failure-handler step.
+			fmt.Fprintf(os.Stderr, "LAND_FAILED: epic=%s branch=%s target=%s reason=conflict files=%s\n",
+				epicID, branchName, targetBranch, strings.Join(conflictPaths, ","))
+			return &LandConflictError{
+				EpicID:        epicID,
+				Branch:        branchName,
+				TargetBranch:  targetBranch,
+				ConflictPaths: conflictPaths,
+				Underlying:    err,
+			}
+		}
+
+		// Non-conflict merge failure (e.g., index lock, disk error).
+		fmt.Fprintf(os.Stderr, "LAND_FAILED: epic=%s branch=%s target=%s reason=merge-error\n",
+			epicID, branchName, targetBranch)
 		return fmt.Errorf("merge failed: %w", err)
 	}
 	fmt.Printf("  %s Merged successfully\n", style.Bold.Render("✓"))

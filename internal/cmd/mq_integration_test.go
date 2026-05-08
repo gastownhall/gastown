@@ -2,6 +2,8 @@ package cmd
 
 import (
 	"encoding/json"
+	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -9,6 +11,63 @@ import (
 
 	"github.com/steveyegge/gastown/internal/beads"
 )
+
+// TestLandConflictError_ErrorsAs verifies that callers (notably the refinery
+// formula's consolidation-failure-handler) can detect a consolidation merge
+// conflict via errors.As, instead of parsing message text. Regression test
+// for hq-j6hur.3.7 (gh#3604): refinery left dirty worktree on consolidation
+// conflict because the failure was an opaque string-wrapped error.
+func TestLandConflictError_ErrorsAs(t *testing.T) {
+	underlying := fmt.Errorf("git merge exit 1: CONFLICT in foo.go")
+	wrapped := fmt.Errorf("integration land failed: %w", &LandConflictError{
+		EpicID:        "gt-epic-99",
+		Branch:        "integration/auth",
+		TargetBranch:  "main",
+		ConflictPaths: []string{"foo.go", "bar.go"},
+		Underlying:    underlying,
+	})
+
+	var lce *LandConflictError
+	if !errors.As(wrapped, &lce) {
+		t.Fatalf("errors.As should match LandConflictError; got %T", wrapped)
+	}
+	if lce.EpicID != "gt-epic-99" {
+		t.Errorf("EpicID = %q, want gt-epic-99", lce.EpicID)
+	}
+	if len(lce.ConflictPaths) != 2 {
+		t.Errorf("ConflictPaths = %v, want 2 paths", lce.ConflictPaths)
+	}
+	if !errors.Is(lce, underlying) {
+		t.Errorf("errors.Is should unwrap to underlying merge error")
+	}
+
+	msg := lce.Error()
+	if !strings.Contains(msg, "integration/auth") || !strings.Contains(msg, "main") {
+		t.Errorf("Error() should mention branch and target, got %q", msg)
+	}
+	if !strings.Contains(msg, "foo.go") {
+		t.Errorf("Error() should list conflict files, got %q", msg)
+	}
+}
+
+// TestLandConflictError_NoFiles covers the case where conflict-file detection
+// failed (e.g., GetConflictingFiles returned nil) — the error message must
+// still be informative.
+func TestLandConflictError_NoFiles(t *testing.T) {
+	lce := &LandConflictError{
+		EpicID:       "gt-epic-99",
+		Branch:       "integration/auth",
+		TargetBranch: "main",
+		Underlying:   fmt.Errorf("merge failed"),
+	}
+	msg := lce.Error()
+	if !strings.Contains(msg, "integration/auth") || !strings.Contains(msg, "main") {
+		t.Errorf("Error() should mention branch and target, got %q", msg)
+	}
+	if !strings.Contains(msg, "merge failed") {
+		t.Errorf("Error() should embed underlying message, got %q", msg)
+	}
+}
 
 // TestMakeTestMR_RealisticFields verifies that makeTestMR produces MR beads
 // matching real beads structure: Type "task" with label "gt:merge-request",

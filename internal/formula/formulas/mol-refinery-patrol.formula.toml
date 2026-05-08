@@ -107,7 +107,7 @@ When `await-event` outputs `EFFORT: full`, run all steps thoroughly (normal mode
 
 The goal: idle cycles should burn ~10% of the tokens a full patrol uses."""
 formula = "mol-refinery-patrol"
-version = 13
+version = 14
 
 [vars]
 [vars.wisp_type]
@@ -883,9 +883,147 @@ Read the two config values above, then:
 - If BOTH are "true":
   1. `bd list --type=epic --status=open` to find epics
   2. `gt mq integration status <epic-id>` for each epic
-  3. If `ready_to_land: true`: run `gt mq integration land <epic-id>`
+  3. If `ready_to_land: true`: run `gt mq integration land <epic-id>` and capture exit code + stderr
   4. If `ready_to_land: false`: do nothing, epic work is incomplete
-  Never land partial epics — ALL children must be closed first."""
+  Never land partial epics — ALL children must be closed first.
+
+## CRITICAL: Handling `gt mq integration land` failures (gh#3604)
+
+> **The Refinery NEVER leaves a consolidation in an unobservable state.**
+> Every non-zero exit from `gt mq integration land` MUST trigger the
+> handler below. Silent skips are forbidden — they cause integration
+> branches to sit orphaned and stall the merge queue indefinitely.
+
+Capture the exit code and stderr from the land command:
+
+```bash
+LAND_OUTPUT=$(gt mq integration land <epic-id> 2>&1)
+LAND_EXIT=$?
+echo "$LAND_OUTPUT"
+```
+
+If `LAND_EXIT == 0`: success, continue to next epic.
+
+If `LAND_EXIT != 0`, you MUST do **all** of the following, in order. Do not
+skip a step. Do not "note and proceed". Do not move on to the next epic until
+this handler completes:
+
+**1. Verify temp worktree is clean (defensive — Go side already cleans up).**
+
+The land command uses an isolated `.land-worktree` that is auto-removed via
+defer. But if the binary crashed mid-merge, the dir may persist:
+
+```bash
+RIG_PATH=$(gt rig path)   # path to current rig root
+if [ -d "$RIG_PATH/.land-worktree" ]; then
+  # Best-effort manual cleanup: abort any in-progress merge and remove the worktree
+  git -C "$RIG_PATH/.land-worktree" merge --abort 2>/dev/null || true
+  git -C "$RIG_PATH/.land-worktree" reset --hard 2>/dev/null || true
+  git -C "$RIG_PATH/.repo.git" worktree remove --force "$RIG_PATH/.land-worktree" 2>/dev/null || true
+  rm -rf "$RIG_PATH/.land-worktree"
+fi
+```
+
+After this block, the rig MUST have no leftover `.land-worktree`.
+
+**2. Classify the failure.**
+
+Look in `$LAND_OUTPUT` for the structured marker emitted by the Go binary:
+
+```
+LAND_FAILED: epic=<id> branch=<name> target=<target> reason=<conflict|merge-error|...>
+```
+
+- `reason=conflict`: branch consolidation hit merge conflicts. Goes to step 3.
+- `reason=merge-error` or other: infrastructure/transient error. Goes to step 4.
+- No `LAND_FAILED:` marker (e.g., precondition failure like open MRs / open
+  children): record the message and skip to step 5 (escalate). DO NOT retry
+  the same epic this cycle.
+
+**3. (conflict) File a conflict-resolution bead and block the epic.**
+
+```bash
+TASK_ID=$(bd create --type=task --priority=1 \\
+  --title="Resolve consolidation conflicts: <epic-title> (<epic-id>)" \\
+  --description="## Consolidation conflict — gh#3604
+
+Epic: <epic-id>
+Integration branch: <branch>
+Target: <target>
+Detected: $(date -u +%Y-%m-%dT%H:%M:%SZ)
+Conflict files (from LAND_FAILED marker):
+<files-from-marker-or-'unknown'>
+
+## Repro
+\\\`\\\`\\\`
+git fetch origin
+git checkout origin/<branch>
+git merge origin/<target>
+\\\`\\\`\\\`
+Resolve the conflicts on the integration branch (force-push), then re-run
+\\\`gt mq integration land <epic-id>\\\` to retry the consolidation.
+
+## Why this exists
+\\\`gt mq integration land\\\` exited non-zero with a merge conflict during
+consolidation. The refinery filed this bead to make the failure observable
+and to block the epic from re-attempting the land until conflicts are
+resolved." \\
+  --json | jq -r '.id')
+
+# Block the epic on the conflict-resolution task so the next patrol
+# cycle does NOT silently re-attempt the same broken consolidation.
+bd update <epic-id> --add-blockedby "$TASK_ID"
+```
+
+**4. (any non-conflict failure) Nudge mayor and file a tracking bead.**
+
+```bash
+gt nudge mayor/ "INTEGRATION_LAND_FAILED epic=<epic-id> branch=<branch> reason=<reason> err=<one-line-error-summary>"
+
+# File a tracking bead so the failure is durable across patrol cycles:
+TASK_ID=$(bd create --type=task --priority=1 \\
+  --title="Investigate integration land failure: <epic-id>" \\
+  --description="\\\`gt mq integration land <epic-id>\\\` failed with non-conflict error.
+
+Epic: <epic-id>
+Branch: <branch>
+Reason: <reason from LAND_FAILED marker, or 'unknown'>
+Captured at: $(date -u +%Y-%m-%dT%H:%M:%SZ)
+
+## Output (last 40 lines)
+\\\`\\\`\\\`
+<tail-of-LAND_OUTPUT>
+\\\`\\\`\\\`" \\
+  --json | jq -r '.id')
+
+bd update <epic-id> --add-blockedby "$TASK_ID"
+```
+
+**5. ALWAYS escalate observably.**
+
+Regardless of classification, the failure must surface to a human-monitorable
+channel:
+
+```bash
+gt escalate -s HIGH "Refinery: integration land failed for <epic-id> (reason=<reason>) — see bead $TASK_ID"
+```
+
+**6. STOP processing this epic for this patrol cycle.**
+
+Do NOT retry the same epic this cycle. Continue to the next epic in the list
+(if any). After processing all epics, proceed to context-check as normal.
+
+## Self-check (verification gate)
+
+Before leaving this step on a failure path, ALL of the following MUST be true:
+
+- [ ] `.land-worktree` directory does not exist on disk
+- [ ] A conflict-resolution OR tracking bead was created (`$TASK_ID` is set)
+- [ ] The epic is `--add-blockedby` the new task
+- [ ] mayor was nudged AND `gt escalate` was called
+- [ ] The next patrol will NOT silently re-attempt the same land
+
+If any box is unchecked, GO BACK and complete it. The Scotty Test applies."""
 
 [[steps]]
 id = "context-check"
