@@ -1,4 +1,4 @@
-description = "Engineer in a Box - the canonical right way. Design before you code. Review before you ship. Test before you submit."
+description = "Shiny - the canonical right way. Design before you code. Review before you ship. Test before you submit."
 formula = "shiny"
 type = "workflow"
 version = 1
