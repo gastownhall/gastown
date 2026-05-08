@@ -955,16 +955,16 @@ Conflict files (from LAND_FAILED marker):
 <files-from-marker-or-'unknown'>
 
 ## Repro
-\\\`\\\`\\\`
+```
 git fetch origin
 git checkout origin/<branch>
 git merge origin/<target>
-\\\`\\\`\\\`
+```
 Resolve the conflicts on the integration branch (force-push), then re-run
-\\\`gt mq integration land <epic-id>\\\` to retry the consolidation.
+`gt mq integration land <epic-id>` to retry the consolidation.
 
 ## Why this exists
-\\\`gt mq integration land\\\` exited non-zero with a merge conflict during
+`gt mq integration land` exited non-zero with a merge conflict during
 consolidation. The refinery filed this bead to make the failure observable
 and to block the epic from re-attempting the land until conflicts are
 resolved." \\
@@ -983,7 +983,7 @@ gt nudge mayor/ "INTEGRATION_LAND_FAILED epic=<epic-id> branch=<branch> reason=<
 # File a tracking bead so the failure is durable across patrol cycles:
 TASK_ID=$(bd create --type=task --priority=1 \\
   --title="Investigate integration land failure: <epic-id>" \\
-  --description="\\\`gt mq integration land <epic-id>\\\` failed with non-conflict error.
+  --description="`gt mq integration land <epic-id>` failed with non-conflict error.
 
 Epic: <epic-id>
 Branch: <branch>
@@ -991,9 +991,9 @@ Reason: <reason from LAND_FAILED marker, or 'unknown'>
 Captured at: $(date -u +%Y-%m-%dT%H:%M:%SZ)
 
 ## Output (last 40 lines)
-\\\`\\\`\\\`
+```
 <tail-of-LAND_OUTPUT>
-\\\`\\\`\\\`" \\
+```" \\
   --json | jq -r '.id')
 
 bd update <epic-id> --add-blockedby "$TASK_ID"
