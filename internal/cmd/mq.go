@@ -558,11 +558,10 @@ func runMQPostMerge(_ *cobra.Command, args []string) error {
 	// Get git client for the rig
 	rigGit, err := getRigGit(r.Path)
 	if err != nil {
-		return fmt.Errorf("branch delete: %w", err)
+		return fmt.Errorf("remote branch delete: %w", err)
 	}
 
 	if err := deletePostMergeBranch(rigGit, mr.Branch); err != nil {
-		fmt.Printf("  %s %v\n", style.Warning.Render("⚠"), err)
 		return err
 	}
 
