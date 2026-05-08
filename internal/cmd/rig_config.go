@@ -195,6 +195,7 @@ func runRigConfigSet(cmd *cobra.Command, args []string) error {
 			return fmt.Errorf("setting %s: %w", key, err)
 		}
 		fmt.Printf("%s Set %s=%s in wisp layer for rig %s\n", style.Success.Render("✓"), key, value, rigName)
+		style.PrintWarning("this value is ephemeral and will not survive a rig reset — use --global to persist")
 	}
 
 	return nil
