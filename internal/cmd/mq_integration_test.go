@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -645,6 +646,51 @@ func TestGetRigGit(t *testing.T) {
 			t.Errorf("expected empty WorkDir for bare repo, got %q", g.WorkDir())
 		}
 	})
+}
+
+// TestPostMerge_RigGitError verifies that getRigGit failure in runMQPostMerge
+// propagates as an error rather than being silently swallowed (gh#3868).
+// Before the fix, the function returned nil on getRigGit failure, giving exit
+// code 0 and causing the refinery to skip retry on branch-delete failures.
+func TestPostMerge_RigGitError(t *testing.T) {
+	// Empty temp dir: no .repo.git, no mayor/rig → getRigGit returns error.
+	tmp := t.TempDir()
+
+	_, err := getRigGit(tmp)
+	if err == nil {
+		t.Fatal("expected getRigGit to fail for empty dir, got nil")
+	}
+	if !strings.Contains(err.Error(), "no repo base found") {
+		t.Errorf("unexpected error: %v", err)
+	}
+}
+
+// TestPostMerge_DeleteRemoteBranchErrorPropagated verifies that a failing
+// git push --delete returns a non-nil error from DeleteRemoteBranch (gh#3868).
+// Before the fix, runMQPostMerge swallowed this error and returned exit code 0.
+func TestPostMerge_DeleteRemoteBranchErrorPropagated(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available")
+	}
+	tmp := t.TempDir()
+	bareRepo := filepath.Join(tmp, ".repo.git")
+	if err := os.MkdirAll(bareRepo, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := exec.Command("git", "init", "--bare", bareRepo).Run(); err != nil {
+		t.Skipf("git init --bare: %v", err)
+	}
+
+	rigGit, err := getRigGit(tmp)
+	if err != nil {
+		t.Fatalf("getRigGit: %v", err)
+	}
+
+	// No "origin" remote is configured → git push --delete must fail.
+	err = rigGit.DeleteRemoteBranch("origin", "polecat/test/gt-abc")
+	if err == nil {
+		t.Error("expected error from DeleteRemoteBranch with no remote, got nil")
+	}
 }
 
 func TestGetIntegrationBranchTemplate(t *testing.T) {
