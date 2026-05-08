@@ -2657,7 +2657,7 @@ func (d *Daemon) isBeadClosed(beadID string) bool {
 	cmd := exec.Command(d.bdPath, "show", beadID, "--json") //nolint:gosec // G204: args are constructed internally
 	setSysProcAttr(cmd)
 	cmd.Dir = d.config.TownRoot
-	cmd.Env = os.Environ()
+	cmd.Env = bdReadOnlyEnv()
 
 	output, err := cmd.Output()
 	if err != nil {
@@ -2690,7 +2690,7 @@ func (d *Daemon) hasAssignedOpenWork(rigName, assignee string) bool {
 		}
 		cmd := exec.Command(d.bdPath, args...) //nolint:gosec // G204: args are constructed internally
 		cmd.Dir = d.config.TownRoot
-		cmd.Env = os.Environ()
+		cmd.Env = bdReadOnlyEnv()
 		output, err := cmd.Output()
 		if err != nil {
 			continue

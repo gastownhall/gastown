@@ -510,6 +510,7 @@ func (m *ConvoyManager) scan() {
 func (m *ConvoyManager) findStranded() ([]strandedConvoyInfo, error) {
 	cmd := exec.CommandContext(m.ctx, m.gtPath, "convoy", "stranded", "--json")
 	cmd.Dir = m.townRoot
+	cmd.Env = bdReadOnlyEnv()
 	util.SetProcessGroup(cmd)
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
