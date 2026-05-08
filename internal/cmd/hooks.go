@@ -4,17 +4,25 @@ import (
 	"github.com/spf13/cobra"
 )
 
+var (
+	hooksCmdVerbose bool
+	hooksCmdJSON    bool
+)
+
 var hooksCmd = &cobra.Command{
 	Use:     "hooks",
 	GroupID: GroupConfig,
-	Short:   "Centralized hook management for Gas Town",
-	Long: `Manage Claude Code hooks across the Gas Town workspace.
+	Short:   "List Claude Code hooks in workspace (or manage hooks via subcommands)",
+	Long: `List all Claude Code hooks across the Gas Town workspace, grouped by type.
 
-Provides centralized hook configuration with a base config and
-per-role/per-rig overrides. Changes are propagated to all workers
-via the sync command.
+Scans .claude/settings.json files in town root, rigs, polecats, crew,
+witness, and refinery. Shows each hook with its owning agent.
 
-Subcommands:
+Flags:
+  --verbose   Show actual hook commands
+  --json      Machine-readable JSON output
+
+Subcommands (for hook management):
   base       Edit the shared base hook config
   override   Edit overrides for a role or rig
   sync       Regenerate all .claude/settings.json files
@@ -31,14 +39,23 @@ Config structure:
 Merge strategy: base → role → rig+role (more specific wins)
 
 Examples:
+  gt hooks                # List all hooks with agent ownership
+  gt hooks --verbose      # Show actual hook commands
+  gt hooks --json         # Machine-readable output
   gt hooks sync           # Regenerate all settings.json files
   gt hooks diff           # Preview what sync would change
   gt hooks base           # Edit the shared base config
   gt hooks override crew  # Edit overrides for all crew workers
   gt hooks list           # Show managed locations and sync status`,
-	RunE: requireSubcommand,
+	RunE: runHooksDefault,
+}
+
+func runHooksDefault(cmd *cobra.Command, args []string) error {
+	return doHooksScan(hooksCmdVerbose, hooksCmdJSON)
 }
 
 func init() {
 	rootCmd.AddCommand(hooksCmd)
+	hooksCmd.Flags().BoolVarP(&hooksCmdVerbose, "verbose", "v", false, "Show hook commands")
+	hooksCmd.Flags().BoolVar(&hooksCmdJSON, "json", false, "Machine-readable JSON output")
 }

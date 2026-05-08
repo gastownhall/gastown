@@ -61,6 +61,11 @@ type HooksOutput struct {
 }
 
 func runHooksScan(cmd *cobra.Command, args []string) error {
+	return doHooksScan(hooksScanVerbose, hooksScanJSON)
+}
+
+// doHooksScan is the shared implementation for both `gt hooks` and `gt hooks scan`.
+func doHooksScan(verbose, jsonOut bool) error {
 	townRoot, err := workspace.FindFromCwd()
 	if err != nil {
 		return fmt.Errorf("not in a Gas Town workspace: %w", err)
@@ -72,11 +77,11 @@ func runHooksScan(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("discovering hooks: %w", err)
 	}
 
-	if hooksScanJSON {
+	if jsonOut {
 		return outputHooksJSON(townRoot, hookInfos)
 	}
 
-	return outputHooksHuman(townRoot, hookInfos)
+	return outputHooksHuman(townRoot, hookInfos, verbose)
 }
 
 // discoverHooks finds all Claude Code hooks in the workspace using hooks.DiscoverTargets.
@@ -158,7 +163,7 @@ func outputHooksJSON(townRoot string, hookInfos []HookInfo) error {
 	return nil
 }
 
-func outputHooksHuman(townRoot string, hookInfos []HookInfo) error {
+func outputHooksHuman(townRoot string, hookInfos []HookInfo, verbose bool) error {
 	if len(hookInfos) == 0 {
 		fmt.Println(style.Dim.Render("No Claude Code hooks found in workspace"))
 		return nil
@@ -211,7 +216,7 @@ func outputHooksHuman(townRoot string, hookInfos []HookInfo) error {
 
 			fmt.Printf("  %s %-25s%s\n", statusIcon, h.Agent, style.Dim.Render(matcherStr))
 
-			if hooksScanVerbose {
+			if verbose {
 				for _, cmd := range h.Commands {
 					fmt.Printf("    %s %s\n", style.Dim.Render("→"), cmd)
 				}
