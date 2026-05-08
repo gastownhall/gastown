@@ -538,6 +538,7 @@ func dispatchSingleBead(b capacity.PendingBead, townRoot, _ string) (*SlingResul
 		Vars:             dp.Vars,
 		Merge:            dp.Merge,
 		BaseBranch:       dp.BaseBranch,
+		ResumeBranch:     dp.ResumeBranch,
 		NoMerge:          dp.NoMerge,
 		ReviewOnly:       dp.ReviewOnly,
 		Account:          dp.Account,

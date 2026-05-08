@@ -131,6 +131,8 @@ var (
 	slingNoBoot        bool   // --no-boot: skip wakeRigAgents (avoid witness/refinery boot and lock contention)
 	slingMaxConcurrent int    // --max-concurrent: throttle spawn rate in batch mode (spawns N, pauses, spawns N more)
 	slingBaseBranch    string // --base-branch: override base branch for polecat worktree
+	slingResumeBranch  string // --branch: resume an existing branch instead of creating a fresh one
+	slingResumePR      int    // --pr: resume the head branch of an existing PR (resolves via gh)
 	slingRalph         bool   // --ralph: enable Ralph Wiggum loop mode for multi-step workflows
 	slingFormula       string // --formula: override formula for dispatch (default: mol-polecat-work)
 	slingCrew          string // --crew: target a crew member in the specified rig
@@ -159,6 +161,8 @@ func init() {
 	slingCmd.Flags().BoolVar(&slingNoBoot, "no-boot", false, "Skip rig boot after polecat spawn (avoids witness/refinery lock contention)")
 	slingCmd.Flags().IntVar(&slingMaxConcurrent, "max-concurrent", 0, "Throttle spawn rate: spawn N polecats, pause, then spawn N more (0 = no throttle). Does not limit total concurrent polecats")
 	slingCmd.Flags().StringVar(&slingBaseBranch, "base-branch", "", "Override base branch for polecat worktree (e.g., 'develop', 'release/v2')")
+	slingCmd.Flags().StringVar(&slingResumeBranch, "branch", "", "Resume work on an existing branch instead of creating a fresh polecat branch (use to fix an existing PR)")
+	slingCmd.Flags().IntVar(&slingResumePR, "pr", 0, "Resume work on the head branch of an existing PR (resolved via 'gh pr view'). Mutually exclusive with --branch.")
 	slingCmd.Flags().BoolVar(&slingRalph, "ralph", false, "Enable Ralph Wiggum loop mode (fresh context per step, for multi-step workflows)")
 	slingCmd.Flags().StringVar(&slingFormula, "formula", "", "Formula to apply (default: mol-polecat-work for polecat targets)")
 	slingCmd.Flags().StringVar(&slingCrew, "crew", "", "Target a crew member in the specified rig (e.g., --crew mel with target gastown → gastown/crew/mel)")
@@ -230,6 +234,24 @@ func runSling(cmd *cobra.Command, args []string) (retErr error) {
 		default:
 			return fmt.Errorf("invalid --merge value %q: must be direct, mr, or local", slingMerge)
 		}
+	}
+
+	// Validate --branch / --pr resume flags (gh#3602).
+	// These flags reuse an existing branch/PR head instead of creating a fresh
+	// polecat branch, letting a polecat continue work on an existing PR.
+	if slingResumeBranch != "" && slingResumePR != 0 {
+		return fmt.Errorf("--branch and --pr are mutually exclusive")
+	}
+	if (slingResumeBranch != "" || slingResumePR != 0) && slingBaseBranch != "" {
+		return fmt.Errorf("--base-branch cannot be combined with --branch or --pr (resume implies starting on the existing branch)")
+	}
+	if slingResumePR != 0 {
+		resolved, err := resolvePRBranch(slingResumePR)
+		if err != nil {
+			return fmt.Errorf("resolving --pr %d: %w", slingResumePR, err)
+		}
+		slingResumeBranch = resolved
+		fmt.Printf("%s --pr %d resolved to branch %s\n", style.Dim.Render("→"), slingResumePR, resolved)
 	}
 
 	// Disable Dolt auto-commit for all bd commands run during sling (gt-u6n6a).
@@ -351,21 +373,22 @@ func runSling(cmd *cobra.Command, args []string) (retErr error) {
 			}
 			beadID := slingOnTarget
 			return scheduleBead(beadID, rigName, ScheduleOptions{
-				Formula:     formulaName,
-				Args:        slingArgs,
-				Vars:        slingVars,
-				Merge:       slingMerge,
-				BaseBranch:  slingBaseBranch,
-				NoConvoy:    slingNoConvoy,
-				Owned:       slingOwned,
-				DryRun:      slingDryRun,
-				Force:       slingForce,
-				NoMerge:     slingNoMerge,
-				ReviewOnly:  slingReviewOnly,
-				Account:     slingAccount,
-				Agent:       slingAgent,
-				HookRawBead: slingHookRawBead,
-				Ralph:       slingRalph,
+				Formula:      formulaName,
+				Args:         slingArgs,
+				Vars:         slingVars,
+				Merge:        slingMerge,
+				BaseBranch:   slingBaseBranch,
+				ResumeBranch: slingResumeBranch,
+				NoConvoy:     slingNoConvoy,
+				Owned:        slingOwned,
+				DryRun:       slingDryRun,
+				Force:        slingForce,
+				NoMerge:      slingNoMerge,
+				ReviewOnly:   slingReviewOnly,
+				Account:      slingAccount,
+				Agent:        slingAgent,
+				HookRawBead:  slingHookRawBead,
+				Ralph:        slingRalph,
 			})
 		}
 	}
@@ -391,21 +414,22 @@ func runSling(cmd *cobra.Command, args []string) (retErr error) {
 			formulaName = ""
 		}
 		return scheduleBead(slingOnTarget, rigName, ScheduleOptions{
-			Formula:     formulaName,
-			Args:        slingArgs,
-			Vars:        slingVars,
-			Merge:       slingMerge,
-			BaseBranch:  slingBaseBranch,
-			NoConvoy:    slingNoConvoy,
-			Owned:       slingOwned,
-			DryRun:      slingDryRun,
-			Force:       slingForce,
-			NoMerge:     slingNoMerge,
-			ReviewOnly:  slingReviewOnly,
-			Account:     slingAccount,
-			Agent:       slingAgent,
-			HookRawBead: slingHookRawBead,
-			Ralph:       slingRalph,
+			Formula:      formulaName,
+			Args:         slingArgs,
+			Vars:         slingVars,
+			Merge:        slingMerge,
+			BaseBranch:   slingBaseBranch,
+			ResumeBranch: slingResumeBranch,
+			NoConvoy:     slingNoConvoy,
+			Owned:        slingOwned,
+			DryRun:       slingDryRun,
+			Force:        slingForce,
+			NoMerge:      slingNoMerge,
+			ReviewOnly:   slingReviewOnly,
+			Account:      slingAccount,
+			Agent:        slingAgent,
+			HookRawBead:  slingHookRawBead,
+			Ralph:        slingRalph,
 		})
 	}
 
@@ -428,21 +452,22 @@ func runSling(cmd *cobra.Command, args []string) (retErr error) {
 			beadID := args[0]
 			formula := resolveFormula(slingFormula, slingHookRawBead, townRoot, rigName)
 			return scheduleBead(beadID, rigName, ScheduleOptions{
-				Formula:     formula,
-				Args:        slingArgs,
-				Vars:        slingVars,
-				Merge:       slingMerge,
-				BaseBranch:  slingBaseBranch,
-				NoConvoy:    slingNoConvoy,
-				Owned:       slingOwned,
-				DryRun:      slingDryRun,
-				Force:       slingForce,
-				NoMerge:     slingNoMerge,
-				ReviewOnly:  slingReviewOnly,
-				Account:     slingAccount,
-				Agent:       slingAgent,
-				HookRawBead: slingHookRawBead,
-				Ralph:       slingRalph,
+				Formula:      formula,
+				Args:         slingArgs,
+				Vars:         slingVars,
+				Merge:        slingMerge,
+				BaseBranch:   slingBaseBranch,
+				ResumeBranch: slingResumeBranch,
+				NoConvoy:     slingNoConvoy,
+				Owned:        slingOwned,
+				DryRun:       slingDryRun,
+				Force:        slingForce,
+				NoMerge:      slingNoMerge,
+				ReviewOnly:   slingReviewOnly,
+				Account:      slingAccount,
+				Agent:        slingAgent,
+				HookRawBead:  slingHookRawBead,
+				Ralph:        slingRalph,
 			})
 		}
 		// Dog targets (deacon/dogs, deacon/dogs/<name>, dog:, dog:<name>) fall through
@@ -672,16 +697,17 @@ func runSling(cmd *cobra.Command, args []string) (retErr error) {
 		target = args[1]
 	}
 	resolved, err := resolveTarget(target, ResolveTargetOptions{
-		DryRun:     slingDryRun,
-		Force:      force,
-		Create:     slingCreate,
-		Account:    slingAccount,
-		Agent:      slingAgent,
-		NoBoot:     slingNoBoot,
-		HookBead:   beadID,
-		BeadID:     beadID,
-		TownRoot:   townRoot,
-		BaseBranch: slingBaseBranch,
+		DryRun:       slingDryRun,
+		Force:        force,
+		Create:       slingCreate,
+		Account:      slingAccount,
+		Agent:        slingAgent,
+		NoBoot:       slingNoBoot,
+		HookBead:     beadID,
+		BeadID:       beadID,
+		TownRoot:     townRoot,
+		BaseBranch:   slingBaseBranch,
+		ResumeBranch: slingResumeBranch,
 	})
 	if err != nil {
 		return err
@@ -1152,6 +1178,25 @@ func tryAcquireSlingAssigneeLock(townRoot, targetAgent string) (func(), error) {
 	}
 
 	return nil, fmt.Errorf("timed out acquiring assignee sling lock for %s after %ds (another sling may be stuck)", targetAgent, maxAttempts*retryInterval/1000)
+}
+
+// resolvePRBranch resolves a GitHub PR number to its head branch name via `gh pr view`.
+// Used by `gt sling --pr <number>` to convert the PR number into a branch name that
+// the polecat worktree can check out.
+func resolvePRBranch(prNumber int) (string, error) {
+	cmd := exec.Command("gh", "pr", "view", fmt.Sprintf("%d", prNumber), "--json", "headRefName", "-q", ".headRefName")
+	out, err := cmd.Output()
+	if err != nil {
+		if exitErr, ok := err.(*exec.ExitError); ok && len(exitErr.Stderr) > 0 {
+			return "", fmt.Errorf("gh pr view: %s", strings.TrimSpace(string(exitErr.Stderr)))
+		}
+		return "", fmt.Errorf("gh pr view: %w", err)
+	}
+	branch := strings.TrimSpace(string(out))
+	if branch == "" {
+		return "", fmt.Errorf("PR #%d has no headRefName (does it exist?)", prNumber)
+	}
+	return branch, nil
 }
 
 // rollbackSlingArtifacts cleans up artifacts left by a partial sling when session start fails.
