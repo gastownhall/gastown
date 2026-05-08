@@ -614,9 +614,10 @@ func (m *Manager) AddRig(opts AddRigOptions) (*Rig, error) {
 			if output, err := cmd.CombinedOutput(); err != nil {
 				fmt.Printf("  Warning: Could not init bd database: %v (%s)\n", err, strings.TrimSpace(string(output)))
 			}
-			// Drop orphaned beads_<prefix> database if it differs from rigName (gt-sv1h).
-			if orphanDB := "beads_" + opts.BeadsPrefix; orphanDB != opts.Name {
-				_ = doltserver.RemoveDatabase(m.townRoot, orphanDB, true)
+			// Drop orphan databases created by bd init (gh#3562, gt-sv1h).
+			// See dropRigOrphanDBs for naming details across bd versions.
+			if err := dropRigOrphanDBs(m.townRoot, opts.BeadsPrefix, opts.Name); err != nil {
+				fmt.Fprintf(os.Stderr, "Warning: orphan database cleanup: %v\n", err)
 			}
 		}
 
@@ -670,10 +671,11 @@ func (m *Manager) AddRig(opts AddRigOptions) (*Rig, error) {
 		fmt.Printf("  Run 'gt doctor --fix' to repair, or it will self-heal on next daemon start.\n")
 	}
 
-	// Safety-net: drop orphaned beads_<prefix> database if it differs from rigName (gt-sv1h).
-	// InitBeads already does this, but repeat here in case EnsureMetadata path diverges.
-	if orphanDB := "beads_" + opts.BeadsPrefix; orphanDB != opts.Name {
-		_ = doltserver.RemoveDatabase(m.townRoot, orphanDB, true)
+	// Safety-net: drop orphan databases that may have been created by bd init.
+	// InitBeads already does this, but repeat here in case EnsureMetadata path
+	// diverges, and verify post-condition: no orphan should remain (gh#3562).
+	if err := dropRigOrphanDBs(m.townRoot, opts.BeadsPrefix, opts.Name); err != nil {
+		return nil, fmt.Errorf("rig init left a duplicate Dolt database: %w", err)
 	}
 
 	// Set issue_prefix on the correct server-side database.
@@ -1051,14 +1053,62 @@ func warnDeprecatedRigConfigKeys(data []byte, path string) {
 	}
 }
 
+// dropRigOrphanDBs drops orphan Dolt databases that bd init creates as a side
+// effect of `bd init --prefix <prefix>`. The orphan name depends on bd version:
+//
+//	bd >= 0.62: "<prefix>"        (e.g. "ma" for prefix=ma)
+//	bd <  0.62: "beads_<prefix>"  (e.g. "beads_ma")
+//
+// Either form must be removed when it differs from <rigName>, otherwise beads
+// created from the rig can silently land in the orphan DB while the mayor
+// reads from <rigName> — causing the silent data split documented in gh#3562.
+//
+// On entry the orphan is freshly created by bd init and contains only schema
+// tables, so it is safe to force-drop. If the candidate looks like a real rig
+// database (matches rigName, "hq", or doesn't exist at all) it is skipped.
+//
+// Returns an error only if at least one orphan candidate exists on disk and
+// cannot be removed — callers in AddRig treat that as fatal so the user is not
+// left with a silently-split rig.
+func dropRigOrphanDBs(townRoot, prefix, rigName string) error {
+	if prefix == "" || rigName == "" {
+		return nil
+	}
+	candidates := []string{prefix, "beads_" + prefix}
+	var failures []string
+	for _, name := range candidates {
+		if name == rigName || name == "hq" {
+			continue
+		}
+		if !doltserver.DatabaseExists(townRoot, name) {
+			continue
+		}
+		if err := doltserver.RemoveDatabase(townRoot, name, true); err != nil {
+			failures = append(failures, fmt.Sprintf("%s: %v", name, err))
+			continue
+		}
+		// Re-check: RemoveDatabase may report success but leave files behind
+		// in pathological cases (read-only server, partial DROP).
+		if doltserver.DatabaseExists(townRoot, name) {
+			failures = append(failures, fmt.Sprintf("%s: still present after RemoveDatabase", name))
+		}
+	}
+	if len(failures) > 0 {
+		return fmt.Errorf("orphan database(s) for rig %q (prefix %q) could not be removed: %s — run `gt dolt cleanup --force` to resolve",
+			rigName, prefix, strings.Join(failures, "; "))
+	}
+	return nil
+}
+
 // InitBeads initializes the beads database at rig level.
 // The project's .beads/config.yaml determines sync-branch settings.
 // Use `bd doctor --fix` in the project to configure sync-branch if needed.
 // TODO(bd-yaml): beads config should migrate to JSON (see beads issue)
 //
 // rigName is the rig's database name (e.g. "gastown"). When non-empty and
-// different from the default "beads_<prefix>" database that bd init creates,
-// InitBeads drops the orphan database to prevent accumulation (gt-sv1h).
+// different from the database that `bd init --prefix` creates (named "<prefix>"
+// on bd >= 0.62 or "beads_<prefix>" on older bd), InitBeads drops the orphan
+// to prevent the silent data split documented in gh#3562.
 func (m *Manager) InitBeads(rigPath, prefix, rigName string) error {
 	// Validate prefix format to prevent command injection from config files
 	if !isValidBeadsPrefix(prefix) {
@@ -1170,14 +1220,19 @@ func (m *Manager) InitBeads(rigPath, prefix, rigName string) error {
 			}
 		}
 
-		// Drop the orphaned beads_<prefix> database created by bd init (gt-sv1h).
-		// bd init --prefix creates a database named beads_<prefix> on the Dolt server,
-		// but the rig uses <rigName> as its database (set by InitRig + EnsureMetadata).
-		// Without cleanup, orphans accumulate with every polecat spawn.
+		// Drop orphan databases created by bd init (gh#3562, gt-sv1h).
+		// bd init --prefix creates a database whose name depends on the bd version:
+		//   bd >= 0.62: "<prefix>"        (e.g. "ma" for prefix=ma)
+		//   bd <  0.62: "beads_<prefix>"  (e.g. "beads_ma")
+		// The rig uses <rigName> as its canonical database (set by InitRig +
+		// EnsureMetadata). Orphans must be dropped or beads created from the
+		// rig will silently land in the wrong DB and become invisible to the mayor.
 		if rigName != "" {
-			orphanDB := "beads_" + prefix
-			if orphanDB != rigName {
-				_ = doltserver.RemoveDatabase(m.townRoot, orphanDB, true)
+			if err := dropRigOrphanDBs(m.townRoot, prefix, rigName); err != nil {
+				// Non-fatal: AddRig has a post-init verification step that errors
+				// loudly if an orphan persists. Log here so the trail is visible
+				// when rig init is invoked outside AddRig.
+				fmt.Fprintf(os.Stderr, "Warning: orphan database cleanup: %v\n", err)
 			}
 		}
 	}
