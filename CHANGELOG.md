@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Rig init no longer creates duplicate Dolt databases** — `gt rig add` was
+  leaving an orphan database matching the beads prefix (e.g. `ma` for prefix
+  `ma`) alongside the canonical rig database (e.g. `mobile_apps`), because the
+  cleanup code only knew the legacy `beads_<prefix>` naming used by bd < 0.62.
+  Beads written from the rig could land in the orphan while the mayor read
+  from the canonical DB — a silent data split. Cleanup now removes both
+  naming forms and `AddRig` fails loudly if an orphan persists (gh#3562,
+  hq-j6hur.4.2).
+
 ## [1.1.0] - 2026-05-06
 
 ### Added
