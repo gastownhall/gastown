@@ -304,6 +304,26 @@ func resolveLocalRepo(path, gitURL string) (string, string) {
 	return absPath, ""
 }
 
+// runWithProgressTicker runs fn while printing elapsed-time updates every 5 seconds.
+// Prints "  <label>..." before starting and ticks "  ... Ns" until fn returns.
+func runWithProgressTicker(label string, fn func() error) error {
+	fmt.Printf("  %s...\n", label)
+	start := time.Now()
+	done := make(chan error, 1)
+	go func() { done <- fn() }()
+
+	ticker := time.NewTicker(5 * time.Second)
+	defer ticker.Stop()
+	for {
+		select {
+		case err := <-done:
+			return err
+		case <-ticker.C:
+			fmt.Printf("  ... %.0fs\n", time.Since(start).Seconds())
+		}
+	}
+}
+
 // AddRig creates a new rig as a container with clones for each agent.
 // The rig structure is:
 //
@@ -420,7 +440,6 @@ func (m *Manager) AddRig(opts AddRigOptions) (*Rig, error) {
 	// Create shared bare repo as source of truth for refinery and polecats.
 	// This allows refinery to see polecat branches without pushing to remote.
 	// Mayor remains a separate clone (doesn't need branch visibility).
-	fmt.Printf("  Cloning repository (this may take a moment)...\n")
 	bareRepoPath := filepath.Join(rigPath, ".repo.git")
 	// cloneBareWith selects the right CloneBare variant based on filter/reference/branch.
 	// When branch is non-empty, git clone --branch is passed so HEAD and the initial
@@ -446,7 +465,9 @@ func (m *Manager) AddRig(opts AddRigOptions) (*Rig, error) {
 		return m.git.CloneBareWithBranch(opts.GitURL, bareRepoPath, branch)
 	}
 
-	if err := cloneBareWith(opts.DefaultBranch); err != nil {
+	if err := runWithProgressTicker("Cloning repository", func() error {
+		return cloneBareWith(opts.DefaultBranch)
+	}); err != nil {
 		return nil, wrapCloneError(err, opts.GitURL)
 	}
 	if opts.CloneFilter != "" {
@@ -515,25 +536,27 @@ func (m *Manager) AddRig(opts AddRigOptions) (*Rig, error) {
 	// This also allows mayor to stay on the default branch without conflicting with refinery.
 	// Uses --reference to borrow objects from the bare repo we just created,
 	// avoiding a redundant download from the remote (GH#1059).
-	fmt.Printf("  Creating mayor clone...\n")
 	mayorRigPath := filepath.Join(rigPath, "mayor", "rig")
 	if err := os.MkdirAll(filepath.Dir(mayorRigPath), 0755); err != nil {
 		return nil, fmt.Errorf("creating mayor dir: %w", err)
 	}
-	if opts.CloneFilter != "" {
-		if err := m.git.CloneBranchPartialWithReference(opts.GitURL, mayorRigPath, defaultBranch, opts.CloneFilter, bareRepoPath); err != nil {
-			fmt.Printf("  Warning: could not use bare repo as reference with filter: %v\n", err)
-			_ = os.RemoveAll(mayorRigPath)
-			if err := m.git.CloneBranchPartial(opts.GitURL, mayorRigPath, defaultBranch, opts.CloneFilter); err != nil {
-				return nil, fmt.Errorf("cloning for mayor: %w", err)
+	if err := runWithProgressTicker("Creating mayor clone", func() error {
+		if opts.CloneFilter != "" {
+			if err := m.git.CloneBranchPartialWithReference(opts.GitURL, mayorRigPath, defaultBranch, opts.CloneFilter, bareRepoPath); err != nil {
+				fmt.Printf("  Warning: could not use bare repo as reference with filter: %v\n", err)
+				_ = os.RemoveAll(mayorRigPath)
+				return m.git.CloneBranchPartial(opts.GitURL, mayorRigPath, defaultBranch, opts.CloneFilter)
 			}
+			return nil
 		}
-	} else if err := m.git.CloneBranchWithReference(opts.GitURL, mayorRigPath, defaultBranch, bareRepoPath); err != nil {
-		fmt.Printf("  Warning: could not use bare repo as reference: %v\n", err)
-		_ = os.RemoveAll(mayorRigPath)
-		if err := m.git.CloneBranch(opts.GitURL, mayorRigPath, defaultBranch); err != nil {
-			return nil, fmt.Errorf("cloning for mayor: %w", err)
+		if err := m.git.CloneBranchWithReference(opts.GitURL, mayorRigPath, defaultBranch, bareRepoPath); err != nil {
+			fmt.Printf("  Warning: could not use bare repo as reference: %v\n", err)
+			_ = os.RemoveAll(mayorRigPath)
+			return m.git.CloneBranch(opts.GitURL, mayorRigPath, defaultBranch)
 		}
+		return nil
+	}); err != nil {
+		return nil, fmt.Errorf("cloning for mayor: %w", err)
 	}
 
 	// Set up sparse checkout on mayor clone if requested
