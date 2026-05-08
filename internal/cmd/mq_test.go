@@ -1,11 +1,88 @@
 package cmd
 
 import (
+	"errors"
 	"testing"
 	"time"
 
 	"github.com/steveyegge/gastown/internal/beads"
 )
+
+// mockBranchOps is a test double for postMergeBranchOps.
+type mockBranchOps struct {
+	hasOpenPR            bool
+	deleteRemoteBranchFn func(remote, branch string) error
+	deleteBranchFn       func(name string, force bool) error
+}
+
+func (m *mockBranchOps) HasOpenPR(_ string) bool { return m.hasOpenPR }
+func (m *mockBranchOps) DeleteRemoteBranch(remote, branch string) error {
+	if m.deleteRemoteBranchFn != nil {
+		return m.deleteRemoteBranchFn(remote, branch)
+	}
+	return nil
+}
+func (m *mockBranchOps) DeleteBranch(name string, force bool) error {
+	if m.deleteBranchFn != nil {
+		return m.deleteBranchFn(name, force)
+	}
+	return nil
+}
+
+func TestDeletePostMergeBranch(t *testing.T) {
+	tests := []struct {
+		name       string
+		ops        *mockBranchOps
+		branch     string
+		wantErr    bool
+		wantErrStr string
+	}{
+		{
+			name:   "skips deletion when open PR exists",
+			ops:    &mockBranchOps{hasOpenPR: true},
+			branch: "polecat/nitro/eat-luj@movek49r",
+		},
+		{
+			name: "returns error when remote deletion fails",
+			ops: &mockBranchOps{
+				deleteRemoteBranchFn: func(_, _ string) error {
+					return errors.New("ref not found")
+				},
+			},
+			branch:     "polecat/nitro/eat-luj@movek49r",
+			wantErr:    true,
+			wantErrStr: "remote branch delete",
+		},
+		{
+			name:   "succeeds when both remote and local deletion succeed",
+			ops:    &mockBranchOps{},
+			branch: "polecat/nitro/eat-luj@movek49r",
+		},
+		{
+			name: "succeeds when remote succeeds but local deletion fails (best-effort)",
+			ops: &mockBranchOps{
+				deleteBranchFn: func(_ string, _ bool) error {
+					return errors.New("branch not found locally")
+				},
+			},
+			branch: "polecat/nitro/eat-luj@movek49r",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := deletePostMergeBranch(tt.ops, tt.branch)
+			if (err != nil) != tt.wantErr {
+				t.Errorf("deletePostMergeBranch() error = %v, wantErr %v", err, tt.wantErr)
+			}
+			if tt.wantErr && tt.wantErrStr != "" {
+				if !stringContains(err.Error(), tt.wantErrStr) {
+					t.Errorf("deletePostMergeBranch() error = %q, want containing %q", err.Error(), tt.wantErrStr)
+				}
+			}
+		})
+	}
+}
 
 func TestParseBranchName(t *testing.T) {
 	tests := []struct {

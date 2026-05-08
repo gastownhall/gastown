@@ -558,27 +558,42 @@ func runMQPostMerge(_ *cobra.Command, args []string) error {
 	// Get git client for the rig
 	rigGit, err := getRigGit(r.Path)
 	if err != nil {
-		fmt.Printf("  %s branch delete: %v\n", style.Warning.Render("⚠"), err)
-		return nil // non-fatal: beads cleanup succeeded
+		return fmt.Errorf("branch delete: %w", err)
 	}
 
-	// Delete remote branch — but skip if there's an open PR on it.
-	// Deleting a branch with an open PR causes GitHub to auto-close the PR
-	// as "closed" (not "merged"), destroying the PR audit trail. (gas-fk4)
-	if rigGit.HasOpenPR(mr.Branch) {
-		fmt.Printf("  %s Skipping remote branch delete for %s: open PR exists (gas-fk4)\n", style.Dim.Render("○"), mr.Branch)
-	} else if err := rigGit.DeleteRemoteBranch("origin", mr.Branch); err != nil {
-		fmt.Printf("  %s remote branch delete: %v\n", style.Warning.Render("⚠"), err)
-	} else {
-		fmt.Printf("  %s Deleted remote branch: %s\n", style.Success.Render("✓"), mr.Branch)
+	if err := deletePostMergeBranch(rigGit, mr.Branch); err != nil {
+		fmt.Printf("  %s %v\n", style.Warning.Render("⚠"), err)
+		return err
 	}
 
-	// Also clean up the local tracking ref if it exists
-	if err := rigGit.DeleteBranch(mr.Branch, true); err != nil {
-		// Not a warning — local branch often doesn't exist
-		_ = err
-	} else {
-		fmt.Printf("  %s Deleted local branch: %s\n", style.Success.Render("✓"), mr.Branch)
+	return nil
+}
+
+// postMergeBranchOps is the subset of git operations needed during post-merge branch cleanup.
+type postMergeBranchOps interface {
+	HasOpenPR(branch string) bool
+	DeleteRemoteBranch(remote, branch string) error
+	DeleteBranch(name string, force bool) error
+}
+
+// deletePostMergeBranch deletes the remote (and optionally local) branch after a merge.
+// Returns an error if remote deletion fails so the refinery can detect and retry.
+// Local tracking ref deletion is best-effort (branch often absent in the rig repo).
+func deletePostMergeBranch(ops postMergeBranchOps, branch string) error {
+	// Skip deletion if an open PR exists — deleting that branch would cause GitHub
+	// to auto-close the PR as "closed" (not "merged"), destroying audit trail. (gas-fk4)
+	if ops.HasOpenPR(branch) {
+		fmt.Printf("  %s Skipping remote branch delete for %s: open PR exists (gas-fk4)\n", style.Dim.Render("○"), branch)
+		return nil
+	}
+
+	if err := ops.DeleteRemoteBranch("origin", branch); err != nil {
+		return fmt.Errorf("remote branch delete: %w", err)
+	}
+	fmt.Printf("  %s Deleted remote branch: %s\n", style.Success.Render("✓"), branch)
+
+	if err := ops.DeleteBranch(branch, true); err == nil {
+		fmt.Printf("  %s Deleted local branch: %s\n", style.Success.Render("✓"), branch)
 	}
 
 	return nil
