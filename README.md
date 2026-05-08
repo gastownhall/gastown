@@ -120,72 +120,148 @@ Federated work coordination network linking Gas Towns through DoltHub. Rigs post
 
 ## Installation
 
+Choose one of the two setup paths below: install Gas Town on your host, or run it inside a Docker container.
+
 ### Prerequisites
 
-- **Go 1.25+** - [go.dev/dl](https://go.dev/dl/)
-- **Git 2.25+** - for worktree support
-- **Dolt 1.84.0+** - `brew install dolt` on macOS, or see [github.com/dolthub/dolt](https://github.com/dolthub/dolt)
-- **beads (bd) 0.55.4+** - installed by `brew install gastown`, or see [github.com/steveyegge/beads](https://github.com/steveyegge/beads)
-- **sqlite3** - for convoy database queries (usually pre-installed on macOS/Linux)
-- **tmux 3.0+** - recommended for full experience
-- **Claude Code CLI** (default runtime) - [claude.ai/code](https://claude.ai/code)
-- **Codex CLI** (optional runtime) - [developers.openai.com/codex/cli](https://developers.openai.com/codex/cli)
-- **GitHub Copilot CLI** (optional runtime) - [cli.github.com](https://cli.github.com) (requires Copilot seat)
+The tools below must be on your system before you start. The setup steps that follow install `gt`, `bd`, and `dolt` for you — you do not need to install those manually.
 
-### Setup (Docker-Compose below)
+| Tool | Version | Notes |
+|---|---|---|
+| Git | 2.25+ | Worktree support |
+| Go | 1.25+ | Required for the Linux and Windows paths and for macOS source builds. Not needed for `brew install gastown`. |
+| sqlite3 | any | Used by convoy database queries. Usually pre-installed on macOS and Linux. |
+| tmux | 3.0+ | Required for `gt up` and the tmux-backed roles (Mayor, Witnesses, Refineries, polecats). Optional only for minimal-mode workflows where you run runtime instances manually. |
+| Claude Code CLI | latest | Default runtime. See [Runtime Configuration](#runtime-configuration) for alternatives (Codex, Copilot, Gemini, Cursor). |
+
+### Local setup
+
+Install the prerequisites listed above, then install `gt` for your platform.
+
+#### Install gt on macOS
+
+Homebrew installs `gt`, `bd`, and `dolt` together.
 
 ```bash
-# Install Gas Town
-$ brew install gastown                                    # Homebrew (recommended)
-$ npm install -g @gastown/gt                              # npm
-$ go install github.com/steveyegge/gastown/cmd/gt@latest  # From source (Linux only)
+brew install gastown
+```
 
-# macOS: go install produces unsigned binaries that macOS will SIGKILL.
-# Use brew install (above) or install Dolt and clone/build with make:
-$ brew install dolt
-$ git clone https://github.com/steveyegge/gastown.git && cd gastown
-$ make build && mv gt $HOME/go/bin/
+Avoid `go install` on macOS. The unsigned binary it produces gets killed by Gatekeeper. To build from source, install Dolt with Homebrew, install `bd` with Go, then build and install `gt` with `make install`. Put `$HOME/.local/bin` ahead of any stale binary locations on your `PATH` so the freshly installed `gt` takes precedence.
 
-# Windows (or if go install fails): clone and build manually
-$ git clone https://github.com/steveyegge/gastown.git && cd gastown
-$ go build -o gt.exe ./cmd/gt
-$ mv gt.exe $HOME/go/bin/  # or add gastown to PATH
+```bash
+brew install dolt
+go install github.com/steveyegge/beads/cmd/bd@latest
+export PATH="$HOME/.local/bin:$PATH:$HOME/go/bin"
+git clone https://github.com/steveyegge/gastown.git
+cd gastown
+make install
+```
 
-# If using go install, add Go binaries to PATH (add to ~/.zshrc or ~/.bashrc)
-export PATH="$PATH:$HOME/go/bin"
+#### Install gt on Linux
 
-# Create workspace with git initialization
-gt install ~/gt --git
+Install Dolt by following the [Dolt installation guide](https://github.com/dolthub/dolt#installation), then install `gt` and `bd` with `go install`.
+
+```bash
+go install github.com/steveyegge/gastown/cmd/gt@latest
+go install github.com/steveyegge/beads/cmd/bd@latest
+```
+
+Add the Go binary directory to your `PATH` if it is not already there. Append to `~/.zshrc` instead if you use zsh.
+
+```bash
+echo 'export PATH="$PATH:$HOME/go/bin"' >> ~/.bashrc
+source ~/.bashrc
+```
+
+#### Install gt on Windows
+
+Install Dolt first by following the [Dolt installation guide](https://github.com/dolthub/dolt#installation). Unlike the macOS Homebrew path, `go install` does not install Dolt. Then install `gt` and `bd` with `go install`.
+
+```powershell
+go install github.com/steveyegge/gastown/cmd/gt@latest
+go install github.com/steveyegge/beads/cmd/bd@latest
+```
+
+Both binaries land in `%USERPROFILE%\go\bin\`. Add that directory to your `PATH` if Go's installer did not already do so, and open a new shell for the change to take effect.
+
+#### Create your workspace
+
+Run `gt install` to create your headquarters (HQ) at `~/gt`. The `--shell` flag installs shell integration and enables Gas Town globally. The `--git` flag initializes the HQ as a git repository.
+
+```bash
+gt install ~/gt --shell --git
 cd ~/gt
+```
 
-# Add your first project
+Start the long-lived services. `gt up` boots Dolt, the daemon, the Deacon, the Mayor, and per-rig Witnesses and Refineries.
+
+```bash
+gt up
+```
+
+Verify the install. The `--fix` flag clears the warnings that `gt install` does not preempt.
+
+```bash
+gt doctor --fix
+```
+
+#### Add a project
+
+Use `gt rig add` to clone a repository into your HQ as a rig.
+
+```bash
 gt rig add myproject https://github.com/you/repo.git
+```
 
-# Create your crew workspace
+Rig names accept lowercase letters, digits, and underscores. Hyphens, dots, spaces, and path separators are not allowed. Use `my_project` instead of `my-project`.
+
+To set a custom beads prefix for the rig, pass `--prefix`.
+
+```bash
+gt rig add myproject https://github.com/you/repo.git --prefix mp
+```
+
+#### Create your crew workspace
+
+A crew workspace is a personal git clone where you do hands-on work.
+
+```bash
 gt crew add yourname --rig myproject
 cd myproject/crew/yourname
+```
 
-# Start the Mayor session (your main interface)
+#### Start the Mayor
+
+The Mayor coordinates work across rigs.
+
+```bash
 gt mayor attach
 ```
 
-### Docker Compose
+### Docker Compose setup
+
+`docker-compose.yml` runs Gas Town inside a sandbox container. The container hosts an HQ at `/gt`, which Compose bind-mounts from `${FOLDER}` on the host. The entrypoint runs `gt install /gt --git` against that directory on first start, so `FOLDER` must point at an empty directory that you want to become the HQ.
 
 ```bash
 export GIT_USER="<your name>"
 export GIT_EMAIL="<your email>"
-export FOLDER="/Users/you/code"
-export DASHBOARD_PORT=8080  # optional, host port for the web dashboard
+export FOLDER="/path/to/empty/dir"   # any empty host directory
+export DASHBOARD_PORT=8080        # optional, host port for the dashboard
 
+mkdir -p "$FOLDER"
 docker compose build              # only needed on first run or after code changes
 docker compose up -d
 
 docker compose exec gastown zsh   # or bash
+```
 
-gt up
+Inside the container, finish bootstrapping.
 
-gh auth login                     # if you want gh to work
-
+```bash
+gt enable                         # turn on shell hooks
+gt shell install                  # install zsh integration
+gt up --restore                   # start the daemon and restore agent settings
+gh auth login                     # optional: required for private GitHub rigs
 gt mayor attach
 ```
 
@@ -196,6 +272,8 @@ Run
 ```shell
 gt install ~/gt --git &&
 cd ~/gt &&
+gt up &&
+gt doctor --fix &&
 gt config agent list &&
 gt mayor attach
 ```
