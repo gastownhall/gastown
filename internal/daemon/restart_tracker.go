@@ -30,6 +30,14 @@ type RestartTrackerConfig struct {
 	// StabilityPeriod is how long an agent must run without restarting
 	// before its backoff resets (default 30m).
 	StabilityPeriod time.Duration `json:"stability_period,omitempty"`
+
+	// PauseBackoff is the fixed delay applied when an agent is paused due
+	// to a transient external limit (e.g., Claude usage-limit reached)
+	// rather than a true crash. Does not escalate and does not count toward
+	// the crash-loop fault budget. Default 60s — long enough for the
+	// quota_dog patrol to rotate accounts (5m cadence), short enough to
+	// recover quickly when the limit resets.
+	PauseBackoff time.Duration `json:"pause_backoff,omitempty"`
 }
 
 // DefaultRestartTrackerConfig returns the default restart tracker configuration.
@@ -41,6 +49,7 @@ func DefaultRestartTrackerConfig() RestartTrackerConfig {
 		CrashLoopWindow:   15 * time.Minute,
 		CrashLoopCount:    5,
 		StabilityPeriod:   30 * time.Minute,
+		PauseBackoff:      60 * time.Second,
 	}
 }
 
@@ -64,6 +73,9 @@ func (c RestartTrackerConfig) withDefaults() RestartTrackerConfig {
 	}
 	if c.StabilityPeriod <= 0 {
 		c.StabilityPeriod = d.StabilityPeriod
+	}
+	if c.PauseBackoff <= 0 {
+		c.PauseBackoff = d.PauseBackoff
 	}
 	return c
 }
@@ -192,6 +204,29 @@ func (rt *RestartTracker) RecordRestart(agentID string) {
 			info.CrashLoopSince = now
 		}
 	}
+}
+
+// RecordPause records that an agent is paused due to a transient external
+// limit (e.g., Claude usage-limit reached) rather than a crashing.
+//
+// Applies the fixed PauseBackoff delay without escalating, and does NOT
+// increment RestartCount or set CrashLoopSince. Use this when the agent's
+// failure is a rate-limit response — restarts under these conditions are
+// not a sign of instability and should not count against the crash-loop
+// fault budget.
+func (rt *RestartTracker) RecordPause(agentID string) {
+	rt.mu.Lock()
+	defer rt.mu.Unlock()
+
+	now := time.Now()
+	info, exists := rt.state.Agents[agentID]
+	if !exists {
+		info = &AgentRestartInfo{}
+		rt.state.Agents[agentID] = info
+	}
+
+	info.LastRestart = now
+	info.BackoffUntil = now.Add(rt.config.PauseBackoff)
 }
 
 // RecordSuccess records that an agent is running successfully.

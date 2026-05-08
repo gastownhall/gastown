@@ -1533,6 +1533,25 @@ func (d *Daemon) restartStuckDeacon(sessionName, reason string) {
 		}
 	}
 
+	// Distinguish a usage-limit pause from a true crash. If Claude is sitting
+	// at a rate-limit prompt the heartbeat will go stale, looking identical
+	// to a crash — but killing and respawning won't help (the new session
+	// hits the same limit) and the repeated kills burn the crash-loop budget.
+	// Detect the rate-limit signature in the pane and let quota_dog handle
+	// account rotation instead.
+	if d.tmux != nil {
+		if pane, err := d.tmux.CapturePane(sessionName, 30); err == nil && IsClaudeUsageLimit(pane) {
+			d.logger.Printf("Stuck-agent-dog: Deacon paused — Claude usage-limit detected, skipping kill (quota_dog will rotate accounts). Reason: %s", reason)
+			if d.restartTracker != nil {
+				d.restartTracker.RecordPause(agentID)
+				if err := d.restartTracker.Save(); err != nil {
+					d.logger.Printf("Warning: failed to save restart state: %v", err)
+				}
+			}
+			return
+		}
+	}
+
 	// Kill the stuck session
 	d.logger.Printf("Stuck-agent-dog: killing stuck Deacon session %s (reason: %s)", sessionName, reason)
 	if err := d.tmux.KillSession(sessionName); err != nil {

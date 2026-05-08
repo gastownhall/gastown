@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Daemon crash-loop vs Claude usage limits** — Stuck-agent-dog now inspects
+  the agent's tmux pane for Claude usage-limit / rate-limit signatures before
+  killing and restarting. Detected pauses apply a fixed retry delay
+  (`PauseBackoff`, default 60s) and don't count toward the crash-loop fault
+  budget, letting `quota_dog` rotate accounts instead of burning the budget on
+  transient API limits (gh#3398, hq-j6hur.4.1).
+
 ## [1.1.0] - 2026-05-06
 
 ### Added
