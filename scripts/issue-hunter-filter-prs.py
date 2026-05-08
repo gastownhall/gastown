@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """Filter GitHub issues that already have an open or recently merged PR.
 
-An issue is "covered" if any PR's title or body contains a closing keyword:
-  closes #N, fixes #N, resolves #N (or variations)
+Two detection methods — an issue is "covered" if either fires:
+  1. closingIssuesReferences: GitHub's own linked-issue tracking (most reliable)
+  2. Keyword regex in PR title/body: closes/fixes/resolves #N (informal references)
 
 Input:  /tmp/ih-issues-raw.json       (from fetch-upstream-issues step)
 Output: /tmp/ih-issues-uncovered.json (issues with no covering PR)
@@ -28,7 +29,7 @@ def fetch_prs(state: str, limit: int) -> list[dict]:
             "--repo", UPSTREAM_REPO,
             "--state", state,
             "--limit", str(limit),
-            "--json", "number,title,body",
+            "--json", "number,title,body,closingIssuesReferences",
         ],
         capture_output=True,
         text=True,
@@ -37,7 +38,7 @@ def fetch_prs(state: str, limit: int) -> list[dict]:
     return json.loads(result.stdout)
 
 
-def extract_referenced(text: str) -> set[int]:
+def extract_keyword_refs(text: str) -> set[int]:
     return set(
         int(m)
         for m in re.findall(
@@ -62,15 +63,20 @@ def main() -> None:
 
     covered: set[int] = set()
     for pr in open_prs + merged_prs:
-        covered |= extract_referenced(pr.get("body") or "")
-        covered |= extract_referenced(pr.get("title") or "")
+        # Method 1: GitHub's own closingIssuesReferences (most reliable)
+        for ref in pr.get("closingIssuesReferences") or []:
+            covered.add(ref["number"])
+        # Method 2: keyword regex fallback (catches informal references)
+        covered |= extract_keyword_refs(pr.get("body") or "")
+        covered |= extract_keyword_refs(pr.get("title") or "")
 
     issues = json.loads(issues_path.read_text())
     uncovered = [i for i in issues if i["number"] not in covered]
 
     output_path = Path("/tmp/ih-issues-uncovered.json")
     output_path.write_text(json.dumps(uncovered, indent=2))
-    print(f"\nUncovered issues: {len(uncovered)} of {len(issues)}")
+    print(f"\nCovered by a PR: {len(covered)} issue(s)")
+    print(f"Uncovered (candidates): {len(uncovered)} of {len(issues)}")
     print(f"Output: {output_path}")
 
 
