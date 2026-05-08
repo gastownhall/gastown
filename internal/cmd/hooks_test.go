@@ -325,3 +325,45 @@ func TestResolveSettingsTarget(t *testing.T) {
 		})
 	}
 }
+
+func TestHooksCmdHasVerboseAndJSONFlags(t *testing.T) {
+	verboseFlag := hooksCmd.Flags().Lookup("verbose")
+	if verboseFlag == nil {
+		t.Fatal("hooksCmd missing --verbose flag")
+	}
+	if verboseFlag.Shorthand != "v" {
+		t.Errorf("expected --verbose shorthand -v, got %q", verboseFlag.Shorthand)
+	}
+
+	jsonFlag := hooksCmd.Flags().Lookup("json")
+	if jsonFlag == nil {
+		t.Fatal("hooksCmd missing --json flag")
+	}
+}
+
+func TestOutputHooksHumanVerbose(t *testing.T) {
+	hookInfos := []HookInfo{
+		{
+			Type:     "SessionStart",
+			Location: "/test/.claude/settings.json",
+			Agent:    "gastown/polecats",
+			Matcher:  "",
+			Commands: []string{"gt prime"},
+			Status:   "active",
+		},
+	}
+
+	// Verify the function accepts and uses the verbose parameter without error.
+	if err := outputHooksHuman("/test", hookInfos, false); err != nil {
+		t.Errorf("outputHooksHuman(verbose=false) returned error: %v", err)
+	}
+	if err := outputHooksHuman("/test", hookInfos, true); err != nil {
+		t.Errorf("outputHooksHuman(verbose=true) returned error: %v", err)
+	}
+}
+
+func TestOutputHooksHumanEmpty(t *testing.T) {
+	if err := outputHooksHuman("/test", nil, false); err != nil {
+		t.Errorf("outputHooksHuman(empty) returned error: %v", err)
+	}
+}
