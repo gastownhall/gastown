@@ -587,7 +587,13 @@ func TestWrapRefineryHandlers_InvalidPayload(t *testing.T) {
 
 func TestDefaultWitnessHandler(t *testing.T) {
 	tmpDir := t.TempDir()
+	// Prevent detectTownRoot from finding the real town via GT_TOWN_ROOT/GT_ROOT.
+	// Without this, NewRouter falls back to the production beads and delivers
+	// synthetic protocol messages to the live mail system during test runs.
+	t.Setenv("GT_TOWN_ROOT", tmpDir)
+	t.Setenv("GT_ROOT", tmpDir)
 	handler := NewWitnessHandler("gastown", tmpDir)
+	handler.Router = mail.NewRouterWithTownRoot(tmpDir, "")
 
 	// Capture output
 	var buf bytes.Buffer
