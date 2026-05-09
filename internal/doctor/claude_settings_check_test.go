@@ -985,6 +985,72 @@ func TestClaudeSettingsCheck_FixPreservesTrackedCleanFiles(t *testing.T) {
 	}
 }
 
+func TestClaudeSettingsCheck_RigRootSettingsFlagged(t *testing.T) {
+	tmpDir := t.TempDir()
+	rigName := "testrig"
+
+	// Create a rig with witness so it's recognised as a rig
+	if err := os.MkdirAll(filepath.Join(tmpDir, rigName, "witness"), 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	// Create a rig-root settings.json (legacy pattern)
+	rigRootSettings := filepath.Join(tmpDir, rigName, ".claude", "settings.json")
+	createValidSettings(t, rigRootSettings)
+
+	check := NewClaudeSettingsCheck()
+	ctx := &CheckContext{TownRoot: tmpDir}
+
+	result := check.Run(ctx)
+	if result.Status == StatusOK {
+		t.Fatal("expected non-OK result when rig-root settings.json exists")
+	}
+
+	foundRigRoot := false
+	for _, sf := range check.staleSettings {
+		if sf.agentType == "rig-root" && sf.path == rigRootSettings {
+			foundRigRoot = true
+			if !sf.wrongLocation {
+				t.Error("expected wrongLocation=true for rig-root settings")
+			}
+		}
+	}
+	if !foundRigRoot {
+		t.Errorf("expected rig-root stale entry for %s", rigRootSettings)
+	}
+}
+
+func TestClaudeSettingsCheck_RigRootSettingsFixDeletes(t *testing.T) {
+	tmpDir := t.TempDir()
+	rigName := "testrig"
+
+	// Create a rig with witness so it's recognised as a rig
+	if err := os.MkdirAll(filepath.Join(tmpDir, rigName, "witness"), 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	// Create rig-root settings.json
+	rigRootSettings := filepath.Join(tmpDir, rigName, ".claude", "settings.json")
+	createValidSettings(t, rigRootSettings)
+
+	check := NewClaudeSettingsCheck()
+	ctx := &CheckContext{TownRoot: tmpDir}
+
+	result := check.Run(ctx)
+	if result.Status == StatusOK {
+		t.Fatal("expected non-OK result before fix")
+	}
+
+	if err := check.Fix(ctx); err != nil {
+		t.Fatalf("Fix failed: %v", err)
+	}
+
+	// Rig-root settings.json should be deleted
+	if _, err := os.Stat(rigRootSettings); !os.IsNotExist(err) {
+		t.Error("expected rig-root settings.json to be deleted by Fix")
+	}
+}
+
 // NOTE: TestClaudeSettingsCheck_DetectsStaleCLAUDEmdAtTownRoot and
 // TestClaudeSettingsCheck_FixMovesCLAUDEmdToMayor were removed because
 // CLAUDE.md at town root is now intentionally created by gt install.

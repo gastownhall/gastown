@@ -418,6 +418,19 @@ func DiscoverTargets(townRoot string) ([]Target, error) {
 		Role: "deacon",
 	})
 
+	// Boot watchdog — ephemeral Claude agent in deacon/dogs/boot/.
+	// Only added when the directory exists (gitignored and optional).
+	// Adding it here ensures HooksSyncCheck manages the file and Fix() preserves
+	// custom fields (e.g. model) via the LoadSettings → MarshalSettings round-trip.
+	bootDir := filepath.Join(townRoot, "deacon", "dogs", "boot")
+	if info, err := os.Stat(bootDir); err == nil && info.IsDir() {
+		targets = append(targets, Target{
+			Path: filepath.Join(bootDir, ".claude", "settings.json"),
+			Key:  "boot",
+			Role: "boot",
+		})
+	}
+
 	// Scan rigs
 	entries, err := os.ReadDir(townRoot)
 	if err != nil {

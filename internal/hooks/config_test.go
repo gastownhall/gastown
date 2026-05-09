@@ -913,6 +913,54 @@ func TestDiscoverTargets_ReturnsOnlyClaude(t *testing.T) {
 	}
 }
 
+func TestDiscoverTargets_BootIncluded(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	os.MkdirAll(filepath.Join(tmpDir, "mayor"), 0755)
+	os.MkdirAll(filepath.Join(tmpDir, "deacon", "dogs", "boot"), 0755)
+
+	targets, err := DiscoverTargets(tmpDir)
+	if err != nil {
+		t.Fatalf("DiscoverTargets failed: %v", err)
+	}
+
+	found := false
+	for _, tgt := range targets {
+		if tgt.Key == "boot" {
+			found = true
+			wantPath := filepath.Join(tmpDir, "deacon", "dogs", "boot", ".claude", "settings.json")
+			if tgt.Path != wantPath {
+				t.Errorf("boot target Path = %q, want %q", tgt.Path, wantPath)
+			}
+			if tgt.Role != "boot" {
+				t.Errorf("boot target Role = %q, want %q", tgt.Role, "boot")
+			}
+		}
+	}
+	if !found {
+		t.Error("expected boot target when deacon/dogs/boot/ exists, not found")
+	}
+}
+
+func TestDiscoverTargets_BootAbsent(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	os.MkdirAll(filepath.Join(tmpDir, "mayor"), 0755)
+	os.MkdirAll(filepath.Join(tmpDir, "deacon"), 0755)
+	// No deacon/dogs/boot directory
+
+	targets, err := DiscoverTargets(tmpDir)
+	if err != nil {
+		t.Fatalf("DiscoverTargets failed: %v", err)
+	}
+
+	for _, tgt := range targets {
+		if tgt.Key == "boot" {
+			t.Errorf("expected no boot target when deacon/dogs/boot/ absent, got one: %+v", tgt)
+		}
+	}
+}
+
 func TestDiscoverRoleLocations(t *testing.T) {
 	tmpDir := t.TempDir()
 

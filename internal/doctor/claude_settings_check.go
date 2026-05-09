@@ -521,6 +521,27 @@ func (c *ClaudeSettingsCheck) findSettingsFiles(townRoot string) []staleSettings
 				}
 			}
 		}
+
+		// Check for STALE rig-root settings (<rig>/.claude/settings.json).
+		// Legacy pattern predating the per-role architecture. Superseded by
+		// per-role files (witness/.claude/, polecats/.claude/, etc.).
+		// Skip if tracked in a customer repo — could be intentional.
+		for _, staleFile := range []string{"settings.json", "settings.local.json"} {
+			rigRootSettings := filepath.Join(rigPath, ".claude", staleFile)
+			if fileExists(rigRootSettings) {
+				gs := c.getGitFileStatus(rigRootSettings)
+				if gs != gitStatusTrackedClean && gs != gitStatusTrackedModified {
+					files = append(files, staleSettingsInfo{
+						path:          rigRootSettings,
+						agentType:     "rig-root",
+						rigName:       rigName,
+						wrongLocation: true,
+						gitStatus:     gs,
+						missing:       []string{"legacy rig-root settings (superseded by per-role files)"},
+					})
+				}
+			}
+		}
 	}
 
 	return files
@@ -714,6 +735,13 @@ func (c *ClaudeSettingsCheck) Fix(ctx *CheckContext) error {
 		// settings before the fix does (gt-99u).
 		if sf.wrongLocation {
 			_ = os.Remove(claudeDir) // Best-effort, will fail if not empty
+		}
+
+		// Rig-root settings: just delete. Per-role files are authoritative.
+		// There is no correct "rig-root" settings location to recreate at.
+		if sf.agentType == "rig-root" {
+			fmt.Printf("\n  %s Rig-root settings removed. Per-role settings in %s/{witness,polecats,...}/.claude/ are authoritative.\n", style.Warning.Render("⚠"), sf.rigName)
+			continue
 		}
 
 		// Handle town-root files: redirect to mayor/ instead of recreating at root.
