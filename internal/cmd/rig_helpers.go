@@ -120,6 +120,15 @@ func IsRigParkedOrDocked(townRoot, rigName string) (bool, string) {
 		return false, ""
 	}
 
+	// Skip bead lookup if the prefix has no registered route (gh#3855).
+	// Without a route, bd.Show emits a spurious "no route found" warning and
+	// falls back to the local beads dir — same outcome as returning false here.
+	// Common for the gastown infrastructure rig on non-default installs where
+	// gt- is not yet in routes.jsonl.
+	if beads.GetRigPathForPrefix(townRoot, prefix+"-") == "" {
+		return false, ""
+	}
+
 	beadsPath := filepath.Join(rigPath, "mayor", "rig")
 	if _, err := os.Stat(beadsPath); err != nil {
 		beadsPath = rigPath

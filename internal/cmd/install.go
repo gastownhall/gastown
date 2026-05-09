@@ -761,6 +761,19 @@ func initTownBeads(townPath string) error {
 		fmt.Printf("   %s Could not register convoy prefix: %v\n", style.Dim.Render("⚠"), err)
 	}
 
+	// Register gt- prefix for the gastown infrastructure rig if present (gh#3855).
+	// Without this entry, formula dispatch emits a "no route found for prefix gt-"
+	// warning once per leg/step on installs where the gastown rig is not in rigs.json.
+	// AppendRoute is idempotent — no-op if the prefix is already registered.
+	for _, gastownRelPath := range []string{"gastown/mayor/rig", "gastown"} {
+		if _, err := os.Stat(filepath.Join(townPath, gastownRelPath)); err == nil {
+			if err := beads.AppendRoute(townPath, beads.Route{Prefix: "gt-", Path: gastownRelPath}); err != nil {
+				fmt.Printf("   %s Could not register gastown rig prefix: %v\n", style.Dim.Render("⚠"), err)
+			}
+			break
+		}
+	}
+
 	return nil
 }
 
