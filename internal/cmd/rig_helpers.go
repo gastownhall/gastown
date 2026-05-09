@@ -125,6 +125,14 @@ func IsRigParkedOrDocked(townRoot, rigName string) (bool, string) {
 		beadsPath = rigPath
 	}
 
+	// Skip bead lookup if prefix has no registered route. On installs where the
+	// gastown infrastructure rig is not registered at the expected path, the
+	// "gt-" prefix has no route entry, and Show() would emit a routing warning
+	// once per convoy leg. The wisp check above already covers parked state.
+	if beads.GetRigPathForPrefix(townRoot, prefix+"-") == "" {
+		return false, ""
+	}
+
 	bd := beads.New(beadsPath)
 	rigBeadID := beads.RigBeadIDWithPrefix(prefix, rigName)
 	rigBead, err := bd.Show(rigBeadID)

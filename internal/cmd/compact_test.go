@@ -1,6 +1,8 @@
 package cmd
 
 import (
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -264,5 +266,39 @@ func TestLoadTTLConfigWithRoleSkipsInvalidPaths(t *testing.T) {
 	}
 	if ttls["error"] != defaultTTLs["error"] {
 		t.Errorf("error TTL = %v, want %v", ttls["error"], defaultTTLs["error"])
+	}
+}
+
+// TestApplyRigBeadTTLOverrides_NoRouteForPrefix verifies that the function
+// returns early without emitting routing warnings when the rig's beads prefix
+// has no entry in routes.jsonl. This is the regression test for the compact
+// fix in https://github.com/gastownhall/gastown/issues/3855.
+func TestApplyRigBeadTTLOverrides_NoRouteForPrefix(t *testing.T) {
+	townRoot := t.TempDir()
+
+	// Write routes.jsonl with entries for other prefixes but NOT "gt-".
+	// This simulates an install where the gastown infrastructure rig is absent.
+	beadsDir := filepath.Join(townRoot, ".beads")
+	if err := os.MkdirAll(beadsDir, 0o755); err != nil {
+		t.Fatalf("mkdir .beads: %v", err)
+	}
+	routes := `{"prefix":"hq-","path":"."}` + "\n"
+	if err := os.WriteFile(filepath.Join(beadsDir, "routes.jsonl"), []byte(routes), 0o644); err != nil {
+		t.Fatalf("write routes.jsonl: %v", err)
+	}
+
+	// Populate ttls with defaults; applyRigBeadTTLOverrides must leave them unchanged.
+	ttls := make(map[string]time.Duration)
+	for k, v := range defaultTTLs {
+		ttls[k] = v
+	}
+
+	// Must not panic and must not modify ttls.
+	applyRigBeadTTLOverrides(ttls, townRoot, "myrig")
+
+	for k, want := range defaultTTLs {
+		if ttls[k] != want {
+			t.Errorf("TTLs[%q] = %v, want %v (should be unchanged)", k, ttls[k], want)
+		}
 	}
 }
