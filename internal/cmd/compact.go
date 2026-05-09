@@ -129,10 +129,17 @@ func loadTTLConfigWithRole(townRoot, rigName string) map[string]time.Duration {
 // applyRigBeadTTLOverrides reads wisp_ttl_* labels from the rig identity bead
 // and applies them as overrides.
 func applyRigBeadTTLOverrides(ttls map[string]time.Duration, townRoot, rigName string) {
+	prefix := beads.GetPrefixForRig(townRoot, rigName)
+	// Skip bead lookup if prefix has no registered route — avoids routing
+	// warnings on installs where the gastown rig is not registered.
+	if beads.GetRigPathForPrefix(townRoot, prefix+"-") == "" {
+		return
+	}
+
 	beadsDir := beads.ResolveBeadsDir(townRoot)
 	bd := beads.NewWithBeadsDir(townRoot, beadsDir)
 
-	rigBeadID := beads.RigBeadIDWithPrefix("gt", rigName)
+	rigBeadID := beads.RigBeadIDWithPrefix(prefix, rigName)
 	issue, err := bd.Show(rigBeadID)
 	if err != nil {
 		return
