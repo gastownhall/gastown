@@ -273,6 +273,7 @@ func runDoctor(cmd *cobra.Command, args []string) error {
 	// Hooks sync check
 	d.Register(doctor.NewStaleTaskDispatchCheck())
 	d.Register(doctor.NewHooksSyncCheck())
+	d.Register(doctor.NewHooksBaseCheck())
 
 	// Dolt data health checks (binary + server reachability moved to top as prerequisites)
 	d.Register(doctor.NewDoltMetadataCheck())

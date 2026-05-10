@@ -18,6 +18,7 @@ import (
 	"github.com/steveyegge/gastown/internal/style"
 	"github.com/steveyegge/gastown/internal/tmux"
 	"github.com/steveyegge/gastown/internal/util"
+	"github.com/steveyegge/gastown/internal/workspace"
 )
 
 // Polecat command flags
@@ -1825,6 +1826,16 @@ func runPolecatPoolInit(cmd *cobra.Command, args []string) error {
 
 	fmt.Printf("\n%s Pool initialized: %d created, %d total (target: %d)\n",
 		style.Bold.Render("✓"), created, created+len(existing), poolSize)
+
+	// Sync hooks so all polecat settings.json files reflect current defaults.
+	// Pool-init may run long after rig-add, when gt defaults have changed.
+	townRoot, twErr := workspace.FindFromCwdOrError()
+	if twErr == nil {
+		ensureHooksBase()
+		if err := syncRigHooks(townRoot, rigName); err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: failed to sync hooks after pool-init: %v\n", err)
+		}
+	}
 
 	return nil
 }

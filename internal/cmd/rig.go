@@ -637,6 +637,9 @@ func runRigAdd(cmd *cobra.Command, args []string) error {
 	// Auto-assign a namepool theme that doesn't collide with other rigs (gas-21k).
 	autoAssignNamepoolTheme(townRoot, name, mgr)
 
+	// Ensure hooks-base.json exists before syncing (needed for gt hooks diff).
+	ensureHooksBase()
+
 	// Sync hooks for the new rig's targets
 	if err := syncRigHooks(townRoot, name); err != nil {
 		fmt.Fprintf(os.Stderr, "Warning: failed to sync hooks for new rig: %v\n", err)
@@ -1357,6 +1360,12 @@ func runRigAdopt(_ *cobra.Command, args []string) error {
 
 	// Auto-assign a namepool theme that doesn't collide with other rigs (gas-21k).
 	autoAssignNamepoolTheme(townRoot, name, mgr)
+
+	// Ensure hooks-base.json exists and sync hooks for the adopted rig.
+	ensureHooksBase()
+	if err := syncRigHooks(townRoot, name); err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: failed to sync hooks for adopted rig: %v\n", err)
+	}
 
 	// Print results
 	fmt.Printf("\n%s Rig %s adopted\n", style.Success.Render("✓"), name)
@@ -2396,6 +2405,22 @@ func getRigOperationalState(townRoot, rigName string) (state string, source stri
 
 	// Default: operational
 	return "OPERATIONAL", "default"
+}
+
+// ensureHooksBase creates ~/.gt/hooks-base.json from current defaults if it
+// doesn't exist yet. Without this file, gt hooks diff has no reference point
+// and cannot detect drift when default hooks change after initial setup.
+// Non-fatal: missing base config is caught by gt doctor hooks-base-missing.
+func ensureHooksBase() {
+	if _, err := hooks.LoadBase(); err == nil {
+		return // already exists
+	}
+	base := hooks.DefaultBase()
+	if err := hooks.SaveBase(base); err != nil {
+		fmt.Fprintf(os.Stderr, "  Warning: could not create hooks-base.json: %v\n", err)
+		return
+	}
+	fmt.Printf("  Created hooks-base.json at %s\n", hooks.BasePath())
 }
 
 // syncRigHooks syncs hooks for a specific rig's targets after rig creation.
