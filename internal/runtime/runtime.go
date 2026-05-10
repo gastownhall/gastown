@@ -46,8 +46,11 @@ func EnsureSettingsForRole(settingsDir, workDir, role string, rc *config.Runtime
 	}
 
 	// 2. Slash commands (agent-agnostic, uses shared body with provider-specific frontmatter)
-	// Only provision for known agents to maintain backwards compatibility
-	if commands.IsKnownAgent(provider) {
+	// Only provision for known agents to maintain backwards compatibility.
+	// Skip if an ancestor directory already has commands: Claude Code loads commands
+	// from all .claude/ dirs in the path hierarchy, so provisioning into a workDir
+	// that is nested under the town root (e.g. mayor/, deacon/) would cause duplicates.
+	if commands.IsKnownAgent(provider) && !commands.HasCommandsInAncestor(workDir, provider) {
 		if err := commands.ProvisionFor(workDir, provider); err != nil {
 			return err
 		}

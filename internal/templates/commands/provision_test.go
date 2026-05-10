@@ -1,6 +1,8 @@
 package commands
 
 import (
+	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
@@ -123,6 +125,62 @@ func TestBuildCommand_Review_Claude(t *testing.T) {
 	}
 	if !strings.Contains(content, "Grade") {
 		t.Error("missing Grade in body")
+	}
+}
+
+func TestHasCommandsInAncestor_NoAncestor(t *testing.T) {
+	workDir := t.TempDir()
+	if HasCommandsInAncestor(workDir, "claude") {
+		t.Error("should return false when no ancestor has commands")
+	}
+}
+
+func TestHasCommandsInAncestor_DirectParent(t *testing.T) {
+	parent := t.TempDir()
+	workDir := filepath.Join(parent, "role")
+	if err := os.MkdirAll(workDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	// Provision commands in parent (simulates town root)
+	if err := ProvisionFor(parent, "claude"); err != nil {
+		t.Fatalf("ProvisionFor: %v", err)
+	}
+	if !HasCommandsInAncestor(workDir, "claude") {
+		t.Error("should return true when direct parent has commands")
+	}
+}
+
+func TestHasCommandsInAncestor_WorkDirItself(t *testing.T) {
+	workDir := t.TempDir()
+	// Provision commands in workDir itself — should NOT count as an ancestor
+	if err := ProvisionFor(workDir, "claude"); err != nil {
+		t.Fatalf("ProvisionFor: %v", err)
+	}
+	if HasCommandsInAncestor(workDir, "claude") {
+		t.Error("should return false when only workDir itself has commands (not an ancestor)")
+	}
+}
+
+func TestHasCommandsInAncestor_GrandparentOnly(t *testing.T) {
+	grandparent := t.TempDir()
+	middle := filepath.Join(grandparent, "mid")
+	workDir := filepath.Join(middle, "role")
+	if err := os.MkdirAll(workDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	// Provision commands in grandparent only
+	if err := ProvisionFor(grandparent, "claude"); err != nil {
+		t.Fatalf("ProvisionFor: %v", err)
+	}
+	if !HasCommandsInAncestor(workDir, "claude") {
+		t.Error("should return true when grandparent has commands")
+	}
+}
+
+func TestHasCommandsInAncestor_UnknownAgent(t *testing.T) {
+	workDir := t.TempDir()
+	if HasCommandsInAncestor(workDir, "unknownagent") {
+		t.Error("should return false for unknown agent")
 	}
 }
 

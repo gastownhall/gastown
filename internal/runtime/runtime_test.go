@@ -2,6 +2,7 @@ package runtime
 
 import (
 	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -301,6 +302,45 @@ func TestEnsureSettingsForRole_ClaudeUsesSettingsDir(t *testing.T) {
 	}
 	if _, err := os.Stat(workDir + "/.claude/settings.json"); err == nil {
 		t.Error("Claude settings should NOT be in workDir when dirs differ")
+	}
+}
+
+func TestEnsureSettingsForRole_SkipsCommandsWhenAncestorHasThem(t *testing.T) {
+	// When workDir is nested under a directory that already has commands provisioned
+	// (e.g. mayor/ inside town root), EnsureSettingsForRole must NOT write a duplicate
+	// copy. Claude Code inherits from all ancestor .claude/commands/ dirs.
+	townRoot := t.TempDir()
+	workDir := filepath.Join(townRoot, "mayor")
+	if err := os.MkdirAll(workDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	// Simulate town root having commands already (as ProvisionCommands would do).
+	townCommandsDir := filepath.Join(townRoot, ".claude", "commands")
+	if err := os.MkdirAll(townCommandsDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(townCommandsDir, "done.md"), []byte("---\n---\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	rc := &config.RuntimeConfig{
+		Hooks: &config.RuntimeHooksConfig{
+			Provider:     "claude",
+			Dir:          ".claude",
+			SettingsFile: "settings.json",
+		},
+	}
+
+	if err := EnsureSettingsForRole(workDir, workDir, "mayor", rc); err != nil {
+		t.Fatalf("EnsureSettingsForRole() error = %v", err)
+	}
+
+	// Commands must NOT be provisioned into mayor/.claude/commands/ because the
+	// town root's .claude/commands/ is inherited via directory traversal.
+	mayorCommandsDir := filepath.Join(workDir, ".claude", "commands")
+	if _, err := os.Stat(mayorCommandsDir); err == nil {
+		t.Error("EnsureSettingsForRole should not provision commands when ancestor already has them")
 	}
 }
 

@@ -173,3 +173,26 @@ func Names() []string {
 func IsKnownAgent(agent string) bool {
 	return getAgentConfigDir(strings.ToLower(agent)) != ""
 }
+
+// HasCommandsInAncestor returns true if any ancestor directory of workDir (not
+// including workDir itself) already has commands provisioned for the given agent.
+// This prevents duplicate commands when workDir is nested inside a hierarchy that
+// already serves commands via Claude Code's directory traversal.
+func HasCommandsInAncestor(workDir, agent string) bool {
+	agent = strings.ToLower(agent)
+	configDir := getAgentConfigDir(agent)
+	if configDir == "" {
+		return false
+	}
+
+	dir := filepath.Clean(workDir)
+	parent := filepath.Dir(dir)
+	for parent != dir {
+		if _, err := os.Stat(filepath.Join(parent, configDir, "commands")); err == nil {
+			return true
+		}
+		dir = parent
+		parent = filepath.Dir(dir)
+	}
+	return false
+}

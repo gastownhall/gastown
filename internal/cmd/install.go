@@ -282,6 +282,18 @@ func runInstall(cmd *cobra.Command, args []string) error {
 		fmt.Printf("   ✓ Preserved existing CLAUDE.md + AGENTS.md (town root identity anchor)\n")
 	}
 
+	// Provision town-level slash commands (.claude/commands/) before role settings.
+	// Must come before EnsureSettingsForRole calls for mayor/deacon so that the
+	// ancestor-check in EnsureSettingsForRole can detect the town root copy and
+	// skip provisioning role-specific duplicates. All agents inherit these via
+	// Claude Code's directory traversal — no per-role copies are needed for
+	// roles (mayor, deacon) whose workDir is inside the town root hierarchy.
+	if err := templates.ProvisionCommands(absPath); err != nil {
+		fmt.Printf("   %s Could not provision slash commands: %v\n", style.Dim.Render("⚠"), err)
+	} else {
+		fmt.Printf("   ✓ Created .claude/commands/ (slash commands for all agents)\n")
+	}
+
 	// Create mayor settings (mayor runs from ~/gt/mayor/)
 	// IMPORTANT: Settings must be in ~/gt/mayor/.claude/, NOT ~/gt/.claude/
 	// Settings at town root would be found by ALL agents via directory traversal,
@@ -415,14 +427,6 @@ func runInstall(cmd *cobra.Command, args []string) error {
 		fmt.Printf("   %s Could not create escalation config: %v\n", style.Dim.Render("⚠"), err)
 	} else {
 		fmt.Printf("   ✓ Created settings/escalation.json\n")
-	}
-
-	// Provision town-level slash commands (.claude/commands/)
-	// All agents inherit these via Claude's directory traversal - no per-workspace copies needed.
-	if err := templates.ProvisionCommands(absPath); err != nil {
-		fmt.Printf("   %s Could not provision slash commands: %v\n", style.Dim.Render("⚠"), err)
-	} else {
-		fmt.Printf("   ✓ Created .claude/commands/ (slash commands for all agents)\n")
 	}
 
 	// Sync hooks to generate .claude/settings.json files for all targets.
