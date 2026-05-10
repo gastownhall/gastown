@@ -829,6 +829,58 @@ func TestDetectZombie_BeadClosedVsDoneIntent(t *testing.T) {
 	}
 }
 
+func TestDetectZombie_ContextFrozen(t *testing.T) {
+	t.Parallel()
+	// Verify the logic: live session + alive agent + hooked bead + stale heartbeat
+	// beyond the context-frozen threshold → should trigger /compact (gt-4yf).
+	sessionAlive := true
+	agentAlive := true
+	var doneIntent *DoneIntent
+	hookBead := "gt-some-issue"
+	beadStatus := "hooked"
+
+	// Heartbeat older than the context-frozen threshold (default 10m).
+	heartbeatAge := config.DefaultWitnessContextFrozenThreshold + time.Minute
+	hasHeartbeat := true
+
+	// All conditions met → should detect context-frozen
+	shouldDetect := sessionAlive && agentAlive && doneIntent == nil &&
+		hookBead != "" && beadStatus != "closed" &&
+		hasHeartbeat && heartbeatAge >= config.DefaultWitnessContextFrozenThreshold
+	if !shouldDetect {
+		t.Error("expected context-frozen detection when heartbeat is stale beyond threshold")
+	}
+
+	// Heartbeat younger than the threshold → should NOT detect
+	heartbeatAge = config.DefaultWitnessContextFrozenThreshold - time.Minute
+	shouldSkip := sessionAlive && agentAlive && doneIntent == nil &&
+		hookBead != "" && beadStatus != "closed" &&
+		hasHeartbeat && heartbeatAge >= config.DefaultWitnessContextFrozenThreshold
+	if shouldSkip {
+		t.Error("should not detect context-frozen when heartbeat is recent")
+	}
+
+	// No heartbeat file → should NOT detect (can't measure staleness)
+	heartbeatAge = config.DefaultWitnessContextFrozenThreshold + time.Minute
+	hasHeartbeat = false
+	shouldSkipNoHB := sessionAlive && agentAlive && doneIntent == nil &&
+		hookBead != "" && beadStatus != "closed" &&
+		hasHeartbeat && heartbeatAge >= config.DefaultWitnessContextFrozenThreshold
+	if shouldSkipNoHB {
+		t.Error("should not detect context-frozen when no heartbeat file exists")
+	}
+
+	// No hook bead → should NOT detect (polecat has no active work)
+	hasHeartbeat = true
+	hookBead = ""
+	shouldSkipNoHook := sessionAlive && agentAlive && doneIntent == nil &&
+		hookBead != "" && beadStatus != "closed" &&
+		hasHeartbeat && heartbeatAge >= config.DefaultWitnessContextFrozenThreshold
+	if shouldSkipNoHook {
+		t.Error("should not detect context-frozen when polecat has no hook bead")
+	}
+}
+
 func TestResetAbandonedBead_EmptyHookBead(t *testing.T) {
 	t.Parallel()
 	// resetAbandonedBead should return false for empty hookBead

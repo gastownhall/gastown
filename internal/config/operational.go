@@ -111,6 +111,7 @@ const (
 	DefaultWitnessMaxBeadRespawns        = 3
 	DefaultWitnessDoneIntentStuckTimeout = 60 * time.Second
 	DefaultWitnessDoneIntentRecentGrace  = 30 * time.Second
+	DefaultWitnessContextFrozenThreshold = 10 * time.Minute
 )
 
 // LoadOperationalConfig loads operational config from a town root.
@@ -731,4 +732,12 @@ func (wt *WitnessThresholds) DoneIntentRecentGraceD() time.Duration {
 		return ParseDurationOrDefault(wt.DoneIntentRecentGrace, DefaultWitnessDoneIntentRecentGrace)
 	}
 	return DefaultWitnessDoneIntentRecentGrace
+}
+
+// ContextFrozenThresholdD returns the configured or default context-frozen threshold.
+func (wt *WitnessThresholds) ContextFrozenThresholdD() time.Duration {
+	if wt != nil {
+		return ParseDurationOrDefault(wt.ContextFrozenThreshold, DefaultWitnessContextFrozenThreshold)
+	}
+	return DefaultWitnessContextFrozenThreshold
 }

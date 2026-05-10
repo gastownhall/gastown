@@ -1074,6 +1074,10 @@ const (
 	ZombieSessionDeadActive ZombieClassification = "session-dead-active"
 	// ZombieAgentSelfReportedStuck: agent self-reported stuck via heartbeat v2 (gt-3vr5).
 	ZombieAgentSelfReportedStuck ZombieClassification = "agent-self-reported-stuck"
+	// ZombieContextFrozen: session and agent alive, hook bead active, but no
+	// heartbeat update for > ContextFrozenThreshold. The witness sends /compact
+	// to unblock the potentially context-frozen session (gt-4yf).
+	ZombieContextFrozen ZombieClassification = "context-frozen"
 )
 
 // ImpliesActiveWork returns true if this classification indicates the polecat
@@ -1083,7 +1087,8 @@ const (
 func (c ZombieClassification) ImpliesActiveWork() bool {
 	switch c {
 	case ZombieStuckInDone, ZombieAgentDeadInSession, ZombieBeadClosedStillRunning,
-		ZombieDoneIntentDead, ZombieSessionDeadActive, ZombieAgentSelfReportedStuck:
+		ZombieDoneIntentDead, ZombieSessionDeadActive, ZombieAgentSelfReportedStuck,
+		ZombieContextFrozen:
 		return true
 	default:
 		return false
@@ -1254,7 +1259,9 @@ func detectZombieLiveSession(bd *BdCli, workDir, townRoot, rigName, polecatName,
 	// Heartbeat v2 check (gt-3vr5): if the agent reports its own state via heartbeat,
 	// trust the agent-reported state instead of inferring from timers.
 	// The witness makes exactly ONE inference: is the heartbeat fresh?
-	if hb := polecat.ReadSessionHeartbeat(townRoot, sessionName); hb != nil && hb.IsV2() {
+	// hb is saved at function scope for context-frozen detection below (gt-4yf).
+	hb := polecat.ReadSessionHeartbeat(townRoot, sessionName)
+	if hb != nil && hb.IsV2() {
 		stale := time.Since(hb.Timestamp) >= polecat.SessionHeartbeatStaleThreshold
 		if !stale {
 			switch hb.EffectiveState() {
@@ -1353,6 +1360,27 @@ func detectZombieLiveSession(bd *BdCli, workDir, townRoot, rigName, polecatName,
 			zombie.Action = fmt.Sprintf("restart-bead-closed-failed: %v", err)
 		}
 		return zombie, true
+	}
+
+	// Context-frozen detection (gt-4yf): session alive, agent alive, hook bead active,
+	// but no heartbeat update for > ContextFrozenThreshold. This indicates the agent's
+	// context window may be full — it can't execute tool calls but its process is alive.
+	// Sending /compact unblocks the session without a restart, preserving in-flight work.
+	// Only fires when a heartbeat file exists; no heartbeat means we can't measure staleness.
+	if hb != nil && snapHook != "" {
+		frozenAge := time.Since(hb.Timestamp)
+		if frozenAge >= witCfg.ContextFrozenThresholdD() {
+			zombie := ZombieResult{
+				PolecatName:    polecatName,
+				AgentState:     snapState,
+				Classification: ZombieContextFrozen,
+				HookBead:       snapHook,
+				WasActive:      true,
+				Action:         fmt.Sprintf("sent-compact (no heartbeat for %v)", frozenAge.Round(time.Second)),
+			}
+			_ = t.NudgeSession(sessionName, "/compact")
+			return zombie, true
+		}
 	}
 
 	return ZombieResult{}, false

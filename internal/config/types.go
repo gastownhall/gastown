@@ -485,6 +485,12 @@ type WitnessThresholds struct {
 	// DoneIntentRecentGrace is how recently a done-intent must have been created
 	// to be considered still in progress (default "30s").
 	DoneIntentRecentGrace string `json:"done_intent_recent_grace,omitempty"`
+
+	// ContextFrozenThreshold is how long a polecat with a live session, alive
+	// agent, and active hook bead can go without a heartbeat update before the
+	// witness sends /compact to recover a potentially context-frozen session
+	// (default "10m"). Only applies when a heartbeat file exists.
+	ContextFrozenThreshold string `json:"context_frozen_threshold,omitempty"`
 }
 
 // DefaultOperationalConfig returns an OperationalConfig with all defaults.
