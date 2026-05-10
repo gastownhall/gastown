@@ -4,6 +4,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -482,8 +483,23 @@ func TestHandoffPolecatEnvCheck(t *testing.T) {
 			handoffStdin = false
 			handoffAuto = false
 
-			// The polecat path tries to exec "gt done" which will fail in tests.
-			// We capture stdout to detect the "Polecat detected" message, which
+			// Install a no-op gt stub so the polecat path cannot exec the real
+			// "gt done" against the developer's working tree (GH #3878).
+			fakeGTDir := t.TempDir()
+			if runtime.GOOS == "windows" {
+				stub := filepath.Join(fakeGTDir, "gt.cmd")
+				if err := os.WriteFile(stub, []byte("@echo off\r\nexit /b 0\r\n"), 0644); err != nil {
+					t.Fatalf("write gt stub: %v", err)
+				}
+			} else {
+				stub := filepath.Join(fakeGTDir, "gt")
+				if err := os.WriteFile(stub, []byte("#!/bin/sh\nexit 0\n"), 0755); err != nil {
+					t.Fatalf("write gt stub: %v", err)
+				}
+			}
+			t.Setenv("PATH", fakeGTDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+			// Capture stdout to detect the "Polecat detected" message, which
 			// confirms the polecat guard triggered. Non-polecat paths will fail
 			// later (missing tmux, etc.) without printing the polecat message.
 			var blocked bool
