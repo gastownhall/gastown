@@ -152,20 +152,26 @@ func showFormulaSteps(formulaName, label, townRoot, rigName string, extraVars ..
 // townRoot and rigName are used to load formula overlays (operator customizations).
 // extraVars is an optional list of "key=value" overrides substituted into step descriptions.
 func showFormulaStepsFull(formulaName, townRoot, rigName string, extraVars ...[]string) {
+	fmt.Print(renderFormulaStepsFull(formulaName, townRoot, rigName, extraVars...))
+}
+
+// renderFormulaStepsFull renders formula steps with full descriptions to a string.
+// It applies the same variable substitution and overlay logic as showFormulaStepsFull.
+func renderFormulaStepsFull(formulaName, townRoot, rigName string, extraVars ...[]string) string {
 	content, err := formula.ResolveFormulaContent(formulaName, townRoot, rigName)
 	if err != nil {
 		style.PrintWarning("could not load formula %s: %v", formulaName, err)
-		return
+		return ""
 	}
 
 	f, err := formula.Parse(content)
 	if err != nil {
 		style.PrintWarning("could not parse formula %s: %v", formulaName, err)
-		return
+		return ""
 	}
 
 	if len(f.Steps) == 0 {
-		return
+		return ""
 	}
 
 	// Apply formula overlays if townRoot is available.
@@ -177,16 +183,17 @@ func showFormulaStepsFull(formulaName, townRoot, rigName string, extraVars ...[]
 	}
 	varMap := buildFormulaVarMap(f, vars)
 
-	fmt.Println()
-	fmt.Printf("**Formula Checklist** (%d steps from %s):\n\n", len(f.Steps), formulaName)
+	var sb strings.Builder
+	sb.WriteString(fmt.Sprintf("\n**Formula Checklist** (%d steps from %s):\n\n", len(f.Steps), formulaName))
 	for i, step := range f.Steps {
 		title := applyFormulaVars(step.Title, varMap)
-		fmt.Printf("### Step %d: %s\n\n", i+1, title)
+		sb.WriteString(fmt.Sprintf("### Step %d: %s\n\n", i+1, title))
 		if step.Description != "" {
-			fmt.Println(applyFormulaVars(step.Description, varMap))
-			fmt.Println()
+			sb.WriteString(applyFormulaVars(step.Description, varMap))
+			sb.WriteString("\n\n")
 		}
 	}
+	return sb.String()
 }
 
 // buildFormulaVarMap builds a map of variable name → value for substitution.

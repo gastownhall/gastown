@@ -980,62 +980,131 @@ func TestEnsureBeadsRedirect_WitnessCreatesRedirect(t *testing.T) {
 	}
 }
 
-// TestOutputRalphLoopDirective_NoSlashCommand verifies that ralph mode emits
-// inline iterative work instructions instead of referencing a nonexistent
-// /ralph-loop slash command. This is the regression test for the ralph-loop
-// dies-on-spawn bug: polecats died immediately because Claude tried to run
-// /ralph-loop which didn't exist as a provisioned slash command.
-func TestOutputRalphLoopDirective_NoSlashCommand(t *testing.T) {
+// TestOutputRalphLoopDirective_PluginNotInstalled verifies that ralph mode
+// returns an error when the ralph-loop plugin is not installed, rather than
+// silently falling back to inline instructions that don't use the stop hook.
+func TestOutputRalphLoopDirective_PluginNotInstalled(t *testing.T) {
 	attachment := &beads.AttachmentFields{
 		Mode:         "ralph",
 		AttachedArgs: "Run story audit, fix worst gap, commit, loop",
 	}
-	output := captureStdout(t, func() {
-		outputRalphLoopDirective(RoleContext{}, attachment)
-	})
+	var output string
+	err := func() error {
+		output = captureStdout(t, func() {})
+		return outputRalphLoopDirectiveWithPluginCheck(RoleContext{}, attachment, false)
+	}()
 
-	// Must NOT reference /ralph-loop (nonexistent slash command)
+	if err == nil {
+		t.Fatal("expected error when ralph-loop plugin is not installed, got nil")
+	}
+	if !strings.Contains(err.Error(), "ralph-loop plugin") {
+		t.Fatalf("error should mention ralph-loop plugin, got: %v", err)
+	}
+	if !strings.Contains(err.Error(), "/plugin install") {
+		t.Fatalf("error should include install instructions, got: %v", err)
+	}
+	// Must NOT emit /ralph-loop when plugin is absent
 	if strings.Contains(output, "/ralph-loop") {
-		t.Fatalf("ralph directive must NOT reference /ralph-loop (slash command doesn't exist), got:\n%s", output)
-	}
-
-	// Must contain iterative workflow instructions
-	if !strings.Contains(output, "RALPH LOOP MODE") {
-		t.Fatalf("expected 'RALPH LOOP MODE' header, got:\n%s", output)
-	}
-	if !strings.Contains(output, "gt done") {
-		t.Fatalf("expected 'gt done' instruction for completion, got:\n%s", output)
-	}
-	if !strings.Contains(output, "Commit frequently") {
-		t.Fatalf("expected commit guidance, got:\n%s", output)
-	}
-
-	// Must include the context/args
-	if !strings.Contains(output, "story audit") {
-		t.Fatalf("expected attached args in output, got:\n%s", output)
+		t.Fatalf("must not emit /ralph-loop when plugin is not installed, got:\n%s", output)
 	}
 }
 
-// TestOutputRalphLoopDirective_WithFormula verifies that ralph mode shows
-// formula steps inline (same as normal mode) when a formula is attached.
+// TestOutputRalphLoopDirective_PluginInstalled verifies that ralph mode emits
+// a /ralph-loop slash command when the plugin is installed.
+func TestOutputRalphLoopDirective_PluginInstalled(t *testing.T) {
+	attachment := &beads.AttachmentFields{
+		Mode:         "ralph",
+		AttachedArgs: "Run story audit, fix worst gap, commit, loop",
+	}
+	var err error
+	output := captureStdout(t, func() {
+		err = outputRalphLoopDirectiveWithPluginCheck(RoleContext{}, attachment, true)
+	})
+
+	if err != nil {
+		t.Fatalf("unexpected error when plugin is installed: %v", err)
+	}
+	// Must emit /ralph-loop to activate the stop-hook loop
+	if !strings.Contains(output, "/ralph-loop") {
+		t.Fatalf("expected /ralph-loop slash command in output, got:\n%s", output)
+	}
+	// Must include completion promise flag
+	if !strings.Contains(output, "--completion-promise") {
+		t.Fatalf("expected --completion-promise in /ralph-loop invocation, got:\n%s", output)
+	}
+	// Must embed the attached args in the prompt
+	if !strings.Contains(output, "story audit") {
+		t.Fatalf("expected attached args embedded in prompt, got:\n%s", output)
+	}
+	// Must include the gt done completion promise text
+	if !strings.Contains(output, "DONE") {
+		t.Fatalf("expected DONE completion promise, got:\n%s", output)
+	}
+}
+
+// TestOutputRalphLoopDirective_WithFormula verifies that ralph mode embeds
+// formula steps in the /ralph-loop prompt when a formula is attached.
 func TestOutputRalphLoopDirective_WithFormula(t *testing.T) {
 	attachment := &beads.AttachmentFields{
 		Mode:            "ralph",
 		AttachedFormula: "mol-polecat-work",
 		FormulaVars:     "base_branch=main",
 	}
+	var err error
 	output := captureStdout(t, func() {
-		outputRalphLoopDirective(RoleContext{}, attachment)
+		err = outputRalphLoopDirectiveWithPluginCheck(RoleContext{}, attachment, true)
 	})
 
-	// Should NOT reference /ralph-loop
-	if strings.Contains(output, "/ralph-loop") {
-		t.Fatalf("ralph directive must NOT reference /ralph-loop, got:\n%s", output)
+	if err != nil {
+		t.Fatalf("unexpected error when plugin is installed: %v", err)
+	}
+	// Must emit /ralph-loop
+	if !strings.Contains(output, "/ralph-loop") {
+		t.Fatalf("expected /ralph-loop slash command in output, got:\n%s", output)
+	}
+	// Formula steps must be embedded in the prompt
+	if !strings.Contains(output, "Formula Checklist") {
+		t.Fatalf("expected formula checklist embedded in ralph-loop prompt, got:\n%s", output)
+	}
+}
+
+// TestRalphLoopPluginInstalledIn verifies detection logic for the ralph-loop plugin.
+func TestRalphLoopPluginInstalledIn(t *testing.T) {
+	dir := t.TempDir()
+	pluginsDir := filepath.Join(dir, ".claude", "plugins")
+	if err := os.MkdirAll(pluginsDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	pluginsFile := filepath.Join(pluginsDir, "installed_plugins.json")
+
+	writePluginsJSON := func(content string) {
+		t.Helper()
+		if err := os.WriteFile(pluginsFile, []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
 	}
 
-	// Should show formula steps (from mol-polecat-work)
-	if !strings.Contains(output, "Formula Checklist") {
-		t.Fatalf("expected formula checklist in ralph output, got:\n%s", output)
+	// No file → not installed.
+	if ralphLoopPluginInstalledIn(dir) {
+		t.Error("expected false when installed_plugins.json does not exist")
+	}
+
+	// Empty plugins map → not installed.
+	writePluginsJSON(`{"version":2,"plugins":{}}`)
+	if ralphLoopPluginInstalledIn(dir) {
+		t.Error("expected false when plugins map is empty")
+	}
+
+	// Different plugin → not installed.
+	writePluginsJSON(`{"version":2,"plugins":{"other-plugin@marketplace":{}}}`)
+	if ralphLoopPluginInstalledIn(dir) {
+		t.Error("expected false when only unrelated plugin is present")
+	}
+
+	// ralph-loop installed → true.
+	writePluginsJSON(`{"version":2,"plugins":{"ralph-loop@claude-plugins-official":{}}}`)
+	if !ralphLoopPluginInstalledIn(dir) {
+		t.Error("expected true when ralph-loop@claude-plugins-official is installed")
 	}
 }
 

@@ -946,9 +946,12 @@ func outputMoleculeWorkflow(ctx RoleContext, attachment *beads.AttachmentFields)
 	}
 	fmt.Println()
 
-	// Ralph loop mode: output Ralph Wiggum loop command instead of step-by-step execution
+	// Ralph loop mode: activate the ralph-loop plugin stop-hook loop.
 	if attachment.Mode == "ralph" {
-		outputRalphLoopDirective(ctx, attachment)
+		if err := outputRalphLoopDirective(ctx, attachment); err != nil {
+			fmt.Fprintf(os.Stderr, "error: %v\n", err)
+			os.Exit(1)
+		}
 		return
 	}
 
@@ -969,40 +972,79 @@ func outputMoleculeWorkflow(ctx RoleContext, attachment *beads.AttachmentFields)
 	fmt.Println("The base bead is just a container. The molecule steps define your workflow.")
 }
 
-// outputRalphLoopDirective emits inline iterative work instructions for ralph mode.
-// Ralph mode is designed for long, iterative workflows (e.g., quality improvement
-// loops) that benefit from committing progress incrementally. The agent works
-// through formula steps iteratively, committing after each meaningful change,
-// and calls gt done when all acceptance criteria are met or no further progress
-// can be made.
-func outputRalphLoopDirective(ctx RoleContext, attachment *beads.AttachmentFields) {
-	fmt.Printf("%s\n\n", style.Bold.Render("## RALPH LOOP MODE (ITERATIVE WORKFLOW)"))
-	fmt.Println("This work uses iterative loop mode. Work through the steps below,")
-	fmt.Println("committing after each meaningful change. Loop until acceptance criteria")
-	fmt.Println("are met or no further progress can be made.")
-	fmt.Println()
+// outputRalphLoopDirective emits a /ralph-loop slash command to activate the
+// Ralph Wiggum stop-hook loop for multi-step iterative workflows. The plugin
+// must be installed; if not, an error is returned so the caller can fail clearly.
+func outputRalphLoopDirective(ctx RoleContext, attachment *beads.AttachmentFields) error {
+	return outputRalphLoopDirectiveWithPluginCheck(ctx, attachment, isRalphLoopPluginInstalled())
+}
 
-	// Show the formula steps inline (same as normal mode) so the agent has
-	// the full checklist. Previously this emitted a /ralph-loop slash command
-	// that didn't exist, causing the polecat to die immediately.
+func outputRalphLoopDirectiveWithPluginCheck(ctx RoleContext, attachment *beads.AttachmentFields, pluginInstalled bool) error {
+	if !pluginInstalled {
+		return fmt.Errorf("--ralph requires the ralph-loop plugin, which is not installed.\n" +
+			"Install it with: /plugin install ralph-loop@claude-plugins-official")
+	}
+
+	// Build the loop prompt from formula steps + attached args.
+	var sb strings.Builder
 	if attachment.AttachedFormula != "" {
-		showFormulaStepsFull(attachment.AttachedFormula, ctx.TownRoot, ctx.Rig, strings.Split(attachment.FormulaVars, "\n"))
-		fmt.Println()
+		sb.WriteString(renderFormulaStepsFull(attachment.AttachedFormula, ctx.TownRoot, ctx.Rig, strings.Split(attachment.FormulaVars, "\n")))
 	}
-
 	if attachment.AttachedArgs != "" {
-		fmt.Printf("%s\n", style.Bold.Render("Context:"))
-		fmt.Printf("  %s\n\n", attachment.AttachedArgs)
+		if sb.Len() > 0 {
+			sb.WriteString("\n")
+		}
+		sb.WriteString(attachment.AttachedArgs)
+		sb.WriteString("\n")
 	}
+	if sb.Len() == 0 {
+		sb.WriteString("Work through the assigned formula steps.\n")
+	}
+	sb.WriteString("\nWhen all steps are complete and `" + cli.Name() + " done` has been run successfully, output: <promise>DONE</promise>")
 
-	fmt.Printf("%s\n", style.Bold.Render("Iterative workflow:"))
-	fmt.Println("1. Work through the formula steps above")
-	fmt.Println("2. Commit after each meaningful change (preserve progress via git)")
-	fmt.Println("3. After completing a pass, evaluate results against acceptance criteria")
-	fmt.Println("4. If criteria not met, loop: identify the worst gap, fix it, commit, re-evaluate")
-	fmt.Println("5. When all criteria are met (or no further progress possible), run `" + cli.Name() + " done`")
-	fmt.Println()
-	fmt.Printf("%s\n", style.Bold.Render("Commit frequently. Each commit preserves your progress."))
+	// Emit the /ralph-loop slash command. Claude Code will invoke the plugin's
+	// setup script, which activates the stop-hook loop for this session.
+	fmt.Printf("/ralph-loop %s --completion-promise DONE\n", quoteForRalphLoop(sb.String()))
+	return nil
+}
+
+// isRalphLoopPluginInstalled reports whether the ralph-loop plugin is installed
+// in the user's Claude Code plugin registry (~/.claude/plugins/installed_plugins.json).
+func isRalphLoopPluginInstalled() bool {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return false
+	}
+	return ralphLoopPluginInstalledIn(home)
+}
+
+// ralphLoopPluginInstalledIn checks the installed_plugins.json under the given home directory.
+// Separated from isRalphLoopPluginInstalled to allow testing with a fake home directory.
+func ralphLoopPluginInstalledIn(home string) bool {
+	data, err := os.ReadFile(filepath.Join(home, ".claude", "plugins", "installed_plugins.json"))
+	if err != nil {
+		return false
+	}
+	var manifest struct {
+		Plugins map[string]json.RawMessage `json:"plugins"`
+	}
+	if err := json.Unmarshal(data, &manifest); err != nil {
+		return false
+	}
+	for key := range manifest.Plugins {
+		if strings.HasPrefix(key, "ralph-loop") {
+			return true
+		}
+	}
+	return false
+}
+
+// quoteForRalphLoop wraps s in double quotes, escaping internal double quotes
+// and backslashes so the shell receives s as a single argument.
+func quoteForRalphLoop(s string) string {
+	s = strings.ReplaceAll(s, `\`, `\\`)
+	s = strings.ReplaceAll(s, `"`, `\"`)
+	return `"` + s + `"`
 }
 
 // outputBeadPreview runs `bd show` and displays a truncated preview of the bead.
