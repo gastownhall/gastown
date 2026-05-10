@@ -1039,11 +1039,13 @@ func ralphLoopPluginInstalledIn(home string) bool {
 	return false
 }
 
-// quoteForRalphLoop wraps s in double quotes, escaping internal double quotes
-// and backslashes so the shell receives s as a single argument.
+// quoteForRalphLoop wraps s in double quotes, escaping backslashes, double
+// quotes, and newlines so the /ralph-loop slash command receives s as a single
+// argument even when formula step descriptions span multiple lines.
 func quoteForRalphLoop(s string) string {
 	s = strings.ReplaceAll(s, `\`, `\\`)
 	s = strings.ReplaceAll(s, `"`, `\"`)
+	s = strings.ReplaceAll(s, "\n", `\n`)
 	return `"` + s + `"`
 }
 

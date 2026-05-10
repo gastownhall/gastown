@@ -1108,6 +1108,23 @@ func TestRalphLoopPluginInstalledIn(t *testing.T) {
 	}
 }
 
+// TestQuoteForRalphLoop verifies that newlines and special characters are escaped.
+func TestQuoteForRalphLoop(t *testing.T) {
+	cases := []struct{ in, want string }{
+		{"simple", `"simple"`},
+		{"has\nnewline", `"has\nnewline"`},
+		{`has"quote`, `"has\"quote"`},
+		{`has\backslash`, `"has\\backslash"`},
+		{"multi\nline\nprompt", `"multi\nline\nprompt"`},
+	}
+	for _, c := range cases {
+		got := quoteForRalphLoop(c.in)
+		if got != c.want {
+			t.Errorf("quoteForRalphLoop(%q) = %q, want %q", c.in, got, c.want)
+		}
+	}
+}
+
 func TestIsBeadNotFound(t *testing.T) {
 	tests := []struct {
 		name string
