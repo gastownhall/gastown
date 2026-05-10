@@ -446,7 +446,10 @@ func runSling(cmd *cobra.Command, args []string) (retErr error) {
 			}
 			if verifyBeadExists(args[0]) != nil {
 				if verifyFormulaExists(args[0]) == nil {
-					return fmt.Errorf("standalone formula cannot be scheduled (use --on <bead>)")
+					// Standalone formula slinging (cook+wisp+attach) is not bead-based
+					// dispatch and does not consume a scheduler slot — fall through to
+					// runSlingFormula, which handles polecat spawning via resolveTarget.
+					return runSlingFormula(ctx, args)
 				}
 			}
 			beadID := args[0]
@@ -574,8 +577,7 @@ func runSling(cmd *cobra.Command, args []string) (retErr error) {
 			// Not a verified bead - try as standalone formula
 			if err := verifyFormulaExists(firstArg); err == nil {
 				// Standalone formula mode: gt sling <formula> [target]
-				// Standalone formula: deferred dispatch is handled above (formula-on-bead),
-				// so no scheduler check needed here.
+				// Deferred dispatch is handled above for the 2-arg rig case (gh#3917).
 				return runSlingFormula(ctx, args)
 			}
 			// Not a formula either - check if it looks like a bead ID (routing issue workaround).

@@ -2788,3 +2788,125 @@ func TestRunSlingResumeFlagValidation(t *testing.T) {
 		})
 	}
 }
+
+// TestSlingStandaloneFormulaInDeferredMode is a regression test for gh#3917.
+//
+// When scheduler.max_polecats > 0 (deferred dispatch mode), `gt sling <formula> <rig>`
+// was rejected with "standalone formula cannot be scheduled (use --on <bead>)" even
+// though the help text and documented examples explicitly show this usage.
+//
+// Fix: fall through to runSlingFormula instead of erroring. Standalone formula
+// slinging (cook+wisp+attach) is not bead-based capacity-scheduled dispatch.
+func TestSlingStandaloneFormulaInDeferredMode(t *testing.T) {
+	townRoot := t.TempDir()
+
+	// Workspace marker: workspace.FindFromCwdOrError needs mayor/town.json
+	mayorDir := filepath.Join(townRoot, "mayor")
+	if err := os.MkdirAll(mayorDir, 0755); err != nil {
+		t.Fatalf("mkdir mayor: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(mayorDir, "town.json"), []byte(`{"name":"test","version":2}`), 0644); err != nil {
+		t.Fatalf("write town.json: %v", err)
+	}
+
+	// Rig registry: IsRigName("testrig") requires testrig in rigs.json
+	rigsJSON := `{"version":1,"rigs":{"testrig":{"git_url":"file:///dev/null"}}}`
+	if err := os.WriteFile(filepath.Join(mayorDir, "rigs.json"), []byte(rigsJSON), 0644); err != nil {
+		t.Fatalf("write rigs.json: %v", err)
+	}
+
+	// Town settings: scheduler.max_polecats > 0 activates deferred dispatch
+	settingsDir := filepath.Join(townRoot, "settings")
+	if err := os.MkdirAll(settingsDir, 0755); err != nil {
+		t.Fatalf("mkdir settings: %v", err)
+	}
+	settingsJSON := `{"version":1,"scheduler":{"max_polecats":10,"batch_size":3}}`
+	settingsPath := config.TownSettingsPath(townRoot)
+	if err := os.WriteFile(settingsPath, []byte(settingsJSON), 0644); err != nil {
+		t.Fatalf("write settings: %v", err)
+	}
+
+	// .beads routes
+	if err := os.MkdirAll(filepath.Join(townRoot, ".beads"), 0755); err != nil {
+		t.Fatalf("mkdir .beads: %v", err)
+	}
+	routes := `{"prefix":"gt-","path":"testrig/mayor/rig"}` + "\n" + `{"prefix":"hq-","path":"."}` + "\n"
+	if err := os.WriteFile(filepath.Join(townRoot, ".beads", "routes.jsonl"), []byte(routes), 0644); err != nil {
+		t.Fatalf("write routes.jsonl: %v", err)
+	}
+
+	// Stub bd: formula show must return output so verifyFormulaExists returns nil
+	binDir := filepath.Join(townRoot, "bin")
+	if err := os.MkdirAll(binDir, 0755); err != nil {
+		t.Fatalf("mkdir binDir: %v", err)
+	}
+	bdScript := `#!/bin/sh
+cmd="$1"
+shift || true
+case "$cmd" in
+  formula) echo '{"name":"mol-test-formula"}'; exit 0 ;;
+  show)    echo '[{"title":"Test","status":"open","assignee":"","description":""}]' ;;
+  cook)    exit 0 ;;
+  mol)
+    sub="$1"; shift || true
+    case "$sub" in
+      wisp) echo '{"new_epic_id":"gt-wisp-xyz"}' ;;
+    esac ;;
+esac
+exit 0
+`
+	bdScriptWindows := `@echo off
+set "cmd=%1"
+if "%cmd%"=="formula" ( echo {"name":"mol-test-formula"} & exit /b 0 )
+if "%cmd%"=="show" ( echo [{"title":"Test","status":"open","assignee":"","description":""}] & exit /b 0 )
+if "%cmd%"=="cook" exit /b 0
+if "%cmd%"=="mol" if "%2"=="wisp" ( echo {"new_epic_id":"gt-wisp-xyz"} & exit /b 0 )
+exit /b 0
+`
+	_ = writeBDStub(t, binDir, bdScript, bdScriptWindows)
+	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	// chdir into the town so workspace.FindFromCwd() resolves townRoot
+	rigDir := filepath.Join(townRoot, "mayor", "rig")
+	if err := os.MkdirAll(rigDir, 0755); err != nil {
+		t.Fatalf("mkdir rig: %v", err)
+	}
+	cwd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("getwd: %v", err)
+	}
+	t.Cleanup(func() { _ = os.Chdir(cwd) })
+	if err := os.Chdir(rigDir); err != nil {
+		t.Fatalf("chdir: %v", err)
+	}
+
+	t.Setenv(EnvGTRole, "mayor")
+	t.Setenv("GT_POLECAT", "")
+	t.Setenv("GT_CREW", "")
+	t.Setenv("TMUX_PANE", "")
+	t.Setenv("GT_TEST_NO_NUDGE", "1")
+	t.Setenv("GT_TEST_SKIP_HOOK_VERIFY", "1")
+
+	// Save and restore global sling state
+	prevDryRun := slingDryRun
+	prevNoConvoy := slingNoConvoy
+	prevVars := slingVars
+	prevOnTarget := slingOnTarget
+	t.Cleanup(func() {
+		slingDryRun = prevDryRun
+		slingNoConvoy = prevNoConvoy
+		slingVars = prevVars
+		slingOnTarget = prevOnTarget
+	})
+	slingDryRun = true // avoid real polecat spawning
+	slingNoConvoy = true
+	slingVars = nil
+	slingOnTarget = ""
+
+	// Regression: before the fix, this returned "standalone formula cannot be scheduled".
+	err = runSling(nil, []string{"mol-test-formula", "testrig"})
+	if err != nil && strings.Contains(err.Error(), "standalone formula cannot be scheduled") {
+		t.Fatalf("gh#3917 regression: standalone formula rejected in deferred mode: %v", err)
+	}
+	// Any other error (e.g., no polecat to spawn) is acceptable — the guard is what we're testing.
+}
