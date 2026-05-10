@@ -105,9 +105,15 @@ Abbreviated patrol rules:
 
 When `await-event` outputs `EFFORT: full`, run all steps thoroughly (normal mode).
 
+When `await-event` outputs `EFFORT: handoff`, the context window is near its limit.
+Do NOT run patrol steps. Handoff immediately:
+```bash
+gt handoff -s "Refinery patrol - context limit" -m "Context window near limit, cycling for fresh session."
+```
+
 The goal: idle cycles should burn ~10% of the tokens a full patrol uses."""
 formula = "mol-refinery-patrol"
-version = 14
+version = 15
 
 [vars]
 [vars.wisp_type]
@@ -1178,6 +1184,12 @@ After await-event returns, check the EFFORT directive in the output:
 
 Abbreviated patrol should complete in ~10% of the tokens of a full patrol.
 Mark skipped steps as SKIP in the patrol report.
+
+**If `EFFORT: handoff`** — Context window near limit. Do NOT run patrol steps.
+Handoff immediately for a fresh session:
+```bash
+gt handoff -s "Refinery patrol - context limit" -m "Context window near limit, cycling for fresh session."
+```
 
 After await-event returns (either by event or timeout):
 1. **Re-assess session health** (check RSS, context, age again — conditions change)

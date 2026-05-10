@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -18,14 +19,15 @@ import (
 )
 
 var (
-	awaitEventChannel     string
-	awaitEventTimeout     string
-	awaitEventBackoffBase string
-	awaitEventBackoffMult int
-	awaitEventBackoffMax  string
-	awaitEventQuiet       bool
-	awaitEventAgentBead   string
-	awaitEventCleanup     bool
+	awaitEventChannel      string
+	awaitEventTimeout      string
+	awaitEventBackoffBase  string
+	awaitEventBackoffMult  int
+	awaitEventBackoffMax   string
+	awaitEventQuiet        bool
+	awaitEventAgentBead    string
+	awaitEventCleanup      bool
+	awaitEventContextLimit int
 )
 
 // validChannelName is a convenience alias for the canonical regex in channelevents.
@@ -60,7 +62,7 @@ Idle cycles and backoff-until timestamp tracked on agent bead labels.
 If killed and restarted, backoff resumes from the stored backoff-until.
 
 EXIT CODES:
-  0 - Event(s) found or timeout
+  0 - Event(s) found, timeout, or context-limit
   1 - Error
 
 EXAMPLES:
@@ -72,7 +74,10 @@ EXAMPLES:
     --backoff-base 60s --backoff-mult 2 --backoff-max 10m
 
   # Auto-cleanup processed events
-  gt mol step await-event --channel refinery --cleanup`,
+  gt mol step await-event --channel refinery --cleanup
+
+  # Exit early if context window exceeds 70%
+  gt mol step await-event --channel refinery --context-limit 70`,
 	RunE: runMoleculeAwaitEvent,
 }
 
@@ -110,6 +115,8 @@ func init() {
 		"Delete event files after reading them")
 	moleculeAwaitEventCmd.Flags().BoolVar(&moleculeJSON, "json", false,
 		"Output as JSON")
+	moleculeAwaitEventCmd.Flags().IntVar(&awaitEventContextLimit, "context-limit", 0,
+		"Exit with reason=context-limit when Claude context window usage exceeds this percentage (0 = disabled, e.g. 70 for 70%)")
 	_ = moleculeAwaitEventCmd.MarkFlagRequired("channel")
 
 	moleculeStepCmd.AddCommand(moleculeAwaitEventCmd)
@@ -198,7 +205,19 @@ func runMoleculeAwaitEvent(cmd *cobra.Command, args []string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 
-	result, err := waitForEventFiles(ctx, eventDir)
+	// Optional: monitor context window usage and exit early when limit is exceeded.
+	// A buffered channel is used so the monitoring goroutine never blocks.
+	var contextLimitCh <-chan struct{}
+	if awaitEventContextLimit > 0 {
+		ch := make(chan struct{}, 1)
+		contextLimitCh = ch
+		cwd, cwdErr := os.Getwd()
+		if cwdErr == nil {
+			go monitorContextLimit(ctx, ch, cwd, awaitEventContextLimit)
+		}
+	}
+
+	result, err := waitForEventFiles(ctx, eventDir, contextLimitCh)
 	if err != nil {
 		return fmt.Errorf("event watch failed: %w", err)
 	}
@@ -220,8 +239,8 @@ func runMoleculeAwaitEvent(cmd *cobra.Command, args []string) error {
 			} else {
 				result.IdleCycles = newIdle
 			}
-		} else if result.Reason == "event" {
-			// Reset idle on event received
+		} else if result.Reason == "event" || result.Reason == "context-limit" {
+			// Reset idle on event received or context-limit exit
 			if idleCycles > 0 {
 				_ = setAgentIdleCycles(awaitEventAgentBead, beadsDir, 0)
 			}
@@ -239,11 +258,18 @@ func runMoleculeAwaitEvent(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	// Set effort level based on idle cycles.
-	if result.Reason == "event" || result.IdleCycles == 0 {
+	// Set effort level based on reason and idle cycles.
+	switch result.Reason {
+	case "context-limit":
+		result.EffortLevel = "handoff"
+	case "event":
 		result.EffortLevel = "full"
-	} else {
-		result.EffortLevel = "abbreviated"
+	default: // "timeout"
+		if result.IdleCycles == 0 {
+			result.EffortLevel = "full"
+		} else {
+			result.EffortLevel = "abbreviated"
+		}
 	}
 
 	// Output
@@ -267,16 +293,23 @@ func runMoleculeAwaitEvent(cmd *cobra.Command, args []string) error {
 					}
 				}
 			}
+		case "context-limit":
+			fmt.Printf("%s Context limit reached (%d%% threshold) after %v\n",
+				style.Bold.Render("⚠"), awaitEventContextLimit, result.Elapsed.Round(time.Millisecond))
 		case "timeout":
 			fmt.Printf("%s Timeout after %v (idle cycle: %d)\n",
 				style.Dim.Render("⏱"), result.Elapsed.Round(time.Millisecond), result.IdleCycles)
 		}
 
 		// Output effort recommendation for the next patrol cycle.
-		if result.EffortLevel == "abbreviated" {
+		switch result.EffortLevel {
+		case "handoff":
+			fmt.Printf("\n%s Context window near limit. Initiate session handoff.\n",
+				style.Bold.Render("EFFORT: handoff"))
+		case "abbreviated":
 			fmt.Printf("\n%s Run ABBREVIATED patrol: quick checks only, skip optional steps.\n",
 				style.Bold.Render("EFFORT: reduced"))
-		} else {
+		default:
 			fmt.Printf("\n%s Run full patrol.\n",
 				style.Bold.Render("EFFORT: full"))
 		}
@@ -322,7 +355,10 @@ func calculateEventTimeout(idleCycles int) (time.Duration, error) {
 
 // waitForEventFiles checks for pending events, then polls until events appear or timeout.
 // Uses a polling loop instead of inotifywait for cross-platform compatibility.
-func waitForEventFiles(ctx context.Context, eventDir string) (*AwaitEventResult, error) {
+//
+// contextLimitCh is optional (may be nil). When a value is sent on it, the function
+// returns immediately with reason="context-limit". A nil channel is never selected.
+func waitForEventFiles(ctx context.Context, eventDir string, contextLimitCh <-chan struct{}) (*AwaitEventResult, error) {
 	// Check for already-pending events
 	events, err := readPendingEvents(eventDir)
 	if err != nil {
@@ -353,6 +389,8 @@ func waitForEventFiles(ctx context.Context, eventDir string) (*AwaitEventResult,
 
 	for {
 		select {
+		case <-contextLimitCh:
+			return &AwaitEventResult{Reason: "context-limit"}, nil
 		case <-ctx.Done():
 			// Final check for events (race condition safety). Bound the
 			// read so a stuck filesystem can't prevent us from returning —
@@ -383,6 +421,8 @@ func waitForEventFiles(ctx context.Context, eventDir string) (*AwaitEventResult,
 				ch <- readRes{events: ev, err: er}
 			}()
 			select {
+			case <-contextLimitCh:
+				return &AwaitEventResult{Reason: "context-limit"}, nil
 			case <-ctx.Done():
 				// Timeout raced with read — abandon the goroutine and
 				// let the outer loop's ctx.Done() case finalize.
@@ -462,4 +502,137 @@ func readPendingEvents(dir string) ([]EventFile, error) {
 	}
 
 	return events, nil
+}
+
+// monitorContextLimit polls the Claude Code JSONL file every 60 seconds and sends
+// on ch when context window usage exceeds the threshold percentage.
+// It exits when ctx is done. The goroutine is started only when --context-limit > 0.
+func monitorContextLimit(ctx context.Context, ch chan<- struct{}, cwd string, limitPct int) {
+	ticker := time.NewTicker(60 * time.Second)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			pct := readContextWindowPct(cwd)
+			if pct >= float64(limitPct) {
+				select {
+				case ch <- struct{}{}:
+				default:
+				}
+				return
+			}
+		}
+	}
+}
+
+// readContextWindowPct returns the current context window usage as a percentage (0–100).
+// It reads the most recent Claude Code JSONL file for the given working directory.
+// Returns 0 when context cannot be determined (best-effort; all errors are silently ignored).
+func readContextWindowPct(cwd string) float64 {
+	projectDir, err := claudeProjectDirForPath(cwd)
+	if err != nil {
+		return 0
+	}
+	jsonlPath, ok := newestJSONLInDir(projectDir)
+	if !ok {
+		return 0
+	}
+	tokens, model := lastInputTokensInJSONL(jsonlPath)
+	if tokens == 0 {
+		return 0
+	}
+	limit := contextWindowForModel(model)
+	return float64(tokens) / float64(limit) * 100
+}
+
+// claudeProjectDirForPath returns the Claude Code project directory for the given path.
+// Formula: $HOME/.claude/projects/<hash> where hash = path with '/' replaced by '-'.
+func claudeProjectDirForPath(dir string) (string, error) {
+	abs, err := filepath.Abs(dir)
+	if err != nil {
+		return "", err
+	}
+	normalized := filepath.ToSlash(abs)
+	// Strip Windows drive letter (e.g. "C:") to match Claude Code's cross-platform hash.
+	if len(normalized) >= 2 && normalized[1] == ':' {
+		normalized = normalized[2:]
+	}
+	hash := strings.ReplaceAll(normalized, "/", "-")
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(home, ".claude", "projects", hash), nil
+}
+
+// newestJSONLInDir returns the path of the most recently modified .jsonl file in dir.
+func newestJSONLInDir(dir string) (string, bool) {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return "", false
+	}
+	var bestPath string
+	var bestTime time.Time
+	for _, e := range entries {
+		if !strings.HasSuffix(e.Name(), ".jsonl") {
+			continue
+		}
+		info, err := e.Info()
+		if err != nil {
+			continue
+		}
+		if bestPath == "" || info.ModTime().After(bestTime) {
+			bestPath = filepath.Join(dir, e.Name())
+			bestTime = info.ModTime()
+		}
+	}
+	return bestPath, bestPath != ""
+}
+
+// lastInputTokensInJSONL reads the last assistant message's input_tokens and model
+// from a Claude Code JSONL conversation file.
+// The most recent assistant entry's input_tokens represents the current context window size.
+func lastInputTokensInJSONL(jsonlPath string) (tokens int, model string) {
+	f, err := os.Open(jsonlPath) //nolint:gosec // G304: path built from OS-reported dir entries
+	if err != nil {
+		return 0, ""
+	}
+	defer f.Close()
+
+	scanner := bufio.NewScanner(f)
+	buf := make([]byte, 0, 64*1024)
+	scanner.Buffer(buf, 4*1024*1024)
+
+	var lastTokens int
+	var lastModel string
+
+	for scanner.Scan() {
+		var entry struct {
+			Type    string `json:"type"`
+			Message *struct {
+				Usage *struct {
+					InputTokens int `json:"input_tokens"`
+				} `json:"usage"`
+				Model string `json:"model"`
+			} `json:"message"`
+		}
+		if err := json.Unmarshal(scanner.Bytes(), &entry); err != nil {
+			continue
+		}
+		if entry.Type == "assistant" && entry.Message != nil && entry.Message.Usage != nil {
+			lastTokens = entry.Message.Usage.InputTokens
+			if entry.Message.Model != "" {
+				lastModel = entry.Message.Model
+			}
+		}
+	}
+	return lastTokens, lastModel
+}
+
+// contextWindowForModel returns the context window size in tokens for a Claude model.
+// All current Claude models (3.x, 4.x) have a 200k-token context window.
+func contextWindowForModel(_ string) int {
+	return 200_000
 }

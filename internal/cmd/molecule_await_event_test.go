@@ -9,6 +9,10 @@ import (
 	"time"
 )
 
+// nilContextLimitCh is a nil receive channel — never selected in select statements.
+// Passed to waitForEventFiles when no context-limit monitoring is desired.
+var nilContextLimitCh <-chan struct{}
+
 func TestCalculateEventTimeout(t *testing.T) {
 	tests := []struct {
 		name        string
@@ -300,7 +304,7 @@ func TestWaitForEventFilesPolling(t *testing.T) {
 	}()
 
 	start := time.Now()
-	result, err := waitForEventFiles(ctx, dir)
+	result, err := waitForEventFiles(ctx, dir, nilContextLimitCh)
 	elapsed := time.Since(start)
 
 	if err != nil {
@@ -330,7 +334,7 @@ func TestWaitForEventFilesWithPending(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	result, err := waitForEventFiles(ctx, dir)
+	result, err := waitForEventFiles(ctx, dir, nilContextLimitCh)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -349,7 +353,7 @@ func TestWaitForEventFilesTimeout(t *testing.T) {
 	ctx, cancel := context.WithDeadline(context.Background(), time.Now().Add(-1*time.Second))
 	defer cancel()
 
-	result, err := waitForEventFiles(ctx, dir)
+	result, err := waitForEventFiles(ctx, dir, nilContextLimitCh)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -362,7 +366,7 @@ func TestWaitForEventFilesNoDeadline(t *testing.T) {
 	// With a context that has no deadline, should return timeout immediately.
 	dir := t.TempDir()
 
-	result, err := waitForEventFiles(context.Background(), dir)
+	result, err := waitForEventFiles(context.Background(), dir, nilContextLimitCh)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -382,7 +386,7 @@ func TestWaitForEventFilesTimeoutWithPolling(t *testing.T) {
 	defer cancel()
 
 	start := time.Now()
-	result, err := waitForEventFiles(ctx, dir)
+	result, err := waitForEventFiles(ctx, dir, nilContextLimitCh)
 	elapsed := time.Since(start)
 
 	if err != nil {
@@ -448,4 +452,175 @@ func TestEventFileStruct(t *testing.T) {
 	if parsed["type"] != "MQ_SUBMIT" {
 		t.Errorf("type = %v, want MQ_SUBMIT", parsed["type"])
 	}
+}
+
+func TestWaitForEventFilesContextLimitCh(t *testing.T) {
+	// When the context-limit channel fires, waitForEventFiles should return
+	// reason="context-limit" promptly, even with a long timeout and no events.
+	dir := t.TempDir()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	// Pre-fire the context limit channel so it triggers immediately.
+	ch := make(chan struct{}, 1)
+	ch <- struct{}{}
+
+	start := time.Now()
+	result, err := waitForEventFiles(ctx, dir, ch)
+	elapsed := time.Since(start)
+
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.Reason != "context-limit" {
+		t.Errorf("expected reason 'context-limit', got %q", result.Reason)
+	}
+	// Should return almost immediately (well under 1s).
+	if elapsed > 2*time.Second {
+		t.Errorf("took %v; expected near-instant return on pre-fired context limit", elapsed)
+	}
+}
+
+func TestWaitForEventFilesContextLimitDuringPoll(t *testing.T) {
+	// Context limit fires while polling (not pre-fired).
+	dir := t.TempDir()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	ch := make(chan struct{}, 1)
+	// Fire the channel after a short delay — longer than one poll interval (500ms).
+	go func() {
+		time.Sleep(700 * time.Millisecond)
+		ch <- struct{}{}
+	}()
+
+	start := time.Now()
+	result, err := waitForEventFiles(ctx, dir, ch)
+	elapsed := time.Since(start)
+
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.Reason != "context-limit" {
+		t.Errorf("expected reason 'context-limit', got %q", result.Reason)
+	}
+	// Should return shortly after 700ms, not at the 10s timeout.
+	if elapsed < 600*time.Millisecond {
+		t.Errorf("returned too quickly (%v); expected ~700ms", elapsed)
+	}
+	if elapsed > 3*time.Second {
+		t.Errorf("took %v; expected ~700ms", elapsed)
+	}
+}
+
+func TestLastInputTokensInJSONL(t *testing.T) {
+	t.Run("reads last assistant entry", func(t *testing.T) {
+		dir := t.TempDir()
+		// Two assistant turns; we want the last one's tokens.
+		content := `{"type":"assistant","message":{"usage":{"input_tokens":50000},"model":"claude-sonnet-4-5"},"timestamp":"2026-05-10T00:00:00Z"}` + "\n" +
+			`{"type":"user","message":{"role":"user","content":[{"type":"tool_result"}]}}` + "\n" +
+			`{"type":"assistant","message":{"usage":{"input_tokens":120000},"model":"claude-sonnet-4-6"},"timestamp":"2026-05-10T00:01:00Z"}` + "\n"
+		path := filepath.Join(dir, "session.jsonl")
+		if err := os.WriteFile(path, []byte(content), 0644); err != nil {
+			t.Fatal(err)
+		}
+		tokens, model := lastInputTokensInJSONL(path)
+		if tokens != 120000 {
+			t.Errorf("tokens = %d, want 120000", tokens)
+		}
+		if model != "claude-sonnet-4-6" {
+			t.Errorf("model = %q, want 'claude-sonnet-4-6'", model)
+		}
+	})
+
+	t.Run("ignores non-assistant entries", func(t *testing.T) {
+		dir := t.TempDir()
+		content := `{"type":"user","message":{"role":"user","content":[]}}` + "\n"
+		path := filepath.Join(dir, "session.jsonl")
+		if err := os.WriteFile(path, []byte(content), 0644); err != nil {
+			t.Fatal(err)
+		}
+		tokens, model := lastInputTokensInJSONL(path)
+		if tokens != 0 {
+			t.Errorf("tokens = %d, want 0", tokens)
+		}
+		if model != "" {
+			t.Errorf("model = %q, want empty", model)
+		}
+	})
+
+	t.Run("nonexistent file returns zero", func(t *testing.T) {
+		tokens, model := lastInputTokensInJSONL("/tmp/nonexistent-jsonl-test-file.jsonl")
+		if tokens != 0 {
+			t.Errorf("tokens = %d, want 0", tokens)
+		}
+		if model != "" {
+			t.Errorf("model = %q, want empty", model)
+		}
+	})
+}
+
+func TestContextWindowForModel(t *testing.T) {
+	tests := []struct {
+		model string
+		want  int
+	}{
+		{"claude-sonnet-4-6", 200_000},
+		{"claude-opus-4-7", 200_000},
+		{"claude-haiku-4-5-20251001", 200_000},
+		{"", 200_000},
+	}
+	for _, tt := range tests {
+		got := contextWindowForModel(tt.model)
+		if got != tt.want {
+			t.Errorf("contextWindowForModel(%q) = %d, want %d", tt.model, got, tt.want)
+		}
+	}
+}
+
+func TestReadContextWindowPctMissingDir(t *testing.T) {
+	// readContextWindowPct is best-effort: returns 0 when the project dir doesn't exist.
+	pct := readContextWindowPct("/tmp/nonexistent-cwd-for-context-pct-test-" + t.Name())
+	if pct != 0 {
+		t.Errorf("expected 0 for missing project dir, got %v", pct)
+	}
+}
+
+func TestNewestJSONLInDir(t *testing.T) {
+	t.Run("returns newest file", func(t *testing.T) {
+		dir := t.TempDir()
+		for _, name := range []string{"a.jsonl", "b.jsonl", "c.jsonl"} {
+			if err := os.WriteFile(filepath.Join(dir, name), []byte("{}"), 0644); err != nil {
+				t.Fatal(err)
+			}
+			time.Sleep(5 * time.Millisecond)
+		}
+		path, ok := newestJSONLInDir(dir)
+		if !ok {
+			t.Fatal("expected to find a JSONL file")
+		}
+		if filepath.Base(path) != "c.jsonl" {
+			t.Errorf("expected newest = c.jsonl, got %s", filepath.Base(path))
+		}
+	})
+
+	t.Run("ignores non-jsonl files", func(t *testing.T) {
+		dir := t.TempDir()
+		os.WriteFile(filepath.Join(dir, "session.json"), []byte("{}"), 0644)
+		os.WriteFile(filepath.Join(dir, "notes.txt"), []byte("hi"), 0644)
+		_, ok := newestJSONLInDir(dir)
+		if ok {
+			t.Error("expected no JSONL files, but found one")
+		}
+	})
+
+	t.Run("empty dir returns false", func(t *testing.T) {
+		dir := t.TempDir()
+		_, ok := newestJSONLInDir(dir)
+		if ok {
+			t.Error("expected false for empty dir")
+		}
+	})
 }
