@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/steveyegge/gastown/internal/config"
+	"github.com/steveyegge/gastown/internal/scheduler/capacity"
 	"github.com/steveyegge/gastown/internal/wisp"
 )
 
@@ -67,6 +68,84 @@ func setupTestRigForConfig(t *testing.T) (string, string) {
 	t.Cleanup(func() { os.Chdir(oldCwd) })
 
 	return townRoot, rigName
+}
+
+func TestRigConfigShow_MaxPolecatsAnnotation(t *testing.T) {
+	t.Run("shows deferred dispatch OFF when no scheduler config", func(t *testing.T) {
+		_, rigName := setupTestRigForConfig(t)
+
+		rigConfigShowLayers = false
+		t.Cleanup(func() { rigConfigShowLayers = false })
+
+		out := captureStdout(t, func() {
+			err := runRigConfigShow(rigConfigShowCmd, []string{rigName})
+			if err != nil {
+				t.Fatalf("runRigConfigShow: %v", err)
+			}
+		})
+
+		if !strings.Contains(out, "max_polecats") {
+			t.Fatalf("expected max_polecats in output, got: %q", out)
+		}
+		if !strings.Contains(out, "deferred dispatch: OFF") {
+			t.Errorf("expected 'deferred dispatch: OFF' annotation, got:\n%s", out)
+		}
+	})
+
+	t.Run("shows deferred dispatch ON when scheduler.max_polecats > 0", func(t *testing.T) {
+		townRoot, rigName := setupTestRigForConfig(t)
+
+		maxPol := 5
+		settings := config.NewTownSettings()
+		settings.Scheduler = &capacity.SchedulerConfig{MaxPolecats: &maxPol}
+		settingsPath := config.TownSettingsPath(townRoot)
+		if err := config.SaveTownSettings(settingsPath, settings); err != nil {
+			t.Fatalf("saving town settings: %v", err)
+		}
+
+		rigConfigShowLayers = false
+		t.Cleanup(func() { rigConfigShowLayers = false })
+
+		out := captureStdout(t, func() {
+			err := runRigConfigShow(rigConfigShowCmd, []string{rigName})
+			if err != nil {
+				t.Fatalf("runRigConfigShow: %v", err)
+			}
+		})
+
+		if !strings.Contains(out, "deferred dispatch: ON") {
+			t.Errorf("expected 'deferred dispatch: ON' annotation, got:\n%s", out)
+		}
+		if !strings.Contains(out, "scheduler.max_polecats=-1") {
+			t.Errorf("expected disable hint in annotation, got:\n%s", out)
+		}
+	})
+
+	t.Run("annotation appears in --layers output", func(t *testing.T) {
+		townRoot, rigName := setupTestRigForConfig(t)
+
+		maxPol := 3
+		settings := config.NewTownSettings()
+		settings.Scheduler = &capacity.SchedulerConfig{MaxPolecats: &maxPol}
+		settingsPath := config.TownSettingsPath(townRoot)
+		if err := config.SaveTownSettings(settingsPath, settings); err != nil {
+			t.Fatalf("saving town settings: %v", err)
+		}
+
+		rigConfigShowLayers = true
+		t.Cleanup(func() { rigConfigShowLayers = false })
+
+		out := captureStdout(t, func() {
+			err := runRigConfigShow(rigConfigShowCmd, []string{rigName})
+			if err != nil {
+				t.Fatalf("runRigConfigShow: %v", err)
+			}
+		})
+
+		if !strings.Contains(out, "deferred dispatch: ON") {
+			t.Errorf("expected 'deferred dispatch: ON' in --layers output, got:\n%s", out)
+		}
+	})
 }
 
 func TestRigConfigSet_WispLayerWarning(t *testing.T) {

@@ -10,6 +10,7 @@ import (
 
 	"github.com/spf13/cobra"
 	"github.com/steveyegge/gastown/internal/beads"
+	"github.com/steveyegge/gastown/internal/config"
 	"github.com/steveyegge/gastown/internal/rig"
 	"github.com/steveyegge/gastown/internal/style"
 	"github.com/steveyegge/gastown/internal/wisp"
@@ -45,7 +46,7 @@ Example output:
   status              parked       wisp
   priority_adjustment 10           bead
   auto_restart        true         system
-  max_polecats        4            town`,
+  max_polecats        4            town   [deferred dispatch: ON — set scheduler.max_polecats=-1 to disable]`,
 	Args: cobra.ExactArgs(1),
 	RunE: runRigConfigShow,
 }
@@ -107,6 +108,13 @@ func runRigConfigShow(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
+	// Determine deferred dispatch state for the max_polecats annotation.
+	deferredDispatch := false
+	settingsPath := config.TownSettingsPath(townRoot)
+	if settings, loadErr := config.LoadOrCreateTownSettings(settingsPath); loadErr == nil && settings.Scheduler != nil {
+		deferredDispatch = settings.Scheduler.IsDeferred()
+	}
+
 	// Collect all known keys
 	allKeys := getConfigKeys(townRoot, r)
 
@@ -120,6 +128,9 @@ func runRigConfigShow(cmd *cobra.Command, args []string) error {
 			sourceStr := string(result.Source)
 			if result.Source == rig.SourceBlocked {
 				valueStr = "(blocked)"
+			}
+			if key == "max_polecats" {
+				sourceStr += "  " + maxPolecatsAnnotation(deferredDispatch)
 			}
 			fmt.Printf("%-25s %-15s %s\n", key, valueStr, sourceStr)
 		}
@@ -136,11 +147,22 @@ func runRigConfigShow(cmd *cobra.Command, args []string) error {
 			if result.Source == rig.SourceBlocked {
 				valueStr = "(blocked)"
 			}
+			if key == "max_polecats" {
+				valueStr += "  " + maxPolecatsAnnotation(deferredDispatch)
+			}
 			fmt.Printf("%-25s %s\n", key, valueStr)
 		}
 	}
 
 	return nil
+}
+
+// maxPolecatsAnnotation returns the deferred dispatch status annotation for max_polecats.
+func maxPolecatsAnnotation(deferredDispatch bool) string {
+	if deferredDispatch {
+		return "[deferred dispatch: ON — set scheduler.max_polecats=-1 to disable]"
+	}
+	return "[deferred dispatch: OFF]"
 }
 
 func runRigConfigSet(cmd *cobra.Command, args []string) error {
