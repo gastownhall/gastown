@@ -632,6 +632,18 @@ func (m *Manager) AddRig(opts AddRigOptions) (*Rig, error) {
 			// port, causing "database not found" errors. (GH #2405)
 			doltCfg := doltserver.DefaultConfig(m.townRoot)
 			initArgs = append(initArgs, "--server-port", strconv.Itoa(doltCfg.Port))
+			// If config.yaml has sync.remote, bd init blocks on a remote
+			// divergence safety check (stdin is /dev/null in subprocess).
+			// Pass reinit flags so it proceeds non-interactively. (GH #3873)
+			if detectBeadsSyncRemote(sourceBeadsConfig) != "" {
+				destroyToken := "DESTROY-" + strings.TrimSuffix(opts.BeadsPrefix, "-")
+				initArgs = append(initArgs,
+					"--reinit-local",
+					"--discard-remote",
+					"--destroy-token", destroyToken,
+					"--non-interactive",
+				)
+			}
 			cmd := exec.Command("bd", initArgs...)
 			cmd.Dir = mayorRigPath
 			if output, err := cmd.CombinedOutput(); err != nil {
@@ -1572,6 +1584,31 @@ func detectBeadsPrefixFromConfig(configPath string) string {
 					return strings.TrimSuffix(value, "-")
 				}
 			}
+		}
+	}
+
+	return ""
+}
+
+// detectBeadsSyncRemote reads the sync.remote value from a beads config.yaml file.
+// Returns empty string if the file doesn't exist or doesn't contain sync.remote.
+// Used by AddRig to detect whether bd init will require reinit flags to avoid
+// hanging on a remote divergence safety check (GH #3873).
+func detectBeadsSyncRemote(configPath string) string {
+	data, err := os.ReadFile(configPath)
+	if err != nil {
+		return ""
+	}
+
+	lines := strings.Split(string(data), "\n")
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		if strings.HasPrefix(line, "sync.remote:") {
+			value := strings.TrimSpace(strings.TrimPrefix(line, "sync.remote:"))
+			return strings.Trim(value, `"'`)
 		}
 	}
 

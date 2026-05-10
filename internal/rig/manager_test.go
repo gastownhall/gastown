@@ -1138,6 +1138,66 @@ func TestDetectBeadsPrefixFromConfig_NoFallbackToJSONL(t *testing.T) {
 	}
 }
 
+func TestDetectBeadsSyncRemote(t *testing.T) {
+	tests := []struct {
+		name       string
+		configYAML string
+		want       string
+	}{
+		{
+			name:       "detects sync.remote",
+			configYAML: "sync.remote: \"git+https://github.com/steveyegge/gastown.git\"\n",
+			want:       "git+https://github.com/steveyegge/gastown.git",
+		},
+		{
+			name:       "detects unquoted sync.remote",
+			configYAML: "sync.remote: git+https://github.com/user/repo.git\n",
+			want:       "git+https://github.com/user/repo.git",
+		},
+		{
+			name:       "returns empty when no sync.remote",
+			configYAML: "prefix: gt\n",
+			want:       "",
+		},
+		{
+			name:       "returns empty for empty file",
+			configYAML: "",
+			want:       "",
+		},
+		{
+			name:       "ignores comments",
+			configYAML: "# sync.remote: commented-out\nprefix: gt\n",
+			want:       "",
+		},
+		{
+			name:       "detects amid other keys",
+			configYAML: "prefix: gt\nsync.remote: git+ssh://example.com/repo.git\nother: value\n",
+			want:       "git+ssh://example.com/repo.git",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dir := t.TempDir()
+			configPath := filepath.Join(dir, "config.yaml")
+			if err := os.WriteFile(configPath, []byte(tt.configYAML), 0644); err != nil {
+				t.Fatalf("writing config: %v", err)
+			}
+			got := detectBeadsSyncRemote(configPath)
+			if got != tt.want {
+				t.Errorf("detectBeadsSyncRemote() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestDetectBeadsSyncRemote_MissingFile(t *testing.T) {
+	got := detectBeadsSyncRemote("/nonexistent/path/config.yaml")
+	if got != "" {
+		t.Errorf("detectBeadsSyncRemote() = %q, want empty for missing file", got)
+	}
+}
+
 func TestIsStandardBeadHash(t *testing.T) {
 	tests := []struct {
 		input string

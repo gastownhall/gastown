@@ -278,6 +278,8 @@ done
 
 case "$cmd" in
   init)
+    # Log init args for verification
+    echo "init $@" >> "$LOG_FILE"
     # Create .beads directory and config.yaml
     mkdir -p .beads
     prefix="gt"
@@ -1451,4 +1453,110 @@ func checkWorktreeClean(t *testing.T, agent agentWorktree, hasTrackedBeads bool)
 	}
 
 	return unexpectedFiles
+}
+
+// createTestGitRepoWithSyncRemote creates a test git repo with .beads/config.yaml
+// committed and containing a sync.remote entry, simulating a repo like gastown
+// that has upstream sync configured. Returns the repo path (usable as a file:// URL).
+func createTestGitRepoWithSyncRemote(t *testing.T, name, prefix, syncRemote string) string {
+	t.Helper()
+
+	repoDir := filepath.Join(t.TempDir(), name)
+	if err := os.MkdirAll(repoDir, 0755); err != nil {
+		t.Fatalf("mkdir repo: %v", err)
+	}
+
+	cmds := [][]string{
+		{"git", "init", "--initial-branch=main"},
+		{"git", "config", "user.email", "test@test.com"},
+		{"git", "config", "user.name", "Test User"},
+	}
+	for _, args := range cmds {
+		cmd := exec.Command(args[0], args[1:]...)
+		cmd.Dir = repoDir
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+	}
+
+	readmePath := filepath.Join(repoDir, "README.md")
+	if err := os.WriteFile(readmePath, []byte("# Test Repo\n"), 0644); err != nil {
+		t.Fatalf("write README: %v", err)
+	}
+
+	beadsDir := filepath.Join(repoDir, ".beads")
+	if err := os.MkdirAll(beadsDir, 0755); err != nil {
+		t.Fatalf("mkdir .beads: %v", err)
+	}
+	configContent := "prefix: " + prefix + "\nsync.remote: \"" + syncRemote + "\"\n"
+	if err := os.WriteFile(filepath.Join(beadsDir, "config.yaml"), []byte(configContent), 0644); err != nil {
+		t.Fatalf("write .beads/config.yaml: %v", err)
+	}
+
+	commitCmds := [][]string{
+		{"git", "add", "."},
+		{"git", "commit", "-m", "Initial commit with beads config"},
+	}
+	for _, args := range commitCmds {
+		cmd := exec.Command(args[0], args[1:]...)
+		cmd.Dir = repoDir
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+	}
+
+	return repoDir
+}
+
+// TestRigAddWithSyncRemotePassesReinitFlags verifies that when a source repo has
+// .beads/config.yaml with sync.remote configured, gt rig add passes --reinit-local
+// --discard-remote --destroy-token to bd init instead of hanging on the interactive
+// remote divergence safety check (GH #3873).
+func TestRigAddWithSyncRemotePassesReinitFlags(t *testing.T) {
+	requireDoltServer(t)
+	bdLogPath := mockBdCommand(t)
+	townRoot := setupTestTown(t)
+	bridgeDoltPidToTown(t, townRoot)
+
+	const prefix = "gt"
+	const syncRemote = "git+https://github.com/steveyegge/gastown.git"
+	gitURL := createTestGitRepoWithSyncRemote(t, "synctest", prefix, syncRemote)
+
+	rigsPath := filepath.Join(townRoot, "mayor", "rigs.json")
+	rigsConfig, err := config.LoadRigsConfig(rigsPath)
+	if err != nil {
+		t.Fatalf("load rigs.json: %v", err)
+	}
+
+	g := git.NewGit(townRoot)
+	mgr := rig.NewManager(townRoot, rigsConfig, g)
+
+	_, err = mgr.AddRig(rig.AddRigOptions{
+		Name:        "synctest",
+		GitURL:      gitURL,
+		BeadsPrefix: prefix,
+	})
+	if err != nil {
+		t.Fatalf("AddRig: %v", err)
+	}
+
+	logContent, err := os.ReadFile(bdLogPath)
+	if err != nil {
+		t.Fatalf("reading bd log: %v", err)
+	}
+	log := string(logContent)
+
+	// bd init should have been called with the reinit flags so it doesn't
+	// block on an interactive remote divergence check with stdin=/dev/null.
+	for _, flag := range []string{"--reinit-local", "--discard-remote", "--destroy-token"} {
+		if !strings.Contains(log, flag) {
+			t.Errorf("bd init should be called with %s when sync.remote is present; log:\n%s", flag, log)
+		}
+	}
+
+	// Verify the destroy token has the correct format: DESTROY-<prefix>
+	expectedToken := "DESTROY-" + prefix
+	if !strings.Contains(log, expectedToken) {
+		t.Errorf("bd init should be called with destroy token %q; log:\n%s", expectedToken, log)
+	}
 }
