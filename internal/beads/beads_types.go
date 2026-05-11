@@ -104,6 +104,9 @@ func EnsureCustomTypes(beadsDir string) error {
 	if beadsDir == "" {
 		return fmt.Errorf("empty beads directory")
 	}
+	if err := GuardNonCanonicalRuntime(beadsDir, "configure Gas Town custom types"); err != nil {
+		return err
+	}
 
 	typesList := strings.Join(constants.BeadsCustomTypesList(), ",")
 
@@ -288,6 +291,10 @@ var prefixRe = regexp.MustCompile(`^[a-zA-Z][a-zA-Z0-9-]{0,19}$`)
 // Uses --server mode to match all production bd init callers (gastown uses a
 // centralized Dolt sql-server). JSONL auto-import is handled by bd init itself.
 func ensureDatabaseInitialized(beadsDir string) error {
+	if err := GuardNonCanonicalRuntime(beadsDir, "initialize Gas Town beads database"); err != nil {
+		return err
+	}
+
 	// If this beads dir has a redirect, the database lives elsewhere.
 	// Never create a new database for a redirected location (polecats, crew, refinery).
 	redirectFile := filepath.Join(beadsDir, "redirect")

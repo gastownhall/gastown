@@ -599,6 +599,9 @@ func (m *Manager) AddRig(opts AddRigOptions) (*Rig, error) {
 		// to a new workspace), we still need to run bd init to create the server-side
 		// database and set issue_prefix. Always ensure issue_prefix is set afterward.
 		if !bdDatabaseExists(sourceBeadsDir) {
+			if err := beads.GuardNonCanonicalRuntime(sourceBeadsDir, "initialize tracked rig issue_prefix"); err != nil {
+				return nil, err
+			}
 			initArgs := []string{"init"}
 			if opts.BeadsPrefix != "" {
 				initArgs = append(initArgs, "--prefix", opts.BeadsPrefix)
@@ -611,6 +614,7 @@ func (m *Manager) AddRig(opts AddRigOptions) (*Rig, error) {
 			initArgs = append(initArgs, "--server-port", strconv.Itoa(doltCfg.Port))
 			cmd := exec.Command("bd", initArgs...)
 			cmd.Dir = mayorRigPath
+			cmd.Env = beads.EnvWithBeadsDir(os.Environ(), sourceBeadsDir)
 			if output, err := cmd.CombinedOutput(); err != nil {
 				fmt.Printf("  Warning: Could not init bd database: %v (%s)\n", err, strings.TrimSpace(string(output)))
 			}
@@ -625,12 +629,18 @@ func (m *Manager) AddRig(opts AddRigOptions) (*Rig, error) {
 		// metadata.json was tracked in git (bdDatabaseExists returned true).
 		// The tracked metadata.json tells bd HOW to connect but doesn't guarantee
 		// the server-side database has issue_prefix set for this workspace.
+		if err := beads.GuardNonCanonicalRuntime(sourceBeadsDir, "configure tracked rig issue_prefix"); err != nil {
+			return nil, err
+		}
+		beadsEnv := beads.EnvWithBeadsDir(os.Environ(), sourceBeadsDir)
 		configCmd := exec.Command("bd", "config", "set", "types.custom", constants.BeadsCustomTypes)
 		configCmd.Dir = mayorRigPath
+		configCmd.Env = beadsEnv
 		_, _ = configCmd.CombinedOutput() // Ignore errors - older beads don't need this
 
 		prefixSetCmd := exec.Command("bd", "config", "set", "issue_prefix", opts.BeadsPrefix)
 		prefixSetCmd.Dir = mayorRigPath
+		prefixSetCmd.Env = beadsEnv
 		if prefixOutput, prefixErr := prefixSetCmd.CombinedOutput(); prefixErr != nil {
 			fmt.Printf("  Warning: Could not set issue_prefix: %v (%s)\n", prefixErr, strings.TrimSpace(string(prefixOutput)))
 		}
@@ -684,15 +694,19 @@ func (m *Manager) AddRig(opts AddRigOptions) (*Rig, error) {
 	// Now that EnsureMetadata has corrected dolt_database, re-set it.
 	{
 		resolvedBeadsDir := beads.ResolveBeadsDir(rigPath)
+		if err := beads.GuardNonCanonicalRuntime(resolvedBeadsDir, "configure rig issue_prefix"); err != nil {
+			return nil, err
+		}
+		beadsEnv := beads.EnvWithBeadsDir(os.Environ(), resolvedBeadsDir)
 		prefixCmd := exec.Command("bd", "config", "set", "issue_prefix", opts.BeadsPrefix)
 		prefixCmd.Dir = rigPath
-		prefixCmd.Env = append(os.Environ(), "BEADS_DIR="+resolvedBeadsDir)
+		prefixCmd.Env = beadsEnv
 		if out, err := prefixCmd.CombinedOutput(); err != nil {
 			fmt.Printf("  Warning: Could not set issue_prefix on rig database: %v (%s)\n", err, strings.TrimSpace(string(out)))
 		}
 		typesCmd := exec.Command("bd", "config", "set", "types.custom", constants.BeadsCustomTypes)
 		typesCmd.Dir = rigPath
-		typesCmd.Env = append(os.Environ(), "BEADS_DIR="+resolvedBeadsDir)
+		typesCmd.Env = beadsEnv
 		_, _ = typesCmd.CombinedOutput()
 	}
 
@@ -1117,6 +1131,9 @@ func (m *Manager) InitBeads(rigPath, prefix, rigName string) error {
 
 	beadsDir := filepath.Join(rigPath, ".beads")
 	mayorRigBeads := filepath.Join(rigPath, "mayor", "rig", ".beads")
+	if err := beads.GuardNonCanonicalRuntime(beadsDir, "initialize rig issue_prefix"); err != nil {
+		return err
+	}
 
 	// Check if source repo has tracked .beads/ (cloned into mayor/rig).
 	// If so, create a redirect file instead of a new database.

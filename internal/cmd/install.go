@@ -702,6 +702,9 @@ func initTownBeads(townPath string) error {
 	}
 
 	beadsEnv := withBeadsDirEnv(beadsDir)
+	if err := beads.GuardNonCanonicalRuntime(beadsDir, "configure Gas Town HQ issue_prefix"); err != nil {
+		return err
+	}
 
 	// Set beads.role to maintainer (town-level beads are always maintainer-owned).
 	// Without this, bd doctor warns about missing role configuration.
