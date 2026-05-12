@@ -6,7 +6,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "{{GT_BIN}} prime --hook && {{GT_BIN}} mail check --inject"
+            "command": "GT_SESSION_ID=${GT_SESSION_ID:-$(uuidgen)} GT_HOOK_SOURCE=startup {{GT_BIN}} prime --hook && {{GT_BIN}} mail check --inject"
           }
         ]
       }

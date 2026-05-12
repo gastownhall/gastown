@@ -217,6 +217,40 @@ func TestStartupFallbackCommands_RoleCasing(t *testing.T) {
 	}
 }
 
+// TestStartupFallbackCommands_CodexWithHooks is a regression test for hq-adl:
+// Mayor Codex startup missed initial Beads/Gas Town mail context because the
+// Codex preset had SupportsHooks=false and no HooksProvider/Dir/SettingsFile.
+// With hooks enabled, StartupFallbackCommands returns nil — the SessionStart
+// hook handles context delivery and no tmux fallback nudge is needed.
+func TestStartupFallbackCommands_CodexWithHooks(t *testing.T) {
+	t.Parallel()
+	rc := config.RuntimeConfigFromPreset(config.AgentCodex)
+	if rc == nil {
+		t.Fatal("RuntimeConfigFromPreset(codex) returned nil")
+	}
+
+	// Codex preset must have hooks configured so context is delivered via
+	// the SessionStart hook, not via a tmux fallback nudge.
+	if rc.Hooks == nil {
+		t.Fatal("Codex RuntimeConfig.Hooks is nil — hooks not configured")
+	}
+	if rc.Hooks.Provider == "" || rc.Hooks.Provider == "none" {
+		t.Errorf("Codex Hooks.Provider = %q, want non-empty non-none provider", rc.Hooks.Provider)
+	}
+	if rc.Hooks.Dir == "" {
+		t.Error("Codex Hooks.Dir is empty — hook files have no install location")
+	}
+	if rc.Hooks.SettingsFile == "" {
+		t.Error("Codex Hooks.SettingsFile is empty — hook files have no filename")
+	}
+
+	// With hooks configured, no startup fallback (tmux nudge) should be needed.
+	commands := StartupFallbackCommands("mayor", rc)
+	if commands != nil {
+		t.Errorf("StartupFallbackCommands(codex with hooks) = %v, want nil", commands)
+	}
+}
+
 func TestEnsureSettingsForRole_NilConfig(t *testing.T) {
 	// Should not panic with nil config
 	err := EnsureSettingsForRole("/tmp/test", "/tmp/test", "polecat", nil)

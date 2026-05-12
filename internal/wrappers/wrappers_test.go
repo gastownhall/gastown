@@ -80,6 +80,26 @@ func TestEmbeddedScripts_HaveGtPrime(t *testing.T) {
 	}
 }
 
+// TestEmbeddedScripts_UseHookFlag verifies that each wrapper uses the --hook flag
+// when calling gt prime, ensuring session ID tracking and proper context injection.
+// Without --hook, gt prime skips session event emission and agent-ready signaling.
+// Regression test for hq-adl: Codex/API startup missed initial Gas Town context.
+func TestEmbeddedScripts_UseHookFlag(t *testing.T) {
+	t.Parallel()
+	for _, name := range expectedWrappers {
+		t.Run(name, func(t *testing.T) {
+			content, err := scriptsFS.ReadFile("scripts/" + name)
+			if err != nil {
+				t.Fatalf("Failed to read %s: %v", name, err)
+			}
+
+			if !strings.Contains(string(content), "gt prime --hook") {
+				t.Errorf("Script %s should use 'gt prime --hook' (not bare 'gt prime') for session tracking", name)
+			}
+		})
+	}
+}
+
 func TestInstall_CreatesAllWrappers(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("wrapper install not supported on Windows")

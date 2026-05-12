@@ -284,7 +284,7 @@ var builtinPresets = map[AgentPreset]*AgentPresetInfo{
 		SessionIDEnv:        "",                // Codex captures from JSONL output
 		ResumeFlag:          "resume",
 		ResumeStyle:         "subcommand",
-		SupportsHooks:       false, // Use env/files instead
+		SupportsHooks:       true,
 		SupportsForkSession: false,
 		NonInteractive: &NonInteractiveConfig{
 			Subcommand: "exec",
@@ -292,6 +292,9 @@ var builtinPresets = map[AgentPreset]*AgentPresetInfo{
 		},
 		// Runtime defaults
 		PromptMode:        "none",
+		HooksProvider:     "codex",
+		HooksDir:          ".codex",
+		HooksSettingsFile: "hooks.json",
 		ReadyPromptPrefix: "› ",
 		ReadyDelayMs:      3000,
 		InstructionsFile:  "AGENTS.md",

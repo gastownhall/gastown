@@ -12,7 +12,9 @@ gastown_enabled() {
 }
 
 if gastown_enabled && command -v gt &>/dev/null; then
-    gt prime 2>/dev/null || true
+    export GT_SESSION_ID="${GT_SESSION_ID:-$(uuidgen 2>/dev/null || echo "gemini-$$")}"
+    export GT_HOOK_SOURCE=startup
+    gt prime --hook 2>/dev/null || true
 fi
 
 exec gemini "$@"
