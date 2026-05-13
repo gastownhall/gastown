@@ -571,6 +571,15 @@ func (m *SessionManager) Start(polecat string, opts SessionStartOptions) error {
 		m.verifyStartupNudgeDelivery(sessionID, runtimeConfig, verifyContent)
 	}
 
+	// Verify beacon delivery for hook+prompt agents (Mode A, hi-y44).
+	// Fresh spawns may show the Claude Code splash screen with the CLI beacon
+	// pre-filled but not auto-submitted. If the agent is still idle after startup,
+	// re-deliver the work instructions via nudge to kick it into action.
+	// Non-fatal: if verification fails the witness zombie patrol will recover.
+	if !fallbackInfo.SendBeaconNudge && !fallbackInfo.SendStartupNudge {
+		m.verifyStartupNudgeDelivery(sessionID, runtimeConfig, startupNudgeContent)
+	}
+
 	// Legacy fallback for other startup paths (non-fatal)
 	_ = runtime.RunStartupFallback(m.tmux, sessionID, "polecat", runtimeConfig)
 

@@ -636,6 +636,58 @@ func TestPromptlessFallbackIncludesPrimeAndWorkInstructions(t *testing.T) {
 	}
 }
 
+// TestModeABeaconVerificationCondition verifies that hook+prompt agents (e.g. Claude)
+// satisfy the Mode A beacon delivery verification condition introduced in hi-y44.
+// Fresh spawns may show the Claude Code splash with the CLI beacon pre-filled but
+// not auto-submitted; the condition triggers verifyStartupNudgeDelivery as a safety net.
+func TestModeABeaconVerificationCondition(t *testing.T) {
+	tests := []struct {
+		name            string
+		rc              *config.RuntimeConfig
+		wantModeA       bool // !SendBeaconNudge && !SendStartupNudge
+	}{
+		{
+			name: "Claude hook+prompt agent triggers Mode A verification",
+			rc: &config.RuntimeConfig{
+				PromptMode: "arg",
+				Hooks: &config.RuntimeHooksConfig{
+					Provider: "claude",
+				},
+			},
+			wantModeA: true,
+		},
+		{
+			name: "Non-hook agent does not trigger Mode A (has startup nudge instead)",
+			rc: &config.RuntimeConfig{
+				PromptMode: "arg",
+				Hooks:      nil,
+			},
+			wantModeA: false,
+		},
+		{
+			name: "Hook agent with no prompt support does not trigger Mode A (uses beacon nudge)",
+			rc: &config.RuntimeConfig{
+				PromptMode: "none",
+				Hooks: &config.RuntimeHooksConfig{
+					Provider: "claude",
+				},
+			},
+			wantModeA: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			info := gtruntime.GetStartupFallbackInfo(tt.rc)
+			gotModeA := !info.SendBeaconNudge && !info.SendStartupNudge
+			if gotModeA != tt.wantModeA {
+				t.Errorf("Mode A condition = %v, want %v (SendBeaconNudge=%v, SendStartupNudge=%v)",
+					gotModeA, tt.wantModeA, info.SendBeaconNudge, info.SendStartupNudge)
+			}
+		})
+	}
+}
+
 func TestValidateSessionName(t *testing.T) {
 	// Register prefixes so validateSessionName can resolve them correctly.
 	reg := session.NewPrefixRegistry()
