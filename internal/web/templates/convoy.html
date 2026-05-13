@@ -894,6 +894,28 @@
                         </div>
                         {{end}}
                     </div>
+                    <div id="ready-work-list">
+                        <div class="section-header">
+                            <h4>Ready Across Rigs</h4>
+                            <span id="ready-count" class="count">0</span>
+                        </div>
+                        <div id="ready-loading" class="loading-state">Loading ready work...</div>
+                        <table id="ready-table" style="display: none;">
+                            <thead>
+                                <tr>
+                                    <th>Pri</th>
+                                    <th>ID</th>
+                                    <th>Title</th>
+                                    <th>Source</th>
+                                    <th>Actions</th>
+                                </tr>
+                            </thead>
+                            <tbody id="ready-tbody"></tbody>
+                        </table>
+                        <div id="ready-empty" class="empty-state" style="display: none;">
+                            <p>No ready work</p>
+                        </div>
+                    </div>
                     <!-- Issue Detail View (hidden by default) -->
                     <div id="issue-detail" style="display: none;">
                         <div class="detail-header">
