@@ -523,7 +523,7 @@ type AddOptions struct {
 	// worktree instead of creating a fresh polecat/<name>/<bead>@<ts> branch (gh#3602).
 	// When set, the polecat's branch IS this branch — pushes go back to the same ref,
 	// updating the existing PR. Mutually exclusive with BaseBranch (resume implies its
-	// own start point). When empty, normal fresh-branch behaviour is used.
+	// own start point). When empty, normal fresh-branch behavior is used.
 	ResumeBranch string
 }
 
