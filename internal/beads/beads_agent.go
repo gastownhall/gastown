@@ -12,7 +12,6 @@ import (
 
 	"github.com/gofrs/flock"
 
-	"github.com/steveyegge/gastown/internal/constants"
 	"github.com/steveyegge/gastown/internal/telemetry"
 )
 
@@ -721,12 +720,32 @@ func isAgentBeadByID(id string) bool {
 	if len(parts) < 2 {
 		return false
 	}
-	// Check parts[1:] to handle both full-form (role at parts[2]) and
-	// collapsed-form (role at parts[1]) agent bead IDs.
-	for _, part := range parts[1:] {
-		switch part {
-		case constants.RoleWitness, constants.RoleRefinery, constants.RoleCrew, constants.RolePolecat, constants.RoleDeacon, constants.RoleMayor:
-			return true
+
+	// Collapsed form when prefix == rig:
+	//   prefix-witness, prefix-refinery
+	//   prefix-crew-name, prefix-polecat-name
+	if isTownLevelRole(parts[1]) || isRigLevelRole(parts[1]) {
+		return len(parts) == 2
+	}
+	if isNamedRole(parts[1]) {
+		return len(parts) == 3 && parts[2] != ""
+	}
+
+	if len(parts) < 3 {
+		return false
+	}
+
+	// Full form:
+	//   prefix-rig-witness, prefix-rig-refinery
+	//   prefix-rig-crew-name, prefix-rig-polecat-name
+	// Rig names may contain hyphens, so scan for the role marker after the
+	// prefix and at least one rig segment.
+	for i := len(parts) - 1; i >= 2; i-- {
+		if isTownLevelRole(parts[i]) || isRigLevelRole(parts[i]) {
+			return i == len(parts)-1
+		}
+		if isNamedRole(parts[i]) {
+			return i < len(parts)-1 && parts[i+1] != ""
 		}
 	}
 	return false

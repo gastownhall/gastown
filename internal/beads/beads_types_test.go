@@ -247,8 +247,14 @@ func TestResolveRoutingTarget(t *testing.T) {
 		{
 			name:     "rig-level bead routes to rig",
 			townRoot: tmpDir,
-			beadID:   "gt-gastown-polecat-Toast",
+			beadID:   "gt-work-123",
 			expected: rigBeadsDir,
+		},
+		{
+			name:     "rig-prefixed agent bead routes to town",
+			townRoot: tmpDir,
+			beadID:   "gt-gastown-polecat-Toast",
+			expected: beadsDir,
 		},
 		{
 			name:     "town-level bead routes to town",

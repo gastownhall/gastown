@@ -267,6 +267,8 @@ func TestIsAgentBeadByID(t *testing.T) {
 		{name: "full polecat with name", id: "gt-gastown-polecat-Toast", want: true},
 		{name: "full deacon", id: "sh-shippercrm-deacon", want: true},
 		{name: "full mayor", id: "ax-axon-mayor", want: true},
+		{name: "hyphenated rig witness", id: "xx-my-rig-witness", want: true},
+		{name: "hyphenated rig polecat", id: "xx-my-rig-polecat-nux", want: true},
 
 		// Collapsed-form IDs (prefix == rig): prefix-role[-name]
 		// These have only 2 parts for witness/refinery, must still be detected.
@@ -278,6 +280,9 @@ func TestIsAgentBeadByID(t *testing.T) {
 		// Non-agent IDs
 		{name: "regular issue", id: "gt-12345", want: false},
 		{name: "task bead", id: "bcc-fix-button-color", want: false},
+		{name: "issue slug mentions polecat", id: "gt-polecat-nuke-fix", want: false},
+		{name: "issue slug mentions witness", id: "ho-witness-health-check", want: false},
+		{name: "polecat role without name", id: "ho-homelab-polecat", want: false},
 		{name: "single part", id: "witness", want: false},
 		{name: "empty string", id: "", want: false},
 		{name: "patrol molecule", id: "mol-patrol-abc123", want: false},
@@ -460,5 +465,50 @@ func TestCreateAgentBead_ParsesMockCreateOutput(t *testing.T) {
 	}
 	if issue.ID != "pt-imported-polecat-shiny" {
 		t.Fatalf("issue.ID = %q", issue.ID)
+	}
+}
+
+func TestUpdate_RigPrefixedAgentBeadUsesTownRoot(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("path assertions are Unix-oriented")
+	}
+
+	townRoot, _ := filepath.EvalSymlinks(t.TempDir())
+	for _, dir := range []string{
+		filepath.Join(townRoot, "mayor"),
+		filepath.Join(townRoot, ".beads"),
+		filepath.Join(townRoot, "homelab", ".beads"),
+	} {
+		if err := os.MkdirAll(dir, 0755); err != nil {
+			t.Fatalf("mkdir %s: %v", dir, err)
+		}
+	}
+	if err := os.WriteFile(filepath.Join(townRoot, "mayor", "town.json"), []byte(`{"name":"test"}`), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(townRoot, ".beads", "routes.jsonl"), []byte("{\"prefix\":\"hq-\",\"path\":\".\"}\n{\"prefix\":\"ho-\",\"path\":\"homelab\"}\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	logPath := filepath.Join(townRoot, "bd.log")
+	installMockBDCreateRecorder(t, logPath)
+
+	rigDir := filepath.Join(townRoot, "homelab")
+	bd := NewWithBeadsDir(rigDir, filepath.Join(rigDir, ".beads"))
+	if err := bd.Update("ho-homelab-polecat-furiosa", UpdateOptions{
+		AddLabels: []string{"done-intent:COMPLETED:1778598000"},
+	}); err != nil {
+		t.Fatalf("Update: %v", err)
+	}
+
+	logOutput := readMockBDLog(t, logPath)
+	if !strings.Contains(logOutput, "pwd="+townRoot) {
+		t.Fatalf("mock bd log missing town root cwd:\n%s", logOutput)
+	}
+	if !strings.Contains(logOutput, "beads_dir="+filepath.Join(townRoot, ".beads")) {
+		t.Fatalf("mock bd log missing town-root BEADS_DIR:\n%s", logOutput)
+	}
+	if !strings.Contains(logOutput, "update ho-homelab-polecat-furiosa --add-label=done-intent:COMPLETED:1778598000") {
+		t.Fatalf("mock bd log missing routed update call:\n%s", logOutput)
 	}
 }

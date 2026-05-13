@@ -417,6 +417,24 @@ func (b *Beads) forIssueID(id string) *Beads {
 	}
 }
 
+// forRoutingID returns a Beads wrapper bound to the database that owns id.
+// This uses Gas Town routing rules, including town-owned agent beads whose IDs
+// carry rig prefixes.
+func (b *Beads) forRoutingID(id string) *Beads {
+	resolved := ResolveRoutingTarget(b.getTownRoot(), id, b.getResolvedBeadsDir())
+	if resolved == "" || resolved == b.getResolvedBeadsDir() {
+		return b
+	}
+	return &Beads{
+		workDir:    filepath.Dir(resolved),
+		beadsDir:   resolved,
+		isolated:   b.isolated,
+		serverPort: b.serverPort,
+		store:      b.store,
+		townRoot:   b.townRoot,
+	}
+}
+
 // Init initializes a new beads database in the working directory.
 // This uses the same environment isolation as other commands.
 // If ServerPort is set (via NewIsolatedWithPort), passes --server-port to bd init
@@ -1503,6 +1521,10 @@ func normalizeBugTitle(title string) string {
 func (b *Beads) Update(id string, opts UpdateOptions) error {
 	if b.store != nil {
 		return b.storeUpdate(id, opts)
+	}
+
+	if target := b.forRoutingID(id); target != b {
+		return target.Update(id, opts)
 	}
 
 	args := []string{"update", id}

@@ -70,6 +70,16 @@ func ResolveRoutingTarget(townRoot, beadID, fallbackDir string) string {
 		return fallbackDir
 	}
 
+	// Agent beads are town-owned identity records even when their IDs carry a
+	// rig prefix (e.g., ho-homelab-polecat-furiosa). Work beads with the same
+	// prefix still route to the rig database below.
+	if isAgentBeadByID(beadID) {
+		if beadsDir := ResolveBeadsDir(townRoot); beadsDir != "" {
+			return beadsDir
+		}
+		return filepath.Join(townRoot, ".beads")
+	}
+
 	// Look up rig path for this prefix
 	rigPath := GetRigPathForPrefix(townRoot, prefix)
 	if rigPath == "" {
