@@ -3,6 +3,7 @@ package cmd
 import (
 	"fmt"
 	"os"
+	"strings"
 
 	"github.com/spf13/cobra"
 	"github.com/steveyegge/gastown/internal/constants"
@@ -74,6 +75,17 @@ func runPatrolNew(cmd *cobra.Command, args []string) error {
 	default:
 		return fmt.Errorf("unsupported role for patrol: %q (expected deacon, witness, or refinery)", roleName)
 	}
+	if cfg.RoleName == "deacon" {
+		patrolID, patrolLine, hasPatrol, err := findActivePatrol(cfg)
+		if err != nil {
+			return fmt.Errorf("checking active deacon patrol: %w", err)
+		}
+		if hasPatrol {
+			fmt.Printf("active patrol already exists: %s\n", strings.TrimSpace(patrolLine))
+			fmt.Println(patrolID)
+			return nil
+		}
+	}
 
 	// Create and hook the wisp
 	patrolID, err := autoSpawnPatrol(cfg)
@@ -86,6 +98,7 @@ func runPatrolNew(cmd *cobra.Command, args []string) error {
 		}
 		return err
 	}
+	grantDeaconPatrolHeartbeatCredits(cfg, patrolID)
 
 	fmt.Println(patrolID)
 	return nil

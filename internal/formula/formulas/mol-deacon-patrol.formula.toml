@@ -1239,7 +1239,7 @@ After await-signal returns (either by signal or timeout):
 3. Close current patrol and start next cycle:
 ```bash
 gt patrol report --summary "<brief summary>" \
-  --steps "heartbeat:OK,inbox-check:OK,orphan-process-cleanup:SKIP,..."
+  --steps "<all 26 step_id:OK|SKIP pairs>"
 ```
 The --steps flag is REQUIRED. List ALL 26 steps with their actual status.
 Steps you executed get OK, steps you skipped get SKIP.

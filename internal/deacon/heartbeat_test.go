@@ -299,6 +299,93 @@ func TestTouchWithAction(t *testing.T) {
 	}
 }
 
+func TestConsumeHeartbeatCreditBootstrapOnce(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "deacon-test-*")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = os.RemoveAll(tmpDir) }()
+
+	if err := ConsumeHeartbeatCredit(tmpDir); err != nil {
+		t.Fatalf("first bootstrap consume failed: %v", err)
+	}
+	state, exists, err := readHeartbeatCredits(tmpDir)
+	if err != nil {
+		t.Fatalf("read credits: %v", err)
+	}
+	if !exists {
+		t.Fatal("expected credit state to be persisted")
+	}
+	if !state.BootstrapGranted {
+		t.Fatal("expected bootstrap to be marked granted")
+	}
+	if state.Credits != 0 {
+		t.Fatalf("credits after bootstrap consume = %d, want 0", state.Credits)
+	}
+
+	if err := ConsumeHeartbeatCredit(tmpDir); err == nil {
+		t.Fatal("second consume without patrol credit succeeded, want failure")
+	}
+}
+
+func TestGrantHeartbeatCreditsCapsAtOnePatrol(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "deacon-test-*")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = os.RemoveAll(tmpDir) }()
+
+	if err := GrantHeartbeatCredits(tmpDir, "hq-wisp-one", HeartbeatCreditsPerPatrol); err != nil {
+		t.Fatalf("grant credits: %v", err)
+	}
+	if err := GrantHeartbeatCredits(tmpDir, "hq-wisp-two", HeartbeatCreditsPerPatrol); err != nil {
+		t.Fatalf("second grant credits: %v", err)
+	}
+
+	state, _, err := readHeartbeatCredits(tmpDir)
+	if err != nil {
+		t.Fatalf("read credits: %v", err)
+	}
+	if state.Credits != HeartbeatCreditsPerPatrol {
+		t.Fatalf("credits = %d, want cap %d", state.Credits, HeartbeatCreditsPerPatrol)
+	}
+
+	for i := 0; i < HeartbeatCreditsPerPatrol; i++ {
+		if err := ConsumeHeartbeatCredit(tmpDir); err != nil {
+			t.Fatalf("consume credit %d: %v", i+1, err)
+		}
+	}
+	if err := ConsumeHeartbeatCredit(tmpDir); err == nil {
+		t.Fatal("consume after granted credits were exhausted succeeded, want failure")
+	}
+}
+
+func TestGrantHeartbeatCreditsSamePatrolDoesNotTopUp(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "deacon-test-*")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = os.RemoveAll(tmpDir) }()
+
+	if err := GrantHeartbeatCredits(tmpDir, "hq-wisp-one", HeartbeatCreditsPerPatrol); err != nil {
+		t.Fatalf("grant credits: %v", err)
+	}
+	if err := ConsumeHeartbeatCredit(tmpDir); err != nil {
+		t.Fatalf("consume credit: %v", err)
+	}
+	if err := GrantHeartbeatCredits(tmpDir, "hq-wisp-one", HeartbeatCreditsPerPatrol); err != nil {
+		t.Fatalf("repeat grant same patrol: %v", err)
+	}
+
+	state, _, err := readHeartbeatCredits(tmpDir)
+	if err != nil {
+		t.Fatalf("read credits: %v", err)
+	}
+	if state.Credits != HeartbeatCreditsPerPatrol-1 {
+		t.Fatalf("credits = %d, want %d after repeated same-patrol grant", state.Credits, HeartbeatCreditsPerPatrol-1)
+	}
+}
+
 func TestWriteHeartbeat_CreatesDirectory(t *testing.T) {
 	tmpDir, err := os.MkdirTemp("", "deacon-test-*")
 	if err != nil {

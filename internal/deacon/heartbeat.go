@@ -5,9 +5,12 @@ package deacon
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"time"
+
+	"github.com/steveyegge/gastown/internal/lock"
 )
 
 // Heartbeat age thresholds — these are compiled-in defaults.
@@ -22,7 +25,21 @@ const (
 	// Must be greater than patrol backoff-max (15m) to avoid false positives
 	// during legitimate await-signal sleep.
 	HeartbeatVeryStaleThreshold = 20 * time.Minute
+
+	// HeartbeatCreditsPerPatrol matches the three heartbeat calls in
+	// mol-deacon-patrol: cycle start, mid-cycle, and pre-await checkpoint.
+	HeartbeatCreditsPerPatrol = 3
 )
+
+// HeartbeatCreditState gates deacon heartbeat writes on patrol lifecycle
+// progress. It prevents background loops from inflating heartbeat/cycle counts
+// without creating or reporting patrol wisps.
+type HeartbeatCreditState struct {
+	Credits          int       `json:"credits"`
+	PatrolID         string    `json:"patrol_id,omitempty"`
+	BootstrapGranted bool      `json:"bootstrap_granted"`
+	UpdatedAt        time.Time `json:"updated_at"`
+}
 
 // Heartbeat represents the Deacon's heartbeat file contents.
 // Written by the Deacon on each wake cycle.
@@ -47,6 +64,125 @@ type Heartbeat struct {
 // HeartbeatFile returns the path to the Deacon heartbeat file.
 func HeartbeatFile(townRoot string) string {
 	return filepath.Join(townRoot, "deacon", "heartbeat.json")
+}
+
+// HeartbeatCreditFile returns the path to the persisted heartbeat credit state.
+func HeartbeatCreditFile(townRoot string) string {
+	return filepath.Join(townRoot, "deacon", "heartbeat_credits.json")
+}
+
+func readHeartbeatCredits(townRoot string) (*HeartbeatCreditState, bool, error) {
+	data, err := os.ReadFile(HeartbeatCreditFile(townRoot)) //nolint:gosec // G304: path is constructed from trusted townRoot
+	if os.IsNotExist(err) {
+		return &HeartbeatCreditState{}, false, nil
+	}
+	if err != nil {
+		return nil, false, err
+	}
+
+	var state HeartbeatCreditState
+	if err := json.Unmarshal(data, &state); err != nil {
+		return nil, true, err
+	}
+	return &state, true, nil
+}
+
+func writeHeartbeatCredits(townRoot string, state *HeartbeatCreditState) error {
+	path := HeartbeatCreditFile(townRoot)
+	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+		return err
+	}
+	state.UpdatedAt = time.Now().UTC()
+
+	data, err := json.MarshalIndent(state, "", "  ")
+	if err != nil {
+		return err
+	}
+
+	tmp, err := os.CreateTemp(filepath.Dir(path), ".heartbeat_credits-*")
+	if err != nil {
+		return err
+	}
+	tmpPath := tmp.Name()
+	defer os.Remove(tmpPath) //nolint:errcheck // best-effort cleanup after rename/failure
+
+	if _, err := tmp.Write(data); err != nil {
+		_ = tmp.Close()
+		return err
+	}
+	if err := tmp.Chmod(0600); err != nil {
+		_ = tmp.Close()
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+
+	return os.Rename(tmpPath, path)
+}
+
+func withHeartbeatCreditsLock(townRoot string, fn func(*HeartbeatCreditState, bool) error) error {
+	path := HeartbeatCreditFile(townRoot)
+	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+		return err
+	}
+
+	unlock, err := lock.FlockAcquire(path + ".flock")
+	if err != nil {
+		return err
+	}
+	defer unlock()
+
+	state, exists, err := readHeartbeatCredits(townRoot)
+	if err != nil {
+		return err
+	}
+	if err := fn(state, exists); err != nil {
+		return err
+	}
+	return writeHeartbeatCredits(townRoot, state)
+}
+
+// GrantHeartbeatCredits records verified patrol lifecycle progress. Credits are
+// capped at one patrol cycle so repeated lifecycle calls cannot accumulate an
+// unbounded heartbeat budget.
+func GrantHeartbeatCredits(townRoot string, patrolID string, credits int) error {
+	if patrolID == "" {
+		return fmt.Errorf("patrol ID is required to grant deacon heartbeat credits")
+	}
+	if credits <= 0 {
+		return nil
+	}
+	return withHeartbeatCreditsLock(townRoot, func(state *HeartbeatCreditState, _ bool) error {
+		if state.PatrolID == patrolID {
+			return nil
+		}
+		state.PatrolID = patrolID
+		state.BootstrapGranted = true
+		state.Credits = credits
+		if state.Credits > HeartbeatCreditsPerPatrol {
+			state.Credits = HeartbeatCreditsPerPatrol
+		}
+		return nil
+	})
+}
+
+// ConsumeHeartbeatCredit spends one heartbeat credit. A missing state file gets
+// exactly one persisted bootstrap credit for startup before the first patrol
+// wisp is created; restarts do not recreate it after it has been consumed.
+func ConsumeHeartbeatCredit(townRoot string) error {
+	return withHeartbeatCreditsLock(townRoot, func(state *HeartbeatCreditState, exists bool) error {
+		if !exists && !state.BootstrapGranted {
+			state.BootstrapGranted = true
+			state.Credits = 1
+		}
+
+		if state.Credits <= 0 {
+			return fmt.Errorf("deacon heartbeat refused: no patrol heartbeat credits remain; run gt patrol new or complete the current patrol with gt patrol report")
+		}
+		state.Credits--
+		return nil
+	})
 }
 
 // WriteHeartbeat writes a new heartbeat to disk.

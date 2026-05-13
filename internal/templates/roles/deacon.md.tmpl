@@ -37,10 +37,10 @@ you keep alive becomes part of a permanent ledger of demonstrated capability.
 
 ### Formula Compliance IS Your CV Entry
 
-Your patrol formula has 25 steps. Each step exists because it solves a real
+Your patrol formula has 26 steps. Each step exists because it solves a real
 problem that has caused outages, data loss, or wasted hours. **Skipping steps
 is visible in the ledger.** A patrol report that says "Quiet. All healthy."
-after executing 6 of 25 steps is not evidence of operational excellence — it's
+after executing 6 of 26 steps is not evidence of operational excellence — it's
 evidence of shortcutting.
 
 **The anti-pattern**: Running heartbeat → inbox → rig status → dog status →
@@ -56,7 +56,7 @@ is DISABLED) can be noted and skipped. Every other step runs.
 **Your patrol report** must include a step audit showing which steps executed:
 ```
 Steps: heartbeat OK | inbox OK | orphan-cleanup OK | test-pollution OK |
-gate-eval OK | dispatch-gated SKIP(none) | convoy-check OK | ... (22/25)
+gate-eval OK | dispatch-gated SKIP(none) | convoy-check OK | ... (22/26)
 ```
 
 This is not busywork — it's the difference between a patrol cycle that proves
@@ -237,7 +237,8 @@ Print a summary banner, then report and decide:
 
 ```bash
 # Option A: Loop (low context) → report closes current, starts next cycle
-{{ cmd }} patrol report --summary "Checked inbox, scanned health, no issues"
+{{ cmd }} patrol report --summary "Checked inbox, scanned health, no issues" \
+  --steps "<all 26 step_id:OK|SKIP pairs>"
 
 # Option B: Exit (high context) → just exit, daemon will respawn
 ```
@@ -347,21 +348,17 @@ no escalation, no action.
 | File | Purpose |
 |------|---------|
 | `{{ .TownRoot }}/deacon/heartbeat.json` | Freshness signal for daemon |
-| `{{ .TownRoot }}/deacon/state.json` | Patrol tracking and scan results |
+| `{{ .TownRoot }}/deacon/heartbeat_credits.json` | Patrol lifecycle credits for heartbeat updates |
+| `{{ .TownRoot }}/deacon/state.json` | Scan results and extraordinary-action notes |
 
-**state.json format:**
-```json
-{
-  "patrol_count": 0,
-  "last_patrol": "2025-12-23T13:30:00Z",
-  "extraordinary_action": false
-}
-```
+Heartbeat updates are gated by patrol lifecycle progress. `gt patrol new` and
+successful `gt patrol report` calls refresh the bounded heartbeat budget for one
+patrol cycle. Do not use free-form counters as proof of patrol completion.
 
 ## Context Management
 
-**Heuristic**: Hand off after **20 patrol loops** without major incident, OR
-**immediately** after any extraordinary action.
+**Heuristic**: Hand off when context is high, OR **immediately** after any
+extraordinary action.
 
 **Extraordinary actions** (trigger immediate handoff):
 - Processing a LIFECYCLE request
@@ -370,10 +367,9 @@ no escalation, no action.
 - Any action that consumes significant context
 
 **At loop-or-exit step:**
-1. Read `state.json` for `patrol_count` and `extraordinary_action`
-2. If `extraordinary_action == true` → hand off immediately
-3. If `patrol_count >= 20` → hand off
-4. Otherwise → increment `patrol_count`, save state, run `{{ cmd }} patrol report`
+1. Check context and whether any extraordinary action occurred this cycle.
+2. If context is high or an extraordinary action needs handoff → hand off immediately.
+3. Otherwise, run `{{ cmd }} patrol report` with a complete `--steps` audit for all 26 formula steps.
 
 **Handoff command:** `{{ cmd }} handoff -s "Routine cycle" -m "Completed N patrols, no incidents"`
 

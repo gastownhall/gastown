@@ -3,6 +3,7 @@ package cmd
 import (
 	"fmt"
 	"os"
+	"sort"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -93,8 +94,16 @@ func runPatrolReport(cmd *cobra.Command, args []string) error {
 	// Close the current patrol root with the summary
 	b := beads.New(cfg.BeadsDir)
 
-	// Build step audit checklist
+	// Build step audit checklist. Deacon patrol is integrity-sensitive: missing
+	// or partial audits allowed synthetic cycles to look healthy (GH #2386).
 	stepAudit := buildStepAudit(cfg.PatrolMolName, patrolReportSteps)
+	if cfg.RoleName == "deacon" {
+		var auditErr error
+		stepAudit, auditErr = validateStepAudit(cfg.PatrolMolName, patrolReportSteps, cfg.BeadsDir, "")
+		if auditErr != nil {
+			return auditErr
+		}
+	}
 
 	// Update the description with the patrol summary and step audit
 	desc := fmt.Sprintf("Patrol report: %s\n\n%s", patrolReportSummary, stepAudit)
@@ -132,15 +141,115 @@ func runPatrolReport(cmd *cobra.Command, args []string) error {
 		}
 		return fmt.Errorf("starting next patrol cycle: %w", err)
 	}
+	grantDeaconPatrolHeartbeatCredits(cfg, newPatrolID)
 
 	fmt.Printf("%s Started new patrol: %s\n", style.Success.Render("✓"), newPatrolID)
 	return nil
 }
 
+func validateStepAudit(formulaName string, stepsFlag string, townRoot string, rigName string) (string, error) {
+	if strings.TrimSpace(stepsFlag) == "" {
+		return "", fmt.Errorf("--steps is required for %s patrol reports", formulaName)
+	}
+
+	content, err := formula.ResolveFormulaContent(formulaName, townRoot, rigName)
+	if err != nil {
+		return "", fmt.Errorf("loading formula %s: %w", formulaName, err)
+	}
+
+	f, err := formula.Parse(content)
+	if err != nil {
+		return "", fmt.Errorf("parsing formula %s: %w", formulaName, err)
+	}
+
+	allStepIDs := f.GetAllIDs()
+	if len(allStepIDs) == 0 {
+		return "", fmt.Errorf("formula %s has no steps", formulaName)
+	}
+
+	reported, err := parseStepResultsStrict(stepsFlag)
+	if err != nil {
+		return "", err
+	}
+
+	known := make(map[string]bool, len(allStepIDs))
+	for _, stepID := range allStepIDs {
+		known[stepID] = true
+	}
+
+	var unknown []string
+	for stepID := range reported {
+		if !known[stepID] {
+			unknown = append(unknown, stepID)
+		}
+	}
+	if len(unknown) > 0 {
+		sort.Strings(unknown)
+		return "", fmt.Errorf("--steps contains unknown step IDs: %s", strings.Join(unknown, ", "))
+	}
+
+	var missing []string
+	for _, stepID := range allStepIDs {
+		if _, ok := reported[stepID]; !ok {
+			missing = append(missing, stepID)
+		}
+	}
+	if len(missing) > 0 {
+		return "", fmt.Errorf("--steps missing required step IDs: %s", strings.Join(missing, ", "))
+	}
+	for _, requiredOK := range []string{"heartbeat", "loop-or-exit"} {
+		if reported[requiredOK] != "OK" {
+			return "", fmt.Errorf("--steps must mark %s:OK for deacon patrol reports", requiredOK)
+		}
+	}
+
+	var parts []string
+	okCount := 0
+	for _, stepID := range allStepIDs {
+		status := reported[stepID]
+		if status == "OK" {
+			okCount++
+		}
+		parts = append(parts, stepID+" "+status)
+	}
+
+	return fmt.Sprintf("Steps: %s (%d/%d)", strings.Join(parts, " | "), okCount, len(allStepIDs)), nil
+}
+
+func parseStepResultsStrict(stepsFlag string) (map[string]string, error) {
+	results := make(map[string]string)
+	for _, entry := range strings.Split(stepsFlag, ",") {
+		entry = strings.TrimSpace(entry)
+		if entry == "" {
+			return nil, fmt.Errorf("--steps contains an empty entry")
+		}
+
+		parts := strings.SplitN(entry, ":", 2)
+		if len(parts) != 2 {
+			return nil, fmt.Errorf("--steps entry %q must use step:STATUS format", entry)
+		}
+
+		stepID := strings.TrimSpace(parts[0])
+		status := strings.ToUpper(strings.TrimSpace(parts[1]))
+		if stepID == "" || status == "" {
+			return nil, fmt.Errorf("--steps entry %q must include both step and status", entry)
+		}
+		if _, exists := results[stepID]; exists {
+			return nil, fmt.Errorf("--steps contains duplicate step ID %q", stepID)
+		}
+		if status != "OK" && status != "SKIP" {
+			return nil, fmt.Errorf("--steps entry %q has invalid status %q (want OK or SKIP)", stepID, status)
+		}
+
+		results[stepID] = status
+	}
+	return results, nil
+}
+
 // buildStepAudit builds a step checklist from the formula's steps and the
 // reported step results. Format:
 //
-//	Steps: heartbeat OK | inbox-check OK | orphan-cleanup SKIP | ... (14/25)
+//	Steps: heartbeat OK | inbox-check OK | orphan-cleanup SKIP | ... (14/26)
 //
 // If stepsFlag is empty, returns a line indicating the audit was not reported.
 func buildStepAudit(formulaName string, stepsFlag string) string {

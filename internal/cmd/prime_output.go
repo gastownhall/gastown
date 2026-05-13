@@ -1,9 +1,9 @@
 package cmd
 
 import (
-	"github.com/steveyegge/gastown/internal/cli"
 	"encoding/json"
 	"fmt"
+	"github.com/steveyegge/gastown/internal/cli"
 	"io"
 	"os"
 	"path/filepath"
@@ -560,7 +560,7 @@ func outputStartupDirective(ctx RoleContext) {
 		fmt.Println("4. Check mail: `" + cli.Name() + " mail inbox` - look for 🤝 HANDOFF messages")
 		fmt.Println("5. Check for attached patrol: `" + cli.Name() + " hook`")
 		fmt.Println("   - If mol attached → **RUN IT** (resume from current step)")
-		fmt.Println("   - If no mol → create patrol: `bd mol wisp mol-deacon-patrol`")
+		fmt.Println("   - If no mol → create patrol: `" + cli.Name() + " patrol new`")
 	case RoleDog:
 		fmt.Println()
 		fmt.Println("---")

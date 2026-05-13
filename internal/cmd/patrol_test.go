@@ -1,8 +1,12 @@
 package cmd
 
 import (
+	"os"
 	"strings"
 	"testing"
+
+	"github.com/steveyegge/gastown/internal/deacon"
+	"github.com/steveyegge/gastown/internal/formula"
 )
 
 func TestExtractPatrolRole(t *testing.T) {
@@ -234,5 +238,124 @@ func TestBuildStepAudit(t *testing.T) {
 				t.Errorf("buildStepAudit() = %q, want to contain %q", got, tt.wantContain)
 			}
 		})
+	}
+}
+
+func deaconAllOKSteps(t *testing.T) string {
+	t.Helper()
+	content, err := formula.GetEmbeddedFormulaContent("mol-deacon-patrol")
+	if err != nil {
+		t.Fatalf("load deacon formula: %v", err)
+	}
+	f, err := formula.Parse(content)
+	if err != nil {
+		t.Fatalf("parse deacon formula: %v", err)
+	}
+	ids := f.GetAllIDs()
+	parts := make([]string, 0, len(ids))
+	for _, id := range ids {
+		parts = append(parts, id+":OK")
+	}
+	return strings.Join(parts, ",")
+}
+
+func TestValidateStepAudit(t *testing.T) {
+	allOK := deaconAllOKSteps(t)
+	allSkip := strings.ReplaceAll(allOK, ":OK", ":SKIP")
+
+	tests := []struct {
+		name      string
+		stepsFlag string
+		wantErr   string
+	}{
+		{
+			name:      "all steps accepted",
+			stepsFlag: allOK,
+		},
+		{
+			name:      "missing steps rejected",
+			stepsFlag: "heartbeat:OK",
+			wantErr:   "missing required step IDs",
+		},
+		{
+			name:      "empty steps rejected",
+			stepsFlag: "",
+			wantErr:   "--steps is required",
+		},
+		{
+			name:      "unknown step rejected",
+			stepsFlag: allOK + ",made-up:OK",
+			wantErr:   "unknown step IDs",
+		},
+		{
+			name:      "invalid status rejected",
+			stepsFlag: strings.Replace(allOK, "heartbeat:OK", "heartbeat:DONE", 1),
+			wantErr:   "invalid status",
+		},
+		{
+			name:      "duplicate step rejected",
+			stepsFlag: allOK + ",heartbeat:OK",
+			wantErr:   "duplicate step ID",
+		},
+		{
+			name:      "all skip rejected",
+			stepsFlag: allSkip,
+			wantErr:   "heartbeat:OK",
+		},
+		{
+			name:      "malformed entry rejected",
+			stepsFlag: strings.Replace(allOK, "heartbeat:OK", "heartbeat", 1),
+			wantErr:   "step:STATUS",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			audit, err := validateStepAudit("mol-deacon-patrol", tt.stepsFlag, "", "")
+			if tt.wantErr == "" {
+				if err != nil {
+					t.Fatalf("validateStepAudit() error = %v", err)
+				}
+				if !strings.HasSuffix(audit, "(26/26)") {
+					t.Fatalf("audit suffix = %q, want (26/26)", audit)
+				}
+				return
+			}
+			if err == nil {
+				t.Fatalf("validateStepAudit() succeeded, want error containing %q", tt.wantErr)
+			}
+			if !strings.Contains(err.Error(), tt.wantErr) {
+				t.Fatalf("validateStepAudit() error = %q, want containing %q", err.Error(), tt.wantErr)
+			}
+		})
+	}
+}
+
+func TestDeaconHeartbeatCreditsMatchFormula(t *testing.T) {
+	content, err := formula.GetEmbeddedFormulaContent("mol-deacon-patrol")
+	if err != nil {
+		t.Fatalf("load deacon formula: %v", err)
+	}
+	heartbeats := strings.Count(string(content), "gt deacon heartbeat")
+	if heartbeats != deacon.HeartbeatCreditsPerPatrol {
+		t.Fatalf("formula heartbeat calls = %d, HeartbeatCreditsPerPatrol = %d", heartbeats, deacon.HeartbeatCreditsPerPatrol)
+	}
+}
+
+func TestDeaconTemplatePatrolIntegrityGuidance(t *testing.T) {
+	content, err := os.ReadFile("../templates/roles/deacon.md.tmpl")
+	if err != nil {
+		t.Fatalf("read deacon template: %v", err)
+	}
+	template := string(content)
+	for _, stale := range []string{"patrol_count", "25 steps", "/25"} {
+		if strings.Contains(template, stale) {
+			t.Fatalf("deacon template still contains stale patrol guidance %q", stale)
+		}
+	}
+	for _, required := range []string{"26 steps", "--steps"} {
+		if !strings.Contains(template, required) {
+			t.Fatalf("deacon template missing required patrol guidance %q", required)
+		}
 	}
 }

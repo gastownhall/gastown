@@ -8,6 +8,7 @@ import (
 
 	"github.com/steveyegge/gastown/internal/beads"
 	"github.com/steveyegge/gastown/internal/cli"
+	"github.com/steveyegge/gastown/internal/deacon"
 	"github.com/steveyegge/gastown/internal/style"
 	"golang.org/x/text/cases"
 	"golang.org/x/text/language"
@@ -306,6 +307,15 @@ func autoSpawnPatrol(cfg PatrolConfig) (string, error) {
 	return patrolID, nil
 }
 
+func grantDeaconPatrolHeartbeatCredits(cfg PatrolConfig, patrolID string) {
+	if cfg.RoleName != "deacon" {
+		return
+	}
+	if err := deacon.GrantHeartbeatCredits(cfg.BeadsDir, patrolID, deacon.HeartbeatCreditsPerPatrol); err != nil {
+		style.PrintWarning("could not grant deacon heartbeat credits: %v", err)
+	}
+}
+
 // outputPatrolContext is the main function that handles patrol display logic.
 // It finds or creates a patrol and outputs the status and work loop.
 func outputPatrolContext(cfg PatrolConfig) {
@@ -339,12 +349,14 @@ func outputPatrolContext(cfg PatrolConfig) {
 				return
 			}
 		} else {
+			grantDeaconPatrolHeartbeatCredits(cfg, patrolID)
 			fmt.Printf("✓ Created and hooked patrol wisp: %s\n", patrolID)
 		}
 	} else {
 		// Has active patrol - show status
 		fmt.Println("Status: **Patrol Active**")
 		fmt.Printf("Patrol: %s\n\n", strings.TrimSpace(patrolLine))
+		grantDeaconPatrolHeartbeatCredits(cfg, patrolID)
 	}
 
 	// Show patrol work loop instructions

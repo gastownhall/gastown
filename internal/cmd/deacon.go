@@ -526,7 +526,7 @@ func startDeaconSession(t *tmux.Tmux, sessionName, agentOverride string) error {
 		Recipient: "deacon",
 		Sender:    "daemon",
 		Topic:     "patrol",
-	}, "I am Deacon. First run `gt deacon heartbeat`. Then check gt hook, and if it is empty run `gt sling mol-deacon-patrol deacon`, then execute the hook it creates.")
+	}, "I am Deacon. First run `gt deacon heartbeat`. Then check gt hook, and if it is empty run `gt patrol new`, then execute the hook it creates.")
 	startupCmd, err := config.BuildStartupCommandFromConfig(config.AgentEnvConfig{
 		Role:             "deacon",
 		TownRoot:         townRoot,
@@ -808,7 +808,6 @@ func runDeaconHeartbeat(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return fmt.Errorf("not in a Gas Town workspace: %w", err)
 	}
-
 	// Check if Deacon is paused - if so, refuse to update heartbeat
 	paused, state, err := deacon.IsPaused(townRoot)
 	if err != nil {
@@ -820,6 +819,9 @@ func runDeaconHeartbeat(cmd *cobra.Command, args []string) error {
 			fmt.Printf("  Reason: %s\n", state.Reason)
 		}
 		return errors.New("Deacon is paused")
+	}
+	if err := deacon.ConsumeHeartbeatCredit(townRoot); err != nil {
+		return err
 	}
 
 	action := ""
