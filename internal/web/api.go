@@ -725,12 +725,19 @@ func (h *APIHandler) handleOptions(w http.ResponseWriter, r *http.Request) {
 	// Fetch rigs
 	go func() {
 		defer wg.Done()
-		if output, err := h.runGtCommand(r.Context(), 3*time.Second, []string{"rig", "list"}); err == nil {
+		if output, err := h.runGtCommand(r.Context(), 3*time.Second, []string{"rig", "list", "--json"}); err == nil {
 			mu.Lock()
-			resp.Rigs = parseRigListOutput(output)
+			resp.Rigs = parseRigListJSON(output)
 			mu.Unlock()
 		} else {
-			log.Printf("warning: handleOptions: rig list: %v", err)
+			log.Printf("warning: handleOptions: rig list --json: %v", err)
+			if output, fallbackErr := h.runGtCommand(r.Context(), 3*time.Second, []string{"rig", "list"}); fallbackErr == nil {
+				mu.Lock()
+				resp.Rigs = parseRigListOutput(output)
+				mu.Unlock()
+			} else {
+				log.Printf("warning: handleOptions: rig list fallback: %v", fallbackErr)
+			}
 		}
 	}()
 
@@ -839,6 +846,24 @@ func parseRigListOutput(output string) []string {
 			if name != "" && !strings.HasPrefix(name, "Rigs") {
 				rigs = append(rigs, name)
 			}
+		}
+	}
+	return rigs
+}
+
+// parseRigListJSON extracts rig names from JSON output of "gt rig list --json".
+func parseRigListJSON(jsonStr string) []string {
+	var rigList []struct {
+		Name string `json:"name"`
+	}
+	if err := json.Unmarshal([]byte(jsonStr), &rigList); err != nil {
+		return nil
+	}
+
+	rigs := make([]string, 0, len(rigList))
+	for _, rig := range rigList {
+		if rig.Name != "" {
+			rigs = append(rigs, rig.Name)
 		}
 	}
 	return rigs

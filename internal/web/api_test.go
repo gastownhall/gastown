@@ -6,6 +6,8 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -931,6 +933,139 @@ func TestOptionsCacheConcurrentAccess(t *testing.T) {
 	}
 
 	wg.Wait()
+}
+
+func TestParseRigListJSON(t *testing.T) {
+	tests := []struct {
+		name string
+		json string
+		want []string
+	}{
+		{
+			name: "valid JSON with rigs",
+			json: `[{"name":"alpha","status":"operational"},{"name":"greenplace","status":"operational"}]`,
+			want: []string{"alpha", "greenplace"},
+		},
+		{
+			name: "empty array",
+			json: `[]`,
+			want: []string{},
+		},
+		{
+			name: "invalid JSON",
+			json: `{not valid`,
+			want: nil,
+		},
+		{
+			name: "skips empty names",
+			json: `[{"name":"alpha"},{"name":""},{"name":"greenplace"}]`,
+			want: []string{"alpha", "greenplace"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := parseRigListJSON(tt.json)
+			if tt.want == nil {
+				if got != nil {
+					t.Errorf("parseRigListJSON(%q) = %v, want nil", tt.json, got)
+				}
+				return
+			}
+			if len(got) != len(tt.want) {
+				t.Errorf("parseRigListJSON(%q) = %v, want %v", tt.json, got, tt.want)
+				return
+			}
+			for i := range got {
+				if got[i] != tt.want[i] {
+					t.Errorf("parseRigListJSON(%q)[%d] = %q, want %q", tt.json, i, got[i], tt.want[i])
+				}
+			}
+		})
+	}
+}
+
+func TestHandleOptionsUsesRigListJSON(t *testing.T) {
+	binDir := t.TempDir()
+	gtPath := filepath.Join(binDir, "gt")
+	bdPath := filepath.Join(binDir, "bd")
+
+	gtScript := `#!/usr/bin/env sh
+set -eu
+case "$*" in
+  "rig list --json")
+    printf '[{"name":"alpha","status":"operational"},{"name":"greenplace","status":"operational"}]\n'
+    ;;
+  "polecat list --all --json")
+    printf '[]\n'
+    ;;
+  "hooks list")
+    printf '\n'
+    ;;
+  "mail inbox")
+    printf '\n'
+    ;;
+  "crew list --all")
+    printf '\n'
+    ;;
+  "status --json")
+    printf '{"agents":[]}\n'
+    ;;
+  *)
+    printf 'unexpected gt args: %s\n' "$*" >&2
+    exit 2
+    ;;
+esac
+`
+	bdScript := `#!/usr/bin/env sh
+set -eu
+case "$*" in
+  "list --type=convoy --json")
+    printf '[]\n'
+    ;;
+  *)
+    printf 'unexpected bd args: %s\n' "$*" >&2
+    exit 2
+    ;;
+esac
+`
+
+	if err := os.WriteFile(gtPath, []byte(gtScript), 0o755); err != nil {
+		t.Fatalf("write fake gt: %v", err)
+	}
+	if err := os.WriteFile(bdPath, []byte(bdScript), 0o755); err != nil {
+		t.Fatalf("write fake bd: %v", err)
+	}
+	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	h := &APIHandler{
+		gtPath:            gtPath,
+		workDir:           t.TempDir(),
+		defaultRunTimeout: 5 * time.Second,
+		maxRunTimeout:     10 * time.Second,
+		cmdSem:            make(chan struct{}, maxConcurrentCommands),
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/api/options?type=rigs", nil)
+	w := httptest.NewRecorder()
+	h.handleOptions(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("handleOptions returned status %d: %s", w.Code, w.Body.String())
+	}
+	var resp OptionsResponse
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("parse response: %v\nbody=%s", err, w.Body.String())
+	}
+	want := []string{"alpha", "greenplace"}
+	if len(resp.Rigs) != len(want) {
+		t.Fatalf("Rigs = %v, want %v", resp.Rigs, want)
+	}
+	for i := range want {
+		if resp.Rigs[i] != want[i] {
+			t.Fatalf("Rigs[%d] = %q, want %q; full=%v", i, resp.Rigs[i], want[i], resp.Rigs)
+		}
+	}
 }
 
 func TestParseConvoyListJSON(t *testing.T) {
