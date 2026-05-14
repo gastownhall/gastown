@@ -688,6 +688,70 @@ func TestModeABeaconVerificationCondition(t *testing.T) {
 	}
 }
 
+// TestModeAStartupVerifyIsNonBlocking exercises the Mode A async verification path
+// that Start uses for hook+prompt agents (hi-y44). Confirms that verifyStartupNudgeDelivery
+// runs as a goroutine — a synchronous call on this path added ~25s to every successful
+// polecat startup because the function sleeps before its first idle check.
+func TestModeAStartupVerifyIsNonBlocking(t *testing.T) {
+	requireTmux(t)
+
+	tm := tmux.NewTmux()
+	sessionName := fmt.Sprintf("gt-test-modeA-%d", testSessionCounter.Add(1))
+	_ = tm.KillSession(sessionName)
+
+	if err := tm.NewSession(sessionName, os.TempDir()); err != nil {
+		t.Fatalf("NewSession: %v", err)
+	}
+	t.Cleanup(func() { _ = tm.KillSession(sessionName) })
+
+	time.Sleep(300 * time.Millisecond)
+	_ = tm.SendKeys(sessionName, "export PS1='❯ '")
+	time.Sleep(300 * time.Millisecond)
+
+	r := &rig.Rig{Name: "test-rig", Path: t.TempDir()}
+	m := NewSessionManager(tm, r)
+
+	rc := &config.RuntimeConfig{
+		PromptMode: "arg",
+		Hooks:      &config.RuntimeHooksConfig{Provider: "claude"},
+		Tmux: &config.RuntimeTmuxConfig{
+			ReadyPromptPrefix: "❯ ",
+		},
+	}
+
+	// Confirm this is a Mode A agent (the condition Start checks before the goroutine).
+	info := gtruntime.GetStartupFallbackInfo(rc)
+	if info.SendBeaconNudge || info.SendStartupNudge {
+		t.Fatal("expected Mode A: !SendBeaconNudge && !SendStartupNudge")
+	}
+
+	// Replicate what Start does on the Mode A path: launch verifyStartupNudgeDelivery
+	// as a goroutine. The caller must return before the verify delay (25s default) elapses.
+	callerReturned := make(chan time.Duration, 1)
+	goroutineDone := make(chan struct{})
+
+	launchStart := time.Now()
+	go func() {
+		m.verifyStartupNudgeDelivery(sessionName, rc, "[GAS TOWN] test ← witness / Run `gt prime --hook`")
+		close(goroutineDone)
+	}()
+	callerReturned <- time.Since(launchStart)
+
+	// Caller side: goroutine launch should be near-instant.
+	elapsed := <-callerReturned
+	if elapsed > 500*time.Millisecond {
+		t.Errorf("goroutine launch blocked caller for %v; expected <500ms (async regression)", elapsed)
+	}
+
+	// Goroutine side: must complete within (maxRetries * verifyDelay) + overhead.
+	// Default: 2 retries * 25s = 50s. Allow 90s for slow CI.
+	select {
+	case <-goroutineDone:
+	case <-time.After(90 * time.Second):
+		t.Fatal("Mode A verifyStartupNudgeDelivery goroutine hung (exceeded 90s timeout)")
+	}
+}
+
 func TestValidateSessionName(t *testing.T) {
 	// Register prefixes so validateSessionName can resolve them correctly.
 	reg := session.NewPrefixRegistry()

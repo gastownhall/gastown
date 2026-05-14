@@ -575,9 +575,11 @@ func (m *SessionManager) Start(polecat string, opts SessionStartOptions) error {
 	// Fresh spawns may show the Claude Code splash screen with the CLI beacon
 	// pre-filled but not auto-submitted. If the agent is still idle after startup,
 	// re-deliver the work instructions via nudge to kick it into action.
-	// Non-fatal: if verification fails the witness zombie patrol will recover.
+	// Runs asynchronously: verifyStartupNudgeDelivery sleeps before checking, so a
+	// synchronous call would add ~25s to every successful polecat startup on the
+	// common gt sling path. Non-fatal: the witness zombie patrol handles unrecovered stalls.
 	if !fallbackInfo.SendBeaconNudge && !fallbackInfo.SendStartupNudge {
-		m.verifyStartupNudgeDelivery(sessionID, runtimeConfig, startupNudgeContent)
+		go m.verifyStartupNudgeDelivery(sessionID, runtimeConfig, startupNudgeContent)
 	}
 
 	// Legacy fallback for other startup paths (non-fatal)
