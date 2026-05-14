@@ -874,6 +874,14 @@ func (rc *RuntimeConfig) BuildCommandWithPrompt(prompt string) string {
 	}
 
 	if p == "" || resolved.PromptMode == "none" {
+		if p != "" {
+			// A non-empty prompt was silently dropped because prompt_mode is "none".
+			// This commonly happens when a user copies a codex agent entry (which ships
+			// with prompt_mode: "none") to create a claude override, inadvertently
+			// suppressing the daemon's startup beacon injection and causing a crash-loop
+			// that looks like a deacon failure. Warn so misconfiguration is self-diagnosing.
+			fmt.Fprintf(os.Stderr, "warning: agent %q has prompt_mode: \"none\" — startup prompt dropped (agent may not bootstrap correctly)\n", resolved.Command)
+		}
 		return base
 	}
 
@@ -919,6 +927,8 @@ func (rc *RuntimeConfig) BuildArgsWithPrompt(prompt string) []string {
 		default:
 			args = append(args, p)
 		}
+	} else if p != "" {
+		fmt.Fprintf(os.Stderr, "warning: agent %q has prompt_mode: \"none\" — startup prompt dropped (agent may not bootstrap correctly)\n", resolved.Command)
 	}
 
 	return args
