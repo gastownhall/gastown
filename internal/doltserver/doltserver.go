@@ -2563,15 +2563,26 @@ type OrphanedDatabase struct {
 	SizeBytes int64
 }
 
+// protectedSharedServerDatabases returns the registry of databases that are
+// intentionally hosted by the shared Dolt server but are not referenced by any
+// rig's metadata. Mapped to a human-readable owner label used by
+// CollectDatabaseOwners so `gt dolt list` / `gt dolt status` annotate them as
+// protected rather than reporting them as orphans.
+//
+// Single source of truth for orphan-detection skipping (FindOrphanedDatabases,
+// RemoveDatabase) and owner-label reporting (CollectDatabaseOwners). Adding a
+// new protected database here automatically picks up all three surfaces.
+func protectedSharedServerDatabases() map[string]string {
+	return map[string]string{
+		"beads_global": "global shared beads database (protected)",
+	}
+}
+
 // isProtectedSharedServerDatabase reports databases that are intentionally
 // hosted by the shared Dolt server but are not referenced by rig metadata.
 func isProtectedSharedServerDatabase(dbName string) bool {
-	switch dbName {
-	case "beads_global":
-		return true
-	default:
-		return false
-	}
+	_, ok := protectedSharedServerDatabases()[dbName]
+	return ok
 }
 
 // FindOrphanedDatabases scans .dolt-data/ for databases that are not referenced
@@ -2790,6 +2801,20 @@ func CollectDatabaseOwners(townRoot string) map[string]string {
 					owners[db] = dirName + " rig beads"
 				}
 			}
+		}
+	}
+
+	// Label protected shared-server databases so `gt dolt list` doesn't render
+	// them as orphans. Only labels protected DBs that actually exist on disk —
+	// otherwise we'd advertise a phantom owner. Never overwrites a rig-derived
+	// label if one is already present.
+	config := DefaultConfig(townRoot)
+	for dbName, label := range protectedSharedServerDatabases() {
+		if _, already := owners[dbName]; already {
+			continue
+		}
+		if _, err := os.Stat(filepath.Join(config.DataDir, dbName, ".dolt")); err == nil {
+			owners[dbName] = label
 		}
 	}
 

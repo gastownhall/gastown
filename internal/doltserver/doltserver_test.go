@@ -3953,6 +3953,55 @@ func TestCollectDatabaseOwners_UnknownDB(t *testing.T) {
 	}
 }
 
+// TestCollectDatabaseOwners_ProtectedSharedServerDatabaseLabeled verifies that
+// protected shared-server databases (e.g. beads_global) are reported with a
+// dedicated owner label rather than appearing as orphans in `gt dolt list`.
+// Regression for the operator-confusion gap flagged on PR #3823 — the
+// orphan-detection skip alone wasn't enough; CollectDatabaseOwners has to
+// know about the same registry.
+func TestCollectDatabaseOwners_ProtectedSharedServerDatabaseLabeled(t *testing.T) {
+	townRoot := t.TempDir()
+
+	setupRigsJSON(t, townRoot, []string{})
+	setupRigMetadata(t, townRoot, "hq", "hq")
+
+	// Create a beads_global database directory on disk (no rig metadata
+	// references it — that's the whole reason it would otherwise look like
+	// an orphan).
+	dataDir := DefaultConfig(townRoot).DataDir
+	beadsGlobalPath := filepath.Join(dataDir, "beads_global", ".dolt")
+	if err := os.MkdirAll(beadsGlobalPath, 0o755); err != nil {
+		t.Fatalf("mkdir beads_global: %v", err)
+	}
+
+	owners := CollectDatabaseOwners(townRoot)
+	label, ok := owners["beads_global"]
+	if !ok {
+		t.Fatalf("expected beads_global to have an owner label, got owners=%v", owners)
+	}
+	if !strings.Contains(label, "protected") {
+		t.Errorf("expected protected-DB label to mention 'protected', got %q", label)
+	}
+}
+
+// TestCollectDatabaseOwners_ProtectedDatabaseNotPhantom verifies that the
+// protected-DB labeling only kicks in when the database actually exists on
+// disk — otherwise CollectDatabaseOwners would advertise an owner for a DB
+// that doesn't exist on the filesystem, which would be its own kind of
+// confusion.
+func TestCollectDatabaseOwners_ProtectedDatabaseNotPhantom(t *testing.T) {
+	townRoot := t.TempDir()
+
+	setupRigsJSON(t, townRoot, []string{})
+	setupRigMetadata(t, townRoot, "hq", "hq")
+
+	// Intentionally do NOT create beads_global on disk.
+	owners := CollectDatabaseOwners(townRoot)
+	if _, exists := owners["beads_global"]; exists {
+		t.Errorf("beads_global should not be in owners when absent from disk, got %q", owners["beads_global"])
+	}
+}
+
 // =============================================================================
 // writeServerConfig tests
 // =============================================================================
