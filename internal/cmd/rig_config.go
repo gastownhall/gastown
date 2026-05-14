@@ -121,7 +121,12 @@ func runRigConfigShow(cmd *cobra.Command, args []string) error {
 			if result.Source == rig.SourceBlocked {
 				valueStr = "(blocked)"
 			}
-			fmt.Printf("%-25s %-15s %s\n", key, valueStr, sourceStr)
+			annotation := configAnnotation(key, result.Value)
+			if annotation != "" {
+				fmt.Printf("%-25s %-15s %-15s %s\n", key, valueStr, sourceStr, annotation)
+			} else {
+				fmt.Printf("%-25s %-15s %s\n", key, valueStr, sourceStr)
+			}
 		}
 	} else {
 		// Show only effective values
@@ -136,7 +141,12 @@ func runRigConfigShow(cmd *cobra.Command, args []string) error {
 			if result.Source == rig.SourceBlocked {
 				valueStr = "(blocked)"
 			}
-			fmt.Printf("%-25s %s\n", key, valueStr)
+			annotation := configAnnotation(key, result.Value)
+			if annotation != "" {
+				fmt.Printf("%-25s %-15s %s\n", key, valueStr, annotation)
+			} else {
+				fmt.Printf("%-25s %s\n", key, valueStr)
+			}
 		}
 	}
 
@@ -296,6 +306,31 @@ func setBeadLabel(townRoot string, r *rig.Rig, key, value string) error {
 	return bd.Update(rigBeadID, beads.UpdateOptions{
 		SetLabels: newLabels,
 	})
+}
+
+// configAnnotation returns an informational annotation for well-known config keys.
+// Returns an empty string for keys that need no annotation.
+func configAnnotation(key string, value interface{}) string {
+	if key != "max_polecats" {
+		return ""
+	}
+	var n int
+	switch v := value.(type) {
+	case int:
+		n = v
+	case int64:
+		n = int(v)
+	case float64:
+		n = int(v)
+	case string:
+		if i, err := strconv.Atoi(v); err == nil {
+			n = i
+		}
+	}
+	if n > 0 {
+		return "[deferred dispatch: ON — set to -1 to disable]"
+	}
+	return "[deferred dispatch: OFF]"
 }
 
 // formatValue formats a config value for display.
