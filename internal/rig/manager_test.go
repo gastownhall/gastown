@@ -1900,3 +1900,227 @@ func TestBareCloneDefaultBranch(t *testing.T) {
 		t.Errorf("DefaultBranch() = %q, want %q", got, "master")
 	}
 }
+
+func TestBeadsConfigHasSyncRemote(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name       string
+		configYAML string
+		want       bool
+	}{
+		{
+			name:       "sync.remote present",
+			configYAML: "sync.remote: \"git+https://github.com/example/repo.git\"\n",
+			want:       true,
+		},
+		{
+			name:       "sync.remote with single quotes",
+			configYAML: "sync.remote: 'git+ssh://git@github.com/example/repo.git'\n",
+			want:       true,
+		},
+		{
+			name:       "sync.remote empty value",
+			configYAML: "sync.remote: \"\"\n",
+			want:       false,
+		},
+		{
+			name:       "sync.remote absent",
+			configYAML: "prefix: gt\nissue-prefix: gt\n",
+			want:       false,
+		},
+		{
+			name:       "sync.remote commented out",
+			configYAML: "# sync.remote: git+https://example.com/repo.git\nprefix: gt\n",
+			want:       false,
+		},
+		{
+			name:       "sync.remote with prefix and other keys",
+			configYAML: "prefix: gt\nsync.remote: git+https://github.com/org/repo.git\ndolt.idle-timeout: \"0\"\n",
+			want:       true,
+		},
+	}
+
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			dir := t.TempDir()
+			configPath := filepath.Join(dir, "config.yaml")
+			if err := os.WriteFile(configPath, []byte(tt.configYAML), 0644); err != nil {
+				t.Fatalf("writing config: %v", err)
+			}
+			got := beadsConfigHasSyncRemote(configPath)
+			if got != tt.want {
+				t.Errorf("beadsConfigHasSyncRemote() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestBeadsConfigHasSyncRemote_MissingFile(t *testing.T) {
+	t.Parallel()
+	got := beadsConfigHasSyncRemote("/nonexistent/path/config.yaml")
+	if got {
+		t.Error("beadsConfigHasSyncRemote() = true for missing file, want false")
+	}
+}
+
+func TestAddRig_TrackedBeadsWithSyncRemote_PassesReinitFlags(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("shell-based bd shim not reliable on Windows CI")
+	}
+
+	// Fake bd that succeeds on all subcommands and logs bd init args.
+	cmdLog := filepath.Join(t.TempDir(), "bd-cmds.log")
+	script := `#!/usr/bin/env bash
+cmd="$1"
+[[ "$cmd" == "--allow-stale" ]] && { shift; cmd="$1"; }
+shift
+if [[ "$cmd" == "init" ]]; then
+  echo "init $*" >> "$BD_CMD_LOG"
+fi
+case "$cmd" in
+  init|config|migrate) exit 0 ;;
+  show) echo "[]" ;;
+  create)
+    id=""; title=""
+    for arg in "$@"; do
+      case "$arg" in --id=*) id="${arg#--id=}" ;; --title=*) title="${arg#--title=}" ;; esac
+    done
+    printf '{"id":"%s","title":"%s","description":"","issue_type":"agent"}' "$id" "$title"
+    ;;
+  *) exit 0 ;;
+esac
+`
+	binDir := writeFakeBD(t, script, "")
+	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	t.Setenv("BD_CMD_LOG", cmdLog)
+
+	// Create a git repo with .beads/config.yaml containing sync.remote.
+	repoDir := t.TempDir()
+	beadsDir := filepath.Join(repoDir, ".beads")
+	if err := os.MkdirAll(beadsDir, 0755); err != nil {
+		t.Fatalf("mkdir .beads: %v", err)
+	}
+	configYAML := "prefix: gt\nsync.remote: \"git+https://github.com/steveyegge/gastown.git\"\n"
+	if err := os.WriteFile(filepath.Join(beadsDir, "config.yaml"), []byte(configYAML), 0644); err != nil {
+		t.Fatalf("write config.yaml: %v", err)
+	}
+	for _, args := range [][]string{
+		{"git", "init", "--initial-branch=main", repoDir},
+		{"git", "-C", repoDir, "config", "user.email", "test@test.com"},
+		{"git", "-C", repoDir, "config", "user.name", "Test User"},
+		{"git", "-C", repoDir, "add", "."},
+		{"git", "-C", repoDir, "commit", "-m", "Initial commit with beads config"},
+	} {
+		cmd := exec.Command(args[0], args[1:]...)
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("%v: %v\n%s", args, err, out)
+		}
+	}
+
+	root, rigsConfig := setupTestTown(t)
+	manager := NewManager(root, rigsConfig, git.NewGit(root))
+
+	// AddRig may fail after the bd init step (e.g. Dolt not running); that's fine.
+	// We only care that bd init was called with the right flags.
+	_, _ = manager.AddRig(AddRigOptions{
+		Name:          "testrip",
+		GitURL:        repoDir,
+		BeadsPrefix:   "gt",
+		SkipDoltCheck: true,
+	})
+
+	logData, err := os.ReadFile(cmdLog)
+	if err != nil {
+		t.Fatalf("reading bd cmd log: %v", err)
+	}
+	cmds := string(logData)
+
+	if !strings.Contains(cmds, "--reinit-local") {
+		t.Errorf("bd init missing --reinit-local; full log:\n%s", cmds)
+	}
+	if !strings.Contains(cmds, "--discard-remote") {
+		t.Errorf("bd init missing --discard-remote; full log:\n%s", cmds)
+	}
+	if !strings.Contains(cmds, "--destroy-token=DESTROY-gt") {
+		t.Errorf("bd init missing --destroy-token=DESTROY-gt; full log:\n%s", cmds)
+	}
+}
+
+func TestAddRig_TrackedBeadsWithoutSyncRemote_NoReinitFlags(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("shell-based bd shim not reliable on Windows CI")
+	}
+
+	// Fake bd that logs bd init args.
+	cmdLog := filepath.Join(t.TempDir(), "bd-cmds.log")
+	script := `#!/usr/bin/env bash
+cmd="$1"
+[[ "$cmd" == "--allow-stale" ]] && { shift; cmd="$1"; }
+shift
+if [[ "$cmd" == "init" ]]; then
+  echo "init $*" >> "$BD_CMD_LOG"
+fi
+case "$cmd" in
+  init|config|migrate) exit 0 ;;
+  show) echo "[]" ;;
+  create)
+    id=""; title=""
+    for arg in "$@"; do
+      case "$arg" in --id=*) id="${arg#--id=}" ;; --title=*) title="${arg#--title=}" ;; esac
+    done
+    printf '{"id":"%s","title":"%s","description":"","issue_type":"agent"}' "$id" "$title"
+    ;;
+  *) exit 0 ;;
+esac
+`
+	binDir := writeFakeBD(t, script, "")
+	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	t.Setenv("BD_CMD_LOG", cmdLog)
+
+	// Create a git repo with .beads/config.yaml without sync.remote.
+	repoDir := t.TempDir()
+	beadsDir := filepath.Join(repoDir, ".beads")
+	if err := os.MkdirAll(beadsDir, 0755); err != nil {
+		t.Fatalf("mkdir .beads: %v", err)
+	}
+	configYAML := "prefix: gt\n"
+	if err := os.WriteFile(filepath.Join(beadsDir, "config.yaml"), []byte(configYAML), 0644); err != nil {
+		t.Fatalf("write config.yaml: %v", err)
+	}
+	for _, args := range [][]string{
+		{"git", "init", "--initial-branch=main", repoDir},
+		{"git", "-C", repoDir, "config", "user.email", "test@test.com"},
+		{"git", "-C", repoDir, "config", "user.name", "Test User"},
+		{"git", "-C", repoDir, "add", "."},
+		{"git", "-C", repoDir, "commit", "-m", "Initial commit"},
+	} {
+		cmd := exec.Command(args[0], args[1:]...)
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("%v: %v\n%s", args, err, out)
+		}
+	}
+
+	root, rigsConfig := setupTestTown(t)
+	manager := NewManager(root, rigsConfig, git.NewGit(root))
+	_, _ = manager.AddRig(AddRigOptions{
+		Name:          "testrip",
+		GitURL:        repoDir,
+		BeadsPrefix:   "gt",
+		SkipDoltCheck: true,
+	})
+
+	logData, err := os.ReadFile(cmdLog)
+	if err != nil {
+		// No bd init calls logged means the test is inconclusive; skip.
+		t.Skip("bd init was not logged (may have been skipped due to bdDatabaseExists check)")
+	}
+	cmds := string(logData)
+	if strings.Contains(cmds, "--reinit-local") {
+		t.Errorf("bd init should NOT have --reinit-local without sync.remote; got:\n%s", cmds)
+	}
+	if strings.Contains(cmds, "--discard-remote") {
+		t.Errorf("bd init should NOT have --discard-remote without sync.remote; got:\n%s", cmds)
+	}
+}

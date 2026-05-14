@@ -627,6 +627,16 @@ func (m *Manager) AddRig(opts AddRigOptions) (*Rig, error) {
 			// port, causing "database not found" errors. (GH #2405)
 			doltCfg := doltserver.DefaultConfig(m.townRoot)
 			initArgs = append(initArgs, "--server-port", strconv.Itoa(doltCfg.Port))
+			// If the cloned repo's config.yaml has sync.remote, bd init blocks
+			// waiting for interactive confirmation (stdin is /dev/null here).
+			// Pass explicit flags to bypass the safety check. (GH #3873)
+			if beadsConfigHasSyncRemote(sourceBeadsConfig) {
+				initArgs = append(initArgs,
+					"--reinit-local",
+					"--discard-remote",
+					"--destroy-token=DESTROY-"+opts.BeadsPrefix,
+				)
+			}
 			cmd := exec.Command("bd", initArgs...)
 			cmd.Dir = mayorRigPath
 			cmd.Env = sourceBdEnv
@@ -1603,6 +1613,28 @@ func detectBeadsPrefixFromConfig(configPath string) string {
 	}
 
 	return ""
+}
+
+// beadsConfigHasSyncRemote reports whether the given beads config.yaml contains
+// a non-empty sync.remote entry. bd init blocks waiting for interactive
+// confirmation when it detects this, so callers must pass --reinit-local
+// --discard-remote --destroy-token to suppress the prompt. (GH #3873)
+func beadsConfigHasSyncRemote(configPath string) bool {
+	data, err := os.ReadFile(configPath)
+	if err != nil {
+		return false
+	}
+	for _, line := range strings.Split(string(data), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		if strings.HasPrefix(line, "sync.remote:") {
+			value := strings.TrimSpace(strings.TrimPrefix(line, "sync.remote:"))
+			return strings.Trim(value, `"'`) != ""
+		}
+	}
+	return false
 }
 
 // RemoveRig unregisters a rig (does not delete files).
