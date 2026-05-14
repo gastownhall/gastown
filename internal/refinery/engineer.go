@@ -302,6 +302,7 @@ type Engineer struct {
 	mergeSlotRelease      func(holder string) error
 	mergeSlotMaxRetries   int           // Max retries for slot acquisition (0 = no retry)
 	mergeSlotRetryBackoff time.Duration // Initial backoff between retries
+	slingConflictTask     func(taskID, rigName string) error // injectable for testing
 }
 
 // NewEngineer creates a new Engineer for the given rig.
@@ -317,6 +318,7 @@ func NewEngineer(r *rig.Rig) *Engineer {
 	}
 	beadsClient := beads.New(r.Path)
 
+	townRoot := filepath.Dir(r.Path)
 	return &Engineer{
 		rig:     r,
 		beads:   beadsClient,
@@ -336,6 +338,12 @@ func NewEngineer(r *rig.Rig) *Engineer {
 		},
 		mergeSlotMaxRetries:   10,
 		mergeSlotRetryBackoff: 500 * time.Millisecond,
+		slingConflictTask: func(taskID, rigName string) error {
+			cmd := exec.Command("gt", "sling", taskID, rigName, "--no-convoy")
+			util.SetDetachedProcessGroup(cmd)
+			cmd.Dir = townRoot
+			return cmd.Run()
+		},
 	}
 }
 
@@ -1750,6 +1758,16 @@ The Refinery will automatically retry the merge after you force-push.`,
 	// When the task closes, the MR unblocks and re-enters the ready queue.
 
 	_, _ = fmt.Fprintf(e.output, "[Engineer] Created conflict resolution task: %s (P%d)\n", task.ID, task.Priority)
+
+	// Auto-sling the task so it dispatches immediately without manual intervention.
+	// A sling failure is non-fatal: the task exists and can be manually re-slung.
+	if e.slingConflictTask != nil {
+		if slingErr := e.slingConflictTask(task.ID, e.rig.Name); slingErr != nil {
+			_, _ = fmt.Fprintf(e.output, "[Engineer] Warning: failed to auto-sling conflict task %s: %v (requires manual dispatch)\n", task.ID, slingErr)
+		} else {
+			_, _ = fmt.Fprintf(e.output, "[Engineer] Auto-slung conflict task %s to %s\n", task.ID, e.rig.Name)
+		}
+	}
 
 	return task.ID, nil
 }
