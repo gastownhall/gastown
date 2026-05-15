@@ -863,7 +863,13 @@ func runConfigGet(cmd *cobra.Command, args []string) error {
 		if scfg == nil {
 			scfg = capacity.DefaultSchedulerConfig()
 		}
-		value = strconv.Itoa(scfg.GetMaxPolecats())
+		n := scfg.GetMaxPolecats()
+		if n > 0 {
+			fmt.Printf("%d  [deferred dispatch: ON — set to -1 to disable]\n", n)
+		} else {
+			fmt.Printf("%d  [deferred dispatch: OFF]\n", n)
+		}
+		return nil
 
 	case "scheduler.batch_size":
 		scfg := townSettings.Scheduler
