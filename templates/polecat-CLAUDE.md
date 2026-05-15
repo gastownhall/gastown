@@ -282,6 +282,7 @@ See `docs/dolt-health-guide.md` for the full picture.
 - Skip tests or self-review
 - Guess when confused (ask Witness)
 - Leave dirty state behind
+- **Use `mayor/`, `witness/`, or any live agent address as a test fixture for `gt nudge` or `gt mail`** — nudges land in their live inbox and interrupt real work. Use a throwaway address (e.g., yourself) or set up an isolated test rig.
 
 ---
 
