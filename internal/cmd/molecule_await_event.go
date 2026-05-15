@@ -392,7 +392,7 @@ func waitForEventFiles(ctx context.Context, eventDir string, contextCheckAfter t
 
 	// Set up context-yield timer when requested.
 	// A nil channel is never selected, so when contextCheckAfter is zero
-	// the timer case never fires and existing behaviour is preserved.
+	// the timer case never fires and existing behavior is preserved.
 	var contextYieldC <-chan time.Time
 	if contextCheckAfter > 0 {
 		t := time.NewTimer(contextCheckAfter)

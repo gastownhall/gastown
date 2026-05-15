@@ -500,7 +500,7 @@ func TestWaitForEventFilesContextYieldTimeoutWins(t *testing.T) {
 }
 
 func TestWaitForEventFilesNoContextYieldWhenZero(t *testing.T) {
-	// When contextCheckAfter is 0 (not set), behaviour is unchanged:
+	// When contextCheckAfter is 0 (not set), behavior is unchanged:
 	// the wait runs to the full timeout without yielding.
 	dir := t.TempDir()
 
