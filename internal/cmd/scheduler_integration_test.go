@@ -1050,8 +1050,10 @@ func TestSchedulerStatusDispatchMode(t *testing.T) {
 	hqPath, _, gtBinary, env := setupSchedulerIntegrationTown(t)
 
 	t.Run("direct dispatch mode", func(t *testing.T) {
-		// Default setup already has max_polecats>0; set to -1 for direct dispatch
-		runGTCmdOutput(t, gtBinary, hqPath, env, "config", "set", "scheduler.max_polecats", "-1")
+		// Default setup already has max_polecats>0; set to -1 for direct dispatch.
+		// Write settings directly: `gt config set scheduler.max_polecats -1`
+		// fails because cobra parses the leading "-1" as an unknown flag.
+		configureScheduler(t, hqPath, -1, 1)
 		out := runGTCmdOutput(t, gtBinary, hqPath, env, "scheduler", "status")
 		if !strings.Contains(out, "direct") {
 			t.Errorf("expected 'direct' in scheduler status when max_polecats=-1, got:\n%s", out)
@@ -1062,13 +1064,13 @@ func TestSchedulerStatusDispatchMode(t *testing.T) {
 	})
 
 	t.Run("deferred dispatch mode", func(t *testing.T) {
-		runGTCmdOutput(t, gtBinary, hqPath, env, "config", "set", "scheduler.max_polecats", "5")
+		configureScheduler(t, hqPath, 5, 1)
 		out := runGTCmdOutput(t, gtBinary, hqPath, env, "scheduler", "status")
 		if !strings.Contains(out, "deferred") {
 			t.Errorf("expected 'deferred' in scheduler status when max_polecats=5, got:\n%s", out)
 		}
-		if !strings.Contains(out, "5") {
-			t.Errorf("expected max_polecats value '5' in scheduler status output, got:\n%s", out)
+		if !strings.Contains(out, "scheduler.max_polecats=5") {
+			t.Errorf("expected 'scheduler.max_polecats=5' in scheduler status output, got:\n%s", out)
 		}
 	})
 }
