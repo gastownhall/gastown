@@ -112,8 +112,8 @@ func runRigConfigShow(cmd *cobra.Command, args []string) error {
 
 	if rigConfigShowLayers {
 		// Show with sources
-		fmt.Printf("%-25s %-15s %-10s %s\n", "Key", "Value", "Source", "Notes")
-		fmt.Printf("%-25s %-15s %-10s %s\n", "---", "-----", "------", "-----")
+		fmt.Printf("%-25s %-15s %s\n", "Key", "Value", "Source")
+		fmt.Printf("%-25s %-15s %s\n", "---", "-----", "------")
 		for _, key := range allKeys {
 			result := r.GetConfigWithSource(key)
 			valueStr := formatValue(result.Value)
@@ -121,12 +121,7 @@ func runRigConfigShow(cmd *cobra.Command, args []string) error {
 			if result.Source == rig.SourceBlocked {
 				valueStr = "(blocked)"
 			}
-			note := configAnnotation(key, result.Value)
-			if note != "" {
-				fmt.Printf("%-25s %-15s %-10s %s\n", key, valueStr, sourceStr, note)
-			} else {
-				fmt.Printf("%-25s %-15s %s\n", key, valueStr, sourceStr)
-			}
+			fmt.Printf("%-25s %-15s %s\n", key, valueStr, sourceStr)
 		}
 	} else {
 		// Show only effective values
@@ -141,33 +136,11 @@ func runRigConfigShow(cmd *cobra.Command, args []string) error {
 			if result.Source == rig.SourceBlocked {
 				valueStr = "(blocked)"
 			}
-			note := configAnnotation(key, result.Value)
-			if note != "" {
-				fmt.Printf("%-25s %-15s %s\n", key, valueStr, note)
-			} else {
-				fmt.Printf("%-25s %s\n", key, valueStr)
-			}
+			fmt.Printf("%-25s %s\n", key, valueStr)
 		}
 	}
 
 	return nil
-}
-
-// configAnnotation returns an inline annotation for a config key/value pair,
-// explaining behavioural implications that are non-obvious from the value alone.
-// Returns empty string when no annotation is warranted.
-func configAnnotation(key string, value interface{}) string {
-	if key != "max_polecats" {
-		return ""
-	}
-	n, ok := value.(int)
-	if !ok {
-		return ""
-	}
-	if n > 0 {
-		return "[deferred dispatch: ON — set to -1 to disable]"
-	}
-	return "[deferred dispatch: OFF]"
 }
 
 func runRigConfigSet(cmd *cobra.Command, args []string) error {

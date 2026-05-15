@@ -1036,11 +1036,41 @@ func TestSchedulerConfigSetZero(t *testing.T) {
 		t.Errorf("max_polecats=0 should be accepted, got:\n%s", out)
 	}
 
-	// Read it back — should return 0
+	// Read it back — should return bare scalar 0 (machine-readable, no annotation)
 	out = runGTCmdOutput(t, gtBinary, hqPath, env, "config", "get", "scheduler.max_polecats")
 	if strings.TrimSpace(out) != "0" {
-		t.Errorf("max_polecats = %q, want %q", strings.TrimSpace(out), "0")
+		t.Errorf("max_polecats = %q, want bare scalar %q", strings.TrimSpace(out), "0")
 	}
+}
+
+// TestSchedulerStatusDispatchMode verifies that gt scheduler status shows the
+// dispatch mode (deferred/direct) based on scheduler.max_polecats — on the
+// human-readable surface, not the machine-readable gt config get output.
+func TestSchedulerStatusDispatchMode(t *testing.T) {
+	hqPath, _, gtBinary, env := setupSchedulerIntegrationTown(t)
+
+	t.Run("direct dispatch mode", func(t *testing.T) {
+		// Default setup already has max_polecats>0; set to -1 for direct dispatch
+		runGTCmdOutput(t, gtBinary, hqPath, env, "config", "set", "scheduler.max_polecats", "-1")
+		out := runGTCmdOutput(t, gtBinary, hqPath, env, "scheduler", "status")
+		if !strings.Contains(out, "direct") {
+			t.Errorf("expected 'direct' in scheduler status when max_polecats=-1, got:\n%s", out)
+		}
+		if strings.Contains(out, "deferred") {
+			t.Errorf("unexpected 'deferred' in scheduler status when max_polecats=-1, got:\n%s", out)
+		}
+	})
+
+	t.Run("deferred dispatch mode", func(t *testing.T) {
+		runGTCmdOutput(t, gtBinary, hqPath, env, "config", "set", "scheduler.max_polecats", "5")
+		out := runGTCmdOutput(t, gtBinary, hqPath, env, "scheduler", "status")
+		if !strings.Contains(out, "deferred") {
+			t.Errorf("expected 'deferred' in scheduler status when max_polecats=5, got:\n%s", out)
+		}
+		if !strings.Contains(out, "5") {
+			t.Errorf("expected max_polecats value '5' in scheduler status output, got:\n%s", out)
+		}
+	})
 }
 
 // TestSchedulerDeferredNonRigRejection verifies that in deferred mode (max_polecats > 0),

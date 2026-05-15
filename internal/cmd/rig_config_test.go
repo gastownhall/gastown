@@ -69,59 +69,6 @@ func setupTestRigForConfig(t *testing.T) (string, string) {
 	return townRoot, rigName
 }
 
-func TestConfigAnnotation(t *testing.T) {
-	tests := []struct {
-		key      string
-		value    interface{}
-		wantNote string
-	}{
-		{"max_polecats", 10, "[deferred dispatch: ON — set to -1 to disable]"},
-		{"max_polecats", 1, "[deferred dispatch: ON — set to -1 to disable]"},
-		{"max_polecats", 0, "[deferred dispatch: OFF]"},
-		{"max_polecats", -1, "[deferred dispatch: OFF]"},
-		{"max_polecats", nil, ""},
-		{"max_polecats", "10", ""},
-		{"auto_restart", true, ""},
-		{"status", "operational", ""},
-		{"default_formula", "mol-polecat-work", ""},
-	}
-	for _, tc := range tests {
-		got := configAnnotation(tc.key, tc.value)
-		if got != tc.wantNote {
-			t.Errorf("configAnnotation(%q, %v) = %q, want %q", tc.key, tc.value, got, tc.wantNote)
-		}
-	}
-}
-
-func TestRigConfigShow_MaxPolecatAnnotation(t *testing.T) {
-	_, rigName := setupTestRigForConfig(t)
-
-	t.Run("annotates max_polecats ON in basic show", func(t *testing.T) {
-		rigConfigShowLayers = false
-		out := captureStdout(t, func() {
-			if err := runRigConfigShow(rigConfigShowCmd, []string{rigName}); err != nil {
-				t.Fatalf("runRigConfigShow: %v", err)
-			}
-		})
-		if !strings.Contains(out, "deferred dispatch: ON") {
-			t.Errorf("expected 'deferred dispatch: ON' annotation in output, got:\n%s", out)
-		}
-	})
-
-	t.Run("annotates max_polecats ON in --layers show", func(t *testing.T) {
-		rigConfigShowLayers = true
-		t.Cleanup(func() { rigConfigShowLayers = false })
-		out := captureStdout(t, func() {
-			if err := runRigConfigShow(rigConfigShowCmd, []string{rigName}); err != nil {
-				t.Fatalf("runRigConfigShow --layers: %v", err)
-			}
-		})
-		if !strings.Contains(out, "deferred dispatch: ON") {
-			t.Errorf("expected 'deferred dispatch: ON' annotation in --layers output, got:\n%s", out)
-		}
-	})
-}
-
 func TestRigConfigSet_WispLayerWarning(t *testing.T) {
 	t.Run("warns about ephemeral when writing to wisp layer", func(t *testing.T) {
 		townRoot, rigName := setupTestRigForConfig(t)

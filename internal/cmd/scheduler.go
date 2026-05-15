@@ -9,6 +9,7 @@ import (
 
 	"github.com/spf13/cobra"
 	"github.com/steveyegge/gastown/internal/beads"
+	"github.com/steveyegge/gastown/internal/config"
 	"github.com/steveyegge/gastown/internal/scheduler/capacity"
 	"github.com/steveyegge/gastown/internal/session"
 	"github.com/steveyegge/gastown/internal/style"
@@ -175,11 +176,25 @@ func runSchedulerStatus(cmd *cobra.Command, args []string) error {
 		}
 	}
 
+	// Load scheduler config for dispatch mode line.
+	settingsPath := config.TownSettingsPath(townRoot)
+	settings, _ := config.LoadOrCreateTownSettings(settingsPath)
+	schedulerCfg := settings.Scheduler
+	if schedulerCfg == nil {
+		schedulerCfg = capacity.DefaultSchedulerConfig()
+	}
+	maxPolecats := schedulerCfg.GetMaxPolecats()
+
 	fmt.Printf("%s\n\n", style.Bold.Render("Scheduler Status"))
 	if state.Paused {
 		fmt.Printf("  State:    %s (by %s)\n", style.Warning.Render("PAUSED"), state.PausedBy)
 	} else {
 		fmt.Printf("  State:    active\n")
+	}
+	if maxPolecats > 0 {
+		fmt.Printf("  Dispatch:  deferred (scheduler.max_polecats=%d) — set to -1 to disable\n", maxPolecats)
+	} else {
+		fmt.Printf("  Dispatch:  direct (scheduler.max_polecats=%d)\n", maxPolecats)
 	}
 	fmt.Printf("  Scheduled: %d total, %d ready\n", len(scheduled), readyCount)
 	fmt.Printf("  Active:    %d polecats\n", activePolecats)
