@@ -1743,6 +1743,34 @@ func updateAgentStateOnDone(cwd, townRoot, exitType, issueID string) {
 		}
 	}
 
+	// BUG FIX (gt-35wl): DEFERRED exit must un-hook the bead so it can be re-dispatched.
+	// Previously, DEFERRED exits left the bead in "hooked" status forever — the block above
+	// was skipped entirely for DEFERRED, so the status was never changed. This prevented
+	// the Witness/Mayor from re-slinging the bead to a fresh polecat.
+	// Change status from "hooked" → "open" and close the attached molecule/wisp so a fresh
+	// one is created on next dispatch.
+	if hookedBeadID != "" && exitType == ExitDeferred {
+		if hookedBead, err := bd.Show(hookedBeadID); err == nil {
+			if beads.IssueStatus(hookedBead.Status) == beads.IssueStatusHooked {
+				openStatus := string(beads.StatusOpen)
+				if updateErr := bd.Update(hookedBeadID, beads.UpdateOptions{Status: &openStatus}); updateErr != nil {
+					fmt.Fprintf(os.Stderr, "Warning: couldn't unhook bead %s on DEFERRED exit: %v\n", hookedBeadID, updateErr)
+				}
+			}
+			// Close the attached molecule/wisp so it doesn't remain orphaned.
+			// A fresh molecule will be created when the bead is re-dispatched.
+			attachment := beads.ParseAttachmentFields(hookedBead)
+			if attachment != nil && attachment.AttachedMolecule != "" {
+				if n := closeDescendants(bd, attachment.AttachedMolecule); n > 0 {
+					fmt.Fprintf(os.Stderr, "Closed %d molecule step(s) for %s\n", n, attachment.AttachedMolecule)
+				}
+				if closeErr := bd.ForceCloseWithReason("deferred", attachment.AttachedMolecule); closeErr != nil && !errors.Is(closeErr, beads.ErrNotFound) {
+					fmt.Fprintf(os.Stderr, "Warning: couldn't close attached molecule %s: %v\n", attachment.AttachedMolecule, closeErr)
+				}
+			}
+		}
+	}
+
 doneStateUpdate:
 	// Clear hook_bead on the agent bead (gt-qbh). The hq-l6mm5 refactor made
 	// SetHookBead/ClearHookBead no-ops, but the witness still reads the

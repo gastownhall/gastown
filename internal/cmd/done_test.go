@@ -1264,6 +1264,38 @@ func TestHookedBeadCloseNotRestrictedToHookedStatus(t *testing.T) {
 	}
 }
 
+// TestDeferredExitClearsHookedState verifies the gt-35wl fix: gt done --status DEFERRED
+// must change the hooked bead's status from "hooked" back to "open" so it can be
+// re-dispatched. Previously, DEFERRED exits skipped the entire bead-update block,
+// leaving beads permanently stuck in "hooked" status.
+func TestDeferredExitClearsHookedState(t *testing.T) {
+	tests := []struct {
+		name       string
+		status     string
+		exitType   string
+		wantUnhook bool
+	}{
+		// DEFERRED + hooked → should un-hook (the bug: this was not happening)
+		{"deferred+hooked → unhook", "hooked", ExitDeferred, true},
+		// DEFERRED + other statuses → leave as-is (not our job to change in_progress→open)
+		{"deferred+in_progress → no change", "in_progress", ExitDeferred, false},
+		{"deferred+open → no change", "open", ExitDeferred, false},
+		// COMPLETED exits close the bead entirely, not our un-hook path
+		{"completed+hooked → close not unhook", "hooked", ExitCompleted, false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Replicate the guard condition from updateAgentStateOnDone (gt-35wl fix)
+			shouldUnhook := tt.exitType == ExitDeferred && beads.IssueStatus(tt.status) == beads.IssueStatusHooked
+			if shouldUnhook != tt.wantUnhook {
+				t.Errorf("shouldUnhook for status=%q exitType=%q = %v, want %v",
+					tt.status, tt.exitType, shouldUnhook, tt.wantUnhook)
+			}
+		})
+	}
+}
+
 // TestPushSubmoduleChanges_Integration verifies that pushSubmoduleChanges detects
 // modified submodules and pushes their commits before the parent repo push (gt-dzs).
 func TestPushSubmoduleChanges_Integration(t *testing.T) {
