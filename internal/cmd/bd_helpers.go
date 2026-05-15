@@ -101,6 +101,32 @@ func filterEnvKey(env []string, key string) []string {
 	return result
 }
 
+func filterBdTargetEnv(env []string) []string {
+	for _, key := range []string{
+		"BEADS_DIR",
+		"BEADS_DB",
+		"BEADS_DOLT_SERVER_DATABASE",
+		"BEADS_DOLT_SERVER_HOST",
+		"BEADS_DOLT_SERVER_PORT",
+		"BEADS_DOLT_PORT",
+	} {
+		env = filterEnvKey(env, key)
+	}
+	return env
+}
+
+func pinBeadsDirEnv(env []string, beadsDir string) []string {
+	env = filterBdTargetEnv(env)
+	if beadsDir == "" {
+		return env
+	}
+	env = append(env, "BEADS_DIR="+beadsDir)
+	if dbEnv := beads.DatabaseEnv(beadsDir); dbEnv != "" {
+		env = append(env, dbEnv)
+	}
+	return env
+}
+
 // buildEnv constructs the final environment slice based on configured options.
 func (b *bdCmd) buildEnv() []string {
 	env := b.env
@@ -123,12 +149,15 @@ func (b *bdCmd) buildEnv() []string {
 	// Add BEADS_DIR if specified.
 	// This prevents inherited BEADS_DIR from causing bd to target the wrong
 	// database (e.g., HQ instead of rig). See gt-ctir.
+	//
+	// Also clear inherited Dolt target variables. Dashboard and agent shells can
+	// carry a town-level or remote BEADS_DOLT_* target; keeping it while changing
+	// BEADS_DIR makes `bd show <displayed-id>` query a different database than
+	// `gt ready` used to render the row.
 	if b.beadsDir != "" {
-		env = filterEnvKey(env, "BEADS_DIR")
-		env = append(env, "BEADS_DIR="+b.beadsDir)
+		env = pinBeadsDirEnv(env, b.beadsDir)
 	} else if b.dir != "" {
-		env = filterEnvKey(env, "BEADS_DIR")
-		env = append(env, "BEADS_DIR="+beads.ResolveBeadsDir(b.dir))
+		env = pinBeadsDirEnv(env, beads.ResolveBeadsDir(b.dir))
 	}
 
 	return env

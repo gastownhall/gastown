@@ -3,8 +3,8 @@ package cmd
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -137,6 +137,10 @@ func runReady(cmd *cobra.Command, args []string) error {
 				// Defense-in-depth: also filter wisps that shouldn't appear in ready work
 				wispIDs := getWispIDs(townBeadsPath)
 				filtered = filterWisps(filtered, wispIDs)
+				// Only show work whose ID routes back to the source that reported it.
+				// Otherwise the dashboard can render a row that `gt sling <same-id>`
+				// cannot resolve because routes.jsonl points that prefix elsewhere.
+				filtered = filterReadyIssuesByRoute(townRoot, "town", filtered)
 				// Filter identity beads (agents, roles, rigs) - not actionable work
 				src.Issues = filterIdentityBeads(filtered)
 			}
@@ -166,6 +170,10 @@ func runReady(cmd *cobra.Command, args []string) error {
 				// Defense-in-depth: also filter wisps that shouldn't appear in ready work
 				wispIDs := getWispIDs(r.BeadsPath())
 				filtered = filterWisps(filtered, wispIDs)
+				// Only show work whose ID routes back to this rig. This keeps the
+				// Ready Across Rigs surface honest: every displayed ID must be
+				// usable by the stock `gt sling <id> <rig>` command.
+				filtered = filterReadyIssuesByRoute(townRoot, r.Name, filtered)
 				// Filter identity beads (agents, roles, rigs) - not actionable work
 				src.Issues = filterIdentityBeads(filtered)
 			}
@@ -383,9 +391,11 @@ func filterFormulaScaffolds(issues []*beads.Issue, formulaNames map[string]bool)
 // This is a defense-in-depth exclusion - bd ready should already filter wisps,
 // but we double-check at the display layer to ensure operational work doesn't leak.
 func getWispIDs(beadsPath string) map[string]bool {
-	cmd := exec.Command("bd", "mol", "wisp", "list", "--json")
-	cmd.Dir = beadsPath
-	output, err := cmd.Output()
+	output, err := BdCmd("mol", "wisp", "list", "--json").
+		Dir(beadsPath).
+		StripBeadsDir().
+		Stderr(io.Discard).
+		Output()
 	if err != nil {
 		return nil // Wisp table may not exist or Dolt unavailable
 	}
@@ -454,6 +464,42 @@ func filterIdentityBeads(issues []*beads.Issue) []*beads.Issue {
 		filtered = append(filtered, issue)
 	}
 	return filtered
+}
+
+// filterReadyIssuesByRoute keeps only issues whose prefix route matches the
+// source that reported them. Ready rows are actionable: the dashboard renders a
+// Sling button for each row, so the displayed ID must resolve through the same
+// routes.jsonl path that produced it.
+func filterReadyIssuesByRoute(townRoot, source string, issues []*beads.Issue) []*beads.Issue {
+	if townRoot == "" {
+		return issues
+	}
+
+	filtered := make([]*beads.Issue, 0, len(issues))
+	for _, issue := range issues {
+		if readyIssueRoutesToSource(townRoot, source, issue.ID) {
+			filtered = append(filtered, issue)
+		}
+	}
+	return filtered
+}
+
+func readyIssueRoutesToSource(townRoot, source, issueID string) bool {
+	prefix := beads.ExtractPrefix(issueID)
+	if prefix == "" {
+		return false
+	}
+
+	routePath := beads.GetRigPathForPrefix(townRoot, prefix)
+	if routePath == "" {
+		return false
+	}
+
+	if source == "town" {
+		return routePath == townRoot
+	}
+
+	return beads.GetRigNameForPrefix(townRoot, prefix) == source
 }
 
 // filterWisps removes wisp issues from the list.

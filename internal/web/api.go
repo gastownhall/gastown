@@ -10,11 +10,14 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/steveyegge/gastown/internal/beads"
+	"github.com/steveyegge/gastown/internal/config"
 	"github.com/steveyegge/gastown/internal/session"
 	"github.com/steveyegge/gastown/internal/tmux"
 )
@@ -695,6 +698,16 @@ type OptionsResponse struct {
 // handleOptions returns dynamic options for command arguments.
 // Results are cached for 30 seconds to avoid slow repeated fetches.
 func (h *APIHandler) handleOptions(w http.ResponseWriter, r *http.Request) {
+	optionType := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("type")))
+
+	if optionType == "rigs" {
+		resp := &OptionsResponse{}
+		resp.Rigs = h.loadRigOptions(r.Context())
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(resp)
+		return
+	}
+
 	// Check cache first — serialize under RLock to a buffer so we don't
 	// hold the lock while writing to the ResponseWriter (which can block
 	// on slow clients).
@@ -725,20 +738,9 @@ func (h *APIHandler) handleOptions(w http.ResponseWriter, r *http.Request) {
 	// Fetch rigs
 	go func() {
 		defer wg.Done()
-		if output, err := h.runGtCommand(r.Context(), 3*time.Second, []string{"rig", "list", "--json"}); err == nil {
-			mu.Lock()
-			resp.Rigs = parseRigListJSON(output)
-			mu.Unlock()
-		} else {
-			log.Printf("warning: handleOptions: rig list --json: %v", err)
-			if output, fallbackErr := h.runGtCommand(r.Context(), 3*time.Second, []string{"rig", "list"}); fallbackErr == nil {
-				mu.Lock()
-				resp.Rigs = parseRigListOutput(output)
-				mu.Unlock()
-			} else {
-				log.Printf("warning: handleOptions: rig list fallback: %v", fallbackErr)
-			}
-		}
+		mu.Lock()
+		resp.Rigs = h.loadRigOptions(r.Context())
+		mu.Unlock()
 	}()
 
 	// Fetch polecats
@@ -824,6 +826,75 @@ func (h *APIHandler) handleOptions(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("X-Cache", "MISS")
 	_ = json.NewEncoder(w).Encode(resp)
+}
+
+func (h *APIHandler) loadRigOptions(ctx context.Context) []string {
+	if rigs, err := h.loadRigOptionsFromConfig(); err == nil {
+		return rigs
+	}
+
+	if output, err := h.runGtCommand(ctx, 3*time.Second, []string{"rig", "list", "--json"}); err == nil {
+		return parseRigListJSON(output)
+	} else {
+		log.Printf("warning: handleOptions: rig list --json: %v", err)
+	}
+
+	if output, err := h.runGtCommand(ctx, 3*time.Second, []string{"rig", "list"}); err == nil {
+		return parseRigListOutput(output)
+	} else {
+		log.Printf("warning: handleOptions: rig list fallback: %v", err)
+	}
+
+	return nil
+}
+
+func (h *APIHandler) loadRigOptionsFromConfig() ([]string, error) {
+	rigsPath, err := findRigsConfigPath(h.workDir)
+	if err != nil {
+		return nil, err
+	}
+	rigsConfig, err := config.LoadRigsConfig(rigsPath)
+	if err != nil {
+		return nil, err
+	}
+
+	rigs := make([]string, 0, len(rigsConfig.Rigs))
+	for name := range rigsConfig.Rigs {
+		if strings.TrimSpace(name) != "" {
+			rigs = append(rigs, name)
+		}
+	}
+	sort.Strings(rigs)
+	return rigs, nil
+}
+
+func findRigsConfigPath(startDir string) (string, error) {
+	dir := startDir
+	if dir == "" {
+		var err error
+		dir, err = os.Getwd()
+		if err != nil {
+			return "", err
+		}
+	}
+
+	dir, err := filepath.Abs(dir)
+	if err != nil {
+		return "", err
+	}
+
+	for {
+		rigsPath := filepath.Join(dir, "mayor", "rigs.json")
+		if _, err := os.Stat(rigsPath); err == nil {
+			return rigsPath, nil
+		}
+
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			return "", os.ErrNotExist
+		}
+		dir = parent
+	}
 }
 
 // parseRigListOutput extracts rig names from the text output of "gt rig list".

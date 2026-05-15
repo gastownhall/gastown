@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+
+	"github.com/steveyegge/gastown/internal/beads"
 )
 
 // execBdShow runs 'bd show' with stdio passthrough on Windows.
@@ -18,13 +20,15 @@ func execBdShow(args []string) error {
 		return fmt.Errorf("bd not found in PATH: %w", err)
 	}
 
+	beadsDir := ""
 	if beadID := extractBeadIDFromArgs(args); beadID != "" {
 		if dir := resolveBeadDir(beadID); dir != "" && dir != "." {
 			_ = os.Chdir(dir)
+			beadsDir = beads.ResolveBeadsDir(dir)
 		}
 	}
 
-	env := stripEnvKey(os.Environ(), "BEADS_DIR")
+	env := pinBeadsDirEnv(os.Environ(), beadsDir)
 
 	cmdArgs := append([]string{"show"}, args...)
 	cmd := exec.Command(bdPath, cmdArgs...)

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -472,6 +473,47 @@ func TestBdCmd_WithBeadsDir_OverridesInherited(t *testing.T) {
 	}
 	if count != 1 {
 		t.Errorf("found %d BEADS_DIR entries, want 1 (dedup must remove old)", count)
+	}
+}
+
+func TestBdCmd_WithBeadsDir_OverridesInheritedDoltTarget(t *testing.T) {
+	beadsDir := filepath.Join(t.TempDir(), ".beads")
+	if err := os.MkdirAll(beadsDir, 0755); err != nil {
+		t.Fatalf("mkdir beads dir: %v", err)
+	}
+	metadata := []byte(`{"backend":"dolt","dolt_database":"rigdb","dolt_server_host":"127.0.0.1","dolt_server_port":3307}`)
+	if err := os.WriteFile(filepath.Join(beadsDir, "metadata.json"), metadata, 0644); err != nil {
+		t.Fatalf("write metadata: %v", err)
+	}
+
+	baseEnv := []string{
+		"PATH=/usr/bin",
+		"BEADS_DIR=/town/.beads",
+		"BEADS_DB=stale",
+		"BEADS_DOLT_SERVER_DATABASE=hq",
+		"BEADS_DOLT_SERVER_HOST=100.107.173.83",
+		"BEADS_DOLT_SERVER_PORT=3307",
+		"BEADS_DOLT_PORT=3307",
+	}
+
+	bdc := &bdCmd{
+		args:   []string{"show", "bds-abc", "--json"},
+		env:    baseEnv,
+		stderr: os.Stderr,
+	}
+	cmd := bdc.WithBeadsDir(beadsDir).Build()
+	envMap := parseEnv(cmd.Env)
+
+	if envMap["BEADS_DIR"] != beadsDir {
+		t.Errorf("BEADS_DIR = %q, want %q", envMap["BEADS_DIR"], beadsDir)
+	}
+	if envMap["BEADS_DOLT_SERVER_DATABASE"] != "rigdb" {
+		t.Errorf("BEADS_DOLT_SERVER_DATABASE = %q, want rigdb", envMap["BEADS_DOLT_SERVER_DATABASE"])
+	}
+	for _, key := range []string{"BEADS_DB", "BEADS_DOLT_SERVER_HOST", "BEADS_DOLT_SERVER_PORT", "BEADS_DOLT_PORT"} {
+		if value, ok := envMap[key]; ok {
+			t.Errorf("%s should be stripped when BEADS_DIR is pinned, got %q", key, value)
+		}
 	}
 }
 

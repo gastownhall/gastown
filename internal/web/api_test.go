@@ -1068,6 +1068,147 @@ esac
 	}
 }
 
+func TestHandleOptionsTypeRigsOnlyFetchesRigs(t *testing.T) {
+	binDir := t.TempDir()
+	gtPath := filepath.Join(binDir, "gt")
+
+	gtScript := `#!/usr/bin/env sh
+set -eu
+case "$*" in
+  "rig list --json")
+    printf '[{"name":"bd_symphony","status":"operational"}]\n'
+    ;;
+  *)
+    printf 'unexpected gt args: %s\n' "$*" >&2
+    exit 2
+    ;;
+esac
+`
+
+	if err := os.WriteFile(gtPath, []byte(gtScript), 0o755); err != nil {
+		t.Fatalf("write fake gt: %v", err)
+	}
+	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	h := &APIHandler{
+		gtPath:            gtPath,
+		workDir:           t.TempDir(),
+		defaultRunTimeout: 5 * time.Second,
+		maxRunTimeout:     10 * time.Second,
+		cmdSem:            make(chan struct{}, maxConcurrentCommands),
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/api/options?type=rigs", nil)
+	w := httptest.NewRecorder()
+	h.handleOptions(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("handleOptions returned status %d: %s", w.Code, w.Body.String())
+	}
+	var resp OptionsResponse
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("parse response: %v\nbody=%s", err, w.Body.String())
+	}
+	if got, want := resp.Rigs, []string{"bd_symphony"}; len(got) != len(want) || got[0] != want[0] {
+		t.Fatalf("Rigs = %v, want %v", got, want)
+	}
+	if len(resp.Convoys) != 0 || len(resp.Hooks) != 0 || len(resp.Agents) != 0 {
+		t.Fatalf("type=rigs response included unrelated options: %+v", resp)
+	}
+}
+
+func TestHandleOptionsTypeRigsUsesConfigWithoutCommands(t *testing.T) {
+	workDir := t.TempDir()
+	mayorDir := filepath.Join(workDir, "mayor")
+	if err := os.MkdirAll(mayorDir, 0o755); err != nil {
+		t.Fatalf("create mayor dir: %v", err)
+	}
+	rigsJSON := `{"version":1,"rigs":{"zeta":{"git_url":"x","added_at":"2026-01-01T00:00:00Z"},"bd_symphony":{"git_url":"x","added_at":"2026-01-01T00:00:00Z"}}}`
+	if err := os.WriteFile(filepath.Join(mayorDir, "rigs.json"), []byte(rigsJSON), 0o644); err != nil {
+		t.Fatalf("write rigs.json: %v", err)
+	}
+
+	binDir := t.TempDir()
+	gtPath := filepath.Join(binDir, "gt")
+	if err := os.WriteFile(gtPath, []byte("#!/usr/bin/env sh\nexit 23\n"), 0o755); err != nil {
+		t.Fatalf("write fake gt: %v", err)
+	}
+
+	h := &APIHandler{
+		gtPath:            gtPath,
+		workDir:           workDir,
+		defaultRunTimeout: 5 * time.Second,
+		maxRunTimeout:     10 * time.Second,
+		cmdSem:            make(chan struct{}, maxConcurrentCommands),
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/api/options?type=rigs", nil)
+	w := httptest.NewRecorder()
+	h.handleOptions(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("handleOptions returned status %d: %s", w.Code, w.Body.String())
+	}
+	var resp OptionsResponse
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("parse response: %v\nbody=%s", err, w.Body.String())
+	}
+	want := []string{"bd_symphony", "zeta"}
+	if len(resp.Rigs) != len(want) {
+		t.Fatalf("Rigs = %v, want %v", resp.Rigs, want)
+	}
+	for i := range want {
+		if resp.Rigs[i] != want[i] {
+			t.Fatalf("Rigs[%d] = %q, want %q; full=%v", i, resp.Rigs[i], want[i], resp.Rigs)
+		}
+	}
+}
+
+func TestHandleOptionsTypeRigsFindsConfigFromSubdir(t *testing.T) {
+	townRoot := t.TempDir()
+	mayorDir := filepath.Join(townRoot, "mayor")
+	if err := os.MkdirAll(mayorDir, 0o755); err != nil {
+		t.Fatalf("create mayor dir: %v", err)
+	}
+	rigsJSON := `{"version":1,"rigs":{"bd_symphony":{"git_url":"x","added_at":"2026-01-01T00:00:00Z"}}}`
+	if err := os.WriteFile(filepath.Join(mayorDir, "rigs.json"), []byte(rigsJSON), 0o644); err != nil {
+		t.Fatalf("write rigs.json: %v", err)
+	}
+	subdir := filepath.Join(townRoot, "bd_symphony", "mayor", "rig")
+	if err := os.MkdirAll(subdir, 0o755); err != nil {
+		t.Fatalf("create subdir: %v", err)
+	}
+
+	binDir := t.TempDir()
+	gtPath := filepath.Join(binDir, "gt")
+	if err := os.WriteFile(gtPath, []byte("#!/usr/bin/env sh\nexit 23\n"), 0o755); err != nil {
+		t.Fatalf("write fake gt: %v", err)
+	}
+
+	h := &APIHandler{
+		gtPath:            gtPath,
+		workDir:           subdir,
+		defaultRunTimeout: 5 * time.Second,
+		maxRunTimeout:     10 * time.Second,
+		cmdSem:            make(chan struct{}, maxConcurrentCommands),
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/api/options?type=rigs", nil)
+	w := httptest.NewRecorder()
+	h.handleOptions(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("handleOptions returned status %d: %s", w.Code, w.Body.String())
+	}
+	var resp OptionsResponse
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("parse response: %v\nbody=%s", err, w.Body.String())
+	}
+	if got, want := resp.Rigs, []string{"bd_symphony"}; len(got) != len(want) || got[0] != want[0] {
+		t.Fatalf("Rigs = %v, want %v", got, want)
+	}
+}
+
 func TestParseConvoyListJSON(t *testing.T) {
 	tests := []struct {
 		name string

@@ -1784,7 +1784,7 @@
         fetch('/api/run', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ command: cmd, confirmed: true })
+            body: JSON.stringify({ command: cmd, confirmed: true, timeout: 120 })
         })
         .then(function(r) { return r.json(); })
         .then(function(data) {
@@ -2684,7 +2684,7 @@
         fetch('/api/run', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ command: cmd, confirmed: true })
+            body: JSON.stringify({ command: cmd, confirmed: true, timeout: 120 })
         })
         .then(function(r) { return r.json(); })
         .then(function(data) {

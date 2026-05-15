@@ -59,6 +59,7 @@ func runDashboard(cmd *cobra.Command, args []string) error {
 	// Check if we're in a workspace - if not, run in setup mode
 	var handler http.Handler
 	var err error
+	webCfg := config.DefaultWebTimeoutsConfig()
 
 	townRoot, wsErr := workspace.FindFromCwdOrError()
 	if wsErr != nil {
@@ -81,9 +82,10 @@ func runDashboard(cmd *cobra.Command, args []string) error {
 		}
 
 		// Load web timeouts config (nil-safe: NewDashboardMux applies defaults)
-		var webCfg *config.WebTimeoutsConfig
 		if ts, loadErr := config.LoadOrCreateTownSettings(config.TownSettingsPath(townRoot)); loadErr == nil {
-			webCfg = ts.WebTimeouts
+			if ts.WebTimeouts != nil {
+				webCfg = ts.WebTimeouts
+			}
 		} else {
 			fmt.Fprintf(cmd.ErrOrStderr(), "warning: loading town settings: %v (using defaults)\n", loadErr)
 		}
@@ -109,6 +111,12 @@ func runDashboard(cmd *cobra.Command, args []string) error {
 	// Open browser if requested
 	if dashboardOpen {
 		go openBrowser(url)
+	}
+
+	maxRunTimeout := config.ParseDurationOrDefault(webCfg.MaxRunTimeout, 120*time.Second)
+	writeTimeout := maxRunTimeout + 15*time.Second
+	if writeTimeout < 60*time.Second {
+		writeTimeout = 60 * time.Second
 	}
 
 	// Start the server with timeouts
@@ -147,7 +155,7 @@ func runDashboard(cmd *cobra.Command, args []string) error {
 		Handler:           handler,
 		ReadHeaderTimeout: 10 * time.Second,
 		ReadTimeout:       30 * time.Second,
-		WriteTimeout:      60 * time.Second,
+		WriteTimeout:      writeTimeout,
 		IdleTimeout:       120 * time.Second,
 	}
 	return server.ListenAndServe()

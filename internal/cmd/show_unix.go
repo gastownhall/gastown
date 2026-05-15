@@ -7,6 +7,8 @@ import (
 	"os"
 	"os/exec"
 	"syscall"
+
+	"github.com/steveyegge/gastown/internal/beads"
 )
 
 // execBdShow replaces the current process with 'bd show'.
@@ -19,13 +21,15 @@ func execBdShow(args []string) error {
 		return fmt.Errorf("bd not found in PATH: %w", err)
 	}
 
+	beadsDir := ""
 	if beadID := extractBeadIDFromArgs(args); beadID != "" {
 		if dir := resolveBeadDir(beadID); dir != "" && dir != "." {
 			_ = os.Chdir(dir)
+			beadsDir = beads.ResolveBeadsDir(dir)
 		}
 	}
 
-	env := stripEnvKey(os.Environ(), "BEADS_DIR")
+	env := pinBeadsDirEnv(os.Environ(), beadsDir)
 
 	// Build args: bd show <all-args>
 	// argv[0] must be the program name for exec

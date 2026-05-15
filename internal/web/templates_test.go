@@ -2,6 +2,7 @@ package web
 
 import (
 	"bytes"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -56,6 +57,17 @@ func TestConvoyTemplate_RendersConvoyList(t *testing.T) {
 
 	// The simplified dashboard no longer shows convoy titles in the table,
 	// only the convoy IDs. Titles are shown in expanded view.
+}
+
+func TestDashboardScript_SlingUsesLongRunTimeout(t *testing.T) {
+	js, err := os.ReadFile("static/dashboard.js")
+	if err != nil {
+		t.Fatalf("ReadFile(static/dashboard.js) error = %v", err)
+	}
+
+	if !strings.Contains(string(js), `JSON.stringify({ command: cmd, confirmed: true, timeout: 120 })`) {
+		t.Error("Sling action should request a long /api/run timeout")
+	}
 }
 
 func TestConvoyTemplate_LastActivityColors(t *testing.T) {

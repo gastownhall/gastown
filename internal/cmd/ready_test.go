@@ -3,6 +3,8 @@ package cmd
 import (
 	"os"
 	"path/filepath"
+	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/steveyegge/gastown/internal/beads"
@@ -56,6 +58,14 @@ func TestGetFormulaNames(t *testing.T) {
 	if len(names) != len(expected) {
 		t.Errorf("got %d formula names, want %d", len(names), len(expected))
 	}
+}
+
+func issueIDs(issues []*beads.Issue) []string {
+	ids := make([]string, 0, len(issues))
+	for _, issue := range issues {
+		ids = append(ids, issue.ID)
+	}
+	return ids
 }
 
 func TestGetFormulaNames_NonexistentDir(t *testing.T) {
@@ -176,5 +186,43 @@ func TestFilterFormulaScaffolds_DotInNonScaffold(t *testing.T) {
 	filtered := filterFormulaScaffolds(issues, formulaNames)
 	if len(filtered) != 2 {
 		t.Errorf("got %d issues, want 2 (non-formula dots should not filter)", len(filtered))
+	}
+}
+
+func TestFilterReadyIssuesByRoute(t *testing.T) {
+	townRoot := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(townRoot, ".beads"), 0755); err != nil {
+		t.Fatalf("creating town beads dir: %v", err)
+	}
+	routes := strings.Join([]string{
+		`{"prefix":"hq-","path":"."}`,
+		`{"prefix":"hq-cv-","path":"."}`,
+		`{"prefix":"bds-","path":"bd_symphony/mayor/rig"}`,
+		`{"prefix":"gt-","path":"gastown/mayor/rig"}`,
+	}, "\n") + "\n"
+	if err := os.WriteFile(filepath.Join(townRoot, ".beads", "routes.jsonl"), []byte(routes), 0644); err != nil {
+		t.Fatalf("writing routes: %v", err)
+	}
+
+	issues := []*beads.Issue{
+		{ID: "hq-123", Title: "town work"},
+		{ID: "hq-cv-123", Title: "town convoy"},
+		{ID: "bds-town-stale", Title: "wrongly-created town bds row"},
+		{ID: "unknown-123", Title: "unknown route"},
+	}
+	filtered := filterReadyIssuesByRoute(townRoot, "town", issues)
+	if got, want := issueIDs(filtered), []string{"hq-123", "hq-cv-123"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("town filtered IDs = %v, want %v", got, want)
+	}
+
+	issues = []*beads.Issue{
+		{ID: "bds-123", Title: "bd_symphony work"},
+		{ID: "hq-123", Title: "town work in rig result"},
+		{ID: "gt-123", Title: "other rig work"},
+		{ID: "unknown-123", Title: "unknown route"},
+	}
+	filtered = filterReadyIssuesByRoute(townRoot, "bd_symphony", issues)
+	if got, want := issueIDs(filtered), []string{"bds-123"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("rig filtered IDs = %v, want %v", got, want)
 	}
 }

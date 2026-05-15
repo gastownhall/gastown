@@ -66,7 +66,7 @@ func TestDefaultWebTimeoutsConfig(t *testing.T) {
 		{"TmuxCmdTimeout", cfg.TmuxCmdTimeout, 0, 2 * time.Second},
 		{"FetchTimeout", cfg.FetchTimeout, 0, 8 * time.Second},
 		{"DefaultRunTimeout", cfg.DefaultRunTimeout, 0, 30 * time.Second},
-		{"MaxRunTimeout", cfg.MaxRunTimeout, 0, 60 * time.Second},
+		{"MaxRunTimeout", cfg.MaxRunTimeout, 0, 120 * time.Second},
 	}
 
 	for _, tt := range tests {
@@ -141,7 +141,7 @@ func TestWebTimeoutsConfig_JSONRoundTrip(t *testing.T) {
 		TmuxCmdTimeout:    "3s",
 		FetchTimeout:      "12s",
 		DefaultRunTimeout: "45s",
-		MaxRunTimeout:      "90s",
+		MaxRunTimeout:     "90s",
 	}
 
 	data, err := json.Marshal(original)
@@ -603,7 +603,7 @@ func TestParseDurationOrDefault_AllWebTimeoutDefaults(t *testing.T) {
 		{"TmuxCmdTimeout", empty.TmuxCmdTimeout, defaults.TmuxCmdTimeout, 2 * time.Second},
 		{"FetchTimeout", empty.FetchTimeout, defaults.FetchTimeout, 8 * time.Second},
 		{"DefaultRunTimeout", empty.DefaultRunTimeout, defaults.DefaultRunTimeout, 30 * time.Second},
-		{"MaxRunTimeout", empty.MaxRunTimeout, defaults.MaxRunTimeout, 60 * time.Second},
+		{"MaxRunTimeout", empty.MaxRunTimeout, defaults.MaxRunTimeout, 120 * time.Second},
 	}
 
 	for _, p := range pairs {
@@ -621,5 +621,3 @@ func TestParseDurationOrDefault_AllWebTimeoutDefaults(t *testing.T) {
 		})
 	}
 }
-
-

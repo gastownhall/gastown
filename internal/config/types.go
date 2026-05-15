@@ -149,7 +149,7 @@ type WebTimeoutsConfig struct {
 	FetchTimeout string `json:"fetch_timeout,omitempty"`
 	// DefaultRunTimeout is the default timeout for /api/run commands. Default: "30s".
 	DefaultRunTimeout string `json:"default_run_timeout,omitempty"`
-	// MaxRunTimeout is the maximum allowed timeout for /api/run commands. Default: "60s".
+	// MaxRunTimeout is the maximum allowed timeout for /api/run commands. Default: "120s".
 	MaxRunTimeout string `json:"max_run_timeout,omitempty"`
 }
 
@@ -161,7 +161,7 @@ func DefaultWebTimeoutsConfig() *WebTimeoutsConfig {
 		TmuxCmdTimeout:    "2s",
 		FetchTimeout:      "8s",
 		DefaultRunTimeout: "30s",
-		MaxRunTimeout:     "60s",
+		MaxRunTimeout:     "120s",
 	}
 }
 
