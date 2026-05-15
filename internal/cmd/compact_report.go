@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"regexp"
 	"sort"
 	"strings"
 	"time"
@@ -14,6 +15,36 @@ import (
 	"github.com/steveyegge/gastown/internal/beads"
 	"github.com/steveyegge/gastown/internal/style"
 )
+
+// beadIDLine matches a bead ID printed on its own line by `bd create`.
+// We scan `bd create` output (which may include startup warnings such as the
+// "beads.role not configured (GH#2950)" notice) for the last line that is
+// just a bead ID, instead of trusting that stdout contained only the ID.
+//
+// IDs look like `hq-1a2b`, `co-rln`, `h25-mrd`, `my-rig-abc`: a rig prefix,
+// dash, then a short alphanumeric token.
+var beadIDLine = regexp.MustCompile(`(?m)^\s*([a-z][a-z0-9-]{0,19}-[a-z0-9]+)\s*$`)
+
+// extractBeadID returns the last line of `output` that is a bare bead ID.
+// Returns an error if no bead-ID-shaped line is found.
+//
+// This guards against `bd` emitting startup warnings before the ID — see
+// gastown issue: "Fix compact_report.go beadID capture (corrupts on stdout
+// warnings)". Without this, a noisy stdout poisons `beadID`, the subsequent
+// `bd close <beadID>` silently fails, the audit bead stays open, and the
+// daily-digest idempotency check (filtered by status=closed) never matches —
+// producing one duplicate digest mail per patrol cycle.
+func extractBeadID(output string) (string, error) {
+	matches := beadIDLine.FindAllStringSubmatch(output, -1)
+	if len(matches) == 0 {
+		preview := strings.TrimSpace(output)
+		if len(preview) > 200 {
+			preview = preview[:200] + "..."
+		}
+		return "", fmt.Errorf("no bead ID found in bd output: %q", preview)
+	}
+	return matches[len(matches)-1][1], nil
+}
 
 var (
 	compactReportDryRun  bool
@@ -168,8 +199,8 @@ func runDailyDigest() error {
 
 	// Create permanent event bead for audit trail
 	beadID, err := createCompactReportBead(report, markdown)
-	if err != nil && compactReportVerbose {
-		fmt.Fprintf(os.Stderr, "warning: failed to create report bead: %v\n", err)
+	if err != nil {
+		return fmt.Errorf("recording compact report audit bead: %w", err)
 	}
 
 	// Send mail to deacon/, cc mayor/
@@ -350,11 +381,18 @@ func createCompactReportBead(report *compactReport, markdown string) (string, er
 		return "", fmt.Errorf("creating report bead: %w\nOutput: %s", err, string(output))
 	}
 
-	beadID := strings.TrimSpace(string(output))
+	beadID, err := extractBeadID(string(output))
+	if err != nil {
+		return "", fmt.Errorf("parsing report bead id: %w", err)
+	}
 
-	// Auto-close (audit record, not work)
+	// Auto-close (audit record, not work). Surface failures: if close fails,
+	// the bead stays open and findExistingCompactReport (filter status=closed)
+	// will never match, causing the digest to re-fire every patrol cycle.
 	closeCmd := exec.Command("bd", "close", beadID, "--reason=daily compaction report")
-	_ = closeCmd.Run()
+	if out, err := closeCmd.CombinedOutput(); err != nil {
+		return "", fmt.Errorf("auto-closing report bead %s: %w\nOutput: %s", beadID, err, string(out))
+	}
 
 	return beadID, nil
 }
@@ -427,8 +465,8 @@ func runWeeklyRollup() error {
 
 	// Create audit event bead for the weekly rollup (for future idempotency checks)
 	beadID, beadErr := createWeeklyRollupBead(rollup, markdown)
-	if beadErr != nil && compactReportVerbose {
-		fmt.Fprintf(os.Stderr, "warning: failed to create weekly rollup bead: %v\n", beadErr)
+	if beadErr != nil {
+		return fmt.Errorf("recording weekly rollup audit bead: %w", beadErr)
 	}
 
 	// Send to mayor/
@@ -654,11 +692,17 @@ func createWeeklyRollupBead(rollup *weeklyRollup, markdown string) (string, erro
 		return "", fmt.Errorf("creating weekly rollup bead: %w\nOutput: %s", err, string(output))
 	}
 
-	beadID := strings.TrimSpace(string(output))
+	beadID, err := extractBeadID(string(output))
+	if err != nil {
+		return "", fmt.Errorf("parsing weekly rollup bead id: %w", err)
+	}
 
-	// Auto-close (audit record, not work)
+	// Auto-close (audit record, not work). Surface failures so mail is not sent
+	// without a matching audit record for future idempotency checks.
 	closeCmd := exec.Command("bd", "close", beadID, "--reason=weekly compaction rollup")
-	_ = closeCmd.Run()
+	if out, err := closeCmd.CombinedOutput(); err != nil {
+		return "", fmt.Errorf("auto-closing rollup bead %s: %w\nOutput: %s", beadID, err, string(out))
+	}
 
 	return beadID, nil
 }
