@@ -234,7 +234,7 @@ func EnsureCustomStatuses(beadsDir string) error {
 
 	// Build merged set: existing + required
 	statusSet := make(map[string]bool)
-	if existing := strings.TrimSpace(string(existingOutput)); existing != "" {
+	if existing := ParseConfigOutput(existingOutput); existing != "" {
 		for _, s := range strings.Split(existing, ",") {
 			s = strings.TrimSpace(s)
 			if s != "" {
@@ -478,4 +478,21 @@ func ResetEnsuredDirs() {
 	ensuredMu.Lock()
 	defer ensuredMu.Unlock()
 	ensuredDirs = make(map[string]bool)
+}
+
+// ParseConfigOutput extracts the config value from `bd config get <key>` output,
+// filtering out informational lines (`Note: ...`) and the unset sentinel
+// (`<key> (not set)`). Returns "" when no value line is present.
+//
+// Without this filter, callers that merge the parsed value back into a
+// `bd config set` would pollute the config with strings like
+// "status.custom (not set)", which fail bd's regex validation (gt-kbi).
+func ParseConfigOutput(output []byte) string {
+	for _, line := range strings.Split(string(output), "\n") {
+		line = strings.TrimSpace(line)
+		if line != "" && !strings.HasPrefix(line, "Note:") && !strings.Contains(line, "(not set)") {
+			return line
+		}
+	}
+	return ""
 }

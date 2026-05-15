@@ -585,6 +585,102 @@ func TestEnsureCustomStatuses(t *testing.T) {
 			t.Error("statuses cache key should not collide with types cache key")
 		}
 	})
+
+	// Regression for gt-kbi: when `bd config get status.custom` returns the
+	// unset sentinel "status.custom (not set)", EnsureCustomStatuses must NOT
+	// merge that literal string into the value passed to `bd config set` —
+	// bd rejects it via the [a-z][a-z0-9_-]* validator, breaking gt convoy.
+	t.Run("unset sentinel from bd config get is filtered (gt-kbi)", func(t *testing.T) {
+		if runtime.GOOS == "windows" {
+			t.Skip("test uses Unix shell script mock for bd")
+		}
+
+		binDir := t.TempDir()
+		logPath := filepath.Join(binDir, "bd.log")
+		script := `#!/bin/sh
+LOG_FILE='` + logPath + `'
+printf '%s\n' "$*" >> "$LOG_FILE"
+
+cmd=""
+for arg in "$@"; do
+  case "$arg" in
+    --*) ;;
+    *) cmd="$arg"; break ;;
+  esac
+done
+
+case "$cmd" in
+  init)
+    target="${BEADS_DIR:-$(pwd)/.beads}"
+    mkdir -p "$target/dolt"
+    printf 'prefix: gt\nissue-prefix: gt-\n' > "$target/config.yaml"
+    exit 0
+    ;;
+  config)
+    # Simulate the real bd behaviour for an unset key: stdout carries the
+    # "<key> (not set)" sentinel and exit status is 0.
+    if echo "$*" | grep -q "get status.custom"; then
+      echo "status.custom (not set)"
+    fi
+    exit 0
+    ;;
+  *)
+    exit 0
+    ;;
+esac
+`
+		if err := os.WriteFile(filepath.Join(binDir, "bd"), []byte(script), 0755); err != nil {
+			t.Fatalf("write mock bd: %v", err)
+		}
+		t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+		tmpDir := t.TempDir()
+		beadsDir := filepath.Join(tmpDir, ".beads")
+		if err := os.MkdirAll(filepath.Join(beadsDir, "dolt"), 0755); err != nil {
+			t.Fatal(err)
+		}
+		ResetEnsuredDirs()
+
+		if err := EnsureCustomStatuses(beadsDir); err != nil {
+			t.Fatalf("EnsureCustomStatuses: %v", err)
+		}
+
+		logOutput := readMockBDLog(t, logPath)
+		if strings.Contains(logOutput, "(not set)") {
+			t.Fatalf("bd config set received the unset sentinel as a status value:\n%s", logOutput)
+		}
+
+		// Verify the set call carries exactly the canonical statuses list.
+		want := "config set status.custom " + strings.Join(constants.BeadsCustomStatusesList(), ",")
+		if !strings.Contains(logOutput, want) {
+			t.Fatalf("bd config set missing canonical statuses\nwant substring: %q\ngot:\n%s", want, logOutput)
+		}
+	})
+}
+
+func TestParseConfigOutput(t *testing.T) {
+	tests := []struct {
+		name  string
+		input string
+		want  string
+	}{
+		{"empty", "", ""},
+		{"only whitespace", "  \n  \n", ""},
+		{"plain value", "agent,role,rig\n", "agent,role,rig"},
+		{"value after Note prefix", "Note: background sync off\nagent,role\n", "agent,role"},
+		{"value after multiple Note prefixes", "Note: a\nNote: b\nagent\n", "agent"},
+		{"unset sentinel filtered", "status.custom (not set)\n", ""},
+		{"unset sentinel followed by value", "status.custom (not set)\nstaged_ready\n", "staged_ready"},
+		{"Note prefix is case-sensitive", "note: lower-case\n", "note: lower-case"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := ParseConfigOutput([]byte(tt.input)); got != tt.want {
+				t.Errorf("ParseConfigOutput(%q) = %q, want %q", tt.input, got, tt.want)
+			}
+		})
+	}
 }
 
 func TestEnsureDatabaseInitialized(t *testing.T) {

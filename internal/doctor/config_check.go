@@ -709,14 +709,9 @@ func (c *CustomTypesCheck) Run(ctx *CheckContext) *CheckResult {
 
 // parseConfigOutput extracts the config value from bd output, filtering out
 // informational messages like "Note: ..." that bd may emit to stdout.
+// Thin wrapper preserved so existing tests/call sites compile unchanged.
 func parseConfigOutput(output []byte) string {
-	for _, line := range strings.Split(string(output), "\n") {
-		line = strings.TrimSpace(line)
-		if line != "" && !strings.HasPrefix(line, "Note:") && !strings.Contains(line, "(not set)") {
-			return line
-		}
-	}
-	return ""
+	return beads.ParseConfigOutput(output)
 }
 
 // Fix registers the missing custom types.
