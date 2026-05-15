@@ -319,3 +319,91 @@ func TestAttachmentFormulaVarsPrefersAttachedVars(t *testing.T) {
 		t.Fatalf("attachmentFormulaVars() = %#v, want %#v", got, want)
 	}
 }
+
+// TestWorkflowStepTargetInteractiveStaysOnRig locks gt-3798: an interactive
+// step is session-bound and must never be routed by `target`, even when the
+// formula declares one. workflowStepTarget must return the rig, not the role.
+func TestWorkflowStepTargetInteractiveStaysOnRig(t *testing.T) {
+	t.Parallel()
+
+	step := formula.Step{Target: "mayor", Interactive: true}
+	if got := workflowStepTarget(step, "gastown"); got != "gastown" {
+		t.Fatalf("workflowStepTarget(interactive, target=mayor) = %q, want %q", got, "gastown")
+	}
+}
+
+// TestWorkflowStepDescriptionInteractiveOmitsTarget locks gt-3798: an
+// interactive step must not carry a routable workflow_target line, otherwise
+// the auto-dispatch override would redirect it away from the human's session.
+func TestWorkflowStepDescriptionInteractiveOmitsTarget(t *testing.T) {
+	t.Parallel()
+
+	description := "Talk to the human\n\nClarify the requirements"
+	got := workflowStepDescription(formula.Step{Target: "mayor", Interactive: true}, description)
+	if got != description {
+		t.Fatalf("workflowStepDescription(interactive) = %q, want raw %q", got, description)
+	}
+	if strings.Contains(got, workflowTargetField) {
+		t.Fatalf("interactive step description must not contain %q: %q", workflowTargetField, got)
+	}
+}
+
+// TestResolveReviewID locks gt-4032-A: --set review_id=X must win so dry-run
+// and real execution compute the same review ID; everything else falls back
+// to a fresh generated short ID.
+func TestResolveReviewID(t *testing.T) {
+	t.Parallel()
+
+	if got := resolveReviewID(map[string]interface{}{"review_id": "fixed-id"}); got != "fixed-id" {
+		t.Fatalf("resolveReviewID(explicit) = %q, want %q", got, "fixed-id")
+	}
+
+	for _, name := range []string{"whitespace", "missing", "non-string"} {
+		t.Run(name, func(t *testing.T) {
+			var setVars map[string]interface{}
+			switch name {
+			case "whitespace":
+				setVars = map[string]interface{}{"review_id": "   "}
+			case "missing":
+				setVars = map[string]interface{}{"problem": "x"}
+			case "non-string":
+				setVars = map[string]interface{}{"review_id": 42}
+			}
+			got := resolveReviewID(setVars)
+			if got == "" || len(got) != 5 {
+				t.Fatalf("resolveReviewID(%s) = %q, want generated 5-char id", name, got)
+			}
+		})
+	}
+}
+
+// TestSynthesisDescriptionRendersOutputVars locks gt-4032-B: the synthesis
+// description is rendered with an .output.* / --set context (mirroring the
+// leg context) so {{.output.directory}}/{{.output.synthesis}} and {{.problem}}
+// resolve to concrete values instead of being stored as raw template text.
+func TestSynthesisDescriptionRendersOutputVars(t *testing.T) {
+	t.Parallel()
+
+	outputDir := ".prd-reviews/fixed-id"
+	synthesisFile := "prd-review.md"
+	synCtx := map[string]interface{}{
+		"formula_name": "mol-prd-review",
+		"review_id":    "fixed-id",
+		"output": map[string]interface{}{
+			"directory": outputDir,
+			"synthesis": synthesisFile,
+		},
+		"output_path": filepath.Join(outputDir, synthesisFile),
+		"problem":     "AI Clause Generator",
+	}
+
+	tmpl := "Input: {{.output.directory}}/\nOutput: {{.output.directory}}/{{.output.synthesis}}\nReview: {{.problem}}"
+	got, err := renderTemplate(tmpl, synCtx)
+	if err != nil {
+		t.Fatalf("renderTemplate() error: %v", err)
+	}
+	want := "Input: .prd-reviews/fixed-id/\nOutput: .prd-reviews/fixed-id/prd-review.md\nReview: AI Clause Generator"
+	if got != want {
+		t.Fatalf("renderTemplate() = %q, want %q", got, want)
+	}
+}

@@ -333,11 +333,12 @@ func dryRunFormula(f *formula.Formula, formulaName, targetRig string) error {
 	}
 
 	if f.Type == formula.TypeConvoy && len(f.Legs) > 0 {
-		// Generate review ID for dry-run display
-		reviewID := generateFormulaShortID()
-
 		// Parse --set key=value pairs for template rendering
 		setVars := parseSetVars(formulaRunSet)
+
+		// Generate review ID for dry-run display. Honors --set review_id=X
+		// so dry-run output matches real execution exactly (gt-4032).
+		reviewID := resolveReviewID(setVars)
 
 		// Build target description
 		var targetDescription string
@@ -509,8 +510,12 @@ func executeConvoyFormula(f *formula.Formula, formulaName, targetRig string) err
 
 	fmt.Printf("%s Created convoy: %s\n", style.Bold.Render("✓"), convoyID)
 
-	// Generate a unique review ID for this convoy run
-	reviewID := generateFormulaShortID()
+	// Parse --set key=value pairs for template rendering
+	setVars := parseSetVars(formulaRunSet)
+
+	// Generate a unique review ID for this convoy run. Honors --set
+	// review_id=X so it matches --dry-run output exactly (gt-4032).
+	reviewID := resolveReviewID(setVars)
 
 	// Build target description
 	var targetDescription string
@@ -530,10 +535,14 @@ func executeConvoyFormula(f *formula.Formula, formulaName, targetRig string) err
 	// Create output directory if configured
 	var outputDir string
 	if f.Output != nil && f.Output.Directory != "" {
-		// Build minimal context for directory rendering
+		// Build minimal context for directory rendering. Inject --set vars
+		// so the rendered directory matches --dry-run exactly (gt-4032).
 		dirCtx := map[string]interface{}{
 			"review_id":    reviewID,
 			"formula_name": formulaName,
+		}
+		for k, v := range setVars {
+			dirCtx[k] = v
 		}
 		outputDir = renderTemplateOrDefault(f.Output.Directory, dirCtx, ".reviews/"+reviewID)
 
@@ -545,9 +554,6 @@ func executeConvoyFormula(f *formula.Formula, formulaName, targetRig string) err
 			fmt.Printf("  %s Output directory: %s\n", style.Dim.Render("📁"), outputDir)
 		}
 	}
-
-	// Parse --set key=value pairs for template rendering
-	setVars := parseSetVars(formulaRunSet)
 
 	// Step 2: Create leg beads and track them
 	legBeads := make(map[string]string) // leg.ID -> bead ID
@@ -624,7 +630,7 @@ func executeConvoyFormula(f *formula.Formula, formulaName, targetRig string) err
 		}
 
 		// Track the leg with the convoy
-		if err := addTrackingRelationFn(townBeads, convoyID, legBeadID); err != nil {
+		if err := addTrackingRelationWithRetry(townBeads, convoyID, legBeadID); err != nil {
 			fmt.Printf("%s Failed to track leg %s: %v\n",
 				style.Dim.Render("Warning:"), leg.ID, err)
 		}
@@ -641,6 +647,36 @@ func executeConvoyFormula(f *formula.Formula, formulaName, targetRig string) err
 		synDesc := f.Synthesis.Description
 		if synDesc == "" {
 			synDesc = "Synthesize findings from all legs into unified output"
+		}
+
+		// Render the synthesis description with the same template context
+		// the legs receive, so {{.output.directory}}/{{.output.synthesis}}
+		// and --set vars resolve to concrete paths instead of being stored
+		// raw for the synthesizer to choke on (gt-4032).
+		synCtx := map[string]interface{}{
+			"formula_name":       formulaName,
+			"target_description": targetDescription,
+			"review_id":          reviewID,
+			"pr_number":          formulaRunPR,
+			"pr_title":           prTitle,
+			"changed_files":      changedFiles,
+			"files":              formulaRunFiles,
+		}
+		for k, v := range setVars {
+			synCtx[k] = v
+		}
+		if f.Output != nil {
+			synCtx["output"] = map[string]interface{}{
+				"directory": outputDir,
+				"synthesis": f.Output.Synthesis,
+			}
+			synCtx["output_path"] = filepath.Join(outputDir, f.Output.Synthesis)
+		}
+		if rendered, err := renderTemplate(synDesc, synCtx); err != nil {
+			fmt.Printf("%s Failed to render synthesis description: %v\n",
+				style.Dim.Render("Warning:"), err)
+		} else {
+			synDesc = rendered
 		}
 
 		synArgs := []string{
@@ -663,7 +699,7 @@ func executeConvoyFormula(f *formula.Formula, formulaName, targetRig string) err
 				style.Dim.Render("Warning:"), err)
 		} else {
 			// Track synthesis with convoy
-			_ = addTrackingRelationFn(townBeads, convoyID, synthesisBeadID)
+			_ = addTrackingRelationWithRetry(townBeads, convoyID, synthesisBeadID)
 
 			// Add dependencies: synthesis depends on all legs
 			for _, legBeadID := range legBeads {
@@ -826,7 +862,7 @@ func executeWorkflowFormula(f *formula.Formula, formulaName, targetRig string) e
 		}
 
 		// Track the step with the workflow
-		_ = addTrackingRelationFn(townBeads, workflowID, stepBeadID)
+		_ = addTrackingRelationWithRetry(townBeads, workflowID, stepBeadID)
 
 		// Wire dependencies: this step depends on its needs
 		for _, needID := range step.Needs {
@@ -851,19 +887,14 @@ func executeWorkflowFormula(f *formula.Formula, formulaName, targetRig string) e
 		fmt.Printf("  %s %s: %s%s\n", style.Dim.Render("○"), step.ID, stepBeadID, needsStr)
 	}
 
-	// Step 3: Identify and dispatch ready steps (those with no dependencies)
-	// Interactive steps are hooked to the current session; others are slung to polecats.
+	// Step 3: Identify and dispatch ready steps (those with no dependencies).
+	// Each step is routed independently: interactive steps are hooked to the
+	// current session (they need the human's chat channel and must NOT be
+	// routed by `target`); non-interactive steps are slung to their resolved
+	// `target` (gt-3798). A workflow that mixes interactive and non-interactive
+	// steps must still route the non-interactive ones — a single interactive
+	// step does not pin the whole workflow to the orchestrator session.
 	fmt.Printf("\n%s Dispatching ready steps...\n\n", style.Bold.Render("→"))
-
-	// Check if any step in the workflow is interactive — if so, we'll need
-	// to handle the molecule lifecycle in the current session.
-	hasInteractive := false
-	for _, step := range f.Steps {
-		if step.Interactive {
-			hasInteractive = true
-			break
-		}
-	}
 
 	slingCount := 0
 	interactiveCount := 0
@@ -877,7 +908,7 @@ func executeWorkflowFormula(f *formula.Formula, formulaName, targetRig string) e
 			continue
 		}
 
-		if step.Interactive || hasInteractive {
+		if step.Interactive {
 			// Interactive step: hook to current session instead of slinging to a polecat.
 			// The user will execute this step in their current crew session.
 			_ = BdCmd("update", stepBeadID, "--status=hooked").
@@ -943,6 +974,13 @@ func executeWorkflowFormula(f *formula.Formula, formulaName, targetRig string) e
 const workflowTargetField = "workflow_target"
 
 func workflowStepDescription(step formula.Step, description string) string {
+	// Interactive steps run in the orchestrator's session (they need the human's
+	// chat channel) and must NOT carry a routable workflow_target — otherwise the
+	// auto-dispatch override (applyWorkflowStepTargetOverride) would redirect them
+	// to a role that has no channel to the human (gt-3798).
+	if step.Interactive {
+		return description
+	}
 	target := strings.TrimSpace(step.Target)
 	if target == "" {
 		return description
@@ -951,6 +989,10 @@ func workflowStepDescription(step formula.Step, description string) string {
 }
 
 func workflowStepTarget(step formula.Step, targetRig string) string {
+	// Interactive steps are session-bound and never routed by target (gt-3798).
+	if step.Interactive {
+		return targetRig
+	}
 	target := strings.TrimSpace(step.Target)
 	if target == "" || target == "rig" {
 		return targetRig
@@ -1139,6 +1181,20 @@ func fetchPRInfo(prNumber int) (string, []map[string]interface{}) {
 	}
 
 	return prTitle, changedFiles
+}
+
+// resolveReviewID returns the explicit --set review_id=<id> when provided,
+// otherwise a fresh short ID. Shared by dry-run and real execution so both
+// paths compute identical review IDs and output paths (gt-4032).
+func resolveReviewID(setVars map[string]interface{}) string {
+	if v, ok := setVars["review_id"]; ok {
+		if s, ok := v.(string); ok {
+			if s = strings.TrimSpace(s); s != "" {
+				return s
+			}
+		}
+	}
+	return generateFormulaShortID()
 }
 
 // generateFormulaShortID generates a short random ID (5 lowercase chars)
