@@ -402,6 +402,36 @@ func TestDoneIntentLabelFormat(t *testing.T) {
 	}
 }
 
+// TestShouldNudgeRefinery locks in the gh#3885 invariant: only COMPLETED
+// exits with a created MR bead may wake the refinery. DEFERRED/ESCALATED
+// exits — used by polecats finishing operational tasks with no code changes —
+// must never emit MQ_SUBMIT, even if an mrID is somehow populated. The
+// "stray MR" cases guard against a regression to a bare `mrID != ""` check.
+func TestShouldNudgeRefinery(t *testing.T) {
+	tests := []struct {
+		name     string
+		exitType string
+		mrID     string
+		want     bool
+	}{
+		{"completed with MR nudges", ExitCompleted, "gt-abc123", true},
+		{"completed without MR does not nudge", ExitCompleted, "", false},
+		{"deferred without MR does not nudge", ExitDeferred, "", false},
+		{"deferred with stray MR does not nudge", ExitDeferred, "gt-abc123", false},
+		{"escalated without MR does not nudge", ExitEscalated, "", false},
+		{"escalated with stray MR does not nudge", ExitEscalated, "gt-abc123", false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := shouldNudgeRefinery(tt.exitType, tt.mrID); got != tt.want {
+				t.Errorf("shouldNudgeRefinery(%q, %q) = %v, want %v",
+					tt.exitType, tt.mrID, got, tt.want)
+			}
+		})
+	}
+}
+
 // TestClearDoneIntentLabel verifies that clearDoneIntentLabel removes
 // only done-intent labels while preserving other labels.
 func TestClearDoneIntentLabel(t *testing.T) {

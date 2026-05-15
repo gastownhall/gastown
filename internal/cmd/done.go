@@ -1303,7 +1303,7 @@ func runDone(cmd *cobra.Command, args []string) (retErr error) {
 
 notifyWitness:
 	// Nudge refinery — MR bead is already on main (transaction-based shared main).
-	if mrID != "" {
+	if shouldNudgeRefinery(exitType, mrID) {
 		nudgeRefinery(rigName, "MERGE_READY received - check inbox for pending work")
 	}
 
@@ -1500,6 +1500,16 @@ func verifyPushedCommitWithBareFallback(g *git.Git, townRoot, rigName, branch, c
 		return nil
 	}
 	return verifyErr
+}
+
+// shouldNudgeRefinery reports whether a gt done invocation may wake the
+// refinery. Only COMPLETED exits create an MR bead; DEFERRED and ESCALATED
+// exits (polecats finishing operational tasks with no code changes) must
+// never emit MQ_SUBMIT, or the refinery wakes from backoff to find an empty
+// merge queue (gh#3885). The exitType check is defensive: it holds the
+// invariant even if a future code path populates mrID outside COMPLETED.
+func shouldNudgeRefinery(exitType, mrID string) bool {
+	return exitType == ExitCompleted && mrID != ""
 }
 
 // setDoneIntentLabel writes a done-intent:<type>:<unix-ts> label on the agent bead
