@@ -276,12 +276,7 @@ func checkStaleBinaryWarning() {
 		staleBinaryWarned = true
 		_ = os.Setenv("GT_STALE_WARNED", "1")
 
-		msg := fmt.Sprintf("gt binary is stale (built from %s, %s at %s)",
-			version.ShortCommit(info.BinaryCommit), info.CompareRef, version.ShortCommit(info.RepoCommit))
-		if info.CommitsBehind > 0 {
-			msg = fmt.Sprintf("gt binary is %d commits behind %s (built from %s, %s at %s)",
-				info.CommitsBehind, info.CompareRef, version.ShortCommit(info.BinaryCommit), info.CompareRef, version.ShortCommit(info.RepoCommit))
-		}
+		msg := info.Describe("gt binary")
 		fmt.Fprintf(os.Stderr, "%s %s\n", style.WarningPrefix, msg)
 		fmt.Fprintf(os.Stderr, "    %s Run 'make install' in gastown repo to update\n", style.ArrowPrefix)
 	}

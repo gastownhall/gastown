@@ -344,3 +344,42 @@ func TestResolveBuildBranchRef(t *testing.T) {
 		}
 	})
 }
+
+func TestStaleBinaryInfo_Describe(t *testing.T) {
+	const (
+		bin  = "abc1234567890def"
+		repo = "fed0987654321cba"
+	)
+	tests := []struct {
+		name    string
+		info    StaleBinaryInfo
+		subject string
+		want    string
+	}{
+		{
+			name:    "commits behind known",
+			info:    StaleBinaryInfo{BinaryCommit: bin, RepoCommit: repo, CompareRef: "main", CommitsBehind: 3},
+			subject: "Binary",
+			want:    "Binary is 3 commits behind main (built from abc123456789, main at fed098765432)",
+		},
+		{
+			name:    "count unknown falls back to stale wording",
+			info:    StaleBinaryInfo{BinaryCommit: bin, RepoCommit: repo, CompareRef: "origin/main", CommitsBehind: 0},
+			subject: "gt binary",
+			want:    "gt binary is stale (built from abc123456789, origin/main at fed098765432)",
+		},
+		{
+			name:    "short hashes are not truncated",
+			info:    StaleBinaryInfo{BinaryCommit: "abc123", RepoCommit: "def456", CompareRef: "carry/ops", CommitsBehind: 1},
+			subject: "Binary",
+			want:    "Binary is 1 commits behind carry/ops (built from abc123, carry/ops at def456)",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := tt.info.Describe(tt.subject); got != tt.want {
+				t.Errorf("Describe(%q) = %q, want %q", tt.subject, got, tt.want)
+			}
+		})
+	}
+}

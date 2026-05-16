@@ -49,6 +49,25 @@ func resolveCommitHash() string {
 	return ""
 }
 
+// Describe returns a one-line, human-readable staleness summary for a stale
+// binary, using subject as the leading noun so callers can vary it
+// ("Binary" for gt doctor, "gt binary" for the startup warning):
+//
+//	"Binary is 3 commits behind main (built from abc123…, main at def456…)"
+//	"gt binary is stale (built from abc123…, origin/main at def456…)"
+//
+// It is only meaningful when i.IsStale; callers gate on that. A zero
+// CommitsBehind (count unknown) falls back to the "is stale" wording.
+func (i *StaleBinaryInfo) Describe(subject string) string {
+	if i.CommitsBehind > 0 {
+		return fmt.Sprintf("%s is %d commits behind %s (built from %s, %s at %s)",
+			subject, i.CommitsBehind, i.CompareRef,
+			ShortCommit(i.BinaryCommit), i.CompareRef, ShortCommit(i.RepoCommit))
+	}
+	return fmt.Sprintf("%s is stale (built from %s, %s at %s)",
+		subject, ShortCommit(i.BinaryCommit), i.CompareRef, ShortCommit(i.RepoCommit))
+}
+
 // ShortCommit returns first 12 characters of a hash.
 func ShortCommit(hash string) string {
 	if len(hash) > 12 {
