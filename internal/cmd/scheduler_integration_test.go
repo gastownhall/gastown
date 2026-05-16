@@ -1056,8 +1056,8 @@ func TestSchedulerDeferredNonRigRejection(t *testing.T) {
 	if err == nil {
 		t.Fatalf("gt sling %s %s (non-rig) in deferred mode should fail, but succeeded:\n%s", beadID, otherBead, out)
 	}
-	if !strings.Contains(out, "deferred dispatch requires a rig target") {
-		t.Errorf("expected 'deferred dispatch requires a rig target' error, got:\n%s", out)
+	if !strings.Contains(out, "deferred dispatch requires a rig or capacity-neutral target") {
+		t.Errorf("expected 'deferred dispatch requires a rig or capacity-neutral target' error, got:\n%s", out)
 	}
 
 	// gt sling <bead> . in deferred mode should also be rejected
@@ -1065,8 +1065,8 @@ func TestSchedulerDeferredNonRigRejection(t *testing.T) {
 	if err == nil {
 		t.Fatalf("gt sling %s . in deferred mode should fail, but succeeded:\n%s", beadID, out)
 	}
-	if !strings.Contains(out, "deferred dispatch requires a rig target") {
-		t.Errorf("expected 'deferred dispatch requires a rig target' error for '.', got:\n%s", out)
+	if !strings.Contains(out, "deferred dispatch requires a rig or capacity-neutral target") {
+		t.Errorf("expected 'deferred dispatch requires a rig or capacity-neutral target' error for '.', got:\n%s", out)
 	}
 }
 
