@@ -980,9 +980,15 @@ func runCostsRecord(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	// Extract cost from Claude transcript
+	// Determine cost: prefer --cost flag (e.g. from opencode session.deleted event),
+	// fall back to parsing Claude Code transcript files.
 	var cost float64
-	if workDir != "" {
+	if recordCostUSD > 0 {
+		cost = recordCostUSD
+		if costsVerbose {
+			fmt.Fprintf(os.Stderr, "[costs] using pre-computed cost $%.4f from --cost flag\n", cost)
+		}
+	} else if workDir != "" {
 		var err error
 		cost, err = extractCostFromWorkDir(workDir)
 		if err != nil {

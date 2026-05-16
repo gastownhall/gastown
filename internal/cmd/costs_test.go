@@ -203,6 +203,60 @@ func TestRunCostsRecord_NoSession_ReturnsNil(t *testing.T) {
 	}
 }
 
+func TestRunCostsRecord_CostFlag_SkipsTranscriptParsing(t *testing.T) {
+	setupCostsTestRegistry(t)
+
+	// Set up a polecat session so runCostsRecord doesn't exit early.
+	t.Setenv("GT_ROLE", "polecat")
+	t.Setenv("GT_RIG", "gastown")
+	t.Setenv("GT_POLECAT", "toast")
+
+	// Redirect the cost log to a temp file.
+	tmpDir := t.TempDir()
+	origGTHome := os.Getenv("GT_HOME")
+	t.Setenv("GT_HOME", tmpDir)
+	defer func() {
+		if origGTHome != "" {
+			os.Setenv("GT_HOME", origGTHome)
+		} else {
+			os.Unsetenv("GT_HOME")
+		}
+	}()
+
+	// Set --cost flag to a known value; workDir is empty so transcript parsing
+	// would normally produce $0.00.
+	oldCost := recordCostUSD
+	recordCostUSD = 0.42
+	defer func() { recordCostUSD = oldCost }()
+
+	oldSession := recordSession
+	recordSession = "opencode-session-abc123"
+	defer func() { recordSession = oldSession }()
+
+	if err := runCostsRecord(nil, nil); err != nil {
+		t.Fatalf("runCostsRecord() returned error: %v", err)
+	}
+
+	// Read the log and verify the recorded cost matches --cost.
+	logPath := getCostsLogPath()
+	data, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatalf("reading cost log: %v", err)
+	}
+
+	var entry CostLogEntry
+	if err := json.Unmarshal(data, &entry); err != nil {
+		t.Fatalf("unmarshaling cost entry: %v", err)
+	}
+
+	if entry.CostUSD != 0.42 {
+		t.Errorf("cost_usd = %.4f, want 0.42", entry.CostUSD)
+	}
+	if entry.SessionID != "opencode-session-abc123" {
+		t.Errorf("session_id = %q, want opencode-session-abc123", entry.SessionID)
+	}
+}
+
 func TestCostDigestPayload_ExcludesSessions(t *testing.T) {
 	// Build a digest with many sessions (simulating the 2885-session case)
 	digest := CostDigest{

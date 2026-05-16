@@ -47,7 +47,14 @@ export const GasTown = async ({ $, directory }) => {
       if (event?.type === "session.deleted") {
         const sessionID = event.properties?.info?.id;
         if (sessionID) {
-          await $`gt costs record --session ${sessionID}`.catch(() => {});
+          // Pass cost from the event when available so gt costs record does not
+          // attempt Claude-specific transcript parsing for opencode sessions.
+          const cost = event.properties?.info?.cost;
+          if (typeof cost === "number" && cost > 0) {
+            await $`gt costs record --session ${sessionID} --cost ${cost.toFixed(6)}`.catch(() => {});
+          } else {
+            await $`gt costs record --session ${sessionID}`.catch(() => {});
+          }
         }
       }
     },
