@@ -87,26 +87,26 @@ gt rigs
 a) **Issues filed and closed:**
 ```bash
 # From rig beads
-bd list --created-after={{since}} --created-before={{until}}
-bd list --status=closed --updated-after={{since}}
+bd list --created-after={{.since}} --created-before={{.until}}
+bd list --status=closed --updated-after={{.since}}
 ```
 
 b) **Agent activity:**
 ```bash
 gt polecats <rig>           # Polecat activity
-gt feed --since={{since}}   # Activity feed entries
+gt feed --since={{.since}}   # Activity feed entries
 ```
 
 c) **Merges:**
 ```bash
 # Git log for merges to main
-git -C <rig-path> log --merges --since={{since}} --oneline main
+git -C <rig-path> log --merges --since={{.since}} --oneline main
 ```
 
 d) **Incidents:**
 ```bash
 # Issues tagged as incident or high-priority
-bd list --label=incident --created-after={{since}}
+bd list --label=incident --created-after={{.since}}
 ```
 
 **3. Aggregate across rigs:**
@@ -135,7 +135,7 @@ Transform collected data into formatted digest.
 
 **3. Generate digest text:**
 ```markdown
-# Gas Town Daily Digest: {{date}}
+# Gas Town Daily Digest: {{.date}}
 
 ## Summary
 - **Issues filed**: N (tasks: X, bugs: Y, features: Z)
@@ -150,7 +150,7 @@ Transform collected data into formatted digest.
 
 ## Highlights
 ### Completed
-- {{epic or feature}} - completed by {{polecat}}
+- {{epic or feature}} - completed by {{.polecat}}
 
 ### Incidents
 - {{incident summary if any}}
@@ -176,8 +176,8 @@ Deliver digest to the Mayor.
 
 **1. Send via mail:**
 ```bash
-gt mail send mayor/ -s "Gas Town Digest: {{date}}" -m "$(cat <<EOF
-{{formatted_digest}}
+gt mail send mayor/ -s "Gas Town Digest: {{.date}}" -m "$(cat <<EOF
+{{.formatted_digest}}
 EOF
 )"
 ```
@@ -185,9 +185,9 @@ EOF
 **2. Archive as bead:**
 Create a digest bead for permanent record:
 ```bash
-bd create --title="Digest: {{date}}" --type=digest \
-  --description="{{formatted_digest}}" \
-  --label=digest,{{period}}
+bd create --title="Digest: {{.date}}" --type=digest \
+  --description="{{.formatted_digest}}" \
+  --label=digest,{{.period}}
 ```
 
 **3. Sync:**
@@ -207,8 +207,8 @@ Signal work complete and return to available pool.
 **1. Signal completion to Deacon:**
 ```bash
 gt mail send deacon/ -s "DOG_DONE $(hostname)" -m "Task: digest-generate
-Period: {{period}}
-Date range: {{since}} to {{until}}
+Period: {{.period}}
+Date range: {{.since}} to {{.until}}
 Status: COMPLETE
 
 Digest sent to Mayor.

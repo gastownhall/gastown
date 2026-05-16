@@ -90,7 +90,7 @@ Skip this step — nothing to escalate.
 
 **2. If phantoms were found, escalate:**
 ```bash
-gt escalate -s HIGH "Dolt: detected {{phantom_count}} phantom database(s): {{phantom_names}} — requires Dolt server restart to resolve"
+gt escalate -s HIGH "Dolt: detected {{.phantom_count}} phantom database(s): {{.phantom_names}} — requires Dolt server restart to resolve"
 ```
 
 Phantom databases indicate a Dolt bug (DROP DATABASE + catalog re-materialization)
@@ -110,15 +110,15 @@ Generate summary and signal completion.
 ```markdown
 ## Phantom DB Dog Report
 
-**Directories scanned**: {{scan_count}}
-**Phantoms found**: {{phantom_count}}
-**Phantoms quarantined**: {{quarantined_count}}
-**Valid databases**: {{valid_count}}
+**Directories scanned**: {{.scan_count}}
+**Phantoms found**: {{.phantom_count}}
+**Phantoms quarantined**: {{.quarantined_count}}
+**Valid databases**: {{.valid_count}}
 
 ### Phantom Databases
 {{#if phantoms}}
 {{#each phantoms}}
-- {{name}} (quarantined)
+- {{.name}} (quarantined)
 {{/each}}
 {{else}}
 None detected — .dolt-data/ is clean.
@@ -128,9 +128,9 @@ None detected — .dolt-data/ is clean.
 **2. Signal completion to Deacon:**
 ```bash
 gt mail send deacon/ -s "DOG_DONE: phantom-db" -m "Task: phantom-db-scan
-Scanned: {{scan_count}}
-Phantoms: {{phantom_count}}
-Quarantined: {{quarantined_count}}
+Scanned: {{.scan_count}}
+Phantoms: {{.phantom_count}}
+Quarantined: {{.quarantined_count}}
 Status: COMPLETE"
 ```
 

@@ -94,18 +94,18 @@ Generate summary and signal completion.
 ```markdown
 ## Backup Dog Report
 
-**Databases synced**: {{synced_count}}/{{total_count}}
-**Offsite sync**: {{offsite_status}}
+**Databases synced**: {{.synced_count}}/{{.total_count}}
+**Offsite sync**: {{.offsite_status}}
 
 ### Per Database
 {{#each db}}
-- {{name}}: {{status}} ({{duration}})
+- {{.name}}: {{.status}} ({{.duration}})
 {{/each}}
 
 ### Failures
 {{#if failures}}
 {{#each failures}}
-- {{name}}: {{error}}
+- {{.name}}: {{.error}}
 {{/each}}
 {{else}}
 None
@@ -115,8 +115,8 @@ None
 **2. Signal completion to Deacon:**
 ```bash
 gt mail send deacon/ -s "DOG_DONE: backup" -m "Task: dolt-backup
-Synced: {{synced_count}}/{{total_count}}
-Offsite: {{offsite_status}}
+Synced: {{.synced_count}}/{{.total_count}}
+Offsite: {{.offsite_status}}
 Status: COMPLETE"
 ```
 

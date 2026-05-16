@@ -60,7 +60,7 @@ gt hook               # Shows convoy in hook_bead or vars
 
 **2. Load convoy details:**
 ```bash
-gt convoy status {{convoy}} --json
+gt convoy status {{.convoy}} --json
 ```
 
 **3. Identify ready issues:**
@@ -180,21 +180,21 @@ Create summary report of convoy feeding actions.
 
 **1. Generate report:**
 ```markdown
-## Convoy Feed Report: {{convoy}}
+## Convoy Feed Report: {{.convoy}}
 
-**Ready issues found**: {{ready_count}}
-**Polecats available**: {{available_count}}
-**Issues dispatched**: {{dispatch_count}}
+**Ready issues found**: {{.ready_count}}
+**Polecats available**: {{.available_count}}
+**Issues dispatched**: {{.dispatch_count}}
 
 ### Dispatched Work
 {{#each dispatched}}
-- {{issue_id}}: {{title}} → {{rig}}/{{polecat}}
+- {{.issue_id}}: {{.title}} → {{.rig}}/{{.polecat}}
 {{/each}}
 
 ### Skipped (no capacity)
 {{#if skipped}}
 {{#each skipped}}
-- {{issue_id}}: {{title}} (will retry next cycle)
+- {{.issue_id}}: {{.title}} (will retry next cycle)
 {{/each}}
 {{else}}
 (none)
@@ -203,7 +203,7 @@ Create summary report of convoy feeding actions.
 ### Errors
 {{#if errors}}
 {{#each errors}}
-- {{issue_id}}: {{error}}
+- {{.issue_id}}: {{.error}}
 {{/each}}
 {{else}}
 (none)
@@ -212,13 +212,13 @@ Create summary report of convoy feeding actions.
 
 **2. Send to Deacon:**
 ```bash
-gt mail send deacon/ -s "Convoy fed: {{convoy}}" -m "$(cat <<EOF
-Convoy {{convoy}} feeding complete.
+gt mail send deacon/ -s "Convoy fed: {{.convoy}}" -m "$(cat <<EOF
+Convoy {{.convoy}} feeding complete.
 
-Dispatched: {{dispatch_count}}/{{ready_count}} issues
-{{#if errors}}Errors: {{error_count}}{{/if}}
+Dispatched: {{.dispatch_count}}/{{.ready_count}} issues
+{{#if errors}}Errors: {{.error_count}}{{/if}}
 
-{{report_summary}}
+{{.report_summary}}
 EOF
 )"
 ```
@@ -239,9 +239,9 @@ Signal work complete and return to available pool.
 **1. Signal completion to Deacon:**
 ```bash
 gt mail send deacon/ -s "DOG_DONE $(hostname)" -m "Task: convoy-feed
-Convoy: {{convoy}}
-Ready: {{ready_count}}
-Dispatched: {{dispatch_count}}
+Convoy: {{.convoy}}
+Ready: {{.ready_count}}
+Dispatched: {{.dispatch_count}}
 Status: COMPLETE
 
 Ready for next assignment."

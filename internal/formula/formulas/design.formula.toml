@@ -5,8 +5,8 @@
 # are synthesized into a unified design document.
 #
 # Usage:
-#   gt formula run design --problem="Add notification levels to mayor"
-#   gt formula run design --problem="Redesign the merge queue"
+#   gt formula run design --set problem="Add notification levels to mayor"
+#   gt formula run design --set problem="Redesign the merge queue"
 
 description = """
 Structured design exploration via parallel specialized analysts.

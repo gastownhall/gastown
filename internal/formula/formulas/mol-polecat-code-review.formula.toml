@@ -63,7 +63,7 @@ gt hook               # Shows your pinned molecule and hook_bead
 
 The hook_bead describes your review scope. Read the tracking issue:
 ```bash
-bd show {{issue}}           # Full issue details
+bd show {{.issue}}           # Full issue details
 ```
 
 **3. Understand the scope:**
@@ -74,16 +74,16 @@ bd show {{issue}}           # Full issue details
 **4. Locate the code:**
 ```bash
 # If scope is a path:
-ls -la {{scope}}
-head -100 {{scope}}         # Quick look at the code
+ls -la {{.scope}}
+head -100 {{.scope}}         # Quick look at the code
 
 # If scope is a directory:
-find {{scope}} -type f -name "*.go" | head -20
+find {{.scope}} -type f -name "*.go" | head -20
 ```
 
 **5. Check for recent changes:**
 ```bash
-git log --oneline -10 -- {{scope}}
+git log --oneline -10 -- {{.scope}}
 ```
 
 **Exit criteria:** You understand what you're reviewing and why."""
@@ -98,10 +98,10 @@ Get a high-level understanding before diving into details.
 **1. Understand the structure:**
 ```bash
 # For a directory:
-tree {{scope}} -L 2
+tree {{.scope}} -L 2
 
 # For a file:
-wc -l {{scope}}             # How big is it?
+wc -l {{.scope}}             # How big is it?
 ```
 
 **2. Identify key components:**
@@ -111,7 +111,7 @@ wc -l {{scope}}             # How big is it?
 
 **3. Read the tests (if any):**
 ```bash
-find {{scope}} -name "*_test.go" | xargs head -50
+find {{.scope}} -name "*_test.go" | xargs head -50
 ```
 Tests often reveal intended behavior.
 
@@ -140,11 +140,11 @@ Systematically review the code for issues.
 | **Maintainability** | Dead code, unclear naming, missing comments on complex logic |
 | **Testing** | Untested paths, missing edge cases, flaky tests |
 
-**Focus on {{focus}} if specified.**
+**Focus on {{.focus}} if specified.**
 
 **1. Read through the code:**
 ```bash
-cat {{scope}}               # For single file
+cat {{.scope}}               # For single file
 # Or read files systematically for a directory
 ```
 
@@ -181,8 +181,8 @@ Group by priority, then by category.
 
 **2. For P0 issues:**
 ```bash
-gt mail send {{rig}}/witness -s "CRITICAL: Security issue found" -m "Scope: {{scope}}
-Issue: {{issue}}
+gt mail send {{.rig}}/witness -s "CRITICAL: Security issue found" -m "Scope: {{.scope}}
+Issue: {{.issue}}
 Finding: <description of critical issue>
 Location: <file:line>"
 ```
@@ -208,7 +208,7 @@ Create beads for each finding.
 ```bash
 bd create --type=bug --priority=1 \
   --title="<clear description of bug>" \
-  --description="Found during code review of {{scope}}.
+  --description="Found during code review of {{.scope}}.
 
 Location: <file:line>
 
@@ -226,7 +226,7 @@ Suggested fix:
 ```bash
 bd create --type=task --priority=2 \
   --title="<clear description>" \
-  --description="Found during code review of {{scope}}.
+  --description="Found during code review of {{.scope}}.
 
 Location: <file:line>
 
@@ -254,10 +254,10 @@ Update the tracking issue with review summary.
 
 **1. Create summary:**
 ```bash
-bd update {{issue}} --notes "Code review complete.
+bd update {{.issue}} --notes "Code review complete.
 
-Scope: {{scope}}
-Focus: {{focus}}
+Scope: {{.scope}}
+Focus: {{.focus}}
 
 Findings:
 - P0 (critical): <count>

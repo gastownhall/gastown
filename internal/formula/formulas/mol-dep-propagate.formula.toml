@@ -45,18 +45,18 @@ Load the closed issue and identify cross-rig dependents.
 **1. Check your assignment:**
 ```bash
 gt hook               # Shows hook_bead = resolved issue ID
-bd show {{resolved_issue}}  # Full issue details
+bd show {{.resolved_issue}}  # Full issue details
 ```
 
 **2. Verify issue is closed:**
 ```bash
-bd show {{resolved_issue}}
+bd show {{.resolved_issue}}
 # Status should be 'closed' or similar terminal state
 ```
 
 **3. Find dependents (issues blocked by this one):**
 ```bash
-bd show {{resolved_issue}}
+bd show {{.resolved_issue}}
 # Look at 'blocks' field - these are issues waiting on this one
 ```
 
@@ -98,7 +98,7 @@ Beads should auto-update blocked status when dependencies close.
 This step verifies and fixes if needed:
 ```bash
 # If still showing as blocked by resolved issue (shouldn't happen):
-bd dep remove <dependent-id> {{resolved_issue}}
+bd dep remove <dependent-id> {{.resolved_issue}}
 ```
 
 **Exit criteria:** All cross-rig dependents have updated blocked status."""
@@ -117,17 +117,17 @@ Send notifications to Witnesses of affected rigs.
 
 **2. For each affected rig, send notification:**
 ```bash
-gt mail send <rig>/witness -s "Dependency resolved: {{resolved_issue}}" -m "$(cat <<EOF
+gt mail send <rig>/witness -s "Dependency resolved: {{.resolved_issue}}" -m "$(cat <<EOF
 External dependency has closed, unblocking work in your rig.
 
 ## Resolved Issue
-- ID: {{resolved_issue}}
-- Title: {{resolved_issue.title}}
-- Rig: {{resolved_issue.prefix}}
+- ID: {{.resolved_issue}}
+- Title: {{.resolved_issue.title}}
+- Rig: {{.resolved_issue.prefix}}
 
 ## Unblocked in Your Rig
 {{range dependent}}
-- {{dependent.id}}: {{dependent.title}} ({{dependent.status}})
+- {{.dependent.id}}: {{.dependent.title}} ({{.dependent.status}})
 {{end}}
 
 These issues may now proceed. Check bd ready for available work.
@@ -185,9 +185,9 @@ Signal work complete and return to available pool.
 **1. Signal completion to Deacon:**
 ```bash
 gt mail send deacon/ -s "DOG_DONE $(hostname)" -m "Task: dep-propagate
-Resolved: {{resolved_issue}}
-Cross-rig dependents: {{dependent_count}}
-Witnesses notified: {{witness_list}}
+Resolved: {{.resolved_issue}}
+Cross-rig dependents: {{.dependent_count}}
+Witnesses notified: {{.witness_list}}
 Status: COMPLETE
 
 Ready for next assignment."

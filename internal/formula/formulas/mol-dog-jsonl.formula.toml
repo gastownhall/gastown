@@ -91,7 +91,7 @@ verifyExportCounts(gitRepo, databases, counts, threshold)
 ```
 
 **3. Evaluate results:**
-- If delta > {{spike_threshold}} (default 20%) for ANY database → HALT
+- If delta > {{.spike_threshold}} (default 20%) for ANY database → HALT
 - Log anomalies: sudden jumps = pollution, sudden drops = data loss
 - Escalate to Mayor with spike report
 - Do NOT proceed to commit/push
@@ -133,7 +133,7 @@ git -C <git_repo> push origin main
 ```
 
 **5. Handle push failures:**
-Track consecutive failures. After {{max_push_failures}} consecutive failures,
+Track consecutive failures. After {{.max_push_failures}} consecutive failures,
 escalate to Mayor.
 
 **Exit criteria:** Changes committed and pushed (or no changes to commit)."""
@@ -149,19 +149,19 @@ Generate summary and signal completion.
 ```markdown
 ## JSONL Dog Report
 
-**Databases exported**: {{exported_count}}/{{total_count}}
-**Total records**: {{record_count}}
-**Git push**: {{push_status}}
+**Databases exported**: {{.exported_count}}/{{.total_count}}
+**Total records**: {{.record_count}}
+**Git push**: {{.push_status}}
 
 ### Per Database
 {{#each db}}
-- {{name}}: {{records}} records ({{tables}} tables)
+- {{.name}}: {{.records}} records ({{.tables}} tables)
 {{/each}}
 
 ### Failures
 {{#if failures}}
 {{#each failures}}
-- {{name}}: {{error}}
+- {{.name}}: {{.error}}
 {{/each}}
 {{else}}
 None
@@ -171,9 +171,9 @@ None
 **2. Signal completion to Deacon:**
 ```bash
 gt mail send deacon/ -s "DOG_DONE: jsonl" -m "Task: jsonl-git-backup
-Exported: {{exported_count}}/{{total_count}}
-Records: {{record_count}}
-Push: {{push_status}}
+Exported: {{.exported_count}}/{{.total_count}}
+Records: {{.record_count}}
+Push: {{.push_status}}
 Status: COMPLETE"
 ```
 

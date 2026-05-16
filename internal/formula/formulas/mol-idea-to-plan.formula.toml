@@ -122,8 +122,8 @@ Pour the mol-prd-review convoy to run 6 parallel PRD reviewers.
 **1. Pour the convoy:**
 ```bash
 gt formula run mol-prd-review \\
-  --problem="{{problem}}" \\
-  --context="See .prd-reviews/{{review_id}}/prd-draft.md. {{context}}"
+  --set problem="{{problem}}" \\
+  --set context="See .prd-reviews/{{review_id}}/prd-draft.md. {{context}}"
 ```
 
 This spawns 6 polecats in parallel:
@@ -215,8 +215,8 @@ Pour the design convoy to generate an implementation plan from the refined PRD.
 **1. Pour the design convoy:**
 ```bash
 gt formula run design \\
-  --problem="{{problem}}" \\
-  --context="PRD with clarifications: .prd-reviews/{{review_id}}/prd-draft.md. {{context}}"
+  --set problem="{{problem}}" \\
+  --set context="PRD with clarifications: .prd-reviews/{{review_id}}/prd-draft.md. {{context}}"
 ```
 
 This spawns 6 polecats in parallel, each exploring a different dimension:

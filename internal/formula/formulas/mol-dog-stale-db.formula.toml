@@ -89,7 +89,7 @@ Remove orphan databases if count is manageable.
 **1. If no orphans found:**
 Skip — nothing to clean.
 
-**2. If orphan count <= {{max_orphans_for_sql}}:**
+**2. If orphan count <= {{.max_orphans_for_sql}}:**
 Clean up via SQL:
 ```sql
 DROP DATABASE IF EXISTS `<orphan_name>`;
@@ -98,11 +98,11 @@ DROP DATABASE IF EXISTS `<orphan_name>`;
 Handle potential read-only mode after DROP (gt-r1cyd):
 If DROP puts server into read-only, attempt recovery before continuing.
 
-**3. If orphan count > {{max_orphans_for_sql}}:**
+**3. If orphan count > {{.max_orphans_for_sql}}:**
 SQL cleanup would take too long (each DROP is ~27s under load).
 Escalate instead of attempting cleanup:
 ```bash
-gt escalate -s HIGH "Dolt: {{orphan_count}} orphan databases detected (too many for SQL cleanup)"
+gt escalate -s HIGH "Dolt: {{.orphan_count}} orphan databases detected (too many for SQL cleanup)"
 ```
 
 Recommend filesystem cleanup:
@@ -130,16 +130,16 @@ Generate summary and signal completion.
 ```markdown
 ## Stale DB Dog Report
 
-**Total databases**: {{total_count}}
-**Production databases**: {{prod_count}}
-**Orphan databases**: {{orphan_count}}
-**Orphans removed**: {{removed_count}}
-**Orphans remaining**: {{remaining_count}}
+**Total databases**: {{.total_count}}
+**Production databases**: {{.prod_count}}
+**Orphan databases**: {{.orphan_count}}
+**Orphans removed**: {{.removed_count}}
+**Orphans remaining**: {{.remaining_count}}
 
 ### Orphan Databases
 {{#if orphans}}
 {{#each orphans}}
-- {{name}} ({{size}})
+- {{.name}} ({{.size}})
 {{/each}}
 {{else}}
 None detected — database list is clean.
@@ -147,27 +147,27 @@ None detected — database list is clean.
 
 ### Action Taken
 {{#if cleaned}}
-Removed {{removed_count}} orphan(s) via SQL DROP DATABASE.
+Removed {{.removed_count}} orphan(s) via SQL DROP DATABASE.
 {{else if escalated}}
-Too many orphans ({{orphan_count}}) for SQL cleanup — escalated.
+Too many orphans ({{.orphan_count}}) for SQL cleanup — escalated.
 {{else}}
 No action needed.
 {{/if}}
 ```
 
 **2. Warn if above threshold:**
-If orphan count >= {{warn_threshold}}, this is early warning:
+If orphan count >= {{.warn_threshold}}, this is early warning:
 ```bash
-gt mail send deacon/ -s "WARN: {{orphan_count}} orphan databases detected" -m "..."
+gt mail send deacon/ -s "WARN: {{.orphan_count}} orphan databases detected" -m "..."
 ```
 
 **3. Signal completion to Deacon:**
 ```bash
 gt mail send deacon/ -s "DOG_DONE: stale-db" -m "Task: stale-db-scan
-Total DBs: {{total_count}}
-Production: {{prod_count}}
-Orphans: {{orphan_count}}
-Removed: {{removed_count}}
+Total DBs: {{.total_count}}
+Production: {{.prod_count}}
+Orphans: {{.orphan_count}}
+Removed: {{.removed_count}}
 Status: COMPLETE"
 ```
 

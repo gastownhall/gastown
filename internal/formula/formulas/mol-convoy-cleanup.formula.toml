@@ -47,7 +47,7 @@ Load the convoy bead and verify it's ready for archival.
 **1. Check your assignment:**
 ```bash
 gt hook               # Shows hook_bead = convoy ID
-bd show {{convoy}}          # Full convoy details
+bd show {{.convoy}}          # Full convoy details
 ```
 
 **2. Verify convoy is complete:**
@@ -55,7 +55,7 @@ bd show {{convoy}}          # Full convoy details
 - If convoy is still open, exit - Deacon dispatched too early
 
 ```bash
-bd show {{convoy}}
+bd show {{.convoy}}
 # Check 'tracks' or 'dependencies' field
 # All tracked issues should be closed
 ```
@@ -90,7 +90,7 @@ bd show <tracked-id>
 
 **3. Create summary text:**
 ```markdown
-## Convoy Summary: {{convoy.title}}
+## Convoy Summary: {{.convoy.title}}
 
 **Duration**: X days/hours
 **Issues completed**: N
@@ -120,12 +120,12 @@ Close the convoy to mark it complete. Beads retention handles archival.
 
 **1. Close convoy:**
 ```bash
-bd close {{convoy}} --reason="Convoy complete"
+bd close {{.convoy}} --reason="Convoy complete"
 ```
 
 **2. Verify closure:**
 ```bash
-bd show {{convoy}}
+bd show {{.convoy}}
 # Status should be "closed"
 ```
 
@@ -145,18 +145,18 @@ Notify the Mayor (overseer) of convoy completion.
 
 **1. Send completion mail:**
 ```bash
-gt mail send mayor/ -s "Convoy complete: {{convoy.title}}" -m "$(cat <<EOF
-Convoy {{convoy}} has completed and been closed.
+gt mail send mayor/ -s "Convoy complete: {{.convoy.title}}" -m "$(cat <<EOF
+Convoy {{.convoy}} has completed and been closed.
 
 ## Summary
-{{generated_summary}}
+{{.generated_summary}}
 
 ## Metrics
-- Duration: {{duration}}
-- Issues: {{issue_count}}
-- Contributors: {{contributor_list}}
+- Duration: {{.duration}}
+- Issues: {{.issue_count}}
+- Contributors: {{.contributor_list}}
 
-This convoy has been closed. View details: bd show {{convoy}}
+This convoy has been closed. View details: bd show {{.convoy}}
 EOF
 )"
 ```
@@ -180,9 +180,9 @@ Signal work complete and return to available pool.
 **1. Signal completion to Deacon:**
 ```bash
 gt mail send deacon/ -s "DOG_DONE $(hostname)" -m "Task: convoy-cleanup
-Convoy: {{convoy}}
+Convoy: {{.convoy}}
 Status: COMPLETE
-Duration: {{work_duration}}
+Duration: {{.work_duration}}
 
 Ready for next assignment."
 ```

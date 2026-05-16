@@ -62,16 +62,16 @@ Discover databases and count candidates for each operation.
 
 **1. List databases to scan:**
 ```bash
-gt reaper databases --port={{dolt_port}} --json
+gt reaper databases --port={{.dolt_port}} --json
 ```
-Or use configured database list from {{databases}} variable.
+Or use configured database list from {{.databases}} variable.
 
 **2. Scan each database:**
 ```bash
-gt reaper scan --db=<name> --port={{dolt_port}} \\
-  --max-age={{max_age}} --purge-age={{purge_age}} \\
-  --mail-age={{mail_delete_age}} --stale-age={{stale_issue_age}} \\
-  --db-delay={{db_delay}} \\
+gt reaper scan --db=<name> --port={{.dolt_port}} \\
+  --max-age={{.max_age}} --purge-age={{.purge_age}} \\
+  --mail-age={{.mail_delete_age}} --stale-age={{.stale_issue_age}} \\
+  --db-delay={{.db_delay}} \\
   --json
 ```
 
@@ -79,7 +79,7 @@ gt reaper scan --db=<name> --port={{dolt_port}} \\
 - Check the `anomalies` array in the JSON output
 - Flag any `dangling_parent_ref` anomalies — these indicate wisps with
   parent dependency records pointing to purged/missing parents
-- If `open_wisps` exceeds {{alert_threshold}}, escalate
+- If `open_wisps` exceeds {{.alert_threshold}}, escalate
 
 **4. Decide whether to proceed:**
 - If no candidates found across all databases, skip remaining steps
@@ -96,8 +96,8 @@ Close wisps past max_age whose parent molecule is closed or missing.
 
 **1. For each database with reap candidates:**
 ```bash
-gt reaper reap --db=<name> --port={{dolt_port}} \\
-  --max-age={{max_age}} --db-delay={{db_delay}} {{#if dry_run}}--dry-run{{/if}} --json
+gt reaper reap --db=<name> --port={{.dolt_port}} \\
+  --max-age={{.max_age}} --db-delay={{.db_delay}} {{#if dry_run}}--dry-run{{/if}} --json
 ```
 
 **2. Inspect results:**
@@ -108,7 +108,7 @@ gt reaper reap --db=<name> --port={{dolt_port}} \\
 - Check for any anomalies in the response
 
 **3. Alert check:**
-If total open wisps across all databases exceed {{alert_threshold}},
+If total open wisps across all databases exceed {{.alert_threshold}},
 log a warning and consider escalating.
 
 **Exit criteria:** All stale wisps closed (or dry-run counts reported)."""
@@ -122,9 +122,9 @@ Delete closed wisps past purge_age and closed mail past mail_delete_age.
 
 **1. For each database with purge candidates:**
 ```bash
-gt reaper purge --db=<name> --port={{dolt_port}} \\
-  --purge-age={{purge_age}} --mail-age={{mail_delete_age}} \\
-  --db-delay={{db_delay}} \\
+gt reaper purge --db=<name> --port={{.dolt_port}} \\
+  --purge-age={{.purge_age}} --mail-age={{.mail_delete_age}} \\
+  --db-delay={{.db_delay}} \\
   {{#if dry_run}}--dry-run{{/if}} --json
 ```
 
@@ -147,9 +147,9 @@ Close issues that have been open with no status change past stale_issue_age.
 
 **1. For each database with stale candidates:**
 ```bash
-gt reaper auto-close --db=<name> --port={{dolt_port}} \\
-  --stale-age={{stale_issue_age}} \\
-  --db-delay={{db_delay}} \\
+gt reaper auto-close --db=<name> --port={{.dolt_port}} \\
+  --stale-age={{.stale_issue_age}} \\
+  --db-delay={{.db_delay}} \\
   {{#if dry_run}}--dry-run{{/if}} --json
 ```
 
