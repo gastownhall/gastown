@@ -20,12 +20,15 @@ var (
 
 // StaleBinaryInfo contains information about binary staleness.
 type StaleBinaryInfo struct {
-	IsStale       bool   // True if binary commit doesn't match repo HEAD
-	IsForward     bool   // True if repo HEAD is a descendant of binary commit (safe to rebuild)
-	OnMainBranch  bool   // True if the repo is on the main branch
+	IsStale       bool   // True if binary commit is behind the build-branch ref
+	IsForward     bool   // True if the compare commit is a descendant of binary commit (safe to rebuild)
+	OnMainBranch  bool   // True if the resolved source worktree is on a build branch
 	BinaryCommit  string // Commit hash the binary was built from
-	RepoCommit    string // Current repo HEAD commit
+	RepoCommit    string // Commit of the ref the binary was compared against (CompareRef)
+	CompareRef    string // The ref staleness was computed against (e.g. "main", "origin/main")
 	CommitsBehind int    // Number of commits binary is behind (0 if unknown)
+	Skipped       bool   // True if no build-branch ref could be resolved to compare against
+	SkipReason    string // Human-readable reason the check was skipped
 	Error         error  // Any error encountered during check
 }
 
@@ -82,26 +85,52 @@ func CheckStaleBinary(repoDir string) *StaleBinaryInfo {
 		return info
 	}
 
-	// Get repo HEAD
-	cmd := exec.Command("git", "rev-parse", "HEAD")
-	cmd.Dir = repoDir
-	util.SetDetachedProcessGroup(cmd)
-	output, err := cmd.Output()
-	if err != nil {
-		info.Error = fmt.Errorf("cannot get repo HEAD: %w", err)
-		return info
-	}
-	info.RepoCommit = strings.TrimSpace(string(output))
-
-	// Check which branch the repo is on.
+	// Check which branch the resolved source worktree is on.
 	// Accept main/master (upstream) and carry/* (fork operational branches).
+	var branch string
 	branchCmd := exec.Command("git", "symbolic-ref", "--short", "HEAD")
 	branchCmd.Dir = repoDir
 	util.SetDetachedProcessGroup(branchCmd)
 	if branchOutput, err := branchCmd.Output(); err == nil {
-		branch := strings.TrimSpace(string(branchOutput))
-		info.OnMainBranch = isBuildBranch(branch)
+		branch = strings.TrimSpace(string(branchOutput))
 	}
+	info.OnMainBranch = isBuildBranch(branch)
+
+	// Decide which ref to compare the binary against.
+	//
+	// GetRepoRoot resolves to $GT_ROOT/gastown/mayor/rig, a worktree that
+	// normally sits on a feature branch (that's where the Mayor does git work).
+	// Diffing the binary against that worktree's HEAD compares it to unmerged
+	// feature work and produces a false "N commits behind" warning advising a
+	// rebuild from the feature branch (GH#4034). Staleness is only meaningful
+	// relative to a *build branch*.
+	var compareRef string
+	if info.OnMainBranch {
+		// Already on a build branch — its HEAD is the build branch.
+		compareRef = "HEAD"
+		info.CompareRef = branch
+	} else {
+		// Resolve a real build-branch ref instead of the feature HEAD.
+		ref, ok := resolveBuildBranchRef(repoDir, info.BinaryCommit)
+		if !ok {
+			info.Skipped = true
+			info.SkipReason = "source worktree not on a build branch and no build-branch ref found to compare against"
+			return info
+		}
+		compareRef = ref
+		info.CompareRef = ref
+	}
+
+	// Resolve the compare ref to a commit hash.
+	revCmd := exec.Command("git", "rev-parse", compareRef)
+	revCmd.Dir = repoDir
+	util.SetDetachedProcessGroup(revCmd)
+	output, err := revCmd.Output()
+	if err != nil {
+		info.Error = fmt.Errorf("cannot resolve compare ref %q: %w", compareRef, err)
+		return info
+	}
+	info.RepoCommit = strings.TrimSpace(string(output))
 
 	// Compare commits using prefix matching (handles short vs full hash)
 	// Use the shorter of the two commit lengths for comparison
@@ -117,26 +146,27 @@ func CheckStaleBinary(repoDir string) *StaleBinaryInfo {
 			return info
 		}
 
-		// Check if all commits between binary and HEAD only touch .beads/ files
-		// (e.g., bd backup commits). These don't affect the binary and should not
-		// trigger a stale warning. (GH#2596)
-		if onlyBeadsChanges(repoDir, info.BinaryCommit) {
-			// HEAD advanced but only via beads-only commits — not stale
+		// Check if all commits between binary and the build ref only touch
+		// .beads/ files (e.g., bd backup commits). These don't affect the
+		// binary and should not trigger a stale warning. (GH#2596)
+		if onlyBeadsChanges(repoDir, info.BinaryCommit, compareRef) {
+			// Build ref advanced but only via beads-only commits — not stale
 			return info
 		}
 
 		info.IsStale = true
 
-		// Check if this is a forward-only update (binary commit is ancestor of HEAD).
-		// This prevents rebuilding to an older or diverged commit, which caused
-		// a crash loop when a crew worktree's HEAD was behind the binary's commit.
-		ancestorCmd := exec.Command("git", "merge-base", "--is-ancestor", info.BinaryCommit, "HEAD")
+		// Check if this is a forward-only update (binary commit is ancestor of
+		// the build ref). This prevents rebuilding to an older or diverged
+		// commit, which caused a crash loop when a worktree's HEAD was behind
+		// the binary's commit.
+		ancestorCmd := exec.Command("git", "merge-base", "--is-ancestor", info.BinaryCommit, compareRef)
 		ancestorCmd.Dir = repoDir
 		util.SetDetachedProcessGroup(ancestorCmd)
 		info.IsForward = ancestorCmd.Run() == nil
 
-		// Try to count commits between binary and HEAD
-		countCmd := exec.Command("git", "rev-list", "--count", info.BinaryCommit+"..HEAD")
+		// Try to count commits between binary and the build ref
+		countCmd := exec.Command("git", "rev-list", "--count", info.BinaryCommit+".."+compareRef)
 		countCmd.Dir = repoDir
 		util.SetDetachedProcessGroup(countCmd)
 		if countOutput, err := countCmd.Output(); err == nil {
@@ -147,6 +177,72 @@ func CheckStaleBinary(repoDir string) *StaleBinaryInfo {
 	}
 
 	return info
+}
+
+// resolveBuildBranchRef finds a build-branch ref to compare the binary against
+// when the resolved source worktree is parked on a non-build branch (the normal
+// state for $GT_ROOT/gastown/mayor/rig). Without this, staleness would be
+// computed against unmerged feature work (GH#4034).
+//
+// Candidates are tried in build-branch precedence order; the first that both
+// (a) resolves to a commit and (b) has binaryCommit as an ancestor is returned.
+// Requiring binaryCommit to be an ancestor ensures we compare against the branch
+// the binary was actually built from — e.g. it routes a fork build to its
+// carry/* operational branch rather than a stale local main.
+func resolveBuildBranchRef(repoDir, binaryCommit string) (string, bool) {
+	candidates := []string{"main", "master"}
+
+	// Fork operational branch: include a local carry/* branch, but only if
+	// exactly one exists (ambiguous otherwise — don't guess).
+	if c, ok := singleCarryBranch(repoDir); ok {
+		candidates = append(candidates, c)
+	}
+
+	candidates = append(candidates,
+		"origin/main", "origin/master",
+		"upstream/main", "upstream/master",
+	)
+
+	for _, ref := range candidates {
+		if refExists(repoDir, ref) && isAncestor(repoDir, binaryCommit, ref) {
+			return ref, true
+		}
+	}
+	return "", false
+}
+
+// refExists reports whether ref resolves to a commit in repoDir.
+func refExists(repoDir, ref string) bool {
+	cmd := exec.Command("git", "rev-parse", "--verify", "--quiet", ref+"^{commit}")
+	cmd.Dir = repoDir
+	util.SetDetachedProcessGroup(cmd)
+	return cmd.Run() == nil
+}
+
+// isAncestor reports whether ancestor is an ancestor of ref (a commit is its
+// own ancestor) in repoDir.
+func isAncestor(repoDir, ancestor, ref string) bool {
+	cmd := exec.Command("git", "merge-base", "--is-ancestor", ancestor, ref)
+	cmd.Dir = repoDir
+	util.SetDetachedProcessGroup(cmd)
+	return cmd.Run() == nil
+}
+
+// singleCarryBranch returns the sole local carry/* branch, if exactly one
+// exists. Multiple carry/* branches are ambiguous and yield ("", false).
+func singleCarryBranch(repoDir string) (string, bool) {
+	cmd := exec.Command("git", "for-each-ref", "--format=%(refname:short)", "refs/heads/carry/")
+	cmd.Dir = repoDir
+	util.SetDetachedProcessGroup(cmd)
+	out, err := cmd.Output()
+	if err != nil {
+		return "", false
+	}
+	branches := strings.Fields(strings.TrimSpace(string(out)))
+	if len(branches) == 1 {
+		return branches[0], true
+	}
+	return "", false
 }
 
 // GetRepoRoot returns the git repository root for the gt source code.
@@ -213,14 +309,15 @@ func hasGtSource(dir string) bool {
 	return err == nil
 }
 
-// onlyBeadsChanges checks whether all commits between binaryCommit and HEAD
-// exclusively modify files under .beads/. Returns true if the diff contains
-// no changes outside .beads/, meaning the binary is functionally up-to-date.
-// Used to suppress false-positive stale warnings from bd backup commits. (GH#2596)
-func onlyBeadsChanges(repoDir, binaryCommit string) bool {
-	// Get files changed between binary commit and HEAD, excluding .beads/
-	// If this produces no output, all changes are within .beads/
-	cmd := exec.Command("git", "diff", "--name-only", binaryCommit+"..HEAD", "--", ".", ":!.beads")
+// onlyBeadsChanges checks whether all commits between binaryCommit and
+// compareRef exclusively modify files under .beads/. Returns true if the diff
+// contains no changes outside .beads/, meaning the binary is functionally
+// up-to-date. Used to suppress false-positive stale warnings from bd backup
+// commits. (GH#2596)
+func onlyBeadsChanges(repoDir, binaryCommit, compareRef string) bool {
+	// Get files changed between binary commit and the build ref, excluding
+	// .beads/. If this produces no output, all changes are within .beads/
+	cmd := exec.Command("git", "diff", "--name-only", binaryCommit+".."+compareRef, "--", ".", ":!.beads")
 	cmd.Dir = repoDir
 	util.SetDetachedProcessGroup(cmd)
 	output, err := cmd.Output()

@@ -46,12 +46,21 @@ func (c *StaleBinaryCheck) Run(ctx *CheckContext) *CheckResult {
 		}
 	}
 
+	if info.Skipped {
+		return &CheckResult{
+			Name:    c.Name(),
+			Status:  StatusOK,
+			Message: "Binary staleness check skipped",
+			Details: []string{info.SkipReason},
+		}
+	}
+
 	if info.IsStale {
-		msg := fmt.Sprintf("Binary is stale (built from %s, repo at %s)",
-			version.ShortCommit(info.BinaryCommit), version.ShortCommit(info.RepoCommit))
+		msg := fmt.Sprintf("Binary is stale (built from %s, %s at %s)",
+			version.ShortCommit(info.BinaryCommit), info.CompareRef, version.ShortCommit(info.RepoCommit))
 		if info.CommitsBehind > 0 {
-			msg = fmt.Sprintf("Binary is %d commits behind (built from %s, repo at %s)",
-				info.CommitsBehind, version.ShortCommit(info.BinaryCommit), version.ShortCommit(info.RepoCommit))
+			msg = fmt.Sprintf("Binary is %d commits behind %s (built from %s, %s at %s)",
+				info.CommitsBehind, info.CompareRef, version.ShortCommit(info.BinaryCommit), info.CompareRef, version.ShortCommit(info.RepoCommit))
 		}
 
 		return &CheckResult{
