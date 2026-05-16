@@ -4,6 +4,8 @@
 # Syncs production databases to filesystem backups via `dolt backup sync`.
 # Skips databases that haven't changed since last backup (hash check).
 # Only escalates when actual backup operations fail — not on ping failures.
+# After each run, prunes old .darc files keeping at least BACKUP_SAFETY_FLOOR
+# most-recent archives and deleting any older than BACKUP_RETENTION_DAYS.
 #
 # Usage: ./run.sh [--databases db1,db2,...] [--dry-run]
 
@@ -14,6 +16,8 @@ set -euo pipefail
 DOLT_DATA_DIR="${DOLT_DATA_DIR:-$HOME/gt/.dolt-data}"
 BACKUP_DIR="${DOLT_BACKUP_DIR:-$HOME/gt/.dolt-backup}"
 BACKUP_TIMEOUT=60
+BACKUP_RETENTION_DAYS="${BACKUP_RETENTION_DAYS:-7}"
+BACKUP_SAFETY_FLOOR="${BACKUP_SAFETY_FLOOR:-3}"
 
 # --- Argument parsing ---------------------------------------------------------
 
@@ -36,6 +40,54 @@ done
 
 log() {
   echo "[dolt-backup] $*"
+}
+
+# retention_cleanup <backup_path>
+# Deletes .darc files older than BACKUP_RETENTION_DAYS, always keeping the
+# BACKUP_SAFETY_FLOOR most-recent files. Non-fatal: errors are logged and skipped.
+retention_cleanup() {
+  local backup_path="$1"
+  [[ -d "$backup_path" ]] || return 0
+
+  # Collect all .darc files sorted newest-first (ls -t is portable on macOS+Linux)
+  local -a darcs=()
+  while IFS= read -r f; do
+    darcs+=("$f")
+  done < <(ls -t "$backup_path"/*.darc 2>/dev/null || true)
+
+  local total=${#darcs[@]}
+  [[ $total -eq 0 ]] && return 0
+
+  local deleted=0
+  local freed_kb=0
+  local cutoff=$(( $(date +%s) - BACKUP_RETENTION_DAYS * 86400 ))
+
+  for (( i=0; i<total; i++ )); do
+    local f="${darcs[$i]}"
+    # Safety floor: never delete the BACKUP_SAFETY_FLOOR most-recent archives
+    (( i < BACKUP_SAFETY_FLOOR )) && continue
+
+    # mtime: macOS uses stat -f "%m"; GNU stat uses stat -c "%Y"
+    local mtime
+    mtime=$(stat -f "%m" "$f" 2>/dev/null || stat -c "%Y" "$f" 2>/dev/null || echo 0)
+
+    if (( mtime < cutoff )); then
+      local age_days=$(( ( $(date +%s) - mtime ) / 86400 ))
+      local kb
+      kb=$(du -k "$f" 2>/dev/null | cut -f1 || echo 0)
+      if rm -f "$f" 2>/dev/null; then
+        deleted=$(( deleted + 1 ))
+        freed_kb=$(( freed_kb + kb ))
+        log "    retention: removed $(basename "$f") (${age_days}d old, ${kb}KB)"
+      else
+        log "    retention: could not remove $(basename "$f") — skipping"
+      fi
+    fi
+  done
+
+  if (( deleted > 0 )); then
+    log "  retention: freed ${freed_kb}KB across ${deleted} file(s) (${BACKUP_RETENTION_DAYS}d policy, floor ${BACKUP_SAFETY_FLOOR})"
+  fi
 }
 
 # --- Step 1: Discover databases -----------------------------------------------
@@ -137,12 +189,46 @@ for DB in "${PROD_DBS[@]}"; do
   fi
 done
 
-# --- Step 3: Report results ---------------------------------------------------
+# --- Step 3: Retention — prune old .darc files --------------------------------
+# Read each DB's configured backup URL from repo_state.json. Only file:// remotes
+# are pruned (remote/cloud remotes manage their own retention).
 
-SUMMARY="Backup: $SYNCED synced, $SKIPPED unchanged, $FAILED failed (of ${#PROD_DBS[@]} DBs)"
+RETENTION_CLEANED=0
+for DB in "${PROD_DBS[@]}"; do
+  DB_DIR="$DOLT_DATA_DIR/$DB"
+  REPO_STATE="$DB_DIR/.dolt/repo_state.json"
+  [[ -f "$REPO_STATE" ]] || continue
+
+  # Extract first backup URL (python3 is available on all Gas Town nodes)
+  BACKUP_URL=$(python3 -c "
+import json, sys
+try:
+    d = json.load(open(sys.argv[1]))
+    bk = d.get('backups', {})
+    if bk:
+        print(list(bk.values())[0]['url'])
+except Exception:
+    pass
+" "$REPO_STATE" 2>/dev/null || true)
+
+  if [[ "$BACKUP_URL" == file://* ]]; then
+    BACKUP_PATH="${BACKUP_URL#file://}"
+    if $DRY_RUN; then
+      DARC_COUNT=$(ls "$BACKUP_PATH"/*.darc 2>/dev/null | wc -l | tr -d ' ')
+      log "  $DB: DRY RUN retention — $DARC_COUNT .darc in $BACKUP_PATH"
+    else
+      retention_cleanup "$BACKUP_PATH"
+      RETENTION_CLEANED=$(( RETENTION_CLEANED + 1 ))
+    fi
+  fi
+done
+
+# --- Step 4: Report results ---------------------------------------------------
+
+SUMMARY="Backup: $SYNCED synced, $SKIPPED unchanged, $FAILED failed (of ${#PROD_DBS[@]} DBs); retention checked ${RETENTION_CLEANED} backup dir(s)"
 log "$SUMMARY"
 
-# --- Step 4: Record result and escalate if needed -----------------------------
+# --- Step 5: Record result and escalate if needed -----------------------------
 
 if [[ "$FAILED" -eq 0 ]]; then
   # Success — record quietly
