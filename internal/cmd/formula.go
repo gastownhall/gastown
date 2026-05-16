@@ -894,6 +894,29 @@ func executeWorkflowFormula(f *formula.Formula, formulaName, targetRig string) e
 	// `target` (gt-3798). A workflow that mixes interactive and non-interactive
 	// steps must still route the non-interactive ones — a single interactive
 	// step does not pin the whole workflow to the orchestrator session.
+	// Pre-flight: warn at pour-time if any ready non-interactive step targets
+	// something the capacity-scheduler's deferred gate will reject — neither a
+	// rig nor a capacity-neutral agent (gt-3798 follow-up, Approach C Part 2).
+	if deferred, _ := shouldDeferDispatch(); deferred {
+		for _, step := range f.Steps {
+			if len(step.Needs) > 0 || step.Interactive {
+				continue
+			}
+			t := workflowStepTarget(step, targetRig)
+			if isUnroutableTarget(t, IsRigName) {
+				fmt.Fprintf(os.Stderr,
+					"\nWARNING: step %q resolves target %q — not a rig or capacity-neutral agent.\n"+
+						"Under the capacity scheduler this step will strand.\n"+
+						"Fix the formula's `target` field.\n\n",
+					step.ID, t)
+				_ = BdCmd("comments", "add", workflowID,
+					fmt.Sprintf("Pour-time WARNING: step %q target %q is not a rig or capacity-neutral agent — will strand under the capacity scheduler (gt-3798).", step.ID, t)).
+					Dir(townBeads).
+					Run()
+			}
+		}
+	}
+
 	fmt.Printf("\n%s Dispatching ready steps...\n\n", style.Bold.Render("→"))
 
 	slingCount := 0

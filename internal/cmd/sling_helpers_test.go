@@ -236,3 +236,94 @@ func TestIsSlingConfigError(t *testing.T) {
 		})
 	}
 }
+
+// TestIsCapacityNeutralTarget verifies the deferred-dispatch gate's target
+// classification: capacity-neutral targets (dogs + standing singleton agents)
+// bypass the scheduler because they do not occupy a polecat slot; bare rigs
+// and explicit polecat targets are capacity-managed (gt-3798 follow-up).
+func TestIsCapacityNeutralTarget(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name   string
+		target string
+		want   bool
+	}{
+		// Capacity-managed: occupies / spawns a polecat slot -> must go through scheduler.
+		{"bare rig spawns polecat", "agreement_hub", false},
+		{"explicit polecat occupies slot", "agreement_hub/polecats/alpha", false},
+		{"another rig", "gastown", false},
+
+		// Capacity-neutral: dogs (Deacon's self-managed pool, aa-4yf2).
+		{"dog pool", "deacon/dogs", true},
+		{"specific dog", "deacon/dogs/alpha", true},
+		{"dog shorthand pool", "dog:", true},
+		{"dog shorthand named", "dog:bravo", true},
+
+		// Capacity-neutral: town-level standing singletons.
+		{"mayor", "mayor", true},
+		{"mayor case-insensitive", "MAYOR", true},
+		{"mayor trailing slash", "mayor/", true},
+		{"deacon", "deacon", true},
+
+		// Capacity-neutral: rig-scoped standing agents.
+		{"rig witness", "agreement_hub/witness", true},
+		{"rig refinery", "agreement_hub/refinery", true},
+		{"named crew", "agreement_hub/crew/hub_sheriff", true},
+		{"crew without name", "agreement_hub/crew", true},
+
+		// Not capacity-neutral: unrecognized / typo'd targets must still be
+		// rejected by the gate so they cannot silently strand a workflow.
+		{"typo'd role", "mayer", false},
+		{"unknown bare token", "nobody", false},
+		{"empty", "", false},
+	}
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			if got := isCapacityNeutralTarget(tt.target); got != tt.want {
+				t.Errorf("isCapacityNeutralTarget(%q) = %v, want %v", tt.target, got, tt.want)
+			}
+		})
+	}
+}
+
+// TestIsUnroutableTarget locks gt-3798 Approach C Part 2: the pour-time
+// pre-flight must block targets that are neither a rig nor capacity-neutral,
+// and must pass targets that are valid under the deferred-dispatch gate.
+func TestIsUnroutableTarget(t *testing.T) {
+	t.Parallel()
+
+	stubIsRig := func(target string) (string, bool) {
+		if target == "my-rig" {
+			return "my-rig", true
+		}
+		return "", false
+	}
+
+	tests := []struct {
+		target  string
+		blocked bool
+	}{
+		// Valid targets: rig or capacity-neutral
+		{"my-rig", false},
+		{"mayor", false},
+		{"deacon", false},
+		{"agreement_hub/witness", false},
+		{"agreement_hub/crew/hub_sheriff", false},
+		{"deacon/dogs/alpha", false},
+		// Blocked: unknown / typo'd targets
+		{"badtarget", true},
+		{"mayors", true},
+		{"", true},
+	}
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.target, func(t *testing.T) {
+			t.Parallel()
+			if got := isUnroutableTarget(tt.target, stubIsRig); got != tt.blocked {
+				t.Fatalf("isUnroutableTarget(%q) = %v, want %v", tt.target, got, tt.blocked)
+			}
+		})
+	}
+}

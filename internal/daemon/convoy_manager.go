@@ -112,6 +112,11 @@ type ConvoyManager struct {
 	// been handled. This allows the 1s overlap window above without replaying
 	// the same lifecycle events on every poll.
 	processedLifecycleEvents sync.Map // map[string]bool
+
+	// seenSlingErrors deduplicates persistent sling failures so the daemon
+	// logs and escalates once per stranded issue instead of spamming every
+	// scan cycle. Key: issueID.
+	seenSlingErrors sync.Map // map[string]bool
 }
 
 // NewConvoyManager creates a new convoy manager.
@@ -571,13 +576,36 @@ func (m *ConvoyManager) feedFirstReady(c strandedConvoyInfo) {
 		cmd.Stderr = &stderr
 
 		if err := cmd.Run(); err != nil {
-			m.logger("Convoy %s: sling %s failed: %s", c.ID, issueID, util.FirstLine(stderr.String()))
+			errMsg := util.FirstLine(stderr.String())
+			// Log always; escalate and suppress future repeats on first failure.
+			if _, already := m.seenSlingErrors.LoadOrStore(issueID, true); !already {
+				m.logger("Convoy %s: sling %s failed: %s", c.ID, issueID, errMsg)
+				m.escalateSlingFailure(c.ID, issueID, errMsg)
+			}
 			continue
 		}
+		// Dispatch succeeded — clear any prior failure record so a future
+		// failure (if the issue is re-queued) is reported again.
+		m.seenSlingErrors.Delete(issueID)
 		return // Successfully dispatched one issue
 	}
 
 	m.logger("Convoy %s: no dispatchable issues (all %d skipped)", c.ID, len(c.ReadyIssues))
+}
+
+// escalateSlingFailure fires a one-shot gt escalate for a stranded convoy step.
+// It is called at most once per issueID (the caller deduplicates via seenSlingErrors).
+func (m *ConvoyManager) escalateSlingFailure(convoyID, issueID, errMsg string) {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	msg := fmt.Sprintf("Convoy %s: step %s cannot be dispatched and will never progress — %s (gt-3798). Investigate with: gt convoy status %s", convoyID, issueID, errMsg, convoyID)
+	cmd := exec.CommandContext(ctx, m.gtPath, "escalate", "-s", "HIGH", msg)
+	cmd.Dir = m.townRoot
+	util.SetDetachedProcessGroup(cmd)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		m.logger("Convoy %s: escalation failed: %v (%s)", convoyID, err, strings.TrimSpace(string(out)))
+	}
 }
 
 // checkConvoyCompletion runs gt convoy check to auto-close a convoy whose

@@ -817,6 +817,55 @@ func isPolecatTarget(target string) bool {
 	return len(parts) >= 3 && parts[1] == "polecats"
 }
 
+// isCapacityNeutralTarget reports whether dispatching to target consumes a rig
+// polecat slot governed by scheduler.max_polecats.
+//
+// It returns true for targets that do NOT occupy a polecat slot — dogs (the
+// Deacon's self-managed pool, bead aa-4yf2) and standing singleton agents
+// (mayor, deacon, and the rig-scoped witness/refinery/crew agents). These may
+// dispatch directly even when the capacity scheduler is active, because the
+// cap governs only polecats. A bare rig name (spawns a polecat) and
+// <rig>/polecats/<name> (occupies a polecat slot) are capacity-managed and
+// return false.
+//
+// This exists because the deferred-dispatch gate must classify on the real
+// question — "does this target consume a polecat slot?" — not the proxy
+// question "is the literal arg a rig?". Conflating the two silently stranded
+// workflows whose steps target a standing role (gt-3798 follow-up: the
+// daemon rewrites a rig target to e.g. workflow_target: mayor, which was
+// then dead-on-arrival under the scheduler).
+func isCapacityNeutralTarget(target string) bool {
+	if _, isDog := IsDogTarget(target); isDog {
+		return true
+	}
+	if isPolecatTarget(target) {
+		return false // <rig>/polecats/<name> occupies a polecat slot
+	}
+	t := strings.ToLower(strings.TrimRight(strings.TrimSpace(target), "/"))
+	switch t {
+	case constants.RoleMayor, constants.RoleDeacon:
+		return true // town-level standing singletons
+	}
+	// Rig-scoped standing agents: <rig>/witness, <rig>/refinery, <rig>/crew[/<name>].
+	if parts := strings.Split(t, "/"); len(parts) >= 2 {
+		switch parts[1] {
+		case constants.RoleWitness, constants.RoleRefinery, constants.RoleCrew:
+			return true
+		}
+	}
+	return false
+}
+
+// isUnroutableTarget reports whether target would be rejected by the
+// deferred-dispatch gate when the capacity scheduler is active. It returns
+// true when the target is neither a rig (which spawns a polecat) nor a
+// capacity-neutral agent. isRig is injectable so the pre-flight helper stays
+// unit-testable without a real town on disk.
+func isUnroutableTarget(target string, isRig func(string) (string, bool)) bool {
+	_, ok := isRig(target)
+	return !ok && !isCapacityNeutralTarget(target)
+}
+
 // FormulaOnBeadResult contains the result of instantiating a formula on a bead.
 type FormulaOnBeadResult struct {
 	WispRootID string // The wisp root ID (compound root after bonding)
