@@ -34,12 +34,12 @@ var (
 	// Record subcommand flags
 	recordSession  string
 	recordWorkItem string
+	recordCostUSD  float64 // pre-computed cost from agent (e.g. opencode session.deleted event)
 
 	// Digest subcommand flags
 	digestYesterday bool
 	digestDate      string
 	digestDryRun    bool
-
 )
 
 var costsCmd = &cobra.Command{
@@ -72,19 +72,25 @@ var costsRecordCmd = &cobra.Command{
 	Short: "Record session cost to local log file (called by Stop hook)",
 	Long: `Record the final cost of a session to a local log file.
 
-This command is intended to be called from a Claude Code Stop hook.
-It reads token usage from the Claude Code transcript file
-($CLAUDE_CONFIG_DIR/projects/... or ~/.claude/projects/...)
-and calculates the cost based on model pricing, then appends it to
-~/.gt/costs.jsonl. This is a simple append operation that never fails
-due to database availability.
+This command is called from agent stop hooks (Claude Code Stop hook,
+OpenCode session.deleted event, etc.). It determines the session cost and
+appends it to ~/.gt/costs.jsonl.
+
+Cost source (first wins):
+  1. --cost flag: pre-computed cost passed directly by the caller
+  2. Claude transcript: reads token usage from ~/.claude/projects/...
+
+The --cost flag enables OpenCode support: the gastown.js plugin reads the
+cost from the session.deleted event and passes it via --cost, bypassing
+Claude-specific transcript parsing.
 
 Session costs are aggregated daily by 'gt costs digest' into a single
 permanent "Cost Report YYYY-MM-DD" bead for audit purposes.
 
 Examples:
   gt costs record --session gt-gastown-toast
-  gt costs record --session gt-gastown-toast --work-item gt-abc123`,
+  gt costs record --session gt-gastown-toast --work-item gt-abc123
+  gt costs record --session <opencode-session-id> --cost 0.42`,
 	RunE: runCostsRecord,
 }
 
@@ -118,8 +124,9 @@ func init() {
 
 	// Add record subcommand
 	costsCmd.AddCommand(costsRecordCmd)
-	costsRecordCmd.Flags().StringVar(&recordSession, "session", "", "Tmux session name to record")
+	costsRecordCmd.Flags().StringVar(&recordSession, "session", "", "Session name or ID to record")
 	costsRecordCmd.Flags().StringVar(&recordWorkItem, "work-item", "", "Work item ID (bead) for attribution")
+	costsRecordCmd.Flags().Float64Var(&recordCostUSD, "cost", 0, "Pre-computed cost in USD (skips transcript parsing; used by opencode)")
 
 	// Add digest subcommand
 	costsCmd.AddCommand(costsDigestCmd)
