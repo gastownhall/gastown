@@ -39,9 +39,10 @@ func gitCommit(t *testing.T, dir, file, content string) string {
 
 func newGitRepo(t *testing.T) string {
 	t.Helper()
-	if testing.Short() {
-		t.Skip("skipping git-backed test in -short mode")
-	}
+	// These tests create tiny temp-dir repos and shell out to git a handful
+	// of times — fast and deterministic, so they run even under -short. CI
+	// runs `-short`; skipping here left stale.go's staleness logic at 0%
+	// patch coverage (GH#4034 follow-up). Only skip if git is unavailable.
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("git not available")
 	}
