@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -15,6 +16,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/steveyegge/gastown/internal/config"
@@ -242,6 +244,80 @@ func (t *Tmux) run(args ...string) (string, error) {
 	return strings.TrimSpace(stdout.String()), nil
 }
 
+// probeServerHealth guards against the gt-h9z clobber: tmux's internal
+// "is a server already bound to this socket?" probe is tight enough that
+// a momentarily-unresponsive server can be misclassified as absent, and
+// tmux's recovery path unlinks the socket and binds a fresh server at
+// the same path — silently orphaning the existing server and any
+// sessions/clients running inside it.
+//
+// Two-stage check, designed to bail ONLY in the wedge case and not on
+// the common "tmux exited cleanly after its last session was killed,
+// but left the socket file behind" pattern that produces a benign
+// stale socket:
+//
+//  1. Kernel-level Unix-socket dial. ECONNREFUSED (no live listener) →
+//     benign stale; tmux will safely recreate. Successful connect →
+//     listener is alive; proceed to stage 2. Any other dial error
+//     (e.g. ENOTSOCK from a regular file in the way, timeout) → bail.
+//  2. App-level `list-sessions` probe with a tight timeout. Success or
+//     ErrNoServer (kernel said yes but tmux already finished exiting
+//     between stages) → safe. Anything else (wedge, slow response,
+//     protocol error) → bail.
+//
+// Default-socket Tmux (empty socketName) is left untouched: that path
+// is shared with the user's interactive tmux and not part of the gt
+// crew start workflow that produced the captured evidence.
+func (t *Tmux) probeServerHealth() error {
+	if t.socketName == "" {
+		return nil
+	}
+	socketPath := filepath.Join(SocketDir(), t.socketName)
+	if _, err := os.Stat(socketPath); err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return fmt.Errorf("stat tmux socket %s: %w", socketPath, err)
+	}
+	conn, err := net.DialTimeout("unix", socketPath, probeDialTimeout)
+	if err != nil {
+		if errors.Is(err, syscall.ECONNREFUSED) || os.IsNotExist(err) {
+			// No live listener — kernel has no one bound. The socket
+			// file is a benign leftover from a clean tmux exit; tmux
+			// will recreate it.
+			return nil
+		}
+		return fmt.Errorf(
+			"tmux socket %s exists but is not a connectable Unix socket (%v); "+
+				"refusing to start a new session — investigate the file "+
+				"holder (e.g. `ss -lxp src %s` or `lsof %s`) before retrying (see gt-h9z)",
+			socketPath, err, socketPath, socketPath,
+		)
+	}
+	_ = conn.Close()
+	// Kernel-level listener is up. Now confirm tmux itself is responsive.
+	if _, err := t.run("list-sessions", "-F", ""); err != nil {
+		if errors.Is(err, ErrNoServer) {
+			// Listener was up at stage 1 but tmux has since shut down
+			// cleanly — also benign. tmux will recreate.
+			return nil
+		}
+		return fmt.Errorf(
+			"tmux socket %s has a live listener but `list-sessions` failed (%v); "+
+				"refusing to start a new session — tmux's recovery path "+
+				"would unlink and rebind, orphaning the existing server (see gt-h9z)",
+			socketPath, err,
+		)
+	}
+	return nil
+}
+
+// probeDialTimeout bounds the kernel-level Unix-socket probe used by
+// probeServerHealth. Generous enough to ride out brief scheduling
+// hiccups on a loaded host, tight enough that the clobber-guard does
+// not add user-visible latency on the happy path.
+const probeDialTimeout = 200 * time.Millisecond
+
 // wrapError wraps tmux errors with context.
 func (t *Tmux) wrapError(err error, stderr string, args []string) error {
 	stderr = strings.TrimSpace(stderr)
@@ -270,6 +346,9 @@ func (t *Tmux) wrapError(err error, stderr string, args []string) error {
 // NewSession creates a new detached tmux session.
 func (t *Tmux) NewSession(name, workDir string) error {
 	if err := validateSessionName(name); err != nil {
+		return err
+	}
+	if err := t.probeServerHealth(); err != nil {
 		return err
 	}
 	args := []string{"new-session", "-d", "-s", name}
@@ -309,6 +388,9 @@ func (t *Tmux) NewSessionWithCommand(name, workDir, command string) error {
 		}
 	}
 	if err := validateCommandBinary(command); err != nil {
+		return err
+	}
+	if err := t.probeServerHealth(); err != nil {
 		return err
 	}
 
@@ -397,6 +479,9 @@ func (t *Tmux) NewSessionWithCommandAndEnv(name, workDir, command string, env ma
 		}
 	}
 	if err := validateCommandBinary(command); err != nil {
+		return err
+	}
+	if err := t.probeServerHealth(); err != nil {
 		return err
 	}
 

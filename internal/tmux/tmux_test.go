@@ -3,8 +3,10 @@ package tmux
 import (
 	"errors"
 	"fmt"
+	"net"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"runtime"
 	"strings"
 	"testing"
@@ -1559,6 +1561,143 @@ func TestNewSession_RejectsInvalidName(t *testing.T) {
 	}
 	if !errors.Is(err, ErrInvalidSessionName) {
 		t.Errorf("expected ErrInvalidSessionName, got %v", err)
+	}
+}
+
+// TestProbeServerHealth covers the gt-h9z clobber guard.
+//
+// Probe behavior matrix:
+//
+//	socketName == ""              → nil (default-socket path is untouched).
+//	socket file absent             → nil (tmux will create a fresh server).
+//	stale Unix socket (no listener)→ nil (kernel ECONNREFUSED; benign).
+//	live tmux server               → nil.
+//	non-socket file at socket path → error (refuse to clobber).
+func TestProbeServerHealth(t *testing.T) {
+	if !hasTmux() {
+		t.Skip("tmux not installed")
+	}
+
+	t.Run("default_socket_returns_nil", func(t *testing.T) {
+		tm := &Tmux{socketName: ""}
+		if err := tm.probeServerHealth(); err != nil {
+			t.Fatalf("probeServerHealth(default) = %v, want nil", err)
+		}
+	})
+
+	t.Run("absent_socket_returns_nil", func(t *testing.T) {
+		socket := fmt.Sprintf("gt-h9z-absent-%d", time.Now().UnixNano())
+		t.Cleanup(func() { _ = os.Remove(filepath.Join(SocketDir(), socket)) })
+
+		tm := &Tmux{socketName: socket}
+		if err := tm.probeServerHealth(); err != nil {
+			t.Fatalf("probeServerHealth(absent socket) = %v, want nil", err)
+		}
+	})
+
+	// Mirror tmux's "exited cleanly, left socket file behind" state by
+	// binding a real Unix listener and then closing it. The socket file
+	// stays on disk but the kernel returns ECONNREFUSED on connect —
+	// indistinguishable from the post-tmux-exit case, and crucially the
+	// case we MUST allow through (otherwise every test that kills the
+	// last session in a shared tmux server starts failing — that
+	// regressed earlier in this PR before the kernel-level probe was
+	// added).
+	t.Run("stale_unix_socket_returns_nil", func(t *testing.T) {
+		dir := SocketDir()
+		if err := os.MkdirAll(dir, 0o700); err != nil {
+			t.Fatalf("MkdirAll(%s): %v", dir, err)
+		}
+		socket := fmt.Sprintf("gt-h9z-stale-unix-%d", time.Now().UnixNano())
+		socketPath := filepath.Join(dir, socket)
+		listener, err := net.Listen("unix", socketPath)
+		if err != nil {
+			t.Fatalf("Listen(%s): %v", socketPath, err)
+		}
+		_ = listener.Close()
+		t.Cleanup(func() { _ = os.Remove(socketPath) })
+
+		tm := &Tmux{socketName: socket}
+		if err := tm.probeServerHealth(); err != nil {
+			t.Fatalf("probeServerHealth(stale unix socket) = %v, want nil", err)
+		}
+	})
+
+	t.Run("non_socket_file_returns_error", func(t *testing.T) {
+		// A regular file at the socket path is not the gt-h9z clobber
+		// scenario per se, but it is unambiguously unsafe: net.Dial
+		// against it returns ENOTSOCK (or similar), not ECONNREFUSED.
+		// Better to bail than to silently let new-session clobber whatever
+		// is there.
+		dir := SocketDir()
+		if err := os.MkdirAll(dir, 0o700); err != nil {
+			t.Fatalf("MkdirAll(%s): %v", dir, err)
+		}
+		socket := fmt.Sprintf("gt-h9z-regfile-%d", time.Now().UnixNano())
+		socketPath := filepath.Join(dir, socket)
+		if err := os.WriteFile(socketPath, []byte("not a socket"), 0o600); err != nil {
+			t.Fatalf("WriteFile(%s): %v", socketPath, err)
+		}
+		t.Cleanup(func() { _ = os.Remove(socketPath) })
+
+		tm := &Tmux{socketName: socket}
+		err := tm.probeServerHealth()
+		if err == nil {
+			t.Skip("kernel accepted Dial against a regular file on this platform; cannot exercise the bail path here")
+		}
+		if !strings.Contains(err.Error(), socketPath) {
+			t.Errorf("error %q should mention socket path %q", err, socketPath)
+		}
+		if !strings.Contains(err.Error(), "gt-h9z") {
+			t.Errorf("error %q should cite gt-h9z for traceability", err)
+		}
+	})
+
+	t.Run("live_server_returns_nil", func(t *testing.T) {
+		socket := fmt.Sprintf("gt-h9z-live-%d", time.Now().UnixNano())
+		tm := &Tmux{socketName: socket}
+		sessionName := "gt-h9z-live-session"
+		if err := tm.NewSession(sessionName, ""); err != nil {
+			t.Fatalf("NewSession (live setup): %v", err)
+		}
+		t.Cleanup(func() {
+			_, _ = tm.run("kill-server")
+		})
+
+		if err := tm.probeServerHealth(); err != nil {
+			t.Fatalf("probeServerHealth(live server) = %v, want nil", err)
+		}
+	})
+}
+
+// TestNewSessionAllowsStaleUnixSocket asserts that NewSession proceeds
+// when the only thing at the configured socket path is an unbound Unix
+// socket — the tmux-exited-cleanly state. Regression guard for an
+// earlier draft of the gt-h9z fix that mistakenly bailed in this case
+// and broke every shared-server test in the package.
+func TestNewSessionAllowsStaleUnixSocket(t *testing.T) {
+	if !hasTmux() {
+		t.Skip("tmux not installed")
+	}
+	dir := SocketDir()
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatalf("MkdirAll(%s): %v", dir, err)
+	}
+	socket := fmt.Sprintf("gt-h9z-newsession-stale-unix-%d", time.Now().UnixNano())
+	socketPath := filepath.Join(dir, socket)
+	listener, err := net.Listen("unix", socketPath)
+	if err != nil {
+		t.Fatalf("Listen(%s): %v", socketPath, err)
+	}
+	_ = listener.Close()
+	t.Cleanup(func() {
+		_, _ = (&Tmux{socketName: socket}).run("kill-server")
+		_ = os.Remove(socketPath)
+	})
+
+	tm := &Tmux{socketName: socket}
+	if err := tm.NewSession("gt-h9z-newsession", ""); err != nil {
+		t.Fatalf("NewSession against stale Unix socket = %v, want success (tmux must recreate cleanly)", err)
 	}
 }
 
