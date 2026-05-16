@@ -576,6 +576,47 @@ esac
 	})
 }
 
+func TestGetAssignedIssuesMapIncludesHookedWork(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("shell-based command test")
+	}
+
+	bdPath := filepath.Join(t.TempDir(), "bd")
+	script := `#!/bin/sh
+printf '%s\n' "$@" > "$0.args"
+cat <<'JSON'
+[
+  {"id":"gt-hooked","title":"Hooked work","assignee":"rig/polecats/alpha"},
+  {"id":"gt-progress","title":"In progress work","assignee":"rig/polecats/beta"},
+  {"id":"gt-unassigned","title":"No assignee","assignee":""}
+]
+JSON
+`
+	if err := os.WriteFile(bdPath, []byte(script), 0o755); err != nil {
+		t.Fatalf("write fake bd: %v", err)
+	}
+
+	f := &LiveConvoyFetcher{townRoot: t.TempDir(), cmdTimeout: 5 * time.Second, bdBin: bdPath}
+	got := f.getAssignedIssuesMap()
+	if got["rig/polecats/alpha"].ID != "gt-hooked" {
+		t.Fatalf("hooked assignment missing: %#v", got)
+	}
+	if got["rig/polecats/beta"].ID != "gt-progress" {
+		t.Fatalf("in_progress assignment missing: %#v", got)
+	}
+	if _, ok := got[""]; ok {
+		t.Fatalf("unassigned issue should not be keyed: %#v", got)
+	}
+
+	argsBytes, err := os.ReadFile(bdPath + ".args")
+	if err != nil {
+		t.Fatalf("read fake bd args: %v", err)
+	}
+	if !strings.Contains(string(argsBytes), "--status=in_progress,hooked") {
+		t.Fatalf("bd list status args = %q, want hooked and in_progress", string(argsBytes))
+	}
+}
+
 func TestFetchConvoysBreakerBacksOffAfterBdFailures(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("shell-based command test")

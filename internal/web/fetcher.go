@@ -949,14 +949,16 @@ type assignedIssue struct {
 }
 
 // getAssignedIssuesMap returns a map of assignee -> assigned issue.
-// Queries beads for all in_progress issues with assignees.
+// Queries beads for all active assigned issues (hooked or in_progress).
 func (f *LiveConvoyFetcher) getAssignedIssuesMap() map[string]assignedIssue {
 	result := make(map[string]assignedIssue)
 
-	// Query all in_progress issues (these are the ones being worked on)
-	stdout, err := f.runBdCmd(f.townRoot, "list", "--status=in_progress", "--json")
+	// Query all assigned work. Newly slung polecats start in hooked before
+	// transitioning to in_progress, but the dashboard should show them as active
+	// as soon as work is assigned.
+	stdout, err := f.runBdCmd(f.townRoot, "list", "--status=in_progress,hooked", "--json")
 	if err != nil {
-		log.Printf("warning: bd list in_progress failed: %v", err)
+		log.Printf("warning: bd list active assigned issues failed: %v", err)
 		return result
 	}
 
