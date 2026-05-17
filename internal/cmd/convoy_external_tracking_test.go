@@ -76,13 +76,10 @@ case "$*" in
   "show hq-cv-ext --json")
     echo '[{"id":"hq-cv-ext","title":"External convoy","status":"open","issue_type":"convoy","dependencies":[{"id":"external:ghostty:ghostty-123","title":"Ghost 123","status":"open","type":"task","dependency_type":"tracks"},{"id":"external:ghostty:ghostty-456","title":"Ghost 456","status":"closed","type":"task","dependency_type":"tracks"},{"id":"gt-ignore","title":"Ignore me","status":"open","type":"task","dependency_type":"blocks"}]}]'
     ;;
-  "show ghostty-123 ghostty-456 --json"|"show ghostty-456 ghostty-123 --json")
-    echo '[{"id":"ghostty-123","title":"Ghost 123","status":"open","issue_type":"task"},{"id":"ghostty-456","title":"Ghost 456","status":"closed","issue_type":"task"}]'
-    ;;
-  "show ghostty-123 --json")
+  "--allow-stale show ghostty-123 --json")
     echo '[{"id":"ghostty-123","title":"Ghost 123","status":"open","issue_type":"task"}]'
     ;;
-  "show ghostty-456 --json")
+  "--allow-stale show ghostty-456 --json")
     echo '[{"id":"ghostty-456","title":"Ghost 456","status":"closed","issue_type":"task"}]'
     ;;
   *)
@@ -197,5 +194,62 @@ func TestCloseConvoyIfComplete_UnknownBlocksAutoClose(t *testing.T) {
 	}
 	if !strings.Contains(out, "unknown") {
 		t.Fatalf("diagnostic missing 'unknown' label: %q", out)
+	}
+}
+
+// TestGetIssueDetailsBatch_CrossRigRouting is the regression test for GH#3681.
+//
+// When townRoot has a local .beads/, the old exec.Command("bd", ...) ran from
+// townRoot and bd bound to the town's .beads/, ignoring routes.jsonl. The new
+// Beads.Show path calls ResolveRoutingTarget internally, which reads routes.jsonl
+// and dispatches to the correct rig database regardless of cwd.
+func TestGetIssueDetailsBatch_CrossRigRouting(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("skipping on windows - shell stubs")
+	}
+
+	townRoot, townBeads, _ := makeExternalTrackingTownWorkspace(t)
+
+	// routes.jsonl routes "gm-" beads to a gemba rig subdirectory.
+	routes := `{"prefix":"gm-","path":"gemba"}` + "\n"
+	if err := os.WriteFile(filepath.Join(townBeads, "routes.jsonl"), []byte(routes), 0644); err != nil {
+		t.Fatalf("write routes.jsonl: %v", err)
+	}
+	if err := os.MkdirAll(filepath.Join(townRoot, "gemba", ".beads"), 0755); err != nil {
+		t.Fatalf("mkdir gemba/.beads: %v", err)
+	}
+
+	// cwd = townRoot, which also has .beads/ — the problematic layout from GH#3681.
+	chdirExternalTrackingTest(t, townRoot)
+
+	// The stub only responds to the routed form. Old code called
+	// "bd show gm-abc --json" (no --allow-stale) from townRoot, which the
+	// stub does not handle → exits 1 → result is empty. New code routes via
+	// Beads.Show and calls "--allow-stale show gm-abc --json" from the rig dir.
+	scriptBody := `
+case "$*" in
+  "--allow-stale version")
+    exit 0
+    ;;
+  "--allow-stale show gm-abc --json")
+    echo '[{"id":"gm-abc","title":"Gemba task","status":"closed","issue_type":"task"}]'
+    ;;
+  *)
+    echo "unexpected bd args: $*" >&2
+    exit 1
+    ;;
+esac
+`
+	writeExternalTrackingBdStub(t, scriptBody)
+
+	result := getIssueDetailsBatch([]string{"gm-abc"})
+	if len(result) != 1 {
+		t.Fatalf("expected 1 result, got %d: %#v", len(result), result)
+	}
+	if result["gm-abc"] == nil {
+		t.Fatal("gm-abc missing from result")
+	}
+	if result["gm-abc"].Status != "closed" {
+		t.Fatalf("expected status 'closed', got %q", result["gm-abc"].Status)
 	}
 }
