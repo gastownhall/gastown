@@ -758,6 +758,9 @@ func upStartRefinery(rigName string, r *rig.Rig) agentStartResult {
 		if err == refinery.ErrAlreadyRunning {
 			return agentStartResult{name: name, ok: true, detail: mgr.SessionName()}
 		}
+		if err == refinery.ErrDisabled {
+			return agentStartResult{name: name, ok: true, detail: "skipped (refinery disabled)"}
+		}
 		return agentStartResult{name: name, ok: false, detail: err.Error()}
 	}
 	return agentStartResult{name: name, ok: true, detail: mgr.SessionName()}

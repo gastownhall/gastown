@@ -106,6 +106,11 @@ type RigConfig struct {
 	CreatedAt     time.Time    `json:"created_at"`               // when rig was created
 	Beads         *BeadsConfig `json:"beads,omitempty"`
 
+	// RefineryDisabled persistently disables the refinery for this rig.
+	// When true, gt refinery start is a no-op (returns ErrRefineryDisabled).
+	// The witness remains operational. Use gt refinery enable to clear.
+	RefineryDisabled bool `json:"refinery_disabled,omitempty"`
+
 	// Persistent polecat pool configuration.
 	// PolecatPoolSize is the number of persistent polecats to create with pool init.
 	// PolecatNames optionally specifies fixed names (overrides theme-based naming).
@@ -1064,6 +1069,22 @@ func LoadRigConfig(rigPath string) (*RigConfig, error) {
 	}
 	warnDeprecatedRigConfigKeys(data, configPath)
 	return &cfg, nil
+}
+
+// SetRefineryDisabled sets the refinery_disabled flag in a rig's config.json.
+// When disabled is true, gt refinery start returns ErrRefineryDisabled for that rig.
+func SetRefineryDisabled(rigPath string, disabled bool) error {
+	cfg, err := LoadRigConfig(rigPath)
+	if err != nil {
+		return fmt.Errorf("loading rig config: %w", err)
+	}
+	cfg.RefineryDisabled = disabled
+	data, err := json.MarshalIndent(cfg, "", "  ")
+	if err != nil {
+		return err
+	}
+	configPath := filepath.Join(rigPath, "config.json")
+	return os.WriteFile(configPath, data, 0644)
 }
 
 // warnDeprecatedRigConfigKeys detects merge_queue keys in rig root config.json
