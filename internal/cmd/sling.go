@@ -807,15 +807,18 @@ func runSling(cmd *cobra.Command, args []string) (retErr error) {
 	// If not, create one for dashboard visibility (unless --no-convoy is set)
 	var convoyID string
 	if !slingNoConvoy && formulaName == "" {
-		existingConvoy := isTrackedByConvoy(beadID)
-		if existingConvoy == "" {
-			if slingDryRun {
-				fmt.Printf("Would create convoy 'Work: %s'\n", info.Title)
-				fmt.Printf("Would add tracking relation to %s\n", beadID)
-				if slingMerge != "" {
-					fmt.Printf("Would set convoy merge strategy: %s\n", slingMerge)
-				}
-			} else {
+		if slingDryRun {
+			// Skip the Dolt convoy query in dry-run: isTrackedByConvoy runs bd
+			// subprocesses that can hang under load, causing --dry-run itself to
+			// time out (GH#3903). Just show what would happen.
+			fmt.Printf("Would create convoy 'Work: %s'\n", info.Title)
+			fmt.Printf("Would add tracking relation to %s\n", beadID)
+			if slingMerge != "" {
+				fmt.Printf("Would set convoy merge strategy: %s\n", slingMerge)
+			}
+		} else {
+			existingConvoy := isTrackedByConvoy(beadID)
+			if existingConvoy == "" {
 				var err error
 				convoyID, err = createAutoConvoy(beadID, info.Title, slingOwned, slingMerge, slingBaseBranch)
 				if err != nil {
@@ -831,9 +834,9 @@ func runSling(cmd *cobra.Command, args []string) (retErr error) {
 						fmt.Printf("  Merge:    %s\n", slingMerge)
 					}
 				}
+			} else {
+				fmt.Printf("%s Already tracked by convoy %s\n", style.Dim.Render("○"), existingConvoy)
 			}
-		} else {
-			fmt.Printf("%s Already tracked by convoy %s\n", style.Dim.Render("○"), existingConvoy)
 		}
 	}
 
