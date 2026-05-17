@@ -1836,6 +1836,10 @@ func (d *Daemon) ensureRefineryRunning(rigName string) {
 			d.logger.Printf("Refinery for %s already running, skipping spawn", rigName)
 			return
 		}
+		if err == refinery.ErrDisabled {
+			d.logger.Printf("Refinery for %s is disabled (refinery_disabled=true), skipping spawn", rigName)
+			return
+		}
 		d.logger.Printf("Error starting refinery for %s: %v", rigName, err)
 		return
 	}

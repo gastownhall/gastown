@@ -274,3 +274,41 @@ func TestGetConfig_BeadLabel(t *testing.T) {
 		t.Logf("source is %s (expected SourceBead or SourceSystem)", result.Source)
 	}
 }
+
+func TestSetRefineryDisabled_RoundTrip(t *testing.T) {
+	tmpDir := t.TempDir()
+	rigPath := filepath.Join(tmpDir, "testrig")
+	if err := os.MkdirAll(rigPath, 0755); err != nil {
+		t.Fatal(err)
+	}
+	// Write minimal config.json
+	cfg := &RigConfig{Type: "rig", Version: 1, Name: "testrig", GitURL: "https://github.com/example/repo"}
+	data, _ := json.MarshalIndent(cfg, "", "  ")
+	if err := os.WriteFile(filepath.Join(rigPath, "config.json"), data, 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Disable
+	if err := SetRefineryDisabled(rigPath, true); err != nil {
+		t.Fatalf("SetRefineryDisabled(true): %v", err)
+	}
+	got, err := LoadRigConfig(rigPath)
+	if err != nil {
+		t.Fatalf("LoadRigConfig after disable: %v", err)
+	}
+	if !got.RefineryDisabled {
+		t.Error("RefineryDisabled should be true after SetRefineryDisabled(true)")
+	}
+
+	// Re-enable
+	if err := SetRefineryDisabled(rigPath, false); err != nil {
+		t.Fatalf("SetRefineryDisabled(false): %v", err)
+	}
+	got, err = LoadRigConfig(rigPath)
+	if err != nil {
+		t.Fatalf("LoadRigConfig after enable: %v", err)
+	}
+	if got.RefineryDisabled {
+		t.Error("RefineryDisabled should be false after SetRefineryDisabled(false)")
+	}
+}

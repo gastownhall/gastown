@@ -23,6 +23,7 @@ var (
 	refineryStatusJSON    bool
 	refineryQueueJSON     bool
 	refineryAgentOverride string
+	refineryForce         bool
 )
 
 var refineryCmd = &cobra.Command{
@@ -226,10 +227,75 @@ Examples:
 
 var refineryBlockedJSON bool
 
+var refineryDisableCmd = &cobra.Command{
+	Use:   "disable [rig]",
+	Short: "Persistently disable the refinery for a rig",
+	Long: `Persistently disable the refinery for a rig (witness stays up).
+
+Sets refinery_disabled=true in the rig's config.json. The refinery will
+not start even after daemon restarts or 'gt up'. Use 'gt refinery enable'
+to re-enable.
+
+This is the correct persistent state for fork rigs where the refinery
+should never run (the witness continues to manage polecat lifecycle).
+
+If rig is not specified, infers it from the current directory.`,
+	Args: cobra.MaximumNArgs(1),
+	RunE: runRefineryDisable,
+}
+
+var refineryEnableCmd = &cobra.Command{
+	Use:   "enable [rig]",
+	Short: "Re-enable the refinery for a rig",
+	Long: `Re-enable the refinery for a rig after 'gt refinery disable'.
+
+Clears the refinery_disabled flag in the rig's config.json.
+Does not automatically start the refinery — use 'gt refinery start' after.
+
+If rig is not specified, infers it from the current directory.`,
+	Args: cobra.MaximumNArgs(1),
+	RunE: runRefineryEnable,
+}
+
+func runRefineryDisable(cmd *cobra.Command, args []string) error {
+	rigName := ""
+	if len(args) > 0 {
+		rigName = args[0]
+	}
+	_, r, rigName, err := getRefineryManager(rigName)
+	if err != nil {
+		return err
+	}
+	if err := rig.SetRefineryDisabled(r.Path, true); err != nil {
+		return fmt.Errorf("disabling refinery: %w", err)
+	}
+	fmt.Printf("%s Refinery disabled for %s\n", style.Bold.Render("✓"), rigName)
+	fmt.Printf("  %s\n", style.Dim.Render("Witness continues running. Use 'gt refinery enable "+rigName+"' to re-enable."))
+	return nil
+}
+
+func runRefineryEnable(cmd *cobra.Command, args []string) error {
+	rigName := ""
+	if len(args) > 0 {
+		rigName = args[0]
+	}
+	_, r, rigName, err := getRefineryManager(rigName)
+	if err != nil {
+		return err
+	}
+	if err := rig.SetRefineryDisabled(r.Path, false); err != nil {
+		return fmt.Errorf("enabling refinery: %w", err)
+	}
+	fmt.Printf("%s Refinery enabled for %s\n", style.Bold.Render("✓"), rigName)
+	fmt.Printf("  %s\n", style.Dim.Render("Use 'gt refinery start "+rigName+"' to start."))
+	return nil
+}
+
 func init() {
 	// Start flags
 	refineryStartCmd.Flags().BoolVar(&refineryForeground, "foreground", false, "Run in foreground (default: background)")
 	refineryStartCmd.Flags().StringVar(&refineryAgentOverride, "agent", "", "Agent alias to run the Refinery with (overrides town default)")
+	refineryStartCmd.Flags().BoolVar(&refineryForce, "force", false, "Start refinery even on a fork rig (overrides upstream_url guard)")
 
 	// Attach flags
 	refineryAttachCmd.Flags().StringVar(&refineryAgentOverride, "agent", "", "Agent alias to run the Refinery with (overrides town default)")
@@ -265,6 +331,8 @@ func init() {
 	refineryCmd.AddCommand(refineryUnclaimedCmd)
 	refineryCmd.AddCommand(refineryReadyCmd)
 	refineryCmd.AddCommand(refineryBlockedCmd)
+	refineryCmd.AddCommand(refineryDisableCmd)
+	refineryCmd.AddCommand(refineryEnableCmd)
 
 	rootCmd.AddCommand(refineryCmd)
 }
@@ -299,7 +367,7 @@ func runRefineryStart(cmd *cobra.Command, args []string) error {
 		rigName = args[0]
 	}
 
-	mgr, _, rigName, err := getRefineryManager(rigName)
+	mgr, r, rigName, err := getRefineryManager(rigName)
 	if err != nil {
 		return err
 	}
@@ -308,11 +376,40 @@ func runRefineryStart(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
+	// Refuse to start the refinery on a fork rig unless --force is given.
+	// The refinery merges branches to the rig's main, which corrupts fork/upstream
+	// fast-forward sync for rigs where upstream_url != git_url.
+	if !refineryForce {
+		if rigCfg, err := rig.LoadRigConfig(r.Path); err == nil && rigCfg.UpstreamURL != "" {
+			fmt.Println()
+			fmt.Printf("  %s Refinery blocked for fork rig %q\n", style.Bold.Render("⛔"), rigName)
+			fmt.Println()
+			fmt.Printf("  This rig is a fork (upstream_url = %s).\n", rigCfg.UpstreamURL)
+			fmt.Println("  Running the refinery merges branches to fork main, which breaks")
+			fmt.Println("  fork↔upstream fast-forward sync and pollutes the fork's history.")
+			fmt.Println()
+			fmt.Println("  Correct workflow for a fork rig:")
+			fmt.Println("    1. Work on a feature branch")
+			fmt.Println("    2. Push to your fork")
+			fmt.Println("    3. Open a PR to the upstream repo")
+			fmt.Println()
+			fmt.Printf("  To permanently disable the refinery for this rig: gt refinery disable %s\n", rigName)
+			fmt.Printf("  To start anyway (advanced / non-standard):        gt refinery start %s --force\n", rigName)
+			fmt.Println()
+			return fmt.Errorf("refinery blocked for fork rig %q (use --force to override)", rigName)
+		}
+	}
+
 	fmt.Printf("Starting refinery for %s...\n", rigName)
 
 	if err := mgr.Start(refineryForeground, refineryAgentOverride); err != nil {
 		if err == refinery.ErrAlreadyRunning {
 			fmt.Printf("%s Refinery is already running\n", style.Dim.Render("⚠"))
+			return nil
+		}
+		if err == refinery.ErrDisabled {
+			fmt.Printf("%s Refinery is disabled for %s (use 'gt refinery enable %s' to re-enable)\n",
+				style.Dim.Render("⚠"), rigName, rigName)
 			return nil
 		}
 		return fmt.Errorf("starting refinery: %w", err)
@@ -549,6 +646,11 @@ func runRefineryRestart(cmd *cobra.Command, args []string) error {
 
 	// Start fresh
 	if err := mgr.Start(false, refineryAgentOverride); err != nil {
+		if err == refinery.ErrDisabled {
+			fmt.Printf("%s Refinery is disabled for %s (use 'gt refinery enable %s' to re-enable)\n",
+				style.Dim.Render("⚠"), rigName, rigName)
+			return nil
+		}
 		return fmt.Errorf("starting refinery: %w", err)
 	}
 

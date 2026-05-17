@@ -32,6 +32,7 @@ var (
 	ErrNotRunning     = errors.New("refinery not running")
 	ErrAlreadyRunning = errors.New("refinery already running")
 	ErrNoQueue        = errors.New("no items in queue")
+	ErrDisabled       = errors.New("refinery disabled for this rig")
 )
 
 // Manager handles refinery lifecycle and queue operations.
@@ -117,6 +118,11 @@ func (m *Manager) Start(foreground bool, agentOverride string) error {
 	if foreground {
 		// Foreground mode is deprecated - the Refinery agent handles merge processing
 		return fmt.Errorf("foreground mode is deprecated; use background mode (remove --foreground flag)")
+	}
+
+	// Check persistent refinery-disabled flag before doing anything.
+	if rigCfg, err := rig.LoadRigConfig(m.rig.Path); err == nil && rigCfg.RefineryDisabled {
+		return ErrDisabled
 	}
 
 	// Check if session already exists
