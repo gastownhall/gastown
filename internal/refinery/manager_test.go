@@ -73,39 +73,6 @@ func TestManager_IsRunning_NoSession(t *testing.T) {
 	}
 }
 
-func TestManager_Start_ReturnsErrDisabledWhenRefineryDisabled(t *testing.T) {
-	_, rigPath := setupTestManager(t)
-	// Write a config.json with refinery_disabled=true
-	cfgJSON := `{"type":"rig","version":1,"name":"testrig","git_url":"https://github.com/example/repo","refinery_disabled":true}`
-	if err := os.WriteFile(filepath.Join(rigPath, "config.json"), []byte(cfgJSON), 0644); err != nil {
-		t.Fatalf("write config.json: %v", err)
-	}
-	r := &rig.Rig{Name: "testrig", Path: rigPath}
-	mgr := NewManager(r)
-	err := mgr.Start(false, "")
-	if err != ErrDisabled {
-		t.Errorf("Start() with refinery_disabled=true: got %v, want ErrDisabled", err)
-	}
-}
-
-func TestManager_Start_NotDisabledWhenFlagFalse(t *testing.T) {
-	mgr, rigPath := setupTestManager(t)
-	// Write a config.json with refinery_disabled=false (should not return ErrDisabled)
-	cfgJSON := `{"type":"rig","version":1,"name":"testrig","git_url":"https://github.com/example/repo","refinery_disabled":false}`
-	if err := os.WriteFile(filepath.Join(rigPath, "config.json"), []byte(cfgJSON), 0644); err != nil {
-		t.Fatalf("write config.json: %v", err)
-	}
-	err := mgr.Start(false, "")
-	// Should not return ErrDisabled (may return other errors for missing tmux/repo)
-	if err == ErrDisabled {
-		t.Error("Start() with refinery_disabled=false returned ErrDisabled unexpectedly")
-	}
-	// If a session was started, stop it to avoid leaking into other tests.
-	t.Cleanup(func() {
-		_ = mgr.Stop()
-	})
-}
-
 func TestManager_Status_NotRunning(t *testing.T) {
 	mgr, _ := setupTestManager(t)
 
@@ -333,5 +300,33 @@ func TestManager_PostMerge_NotFound(t *testing.T) {
 	_, err := mgr.PostMerge("nonexistent-mr-id")
 	if err == nil {
 		t.Error("PostMerge() expected error for nonexistent MR")
+	}
+}
+
+func TestManager_Start_ReturnsErrDisabledWhenRefineryDisabled(t *testing.T) {
+	_, rigPath := setupTestManager(t)
+	cfgJSON := `{"type":"rig","version":1,"name":"testrig","git_url":"https://github.com/example/repo","refinery_disabled":true}`
+	if err := os.WriteFile(filepath.Join(rigPath, "config.json"), []byte(cfgJSON), 0644); err != nil {
+		t.Fatalf("write config.json: %v", err)
+	}
+	r := &rig.Rig{Name: "testrig", Path: rigPath}
+	mgr := NewManager(r)
+	err := mgr.Start(false, "")
+	if err != ErrDisabled {
+		t.Errorf("Start() with refinery_disabled=true: got %v, want ErrDisabled", err)
+	}
+}
+
+func TestManager_Start_NotDisabledWhenFlagFalse(t *testing.T) {
+	mgr, rigPath := setupTestManager(t)
+	cfgJSON := `{"type":"rig","version":1,"name":"testrig","git_url":"https://github.com/example/repo","refinery_disabled":false}`
+	if err := os.WriteFile(filepath.Join(rigPath, "config.json"), []byte(cfgJSON), 0644); err != nil {
+		t.Fatalf("write config.json: %v", err)
+	}
+	err := mgr.Start(false, "")
+	// Eagerly stop the session before returning so it doesn't leak into other packages.
+	_ = mgr.Stop()
+	if err == ErrDisabled {
+		t.Error("Start() with refinery_disabled=false returned ErrDisabled unexpectedly")
 	}
 }
