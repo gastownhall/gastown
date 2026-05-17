@@ -309,5 +309,11 @@ func resolveTarget(target string, opts ResolveTargetOptions) (*ResolvedTarget, e
 	result.Agent = agentID
 	result.Pane = pane
 	result.WorkDir = workDir
+	// Detect self-sling by pane: a named target (e.g. "deacon") that resolves to
+	// the caller's own tmux pane should not inject the ack prompt — the caller is
+	// already running and knows about the hook (GH#3839).
+	if pane != "" && pane == os.Getenv("TMUX_PANE") {
+		result.IsSelfSling = true
+	}
 	return result, nil
 }

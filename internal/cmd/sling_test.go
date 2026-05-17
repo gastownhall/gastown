@@ -3281,3 +3281,59 @@ exit /b 0
 	}
 	// Any other error (e.g., no polecat to spawn) is acceptable — the guard is what we're testing.
 }
+
+// TestResolveTargetSelfSlingByPane verifies that a named target resolving to the
+// caller's own tmux pane sets IsSelfSling=true (GH#3839). Without this, gt sling
+// deacon (from the deacon itself) injects the ack prompt into the running agent's
+// pane, wedging it mid-command.
+func TestResolveTargetSelfSlingByPane(t *testing.T) {
+	const callerPane = "%42"
+
+	prev := resolveTargetAgentFn
+	t.Cleanup(func() { resolveTargetAgentFn = prev })
+
+	t.Run("named_target_same_pane_is_self_sling", func(t *testing.T) {
+		resolveTargetAgentFn = func(_ string) (string, string, string, error) {
+			return "deacon/", callerPane, "/home/deacon", nil
+		}
+		t.Setenv("TMUX_PANE", callerPane)
+
+		result, err := resolveTarget("deacon", ResolveTargetOptions{})
+		if err != nil {
+			t.Fatalf("resolveTarget: %v", err)
+		}
+		if !result.IsSelfSling {
+			t.Error("expected IsSelfSling=true when named target pane matches caller pane")
+		}
+	})
+
+	t.Run("named_target_different_pane_is_not_self_sling", func(t *testing.T) {
+		resolveTargetAgentFn = func(_ string) (string, string, string, error) {
+			return "deacon/", "%99", "/home/deacon", nil
+		}
+		t.Setenv("TMUX_PANE", callerPane)
+
+		result, err := resolveTarget("deacon", ResolveTargetOptions{})
+		if err != nil {
+			t.Fatalf("resolveTarget: %v", err)
+		}
+		if result.IsSelfSling {
+			t.Error("expected IsSelfSling=false when named target pane differs from caller pane")
+		}
+	})
+
+	t.Run("empty_pane_is_not_self_sling", func(t *testing.T) {
+		resolveTargetAgentFn = func(_ string) (string, string, string, error) {
+			return "deacon/", "", "/home/deacon", nil
+		}
+		t.Setenv("TMUX_PANE", callerPane)
+
+		result, err := resolveTarget("deacon", ResolveTargetOptions{})
+		if err != nil {
+			t.Fatalf("resolveTarget: %v", err)
+		}
+		if result.IsSelfSling {
+			t.Error("expected IsSelfSling=false when resolved pane is empty (no tmux)")
+		}
+	})
+}
