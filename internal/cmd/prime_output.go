@@ -62,12 +62,20 @@ func outputPrimeContext(ctx RoleContext) (string, error) {
 	// Get town name for session names
 	townName, _ := workspace.GetTownName(ctx.TownRoot)
 
-	// Get default branch from rig config (default to "main" if not set)
+	// Get default branch and fork info from rig config.
 	defaultBranch := "main"
+	var isForkRig bool
+	var upstreamURL string
 	if ctx.Rig != "" && ctx.TownRoot != "" {
 		rigPath := filepath.Join(ctx.TownRoot, ctx.Rig)
-		if rigCfg, err := rig.LoadRigConfig(rigPath); err == nil && rigCfg.DefaultBranch != "" {
-			defaultBranch = rigCfg.DefaultBranch
+		if rigCfg, err := rig.LoadRigConfig(rigPath); err == nil {
+			if rigCfg.DefaultBranch != "" {
+				defaultBranch = rigCfg.DefaultBranch
+			}
+			if rigCfg.UpstreamURL != "" {
+				isForkRig = true
+				upstreamURL = rigCfg.UpstreamURL
+			}
 		}
 	}
 
@@ -82,6 +90,8 @@ func outputPrimeContext(ctx RoleContext) (string, error) {
 		DogName:       ctx.Polecat, // ctx.Polecat holds the dog name for RoleDog
 		MayorSession:  session.MayorSessionName(),
 		DeaconSession: session.DeaconSessionName(),
+		IsForkRig:     isForkRig,
+		UpstreamURL:   upstreamURL,
 	}
 
 	// Render and output

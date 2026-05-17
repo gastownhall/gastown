@@ -9,6 +9,32 @@
 The instant your work is done, you run `{{ cmd }} done`. **There is no approval step.
 There is no confirmation.**
 
+{{ if .IsForkRig -}}
+> ⚠️ **This is a fork rig.** Upstream: `{{ .UpstreamURL }}`
+>
+> The refinery is disabled. Your workflow is: **branch → push to fork → PR to upstream**.
+
+**Fork rig workflow:**
+
+1. Work on a feature branch (already created when you were slunged)
+2. Commit your changes
+3. Push the branch to the fork origin:
+   ```bash
+   git push origin <your-branch>
+   ```
+4. Open a PR to the upstream repo:
+   ```bash
+   gh pr create --repo {{ .UpstreamURL }} --title "..." --body "..."
+   ```
+5. Monitor CI and review; address feedback on the same branch
+6. When the PR is approved and CI passes: `{{ cmd }} done`
+
+**DO NOT:**
+- Push directly to fork main (`git push origin {{ .DefaultBranch }}` — WRONG)
+- Start or restart the refinery (it is disabled for this rig)
+- Merge your own PR (the upstream maintainer does that)
+
+{{ else -}}
 **Two workflow types:**
 
 **1. Merge Queue Workflow (gastown, beads repos):**
@@ -26,6 +52,7 @@ There is no confirmation.**
 - Push directly to main (`git push origin main` — WRONG)
 - Merge their own PRs (maintainer or Refinery does this)
 - Wait around after running `{{ cmd }} done`
+{{ end -}}
 
 **If you have finished your implementation work, your ONLY next action is:**
 ```bash

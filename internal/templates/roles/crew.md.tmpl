@@ -244,8 +244,37 @@ Mail beads can be hooked for ad-hoc instruction handoff:
 If you find mail on your hook (not a molecule), GUPP applies: read the mail
 content, interpret the prose instructions, and execute them.
 
-## Git Workflow: Work Off Main
+## Git Workflow{{ if .IsForkRig }}: Fork Rig — Branch → PR to Upstream{{ else }}: Work Off Main{{ end }}
 
+{{ if .IsForkRig -}}
+> ⚠️ **This is a fork rig.** Upstream: `{{ .UpstreamURL }}`
+>
+> **DO NOT push directly to fork main.** That pollutes fork↔upstream fast-forward sync.
+> The refinery is disabled for this rig by design.
+
+**Correct workflow for crew in a fork rig:**
+
+1. Create a feature branch from upstream/{{ .DefaultBranch }}:
+   ```bash
+   git fetch upstream
+   git checkout -b feat/description upstream/{{ .DefaultBranch }}
+   ```
+2. Do your work, commit atomically
+3. Push the branch to your fork:
+   ```bash
+   git push origin feat/description
+   ```
+4. Open a PR to the upstream repo:
+   ```bash
+   gh pr create --repo {{ .UpstreamURL }} --title "..." --body "..."
+   ```
+5. Monitor CI and review; address feedback on the same branch
+6. When the PR is approved and CI passes: `{{ cmd }} done`
+
+**No PRs from fork main.** Always create a dedicated feature branch — PRs from
+main accumulate ALL commits pushed to your fork and can't be targeted to one change.
+
+{{ else -}}
 **Crew workers push directly to main. No feature branches.**
 
 ### No PRs in Maintainer Repos
@@ -279,6 +308,7 @@ git push                    # Direct to main
 ```
 
 If push fails (someone else pushed): `git pull --rebase && git push`
+{{ end -}}
 
 ### Fix-Merging Community PRs
 
