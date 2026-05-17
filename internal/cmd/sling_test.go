@@ -3337,3 +3337,91 @@ func TestResolveTargetSelfSlingByPane(t *testing.T) {
 		}
 	})
 }
+
+// TestSlingDryRunSkipsConvoyLookup verifies that --dry-run does not invoke
+// isTrackedByConvoy (which runs bd sql and can hang under Dolt load).
+// Regression test for GH#3903.
+func TestSlingDryRunSkipsConvoyLookup(t *testing.T) {
+	townRoot, _ := filepath.EvalSymlinks(t.TempDir())
+	if err := os.MkdirAll(filepath.Join(townRoot, "mayor", "rig"), 0755); err != nil {
+		t.Fatalf("mkdir mayor/rig: %v", err)
+	}
+
+	binDir := filepath.Join(townRoot, "bin")
+	if err := os.MkdirAll(binDir, 0755); err != nil {
+		t.Fatalf("mkdir binDir: %v", err)
+	}
+	logPath := filepath.Join(townRoot, "bd.log")
+
+	// bd stub: log all commands; return minimal valid responses.
+	// "sql" must NOT appear in the log after --dry-run (isTrackedByConvoy uses it).
+	bdScript := `#!/bin/sh
+set -e
+echo "$*" >> "${BD_LOG}"
+cmd="$1"
+shift || true
+case "$cmd" in
+  show)
+    echo '[{"title":"Test issue","status":"open","assignee":"","description":""}]'
+    ;;
+  sql)
+    echo '[]'
+    ;;
+esac
+exit 0
+`
+	bdScriptWindows := `@echo off
+echo %*>>"%BD_LOG%"
+set "cmd=%1"
+if "%cmd%"=="show" (
+  echo [{"title":"Test issue","status":"open","assignee":"","description":""}]
+  exit /b 0
+)
+if "%cmd%"=="sql" ( echo [] & exit /b 0 )
+exit /b 0
+`
+	_ = writeBDStub(t, binDir, bdScript, bdScriptWindows)
+
+	t.Setenv("BD_LOG", logPath)
+	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	t.Setenv(EnvGTRole, "mayor")
+	t.Setenv("GT_CREW", "")
+	t.Setenv("GT_POLECAT", "")
+	t.Setenv("TMUX_PANE", "")
+	t.Setenv("GT_TEST_NO_NUDGE", "1")
+
+	cwd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("getwd: %v", err)
+	}
+	t.Cleanup(func() { _ = os.Chdir(cwd) })
+	if err := os.Chdir(filepath.Join(townRoot, "mayor", "rig")); err != nil {
+		t.Fatalf("chdir: %v", err)
+	}
+
+	prevDryRun := slingDryRun
+	prevNoConvoy := slingNoConvoy
+	t.Cleanup(func() {
+		slingDryRun = prevDryRun
+		slingNoConvoy = prevNoConvoy
+	})
+	slingDryRun = true
+	slingNoConvoy = false // convoy check enabled — the important part
+
+	// Self-sling (no target) with convoy check enabled. Before the fix,
+	// this would call isTrackedByConvoy → bd sql, which can hang under load.
+	_ = runSling(nil, []string{"gt-test123"})
+
+	// Verify bd sql was never invoked.
+	logBytes, err := os.ReadFile(logPath)
+	if err != nil && !os.IsNotExist(err) {
+		t.Fatalf("read bd log: %v", err)
+	}
+	for _, line := range strings.Split(string(logBytes), "\n") {
+		line = strings.TrimSpace(line)
+		if strings.HasPrefix(line, "sql ") || line == "sql" {
+			t.Errorf("--dry-run called bd sql (isTrackedByConvoy ran): "+
+				"GH#3903 regression — Dolt queries must be skipped in dry-run\nlog:\n%s", string(logBytes))
+		}
+	}
+}
