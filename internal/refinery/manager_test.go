@@ -89,19 +89,21 @@ func TestManager_Start_ReturnsErrDisabledWhenRefineryDisabled(t *testing.T) {
 }
 
 func TestManager_Start_NotDisabledWhenFlagFalse(t *testing.T) {
-	_, rigPath := setupTestManager(t)
+	mgr, rigPath := setupTestManager(t)
 	// Write a config.json with refinery_disabled=false (should not return ErrDisabled)
 	cfgJSON := `{"type":"rig","version":1,"name":"testrig","git_url":"https://github.com/example/repo","refinery_disabled":false}`
 	if err := os.WriteFile(filepath.Join(rigPath, "config.json"), []byte(cfgJSON), 0644); err != nil {
 		t.Fatalf("write config.json: %v", err)
 	}
-	r := &rig.Rig{Name: "testrig", Path: rigPath}
-	mgr := NewManager(r)
 	err := mgr.Start(false, "")
 	// Should not return ErrDisabled (may return other errors for missing tmux/repo)
 	if err == ErrDisabled {
 		t.Error("Start() with refinery_disabled=false returned ErrDisabled unexpectedly")
 	}
+	// If a session was started, stop it to avoid leaking into other tests.
+	t.Cleanup(func() {
+		_ = mgr.Stop()
+	})
 }
 
 func TestManager_Status_NotRunning(t *testing.T) {
