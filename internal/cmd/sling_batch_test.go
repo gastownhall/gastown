@@ -907,7 +907,14 @@ exit 0
 		t.Errorf("create should include 'Work: Fix the widget' in args:\n%s", logContent)
 	}
 
-	if helperTownRoot != townRoot {
+	// workspace.FindFromCwd resolves symlinks, so helperTownRoot may be the
+	// canonical /private/var/... path while townRoot is the unresolved /var/...
+	// path from t.TempDir(). Resolve before comparing to avoid macOS mismatch.
+	wantTownRoot := townRoot
+	if resolved, err := filepath.EvalSymlinks(townRoot); err == nil {
+		wantTownRoot = resolved
+	}
+	if helperTownRoot != wantTownRoot {
 		t.Errorf("tracking helper townRoot = %q, want %q", helperTownRoot, townRoot)
 	}
 	if helperConvoyID != convoyID {

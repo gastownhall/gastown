@@ -261,10 +261,11 @@ exit /b 0
 	if resolved, err := filepath.EvalSymlinks(wantDir); err == nil {
 		wantDir = resolved
 	}
-	wantBeadsDir := filepath.Join(rigDir, ".beads")
-	if resolved, err := filepath.EvalSymlinks(wantBeadsDir); err == nil {
-		wantBeadsDir = resolved
-	}
+	// Build wantBeadsDir from the already-resolved wantDir, not from rigDir.
+	// EvalSymlinks fails on non-existent paths (the .beads dir isn't created in
+	// this test), so we'd fall back to the unresolved /var/... path while the
+	// actual subprocess path resolves to /private/var/... — a mismatch on macOS.
+	wantBeadsDir := filepath.Join(wantDir, ".beads")
 	gotCook := false
 	gotWisp := false
 	gotBond := false

@@ -185,6 +185,13 @@ func TestPersistentPreRunLoadsAgentRegistry(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = os.Chdir(origDir) })
 
+	// persistentPreRun calls os.Exit(1) when BuiltProperly=="" on macOS (the
+	// binary signing guard). In tests the binary is built without ldflags, so
+	// BuiltProperly is empty. Set it to "1" to bypass the guard.
+	oldBuiltProperly := BuiltProperly
+	BuiltProperly = "1"
+	t.Cleanup(func() { BuiltProperly = oldBuiltProperly })
+
 	// Run persistentPreRun (the function under test).
 	cmd := &cobra.Command{Use: "version"}
 	if err := persistentPreRun(cmd, nil); err != nil {
@@ -235,6 +242,13 @@ func TestPersistentPreRunMalformedAgentRegistry(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = os.Chdir(origDir) })
+
+	// persistentPreRun calls os.Exit(1) when BuiltProperly=="" on macOS (the
+	// binary signing guard). In tests the binary is built without ldflags, so
+	// BuiltProperly is empty. Set it to "1" to bypass the guard.
+	oldBuiltProperly2 := BuiltProperly
+	BuiltProperly = "1"
+	t.Cleanup(func() { BuiltProperly = oldBuiltProperly2 })
 
 	// persistentPreRun should succeed despite malformed agents.json.
 	cmd := &cobra.Command{Use: "version"}

@@ -19,7 +19,11 @@ func setupPrimeExternalToolTest(t *testing.T, bdScript, gtScript string) string 
 
 	oldTimeout := primeExternalToolTimeout
 	oldWaitDelay := primeExternalToolWaitDelay
-	primeExternalToolTimeout = 100 * time.Millisecond
+	// 500ms gives macOS shell scripts enough time to start and write their log
+	// entry before SIGKILL arrives (shell startup can take >100ms on macOS due
+	// to codesigning validation). The slow-bd/slow-mail scripts sleep 2s, so
+	// the 500ms bound still exercises the timeout path.
+	primeExternalToolTimeout = 500 * time.Millisecond
 	primeExternalToolWaitDelay = 10 * time.Millisecond
 	t.Cleanup(func() {
 		primeExternalToolTimeout = oldTimeout
@@ -86,7 +90,7 @@ esac
 
 	start := time.Now()
 	output := captureStdout(t, func() { runPrimeExternalTools(workDir) })
-	assertElapsedUnder(t, time.Since(start), time.Second)
+	assertElapsedUnder(t, time.Since(start), 2*time.Second)
 	assertPrimeToolCalled(t, "bd:prime")
 	assertPrimeToolCalled(t, "bd:kv list --json")
 	assertPrimeToolCalled(t, "gt:mail check --inject")
@@ -123,7 +127,7 @@ esac
 
 	start := time.Now()
 	output := captureStdout(t, func() { runPrimeExternalTools(workDir) })
-	assertElapsedUnder(t, time.Since(start), time.Second)
+	assertElapsedUnder(t, time.Since(start), 2*time.Second)
 	assertPrimeToolCalled(t, "bd:prime")
 	assertPrimeToolCalled(t, "bd:kv list --json")
 	assertPrimeToolCalled(t, "gt:mail check --inject")
@@ -158,7 +162,7 @@ esac
 	output := captureStdout(t, func() {
 		checkPendingEscalations(RoleContext{Role: RoleMayor, WorkDir: workDir})
 	})
-	assertElapsedUnder(t, time.Since(start), time.Second)
+	assertElapsedUnder(t, time.Since(start), 2*time.Second)
 	assertPrimeToolCalled(t, "bd:list --status=open --tag=escalation --json")
 
 	if strings.Contains(output, "PENDING ESCALATIONS") {
