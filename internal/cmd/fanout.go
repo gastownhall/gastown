@@ -99,6 +99,11 @@ func runFanout(_ *cobra.Command, _ []string) error {
 	// Resolve the rig's beads directory, pinning all writes to it.
 	// This prevents ambient database discovery when running from arbitrary cwd.
 	rigDir := filepath.Join(townRoot, fanoutRig)
+	// Guard against path traversal: --rig "../other" would escape townRoot.
+	cleanTown := filepath.Clean(townRoot)
+	if !strings.HasPrefix(filepath.Clean(rigDir), cleanTown+string(os.PathSeparator)) {
+		return fmt.Errorf("rig %q escapes town root %s", fanoutRig, townRoot)
+	}
 	if info, err := os.Stat(rigDir); err != nil || !info.IsDir() {
 		return fmt.Errorf("rig %q not found at %s", fanoutRig, rigDir)
 	}
@@ -201,6 +206,8 @@ func runFanout(_ *cobra.Command, _ []string) error {
 		created = append(created, beadID)
 
 		// Persist to state file before sleeping so partial runs are recoverable.
+		// Also update done map to skip duplicate titles later in the same run.
+		done[title] = beadID
 		entry := fanoutStateEntry{
 			Title:     title,
 			BeadID:    beadID,
