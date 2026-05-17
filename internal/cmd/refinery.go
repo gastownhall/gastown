@@ -628,13 +628,31 @@ func runRefineryRestart(cmd *cobra.Command, args []string) error {
 		rigName = args[0]
 	}
 
-	mgr, _, rigName, err := getRefineryManager(rigName)
+	mgr, r, rigName, err := getRefineryManager(rigName)
 	if err != nil {
 		return err
 	}
 
 	if err := checkRigNotParkedOrDocked(rigName); err != nil {
 		return err
+	}
+
+	// Refuse to restart the refinery on a fork rig unless --force is given.
+	// Same guard as runRefineryStart: restarting would still merge to fork main.
+	if !refineryForce {
+		if rigCfg, err := rig.LoadRigConfig(r.Path); err == nil && rigCfg.UpstreamURL != "" {
+			fmt.Println()
+			fmt.Printf("  %s Refinery blocked for fork rig %q\n", style.Bold.Render("⛔"), rigName)
+			fmt.Println()
+			fmt.Printf("  This rig is a fork (upstream_url = %s).\n", rigCfg.UpstreamURL)
+			fmt.Println("  Running the refinery merges branches to fork main, which breaks")
+			fmt.Println("  fork↔upstream fast-forward sync and pollutes the fork's history.")
+			fmt.Println()
+			fmt.Printf("  To permanently disable the refinery for this rig: gt refinery disable %s\n", rigName)
+			fmt.Printf("  To restart anyway (advanced / non-standard):      gt refinery restart %s --force\n", rigName)
+			fmt.Println()
+			return fmt.Errorf("refinery blocked for fork rig %q (use --force to override)", rigName)
+		}
 	}
 
 	fmt.Printf("Restarting refinery for %s...\n", rigName)

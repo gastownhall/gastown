@@ -213,8 +213,11 @@ func runFanout(_ *cobra.Command, _ []string) error {
 			BeadID:    beadID,
 			CreatedAt: time.Now().UTC().Format(time.RFC3339),
 		}
-		if data, err := json.Marshal(entry); err == nil {
-			_, _ = fmt.Fprintf(sf, "%s\n", data)
+		if data, marshalErr := json.Marshal(entry); marshalErr != nil {
+			fmt.Fprintf(os.Stderr, "warning: failed to marshal state for %q: %v (re-run may re-create this bead)\n", beadID, marshalErr)
+		} else if _, writeErr := fmt.Fprintf(sf, "%s\n", data); writeErr != nil {
+			fmt.Fprintf(os.Stderr, "warning: failed to write state for %q: %v (re-run may re-create this bead)\n", beadID, writeErr)
+		} else {
 			_ = sf.Sync()
 		}
 
