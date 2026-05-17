@@ -165,7 +165,8 @@ func runFanout(_ *cobra.Command, _ []string) error {
 		err   string
 	}
 	var created []string
-	var failures []fanoutFailure
+	var failures []fanoutFailure   // bead creation failures (retryable via state file)
+	var depWarnings []fanoutFailure // dep-link failures (bead created; fix manually)
 	skipped := 0
 
 	for i, title := range titles {
@@ -184,12 +185,15 @@ func runFanout(_ *cobra.Command, _ []string) error {
 			continue
 		}
 
-		// Link to parent if specified.
+		// Link to parent if specified. Dep failure is a warning — the bead exists
+		// and is persisted, so retrying won't help. User must fix the link manually.
 		if fanoutParent != "" {
 			if depErr := fanoutAddParentDep(fanoutParent, beadID, rigBeadsDir); depErr != nil {
-				// Dep failure is reported but doesn't block; the bead still exists.
 				fmt.Printf("         %s dep link failed: %v\n", style.Warning.Render("⚠"), depErr)
-				failures = append(failures, fanoutFailure{title: title, err: fmt.Sprintf("created as %s but dep link failed: %v", beadID, depErr)})
+				depWarnings = append(depWarnings, fanoutFailure{
+					title: title,
+					err:   fmt.Sprintf("%s created but dep link failed: %v", beadID, depErr),
+				})
 			}
 		}
 
@@ -219,6 +223,13 @@ func runFanout(_ *cobra.Command, _ []string) error {
 
 	if len(created) > 0 {
 		fmt.Printf("  Created: %s\n", strings.Join(created, " "))
+	}
+	if len(depWarnings) > 0 {
+		fmt.Printf("\n%s Dep-link warnings — beads created but parent links missing (fix with 'bd dep add'):\n",
+			style.Warning.Render("⚠"))
+		for _, w := range depWarnings {
+			fmt.Printf("  ⚠ %q: %s\n", w.title, w.err)
+		}
 	}
 	if len(failures) > 0 {
 		fmt.Printf("\n%s Partial failures — retry with the same --state-file to skip successful beads:\n",
