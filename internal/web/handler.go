@@ -355,6 +355,7 @@ func (h *ConvoyHandler) fetchAndRender(r *http.Request, expandPanel string) []by
 		Sessions:    sessions,
 		Hooks:       hooks,
 		Mayor:       mayor,
+		Agents:      toAgentViews(workers, sessions, mayor),
 		Issues:      enrichIssuesWithAssignees(issues, hooks),
 		Activity:    activity,
 		Summary:     summary,

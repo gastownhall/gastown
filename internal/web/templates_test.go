@@ -236,3 +236,101 @@ func TestConvoyTemplate_EmptyState(t *testing.T) {
 		t.Error("Template should show empty state message when no convoys")
 	}
 }
+
+// TestConvoyTemplate_AgentsPanelRendersAllRoles (fl-t33l) is the
+// regression guard for the unified Agents panel. The fixture mixes
+// a crew session, a polecat worker, and a refinery worker — all
+// three must land in the Agents table in a single, flat list.
+// Before fl-t33l these would have rendered into three separate
+// panels (Crew / Polecats / Sessions), with the gascity-side
+// invisible-bucket issue (fl-kwmk) also applying here.
+func TestConvoyTemplate_AgentsPanelRendersAllRoles(t *testing.T) {
+	tmpl, err := LoadTemplates()
+	if err != nil {
+		t.Fatalf("LoadTemplates() error = %v", err)
+	}
+
+	data := ConvoyData{
+		Agents: []AgentView{
+			{
+				Name:       "fontaine",
+				Role:       "crew",
+				Rig:        "gastown",
+				WorkStatus: "idle",
+				State:      "idle",
+				Activity:   activity.Calculate(time.Now().Add(-1 * time.Minute)),
+				IsAlive:    true,
+			},
+			{
+				Name:       "nux",
+				Role:       "polecat",
+				Rig:        "gastown",
+				BeadID:     "hq-1234",
+				BeadTitle:  "Fix the build",
+				WorkStatus: "working",
+				State:      "spinning",
+				Activity:   activity.Calculate(time.Now().Add(-2 * time.Minute)),
+				IsAlive:    true,
+			},
+			{
+				Name:       "refinery",
+				Role:       "refinery",
+				Rig:        "gastown",
+				WorkStatus: "idle",
+				State:      "idle",
+				Activity:   activity.Calculate(time.Now().Add(-30 * time.Second)),
+				IsAlive:    true,
+			},
+		},
+	}
+
+	var buf bytes.Buffer
+	if err := tmpl.ExecuteTemplate(&buf, "convoy.html", data); err != nil {
+		t.Fatalf("ExecuteTemplate() error = %v", err)
+	}
+	output := buf.String()
+
+	for _, want := range []string{"fontaine", "nux", "refinery", `id="agents-table"`, "hq-1234"} {
+		if !strings.Contains(output, want) {
+			t.Errorf("Agents panel missing %q in output", want)
+		}
+	}
+	// Mayor banner is gone — assert that none of its DOM markers
+	// leak back into the page.
+	for _, gone := range []string{"mayor-banner", "mayor-info", "mayor-title"} {
+		if strings.Contains(output, gone) {
+			t.Errorf("Mayor banner not removed: found %q in output", gone)
+		}
+	}
+}
+
+// TestToAgentViews_EmptyDashesPropagate covers the gascity-aligned
+// "render — when empty" contract in the consolidator, before it
+// hits the template.
+func TestToAgentViews_EmptyDashesPropagate(t *testing.T) {
+	workers := []WorkerRow{
+		{Name: "nux", Rig: "gastown", AgentType: "polecat"},
+		{Name: "floating", AgentType: "polecat"}, // no Rig
+	}
+	sessions := []SessionRow{
+		{Name: "gt-gastown-witness", Role: "witness", Rig: "gastown", IsAlive: true},
+	}
+	agents := toAgentViews(workers, sessions, nil)
+	if len(agents) != 3 {
+		t.Fatalf("got %d agents, want 3 (no mayor + 2 workers + 1 session)", len(agents))
+	}
+	if agents[1].Rig != "" {
+		t.Errorf("worker with no rig should keep empty Rig (template renders —), got %q", agents[1].Rig)
+	}
+}
+
+// TestToAgentViews_DedupesWorkerSession confirms that when a session
+// also represents a worker (same SessionID), we don't double-list it.
+func TestToAgentViews_DedupesWorkerSession(t *testing.T) {
+	workers := []WorkerRow{{Name: "nux", Rig: "gastown", SessionID: "gt-gastown-nux", AgentType: "polecat"}}
+	sessions := []SessionRow{{Name: "gt-gastown-nux", Role: "polecat", Rig: "gastown", IsAlive: true}}
+	agents := toAgentViews(workers, sessions, nil)
+	if len(agents) != 1 {
+		t.Errorf("got %d agents, want 1 (worker + matching session = single row)", len(agents))
+	}
+}

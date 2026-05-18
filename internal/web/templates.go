@@ -14,6 +14,15 @@ import (
 var templateFS embed.FS
 
 // ConvoyData represents data passed to the convoy template.
+//
+// fl-t33l: the dashboard previously rendered three separate
+// per-tier panels (Mayor banner, Polecats workers, Sessions list)
+// gated on different criteria. Operators wanted a single flat
+// Agents view that surfaces every running session regardless of
+// role. Agents is the consolidated slice convoy.html now iterates.
+// Mayor/Workers/Sessions stay populated so non-template callers
+// (summary stats, error paths, handler tests) keep working — the
+// template just no longer reads them.
 type ConvoyData struct {
 	Convoys     []ConvoyRow
 	MergeQueue  []MergeQueueRow
@@ -27,11 +36,133 @@ type ConvoyData struct {
 	Sessions    []SessionRow
 	Hooks       []HookRow
 	Mayor       *MayorStatus
+	Agents      []AgentView
 	Issues      []IssueRow
 	Activity    []ActivityRow
 	Summary     *DashboardSummary
 	Expand      string // Panel to show fullscreen (from ?expand=name)
 	CSRFToken   string // Token for CSRF protection on POST requests
+}
+
+// AgentView is one row of the unified Agents panel (fl-t33l).
+// Mirrors the gascity dashboard's Agents table column shape so an
+// operator running both instances sees consistent layout.
+// Columns: Agent / Rig / Pool / Bead / Status / Activity / State.
+// Rig and Pool render as "—" when empty.
+type AgentView struct {
+	Name       string        // Display name (template, worker, or session ID)
+	Role       string        // crew / polecat / refinery / witness / deacon / session
+	Rig        string        // Rig name; "" renders as "—"
+	Pool       string        // Pool name; "" renders as "—"
+	BeadID     string        // Active bead ID; "" renders as "—"
+	BeadTitle  string        // Active bead title for display
+	WorkStatus string        // working / stuck / stale / idle
+	State      string        // spinning / questions / idle / finished
+	Activity   activity.Info // Last-active age + color
+	IsAlive    bool          // True when the agent's session is up
+}
+
+// toAgentViews collapses the gastown data model's per-tier slices
+// (Workers, Sessions, plus the Mayor singleton) into one flat
+// AgentView list. Order is stable so the rendered table doesn't
+// shuffle per refresh: Mayor first (when present), then workers
+// in their existing order, then sessions that haven't already
+// been represented by a worker entry.
+func toAgentViews(workers []WorkerRow, sessions []SessionRow, mayor *MayorStatus) []AgentView {
+	agents := make([]AgentView, 0, len(workers)+len(sessions)+1)
+	seenSessionID := map[string]bool{}
+
+	if mayor != nil {
+		agents = append(agents, AgentView{
+			Name:       "mayor",
+			Role:       "mayor",
+			WorkStatus: mayorWorkStatus(mayor),
+			State:      mayorState(mayor),
+			Activity:   activity.Info{FormattedAge: mayor.LastActivity, ColorClass: mayorColor(mayor)},
+			IsAlive:    mayor.IsAttached,
+		})
+		if mayor.SessionName != "" {
+			seenSessionID[mayor.SessionName] = true
+		}
+	}
+
+	for _, w := range workers {
+		state := workerState(w)
+		agents = append(agents, AgentView{
+			Name:       w.Name,
+			Role:       w.AgentType,
+			Rig:        w.Rig,
+			BeadID:     w.IssueID,
+			BeadTitle:  w.IssueTitle,
+			WorkStatus: w.WorkStatus,
+			State:      state,
+			Activity:   w.LastActivity,
+			IsAlive:    true,
+		})
+		if w.SessionID != "" {
+			seenSessionID[w.SessionID] = true
+		}
+	}
+
+	for _, s := range sessions {
+		if seenSessionID[s.Name] {
+			continue
+		}
+		agents = append(agents, AgentView{
+			Name:       s.Name,
+			Role:       s.Role,
+			Rig:        s.Rig,
+			WorkStatus: "idle",
+			State:      sessionState(s),
+			Activity:   activity.Info{FormattedAge: s.Activity},
+			IsAlive:    s.IsAlive,
+		})
+	}
+	return agents
+}
+
+func mayorWorkStatus(m *MayorStatus) string {
+	if !m.IsAttached {
+		return "idle"
+	}
+	if m.IsActive {
+		return "working"
+	}
+	return "stale"
+}
+
+func mayorState(m *MayorStatus) string {
+	if !m.IsAttached {
+		return "finished"
+	}
+	if m.IsActive {
+		return "spinning"
+	}
+	return "idle"
+}
+
+func mayorColor(m *MayorStatus) string {
+	if !m.IsAttached {
+		return activity.ColorRed
+	}
+	if m.IsActive {
+		return activity.ColorGreen
+	}
+	return activity.ColorYellow
+}
+
+func workerState(w WorkerRow) string {
+	if w.IssueID != "" {
+		return "spinning"
+	}
+	return "idle"
+}
+
+func sessionState(s SessionRow) string {
+	if !s.IsAlive {
+		return "finished"
+	}
+	return "idle"
 }
 
 // RigRow represents a registered rig in the dashboard.

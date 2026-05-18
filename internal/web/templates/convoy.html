@@ -27,36 +27,8 @@
             </div>
         </header>
 
-        <!-- Mayor Status Banner -->
-        <div class="mayor-banner {{if .Mayor}}{{if .Mayor.IsAttached}}attached{{else}}detached{{end}}{{else}}detached{{end}}">
-            <div class="mayor-info">
-                <span class="mayor-icon">🎩</span>
-                <span class="mayor-title">The Mayor</span>
-                {{if .Mayor}}
-                    {{if .Mayor.IsAttached}}
-                    <span class="badge badge-green">Attached</span>
-                    {{else}}
-                    <span class="badge badge-muted">Detached</span>
-                    {{end}}
-                {{else}}
-                <span class="badge badge-muted">Unknown</span>
-                {{end}}
-            </div>
-            {{if .Mayor}}{{if .Mayor.IsAttached}}
-            <div class="mayor-status">
-                <div class="mayor-stat">
-                    <span class="mayor-stat-label">Activity</span>
-                    <span class="mayor-stat-value {{if .Mayor.IsActive}}active{{else}}idle{{end}}">
-                        {{.Mayor.LastActivity}}
-                    </span>
-                </div>
-                <div class="mayor-stat">
-                    <span class="mayor-stat-label">Runtime</span>
-                    <span class="mayor-stat-value">{{.Mayor.Runtime}}</span>
-                </div>
-            </div>
-            {{end}}{{end}}
-        </div>
+        <!-- Mayor banner removed (fl-t33l): same mayor across both
+             gas city and gas town, no value showing it on this dashboard. -->
 
         <!-- Summary & Alerts Banner -->
         {{if .Summary}}
@@ -263,71 +235,46 @@
                 </div>
             </div>
 
-            <!-- Crew Panel (named, long-lived workers) -->
-            <div class="panel" id="crew-panel">
+            <!-- Agents Panel (fl-t33l): replaces the prior crew /
+                 polecats / sessions split. One flat table for every
+                 agent the dashboard surfaces, mirroring the gascity
+                 dashboard's layout so operators see consistent shape
+                 across both systems. -->
+            <div class="panel" id="agents-panel">
                 <div class="panel-header">
-                    <h2>👨‍💼 Crew</h2>
-                    <span class="count" id="crew-count">0</span>
+                    <h2>👥 Agents</h2>
+                    <span class="count">{{len .Agents}}</span>
                     <button class="collapse-btn" aria-label="Toggle panel">▼</button>
                     <button class="expand-btn">Expand</button>
                 </div>
                 <div class="panel-body">
-                    <div class="loading-state" id="crew-loading">Loading crew...</div>
-                    <table id="crew-table" style="display: none;">
+                    {{if .Agents}}
+                    <table id="agents-table">
                         <thead>
                             <tr>
-                                <th>Name</th>
+                                <th>Agent</th>
                                 <th>Rig</th>
-                                <th>State</th>
-                                <th>Hook</th>
-                                <th>Activity</th>
-                                <th>Session</th>
-                                <th>Actions</th>
-                            </tr>
-                        </thead>
-                        <tbody id="crew-tbody">
-                        </tbody>
-                    </table>
-                    <div class="empty-state" id="crew-empty" style="display: none;">
-                        <p>No crew configured</p>
-                    </div>
-                </div>
-            </div>
-
-            <!-- Polecats Panel -->
-            <div class="panel">
-                <div class="panel-header">
-                    <h2>🦨 Polecats</h2>
-                    <span class="count">{{len .Workers}}</span>
-                    <button class="collapse-btn" aria-label="Toggle panel">▼</button>
-                    <button class="expand-btn">Expand</button>
-                </div>
-                <div class="panel-body">
-                    {{if .Workers}}
-                    <table>
-                        <thead>
-                            <tr>
-                                <th>Worker</th>
-                                <th>Type</th>
-                                <th>Rig</th>
-                                <th>Working On</th>
+                                <th>Pool</th>
+                                <th>Bead</th>
                                 <th>Status</th>
                                 <th>Activity</th>
+                                <th>State</th>
                             </tr>
                         </thead>
-                        <tbody>
-                            {{range .Workers}}
-                            <tr class="{{polecatStatusClass .WorkStatus}}">
-                                <td><span class="polecat-name">{{.Name}}</span></td>
-                                <td>{{if eq .AgentType "refinery"}}<span class="badge badge-blue">refinery</span>{{else}}<span class="badge badge-muted">polecat</span>{{end}}</td>
-                                <td><span class="polecat-rig">{{.Rig}}</span></td>
-                                <td class="polecat-issue">
-                                    {{if .IssueID}}
-                                    <span class="issue-id">{{.IssueID}}</span>
-                                    <span class="issue-title">{{.IssueTitle}}</span>
-                                    {{else}}
-                                    <span class="no-issue">—</span>
-                                    {{end}}
+                        <tbody id="agents-tbody">
+                            {{range .Agents}}
+                            <tr class="agent-row {{polecatStatusClass .WorkStatus}}" data-agent-name="{{.Name}}">
+                                <td>
+                                    <span class="agent-name">{{.Name}}</span>
+                                    {{if .Role}}<span class="badge badge-muted">{{.Role}}</span>{{end}}
+                                </td>
+                                <td>{{if .Rig}}{{.Rig}}{{else}}—{{end}}</td>
+                                <td>{{if .Pool}}{{.Pool}}{{else}}—{{end}}</td>
+                                <td class="agent-bead">
+                                    {{if .BeadID}}
+                                    <span class="issue-id">{{.BeadID}}</span>
+                                    <span class="issue-title">{{.BeadTitle}}</span>
+                                    {{else}}—{{end}}
                                 </td>
                                 <td>
                                     {{if eq .WorkStatus "working"}}
@@ -340,60 +287,23 @@
                                     <span class="badge badge-muted">Idle</span>
                                     {{end}}
                                 </td>
-                                <td class="{{activityClass .LastActivity}}">
+                                <td class="{{activityClass .Activity}}">
                                     <span class="activity-dot"></span>
-                                    {{.LastActivity.FormattedAge}}
+                                    {{.Activity.FormattedAge}}
                                 </td>
+                                <td><span class="badge badge-muted">{{.State}}</span></td>
                             </tr>
                             {{end}}
                         </tbody>
                     </table>
                     {{else}}
-                    <div class="empty-state">
-                        <p>No polecats</p>
+                    <div class="empty-state" id="agents-empty">
+                        <p>No active agents</p>
                     </div>
                     {{end}}
-                </div>
-            </div>
-
-            <!-- Sessions Panel -->
-            <div class="panel">
-                <div class="panel-header">
-                    <h2>📟 Sessions</h2>
-                    <span class="count">{{len .Sessions}}</span>
-                    <button class="collapse-btn" aria-label="Toggle panel">▼</button>
-                    <button class="expand-btn">Expand</button>
-                </div>
-                <div class="panel-body">
-                    {{if .Sessions}}
-                    <table>
-                        <thead>
-                            <tr>
-                                <th>Role</th>
-                                <th>Rig</th>
-                                <th>Worker</th>
-                                <th>Activity</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            {{range .Sessions}}
-                            <tr class="session-row" data-session-name="{{.Name}}">
-                                <td>
-                                    <span class="role-{{.Role}}">{{.Role}}</span>
-                                </td>
-                                <td>{{.Rig}}</td>
-                                <td>{{.Worker}}</td>
-                                <td>{{.Activity}}</td>
-                            </tr>
-                            {{end}}
-                        </tbody>
-                    </table>
-                    {{else}}
-                    <div class="empty-state">
-                        <p>No active sessions</p>
-                    </div>
-                    {{end}}
-                    <!-- Session terminal preview -->
+                    <!-- Session terminal preview (kept from the
+                         pre-fl-t33l Sessions panel; the session-preview
+                         JS still binds to this DOM by ID). -->
                     <div id="session-preview" style="display:none;">
                         <div class="session-preview-header">
                             <button id="session-preview-back" class="mail-back-btn">← Back</button>
