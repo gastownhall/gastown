@@ -14,6 +14,8 @@ import (
 
 	"github.com/gofrs/flock"
 	"github.com/steveyegge/gastown/internal/config"
+	"github.com/steveyegge/gastown/internal/constants"
+	"github.com/steveyegge/gastown/internal/runtime"
 	"github.com/steveyegge/gastown/internal/session"
 	"github.com/steveyegge/gastown/internal/tmux"
 	"github.com/steveyegge/gastown/internal/util"
@@ -179,8 +181,9 @@ func (b *Boot) spawnTmux(agentOverride string) error {
 	}
 
 	// Use unified session lifecycle for config → settings → command → create → env.
-	_, err := session.StartSession(b.tmux, session.SessionConfig{
-		SessionID: session.BootSessionName(),
+	bootSessionID := session.BootSessionName()
+	result, err := session.StartSession(b.tmux, session.SessionConfig{
+		SessionID: bootSessionID,
 		WorkDir:   b.bootDir,
 		Role:      "boot",
 		TownRoot:  b.townRoot,
@@ -192,7 +195,22 @@ func (b *Boot) spawnTmux(agentOverride string) error {
 		Instructions:  "Run `" + cli.Name() + " boot triage` now.",
 		AgentOverride: agentOverride,
 	})
-	return err
+	if err != nil {
+		return err
+	}
+
+	// Startup fallback for promptless runtimes (prompt_mode: none).
+	// BuildCommandWithPrompt drops the prompt text for these runtimes, so boot
+	// never receives its triage instruction via the CLI argument.
+	_ = runtime.RunStartupFallback(b.tmux, bootSessionID, "boot", result.RuntimeConfig)
+	bootPrompt := session.BuildStartupPrompt(session.BeaconConfig{
+		Recipient: "boot",
+		Sender:    "daemon",
+		Topic:     "triage",
+	}, "Run `"+cli.Name()+" boot triage` now.")
+	_ = runtime.DeliverStartupPromptFallback(b.tmux, bootSessionID, bootPrompt, result.RuntimeConfig, constants.ClaudeStartTimeout)
+
+	return nil
 }
 
 // spawnDegraded spawns Boot in degraded mode (no tmux).

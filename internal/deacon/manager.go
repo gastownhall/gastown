@@ -179,6 +179,15 @@ func (m *Manager) Start(agentOverride string) error {
 	// Accept startup dialogs (workspace trust + bypass permissions) if they appear.
 	_ = t.AcceptStartupDialogs(sessionID)
 
+	// Startup fallback for promptless runtimes (prompt_mode: none).
+	// BuildStartupCommandFromConfig drops the prompt text for non-prompt runtimes,
+	// so the deacon never receives its work instructions via the CLI argument.
+	// We must deliver them via tmux nudge to ensure the deacon starts patrol.
+	if realTmux, ok := t.(*tmux.Tmux); ok {
+		_ = runtime.RunStartupFallback(realTmux, sessionID, "deacon", runtimeConfig)
+		_ = runtime.DeliverStartupPromptFallback(realTmux, sessionID, initialPrompt, runtimeConfig, constants.ClaudeStartTimeout)
+	}
+
 	time.Sleep(constants.ShutdownNotifyDelay)
 
 	return nil
