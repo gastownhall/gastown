@@ -169,6 +169,149 @@ esac
 	}
 }
 
+func TestGetIssueDetailsBatchRoutesTrackedIDsByPrefix(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("skipping on windows - shell stubs")
+	}
+
+	townRoot, _, expectedTownWD := makeExternalTrackingTownWorkspace(t)
+	rigDir := filepath.Join(townRoot, "worker", "mayor", "rig")
+	if err := os.MkdirAll(filepath.Join(rigDir, ".beads"), 0755); err != nil {
+		t.Fatalf("mkdir rig beads: %v", err)
+	}
+	routes := `{"prefix":"hq-","path":"."}
+{"prefix":"ws-","path":"worker/mayor/rig"}
+`
+	if err := os.WriteFile(filepath.Join(townRoot, ".beads", "routes.jsonl"), []byte(routes), 0644); err != nil {
+		t.Fatalf("write routes.jsonl: %v", err)
+	}
+	chdirExternalTrackingTest(t, townRoot)
+
+	expectedRigWD := rigDir
+	if resolved, err := filepath.EvalSymlinks(rigDir); err == nil && resolved != "" {
+		expectedRigWD = resolved
+	}
+	scriptBody := fmt.Sprintf(`
+case "$PWD|$*" in
+  %q)
+    echo '[{"id":"hq-town","title":"Town task","status":"open","issue_type":"task"}]'
+    ;;
+  %q)
+    echo '[{"id":"ws-rig","title":"Rig task","status":"closed","issue_type":"task"}]'
+    ;;
+  *)
+    echo "unexpected bd cwd/args: $PWD|$*" >&2
+    exit 1
+    ;;
+esac
+`, expectedTownWD+"|show hq-town --json", expectedRigWD+"|show ws-rig --json")
+	writeExternalTrackingBdStub(t, scriptBody)
+
+	got := getIssueDetailsBatch([]string{"hq-town", "ws-rig"})
+	if got["hq-town"] == nil || got["hq-town"].Status != "open" {
+		t.Fatalf("town detail not resolved through town route: %#v", got["hq-town"])
+	}
+	if got["ws-rig"] == nil || got["ws-rig"].Status != "closed" {
+		t.Fatalf("rig detail not resolved through rig route: %#v", got["ws-rig"])
+	}
+}
+
+func TestGetIssueDetailsBatchEmptyInput(t *testing.T) {
+	got := getIssueDetailsBatch(nil)
+	if len(got) != 0 {
+		t.Fatalf("expected empty result, got %#v", got)
+	}
+}
+
+func TestGetIssueDetailsBatchFallsBackThroughRoutedSingleLookup(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("skipping on windows - shell stubs")
+	}
+
+	townRoot, _, _ := makeExternalTrackingTownWorkspace(t)
+	rigDir := filepath.Join(townRoot, "worker", "mayor", "rig")
+	if err := os.MkdirAll(filepath.Join(rigDir, ".beads"), 0755); err != nil {
+		t.Fatalf("mkdir rig beads: %v", err)
+	}
+	routes := `{"prefix":"ws-","path":"worker/mayor/rig"}
+`
+	if err := os.WriteFile(filepath.Join(townRoot, ".beads", "routes.jsonl"), []byte(routes), 0644); err != nil {
+		t.Fatalf("write routes.jsonl: %v", err)
+	}
+	chdirExternalTrackingTest(t, townRoot)
+
+	expectedRigWD := rigDir
+	if resolved, err := filepath.EvalSymlinks(rigDir); err == nil && resolved != "" {
+		expectedRigWD = resolved
+	}
+	scriptBody := fmt.Sprintf(`
+case "$PWD|$*" in
+  %q)
+    echo "batch lookup failed" >&2
+    exit 1
+    ;;
+  %q)
+    echo '[{"id":"ws-one","title":"Recovered via fallback","status":"open","issue_type":"task"}]'
+    ;;
+  %q)
+    echo "missing issue" >&2
+    exit 1
+    ;;
+  *)
+    echo "unexpected bd cwd/args: $PWD|$*" >&2
+    exit 1
+    ;;
+esac
+`, expectedRigWD+"|show ws-one ws-missing --json", expectedRigWD+"|show ws-one --json", expectedRigWD+"|show ws-missing --json")
+	writeExternalTrackingBdStub(t, scriptBody)
+
+	got := getIssueDetailsBatch([]string{"ws-one", "ws-missing"})
+	if got["ws-one"] == nil || got["ws-one"].Status != "open" {
+		t.Fatalf("fallback detail not resolved through rig route: %#v", got["ws-one"])
+	}
+	if got["ws-missing"] != nil {
+		t.Fatalf("missing detail should be omitted, got %#v", got["ws-missing"])
+	}
+}
+
+func TestGetIssueDetailsSkipsUnusableBdOutput(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("skipping on windows - shell stubs")
+	}
+
+	townRoot, _, expectedTownWD := makeExternalTrackingTownWorkspace(t)
+	chdirExternalTrackingTest(t, townRoot)
+
+	scriptBody := fmt.Sprintf(`
+case "$PWD|$*" in
+  %q)
+    exit 0
+    ;;
+  %q)
+    echo 'not json'
+    ;;
+  %q)
+    echo 'not json'
+    ;;
+  *)
+    echo "unexpected bd cwd/args: $PWD|$*" >&2
+    exit 1
+    ;;
+esac
+`, expectedTownWD+"|show hq-empty --json", expectedTownWD+"|show hq-invalid --json", expectedTownWD+"|show hq-bad-batch --json")
+	writeExternalTrackingBdStub(t, scriptBody)
+
+	if got := getIssueDetails("hq-empty"); got != nil {
+		t.Fatalf("empty detail output should return nil, got %#v", got)
+	}
+	if got := getIssueDetails("hq-invalid"); got != nil {
+		t.Fatalf("invalid detail output should return nil, got %#v", got)
+	}
+	if got := getIssueDetailsBatch([]string{"hq-bad-batch"}); len(got) != 0 {
+		t.Fatalf("invalid batch output should be omitted, got %#v", got)
+	}
+}
+
 // TestCloseConvoyIfComplete_UnknownBlocksAutoClose verifies (gt-bs6) that an
 // unknown-status tracked bead prevents convoy auto-close. The rig DB being
 // temporarily unreachable must not be mistaken for a completed bead.

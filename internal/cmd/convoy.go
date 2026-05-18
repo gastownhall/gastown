@@ -2483,7 +2483,9 @@ func (d issueDetails) IsBlocked() bool {
 	return false
 }
 
-// getIssueDetailsBatch fetches details for multiple issues in a single bd show call.
+// getIssueDetailsBatch fetches details for multiple issues via bd show.
+// IDs are grouped by resolved bead directory so each batch query runs against
+// the correct rig database for that prefix.
 // Returns a map from issue ID to details. Missing/invalid issues are omitted from the map.
 func getIssueDetailsBatch(issueIDs []string) map[string]*issueDetails {
 	result := make(map[string]*issueDetails)
@@ -2491,36 +2493,42 @@ func getIssueDetailsBatch(issueIDs []string) map[string]*issueDetails {
 		return result
 	}
 
-	// Build args: bd show id1 id2 id3 ... --json
-	args := append([]string{"show"}, issueIDs...)
-	args = append(args, "--json")
-
-	// Run from town root so bd's prefix routing (routes.jsonl) can dispatch
-	// to the correct rig database for cross-rig bead lookups. (GH#2960)
-	townRoot, _ := workspace.FindFromCwdOrError()
-	bdc := BdCmd(args...).Stderr(io.Discard)
-	if townRoot != "" {
-		bdc.Dir(townRoot).WithRouting()
+	// Group by routing directory so each bd show batch runs in the owning rig.
+	idsByDir := make(map[string][]string)
+	for _, id := range issueIDs {
+		dir := resolveBeadDir(id)
+		idsByDir[dir] = append(idsByDir[dir], id)
 	}
-	out, err := bdc.Output()
-	if err != nil {
-		// Batch failed - fall back to individual lookups for robustness
-		// This handles cases where some IDs are invalid/missing
-		for _, id := range issueIDs {
-			if details := getIssueDetails(id); details != nil {
-				result[id] = details
-			}
+
+	for dir, ids := range idsByDir {
+		// Build args: bd show id1 id2 ... --json
+		args := append([]string{"show"}, ids...)
+		args = append(args, "--json")
+
+		bdc := BdCmd(args...).Stderr(io.Discard)
+		if dir != "" && dir != "." {
+			bdc.Dir(dir).WithRouting()
 		}
-		return result
-	}
 
-	var issues []issueDetailsJSON
-	if err := json.Unmarshal(out, &issues); err != nil {
-		return result
-	}
+		out, err := bdc.Output()
+		if err != nil {
+			// Batch failed for this route - fall back to individual lookups.
+			for _, id := range ids {
+				if details := getIssueDetails(id); details != nil {
+					result[id] = details
+				}
+			}
+			continue
+		}
 
-	for _, issue := range issues {
-		result[issue.ID] = issue.toIssueDetails()
+		var issues []issueDetailsJSON
+		if err := json.Unmarshal(out, &issues); err != nil {
+			continue
+		}
+
+		for _, issue := range issues {
+			result[issue.ID] = issue.toIssueDetails()
+		}
 	}
 
 	return result
@@ -2529,14 +2537,10 @@ func getIssueDetailsBatch(issueIDs []string) map[string]*issueDetails {
 // getIssueDetails fetches issue details by trying to show it via bd.
 // Prefer getIssueDetailsBatch for multiple issues to avoid N+1 subprocess calls.
 func getIssueDetails(issueID string) *issueDetails {
-	// Use bd show with routing - resolve from town root so bd's prefix
-	// routing (routes.jsonl) can dispatch to the correct rig database.
-	// Without Dir + StripBeadsDir, bd inherits CWD/BEADS_DIR which may
-	// point to a rig that doesn't contain the target bead. (GH#2960)
-	townRoot, _ := workspace.FindFromCwdOrError()
 	bdc := BdCmd("show", issueID, "--json").Stderr(io.Discard)
-	if townRoot != "" {
-		bdc.Dir(townRoot).WithRouting()
+	// Route directly to the bead's owning rig database.
+	if dir := resolveBeadDir(issueID); dir != "" && dir != "." {
+		bdc.Dir(dir).WithRouting()
 	}
 	out, err := bdc.Output()
 	if err != nil {

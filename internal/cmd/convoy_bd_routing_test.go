@@ -215,6 +215,92 @@ esac
 	}
 }
 
+func TestGetTrackedIssues_RoutesShowByPrefix(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("skipping on windows - shell stubs")
+	}
+
+	townRoot, expectedTownWD := makeRoutingTownWorkspace(t)
+	chdirConvoyTest(t, townRoot)
+	t.Setenv("BEADS_DIR", "/wrong/.beads")
+
+	routes := `{"prefix":"hq-","path":"."}
+{"prefix":"ws-","path":"worker/.beads"}
+`
+	if err := os.WriteFile(filepath.Join(townRoot, ".beads", "routes.jsonl"), []byte(routes), 0644); err != nil {
+		t.Fatalf("write routes.jsonl: %v", err)
+	}
+	if err := os.MkdirAll(filepath.Join(townRoot, "worker", ".beads"), 0755); err != nil {
+		t.Fatalf("mkdir worker/.beads: %v", err)
+	}
+
+	expectedWorkerWD := filepath.Join(expectedTownWD, "worker")
+
+	scriptBody := fmt.Sprintf(`
+if [ "$*" = "--allow-stale version" ]; then
+  exit 0
+fi
+
+case "$1" in
+  sql)
+    echo '[{"depends_on_id":"ws-123"},{"depends_on_id":"hq-456"}]'
+    exit 0
+    ;;
+  show)
+    if [ -n "$BEADS_DIR" ]; then
+      echo "BEADS_DIR leaked: $BEADS_DIR" >&2
+      exit 1
+    fi
+    case "$*" in
+      "show ws-123 hq-456 --json"|"show hq-456 ws-123 --json")
+        echo "mixed-prefix batch not supported" >&2
+        exit 1
+        ;;
+      "show ws-123 --json")
+        if [ "$PWD" != "%s" ]; then
+          echo "expected worker dir, got $PWD" >&2
+          exit 1
+        fi
+        echo '[{"id":"ws-123","title":"Worker issue","status":"open","issue_type":"task"}]'
+        exit 0
+        ;;
+      "show hq-456 --json")
+        if [ "$PWD" != "%s" ]; then
+          echo "expected town root, got $PWD" >&2
+          exit 1
+        fi
+        echo '[{"id":"hq-456","title":"Town issue","status":"closed","issue_type":"task"}]'
+        exit 0
+        ;;
+    esac
+    ;;
+esac
+
+echo "unexpected bd args: $*" >&2
+exit 1
+`, expectedWorkerWD, expectedTownWD)
+	writeRoutingBdStub(t, scriptBody)
+
+	tracked, err := getTrackedIssues(filepath.Join(townRoot, ".beads"), "hq-cv-route")
+	if err != nil {
+		t.Fatalf("getTrackedIssues: %v", err)
+	}
+	if len(tracked) != 2 {
+		t.Fatalf("expected 2 tracked issues, got %d: %#v", len(tracked), tracked)
+	}
+
+	statusByID := map[string]string{}
+	for _, item := range tracked {
+		statusByID[item.ID] = item.Status
+	}
+	if statusByID["ws-123"] != "open" {
+		t.Fatalf("ws-123 status = %q, want %q", statusByID["ws-123"], "open")
+	}
+	if statusByID["hq-456"] != "closed" {
+		t.Fatalf("hq-456 status = %q, want %q", statusByID["hq-456"], "closed")
+	}
+}
+
 // TestConvoyCreate_UsesTrackingHelper verifies convoy create delegates tracking
 // to the in-process helper instead of shelling out to `bd dep add`.
 func TestConvoyCreate_UsesTrackingHelper(t *testing.T) {
