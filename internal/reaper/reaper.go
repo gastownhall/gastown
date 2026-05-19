@@ -944,6 +944,87 @@ func ClosePluginDispatches(db *sql.DB, dbName string, maxAge time.Duration, dryR
 	return result, nil
 }
 
+// CloseStaleHookedMols closes wisps that have been in 'hooked' status for
+// longer than maxAge. These are dispatch wisps created by gt sling targeting
+// the dog group (deacon/dogs) that were never consumed because no dog session
+// was running. The title filter "mol-dog-%" scopes cleanup to daemon-dispatch
+// mols without touching user-created hooked beads. The standard Reap() path
+// also reaps hooked wisps but only after 24h; this shorter TTL prevents
+// orphan accumulation between reaper cycles. See: GH#3767.
+func CloseStaleHookedMols(db *sql.DB, dbName string, maxAge time.Duration, dryRun bool) (*ClosePluginReceiptResult, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), DefaultQueryTimeout)
+	defer cancel()
+
+	cutoff := time.Now().UTC().Add(-maxAge)
+	result := &ClosePluginReceiptResult{Database: dbName, DryRun: dryRun}
+
+	selectQuery := fmt.Sprintf(
+		"SELECT id FROM `%s`.wisps WHERE status = 'hooked' AND title LIKE 'mol-dog-%%' AND issue_type != 'agent' AND created_at < ?",
+		dbName)
+
+	rows, err := db.QueryContext(ctx, selectQuery, cutoff)
+	if err != nil {
+		if isTableNotFound(err) {
+			return result, nil
+		}
+		return nil, fmt.Errorf("select stale hooked mols: %w", err)
+	}
+	var ids []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			rows.Close()
+			return nil, fmt.Errorf("scan hooked mol id: %w", err)
+		}
+		ids = append(ids, id)
+	}
+	rows.Close()
+
+	result.Closed = len(ids)
+	if len(ids) == 0 || dryRun {
+		return result, nil
+	}
+
+	if _, err := db.ExecContext(ctx, "SET @@autocommit = 0"); err != nil {
+		return nil, fmt.Errorf("disable autocommit: %w", err)
+	}
+	defer func() {
+		_, _ = db.ExecContext(context.Background(), "SET @@autocommit = 1")
+	}()
+
+	placeholders := make([]string, len(ids))
+	args := make([]interface{}, len(ids))
+	for i, id := range ids {
+		placeholders[i] = "?"
+		args[i] = id
+	}
+	updateQuery := fmt.Sprintf(
+		"UPDATE `%s`.wisps SET status = 'closed', closed_at = NOW() WHERE id IN (%s)",
+		dbName, strings.Join(placeholders, ","))
+	if _, err := db.ExecContext(ctx, updateQuery, args...); err != nil {
+		return nil, fmt.Errorf("close stale hooked mols: %w", err)
+	}
+
+	if _, err := db.ExecContext(ctx, "COMMIT"); err != nil {
+		result.Anomalies = append(result.Anomalies, Anomaly{
+			Type:    "sql_commit_failed",
+			Message: fmt.Sprintf("sql commit after hooked mol close failed: %v", err),
+		})
+		return result, nil
+	}
+	commitMsg := fmt.Sprintf("reaper: close %d stale hooked mols in %s", len(ids), dbName)
+	if _, err := db.ExecContext(ctx, fmt.Sprintf("CALL DOLT_COMMIT('-Am', '%s')", commitMsg)); err != nil { //nolint:gosec // G201: commitMsg from safe values
+		if !isNothingToCommit(err) {
+			result.Anomalies = append(result.Anomalies, Anomaly{
+				Type:    "dolt_commit_failed",
+				Message: fmt.Sprintf("dolt commit after hooked mol close failed: %v", err),
+			})
+		}
+	}
+
+	return result, nil
+}
+
 // FormatJSON marshals any value to indented JSON.
 func FormatJSON(v interface{}) string {
 	data, err := json.MarshalIndent(v, "", "  ")

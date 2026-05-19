@@ -1,6 +1,7 @@
 package daemon
 
 import (
+	"os"
 	"testing"
 	"time"
 )
@@ -71,5 +72,42 @@ func TestDefaultReaperIntervalIsOneHour(t *testing.T) {
 	// Verify the default changed from 30m to 1h per issue gt-caf7.
 	if defaultWispReaperInterval != 1*time.Hour {
 		t.Errorf("expected default interval 1h, got %v", defaultWispReaperInterval)
+	}
+}
+
+func TestDefaultHookedMolTTLIsGreaterThanInterval(t *testing.T) {
+	// TTL must be at least one full reaper cycle so a running dog has time to
+	// pick up the dispatch wisp before it is closed as orphaned. GH#3767.
+	if defaultHookedMolTTL <= defaultWispReaperInterval {
+		t.Errorf("defaultHookedMolTTL (%v) must exceed defaultWispReaperInterval (%v)",
+			defaultHookedMolTTL, defaultWispReaperInterval)
+	}
+}
+
+func TestKennelHasRunningDogsEmptyKennel(t *testing.T) {
+	// An empty or missing kennel dir must return false without panicking.
+	d := &Daemon{
+		config: &Config{TownRoot: t.TempDir()},
+		tmux:   nil, // no tmux needed — kennel dir check is first
+	}
+	if d.kennelHasRunningDogs() {
+		t.Error("expected false for missing kennel dir")
+	}
+}
+
+func TestKennelHasRunningDogsNoValidDogs(t *testing.T) {
+	// A kennel dir with subdirs that have no .dog.json must return false.
+	dir := t.TempDir()
+	kennelPath := dir + "/deacon/dogs/alpha"
+	if err := os.MkdirAll(kennelPath, 0755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	// No .dog.json in alpha/ — not a valid dog.
+	d := &Daemon{
+		config: &Config{TownRoot: dir},
+		tmux:   nil,
+	}
+	if d.kennelHasRunningDogs() {
+		t.Error("expected false when no valid dog state files exist")
 	}
 }

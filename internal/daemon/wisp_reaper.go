@@ -2,7 +2,9 @@ package daemon
 
 import (
 	"fmt"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -26,6 +28,10 @@ const (
 	defaultMailDeleteAge = 7 * 24 * time.Hour
 	// Issues stale longer than this are auto-closed. Formula var: stale_issue_age.
 	defaultStaleIssueAge = 7 * 24 * time.Hour
+	// defaultHookedMolTTL is the short TTL for closing stale hooked dispatch mols
+	// (mol-dog-* wisps in 'hooked' status that no dog consumed). Two reaper cycles
+	// gives a running dog time to pick up the mol; beyond that it is an orphan.
+	defaultHookedMolTTL = 2 * time.Hour
 )
 
 // WispReaperConfig holds configuration for the wisp_reaper patrol.
@@ -111,6 +117,15 @@ func (d *Daemon) reapWisps() {
 		d.logger.Printf("wisp_reaper: DRY RUN — reporting only, no changes will be made")
 	}
 
+	// Guard: skip Dog dispatch if no dog sessions are running. gt sling creates
+	// a hooked bead that sits orphaned forever if no dog consumes it. Running
+	// inline avoids the accumulation of phantom dispatch wisps. GH#3767.
+	if !d.kennelHasRunningDogs() {
+		d.logger.Printf("wisp_reaper: no dog sessions running, running inline")
+		d.reapWispsInline(config, maxAge, deleteAge, mol)
+		return
+	}
+
 	// Try dispatching to a Dog for formula-driven execution.
 	if err := d.dispatchReaperDog(vars); err != nil {
 		d.logger.Printf("wisp_reaper: Dog dispatch failed (%v), running inline fallback", err)
@@ -119,6 +134,33 @@ func (d *Daemon) reapWisps() {
 	}
 
 	d.logger.Printf("wisp_reaper: dispatched to Dog for formula-driven execution")
+}
+
+// kennelHasRunningDogs returns true if at least one dog tmux session is running.
+// Dogs run as tmux sessions named "hq-dog-{name}". The check is a lightweight
+// filesystem + tmux scan that avoids dispatching to a phantom group address
+// when the kennel is empty or all sessions are dead. See: GH#3767.
+func (d *Daemon) kennelHasRunningDogs() bool {
+	kennelPath := filepath.Join(d.config.TownRoot, "deacon", "dogs")
+	entries, err := os.ReadDir(kennelPath)
+	if err != nil || len(entries) == 0 {
+		return false
+	}
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+		// Only count valid dogs (those with a .dog.json state file).
+		stateFile := filepath.Join(kennelPath, entry.Name(), ".dog.json")
+		if _, err := os.Stat(stateFile); os.IsNotExist(err) {
+			continue
+		}
+		sessionName := fmt.Sprintf("hq-dog-%s", entry.Name())
+		if running, err := d.tmux.HasSession(sessionName); err == nil && running {
+			return true
+		}
+	}
+	return false
 }
 
 // dispatchReaperDog dispatches the mol-dog-reaper formula to a Dog via gt sling.
@@ -285,6 +327,33 @@ func (d *Daemon) reapWispsInline(config *WispReaperConfig, maxAge, deleteAge tim
 		}
 	}
 
+	// Step 3d: Close stale hooked mols — dispatch wisps that sat in 'hooked'
+	// status beyond defaultHookedMolTTL because no dog was alive to consume them.
+	var totalHookedClosed int
+	for _, dbName := range databases {
+		if err := reaper.ValidateDBName(dbName); err != nil {
+			continue
+		}
+		db, err := reaper.OpenDB("127.0.0.1", port, dbName, 10*time.Second, 10*time.Second)
+		if err != nil {
+			continue
+		}
+		if ok, _ := reaper.HasReaperSchema(db); !ok {
+			db.Close()
+			continue
+		}
+		result, err := reaper.CloseStaleHookedMols(db, dbName, defaultHookedMolTTL, dryRun)
+		db.Close()
+		if err != nil {
+			d.logger.Printf("wisp_reaper: %s: hooked mol close error: %v", dbName, err)
+			continue
+		}
+		totalHookedClosed += result.Closed
+		if result.Closed > 0 {
+			d.logger.Printf("wisp_reaper: %s: closed %d stale hooked mols", dbName, result.Closed)
+		}
+	}
+
 	// Step 4: Auto-close
 	autoCloseErrors := 0
 	for _, dbName := range databases {
@@ -322,8 +391,8 @@ func (d *Daemon) reapWispsInline(config *WispReaperConfig, maxAge, deleteAge tim
 		d.logger.Printf("wisp_reaper: WARNING: %d open wisps exceed threshold %d — investigate wisp lifecycle",
 			totalOpen, wispAlertThreshold)
 	}
-	d.logger.Printf("wisp_reaper: cycle complete — reaped=%d purged=%d mail_purged=%d plugin_closed=%d dispatch_closed=%d auto_closed=%d open=%d databases=%d dryRun=%v",
-		totalReaped, totalPurged, totalMailPurged, totalPluginClosed, totalDispatchClosed, totalAutoClosed, totalOpen, len(databases), dryRun)
+	d.logger.Printf("wisp_reaper: cycle complete — reaped=%d purged=%d mail_purged=%d plugin_closed=%d dispatch_closed=%d hooked_closed=%d auto_closed=%d open=%d databases=%d dryRun=%v",
+		totalReaped, totalPurged, totalMailPurged, totalPluginClosed, totalDispatchClosed, totalHookedClosed, totalAutoClosed, totalOpen, len(databases), dryRun)
 	mol.closeStep("report")
 }
 
