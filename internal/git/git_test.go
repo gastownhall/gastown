@@ -1067,6 +1067,124 @@ func TestListPushRemoteRefsWithHashesClassifiesRemoteOnlyMergedBranch(t *testing
 	}
 }
 
+func TestCherry_SquashMergedBranch(t *testing.T) {
+	localDir, _, mainBranch := initTestRepoWithRemote(t)
+	g := NewGit(localDir)
+	branch := "polecat/squash-merged"
+
+	runGit(t, localDir, "checkout", "-b", branch)
+	if err := os.WriteFile(filepath.Join(localDir, "squash-work.txt"), []byte("work"), 0644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	runGit(t, localDir, "add", "squash-work.txt")
+	runGit(t, localDir, "commit", "-m", "squash work")
+	branchSHA, err := g.Rev("HEAD")
+	if err != nil {
+		t.Fatalf("Rev branch: %v", err)
+	}
+	runGit(t, localDir, "push", "origin", branch)
+
+	// Squash-merge into main: different SHA from the branch commit.
+	runGit(t, localDir, "checkout", mainBranch)
+	runGit(t, localDir, "merge", "--squash", branch)
+	runGit(t, localDir, "commit", "-m", "squash merge polecat/squash-merged")
+	runGit(t, localDir, "push", "origin", mainBranch)
+
+	// IsAncestor returns false for squash merges (SHA mismatch) — that's the bug.
+	isAncestor, ancestorErr := g.IsAncestor(branchSHA, "origin/"+mainBranch)
+	if ancestorErr != nil {
+		t.Fatalf("IsAncestor: %v", ancestorErr)
+	}
+	if isAncestor {
+		t.Fatal("test setup broken: IsAncestor returned true for a squash merge (expected false)")
+	}
+
+	// Cherry must report 0 unique commits — the fix for the bug.
+	out, cherryErr := g.Cherry("origin/"+mainBranch, branchSHA)
+	if cherryErr != nil {
+		t.Fatalf("Cherry: %v", cherryErr)
+	}
+	unique := 0
+	for _, line := range strings.Split(strings.TrimSpace(out), "\n") {
+		if strings.HasPrefix(line, "+ ") {
+			unique++
+		}
+	}
+	if unique != 0 {
+		t.Errorf("Cherry unique = %d, want 0 for squash-merged branch", unique)
+	}
+}
+
+func TestCherry_UnmergedBranch(t *testing.T) {
+	localDir, _, mainBranch := initTestRepoWithRemote(t)
+	g := NewGit(localDir)
+	branch := "polecat/unmerged"
+
+	runGit(t, localDir, "checkout", "-b", branch)
+	if err := os.WriteFile(filepath.Join(localDir, "unmerged.txt"), []byte("work"), 0644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	runGit(t, localDir, "add", "unmerged.txt")
+	runGit(t, localDir, "commit", "-m", "unmerged work")
+	branchSHA, err := g.Rev("HEAD")
+	if err != nil {
+		t.Fatalf("Rev branch: %v", err)
+	}
+	runGit(t, localDir, "push", "origin", branch)
+	runGit(t, localDir, "checkout", mainBranch)
+
+	out, cherryErr := g.Cherry("origin/"+mainBranch, branchSHA)
+	if cherryErr != nil {
+		t.Fatalf("Cherry: %v", cherryErr)
+	}
+	unique := 0
+	for _, line := range strings.Split(strings.TrimSpace(out), "\n") {
+		if strings.HasPrefix(line, "+ ") {
+			unique++
+		}
+	}
+	if unique != 1 {
+		t.Errorf("Cherry unique = %d, want 1 for unmerged branch", unique)
+	}
+}
+
+func TestCherry_NormalMergedBranch(t *testing.T) {
+	localDir, _, mainBranch := initTestRepoWithRemote(t)
+	g := NewGit(localDir)
+	branch := "polecat/normal-merged"
+
+	runGit(t, localDir, "checkout", "-b", branch)
+	if err := os.WriteFile(filepath.Join(localDir, "normal-work.txt"), []byte("work"), 0644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	runGit(t, localDir, "add", "normal-work.txt")
+	runGit(t, localDir, "commit", "-m", "normal work")
+	branchSHA, err := g.Rev("HEAD")
+	if err != nil {
+		t.Fatalf("Rev branch: %v", err)
+	}
+	runGit(t, localDir, "push", "origin", branch)
+
+	// Normal merge: commit becomes reachable from main, cherry outputs nothing.
+	runGit(t, localDir, "checkout", mainBranch)
+	runGit(t, localDir, "merge", "--no-ff", branch)
+	runGit(t, localDir, "push", "origin", mainBranch)
+
+	out, cherryErr := g.Cherry("origin/"+mainBranch, branchSHA)
+	if cherryErr != nil {
+		t.Fatalf("Cherry: %v", cherryErr)
+	}
+	unique := 0
+	for _, line := range strings.Split(strings.TrimSpace(out), "\n") {
+		if strings.HasPrefix(line, "+ ") {
+			unique++
+		}
+	}
+	if unique != 0 {
+		t.Errorf("Cherry unique = %d, want 0 for normal-merged branch", unique)
+	}
+}
+
 func TestPushWithEnv(t *testing.T) {
 	localDir, _, mainBranch := initTestRepoWithRemote(t)
 	g := NewGit(localDir)
