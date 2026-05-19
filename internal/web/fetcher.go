@@ -222,7 +222,7 @@ func NewLiveConvoyFetcher() (*LiveConvoyFetcher, error) {
 		cmdTimeout:              config.ParseDurationOrDefault(webCfg.CmdTimeout, 15*time.Second),
 		ghCmdTimeout:            config.ParseDurationOrDefault(webCfg.GhCmdTimeout, 10*time.Second),
 		tmuxCmdTimeout:          config.ParseDurationOrDefault(webCfg.TmuxCmdTimeout, 2*time.Second),
-		staleThreshold:          config.ParseDurationOrDefault(workerCfg.StaleThreshold, 5*time.Minute),
+		staleThreshold:          config.ParseDurationOrDefault(workerCfg.StaleThreshold, 15*time.Minute),
 		stuckThreshold:          config.ParseDurationOrDefault(workerCfg.StuckThreshold, constants.GUPPViolationTimeout),
 		heartbeatFreshThreshold: config.ParseDurationOrDefault(workerCfg.HeartbeatFreshThreshold, 5*time.Minute),
 		mayorActiveThreshold:    config.ParseDurationOrDefault(workerCfg.MayorActiveThreshold, 5*time.Minute),
@@ -953,8 +953,9 @@ type assignedIssue struct {
 func (f *LiveConvoyFetcher) getAssignedIssuesMap() map[string]assignedIssue {
 	result := make(map[string]assignedIssue)
 
-	// Query all in_progress issues (these are the ones being worked on)
-	stdout, err := f.runBdCmd(f.townRoot, "list", "--status=in_progress", "--json")
+	// Query in_progress and hooked issues — hooked is the initial state when an issue
+	// is assigned to an agent but before it begins active processing.
+	stdout, err := f.runBdCmd(f.townRoot, "list", "--status=in_progress,hooked", "--json")
 	if err != nil {
 		log.Printf("warning: bd list in_progress failed: %v", err)
 		return result

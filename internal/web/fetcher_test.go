@@ -347,7 +347,7 @@ func TestParseActivityTimestamp(t *testing.T) {
 // --- calculateWorkerWorkStatus with configurable thresholds ---
 
 func TestCalculateWorkerWorkStatus_DefaultThresholds(t *testing.T) {
-	stale := 5 * time.Minute
+	stale := 15 * time.Minute
 	stuck := 30 * time.Minute
 
 	tests := []struct {
@@ -364,7 +364,7 @@ func TestCalculateWorkerWorkStatus_DefaultThresholds(t *testing.T) {
 		{"very recent is working", 1 * time.Second, "gt-123", "dag", "working"},
 		{"just under stale is working", stale - 1*time.Second, "gt-123", "dag", "working"},
 		{"at stale boundary is stale", stale, "gt-123", "dag", "stale"},
-		{"between stale and stuck is stale", 15 * time.Minute, "gt-123", "dag", "stale"},
+		{"between stale and stuck is stale", 20 * time.Minute, "gt-123", "dag", "stale"},
 		{"just under stuck is stale", stuck - 1*time.Second, "gt-123", "dag", "stale"},
 		{"at stuck boundary is stuck", stuck, "gt-123", "dag", "stuck"},
 		{"well past stuck is stuck", 2 * time.Hour, "gt-123", "dag", "stuck"},

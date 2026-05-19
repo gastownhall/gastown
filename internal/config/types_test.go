@@ -89,8 +89,8 @@ func TestDefaultWorkerStatusConfig(t *testing.T) {
 	}
 
 	stale := ParseDurationOrDefault(cfg.StaleThreshold, 0)
-	if stale != 5*time.Minute {
-		t.Errorf("StaleThreshold = %v, want 5m", stale)
+	if stale != 15*time.Minute {
+		t.Errorf("StaleThreshold = %v, want 15m", stale)
 	}
 	stuck := ParseDurationOrDefault(cfg.StuckThreshold, 0)
 	if stuck != 30*time.Minute {
