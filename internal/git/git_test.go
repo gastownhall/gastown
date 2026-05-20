@@ -2385,6 +2385,95 @@ func TestVerifyPushedCommit(t *testing.T) {
 	}
 }
 
+// TestVerifyCommitOnRemoteBranch covers the no-MR / direct-push completion
+// path used by gt done. The shared target branch (e.g. main) may advance
+// between push and verify when other agents push concurrently — verification
+// must accept our commit as either the tip or an ancestor of the tip.
+func TestVerifyCommitOnRemoteBranch(t *testing.T) {
+	localDir, remoteDir, mainBranch := initTestRepoWithRemote(t)
+	g := NewGit(localDir)
+
+	// Agent A pushes a commit to main.
+	if err := os.WriteFile(filepath.Join(localDir, "a.txt"), []byte("a\n"), 0644); err != nil {
+		t.Fatalf("write a: %v", err)
+	}
+	if err := g.Add("a.txt"); err != nil {
+		t.Fatalf("Add a: %v", err)
+	}
+	if err := g.Commit("agent A commit"); err != nil {
+		t.Fatalf("Commit a: %v", err)
+	}
+	aSHA, err := g.Rev("HEAD")
+	if err != nil {
+		t.Fatalf("Rev a: %v", err)
+	}
+	if err := g.Push("origin", mainBranch, false); err != nil {
+		t.Fatalf("Push a: %v", err)
+	}
+
+	// Agent A's commit is the tip — verification trivially passes.
+	if err := g.VerifyCommitOnRemoteBranch("origin", mainBranch, aSHA); err != nil {
+		t.Fatalf("VerifyCommitOnRemoteBranch on tip: %v", err)
+	}
+
+	// Simulate agent B pushing a commit on top of A directly to the remote,
+	// via a second clone — A does not yet know about it.
+	bDir := filepath.Join(t.TempDir(), "b")
+	for _, args := range [][]string{
+		{"git", "clone", remoteDir, bDir},
+		{"git", "-C", bDir, "config", "user.email", "b@test.com"},
+		{"git", "-C", bDir, "config", "user.name", "Agent B"},
+	} {
+		if err := exec.Command(args[0], args[1:]...).Run(); err != nil {
+			t.Fatalf("%s: %v", args, err)
+		}
+	}
+	if err := os.WriteFile(filepath.Join(bDir, "b.txt"), []byte("b\n"), 0644); err != nil {
+		t.Fatalf("write b: %v", err)
+	}
+	for _, args := range [][]string{
+		{"git", "-C", bDir, "add", "b.txt"},
+		{"git", "-C", bDir, "commit", "-m", "agent B commit"},
+		{"git", "-C", bDir, "push", "origin", mainBranch},
+	} {
+		if err := exec.Command(args[0], args[1:]...).Run(); err != nil {
+			t.Fatalf("%s: %v", args, err)
+		}
+	}
+
+	// Agent A's commit is now behind the tip but still on origin/main.
+	// This is the bug from hq-5ox — must succeed, not fail.
+	if err := g.VerifyCommitOnRemoteBranch("origin", mainBranch, aSHA); err != nil {
+		t.Fatalf("VerifyCommitOnRemoteBranch on ancestor (hq-5ox regression): %v", err)
+	}
+
+	// An unrelated commit that was never pushed must still fail.
+	if err := g.Checkout(mainBranch); err != nil {
+		t.Fatalf("Checkout main: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(localDir, "unpushed.txt"), []byte("nope\n"), 0644); err != nil {
+		t.Fatalf("write unpushed: %v", err)
+	}
+	if err := g.Add("unpushed.txt"); err != nil {
+		t.Fatalf("Add unpushed: %v", err)
+	}
+	if err := g.Commit("unpushed commit"); err != nil {
+		t.Fatalf("Commit unpushed: %v", err)
+	}
+	unpushedSHA, err := g.Rev("HEAD")
+	if err != nil {
+		t.Fatalf("Rev unpushed: %v", err)
+	}
+	if err := g.VerifyCommitOnRemoteBranch("origin", mainBranch, unpushedSHA); err == nil {
+		t.Fatal("VerifyCommitOnRemoteBranch should fail for commit not on remote branch")
+	}
+
+	// Missing branch should still fail.
+	if err := g.VerifyCommitOnRemoteBranch("origin", "no-such-branch", aSHA); err == nil {
+		t.Fatal("VerifyCommitOnRemoteBranch should fail for missing branch")
+	}
+}
+
 func TestVerifyPushedCommitSplitURL(t *testing.T) {
 	localDir, _, _, _ := initTestRepoWithSplitRemote(t)
 	g := NewGit(localDir)

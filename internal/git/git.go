@@ -1478,10 +1478,52 @@ func (g *Git) PushRemoteBranchTip(remote, branch string) (string, error) {
 	return g.RemoteBranchTip(pushURL, branch)
 }
 
+// VerifyCommitOnRemoteBranch verifies that commit is reachable from the tip of
+// remote/branch on the remote — i.e. it is either the tip or an ancestor of
+// the tip. Use this when verifying that work landed on a shared target branch
+// (e.g. main) where the tip may advance independently between push and verify
+// because other agents push concurrently.
+//
+// For verifying a freshly-pushed feature branch (where the tip must match the
+// commit exactly because no one else writes to it), use VerifyPushedCommit.
+func (g *Git) VerifyCommitOnRemoteBranch(remote, branch, commit string) error {
+	commit = strings.TrimSpace(commit)
+	if commit == "" {
+		return fmt.Errorf("verified_push_failed: empty commit for %s/%s", remote, branch)
+	}
+	tip, err := g.PushRemoteBranchTip(remote, branch)
+	if err != nil {
+		return fmt.Errorf("verified_push_failed: unable to read %s/%s: %w", remote, branch, err)
+	}
+	if tip == "" {
+		return fmt.Errorf("verified_push_failed: branch %s/%s missing after push (expected %s)", remote, branch, shortSHA(commit))
+	}
+	if tip == commit {
+		return nil
+	}
+	// Tip has advanced past our commit. Fetch the branch so we have the new
+	// objects locally, then verify our commit is an ancestor of the new tip.
+	if _, fetchErr := g.run("fetch", remote, branch); fetchErr != nil {
+		return fmt.Errorf("verified_push_failed: fetch %s/%s for ancestry check: %w", remote, branch, fetchErr)
+	}
+	isAncestor, ancErr := g.IsAncestor(commit, remote+"/"+branch)
+	if ancErr != nil {
+		return fmt.Errorf("verified_push_failed: ancestry check on %s/%s: %w", remote, branch, ancErr)
+	}
+	if !isAncestor {
+		return fmt.Errorf("verified_push_failed: commit %s not on %s/%s (remote tip %s)", shortSHA(commit), remote, branch, shortSHA(tip))
+	}
+	return nil
+}
+
 // VerifyPushedCommit verifies that the push target branch tip is exactly commit.
 // gt/refinery callers invoke this immediately after a push, before closing beads
 // or creating downstream merge artifacts. Exact-tip verification catches the
 // dangerous case where git push exits 0 but leaves the remote branch stale.
+//
+// Only safe for branches the caller owns exclusively (e.g. a polecat feature
+// branch). For target branches like main where other agents push concurrently,
+// use VerifyCommitOnRemoteBranch.
 func (g *Git) VerifyPushedCommit(remote, branch, commit string) error {
 	commit = strings.TrimSpace(commit)
 	if commit == "" {
