@@ -125,6 +125,15 @@ func showFormulaSteps(formulaName, label, townRoot, rigName string, extraVars ..
 		return
 	}
 
+	// Resolve extends/compose so child formulas (e.g. wc26-frontend extends
+	// mol-polecat-work) inherit their parent steps. Without this, formulas
+	// that only use extends/compose render zero steps. (gt-codex-overlay)
+	f, err = formula.Resolve(f, formulaSearchPaths(townRoot, rigName))
+	if err != nil {
+		style.PrintWarning("could not resolve formula %s: %v", formulaName, err)
+		return
+	}
+
 	if len(f.Steps) == 0 {
 		return
 	}
@@ -164,6 +173,15 @@ func showFormulaStepsFull(formulaName, townRoot, rigName string, extraVars ...[]
 		return
 	}
 
+	// Resolve extends/compose so child formulas (e.g. wc26-frontend extends
+	// mol-polecat-work) inherit their parent steps. Without this, formulas
+	// that only use extends/compose render zero steps. (gt-codex-overlay)
+	f, err = formula.Resolve(f, formulaSearchPaths(townRoot, rigName))
+	if err != nil {
+		style.PrintWarning("could not resolve formula %s: %v", formulaName, err)
+		return
+	}
+
 	if len(f.Steps) == 0 {
 		return
 	}
@@ -187,6 +205,22 @@ func showFormulaStepsFull(formulaName, townRoot, rigName string, extraVars ...[]
 			fmt.Println()
 		}
 	}
+}
+
+// formulaSearchPaths returns on-disk directories Resolve uses to locate
+// parent formulas referenced via extends/compose. Mirrors the precedence
+// of ResolveFormulaContent: rig-level before town-level. Embedded formulas
+// are tried first inside Resolve, so these are fallbacks for rig-specific
+// formulas like wc26-frontend-verify that are NOT embedded.
+func formulaSearchPaths(townRoot, rigName string) []string {
+	var paths []string
+	if townRoot != "" && rigName != "" {
+		paths = append(paths, filepath.Join(townRoot, rigName, ".beads", "formulas"))
+	}
+	if townRoot != "" {
+		paths = append(paths, filepath.Join(townRoot, ".beads", "formulas"))
+	}
+	return paths
 }
 
 // buildFormulaVarMap builds a map of variable name → value for substitution.

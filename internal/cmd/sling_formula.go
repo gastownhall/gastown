@@ -255,12 +255,16 @@ func runSlingFormula(ctx context.Context, args []string) error {
 	// attached_molecule as a self-reference (the wisp's own ID pointing to itself
 	// is meaningless). attached_molecule is only meaningful when a formula-on-bead
 	// creates a wisp that's bonded to a separate base bead.
+	// Inject `issue=<wispRootID>` into stored vars so polecat formula step
+	// descriptions render `{{issue}}` correctly. For standalone formula
+	// sling, the wisp IS the work, so its own ID is the "issue". (gt-codex-issue-var)
+	storedVars := append([]string{fmt.Sprintf("issue=%s", wispRootID)}, slingVars...)
 	fieldUpdates := beadFieldUpdates{
 		Dispatcher:      actor,
 		Args:            slingArgs,
-		Vars:            append([]string(nil), slingVars...),
+		Vars:            storedVars,
 		AttachedFormula: formulaName,
-		FormulaVars:     strings.Join(slingVars, "\n"),
+		FormulaVars:     strings.Join(storedVars, "\n"),
 	}
 	if err := storeFieldsInBead(wispRootID, fieldUpdates); err != nil {
 		fmt.Printf("%s Could not store fields in bead: %v\n", style.Dim.Render("Warning:"), err)

@@ -949,9 +949,6 @@ func runSling(cmd *cobra.Command, args []string) (retErr error) {
 		// - Base bead left orphaned after gt done
 	}
 
-	// Hook the bead with retry and verification.
-	// See: https://github.com/steveyegge/gastown/issues/148
-	//
 	// Acquire a per-assignee lock before writing hook_bead to serialize concurrent slings
 	// targeting the same polecat. Without this, multiple concurrent slings race on the
 	// same assignee's row in Dolt, causing silent rollbacks (issue #3114).
@@ -960,6 +957,43 @@ func runSling(cmd *cobra.Command, args []string) (retErr error) {
 		return fmt.Errorf("serializing hook write for %s: %w", targetAgent, assigneeLockErr)
 	}
 	defer assigneeUnlock()
+
+	// Store all attachment fields in a single read-modify-write cycle.
+	// This eliminates the race condition where sequential independent updates
+	// (dispatcher, args, no_merge, attached_molecule) could overwrite each other.
+	//
+	// IMPORTANT: this MUST run BEFORE hookBeadWithRetry. The description update
+	// is a read-modify-write through bd, and bd's "auto-import JSONL into empty
+	// database" startup can wipe a previously-written status=hooked/assignee
+	// pair (the JSONL is stale relative to Dolt). By writing the description
+	// fields first and the hook last, the hook becomes the final authoritative
+	// write — nothing after it can clobber status/assignee. (sling-hook-revert)
+	actor := detectActor()
+	// Inject `issue=<beadID>` into the stored vars so polecat formula step
+	// descriptions render `{{issue}}` correctly. InstantiateFormulaOnBead sets
+	// this on the wisp itself, but the bead's attached_vars / formula_vars
+	// (read by `gt prime --hook` to populate the var map) do NOT include it
+	// unless we add it here. (gt-codex-issue-var)
+	storedVars := append([]string{fmt.Sprintf("issue=%s", beadID)}, slingVars...)
+	fieldUpdates := buildSlingFieldUpdates(
+		actor,
+		slingArgs,
+		storedVars,
+		attachedMoleculeID,
+		formulaName,
+		slingNoMerge,
+		slingReviewOnly,
+		strings.Join(storedVars, "\n"),
+		convoyID,
+		slingMerge,
+		slingOwned,
+	)
+	storeFieldsErr := storeFieldsInBead(beadID, fieldUpdates)
+
+	// Hook the bead with retry and verification. This is the LAST mutation we
+	// perform on the bead so a stale-JSONL read-modify-write in a subsequent
+	// bd invocation can't revert status=hooked or assignee.
+	// See: https://github.com/steveyegge/gastown/issues/148
 	hookDir := beads.ResolveHookDir(townRoot, beadID, hookWorkDir)
 	if err := hookBeadWithRetry(beadID, targetAgent, hookDir); err != nil {
 		return err
@@ -982,7 +1016,6 @@ func runSling(cmd *cobra.Command, args []string) (retErr error) {
 	fmt.Printf("%s Work attached to hook (status=hooked)\n", style.Bold.Render("✓"))
 
 	// Log sling event to activity feed
-	actor := detectActor()
 	_ = events.LogFeed(events.TypeSling, actor, events.SlingPayload(beadID, targetAgent))
 
 	// Update agent bead's hook_bead field (ZFC: agents track their current work)
@@ -993,25 +1026,11 @@ func runSling(cmd *cobra.Command, args []string) (retErr error) {
 		updateAgentHookBead(targetAgent, beadID, hookWorkDir, townBeadsDir)
 	}
 
-	// Store all attachment fields in a single read-modify-write cycle.
-	// This eliminates the race condition where sequential independent updates
-	// (dispatcher, args, no_merge, attached_molecule) could overwrite each other.
-	fieldUpdates := buildSlingFieldUpdates(
-		actor,
-		slingArgs,
-		append([]string(nil), slingVars...),
-		attachedMoleculeID,
-		formulaName,
-		slingNoMerge,
-		slingReviewOnly,
-		strings.Join(slingVars, "\n"),
-		convoyID,
-		slingMerge,
-		slingOwned,
-	)
-	if err := storeFieldsInBead(beadID, fieldUpdates); err != nil {
+	// Report the result of the earlier description write (deferred so the
+	// "Work attached to hook" success line is the headline message).
+	if storeFieldsErr != nil {
 		// Warn but don't fail - polecat will still complete work
-		fmt.Printf("%s Could not store fields in bead: %v\n", style.Dim.Render("Warning:"), err)
+		fmt.Printf("%s Could not store fields in bead: %v\n", style.Dim.Render("Warning:"), storeFieldsErr)
 	} else {
 		if slingArgs != "" {
 			fmt.Printf("%s Args stored in bead (durable)\n", style.Bold.Render("✓"))
