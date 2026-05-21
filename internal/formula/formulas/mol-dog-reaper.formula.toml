@@ -25,7 +25,7 @@ This is infrastructure cleanup work:
 | alert_threshold | config | Open wisp count that triggers escalation (default 500) |
 | dry_run | config | If "true", report without acting |
 | databases | config | Comma-separated DB list (default: auto-discover) |
-| dolt_port | config | Dolt server port (default 3307) |
+| dolt_port | config | Dolt server port (default 3308) |
 | db_delay | config | Delay between databases to reduce Dolt load (default 250ms) |
 
 ## Safety
@@ -218,7 +218,7 @@ default = ""
 
 [vars.dolt_port]
 description = "Dolt server port"
-default = "3307"
+default = "3308"
 
 [vars.db_delay]
 description = "Delay between databases to reduce Dolt load"

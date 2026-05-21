@@ -173,7 +173,7 @@ Status: COMPLETE"
 [vars]
 [vars.port]
 description = "Dolt server port"
-default = "3307"
+default = "3308"
 
 [vars.latency_threshold]
 description = "Latency warning threshold"

@@ -176,7 +176,7 @@ Status: COMPLETE"
 [vars]
 [vars.port]
 description = "Dolt server port"
-default = "3307"
+default = "3308"
 
 [vars.max_orphans_for_sql]
 description = "Maximum orphan count for SQL-based cleanup (above this, escalate instead)"
