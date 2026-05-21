@@ -497,6 +497,20 @@ func (m *SessionManager) Start(polecat string, opts SessionStartOptions) error {
 		envVars[runtimeConfig.Session.ConfigDirEnv] = opts.RuntimeConfigDir
 	}
 
+	// Hook the issue BEFORE creating the session (hq-6n8).
+	// Previously the hook was written AFTER NewSessionWithCommandAndEnv, which
+	// raced with the polecat's first turn: Claude Code launched, ran `gt prime
+	// --hook` from the SessionStart hook, saw no work, and self-terminated via
+	// `gt done` — spuriously closing the bead with "no code changes". Sequencing
+	// the hook write before session start guarantees the polecat's first
+	// `gt prime --hook` sees the work assignment.
+	if opts.Issue != "" {
+		agentID := fmt.Sprintf("%s/polecats/%s", m.rig.Name, polecat)
+		if err := m.hookIssue(opts.Issue, agentID, workDir); err != nil {
+			style.PrintWarning("could not hook issue %s: %v", opts.Issue, err)
+		}
+	}
+
 	// Create session with command and env vars via -e flags so the initial
 	// shell — and Claude's subprocesses (notably bd) — inherit them from the start.
 	// See: https://github.com/anthropics/gastown/issues/280 (race condition fix)
@@ -509,14 +523,6 @@ func (m *SessionManager) Start(polecat string, opts SessionStartOptions) error {
 	// and FindAgentPane. Legacy sessions without GT_PANE_ID fall back to scanning.
 	if paneID, err := m.tmux.GetPaneID(sessionID); err == nil {
 		debugSession("SetEnvironment GT_PANE_ID", m.tmux.SetEnvironment(sessionID, "GT_PANE_ID", paneID))
-	}
-
-	// Hook the issue to the polecat if provided via --issue flag
-	if opts.Issue != "" {
-		agentID := fmt.Sprintf("%s/polecats/%s", m.rig.Name, polecat)
-		if err := m.hookIssue(opts.Issue, agentID, workDir); err != nil {
-			style.PrintWarning("could not hook issue %s: %v", opts.Issue, err)
-		}
 	}
 
 	// Apply theme (non-fatal)

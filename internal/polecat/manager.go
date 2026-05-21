@@ -380,6 +380,14 @@ func (m *Manager) SetAgentStateWithRetry(name string, state string) error {
 		if isDoltConfigError(err) {
 			return fmt.Errorf("setting agent state failed (DB not initialized — not retrying): %w", err)
 		}
+		// Fail fast on "issue not found" — retrying won't conjure the bead (hq-6n8).
+		// This eliminates the noisy "setting agent state after 3 attempts: issue not
+		// found" warnings during sling that previously cost ~3.5s per failed sling.
+		// If the agent bead truly doesn't exist, surface the issue immediately so
+		// the caller can decide how to handle it.
+		if errors.Is(err, beads.ErrNotFound) {
+			return fmt.Errorf("setting agent state failed (agent bead not found — not retrying): %w", err)
+		}
 		if attempt < doltStateRetries {
 			backoff := doltBackoff(attempt)
 			style.PrintWarning("SetAgentState attempt %d failed, retrying in %v: %v", attempt, backoff, err)

@@ -246,6 +246,12 @@ func runDone(cmd *cobra.Command, args []string) (retErr error) {
 		}
 	}
 
+	// Capture whether --cleanup-status was explicitly passed (hq-6n8).
+	// We use this below to distinguish formula-blessed report-only completions
+	// (--cleanup-status=clean explicit) from polecat no-ops (auto-detected clean
+	// because the polecat never started any work).
+	cleanupStatusExplicit := cmd.Flags().Changed("cleanup-status")
+
 	// Auto-detect cleanup status if not explicitly provided
 	// This prevents premature polecat cleanup by ensuring witness knows git state
 	if doneCleanupStatus == "" {
@@ -549,8 +555,15 @@ func runDone(cmd *cobra.Command, args []string) (retErr error) {
 		// no_merge/review_only tasks (GH#2496, gt-kvf) also bypass: non-code work has no commits by design.
 		// IMPORTANT: The error message must NOT mention --cleanup-status=clean.
 		// LLM agents read error messages and self-bypass (the original bug).
+		//
+		// hq-6n8: Auto-detected "clean" must NOT bypass the guard. A polecat that
+		// never started work (e.g. hook-not-injected dispatch bug) has a clean
+		// worktree by default, which would silently close substantive beads as
+		// "no code changes". Only an explicit --cleanup-status=clean from the
+		// formula counts as a report-only bypass.
+		explicitCleanBypass := cleanupStatusExplicit && doneCleanupStatus == "clean"
 		if aheadCount == 0 {
-			if os.Getenv("GT_POLECAT") != "" && doneCleanupStatus != "clean" && !isNoMergeTask {
+			if os.Getenv("GT_POLECAT") != "" && !explicitCleanBypass && !isNoMergeTask {
 				// Before failing, check whether commits exist on the remote feature branch.
 				// After a polecat pushes to origin/<feature-branch> and submits an MR,
 				// if master advances (e.g., other MRs land), the feature branch is no
@@ -570,10 +583,11 @@ func runDone(cmd *cobra.Command, args []string) (retErr error) {
 				}
 			}
 
-			// Non-polecat (crew/mayor), polecat with --cleanup-status=clean
+			// Non-polecat (crew/mayor), polecat with explicit --cleanup-status=clean
 			// (report-only tasks like audits/reviews), or no_merge polecat
 			// (non-code tasks like email/research per GH#2496):
-			// zero commits is valid.
+			// zero commits is valid. Auto-detected "clean" no longer reaches
+			// here (hq-6n8) — the polecat guard above errors out first.
 			fmt.Printf("%s Branch has no commits ahead of %s\n", style.Bold.Render("→"), originDefault)
 			fmt.Printf("  Work was likely pushed directly to main or already merged.\n")
 			fmt.Printf("  Skipping MR creation - completing without merge request.\n\n")
