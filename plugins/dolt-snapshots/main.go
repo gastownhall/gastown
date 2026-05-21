@@ -29,6 +29,9 @@ import (
 var (
 	safeNameRe = regexp.MustCompile(`[^a-zA-Z0-9-]`)
 	multiDash  = regexp.MustCompile(`-{2,}`)
+	// hqDB is the town/HQ database name. Defaults to "hq" for upstream compat.
+	// Override with --hq-db flag or GT_HQ_DB env var (e.g. "gt2").
+	hqDB = "hq"
 )
 
 // route represents a single entry from routes.jsonl.
@@ -50,10 +53,18 @@ func main() {
 	host := flag.String("host", "", "Dolt server host (default: 127.0.0.1)")
 	port := flag.String("port", "", "Dolt server port (default: GT_DOLT_PORT or 3307)")
 	routesFile := flag.String("routes", "", "Path to routes.jsonl (default: ~/gt/.beads/routes.jsonl)")
+	hqFlag := flag.String("hq-db", "", "HQ/town database name (default: GT_HQ_DB or 'hq')")
 	dryRun := flag.Bool("dry-run", false, "Show what would be done without making changes")
 	cleanup := flag.Bool("cleanup", false, "Also escalate stale convoy branches for review")
 	watch := flag.Bool("watch", false, "Watch events.jsonl and snapshot immediately on convoy events")
 	flag.Parse()
+
+	// Resolve HQ database name (flag > env > default "hq")
+	if *hqFlag != "" {
+		hqDB = *hqFlag
+	} else if env := os.Getenv("GT_HQ_DB"); env != "" {
+		hqDB = env
+	}
 
 	// Resolve defaults
 	h := resolveHost(*host)
@@ -275,7 +286,7 @@ func snapshotConvoys(db *sql.DB, databases []string, routes map[string]string, d
 
 		// Always tag HQ too, dedup
 		dbSet := make(map[string]bool)
-		dbSet["hq"] = true
+		dbSet[hqDB] = true
 		for _, d := range rigDBs {
 			dbSet[d] = true
 		}
@@ -337,15 +348,15 @@ func snapshotConvoys(db *sql.DB, databases []string, routes map[string]string, d
 
 // findConvoysNeedingSnapshots queries HQ for convoys that need tags.
 func findConvoysNeedingSnapshots(db *sql.DB) ([]convoyRow, error) {
-	query := `
+	query := fmt.Sprintf(`
 		SELECT i.id, i.title, i.status,
-			CASE WHEN EXISTS (SELECT 1 FROM hq.dolt_tags t WHERE t.tag_name LIKE CONCAT('open/%-', i.id))
+			CASE WHEN EXISTS (SELECT 1 FROM `+"`%[1]s`"+`.dolt_tags t WHERE t.tag_name LIKE CONCAT('open/%%-', i.id))
 				 THEN 1 ELSE 0 END AS has_open_tag,
-			CASE WHEN EXISTS (SELECT 1 FROM hq.dolt_tags t WHERE t.tag_name LIKE CONCAT('staged/%-', i.id))
+			CASE WHEN EXISTS (SELECT 1 FROM `+"`%[1]s`"+`.dolt_tags t WHERE t.tag_name LIKE CONCAT('staged/%%-', i.id))
 				 THEN 1 ELSE 0 END AS has_staged_tag
-		FROM hq.issues i
+		FROM `+"`%[1]s`"+`.issues i
 		WHERE (i.issue_type = 'convoy' OR EXISTS (
-				SELECT 1 FROM hq.labels l
+				SELECT 1 FROM `+"`%[1]s`"+`.labels l
 				WHERE l.issue_id = i.id AND l.label = 'gt:convoy'
 			))
 			AND (
@@ -353,11 +364,11 @@ func findConvoysNeedingSnapshots(db *sql.DB) ([]convoyRow, error) {
 				OR (i.status = 'closed' AND i.updated_at >= NOW() - INTERVAL 24 HOUR)
 			)
 			AND EXISTS (
-				SELECT 1 FROM hq.dependencies d
+				SELECT 1 FROM `+"`%[1]s`"+`.dependencies d
 				WHERE d.issue_id = i.id AND d.type = 'tracks'
 			)
 		HAVING has_open_tag = 0 OR has_staged_tag = 0
-	`
+	`, hqDB)
 
 	rows, err := db.Query(query)
 	if err != nil {
@@ -382,12 +393,12 @@ func findConvoysNeedingSnapshots(db *sql.DB) ([]convoyRow, error) {
 // discoverConvoyDatabases finds which rig databases a convoy touches
 // by looking at its tracked issues' prefixes.
 func discoverConvoyDatabases(db *sql.DB, convoyID string, databases []string, routes map[string]string) ([]string, error) {
-	query := `
+	query := fmt.Sprintf(`
 		SELECT DISTINCT d.depends_on_issue_id
-		FROM hq.dependencies d
+		FROM `+"`%s`"+`.dependencies d
 		WHERE d.issue_id = ? AND d.type = 'tracks'
 		  AND d.depends_on_issue_id IS NOT NULL
-	`
+	`, hqDB)
 	rows, err := db.Query(query, convoyID)
 	if err != nil {
 		return nil, err
@@ -539,16 +550,16 @@ func escalateStale(db *sql.DB, databases []string, dryRun bool) {
 			SELECT b.name FROM %s.dolt_branches b
 			WHERE b.name LIKE 'convoy/%%'
 				AND EXISTS (
-					SELECT 1 FROM hq.issues i
+					SELECT 1 FROM `+"`%s`"+`.issues i
 					WHERE (i.issue_type = 'convoy' OR EXISTS (
-							SELECT 1 FROM hq.labels l
+							SELECT 1 FROM `+"`%s`"+`.labels l
 							WHERE l.issue_id = i.id AND l.label = 'gt:convoy'
 						))
 						AND b.name LIKE CONCAT('%%-', i.id)
 						AND i.status IN ('closed', 'landed')
 						AND i.updated_at < DATE_SUB(NOW(), INTERVAL 7 DAY)
 				)
-		`, "`"+sanitizeDBName(dbName)+"`")
+		`, "`"+sanitizeDBName(dbName)+"`", hqDB, hqDB)
 
 		rows, err := db.Query(query)
 		if err != nil {
