@@ -469,30 +469,42 @@ func runBdJSON(dir string, args ...string) ([]byte, error) {
 // target issues live in a different Dolt database. See GH #2624.
 //
 // dir should be the town beads directory (.beads) for HQ queries.
-// direction is "down" (issue_id → depends_on_id) or "up" (depends_on_id → issue_id).
+// direction is "down" (issue_id → target) or "up" (target → issue_id).
 // depType filters by dependency type (e.g., "tracks", "blocks"); empty means all types.
 //
 // Returns deduplicated, unwrapped issue IDs (external:prefix:id → id).
+//
+// Schema note: dependencies.depends_on_id was split into three typed columns
+// (depends_on_issue_id, depends_on_wisp_id, depends_on_external). Queries use
+// COALESCE on read and OR across all three on write-direction lookups so this
+// works on both pre-split (beads, discordia) and post-split (gt2, pyloracle,
+// gtvoice) schemas — the split-out columns are NULL on pre-split tables only
+// if the old depends_on_id wasn't migrated, which is impossible since both
+// schemas always have at least one populated.
 func bdDepListRawIDs(dir, issueID, direction, depType string) ([]string, error) {
-	// Determine query columns based on direction.
-	// "down": issueID depends on targets → SELECT depends_on_id WHERE issue_id = ?
-	// "up":   issueID is depended on → SELECT issue_id WHERE depends_on_id = ?
-	var selectCol, whereCol string
-	if direction == "up" {
-		selectCol = "issue_id"
-		whereCol = "depends_on_id"
-	} else {
-		selectCol = "depends_on_id"
-		whereCol = "issue_id"
-	}
-
 	// Build SQL query. Bead IDs are system-generated alphanumeric strings
 	// with hyphens and dots — validate to prevent injection.
 	if !isValidBeadID(issueID) {
 		return nil, fmt.Errorf("invalid bead ID: %q", issueID)
 	}
 
-	query := fmt.Sprintf("SELECT %s FROM dependencies WHERE %s = '%s'", selectCol, whereCol, issueID)
+	// SELECT/WHERE constructions for the split-column schema. The "down"
+	// direction COALESCEs the three typed target columns back into the legacy
+	// `depends_on_id` alias so JSON consumers (and tests) stay stable.
+	// "down": issueID depends on targets → SELECT the target id WHERE issue_id = ?
+	// "up":   issueID is depended on → SELECT issue_id WHERE any target column = ?
+	var query string
+	if direction == "up" {
+		query = fmt.Sprintf(
+			"SELECT issue_id FROM dependencies WHERE (depends_on_issue_id = '%[1]s' OR depends_on_wisp_id = '%[1]s' OR depends_on_external = '%[1]s')",
+			issueID,
+		)
+	} else {
+		query = fmt.Sprintf(
+			"SELECT COALESCE(depends_on_issue_id, depends_on_wisp_id, depends_on_external) AS depends_on_id FROM dependencies WHERE issue_id = '%s'",
+			issueID,
+		)
+	}
 	if depType != "" {
 		if !isValidBeadID(depType) {
 			return nil, fmt.Errorf("invalid dep type: %q", depType)
@@ -511,10 +523,17 @@ func bdDepListRawIDs(dir, issueID, direction, depType string) ([]string, error) 
 		return nil, fmt.Errorf("parsing dep sql for %s: %w", issueID, err)
 	}
 
+	// Row key matches the SELECT-list alias: "issue_id" for up,
+	// "depends_on_id" (alias of the COALESCE) for down.
+	rowKey := "issue_id"
+	if direction != "up" {
+		rowKey = "depends_on_id"
+	}
+
 	seen := make(map[string]bool, len(rows))
 	var ids []string
 	for _, row := range rows {
-		rawID := row[selectCol]
+		rawID := row[rowKey]
 		id := beads.ExtractIssueID(rawID)
 		if id != "" && !seen[id] {
 			seen[id] = true
