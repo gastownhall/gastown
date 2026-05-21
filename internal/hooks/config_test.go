@@ -643,6 +643,24 @@ func TestComputeExpectedNoBase(t *testing.T) {
 		}
 	}
 
+	// Boot should get DefaultBase + built-in tmux-send-keys guard (hq-fzv).
+	boot, err := ComputeExpected("boot")
+	if err != nil {
+		t.Fatalf("ComputeExpected(boot) failed: %v", err)
+	}
+	if len(boot.SessionStart) != len(defaultBase.SessionStart) {
+		t.Error("expected boot to inherit SessionStart from DefaultBase")
+	}
+	bootSendKeysGuarded := false
+	for _, entry := range boot.PreToolUse {
+		if entry.Matcher == "Bash(*tmux send-keys*)" {
+			bootSendKeysGuarded = true
+		}
+	}
+	if !bootSendKeysGuarded {
+		t.Error("boot missing tmux-send-keys guard matcher: Bash(*tmux send-keys*)")
+	}
+
 	// Refinery should get DefaultBase + built-in patrol-formula-guard (same as witness)
 	refinery, err := ComputeExpected("refinery")
 	if err != nil {

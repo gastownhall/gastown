@@ -342,8 +342,26 @@ func DefaultOverrides() map[string]*HooksConfig {
 				},
 			},
 		},
+		// Boot watchdog: block raw `tmux send-keys` (hq-fzv).
+		// Boot is an ephemeral, stateless watchdog whose only legitimate way to
+		// reach the Deacon is `gt nudge`, which stages text AND submits it (Enter)
+		// under a serialized lock. A raw `tmux send-keys` from Boot's reasoning can
+		// leave text (e.g. "Stop the patrol loop") staged but UNSUBMITTED in the
+		// Deacon TUI input. Because Boot is fresh each tick with no handoff, the
+		// next tick sees the orphaned draft as an unexplained injection. If that
+		// draft is ever submitted, the Deacon's patrol loop stops and town
+		// monitoring goes dark with no auto-respawn. Force Boot through gt nudge.
 		"boot": {
 			UserPromptSubmit: []HookEntry{{Matcher: ""}},
+			PreToolUse: []HookEntry{
+				{
+					Matcher: "Bash(*tmux send-keys*)",
+					Hooks: []Hook{{
+						Type:    "command",
+						Command: "echo '❌ BLOCKED: Boot must not use raw tmux send-keys. It can leave unsubmitted text staged in the Deacon TUI input, which stops town monitoring if later submitted (hq-fzv).' && echo 'Use: gt nudge deacon \"msg\" — reliable, serialized, always submits.' && exit 2",
+					}},
+				},
+			},
 		},
 		// Deacon roles: patrol-formula-guard (same as witness).
 		// Deacons also run patrols and must use wisps, not persistent molecules.

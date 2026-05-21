@@ -410,7 +410,12 @@ func outputCommandQuickReference(ctx RoleContext) {
 		fmt.Println("|------------|----------------|----------------|")
 		fmt.Printf("| Run triage | `%s boot triage` | ~~gt deacon heartbeat~~ (that's Deacon's job) |\n", c)
 		fmt.Printf("| Check Deacon health | `%s deacon status` | ~~gt status~~ (town-wide, not Deacon-specific) |\n", c)
-		fmt.Printf("| Nudge the Deacon | `%s nudge deacon \"msg\"` | ~~tmux send-keys~~ (unreliable) |\n", c)
+		fmt.Printf("| Message the Deacon | `%s nudge deacon \"msg\"` | ~~tmux send-keys~~ (BLOCKED — see below) |\n", c)
+		fmt.Println()
+		fmt.Println("**NEVER use raw `tmux send-keys` against the Deacon (or any agent).**")
+		fmt.Println("It can leave text staged but unsubmitted in the Deacon's input box;")
+		fmt.Println("a later submit stops the patrol loop and town monitoring goes dark.")
+		fmt.Printf("Always use `%s nudge deacon \"msg\"` — it submits reliably under a lock.\n", c)
 	}
 
 	fmt.Println()
