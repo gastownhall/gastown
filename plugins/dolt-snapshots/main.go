@@ -383,9 +383,10 @@ func findConvoysNeedingSnapshots(db *sql.DB) ([]convoyRow, error) {
 // by looking at its tracked issues' prefixes.
 func discoverConvoyDatabases(db *sql.DB, convoyID string, databases []string, routes map[string]string) ([]string, error) {
 	query := `
-		SELECT DISTINCT d.depends_on_id
+		SELECT DISTINCT d.depends_on_issue_id
 		FROM hq.dependencies d
 		WHERE d.issue_id = ? AND d.type = 'tracks'
+		  AND d.depends_on_issue_id IS NOT NULL
 	`
 	rows, err := db.Query(query, convoyID)
 	if err != nil {
