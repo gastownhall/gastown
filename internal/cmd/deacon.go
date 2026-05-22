@@ -16,6 +16,7 @@ import (
 	"github.com/steveyegge/gastown/internal/config"
 	"github.com/steveyegge/gastown/internal/constants"
 	"github.com/steveyegge/gastown/internal/deacon"
+	"github.com/steveyegge/gastown/internal/nudge"
 	"github.com/steveyegge/gastown/internal/runtime"
 	"github.com/steveyegge/gastown/internal/session"
 	"github.com/steveyegge/gastown/internal/style"
@@ -580,6 +581,16 @@ func startDeaconSession(t *tmux.Tmux, sessionName, agentOverride string) error {
 	deaconTownRoot, _ := workspace.FindFromCwdOrError()
 	runtimeCfg := config.ResolveRoleAgentConfig("deacon", deaconTownRoot, "")
 	_ = runtime.RunStartupFallback(t, sessionName, "deacon", runtimeCfg)
+
+	// Start nudge-queue poller (gt-dgf, mirroring witness/refinery). Claude's
+	// UserPromptSubmit hook only drains the nudge queue when the agent submits a
+	// prompt, and the Dolt-subprocess-storm hardening disabled the deacon's
+	// per-turn `gt mail check --inject` drain. Without a poller the deacon's
+	// queue never drains and fills up. The poller drains on a 10s interval
+	// without re-introducing the per-turn Dolt subprocess.
+	if _, pollerErr := nudge.StartPoller(townRoot, sessionName); pollerErr != nil {
+		style.PrintWarning("could not start nudge poller for %s: %v", sessionName, pollerErr)
+	}
 
 	return nil
 }
