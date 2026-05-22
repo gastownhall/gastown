@@ -181,6 +181,56 @@ func OpenDB(host string, port int, dbName string, readTimeout, writeTimeout time
 	return sql.Open("mysql", dsn)
 }
 
+// depCols holds the column names for table dependency references.
+// New schema uses separate depends_on_wisp_id / depends_on_issue_id columns.
+// Old schema uses a single depends_on_id column for both.
+type depCols struct {
+	wispCol  string // column for wisp parent joins (depends_on_wisp_id or depends_on_id)
+	issueCol string // column for issue parent joins (depends_on_issue_id or depends_on_id)
+}
+
+// detectTableDepColumns checks whether a given table uses the new schema
+// (depends_on_wisp_id / depends_on_issue_id) or the old schema (depends_on_id).
+func detectTableDepColumns(db *sql.DB, tableName string) (*depCols, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	var count int
+	err := db.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM information_schema.COLUMNS
+		 WHERE table_name = ?
+		 AND column_name = 'depends_on_wisp_id'
+		 AND table_schema = DATABASE()`, tableName).Scan(&count)
+	if err != nil {
+		return nil, fmt.Errorf("detect dep schema for %s: %w", tableName, err)
+	}
+
+	if count > 0 {
+		return &depCols{wispCol: "depends_on_wisp_id", issueCol: "depends_on_issue_id"}, nil
+	}
+	return &depCols{wispCol: "depends_on_id", issueCol: "depends_on_id"}, nil
+}
+
+// depTargetExpr returns the SQL expression for the dependency target column(s)
+// with the given table alias prefix.
+// For new schema, COALESCE over all three specific columns with alias.
+// For old schema, just alias.depends_on_id.
+// depTargetExpr returns the SQL expression for the dependency target column(s)
+// with the given table alias prefix.
+// For new schema, COALESCE over all three specific columns with alias prefix.
+// For old schema, just alias.depends_on_id (or bare depends_on_id if alias empty).
+func depTargetExpr(dc *depCols, alias string) string {
+	prefix := ""
+	if alias != "" {
+		prefix = alias + "."
+	}
+	if dc.wispCol == "depends_on_id" {
+		return fmt.Sprintf("%sdepends_on_id", prefix)
+	}
+	return fmt.Sprintf("COALESCE(%sdepends_on_issue_id, %sdepends_on_wisp_id, %sdepends_on_external)",
+		prefix, prefix, prefix)
+}
+
 // parentExcludeJoin returns a LEFT JOIN clause and WHERE condition that restricts
 // results to wisps whose parent molecule is closed, missing, or nonexistent.
 //
@@ -197,16 +247,16 @@ func OpenDB(host string, port int, dbName string, readTimeout, writeTimeout time
 //
 // Usage:
 //
-//	join, where := parentExcludeJoin(dbName)
-//	query := fmt.Sprintf("SELECT ... FROM wisps w %s WHERE ... AND %s", dbName, join, where)
-func parentExcludeJoin(dbName string) (joinClause, whereCondition string) {
-	joinClause = `LEFT JOIN (
+//	join, where := parentExcludeJoin(dc)
+//	query := fmt.Sprintf("SELECT ... FROM wisps w %s WHERE ... AND %s", join, where)
+func parentExcludeJoin(dc *depCols) (joinClause, whereCondition string) {
+	joinClause = fmt.Sprintf(`LEFT JOIN (
 		SELECT DISTINCT wd.issue_id
 		FROM wisp_dependencies wd
-		LEFT JOIN wisps pw ON pw.id = wd.depends_on_id LEFT JOIN issues pi ON pi.id = wd.depends_on_id
+		LEFT JOIN wisps pw ON pw.id = wd.%s LEFT JOIN issues pi ON pi.id = wd.%s
 		WHERE wd.type = 'parent-child'
 		AND (pw.status IN ('open', 'hooked', 'in_progress') OR pi.status IN ('open', 'in_progress'))
-	) open_parent ON open_parent.issue_id = w.id`
+	) open_parent ON open_parent.issue_id = w.id`, dc.wispCol, dc.issueCol)
 	whereCondition = "open_parent.issue_id IS NULL"
 	return
 }
@@ -235,7 +285,19 @@ func Scan(db *sql.DB, dbName string, maxAge, purgeAge, mailDeleteAge, staleIssue
 
 	result := &ScanResult{Database: dbName}
 	now := time.Now().UTC()
-	parentJoin, parentWhere := parentExcludeJoin(dbName)
+
+	// Detect wisp_dependencies schema version for parent-exclusion queries.
+	wdDC, err := detectTableDepColumns(db, "wisp_dependencies")
+	if err != nil {
+		return nil, fmt.Errorf("detect dep schema: %w", err)
+	}
+	parentJoin, parentWhere := parentExcludeJoin(wdDC)
+
+	// Detect dependencies table schema version for stale-issue queries.
+	depDC, depErr := detectTableDepColumns(db, "dependencies")
+	if depErr != nil {
+		depDC = wdDC // fallback to wisp_dependencies schema
+	}
 
 	// Count reap candidates: open wisps past max_age with eligible parent status.
 	// Must match Reap() eligibility semantics exactly, including the exclusion of
@@ -270,7 +332,8 @@ func Scan(db *sql.DB, dbName string, maxAge, purgeAge, mailDeleteAge, staleIssue
 
 	// Count stale issue candidates.
 	// Same caveat: issues/dependencies tables may live on a separate Dolt instance.
-	staleQuery := `
+	staleTargetExpr := depTargetExpr(depDC, "d")
+	staleQuery := fmt.Sprintf(`
 		SELECT COUNT(*) FROM issues i
 		WHERE i.status IN ('open', 'in_progress')
 		AND i.updated_at < ?
@@ -278,14 +341,14 @@ func Scan(db *sql.DB, dbName string, maxAge, purgeAge, mailDeleteAge, staleIssue
 		AND i.issue_type != 'epic'
 		AND i.id NOT IN (
 			SELECT DISTINCT d.issue_id FROM dependencies d
-			INNER JOIN issues dep ON d.depends_on_id = dep.id
+			INNER JOIN issues dep ON %s = dep.id
 			WHERE dep.status IN ('open', 'in_progress')
 		)
 		AND i.id NOT IN (
-			SELECT DISTINCT d.depends_on_id FROM dependencies d
+			SELECT DISTINCT %s FROM dependencies d
 			INNER JOIN issues blocker ON d.issue_id = blocker.id
 			WHERE blocker.status IN ('open', 'in_progress')
-		)`
+		)`, staleTargetExpr, staleTargetExpr)
 	if err := db.QueryRowContext(ctx, staleQuery, now.Add(-staleIssueAge)).Scan(&result.StaleCandidates); err != nil {
 		if !isTableNotFound(err) {
 			return nil, fmt.Errorf("count stale candidates: %w", err)
@@ -300,10 +363,10 @@ func Scan(db *sql.DB, dbName string, maxAge, purgeAge, mailDeleteAge, staleIssue
 	}
 
 	// Anomaly detection: dangling parent references.
-	danglingQuery := `
+	danglingQuery := fmt.Sprintf(`
 		SELECT COUNT(*) FROM wisp_dependencies wd
-		LEFT JOIN wisps pw ON pw.id = wd.depends_on_id LEFT JOIN issues pi ON pi.id = wd.depends_on_id
-		WHERE wd.type = 'parent-child' AND pw.id IS NULL AND pi.id IS NULL`
+		LEFT JOIN wisps pw ON pw.id = wd.%s LEFT JOIN issues pi ON pi.id = wd.%s
+		WHERE wd.type = 'parent-child' AND pw.id IS NULL AND pi.id IS NULL`, wdDC.wispCol, wdDC.issueCol)
 	var danglingCount int
 	if err := db.QueryRowContext(ctx, danglingQuery).Scan(&danglingCount); err == nil && danglingCount > 0 {
 		result.Anomalies = append(result.Anomalies, Anomaly{
@@ -324,7 +387,11 @@ func Reap(db *sql.DB, dbName string, maxAge time.Duration, dryRun bool) (*ReapRe
 	defer cancel()
 
 	cutoff := time.Now().UTC().Add(-maxAge)
-	parentJoin, parentWhere := parentExcludeJoin(dbName)
+	wdDC, err := detectTableDepColumns(db, "wisp_dependencies")
+	if err != nil {
+		return nil, fmt.Errorf("detect dep schema: %w", err)
+	}
+	parentJoin, parentWhere := parentExcludeJoin(wdDC)
 	// Exclude agent beads (issue_type='agent') from reaping — they have persistent
 	// identity and should not be closed by the wisp reaper regardless of age.
 	whereClause := fmt.Sprintf(
@@ -459,6 +526,13 @@ func purgeClosedWisps(db *sql.DB, dbName string, purgeAge time.Duration, dryRun 
 	deleteCutoff := time.Now().UTC().Add(-purgeAge)
 	var anomalies []Anomaly
 
+	// Detect wisp_dependencies schema version for reverse dependency cleanup.
+	wdDC, wdErr := detectTableDepColumns(db, "wisp_dependencies")
+	wdDepColExpr := ""
+	if wdErr == nil {
+		wdDepColExpr = depTargetExpr(wdDC, "")
+	}
+
 	// Digest: count by wisp_type.
 	// No parent check — closed wisps past the delete age are unconditionally purgeable.
 	// The parent check (correlated subqueries on wisp_dependencies) was causing O(n*m)
@@ -501,7 +575,7 @@ func purgeClosedWisps(db *sql.DB, dbName string, purgeAge time.Duration, dryRun 
 		DefaultBatchSize)
 	auxTables := []string{"wisp_labels", "wisp_comments", "wisp_events", "wisp_dependencies"}
 
-	totalDeleted, err := batchDeleteRows(ctx, db, idQuery, deleteCutoff, "wisps", auxTables)
+	totalDeleted, err := batchDeleteRows(ctx, db, idQuery, deleteCutoff, "wisps", auxTables, wdDepColExpr)
 	if err != nil {
 		return totalDeleted, anomalies, err
 	}
@@ -564,7 +638,7 @@ func purgeOldMail(db *sql.DB, dbName string, mailDeleteAge time.Duration, dryRun
 		dbName, dbName, DefaultBatchSize)
 	auxTables := []string{"labels", "comments", "events", "dependencies"}
 
-	totalDeleted, err := batchDeleteRows(ctx, db, idQuery, mailCutoff, "issues", auxTables)
+	totalDeleted, err := batchDeleteRows(ctx, db, idQuery, mailCutoff, "issues", auxTables, "")
 	if err != nil {
 		return totalDeleted, err
 	}
@@ -593,6 +667,13 @@ func AutoClose(db *sql.DB, dbName string, staleAge time.Duration, dryRun bool) (
 	staleCutoff := time.Now().UTC().Add(-staleAge)
 	result := &AutoCloseResult{Database: dbName, DryRun: dryRun}
 
+	// Detect the dependencies table schema version for the dependency subqueries.
+	depDC, err := detectTableDepColumns(db, "dependencies")
+	if err != nil {
+		depDC = &depCols{wispCol: "depends_on_id", issueCol: "depends_on_id"}
+	}
+	depTarget := depTargetExpr(depDC, "d")
+
 	whereClause := fmt.Sprintf(`
 		i.status IN ('open', 'in_progress')
 		AND i.updated_at < ?
@@ -604,14 +685,14 @@ func AutoClose(db *sql.DB, dbName string, staleAge time.Duration, dryRun bool) (
 		)
 		AND i.id NOT IN (
 			SELECT DISTINCT d.issue_id FROM `+"`%s`"+`.dependencies d
-			INNER JOIN `+"`%s`"+`.issues dep ON d.depends_on_id = dep.id
+			INNER JOIN `+"`%s`"+`.issues dep ON %s = dep.id
 			WHERE dep.status IN ('open', 'in_progress')
 		)
 		AND i.id NOT IN (
-			SELECT DISTINCT d.depends_on_id FROM `+"`%s`"+`.dependencies d
+			SELECT DISTINCT %s FROM `+"`%s`"+`.dependencies d
 			INNER JOIN `+"`%s`"+`.issues blocker ON d.issue_id = blocker.id
 			WHERE blocker.status IN ('open', 'in_progress')
-		)`, dbName, dbName, dbName, dbName, dbName)
+		)`, dbName, dbName, dbName, depTarget, depTarget, dbName, dbName)
 
 	// Two-step SELECT-then-UPDATE to avoid self-referencing subquery in UPDATE,
 	// which is not valid MySQL (Error 1093) and fragile in Dolt (dolthub/dolt#10600).
@@ -708,7 +789,7 @@ func AutoClose(db *sql.DB, dbName string, staleAge time.Duration, dryRun bool) (
 }
 
 // batchDeleteRows deletes rows from a primary table and its auxiliary tables in batches.
-func batchDeleteRows(ctx context.Context, db *sql.DB, idQuery string, cutoffArg time.Time, primaryTable string, auxTables []string) (int, error) {
+func batchDeleteRows(ctx context.Context, db *sql.DB, idQuery string, cutoffArg time.Time, primaryTable string, auxTables []string, wdDepColExpr string) (int, error) {
 	totalDeleted := 0
 	for {
 		idRows, err := db.QueryContext(ctx, idQuery, cutoffArg)
@@ -747,9 +828,11 @@ func batchDeleteRows(ctx context.Context, db *sql.DB, idQuery string, cutoffArg 
 		}
 
 		// Clean up reverse dependency references to prevent dangling parent refs.
-		delReverse := fmt.Sprintf("DELETE FROM wisp_dependencies WHERE depends_on_id IN %s", inClause)
-		if _, err := db.ExecContext(ctx, delReverse, args...); err != nil {
-			// Non-fatal.
+		if wdDepColExpr != "" {
+			delReverse := fmt.Sprintf("DELETE FROM wisp_dependencies WHERE %s IN %s", wdDepColExpr, inClause)
+			if _, err := db.ExecContext(ctx, delReverse, args...); err != nil {
+				// Non-fatal.
+			}
 		}
 
 		delPrimary := fmt.Sprintf("DELETE FROM `%s` WHERE id IN %s", primaryTable, inClause) //nolint:gosec // G201: primaryTable is internal
