@@ -210,34 +210,38 @@ func SpawnPolecatForSling(rigName string, opts SlingSpawnOptions) (*SpawnedPolec
 				return nil, fmt.Errorf("getting idle polecat after reuse: %w", err)
 			}
 			if err := verifyWorktreeExists(polecatObj.ClonePath); err != nil {
-				return nil, fmt.Errorf("worktree verification failed for reused %s: %w", polecatName, err)
+				fmt.Printf("  Worktree broken for idle polecat %s: %v; nuking and allocating fresh\n", polecatName, err)
+				if nukeErr := nukePolecatFull(polecatName, rigName, polecatMgr, r); nukeErr != nil {
+					return nil, fmt.Errorf("worktree verification failed for reused %s and repair failed: %w (initial: %w)", polecatName, nukeErr, err)
+				}
+				// Fall through to fresh allocation below (polecat just nuked).
+			} else {
+				polecatSessMgr := polecat.NewSessionManager(t, r)
+				sessionName := polecatSessMgr.SessionName(polecatName)
+
+				fmt.Printf("%s Polecat %s reused (idle → working, session start deferred)\n", style.Bold.Render("✓"), polecatName)
+				_ = events.LogFeed(events.TypeSpawn, "gt", events.SpawnPayload(rigName, polecatName))
+
+				effectiveBranch := strings.TrimPrefix(baseBranch, "origin/")
+				if effectiveBranch == "" {
+					effectiveBranch = r.DefaultBranch()
+				}
+				if opts.ResumeBranch != "" {
+					effectiveBranch = opts.ResumeBranch
+				}
+
+				return &SpawnedPolecatInfo{
+					RigName:     rigName,
+					PolecatName: polecatName,
+					ClonePath:   polecatObj.ClonePath,
+					SessionName: sessionName,
+					Pane:        "",
+					BaseBranch:  effectiveBranch,
+					Branch:      polecatObj.Branch,
+					account:     opts.Account,
+					agent:       opts.Agent,
+				}, nil
 			}
-
-			polecatSessMgr := polecat.NewSessionManager(t, r)
-			sessionName := polecatSessMgr.SessionName(polecatName)
-
-			fmt.Printf("%s Polecat %s reused (idle → working, session start deferred)\n", style.Bold.Render("✓"), polecatName)
-			_ = events.LogFeed(events.TypeSpawn, "gt", events.SpawnPayload(rigName, polecatName))
-
-			effectiveBranch := strings.TrimPrefix(baseBranch, "origin/")
-			if effectiveBranch == "" {
-				effectiveBranch = r.DefaultBranch()
-			}
-			if opts.ResumeBranch != "" {
-				effectiveBranch = opts.ResumeBranch
-			}
-
-			return &SpawnedPolecatInfo{
-				RigName:     rigName,
-				PolecatName: polecatName,
-				ClonePath:   polecatObj.ClonePath,
-				SessionName: sessionName,
-				Pane:        "",
-				BaseBranch:  effectiveBranch,
-				Branch:      polecatObj.Branch,
-				account:     opts.Account,
-				agent:       opts.Agent,
-			}, nil
 		}
 	}
 
