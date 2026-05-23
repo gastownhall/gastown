@@ -34,8 +34,9 @@ type SpawnedPolecatInfo struct {
 	Branch      string // Git branch name (for cleanup on rollback)
 
 	// Internal fields for deferred session start
-	account string
-	agent   string
+	account  string
+	agent    string
+	hookBead string // Bead ID hooked at spawn time; passed to SessionManager.Start as Issue
 }
 
 // AgentID returns the agent identifier (e.g., "gastown/polecats/Toast")
@@ -228,6 +229,7 @@ func SpawnPolecatForSling(rigName string, opts SlingSpawnOptions) (*SpawnedPolec
 				Branch:      polecatObj.Branch,
 				account:     opts.Account,
 				agent:       opts.Agent,
+				hookBead:    opts.HookBead,
 			}, nil
 		}
 	}
@@ -339,6 +341,7 @@ func SpawnPolecatForSling(rigName string, opts SlingSpawnOptions) (*SpawnedPolec
 		Branch:      polecatObj.Branch,
 		account:     opts.Account,
 		agent:       opts.Agent,
+		hookBead:    opts.HookBead,
 	}, nil
 }
 
@@ -382,9 +385,14 @@ func (s *SpawnedPolecatInfo) StartSession() (string, error) {
 	polecatSessMgr := polecat.NewSessionManager(t, r)
 
 	fmt.Printf("Starting session for %s/%s...\n", s.RigName, s.PolecatName)
+	// Pass Issue so SessionManager.Start re-asserts the hook before tmux session
+	// creation (hq-6n8). The bead is already hooked by sling_dispatch.go before
+	// this call, but re-asserting is idempotent and guards against races where
+	// the earlier hook write isn't visible by the polecat's first `gt prime --hook`.
 	startOpts := polecat.SessionStartOptions{
 		RuntimeConfigDir: claudeConfigDir,
 		Agent:            s.agent,
+		Issue:            s.hookBead,
 	}
 	if err := polecatSessMgr.Start(s.PolecatName, startOpts); err != nil {
 		return "", fmt.Errorf("starting session: %w", err)
