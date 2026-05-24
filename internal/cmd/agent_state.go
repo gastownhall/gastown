@@ -220,7 +220,11 @@ func modifyAgentState(agentBead, beadsDir string, hasIncr bool) error {
 
 	// Execute bd update
 	cmd := exec.Command("bd", args...)
-	cmd.Env = append(os.Environ(), "BEADS_DIR="+beadsDir)
+	// Apply the shared bd side-effect suppression (BEADS_NO_AUTO_IMPORT=1, etc.)
+	// so this watchdog-path write can't auto-import a stale .beads/issues.jsonl
+	// over the live Dolt server — which would revert the label change we just
+	// made and feed the "create N issue(s)" churn loop. Keeps BEADS_DIR pinning.
+	cmd.Env = beads.BuildMutationPinnedBDEnv(os.Environ(), beadsDir)
 
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
@@ -273,7 +277,9 @@ func getAllAgentLabels(agentBead, beadsDir string) ([]string, error) {
 	defer cancel()
 
 	cmd := exec.CommandContext(ctx, "bd", args...) //nolint:gosec // G204: bd is a trusted internal tool
-	cmd.Env = append(os.Environ(), "BEADS_DIR="+beadsDir)
+	// Read-only query, but still suppress bd side effects so the read can't
+	// trigger a stale-JSONL auto-import over the live Dolt server.
+	cmd.Env = beads.BuildReadOnlyPinnedBDEnv(os.Environ(), beadsDir)
 
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout

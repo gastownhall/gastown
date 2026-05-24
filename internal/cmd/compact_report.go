@@ -15,6 +15,18 @@ import (
 	"github.com/steveyegge/gastown/internal/style"
 )
 
+// bdReportCmd builds a bd command for compaction-report bookkeeping with the
+// shared Gas Town side-effect suppression applied (BEADS_NO_AUTO_IMPORT=1, no
+// auto-export/push). Without this, each compactor-dog bd call auto-imports the
+// (often stale) .beads/issues.jsonl over the live Dolt server, producing the
+// self-feeding "create N issue(s)" commit churn. Inherited Dolt/BEADS_DIR
+// targeting is preserved (only side effects are suppressed).
+func bdReportCmd(args ...string) *exec.Cmd {
+	cmd := exec.Command("bd", args...) //nolint:gosec // G204: args constructed internally
+	cmd.Env = beads.SuppressBDSideEffects(os.Environ())
+	return cmd
+}
+
 var (
 	compactReportDryRun  bool
 	compactReportWeekly  bool
@@ -344,7 +356,7 @@ func createCompactReportBead(report *compactReport, markdown string) (string, er
 		"--silent",
 	}
 
-	bdCmd := exec.Command("bd", bdArgs...)
+	bdCmd := bdReportCmd(bdArgs...)
 	output, err := bdCmd.CombinedOutput()
 	if err != nil {
 		return "", fmt.Errorf("creating report bead: %w\nOutput: %s", err, string(output))
@@ -353,7 +365,7 @@ func createCompactReportBead(report *compactReport, markdown string) (string, er
 	beadID := strings.TrimSpace(string(output))
 
 	// Auto-close (audit record, not work)
-	closeCmd := exec.Command("bd", "close", beadID, "--reason=daily compaction report")
+	closeCmd := bdReportCmd("close", beadID, "--reason=daily compaction report")
 	_ = closeCmd.Run()
 
 	return beadID, nil
@@ -454,7 +466,7 @@ func runWeeklyRollup() error {
 
 // queryCompactionReports queries compaction report event beads in a date range.
 func queryCompactionReports(startDate, endDate string) ([]*compactReport, error) {
-	listCmd := exec.Command("bd", "list",
+	listCmd := bdReportCmd("list",
 		"--type=event",
 		"--json",
 		"--limit=0",
@@ -562,7 +574,7 @@ func formatWeeklyRollup(rollup *weeklyRollup) string {
 func findExistingCompactReport(dateStr string) (string, error) {
 	expectedTitle := fmt.Sprintf("Compaction Report %s", dateStr)
 
-	listCmd := exec.Command("bd", "list",
+	listCmd := bdReportCmd("list",
 		"--type=event",
 		"--status=closed",
 		"--json",
@@ -594,7 +606,7 @@ func findExistingCompactReport(dateStr string) (string, error) {
 func findExistingWeeklyRollup(weekStart, weekEnd string) (string, error) {
 	expectedTitle := fmt.Sprintf("Weekly Compaction Rollup %s to %s", weekStart, weekEnd)
 
-	listCmd := exec.Command("bd", "list",
+	listCmd := bdReportCmd("list",
 		"--type=event",
 		"--json",
 		"--limit=20",
@@ -648,7 +660,7 @@ func createWeeklyRollupBead(rollup *weeklyRollup, markdown string) (string, erro
 		"--silent",
 	}
 
-	bdCmd := exec.Command("bd", bdArgs...)
+	bdCmd := bdReportCmd(bdArgs...)
 	output, err := bdCmd.CombinedOutput()
 	if err != nil {
 		return "", fmt.Errorf("creating weekly rollup bead: %w\nOutput: %s", err, string(output))
@@ -657,7 +669,7 @@ func createWeeklyRollupBead(rollup *weeklyRollup, markdown string) (string, erro
 	beadID := strings.TrimSpace(string(output))
 
 	// Auto-close (audit record, not work)
-	closeCmd := exec.Command("bd", "close", beadID, "--reason=weekly compaction rollup")
+	closeCmd := bdReportCmd("close", beadID, "--reason=weekly compaction rollup")
 	_ = closeCmd.Run()
 
 	return beadID, nil
