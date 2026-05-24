@@ -191,6 +191,18 @@ func AgentEnv(cfg AgentEnvConfig) map[string]string {
 	// See: https://github.com/steveyegge/beads/issues/2241
 	env["BD_BACKUP_ENABLED"] = "false"
 
+	// Stop bd from auto-importing the (throttled, frequently stale) per-repo
+	// .beads/issues.jsonl over the live Dolt server on every invocation. In Gas
+	// Town, Dolt (:3307) is the authoritative data plane and issues.jsonl is a
+	// passive export — but a stale re-import reverts server-side status changes
+	// and resurrects deleted beads (observed: "hooked" handoff beads that refuse
+	// to clear because each subsequent bd call re-imports the old status). gt
+	// already sets this for the bd subprocesses it spawns via
+	// beads.SuppressBDSideEffects(); setting it here in the single source of
+	// truth for agent env makes every agent's *direct* bd calls follow the same
+	// policy, so interactive/agent-driven writes can't be clobbered either.
+	env["BEADS_NO_AUTO_IMPORT"] = "1"
+
 	// Clear NODE_OPTIONS to prevent debugger flags (e.g., --inspect from VSCode)
 	// from being inherited through tmux into Claude's Node.js runtime.
 	// This is the PRIMARY guard: setting it here (the single source of truth

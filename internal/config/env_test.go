@@ -134,6 +134,25 @@ func TestAgentEnv_Dog(t *testing.T) {
 	assertNotSet(t, env, "GT_RIG")
 }
 
+// TestAgentEnv_SuppressesBeadsAutoImport verifies that every agent role gets
+// BEADS_NO_AUTO_IMPORT=1, so a direct bd call can't re-import a stale
+// .beads/issues.jsonl over the live Dolt server (which reverts server-side
+// status changes and resurrects deleted beads). It's an all-roles guarantee.
+func TestAgentEnv_SuppressesBeadsAutoImport(t *testing.T) {
+	t.Parallel()
+	for _, cfg := range []AgentEnvConfig{
+		{Role: "mayor", TownRoot: "/town"},
+		{Role: "deacon", TownRoot: "/town"},
+		{Role: "witness", Rig: "myrig", TownRoot: "/town"},
+		{Role: "refinery", Rig: "myrig", TownRoot: "/town"},
+		{Role: "polecat", Rig: "myrig", AgentName: "Toast", TownRoot: "/town"},
+		{Role: "dog", AgentName: "alpha", TownRoot: "/town"},
+	} {
+		env := AgentEnv(cfg)
+		assertEnv(t, env, "BEADS_NO_AUTO_IMPORT", "1")
+	}
+}
+
 // TestIdentityEnvVars_CoversAgentEnvOutput verifies that IdentityEnvVars contains
 // all identity-bearing keys that AgentEnv can produce. If AgentEnv gains a new
 // identity key, this test fails to remind you to add it to IdentityEnvVars.
