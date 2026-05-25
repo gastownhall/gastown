@@ -171,10 +171,10 @@ func runStatusLine(cmd *cobra.Command, args []string) error {
 		}
 		// Refinery status line
 		if role == "refinery" || strings.HasSuffix(statusLineSession, "-refinery") {
-			return runRefineryStatusLine(t, rigName)
+			return runRefineryStatusLine(rigName)
 		}
 		// Crew/Polecat status line
-		return runWorkerStatusLine(t, statusLineSession, rigName, polecat, crew, issue)
+		return runWorkerStatusLine(polecat, crew, issue)
 	})
 	if err == nil && output != "" {
 		writeStatusLineCache(cacheKey, output)
