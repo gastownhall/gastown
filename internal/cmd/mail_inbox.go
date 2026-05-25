@@ -1,10 +1,13 @@
 package cmd
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -12,6 +15,7 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/steveyegge/gastown/internal/mail"
 	"github.com/steveyegge/gastown/internal/session"
+	"github.com/steveyegge/gastown/internal/state"
 	"github.com/steveyegge/gastown/internal/style"
 )
 
@@ -48,6 +52,16 @@ func runMailInbox(cmd *cobra.Command, args []string) error {
 		address = detectSender()
 	}
 
+	// Fast path: serve from file cache for --json requests (15s TTL).
+	// Avoids the expensive fan-out of bd sql queries per cc: label tag.
+	if mailInboxJSON && !mailInboxNoCache {
+		cacheKey := inboxCacheKey(address, mailInboxUnread)
+		if cached, ok := readInboxCache(cacheKey); ok {
+			_, _ = os.Stdout.Write(cached)
+			return nil
+		}
+	}
+
 	mailbox, err := getMailbox(address)
 	if err != nil {
 		return err
@@ -66,6 +80,14 @@ func runMailInbox(cmd *cobra.Command, args []string) error {
 		enc.SetIndent("", "  ")
 		if err := enc.Encode(messages); err != nil {
 			return err
+		}
+		// Write-through: populate cache for subsequent callers.
+		if !mailInboxNoCache {
+			cacheKey := inboxCacheKey(address, mailInboxUnread)
+			if data, err := json.MarshalIndent(messages, "", "  "); err == nil {
+				data = append(data, '\n')
+				writeInboxCache(cacheKey, data)
+			}
 		}
 		return nil
 	}
@@ -494,6 +516,54 @@ func staleMessagesForSession(messages []*mail.Message, sessionStart time.Time) [
 		}
 	}
 	return staleMessages
+}
+
+const inboxCacheTTL = 15 * time.Second
+
+var inboxCacheTTLOverride time.Duration
+
+func inboxCacheDir() string {
+	return filepath.Join(state.CacheDir(), "mail-inbox")
+}
+
+func inboxCacheKey(address string, unreadOnly bool) string {
+	h := sha256.New()
+	h.Write([]byte(address))
+	if unreadOnly {
+		h.Write([]byte(":unread"))
+	}
+	return hex.EncodeToString(h.Sum(nil))[:16]
+}
+
+func inboxCachePath(key string) string {
+	return filepath.Join(inboxCacheDir(), key+".json")
+}
+
+func readInboxCache(key string) ([]byte, bool) {
+	p := inboxCachePath(key)
+	info, err := os.Stat(p)
+	if err != nil {
+		return nil, false
+	}
+	ttl := inboxCacheTTL
+	if inboxCacheTTLOverride > 0 {
+		ttl = inboxCacheTTLOverride
+	}
+	if time.Since(info.ModTime()) > ttl {
+		return nil, false
+	}
+	data, err := os.ReadFile(p)
+	if err != nil {
+		return nil, false
+	}
+	return data, true
+}
+
+func writeInboxCache(key string, data []byte) {
+	dir := inboxCacheDir()
+	_ = os.MkdirAll(dir, 0755)
+	p := inboxCachePath(key)
+	_ = os.WriteFile(p, data, 0644)
 }
 
 func runMailMarkRead(cmd *cobra.Command, args []string) error {

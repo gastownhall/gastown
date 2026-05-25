@@ -22,6 +22,7 @@ var (
 	mailSendSelf      bool
 	mailCC            []string // CC recipients
 	mailInboxJSON     bool
+	mailInboxNoCache  bool
 	mailReadJSON      bool
 	mailInboxUnread   bool
 	mailInboxAll      bool
@@ -482,6 +483,7 @@ func init() {
 
 	// Inbox flags
 	mailInboxCmd.Flags().BoolVar(&mailInboxJSON, "json", false, "Output as JSON")
+	mailInboxCmd.Flags().BoolVar(&mailInboxNoCache, "no-cache", false, "Bypass JSON response cache")
 	mailInboxCmd.Flags().BoolVarP(&mailInboxUnread, "unread", "u", false, "Show only unread messages")
 	mailInboxCmd.Flags().BoolVarP(&mailInboxAll, "all", "a", false, "Show all messages (read and unread)")
 	mailInboxCmd.Flags().StringVar(&mailInboxIdentity, "identity", "", "Explicit identity for inbox (e.g., greenplace/Toast)")
