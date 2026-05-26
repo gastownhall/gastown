@@ -52,7 +52,8 @@ func TestFormatJSON(t *testing.T) {
 }
 
 func TestParentExcludeJoin(t *testing.T) {
-	joinClause, whereCondition := parentExcludeJoin("testdb")
+	dc := &depCols{wispCol: "depends_on_wisp_id", issueCol: "depends_on_issue_id"}
+	joinClause, whereCondition := parentExcludeJoin(dc)
 
 	// JOIN clause should reference the correct database.
 	if joinClause == "" {
@@ -88,8 +89,7 @@ func TestParentExcludeJoin(t *testing.T) {
 // positional shift: "FROM wisps w gt WHERE..." instead of "FROM wisps w LEFT JOIN...".
 func TestReapQueryNoDatabaseNameInjection(t *testing.T) {
 	// Reproduce the exact Sprintf call from Reap() to verify no dbName injection.
-	dbName := "gt"
-	parentJoin, parentWhere := parentExcludeJoin(dbName)
+	parentJoin, parentWhere := parentExcludeJoin(&depCols{wispCol: "depends_on_wisp_id", issueCol: "depends_on_issue_id"})
 	whereClause := fmt.Sprintf(
 		"w.status IN ('open', 'hooked', 'in_progress') AND w.created_at < ? AND %s", parentWhere)
 
