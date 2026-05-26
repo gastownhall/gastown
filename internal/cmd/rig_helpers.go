@@ -97,18 +97,20 @@ func hasRigBeadLabel(townRoot, rigName, label string) bool {
 // IsRigParkedOrDocked checks if a rig is parked or docked by any mechanism
 // (wisp ephemeral state or persistent bead labels). Returns (blocked, reason).
 // This is the single entry point for all dispatch paths (sling, convoy launch,
-// convoy stage) to check rig availability.
+// convoy stage, gt up) to check rig availability.
 //
-// Parked vs docked asymmetry: parked state is checked in both the wisp layer
-// (ephemeral, set by "gt rig park") and bead labels (persistent fallback for
-// when wisp state is lost during cleanup). Docked state is bead-label only
-// because "gt rig dock" never writes to wisp — it persists exclusively via
-// the rig identity bead's status:docked label.
+// Both parked and docked states are checked in the wisp layer first (fast,
+// local, survives Dolt outages), then in bead labels as persistent fallback.
+// When Dolt is unreachable, fails safe (assumes blocked) to prevent starting
+// agents for docked rigs during startup races.
 func IsRigParkedOrDocked(townRoot, rigName string) (bool, string) {
-	// Check wisp layer first (fast, local) — only relevant for parked state
+	// Check wisp layer first (fast, local, survives Dolt outages).
 	wispCfg := wisp.NewConfig(townRoot, rigName)
-	if wispCfg.GetString(RigStatusKey) == RigStatusParked {
+	switch wispCfg.GetString(RigStatusKey) {
+	case RigStatusParked:
 		return true, "parked"
+	case "docked":
+		return true, "docked"
 	}
 
 	// Single bead lookup for both parked and docked labels.
@@ -129,7 +131,9 @@ func IsRigParkedOrDocked(townRoot, rigName string) (bool, string) {
 	rigBeadID := beads.RigBeadIDWithPrefix(prefix, rigName)
 	rigBead, err := bd.Show(rigBeadID)
 	if err != nil {
-		return false, ""
+		// Fail-safe: when we can't verify status (Dolt down, network issue),
+		// assume blocked. Matches daemon's isRigOperational behavior.
+		return true, "unknown (cannot verify rig status)"
 	}
 
 	for _, l := range rigBead.Labels {

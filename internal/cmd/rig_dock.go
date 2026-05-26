@@ -15,6 +15,7 @@ import (
 	"github.com/steveyegge/gastown/internal/session"
 	"github.com/steveyegge/gastown/internal/style"
 	"github.com/steveyegge/gastown/internal/tmux"
+	"github.com/steveyegge/gastown/internal/wisp"
 	"github.com/steveyegge/gastown/internal/witness"
 	"github.com/steveyegge/gastown/internal/workspace"
 )
@@ -168,9 +169,18 @@ func runRigDock(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("setting docked label: %w", err)
 	}
 
+	// Write docked status to wisp layer so IsRigParkedOrDocked can detect it
+	// even when Dolt is unreachable (e.g. during gt up startup race).
+	townRoot, twErr := workspace.FindFromCwdOrError()
+	if twErr == nil {
+		wispCfg := wisp.NewConfig(townRoot, rigName)
+		if err := wispCfg.Set("status", "docked"); err != nil {
+			fmt.Printf("  %s Could not write wisp docked status: %v\n", style.Warning.Render("!"), err)
+		}
+	}
+
 	// Remove rig from daemon.json patrol config so daemon stops spawning
 	// witness/refinery sessions for this rig on every heartbeat cycle.
-	townRoot, twErr := workspace.FindFromCwdOrError()
 	if twErr == nil {
 		if err := config.RemoveRigFromDaemonPatrols(townRoot, rigName); err != nil {
 			fmt.Printf("  %s Could not update daemon.json patrols: %v\n", style.Warning.Render("!"), err)
@@ -246,9 +256,15 @@ func runRigUndock(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("removing docked label: %w", err)
 	}
 
+	// Clear docked status from wisp layer (mirrors gt rig dock writing it).
+	townRoot, twErr := workspace.FindFromCwdOrError()
+	if twErr == nil {
+		wispCfg := wisp.NewConfig(townRoot, rigName)
+		_ = wispCfg.Unset("status")
+	}
+
 	// Re-add rig to daemon.json patrol config so daemon resumes spawning
 	// witness/refinery sessions for this rig.
-	townRoot, twErr := workspace.FindFromCwdOrError()
 	if twErr == nil {
 		if err := config.AddRigToDaemonPatrols(townRoot, rigName); err != nil {
 			fmt.Printf("  %s Could not update daemon.json patrols: %v\n", style.Warning.Render("!"), err)
