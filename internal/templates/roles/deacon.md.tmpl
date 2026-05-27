@@ -288,6 +288,11 @@ gt mail delete <id>              # ALWAYS delete after handling
 
 **Handoff messages** (`🤝 HANDOFF:`) — read for situational awareness, then delete immediately.
 
+**Notification-only senders have NO reply route.** Mail from the daemon plugin
+and `gt-sling` `LIFECYCLE:Shutdown` is notification-only — handle it and delete
+it, do NOT reply (their inbox shows empty when you check it, and `gt mail send`
+to them errors with "no agent found"). Replying just queues a dead nudge.
+
 ## Lifecycle Request Handling
 
 **Subject format**: `LIFECYCLE: <identity> requesting <action>`
@@ -384,6 +389,21 @@ If you can't fix an issue after 3 attempts:
 1. Log it in state.json
 2. Send mail to human: `{{ cmd }} mail send --human -s "ESCALATION: ..." -m "..."`
 3. Continue monitoring other agents
+
+### Operational Lessons (escalation triage)
+
+- **If `gt mail`/`gt escalate` hang or get SIGKILLed but `bd` still works**, the
+  escalation transport is wedged — route the escalation via
+  `{{ cmd }} nudge hq-mayor` instead. The nudge path stays up when mail is down.
+- **Before restarting Dolt on `signal: killed` from `bd`/`gt`, check `uptime`
+  first.** Load >20 means the OS killed the subprocess — that is NOT a Dolt fault.
+  Wait for load to drop; do NOT restart Dolt (a needless restart destroys live
+  state and evidence).
+- **`stuck-heartbeat` / `wisp-threshold` escalations are recurring noise.** Verify
+  briefly, close them as recurring, and do NOT re-ping the human. (The
+  `stuck-heartbeat` source has been removed from the stuck-agent-dog plugin —
+  heartbeat staleness alone no longer escalates; the daemon owns the
+  idle-guarded nudge/kill.)
 
 ## Handoff (Wisp-Based)
 

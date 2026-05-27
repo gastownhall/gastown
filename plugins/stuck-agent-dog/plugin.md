@@ -173,7 +173,9 @@ echo "Health summary: ${#CRASHED[@]} crashed, ${#STUCK[@]} stuck, $HEALTHY healt
 
 ## Step 3: Check deacon health
 
-The deacon session is `hq-deacon`. Check heartbeat staleness.
+The deacon session is `hq-deacon`. A dead session or dead process sets
+`DEACON_ISSUE` and escalates. Heartbeat staleness is logged as a NOTICE only and
+NEVER escalates — the Go daemon owns the idle-guarded nudge/kill for staleness.
 
 ```bash
 echo ""
@@ -186,7 +188,12 @@ if ! tmux has-session -t "$DEACON_SESSION" 2>/dev/null; then
   echo "  CRASHED: Deacon session is dead"
   DEACON_ISSUE="crashed"
 else
-  # Check deacon heartbeat file
+  # Heartbeat staleness alone is NOT "stuck" — log a NOTICE only, never escalate.
+  # The Deacon is event-driven and parks during await-signal idle, so a stale
+  # heartbeat usually just means there was no work. The Go daemon owns the
+  # nudge/kill decision and correctly idle-guards it (skips when no work is in
+  # flight). Duplicating that check here without the guard caused recurring
+  # false HIGH escalations.
   HEARTBEAT_FILE="$TOWN_ROOT/deacon/heartbeat.json"
   if [ -f "$HEARTBEAT_FILE" ]; then
     HEARTBEAT_TIME=$(jq -r '(.timestamp // empty) | sub("\\.[0-9]+Z$"; "Z") | fromdateiso8601? // empty' "$HEARTBEAT_FILE" 2>/dev/null)
@@ -194,9 +201,9 @@ else
       NOW=$(date +%s)
       HEARTBEAT_AGE=$(( NOW - HEARTBEAT_TIME ))
 
-      if [ "$HEARTBEAT_AGE" -gt 900 ]; then
-        echo "  STUCK: Deacon heartbeat stale (${HEARTBEAT_AGE}s old, >15m threshold)"
-        DEACON_ISSUE="stuck_heartbeat_${HEARTBEAT_AGE}s"
+      if [ "$HEARTBEAT_AGE" -gt 7200 ]; then
+        # NOTICE only — does NOT set DEACON_ISSUE.
+        echo "  NOTICE: Deacon heartbeat ${HEARTBEAT_AGE}s old (>2h) — likely await-signal idle, not stuck; daemon owns nudge/kill"
       else
         echo "  OK: Deacon heartbeat ${HEARTBEAT_AGE}s old"
       fi
@@ -230,17 +237,25 @@ For STUCK agents (session alive, agent dead):
 - Kill the zombie session, then restart
 - Exception: if pane output shows the agent is in a long-running build/test
 
-For DEACON stuck (stale heartbeat):
-- Capture pane output: `tmux capture-pane -t hq-deacon -p -S -20`
-- If output shows active work (recent timestamps, command output), the heartbeat
-  file may just be stale — nudge instead of kill
-- If output shows no recent activity, restart is warranted
+For DEACON heartbeat staleness:
+- **Heartbeat age alone NEVER escalates.** The Deacon is event-driven and parks
+  during await-signal idle, so a stale heartbeat usually just means there was no
+  work to do — not that the Deacon is stuck or dead.
+- The Go daemon owns the nudge/kill decision on heartbeat staleness, and it
+  idle-guards that decision (it skips the nudge when no work is in flight). This
+  plugin must NOT duplicate that check, or it produces recurring false HIGH
+  escalations. The plugin only logs a NOTICE for visibility.
+- Genuine Deacon death is caught by the session/process checks below, which DO
+  escalate — not by heartbeat age.
 
 **Decision framework:**
-1. If agent is clearly dead (no process, no output) → restart
-2. If agent shows recent activity in pane → nudge first, check again next cycle
-3. If agent has been stuck for >15 minutes with no pane activity → restart
-4. If mass death detected (>3 crashes in same cycle) → escalate, don't restart
+1. If the Deacon tmux session is dead (`crashed`) → escalate.
+2. If the Deacon process is dead but the session is alive (`zombie`) → escalate.
+3. Heartbeat age, no matter how stale → NOTICE only, never escalate. The daemon
+   handles nudge/kill for genuine staleness (idle-guarded).
+4. For polecats: clearly dead (no process) → restart; recent pane activity →
+   nudge first, recheck next cycle.
+5. If mass death detected (>3 crashes in same cycle) → escalate, don't restart.
 
 ## Step 5: Take action
 

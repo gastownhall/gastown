@@ -107,15 +107,25 @@ else
     log "  Process alive: pid=$DEACON_PID comm=$DEACON_COMM"
   fi
 
+  # Heartbeat staleness alone is NOT "stuck". The Deacon is event-driven and
+  # parks during await-signal idle — a stale heartbeat just means there was no
+  # work to do, not that the Deacon died. Real death is already caught by the
+  # session/process checks above (crashed/zombie). The Go daemon owns the
+  # nudge/kill decision on heartbeat staleness, and it correctly skips when no
+  # work is in flight (see internal/daemon/daemon.go:1600 idle-guard and the
+  # threshold rationale in internal/deacon/heartbeat.go). Escalating here would
+  # duplicate that check WITHOUT the idle-guard, producing recurring false
+  # HIGH escalations. So: log a NOTICE for visibility only, never escalate.
   HEARTBEAT_FILE="$TOWN_ROOT/deacon/heartbeat.json"
   if [ -f "$HEARTBEAT_FILE" ]; then
     HEARTBEAT_TIME=$(stat -f %m "$HEARTBEAT_FILE" 2>/dev/null || stat -c %Y "$HEARTBEAT_FILE" 2>/dev/null)
     NOW=$(date +%s)
     HEARTBEAT_AGE=$(( NOW - HEARTBEAT_TIME ))
 
-    if [ "$HEARTBEAT_AGE" -gt 1200 ]; then
-      log "  STUCK: Deacon heartbeat stale (${HEARTBEAT_AGE}s old, >20m threshold)"
-      DEACON_ISSUE="stuck_heartbeat_${HEARTBEAT_AGE}s"
+    if [ "$HEARTBEAT_AGE" -gt 7200 ]; then
+      # NOTICE only — does NOT set DEACON_ISSUE, so no escalation. The daemon's
+      # idle-guarded nudge/kill handles genuine staleness; this is for visibility.
+      log "  NOTICE: Deacon heartbeat ${HEARTBEAT_AGE}s old (>2h) — likely await-signal idle, not stuck; daemon owns nudge/kill"
     else
       log "  OK: Deacon heartbeat ${HEARTBEAT_AGE}s old"
     fi
