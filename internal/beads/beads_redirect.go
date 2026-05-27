@@ -109,8 +109,20 @@ func resolveBeadsDirWithDepth(beadsDir string, maxDepth int) string {
 }
 
 // cleanBeadsRuntimeFiles removes gitignored runtime files from a .beads directory
-// while preserving tracked files (formulas/, README.md, config.yaml, .gitignore).
+// while preserving tracked files (formulas/, README.md, .gitignore).
 // This is safe to call even if the directory doesn't exist.
+//
+// IMPORTANT: This is only ever called by SetupRedirect, which makes a worktree
+// .beads strictly redirect-only. Per the canonical design (docs/design/
+// architecture.md:193), a worktree .beads must contain ONLY a redirect file —
+// it must never carry its own database identity. A git-tracked metadata.json
+// (with dolt_database=<prefix>) or config.yaml left behind in a worktree .beads
+// breaks bd when issue_prefix != db name, because bd reads the worktree's local
+// metadata.json/config.yaml instead of following the redirect (refs #2682,
+// #4033). SetupRedirect refuses to run on the canonical mayor/rig/.beads
+// (ComputeRedirectTarget guards against parts[0]/parts[1] == "mayor"), so
+// removing metadata.json/config.yaml here is scoped to redirect-target
+// worktrees only and never strips the source-of-truth database identity.
 func cleanBeadsRuntimeFiles(beadsDir string) error {
 	if _, err := os.Stat(beadsDir); os.IsNotExist(err) {
 		return nil // Nothing to clean
@@ -126,6 +138,11 @@ func cleanBeadsRuntimeFiles(beadsDir string) error {
 		".local_version",
 		// Redirect file (we're about to recreate it)
 		"redirect",
+		// Database identity — a worktree .beads is redirect-only and must NOT
+		// carry its own dolt_database/config, or bd reads it instead of
+		// following the redirect (breaks rigs where issue_prefix != db name).
+		"metadata.json",
+		"config.yaml",
 		// Runtime directories
 		"mq",
 	}

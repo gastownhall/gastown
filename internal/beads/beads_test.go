@@ -2853,7 +2853,12 @@ func TestSetupRedirect(t *testing.T) {
 		}
 	})
 
-	t.Run("cleans runtime files but preserves config files", func(t *testing.T) {
+	t.Run("strips database identity but preserves tracked docs", func(t *testing.T) {
+		// A worktree .beads is redirect-only (docs/design/architecture.md:193).
+		// SetupRedirect must strip runtime files AND any local database identity
+		// (metadata.json, config.yaml) so the worktree never carries a
+		// stale/wrong dolt_database that breaks bd when issue_prefix != db name
+		// (refs #2682, #4033). Tracked docs like README.md are still preserved.
 		townRoot := t.TempDir()
 		rigRoot := filepath.Join(townRoot, "testrig")
 		rigBeads := filepath.Join(rigRoot, ".beads")
@@ -2863,7 +2868,7 @@ func TestSetupRedirect(t *testing.T) {
 		if err := os.MkdirAll(rigBeads, 0755); err != nil {
 			t.Fatalf("mkdir rig beads: %v", err)
 		}
-		// Simulate worktree with both runtime and tracked files
+		// Simulate worktree with runtime, database-identity, and doc files
 		if err := os.MkdirAll(crewBeads, 0755); err != nil {
 			t.Fatalf("mkdir crew beads: %v", err)
 		}
@@ -2871,14 +2876,14 @@ func TestSetupRedirect(t *testing.T) {
 		if err := os.WriteFile(filepath.Join(crewBeads, "daemon.lock"), []byte("1234"), 0644); err != nil {
 			t.Fatalf("write daemon.lock: %v", err)
 		}
-		// Local beads metadata is per-machine configuration and must survive startup.
+		// Database identity (should now be removed — worktree .beads is redirect-only)
 		if err := os.WriteFile(filepath.Join(crewBeads, "metadata.json"), []byte("{}"), 0644); err != nil {
 			t.Fatalf("write metadata.json: %v", err)
 		}
-		// Config files (should be preserved)
 		if err := os.WriteFile(filepath.Join(crewBeads, "config.yaml"), []byte("prefix: test"), 0644); err != nil {
 			t.Fatalf("write config: %v", err)
 		}
+		// Tracked docs (should be preserved)
 		if err := os.WriteFile(filepath.Join(crewBeads, "README.md"), []byte("# Beads"), 0644); err != nil {
 			t.Fatalf("write README: %v", err)
 		}
@@ -2891,14 +2896,16 @@ func TestSetupRedirect(t *testing.T) {
 		if _, err := os.Stat(filepath.Join(crewBeads, "daemon.lock")); !os.IsNotExist(err) {
 			t.Error("daemon.lock should have been removed")
 		}
-		if _, err := os.Stat(filepath.Join(crewBeads, "metadata.json")); err != nil {
-			t.Errorf("metadata.json should have been preserved: %v", err)
+
+		// Verify database identity was stripped (worktree .beads is redirect-only)
+		if _, err := os.Stat(filepath.Join(crewBeads, "metadata.json")); !os.IsNotExist(err) {
+			t.Errorf("metadata.json should have been removed (redirect-only worktree), stat err = %v", err)
+		}
+		if _, err := os.Stat(filepath.Join(crewBeads, "config.yaml")); !os.IsNotExist(err) {
+			t.Errorf("config.yaml should have been removed (redirect-only worktree), stat err = %v", err)
 		}
 
-		// Verify config files were preserved
-		if _, err := os.Stat(filepath.Join(crewBeads, "config.yaml")); err != nil {
-			t.Errorf("config.yaml should have been preserved: %v", err)
-		}
+		// Verify tracked docs were preserved
 		if _, err := os.Stat(filepath.Join(crewBeads, "README.md")); err != nil {
 			t.Errorf("README.md should have been preserved: %v", err)
 		}
