@@ -106,6 +106,14 @@ const (
 	// from "open" so auto-close does not mistake it for pending work and
 	// `gt convoy status` can label it clearly. (gt-bs6 / GH#2786)
 	trackedStatusUnknown = "unknown"
+
+	// convoyAutoClosedLabel marks a convoy that has already been auto-closed
+	// and notified by checkAndCloseCompletedConvoys. Labels live in Dolt
+	// outside of .beads/issues.jsonl, so they survive the auto-import that
+	// otherwise flips closed convoys back to open and re-arms the notify path.
+	// Without this guard, every patrol after a reimport re-fires "Convoy
+	// complete" notifications. (gst-4a3)
+	convoyAutoClosedLabel = "gt:convoy-auto-closed"
 )
 
 func normalizeConvoyStatus(status string) string {
@@ -835,6 +843,17 @@ func runConvoyAdd(cmd *cobra.Command, args []string) error {
 				return fmt.Errorf("couldn't clear convoy completion notification state: %w", err)
 			}
 		}
+		// Strip the auto-closed marker so the patrol can re-evaluate this convoy
+		// after the new issues land. Without this, the label persists from the
+		// previous auto-close and permanently silences future notifications. (gst-4a3)
+		if hasLabel(convoy.Labels, convoyAutoClosedLabel) {
+			if err := BdCmd("label", "remove", convoyID, convoyAutoClosedLabel).
+				Dir(townBeads).
+				WithAutoCommit().
+				Run(); err != nil {
+				style.PrintWarning("could not remove %s on reopen: %v", convoyAutoClosedLabel, err)
+			}
+		}
 		reopened = true
 		fmt.Printf("%s Reopened convoy %s\n", style.Bold.Render("↺"), convoyID)
 	}
@@ -951,7 +970,22 @@ func closeConvoyIfComplete(townBeads, convoyID, title string, tracked []trackedI
 
 	fmt.Printf("%s Auto-closed convoy 🚚 %s: %s\n", style.Bold.Render("✓"), convoyID, title)
 	notifyConvoyCompletion(townBeads, convoyID, title)
+	stampConvoyAutoClosed(townBeads, convoyID)
 	return true, nil
+}
+
+// stampConvoyAutoClosed adds the convoyAutoClosedLabel to a convoy that has
+// just been auto-closed. Failures are non-fatal and logged — the close has
+// already succeeded, and the worst case is a re-notification on the next
+// patrol if the label write fails. See [[convoyAutoClosedLabel]] for why a
+// label is used instead of the convoy status or description. (gst-4a3)
+func stampConvoyAutoClosed(townBeads, convoyID string) {
+	if err := BdCmd("label", "add", convoyID, convoyAutoClosedLabel).
+		Dir(townBeads).
+		WithAutoCommit().
+		Run(); err != nil {
+		style.PrintWarning("could not stamp %s on convoy %s: %v", convoyAutoClosedLabel, convoyID, err)
+	}
 }
 
 // checkSingleConvoy checks a specific convoy and closes it if all tracked issues are complete.
@@ -1135,6 +1169,7 @@ func runConvoyClose(cmd *cobra.Command, args []string) error {
 		// Check if convoy has a notify address in description
 		notifyConvoyCompletion(townBeads, convoyID, convoy.Title)
 	}
+	stampConvoyAutoClosed(townBeads, convoyID)
 
 	return nil
 }
@@ -1285,6 +1320,7 @@ func runConvoyLand(cmd *cobra.Command, args []string) error {
 
 	// Phase 3: Send completion notifications
 	notifyConvoyCompletion(townBeads, convoyID, convoy.Title)
+	stampConvoyAutoClosed(townBeads, convoyID)
 
 	return nil
 }
@@ -1643,6 +1679,14 @@ func checkAndCloseCompletedConvoys(townBeads string, dryRun bool) ([]struct{ ID,
 	for _, convoy := range convoys {
 		if err := ensureKnownConvoyStatus(convoy.Status); err != nil {
 			style.PrintWarning("skipping convoy %s: invalid lifecycle state: %v", convoy.ID, err)
+			continue
+		}
+		// A jsonl auto-import can resurrect a previously closed convoy back to
+		// "open" because it overwrites the issue row with the stale exported
+		// status. The auto-closed label lives outside that row, so its presence
+		// is our durable "already notified" signal. Skip silently — re-printing
+		// for each patrol cycle would be just as noisy as the bug we fixed. (gst-4a3)
+		if hasLabel(convoy.Labels, convoyAutoClosedLabel) {
 			continue
 		}
 		tracked, err := getTrackedIssues(townBeads, convoy.ID)
