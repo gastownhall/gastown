@@ -172,12 +172,16 @@ func runDailyDigest() error {
 		fmt.Fprintf(os.Stderr, "warning: failed to create report bead: %v\n", err)
 	}
 
-	// Send mail to deacon/, cc mayor/
-	if err := sendCompactDigest(dateStr, markdown); err != nil {
-		return fmt.Errorf("sending digest: %w", err)
+	// Send mail only when the report has something noteworthy. Audit bead is
+	// always written above so the cycle is still recorded.
+	if reportIsNoteworthy(report) {
+		if err := sendCompactDigest(dateStr, markdown); err != nil {
+			return fmt.Errorf("sending digest: %w", err)
+		}
+		fmt.Printf("%s Compaction digest sent for %s\n", style.Success.Render("✓"), dateStr)
+	} else {
+		fmt.Printf("%s Compaction digest for %s suppressed (no activity)\n", style.Dim.Render("·"), dateStr)
 	}
-
-	fmt.Printf("%s Compaction digest sent for %s\n", style.Success.Render("✓"), dateStr)
 	if beadID != "" {
 		fmt.Printf("  Audit bead: %s\n", beadID)
 	}
@@ -309,6 +313,21 @@ func formatDailyDigest(report *compactReport) string {
 	}
 
 	return sb.String()
+}
+
+// reportIsNoteworthy returns true if the report has any deletions, promotions,
+// anomalies, or errors worth alerting on. A pure "nothing happened" report is
+// suppressed to keep the mayor inbox quiet.
+func reportIsNoteworthy(report *compactReport) bool {
+	if len(report.Promotions) > 0 || len(report.Anomalies) > 0 || len(report.Errors) > 0 {
+		return true
+	}
+	for _, stats := range report.Categories {
+		if stats.Deleted > 0 || stats.Promoted > 0 {
+			return true
+		}
+	}
+	return false
 }
 
 // sendCompactDigest sends the daily digest via gt mail send.
