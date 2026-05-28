@@ -144,6 +144,10 @@ func (b *Beads) CreateRigBead(name string, fields *RigFields) (*Issue, error) {
 	id := RigBeadIDWithPrefix(prefix, name)
 	description := FormatRigDescription(name, fields)
 
+	if err := EnsureSchemaMigrated(b.getResolvedBeadsDir()); err != nil {
+		return nil, fmt.Errorf("migrating beads schema: %w", err)
+	}
+
 	// Ensure target database has custom types configured (including "rig").
 	// This matches what CreateAgentBead does — without it, bd rejects
 	// --type=rig on databases that haven't registered custom types yet.

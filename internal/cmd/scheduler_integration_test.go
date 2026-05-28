@@ -13,6 +13,7 @@
 package cmd
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"fmt"
@@ -27,6 +28,7 @@ import (
 	"github.com/steveyegge/gastown/internal/beads"
 	"github.com/steveyegge/gastown/internal/config"
 	"github.com/steveyegge/gastown/internal/scheduler/capacity"
+	"github.com/steveyegge/gastown/internal/util"
 )
 
 // schedulerTestCounter generates unique prefixes for each test to isolate Dolt
@@ -34,12 +36,38 @@ import (
 // leak into later tests (all using the same database).
 var schedulerTestCounter atomic.Int32
 
+const schedulerBDInitTimeout = 45 * time.Second
+
+func runSchedulerCombinedOutput(name string, args []string, dir string, env []string, timeout time.Duration) ([]byte, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+
+	cmd := exec.CommandContext(ctx, name, args...)
+	util.SetProcessGroup(cmd)
+	cmd.Dir = dir
+	cmd.Env = env
+	out, err := cmd.CombinedOutput()
+	if ctx.Err() == context.DeadlineExceeded {
+		return out, fmt.Errorf("%s %s timed out after %v: %w", name, strings.Join(args, " "), timeout, ctx.Err())
+	}
+	return out, err
+}
+
+func isSchedulerCommandTimeout(err error) bool {
+	return err != nil && strings.Contains(err.Error(), "timed out after")
+}
+
 // initBeadsDBForServer initializes a beads DB that can operate against the
 // shared Dolt test server. Uses local init (bd init --prefix --server-port)
 // which reliably creates the schema and records the ephemeral port in
 // metadata.json so subsequent bd commands reach the test server.
-func initBeadsDBForServer(t *testing.T, dir, prefix string) {
+func initBeadsDBForServer(t *testing.T, dir, prefix, homeDir string, requirePrefixConfig bool) {
 	t.Helper()
+
+	beadsDir := filepath.Join(dir, ".beads")
+	if err := os.MkdirAll(beadsDir, 0755); err != nil {
+		t.Fatalf("mkdir .beads in %s: %v", dir, err)
+	}
 
 	args := []string{"init", "--prefix", prefix}
 	// Forward GT_DOLT_PORT so bd connects to the ephemeral test server
@@ -49,23 +77,86 @@ func initBeadsDBForServer(t *testing.T, dir, prefix string) {
 	if p := os.Getenv("GT_DOLT_PORT"); p != "" {
 		args = append(args, "--server", "--server-port", p)
 	}
-	cmd := exec.Command("bd", args...)
-	cmd.Dir = dir
-	out, err := cmd.CombinedOutput()
-	t.Logf("bd init --prefix %s in %s: exit=%v\n%s", prefix, dir, err, out)
+	var out []byte
+	var err error
+	for attempt := 1; attempt <= 3; attempt++ {
+		if attempt > 1 {
+			if removeErr := os.RemoveAll(beadsDir); removeErr != nil {
+				t.Fatalf("reset .beads in %s before retry: %v", dir, removeErr)
+			}
+			if mkdirErr := os.MkdirAll(beadsDir, 0755); mkdirErr != nil {
+				t.Fatalf("mkdir .beads in %s before retry: %v", dir, mkdirErr)
+			}
+		}
+		out, err = runSchedulerCombinedOutput("bd", args, dir, schedulerBDEnvWithHome(dir, homeDir, true), schedulerBDInitTimeout)
+		t.Logf("bd init --prefix %s in %s attempt %d: exit=%v\n%s", prefix, dir, attempt, err, out)
+		if err == nil || !isSchedulerCommandTimeout(err) {
+			break
+		}
+	}
 	if err != nil {
 		t.Fatalf("bd init failed in %s: %v\n%s", dir, err, out)
 	}
 
 	// Create empty issues.jsonl to prevent bd auto-export from corrupting
 	// routes.jsonl (same as initBeadsDBWithPrefix does).
-	issuesPath := filepath.Join(dir, ".beads", "issues.jsonl")
+	issuesPath := filepath.Join(beadsDir, "issues.jsonl")
 	if err := os.WriteFile(issuesPath, []byte(""), 0644); err != nil {
 		t.Fatalf("create issues.jsonl in %s: %v", dir, err)
 	}
 
-	if err := beads.EnsureCustomTypes(filepath.Join(dir, ".beads")); err != nil {
+	if err := beads.EnsureConfigYAML(beadsDir, prefix); err != nil {
+		t.Fatalf("ensure config.yaml in %s: %v", dir, err)
+	}
+
+	var prefixSetOutput string
+	for attempt := 0; attempt < 20; attempt++ {
+		prefixOutput, prefixErr := runSchedulerCombinedOutput("bd",
+			[]string{"config", "set", "issue_prefix", prefix},
+			dir,
+			append(filterEnvKey(withBeadsDirEnv(beadsDir), "HOME"), "HOME="+homeDir),
+			30*time.Second,
+		)
+		prefixSetOutput = strings.TrimSpace(string(prefixOutput))
+		if prefixErr == nil || strings.Contains(prefixSetOutput, "cannot be set via") {
+			prefixSetOutput = ""
+			break
+		}
+		if !strings.Contains(prefixSetOutput, "no beads database found") {
+			t.Fatalf("bd config set issue_prefix in %s failed: %v\n%s", dir, prefixErr, prefixSetOutput)
+		}
+		time.Sleep(250 * time.Millisecond)
+	}
+	if prefixSetOutput != "" {
+		if requirePrefixConfig {
+			t.Fatalf("bd config set issue_prefix in %s failed after catalog wait:\n%s", dir, prefixSetOutput)
+		}
+		t.Logf("bd config set issue_prefix in %s skipped after catalog wait:\n%s", dir, prefixSetOutput)
+	}
+
+	if err := beads.EnsureCustomTypes(beadsDir); err != nil {
 		t.Fatalf("ensure custom types in %s: %v", dir, err)
+	}
+}
+
+func initNestedRigBeadsDBForServer(t *testing.T, rigPath, prefix, homeDir string) {
+	t.Helper()
+
+	stagingDir := filepath.Join(homeDir, ".beads-init-"+prefix)
+	if err := os.MkdirAll(stagingDir, 0755); err != nil {
+		t.Fatalf("mkdir staging dir for %s: %v", prefix, err)
+	}
+	initBeadsDBForServer(t, stagingDir, prefix, homeDir, true)
+
+	if err := os.MkdirAll(rigPath, 0755); err != nil {
+		t.Fatalf("mkdir rig path %s: %v", rigPath, err)
+	}
+	targetBeadsDir := filepath.Join(rigPath, ".beads")
+	if err := os.RemoveAll(targetBeadsDir); err != nil {
+		t.Fatalf("remove existing rig .beads %s: %v", targetBeadsDir, err)
+	}
+	if err := os.Rename(filepath.Join(stagingDir, ".beads"), targetBeadsDir); err != nil {
+		t.Fatalf("move initialized .beads to %s: %v", targetBeadsDir, err)
 	}
 }
 
@@ -95,7 +186,7 @@ func setupSchedulerIntegrationTown(t *testing.T) (hqPath, rigPath, gtBinary stri
 	configureTestGitIdentity(t, tmpDir)
 
 	// Generate unique prefixes per test to avoid cross-test data leakage on
-	// the shared Dolt server. Each test gets its own databases (e.g., beads_h3, beads_r3).
+	// the shared Dolt server. Each test gets its own databases (e.g., h3, r3).
 	n := schedulerTestCounter.Add(1)
 	hqPrefix := fmt.Sprintf("h%d", n)
 	rigPrefix := fmt.Sprintf("r%d", n)
@@ -150,13 +241,10 @@ func setupSchedulerIntegrationTown(t *testing.T) (hqPath, rigPath, gtBinary stri
 	if err := beads.WriteRoutes(townBeadsDir, routes); err != nil {
 		t.Fatalf("write routes: %v", err)
 	}
-	initBeadsDBForServer(t, hqPath, hqPrefix)
+	initBeadsDBForServer(t, hqPath, hqPrefix, tmpDir, false)
 
 	// --- testrig directory (loadRig checks os.Stat on townRoot/<rigName>) ---
-	if err := os.MkdirAll(rigPath, 0755); err != nil {
-		t.Fatalf("mkdir rigPath: %v", err)
-	}
-	initBeadsDBForServer(t, rigPath, rigPrefix)
+	initNestedRigBeadsDBForServer(t, rigPath, rigPrefix, tmpDir)
 
 	// Drop test databases on cleanup to prevent orphaned databases on the Dolt server.
 	t.Cleanup(func() {
@@ -172,10 +260,14 @@ func setupSchedulerIntegrationTown(t *testing.T) (hqPath, rigPath, gtBinary stri
 		}
 		defer db.Close()
 		for _, prefix := range []string{hqPrefix, rigPrefix} {
-			dbName := "beads_" + prefix
-			if _, err := db.Exec("DROP DATABASE IF EXISTS `" + dbName + "`"); err != nil {
-				t.Logf("cleanup: failed to drop %s: %v", dbName, err)
+			for _, dbName := range []string{prefix, "beads_" + prefix} {
+				if _, err := db.Exec("DROP DATABASE IF EXISTS `" + dbName + "`"); err != nil {
+					t.Logf("cleanup: failed to drop %s: %v", dbName, err)
+				}
 			}
+		}
+		if _, err := db.Exec("CALL dolt_purge_dropped_databases()"); err != nil {
+			t.Logf("cleanup: failed to purge dropped databases: %v", err)
 		}
 	})
 
@@ -309,6 +401,7 @@ func TestSchedulerAutoConvoyCreation(t *testing.T) {
 	showArgs := beads.MaybePrependAllowStale([]string{"show", fields.Convoy, "--json"})
 	cmd := exec.Command("bd", showArgs...)
 	cmd.Dir = hqPath
+	cmd.Env = schedulerBDEnv(hqPath, false)
 	out, err := cmd.Output()
 	if err != nil {
 		if exitErr, ok := err.(*exec.ExitError); ok {
@@ -338,6 +431,7 @@ func TestSchedulerAutoConvoyCreation(t *testing.T) {
 	})
 	depCmd := exec.Command("bd", depArgs...)
 	depCmd.Dir = hqPath
+	depCmd.Env = schedulerBDEnv(hqPath, false)
 	depOut, err := depCmd.Output()
 	if err != nil {
 		t.Fatalf("convoy %s dep list failed: %v", fields.Convoy, err)
@@ -448,6 +542,7 @@ func TestSchedulerSlingDryRun(t *testing.T) {
 	listArgs := beads.MaybePrependAllowStale([]string{"list", "--label=gt:convoy", "--json"})
 	cmd := exec.Command("bd", listArgs...)
 	cmd.Dir = hqPath
+	cmd.Env = schedulerBDEnv(hqPath, false)
 	out, err := cmd.Output()
 	if err != nil {
 		t.Fatalf("bd list convoys failed: %v", err)
@@ -459,7 +554,11 @@ func TestSchedulerSlingDryRun(t *testing.T) {
 		t.Fatalf("parse convoy list: %v", err)
 	}
 	if len(convoys) != 0 {
-		t.Errorf("dry-run should NOT create convoys, found %d", len(convoys))
+		var ids []string
+		for _, convoy := range convoys {
+			ids = append(ids, convoy.ID)
+		}
+		t.Errorf("dry-run should NOT create convoys, found %d: %v", len(convoys), ids)
 	}
 }
 
@@ -599,13 +698,10 @@ func setupMultiRigSchedulerTown(t *testing.T) (hqPath, rig1Path, rig2Path, gtBin
 	if err := beads.WriteRoutes(townBeadsDir, routes); err != nil {
 		t.Fatalf("write routes: %v", err)
 	}
-	initBeadsDBForServer(t, hqPath, hqPrefix)
+	initBeadsDBForServer(t, hqPath, hqPrefix, tmpDir, false)
 
 	// --- rig1 ---
-	if err := os.MkdirAll(rig1Path, 0755); err != nil {
-		t.Fatalf("mkdir rig1Path: %v", err)
-	}
-	initBeadsDBForServer(t, rig1Path, rig1Prefix)
+	initNestedRigBeadsDBForServer(t, rig1Path, rig1Prefix, tmpDir)
 	// Write routes to rig1's .beads/ so bd can resolve cross-rig IDs (needed for
 	// cross-rig dep creation via external refs).
 	if err := beads.WriteRoutes(filepath.Join(rig1Path, ".beads"), routes); err != nil {
@@ -620,10 +716,7 @@ func setupMultiRigSchedulerTown(t *testing.T) (hqPath, rig1Path, rig2Path, gtBin
 	}
 
 	// --- rig2 ---
-	if err := os.MkdirAll(rig2Path, 0755); err != nil {
-		t.Fatalf("mkdir rig2Path: %v", err)
-	}
-	initBeadsDBForServer(t, rig2Path, rig2Prefix)
+	initNestedRigBeadsDBForServer(t, rig2Path, rig2Prefix, tmpDir)
 	if err := beads.WriteRoutes(filepath.Join(rig2Path, ".beads"), routes); err != nil {
 		t.Fatalf("write rig2 routes: %v", err)
 	}
@@ -651,10 +744,14 @@ func setupMultiRigSchedulerTown(t *testing.T) (hqPath, rig1Path, rig2Path, gtBin
 		}
 		defer db.Close()
 		for _, prefix := range []string{hqPrefix, rig1Prefix, rig2Prefix} {
-			dbName := "beads_" + prefix
-			if _, err := db.Exec("DROP DATABASE IF EXISTS `" + dbName + "`"); err != nil {
-				t.Logf("cleanup: failed to drop %s: %v", dbName, err)
+			for _, dbName := range []string{prefix, "beads_" + prefix} {
+				if _, err := db.Exec("DROP DATABASE IF EXISTS `" + dbName + "`"); err != nil {
+					t.Logf("cleanup: failed to drop %s: %v", dbName, err)
+				}
 			}
+		}
+		if _, err := db.Exec("CALL dolt_purge_dropped_databases()"); err != nil {
+			t.Logf("cleanup: failed to purge dropped databases: %v", err)
 		}
 	})
 
@@ -1186,6 +1283,7 @@ func TestSchedulerInvalidJSONContextCleanup(t *testing.T) {
 	// Corrupt the context bead description with invalid JSON.
 	corruptCmd := exec.Command("bd", "update", ctxID, "--description=not valid json {{{")
 	corruptCmd.Dir = hqPath
+	corruptCmd.Env = schedulerBDEnv(hqPath, true)
 	if out, err := corruptCmd.CombinedOutput(); err != nil {
 		t.Fatalf("bd update to corrupt description failed: %v\n%s", err, out)
 	}
@@ -1385,6 +1483,7 @@ func TestScheduleBead_RefusesClosed(t *testing.T) {
 	// Close the bead before attempting to schedule.
 	closeCmd := exec.Command("bd", "close", beadID)
 	closeCmd.Dir = rigPath
+	closeCmd.Env = schedulerBDEnv(rigPath, true)
 	if out, err := closeCmd.CombinedOutput(); err != nil {
 		t.Fatalf("bd close %s failed: %v\n%s", beadID, err, out)
 	}
@@ -1416,6 +1515,7 @@ func TestScheduleBead_RefusesTombstone(t *testing.T) {
 	// Tombstone the bead. bd uses `bd close --tombstone` for terminal removal.
 	closeCmd := exec.Command("bd", "close", beadID, "--tombstone")
 	closeCmd.Dir = rigPath
+	closeCmd.Env = schedulerBDEnv(rigPath, true)
 	if out, err := closeCmd.CombinedOutput(); err != nil {
 		if strings.Contains(string(out), "unknown flag: --tombstone") {
 			t.Skip("bd CLI does not support close --tombstone")
@@ -1447,6 +1547,7 @@ func TestScheduleBead_ClosedForceDoesNotBypass(t *testing.T) {
 
 	closeCmd := exec.Command("bd", "close", beadID)
 	closeCmd.Dir = rigPath
+	closeCmd.Env = schedulerBDEnv(rigPath, true)
 	if out, err := closeCmd.CombinedOutput(); err != nil {
 		t.Fatalf("bd close %s failed: %v\n%s", beadID, err, out)
 	}

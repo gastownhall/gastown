@@ -455,6 +455,116 @@ esac
 	})
 }
 
+func TestEnsureCustomTypesMigratesExistingServerDatabaseBeforeConfigWrite(t *testing.T) {
+	logPath := installMockBDRecorder(t)
+
+	townDir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(townDir, "mayor"), 0755); err != nil {
+		t.Fatalf("mkdir mayor: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(townDir, "mayor", "town.json"), []byte("{}"), 0644); err != nil {
+		t.Fatalf("write town.json: %v", err)
+	}
+	if err := os.MkdirAll(filepath.Join(townDir, ".dolt-data", "testdb"), 0755); err != nil {
+		t.Fatalf("mkdir db: %v", err)
+	}
+
+	beadsDir := filepath.Join(townDir, "testrig", ".beads")
+	if err := os.MkdirAll(beadsDir, 0755); err != nil {
+		t.Fatalf("mkdir beads: %v", err)
+	}
+	meta := `{"dolt_mode":"server","dolt_database":"testdb"}`
+	if err := os.WriteFile(filepath.Join(beadsDir, "metadata.json"), []byte(meta), 0644); err != nil {
+		t.Fatalf("write metadata: %v", err)
+	}
+
+	ResetEnsuredDirs()
+	if err := EnsureCustomTypes(beadsDir); err != nil {
+		t.Fatalf("EnsureCustomTypes: %v", err)
+	}
+
+	logOutput := readMockBDLog(t, logPath)
+	migrateIndex := strings.Index(logOutput, "migrate --yes")
+	configIndex := strings.Index(logOutput, "config set types.custom")
+	if migrateIndex == -1 {
+		t.Fatalf("mock bd log missing schema migration:\n%s", logOutput)
+	}
+	if configIndex == -1 {
+		t.Fatalf("mock bd log missing custom type config write:\n%s", logOutput)
+	}
+	if migrateIndex > configIndex {
+		t.Fatalf("schema migration ran after config write:\n%s", logOutput)
+	}
+}
+
+func TestEnsureSchemaMigratedUsesPinnedMetadataDatabase(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("test uses Unix shell script mock for bd")
+	}
+
+	binDir := t.TempDir()
+	logPath := filepath.Join(binDir, "bd.log")
+	script := `#!/bin/sh
+printf 'args=%s beads=%s db=%s data_dir=%s auto=%s readonly=%s\n' "$*" "${BEADS_DIR:-<unset>}" "${BEADS_DOLT_SERVER_DATABASE:-<unset>}" "${BEADS_DOLT_DATA_DIR:-<unset>}" "${BD_DOLT_AUTO_COMMIT:-<unset>}" "${BD_READONLY:-<unset>}" >> "$BD_LOG"
+exit 0
+`
+	if err := os.WriteFile(filepath.Join(binDir, "bd"), []byte(script), 0755); err != nil {
+		t.Fatalf("write mock bd: %v", err)
+	}
+	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	t.Setenv("BD_LOG", logPath)
+	t.Setenv("BEADS_DIR", "/wrong")
+	t.Setenv("BEADS_DOLT_SERVER_DATABASE", "stale")
+	t.Setenv("BEADS_DOLT_DATA_DIR", "/wrong/data")
+	t.Setenv("BD_READONLY", "true")
+
+	townDir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(townDir, "mayor"), 0755); err != nil {
+		t.Fatalf("mkdir mayor: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(townDir, "mayor", "town.json"), []byte("{}"), 0644); err != nil {
+		t.Fatalf("write town.json: %v", err)
+	}
+
+	beadsDir := filepath.Join(townDir, "testrig", ".beads")
+	if err := os.MkdirAll(beadsDir, 0755); err != nil {
+		t.Fatalf("mkdir beads: %v", err)
+	}
+	meta := `{"dolt_mode":"server","dolt_database":"rigdb","dolt_server_host":"127.0.0.1","dolt_server_port":4407}`
+	if err := os.WriteFile(filepath.Join(beadsDir, "metadata.json"), []byte(meta), 0644); err != nil {
+		t.Fatalf("write metadata: %v", err)
+	}
+
+	ResetEnsuredDirs()
+	if err := EnsureSchemaMigrated(beadsDir); err != nil {
+		t.Fatalf("EnsureSchemaMigrated: %v", err)
+	}
+	if err := EnsureSchemaMigrated(beadsDir); err != nil {
+		t.Fatalf("EnsureSchemaMigrated second call: %v", err)
+	}
+
+	logOutput := readMockBDLog(t, logPath)
+	lines := strings.Split(strings.TrimSpace(logOutput), "\n")
+	if len(lines) != 1 {
+		t.Fatalf("expected one cached migration call, got %d:\n%s", len(lines), logOutput)
+	}
+	for _, want := range []string{
+		"args=migrate --yes",
+		"beads=" + beadsDir,
+		"db=rigdb",
+		"data_dir=<unset>",
+		"auto=on",
+		"readonly=<unset>",
+	} {
+		if !strings.Contains(logOutput, want) {
+			t.Fatalf("schema migration env log missing %q:\n%s", want, logOutput)
+		}
+	}
+	if strings.Contains(logOutput, "stale") || strings.Contains(logOutput, "/wrong") || strings.Contains(logOutput, ".dolt-data") {
+		t.Fatalf("stale inherited beads env leaked into migration:\n%s", logOutput)
+	}
+}
+
 func TestEnsureCustomStatuses(t *testing.T) {
 	ResetEnsuredDirs()
 
@@ -684,7 +794,8 @@ func TestParseConfigOutput(t *testing.T) {
 }
 
 func TestEnsureDatabaseInitialized(t *testing.T) {
-	t.Run("dolt dir exists — skip init", func(t *testing.T) {
+	t.Run("dolt dir exists — migrate without init", func(t *testing.T) {
+		logPath := installMockBDRecorder(t)
 		beadsDir := filepath.Join(t.TempDir(), ".beads")
 		os.MkdirAll(filepath.Join(beadsDir, "dolt"), 0755)
 
@@ -692,10 +803,17 @@ func TestEnsureDatabaseInitialized(t *testing.T) {
 		if err != nil {
 			t.Errorf("expected nil error when dolt/ exists, got: %v", err)
 		}
+		logOutput := readMockBDLog(t, logPath)
+		if strings.Contains(logOutput, "init") {
+			t.Fatalf("mock bd log %q unexpectedly ran init", logOutput)
+		}
+		if !strings.Contains(logOutput, "migrate --yes") {
+			t.Fatalf("mock bd log %q missing schema migration", logOutput)
+		}
 	})
 
-	t.Run("metadata.json with valid db — skip init (server mode)", func(t *testing.T) {
-		// Set up town structure with .dolt-data/<db> so the deep check passes
+	t.Run("metadata.json with valid db — migrate without init (server mode)", func(t *testing.T) {
+		logPath := installMockBDRecorder(t)
 		townDir := t.TempDir()
 		mayorDir := filepath.Join(townDir, "mayor")
 		os.MkdirAll(mayorDir, 0755)
@@ -715,22 +833,27 @@ func TestEnsureDatabaseInitialized(t *testing.T) {
 		if err != nil {
 			t.Errorf("expected nil error when metadata.json + .dolt-data/<db> exist, got: %v", err)
 		}
+		logOutput := readMockBDLog(t, logPath)
+		if strings.Contains(logOutput, "init") {
+			t.Fatalf("mock bd log %q unexpectedly ran init", logOutput)
+		}
+		if !strings.Contains(logOutput, "migrate --yes") {
+			t.Fatalf("mock bd log %q missing schema migration", logOutput)
+		}
 	})
 
-	t.Run("metadata.json exists but db missing — attempts init", func(t *testing.T) {
+	t.Run("server metadata without local data dir — migrate without init", func(t *testing.T) {
 		logPath := installMockBDRecorder(t)
-		// metadata.json references a database that doesn't exist in .dolt-data/
 		townDir := t.TempDir()
 		mayorDir := filepath.Join(townDir, "mayor")
 		os.MkdirAll(mayorDir, 0755)
 		os.WriteFile(filepath.Join(mayorDir, "town.json"), []byte("{}"), 0644)
-		os.MkdirAll(filepath.Join(townDir, ".dolt-data"), 0755) // empty .dolt-data
 
 		rigDir := filepath.Join(townDir, "testrig")
 		beadsDir := filepath.Join(rigDir, ".beads")
 		os.MkdirAll(beadsDir, 0755)
 
-		meta := `{"dolt_mode":"server","dolt_database":"missing_db"}`
+		meta := `{"dolt_mode":"server","dolt_database":"external_db"}`
 		os.WriteFile(filepath.Join(beadsDir, "metadata.json"), []byte(meta), 0644)
 
 		if err := ensureDatabaseInitialized(beadsDir); err != nil {
@@ -738,10 +861,14 @@ func TestEnsureDatabaseInitialized(t *testing.T) {
 		}
 
 		logOutput := readMockBDLog(t, logPath)
-		for _, want := range []string{"init --prefix gt --server", "config set issue_prefix", "migrate --yes"} {
-			if !strings.Contains(logOutput, want) {
-				t.Fatalf("mock bd log %q missing %q", logOutput, want)
-			}
+		if strings.Contains(logOutput, "init") {
+			t.Fatalf("mock bd log %q unexpectedly ran init", logOutput)
+		}
+		if !strings.Contains(logOutput, "migrate --yes") {
+			t.Fatalf("mock bd log %q missing schema migration", logOutput)
+		}
+		if got := string(mustReadFile(t, filepath.Join(beadsDir, "metadata.json"))); got != meta {
+			t.Fatalf("metadata.json changed: got %s want %s", got, meta)
 		}
 	})
 
@@ -892,6 +1019,21 @@ func TestDetectPrefix(t *testing.T) {
 		// "rig" won't be found in rigs.json → falls to "gt" default
 		if got != "gt" {
 			t.Errorf("detectPrefix() for routed path = %q, want %q", got, "gt")
+		}
+	})
+
+	t.Run("routed path prefers local config.yaml", func(t *testing.T) {
+		townDir := t.TempDir()
+		mayorDir := filepath.Join(townDir, "mayor")
+		os.MkdirAll(mayorDir, 0755)
+		os.WriteFile(filepath.Join(mayorDir, "town.json"), []byte("{}"), 0644)
+
+		beadsDir := filepath.Join(townDir, "myrig", "mayor", "rig", ".beads")
+		os.MkdirAll(beadsDir, 0755)
+		os.WriteFile(filepath.Join(beadsDir, "config.yaml"), []byte("prefix: custom\nissue-prefix: custom\n"), 0644)
+
+		if got := detectPrefix(beadsDir); got != "custom" {
+			t.Errorf("detectPrefix() for routed path with config.yaml = %q, want %q", got, "custom")
 		}
 	})
 }

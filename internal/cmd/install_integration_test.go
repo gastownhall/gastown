@@ -13,7 +13,7 @@ import (
 	"testing"
 
 	"github.com/steveyegge/gastown/internal/config"
-	"github.com/steveyegge/gastown/internal/testutil"
+	"github.com/steveyegge/gastown/internal/testutil/doltcleanup"
 	"gopkg.in/yaml.v3"
 )
 
@@ -29,7 +29,7 @@ func TestInstallCreatesCorrectStructure(t *testing.T) {
 	// HOME and Dolt port are overridden for isolation; configure git identity so EnsureDoltIdentity works.
 	env, doltPort := isolatedE2EDoltEnv(t, tmpDir)
 	configureGitIdentity(t, env)
-	testutil.ReapOwnedDoltOnCleanup(t, hqPath)
+	doltcleanup.ReapOwnedDoltOnCleanup(t, hqPath)
 
 	// Run gt install
 	cmd := exec.Command(gtBinary, "install", hqPath, "--name", "test-town", "--dolt-port", doltPort)
@@ -94,7 +94,7 @@ func TestInstallBeadsHasCorrectPrefix(t *testing.T) {
 	// HOME and Dolt port are overridden for isolation; configure git identity so EnsureDoltIdentity works.
 	env, doltPort := isolatedE2EDoltEnv(t, tmpDir)
 	configureGitIdentity(t, env)
-	testutil.ReapOwnedDoltOnCleanup(t, hqPath)
+	doltcleanup.ReapOwnedDoltOnCleanup(t, hqPath)
 
 	// Run gt install (includes beads init by default)
 	cmd := exec.Command(gtBinary, "install", hqPath, "--dolt-port", doltPort)
@@ -357,7 +357,7 @@ func TestInstallFormulasProvisioned(t *testing.T) {
 	// HOME and Dolt port are overridden for isolation; configure git identity so EnsureDoltIdentity works.
 	env, doltPort := isolatedE2EDoltEnv(t, tmpDir)
 	configureGitIdentity(t, env)
-	testutil.ReapOwnedDoltOnCleanup(t, hqPath)
+	doltcleanup.ReapOwnedDoltOnCleanup(t, hqPath)
 
 	// Run gt install (includes beads and formula provisioning)
 	cmd := exec.Command(gtBinary, "install", hqPath, "--dolt-port", doltPort)
@@ -577,7 +577,7 @@ func TestInstallDoctorClean(t *testing.T) {
 
 	// Clean environment and isolated Dolt port for predictable, non-destructive behavior.
 	env, doltPort := isolatedE2EDoltEnv(t, tmpDir)
-	testutil.ReapOwnedDoltOnCleanup(t, hqPath)
+	doltcleanup.ReapOwnedDoltOnCleanup(t, hqPath)
 
 	// Set up git identity in the test's temp HOME so EnsureDoltIdentity can copy it.
 	configureGitIdentity(t, env)
@@ -709,7 +709,7 @@ func TestInstallWithDaemon(t *testing.T) {
 
 	// Clean environment and isolated Dolt port for predictable, non-destructive behavior.
 	env, doltPort := isolatedE2EDoltEnv(t, tmpDir)
-	testutil.ReapOwnedDoltOnCleanup(t, hqPath)
+	doltcleanup.ReapOwnedDoltOnCleanup(t, hqPath)
 
 	// Set up git identity in the test's temp HOME so EnsureDoltIdentity can copy it.
 	configureGitIdentity(t, env)

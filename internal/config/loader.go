@@ -1168,7 +1168,11 @@ func resolveAgentConfigInternal(townRoot, rigPath string) *RuntimeConfig {
 	} else if townSettings.DefaultAgent != "" {
 		agentName = townSettings.DefaultAgent
 	} else {
-		agentName = "claude" // ultimate fallback
+		return defaultClaudeRuntimeConfig()
+	}
+
+	if shouldUseCanonicalClaudeDefault(agentName, townSettings, rigSettings) {
+		return defaultClaudeRuntimeConfig()
 	}
 
 	rc := lookupAgentConfig(agentName, townSettings, rigSettings)
@@ -1233,7 +1237,7 @@ func resolveAgentConfigWithOverrideInternal(townRoot, rigPath, agentOverride str
 	} else if townSettings.DefaultAgent != "" {
 		agentName = townSettings.DefaultAgent
 	} else {
-		agentName = "claude" // ultimate fallback
+		return defaultClaudeRuntimeConfig(), string(AgentClaude), nil
 	}
 
 	// If an override is requested, validate it exists
@@ -1281,6 +1285,9 @@ func resolveAgentConfigWithOverrideInternal(townRoot, rigPath, agentOverride str
 	}
 
 	// Normal lookup path (no override)
+	if shouldUseCanonicalClaudeDefault(agentName, townSettings, rigSettings) {
+		return defaultClaudeRuntimeConfig(), string(AgentClaude), nil
+	}
 	rc := lookupAgentConfig(agentName, townSettings, rigSettings)
 	rc.ResolvedAgent = agentName
 
@@ -1290,6 +1297,16 @@ func resolveAgentConfigWithOverrideInternal(townRoot, rigPath, agentOverride str
 	}
 
 	return rc, agentName, nil
+}
+
+func shouldUseCanonicalClaudeDefault(agentName string, townSettings *TownSettings, rigSettings *RigSettings) bool {
+	return agentName == string(AgentClaude) && lookupCustomAgentConfig(agentName, townSettings, rigSettings) == nil
+}
+
+func defaultClaudeRuntimeConfig() *RuntimeConfig {
+	rc := DefaultRuntimeConfig()
+	rc.ResolvedAgent = string(AgentClaude)
+	return rc
 }
 
 // ValidateAgentConfig checks if an agent configuration is valid and the binary exists.

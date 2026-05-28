@@ -577,6 +577,7 @@ func (m *Manager) AddRig(opts AddRigOptions) (*Rig, error) {
 	// Check if source repo has tracked .beads/ directory.
 	// If so, we need to initialize the database (it doesn't exist after clone since DB files are gitignored).
 	sourceBeadsDir := filepath.Join(mayorRigPath, ".beads")
+	restoreSourceBeadsConfig := func() error { return nil }
 	if _, err := os.Stat(sourceBeadsDir); err == nil {
 		// Remove any redirect file that might have been accidentally tracked.
 		// Redirect files are runtime/local config and should not be in git.
@@ -586,6 +587,33 @@ func (m *Manager) AddRig(opts AddRigOptions) (*Rig, error) {
 
 		// Tracked beads exist - try to detect prefix from existing issues
 		sourceBeadsConfig := filepath.Join(sourceBeadsDir, "config.yaml")
+		if info, err := os.Stat(sourceBeadsConfig); err == nil && !info.IsDir() {
+			if data, err := os.ReadFile(sourceBeadsConfig); err == nil {
+				originalSourceBeadsConfig := append([]byte(nil), data...)
+				originalSourceBeadsConfigMode := info.Mode().Perm()
+				restoreSourceBeadsConfig = func() error {
+					desired := originalSourceBeadsConfig
+					desiredMode := originalSourceBeadsConfigMode
+					if headData, err := exec.Command("git", "-C", mayorRigPath, "show", "HEAD:.beads/config.yaml").Output(); err == nil {
+						desired = headData
+						desiredMode = 0644
+					}
+					current, err := os.ReadFile(sourceBeadsConfig)
+					if err != nil {
+						return err
+					}
+					if string(current) != string(desired) {
+						if err := os.WriteFile(sourceBeadsConfig, desired, desiredMode); err != nil {
+							return fmt.Errorf("restoring tracked beads config: %w", err)
+						}
+					}
+					if err := os.Chmod(sourceBeadsConfig, desiredMode); err != nil {
+						return fmt.Errorf("restoring tracked beads config mode: %w", err)
+					}
+					return nil
+				}
+			}
+		}
 		if sourcePrefix := detectBeadsPrefixFromConfig(sourceBeadsConfig); sourcePrefix != "" {
 			fmt.Printf("  Detected existing beads prefix '%s' from source repo\n", sourcePrefix)
 			// Only error on mismatch if user explicitly provided --prefix
@@ -665,6 +693,9 @@ func (m *Manager) AddRig(opts AddRigOptions) (*Rig, error) {
 		if prefixOutput, prefixErr := prefixSetCmd.CombinedOutput(); prefixErr != nil {
 			fmt.Printf("  Warning: Could not set issue_prefix: %v (%s)\n", prefixErr, strings.TrimSpace(string(prefixOutput)))
 		}
+		if err := restoreSourceBeadsConfig(); err != nil {
+			return nil, err
+		}
 	}
 
 	// NOTE: No per-directory CLAUDE.md/AGENTS.md is created for any agent.
@@ -716,16 +747,31 @@ func (m *Manager) AddRig(opts AddRigOptions) (*Rig, error) {
 	{
 		resolvedBeadsDir := beads.ResolveBeadsDir(rigPath)
 		bdEnv := bdSubprocessEnv(resolvedBeadsDir, opts.Name)
-		prefixCmd := exec.Command("bd", "config", "set", "issue_prefix", opts.BeadsPrefix)
-		prefixCmd.Dir = rigPath
-		prefixCmd.Env = bdEnv
-		if out, err := prefixCmd.CombinedOutput(); err != nil {
-			fmt.Printf("  Warning: Could not set issue_prefix on rig database: %v (%s)\n", err, strings.TrimSpace(string(out)))
+		configuredServerDB := false
+		if !opts.SkipDoltCheck {
+			if err := beads.EnsureSchemaMigrated(resolvedBeadsDir); err != nil {
+				fmt.Printf("  Warning: Could not migrate rig beads schema before config: %v\n", err)
+			} else if err := doltserver.SetBeadsConfigValues(m.townRoot, opts.Name, map[string]string{
+				"issue_prefix": opts.BeadsPrefix,
+				"types.custom": constants.BeadsCustomTypes,
+			}); err != nil {
+				fmt.Printf("  Warning: Could not set rig beads config directly: %v\n", err)
+			} else {
+				configuredServerDB = true
+			}
 		}
-		typesCmd := exec.Command("bd", "config", "set", "types.custom", constants.BeadsCustomTypes)
-		typesCmd.Dir = rigPath
-		typesCmd.Env = bdEnv
-		_, _ = typesCmd.CombinedOutput()
+		if !configuredServerDB {
+			prefixCmd := exec.Command("bd", "config", "set", "issue_prefix", opts.BeadsPrefix)
+			prefixCmd.Dir = rigPath
+			prefixCmd.Env = bdEnv
+			if out, err := prefixCmd.CombinedOutput(); err != nil {
+				fmt.Printf("  Warning: Could not set issue_prefix on rig database: %v (%s)\n", err, strings.TrimSpace(string(out)))
+			}
+			typesCmd := exec.Command("bd", "config", "set", "types.custom", constants.BeadsCustomTypes)
+			typesCmd.Dir = rigPath
+			typesCmd.Env = bdEnv
+			_, _ = typesCmd.CombinedOutput()
+		}
 	}
 
 	// Auto-create DoltHub remote for the rig's beads database.
@@ -894,6 +940,9 @@ Use crew for your own workspace. Polecats are for batch work dispatch.
 	if err := m.seedPatrolMolecules(rigPath); err != nil {
 		// Non-fatal: log warning but continue
 		fmt.Fprintf(os.Stderr, "  Warning: Could not seed patrol molecules: %v\n", err)
+	}
+	if err := restoreSourceBeadsConfig(); err != nil {
+		return nil, err
 	}
 
 	// Create plugin directories
@@ -1230,11 +1279,25 @@ func (m *Manager) InitBeads(rigPath, prefix, rigName string) error {
 	cmd.Dir = rigPath
 	cmd.Env = filteredEnv
 	_, bdInitErr := cmd.CombinedOutput()
+	bdInitOK := bdInitErr == nil
 	if bdInitErr != nil {
 		// bd might not be installed or failed — the shared helper below will
 		// create config.yaml with the required defaults as a fallback.
-	} else {
-		// bd init succeeded - configure the Dolt database
+	}
+
+	if err := beads.EnsureConfigYAML(beadsDir, prefix); err != nil {
+		return fmt.Errorf("ensuring config.yaml: %w", err)
+	}
+	if rigName != "" {
+		if err := doltserver.EnsureMetadataForBeadsDir(m.townRoot, beadsDir, rigName, rigName); err != nil {
+			return fmt.Errorf("ensuring metadata.json: %w", err)
+		}
+	}
+
+	if bdInitOK {
+		if err := beads.EnsureSchemaMigrated(beadsDir); err != nil {
+			return fmt.Errorf("migrating beads schema: %w", err)
+		}
 
 		// Configure custom types for Gas Town (agent, role, rig, convoy).
 		// These were extracted from beads core in v0.46.0 and now require explicit config.
@@ -1272,15 +1335,6 @@ func (m *Manager) InitBeads(rigPath, prefix, rigName string) error {
 				// when rig init is invoked outside AddRig.
 				fmt.Fprintf(os.Stderr, "Warning: orphan database cleanup: %v\n", err)
 			}
-		}
-	}
-
-	if err := beads.EnsureConfigYAML(beadsDir, prefix); err != nil {
-		return fmt.Errorf("ensuring config.yaml: %w", err)
-	}
-	if rigName != "" {
-		if err := doltserver.EnsureMetadataForBeadsDir(m.townRoot, beadsDir, rigName, rigName); err != nil {
-			return fmt.Errorf("ensuring metadata.json: %w", err)
 		}
 	}
 

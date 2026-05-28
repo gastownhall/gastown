@@ -467,7 +467,14 @@ func runBdJSONWithOptions(dir string, allowStale bool, args ...string) ([]byte, 
 	cmd.Stdout = &stdout
 
 	if err := cmd.Run(); err != nil {
-		if errMsg := strings.TrimSpace(stderr.String()); errMsg != "" {
+		errMsg := strings.TrimSpace(stderr.String())
+		if outMsg := strings.TrimSpace(stdout.String()); outMsg != "" {
+			if errMsg != "" {
+				errMsg += "\n"
+			}
+			errMsg += outMsg
+		}
+		if errMsg != "" {
 			return nil, fmt.Errorf("bd %s: %s", args[0], errMsg)
 		}
 		return nil, fmt.Errorf("bd %s: %w", args[0], err)
@@ -486,29 +493,45 @@ func runBdJSONWithOptions(dir string, allowStale bool, args ...string) ([]byte, 
 //
 // Returns deduplicated, unwrapped issue IDs (external:prefix:id → id).
 func bdDepListRawIDs(dir, issueID, direction, depType string) ([]string, error) {
-	// Determine query columns based on direction.
-	// "down": issueID depends on targets → SELECT depends_on_id WHERE issue_id = ?
-	// "up":   issueID is depended on → SELECT issue_id WHERE depends_on_id = ?
-	var selectCol, whereCol string
-	if direction == "up" {
-		selectCol = "issue_id"
-		whereCol = "depends_on_id"
-	} else {
-		selectCol = "depends_on_id"
-		whereCol = "issue_id"
-	}
-
-	// Build SQL query. Bead IDs are system-generated alphanumeric strings
-	// with hyphens and dots — validate to prevent injection.
 	if !isValidBeadID(issueID) {
 		return nil, fmt.Errorf("invalid bead ID: %q", issueID)
 	}
+	if depType != "" && !isValidBeadID(depType) {
+		return nil, fmt.Errorf("invalid dep type: %q", depType)
+	}
 
-	query := fmt.Sprintf("SELECT %s FROM dependencies WHERE %s = '%s'", selectCol, whereCol, issueID)
+	ids, err := bdDepListRawIDsWithSchema(dir, issueID, direction, depType, false)
+	if err == nil {
+		return ids, nil
+	}
+	if !isDependencyTargetColumnError(err) {
+		return nil, err
+	}
+	return bdDepListRawIDsWithSchema(dir, issueID, direction, depType, true)
+}
+
+func bdDepListRawIDsWithSchema(dir, issueID, direction, depType string, splitTarget bool) ([]string, error) {
+	targetExpr := "depends_on_id"
+	if splitTarget {
+		targetExpr = "COALESCE(depends_on_issue_id, depends_on_wisp_id, depends_on_external)"
+	}
+
+	// Determine query columns based on direction.
+	// "down": issueID depends on targets → SELECT target WHERE issue_id = ?
+	// "up":   issueID is depended on → SELECT issue_id WHERE target = ?
+	selectExpr := targetExpr
+	rowKey := "depends_on_id"
+	whereExpr := "issue_id"
+	if direction == "up" {
+		selectExpr = "issue_id"
+		rowKey = "issue_id"
+		whereExpr = targetExpr
+	} else if splitTarget {
+		selectExpr = targetExpr + " AS depends_on_id"
+	}
+
+	query := fmt.Sprintf("SELECT %s FROM dependencies WHERE %s = '%s'", selectExpr, whereExpr, issueID)
 	if depType != "" {
-		if !isValidBeadID(depType) {
-			return nil, fmt.Errorf("invalid dep type: %q", depType)
-		}
 		query += fmt.Sprintf(" AND type = '%s'", depType)
 	}
 
@@ -526,7 +549,7 @@ func bdDepListRawIDs(dir, issueID, direction, depType string) ([]string, error) 
 	seen := make(map[string]bool, len(rows))
 	var ids []string
 	for _, row := range rows {
-		rawID := row[selectCol]
+		rawID := row[rowKey]
 		id := beads.ExtractIssueID(rawID)
 		if id != "" && !seen[id] {
 			seen[id] = true
@@ -534,6 +557,18 @@ func bdDepListRawIDs(dir, issueID, direction, depType string) ([]string, error) 
 		}
 	}
 	return ids, nil
+}
+
+func isDependencyTargetColumnError(err error) bool {
+	msg := strings.ToLower(err.Error())
+	missingColumn := strings.Contains(msg, "unknown column") ||
+		strings.Contains(msg, "could not be found") ||
+		strings.Contains(msg, "no such column")
+	return missingColumn &&
+		(strings.Contains(msg, "depends_on_id") ||
+			strings.Contains(msg, "depends_on_issue_id") ||
+			strings.Contains(msg, "depends_on_wisp_id") ||
+			strings.Contains(msg, "depends_on_external"))
 }
 
 // isValidBeadID checks that a string is safe for SQL interpolation in dep queries.

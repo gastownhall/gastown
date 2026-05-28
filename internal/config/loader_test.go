@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -1810,6 +1811,24 @@ func TestResolveRoleAgentConfigFallsBackToDefaults(t *testing.T) {
 	rc := ResolveRoleAgentConfig("polecat", "/nonexistent/town", "/nonexistent/rig")
 	if !isClaudeCommand(rc.Command) {
 		t.Errorf("Command = %q, want claude or path ending in /claude (default)", rc.Command)
+	}
+}
+
+func TestResolveRoleAgentConfigFallbackUsesCanonicalClaude(t *testing.T) {
+	ResetRegistryForTesting()
+	t.Cleanup(ResetRegistryForTesting)
+	RegisterAgentForTesting("claude", AgentPresetInfo{
+		Name:    "claude",
+		Command: "env",
+		Args:    []string{"FOO=bar", "claude"},
+	})
+
+	rc := ResolveRoleAgentConfig("polecat", "/nonexistent/town", "/nonexistent/rig")
+	if !isClaudeCommand(rc.Command) {
+		t.Fatalf("Command = %q, want canonical Claude default", rc.Command)
+	}
+	if slices.Contains(rc.Args, "FOO=bar") {
+		t.Fatalf("fallback used shadowed registry args: %v", rc.Args)
 	}
 }
 

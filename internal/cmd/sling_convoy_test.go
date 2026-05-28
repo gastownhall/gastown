@@ -155,3 +155,40 @@ func TestBdDepListRawIDsValidation(t *testing.T) {
 		t.Error("bdDepListRawIDs should reject SQL injection in depType")
 	}
 }
+
+func TestBdDepListRawIDsFallsBackToSplitTargetSchema(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("skipping on windows")
+	}
+
+	binDir := t.TempDir()
+	bdScript := `#!/bin/sh
+case "$*" in
+  *"SELECT depends_on_id FROM dependencies"*)
+    echo '{"error":"query error: Error 1105 (HY000): column \"depends_on_id\" could not be found in any table in scope","schema_version":1}'
+    exit 1
+    ;;
+  *"COALESCE(depends_on_issue_id, depends_on_wisp_id, depends_on_external) AS depends_on_id"*)
+    echo '[{"depends_on_id":"external:gt:gt-abc123"}]'
+    exit 0
+    ;;
+  *)
+    echo "unexpected args: $*" >&2
+    exit 1
+    ;;
+esac
+`
+	bdPath := filepath.Join(binDir, "bd")
+	if err := os.WriteFile(bdPath, []byte(bdScript), 0755); err != nil {
+		t.Fatalf("write bd stub: %v", err)
+	}
+	t.Setenv("PATH", binDir+":"+os.Getenv("PATH"))
+
+	ids, err := bdDepListRawIDs(t.TempDir(), "hq-cv-test", "down", "tracks")
+	if err != nil {
+		t.Fatalf("bdDepListRawIDs: %v", err)
+	}
+	if len(ids) != 1 || ids[0] != "gt-abc123" {
+		t.Fatalf("ids = %v, want [gt-abc123]", ids)
+	}
+}

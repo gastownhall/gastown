@@ -129,6 +129,8 @@ func dropStaleBeadsDatabases() error {
 			shouldDrop := false
 			if strings.HasPrefix(name, "beads_") {
 				shouldDrop = true
+			} else if isSchedulerTestDatabaseName(name) {
+				shouldDrop = true
 			} else if name == "hq" {
 				shouldDrop = true // Created by beads_db_init_test.go
 			}
@@ -168,4 +170,21 @@ func dropStaleBeadsDatabases() error {
 
 	fmt.Fprintf(os.Stderr, "[dropStaleBeadsDatabases] cleaned: %v\n", dropped)
 	return nil
+}
+
+func isSchedulerTestDatabaseName(name string) bool {
+	if len(name) < 2 {
+		return false
+	}
+	switch name[0] {
+	case 'h', 'r', 's':
+	default:
+		return false
+	}
+	for _, r := range name[1:] {
+		if r < '0' || r > '9' {
+			return false
+		}
+	}
+	return true
 }

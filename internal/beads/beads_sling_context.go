@@ -95,6 +95,7 @@ func (b *Beads) ListOpenSlingContexts() ([]*Issue, error) {
 	out, err := b.run("list",
 		"--label="+capacity.LabelSlingContext,
 		"--status=open",
+		"--include-ephemeral",
 		"--json",
 		"--limit=0",
 	)

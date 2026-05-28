@@ -584,6 +584,7 @@ func (b *Beads) runWithStdin(stdinData []byte, args ...string) (_ []byte, retErr
 	// Always explicitly set BEADS_DIR to prevent inherited env vars from
 	// causing prefix mismatches. Use explicit beadsDir if set, otherwise
 	// resolve from working directory.
+	trackedConfig := snapshotTrackedConfigYAML(beadsDir)
 	cmd := exec.CommandContext(ctx, "bd", fullArgs...) //nolint:gosec // G204: bd is a trusted internal tool
 	util.SetDetachedProcessGroup(cmd)
 	cmd.Dir = b.workDir
@@ -622,6 +623,9 @@ func (b *Beads) runWithStdin(stdinData []byte, args ...string) (_ []byte, retErr
 			cmd.Stdin = bytes.NewReader(stdinData)
 		}
 		err = cmd.Run()
+	}
+	if restoreErr := restoreTrackedConfigYAML(trackedConfig); restoreErr != nil && err == nil {
+		return nil, fmt.Errorf("restoring tracked config.yaml in %s: %w", beadsDir, restoreErr)
 	}
 
 	if err != nil {
@@ -782,8 +786,7 @@ func (b *Beads) buildRunEnv() []string {
 	// keep buildRunEnv focused on Dolt target isolation and avoid duplicate
 	// first-match-sensitive BEADS_DIR entries.
 	env := BuildPinnedBDEnv(os.Environ(), b.getResolvedBeadsDir())
-	env = stripEnvKey(env, "BEADS_DIR")
-	return stripEnvKey(env, "BEADS_DOLT_SERVER_PORT")
+	return stripEnvKey(env, "BEADS_DIR")
 }
 
 // buildRoutingEnv builds the environment for runWithRouting() calls.
@@ -801,7 +804,7 @@ func (b *Beads) buildRoutingEnv() []string {
 		return SuppressBDSideEffects(env)
 	}
 	env := BuildRoutingBDEnv(os.Environ(), b.getResolvedBeadsDir())
-	return stripEnvKey(env, "BEADS_DOLT_SERVER_PORT")
+	return env
 }
 
 // filterBeadsEnv removes beads-related environment variables from the given

@@ -699,23 +699,26 @@ func initTownBeads(townPath string) error {
 	// DefaultConfig resolves the port from config.yaml > GT_DOLT_PORT env > default (3307).
 	// Forward GT_DOLT_PORT so bd connects to the correct server when a
 	// non-default port is configured (e.g., ephemeral test servers in CI).
-	bdInitArgs := buildBdInitArgs(townPath)
-	cmd := exec.Command("bd", bdInitArgs...)
-	cmd.Dir = townPath
-	cmd.Env = withBeadsDirEnv(filepath.Join(townPath, ".beads"))
+	beadsDir := filepath.Join(townPath, ".beads")
+	preinitializedHQ := doltserver.DatabaseExists(townPath, "hq")
+	if !preinitializedHQ {
+		bdInitArgs := buildBdInitArgs(townPath)
+		cmd := exec.Command("bd", bdInitArgs...)
+		cmd.Dir = townPath
+		cmd.Env = withBeadsDirEnv(beadsDir)
 
-	output, err := cmd.CombinedOutput()
-	if err != nil {
-		// Check if beads is already initialized
-		if strings.Contains(string(output), "already initialized") {
-			// Already initialized - still need to ensure fingerprint exists
-		} else {
-			return fmt.Errorf("bd init failed: %s", strings.TrimSpace(string(output)))
+		output, err := cmd.CombinedOutput()
+		if err != nil {
+			// Check if beads is already initialized
+			if strings.Contains(string(output), "already initialized") {
+				// Already initialized - still need to ensure fingerprint exists
+			} else {
+				return fmt.Errorf("bd init failed: %s", strings.TrimSpace(string(output)))
+			}
 		}
 	}
 
 	// Verify .beads directory was actually created (bd init can exit 0 without creating it)
-	beadsDir := filepath.Join(townPath, ".beads")
 	if _, statErr := os.Stat(beadsDir); os.IsNotExist(statErr) {
 		return fmt.Errorf("bd init succeeded but .beads directory not created (check bd daemon interference)")
 	}
@@ -730,44 +733,56 @@ func initTownBeads(townPath string) error {
 	if err := beads.EnsureConfigYAML(beadsDir, "hq"); err != nil {
 		return fmt.Errorf("ensuring config.yaml: %w", err)
 	}
-
-	beadsEnv := withBeadsDirEnv(beadsDir)
-
-	// Set beads.role to maintainer (town-level beads are always maintainer-owned).
-	// Without this, bd doctor warns about missing role configuration.
-	roleSetCmd := exec.Command("bd", "config", "set", "beads.role", "maintainer")
-	roleSetCmd.Dir = townPath
-	roleSetCmd.Env = beadsEnv
-	if roleOutput, roleErr := roleSetCmd.CombinedOutput(); roleErr != nil {
-		fmt.Printf("   %s Could not set beads.role: %s\n", style.Dim.Render("⚠"), strings.TrimSpace(string(roleOutput)))
+	if err := beads.EnsureSchemaMigrated(beadsDir); err != nil {
+		return fmt.Errorf("migrating town beads schema: %w", err)
 	}
 
-	// Explicitly set issue_prefix config (bd init --prefix may not persist it in newer versions).
-	// bd >= 1.0.0 rejects this with "cannot be set via 'bd config set'" because init persists
-	// it directly; treat that as already-set rather than a failure.
-	prefixSetCmd := exec.Command("bd", "config", "set", "issue_prefix", "hq")
-	prefixSetCmd.Dir = townPath
-	prefixSetCmd.Env = beadsEnv
-	if prefixOutput, prefixErr := prefixSetCmd.CombinedOutput(); prefixErr != nil {
-		out := strings.TrimSpace(string(prefixOutput))
-		if !strings.Contains(out, "cannot be set via") {
-			return fmt.Errorf("bd config set issue_prefix failed: %s", out)
+	if preinitializedHQ {
+		if err := seedPreinitializedTownBeadsConfig(townPath); err != nil {
+			return fmt.Errorf("seeding town beads config: %w", err)
 		}
-	}
+		if err := doltserver.CommitServerWorkingSet(townPath, "hq", "gt install: initialize town beads"); err != nil {
+			return fmt.Errorf("committing town beads schema: %w", err)
+		}
+	} else {
+		beadsEnv := withBeadsDirEnv(beadsDir)
 
-	// Configure custom types for Gas Town (agent, role, rig, convoy, slot).
-	// These were extracted from beads core in v0.46.0 and now require explicit config.
-	if err := beads.EnsureCustomTypes(beadsDir); err != nil {
-		return fmt.Errorf("ensuring custom types: %w", err)
-	}
+		// Set beads.role to maintainer (town-level beads are always maintainer-owned).
+		// Without this, bd doctor warns about missing role configuration.
+		roleSetCmd := exec.Command("bd", "config", "set", "beads.role", "maintainer")
+		roleSetCmd.Dir = townPath
+		roleSetCmd.Env = beadsEnv
+		if roleOutput, roleErr := roleSetCmd.CombinedOutput(); roleErr != nil {
+			fmt.Printf("   %s Could not set beads.role: %s\n", style.Dim.Render("⚠"), strings.TrimSpace(string(roleOutput)))
+		}
 
-	// Configure allowed_prefixes for convoy beads (hq-cv-* IDs).
-	// This allows bd create --id=hq-cv-xxx to pass prefix validation.
-	prefixCmd := exec.Command("bd", "config", "set", "allowed_prefixes", "hq,hq-cv")
-	prefixCmd.Dir = townPath
-	prefixCmd.Env = beadsEnv
-	if prefixOutput, prefixErr := prefixCmd.CombinedOutput(); prefixErr != nil {
-		fmt.Printf("   %s Could not set allowed_prefixes: %s\n", style.Dim.Render("⚠"), strings.TrimSpace(string(prefixOutput)))
+		// Explicitly set issue_prefix config (bd init --prefix may not persist it in newer versions).
+		// bd >= 1.0.0 rejects this with "cannot be set via 'bd config set'" because init persists
+		// it directly; treat that as already-set rather than a failure.
+		prefixSetCmd := exec.Command("bd", "config", "set", "issue_prefix", "hq")
+		prefixSetCmd.Dir = townPath
+		prefixSetCmd.Env = beadsEnv
+		if prefixOutput, prefixErr := prefixSetCmd.CombinedOutput(); prefixErr != nil {
+			out := strings.TrimSpace(string(prefixOutput))
+			if !strings.Contains(out, "cannot be set via") {
+				return fmt.Errorf("bd config set issue_prefix failed: %s", out)
+			}
+		}
+
+		// Configure custom types for Gas Town (agent, role, rig, convoy, slot).
+		// These were extracted from beads core in v0.46.0 and now require explicit config.
+		if err := beads.EnsureCustomTypes(beadsDir); err != nil {
+			return fmt.Errorf("ensuring custom types: %w", err)
+		}
+
+		// Configure allowed_prefixes for convoy beads (hq-cv-* IDs).
+		// This allows bd create --id=hq-cv-xxx to pass prefix validation.
+		prefixCmd := exec.Command("bd", "config", "set", "allowed_prefixes", "hq,hq-cv")
+		prefixCmd.Dir = townPath
+		prefixCmd.Env = beadsEnv
+		if prefixOutput, prefixErr := prefixCmd.CombinedOutput(); prefixErr != nil {
+			fmt.Printf("   %s Could not set allowed_prefixes: %s\n", style.Dim.Render("⚠"), strings.TrimSpace(string(prefixOutput)))
+		}
 	}
 
 	// Ensure issues.jsonl exists — bd expects this file for git-tracked issue data.
@@ -791,6 +806,37 @@ func initTownBeads(townPath string) error {
 		fmt.Printf("   %s Could not register convoy prefix: %v\n", style.Dim.Render("⚠"), err)
 	}
 
+	return nil
+}
+
+func seedPreinitializedTownBeadsConfig(townPath string) error {
+	cfg := doltserver.DefaultConfig(townPath)
+	dsn := buildDoltDSNFromConfig(cfg, "hq", dsnOpts{
+		Timeout:      "5s",
+		ReadTimeout:  "5s",
+		WriteTimeout: "5s",
+	})
+	db, err := sql.Open("mysql", dsn)
+	if err != nil {
+		return err
+	}
+	defer db.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	values := map[string]string{
+		"beads.role":       "maintainer",
+		"issue_prefix":     "hq",
+		"types.custom":     constants.BeadsCustomTypes,
+		"allowed_prefixes": "hq,hq-cv",
+		"routing.mode":     "explicit",
+	}
+	for key, value := range values {
+		if _, err := db.ExecContext(ctx, "REPLACE INTO config (`key`, `value`) VALUES (?, ?)", key, value); err != nil {
+			return fmt.Errorf("setting %s: %w", key, err)
+		}
+	}
 	return nil
 }
 

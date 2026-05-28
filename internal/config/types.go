@@ -1043,7 +1043,7 @@ func defaultRuntimeCommand(provider string) string {
 	if provider == "generic" {
 		return ""
 	}
-	if preset := GetAgentPresetByName(provider); preset != nil {
+	if preset := defaultProviderPreset(provider); preset != nil {
 		cmd := preset.Command
 		// Resolve claude path for Claude preset (handles alias installations)
 		if preset.Name == AgentClaude && cmd == "claude" {
@@ -1080,49 +1080,49 @@ func resolveClaudePath() string {
 }
 
 func defaultRuntimeArgs(provider string) []string {
-	if preset := GetAgentPresetByName(provider); preset != nil && preset.Args != nil {
+	if preset := defaultProviderPreset(provider); preset != nil && preset.Args != nil {
 		return append([]string(nil), preset.Args...) // copy to avoid mutation
 	}
 	return nil
 }
 
 func defaultPromptMode(provider string) string {
-	if preset := GetAgentPresetByName(provider); preset != nil && preset.PromptMode != "" {
+	if preset := defaultProviderPreset(provider); preset != nil && preset.PromptMode != "" {
 		return preset.PromptMode
 	}
 	return "arg"
 }
 
 func defaultSessionIDEnv(provider string) string {
-	if preset := GetAgentPresetByName(provider); preset != nil {
+	if preset := defaultProviderPreset(provider); preset != nil {
 		return preset.SessionIDEnv
 	}
 	return ""
 }
 
 func defaultConfigDirEnv(provider string) string {
-	if preset := GetAgentPresetByName(provider); preset != nil {
+	if preset := defaultProviderPreset(provider); preset != nil {
 		return preset.ConfigDirEnv
 	}
 	return ""
 }
 
 func defaultHooksProvider(provider string) string {
-	if preset := GetAgentPresetByName(provider); preset != nil && preset.HooksProvider != "" {
+	if preset := defaultProviderPreset(provider); preset != nil && preset.HooksProvider != "" {
 		return preset.HooksProvider
 	}
 	return "none"
 }
 
 func defaultHooksDir(provider string) string {
-	if preset := GetAgentPresetByName(provider); preset != nil {
+	if preset := defaultProviderPreset(provider); preset != nil {
 		return preset.HooksDir
 	}
 	return ""
 }
 
 func defaultHooksFile(provider string) string {
-	if preset := GetAgentPresetByName(provider); preset != nil {
+	if preset := defaultProviderPreset(provider); preset != nil {
 		return preset.HooksSettingsFile
 	}
 	return ""
@@ -1132,14 +1132,14 @@ func defaultHooksFile(provider string) string {
 // files only (not executable lifecycle hooks). For these providers, Gas Town sends
 // startup fallback commands (gt prime) via nudge since hooks won't auto-run.
 func defaultHooksInformational(provider string) bool {
-	if preset := GetAgentPresetByName(provider); preset != nil {
+	if preset := defaultProviderPreset(provider); preset != nil {
 		return preset.HooksInformational
 	}
 	return false
 }
 
 func defaultProcessNames(provider, command string) []string {
-	if preset := GetAgentPresetByName(provider); preset != nil && len(preset.ProcessNames) > 0 {
+	if preset := defaultProviderPreset(provider); preset != nil && len(preset.ProcessNames) > 0 {
 		return append([]string(nil), preset.ProcessNames...) // copy to avoid mutation
 	}
 	if command != "" {
@@ -1149,24 +1149,31 @@ func defaultProcessNames(provider, command string) []string {
 }
 
 func defaultReadyPromptPrefix(provider string) string {
-	if preset := GetAgentPresetByName(provider); preset != nil {
+	if preset := defaultProviderPreset(provider); preset != nil {
 		return preset.ReadyPromptPrefix
 	}
 	return ""
 }
 
 func defaultReadyDelayMs(provider string) int {
-	if preset := GetAgentPresetByName(provider); preset != nil {
+	if preset := defaultProviderPreset(provider); preset != nil {
 		return preset.ReadyDelayMs
 	}
 	return 0
 }
 
 func defaultInstructionsFile(provider string) string {
-	if preset := GetAgentPresetByName(provider); preset != nil && preset.InstructionsFile != "" {
+	if preset := defaultProviderPreset(provider); preset != nil && preset.InstructionsFile != "" {
 		return preset.InstructionsFile
 	}
 	return "AGENTS.md"
+}
+
+func defaultProviderPreset(provider string) *AgentPresetInfo {
+	if preset, ok := builtinPresets[AgentPreset(provider)]; ok {
+		return preset
+	}
+	return GetAgentPresetByName(provider)
 }
 
 // quoteForShell quotes a string for safe shell usage.

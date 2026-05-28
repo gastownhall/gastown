@@ -218,6 +218,10 @@ func (b *Beads) CreateAgentBead(id, title string, fields *AgentFields) (*Issue, 
 	target := b.agentBeadTarget()
 	targetDir := target.getResolvedBeadsDir()
 
+	if err := EnsureSchemaMigrated(targetDir); err != nil {
+		return nil, fmt.Errorf("migrating target beads schema: %w", err)
+	}
+
 	// Ensure target database has custom types configured.
 	// This is cached (sentinel file + in-memory) so repeated calls are fast.
 	// On fresh rigs, this may fail if the database can't be initialized.

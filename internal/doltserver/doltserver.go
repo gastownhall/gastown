@@ -2700,15 +2700,16 @@ func EnsureRigIssuePrefix(townRoot, rigName string, serverMode bool) error {
 	if err != nil {
 		return err
 	}
-	if err := beads.EnsureConfigYAML(beadsDir, prefix); err != nil {
+	if beads.ConfigYAMLIsGitTracked(beadsDir) {
+		if err := beads.EnsureConfigYAMLIfMissing(beadsDir, prefix); err != nil {
+			return fmt.Errorf("ensuring config.yaml: %w", err)
+		}
+	} else if err := beads.EnsureConfigYAML(beadsDir, prefix); err != nil {
 		return fmt.Errorf("ensuring config.yaml: %w", err)
 	}
 	if err := EnsureMetadataForBeadsDir(townRoot, beadsDir, rigName, rigName); err != nil {
 		return fmt.Errorf("ensuring metadata.json: %w", err)
 	}
-
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
 
 	if !serverMode {
 		if err := Start(townRoot); err != nil {
@@ -2720,14 +2721,11 @@ func EnsureRigIssuePrefix(townRoot, rigName string, serverMode bool) error {
 			}
 		}()
 	}
-
-	store, err := openRigStoreFromConfig(ctx, townRoot, beadsDir, rigName)
-	if err != nil {
-		return fmt.Errorf("opening beads database: %w", err)
+	if err := beads.EnsureSchemaMigrated(beadsDir); err != nil {
+		return fmt.Errorf("migrating beads schema: %w", err)
 	}
-	defer store.Close()
 
-	if err := store.SetConfig(ctx, "issue_prefix", prefix); err != nil {
+	if err := SetBeadsConfigValues(townRoot, rigName, map[string]string{"issue_prefix": prefix}); err != nil {
 		return fmt.Errorf("setting issue_prefix: %w", err)
 	}
 	return nil
@@ -2772,6 +2770,35 @@ func openRigStoreFromConfig(ctx context.Context, townRoot, beadsDir, rigName str
 	}()
 
 	return beadssdk.OpenFromConfig(ctx, beadsDir)
+}
+
+// SetBeadsConfigValues writes Beads config rows directly to a server-mode Dolt
+// database and commits the working set. Use this for immutable bd config keys
+// such as issue_prefix, after the schema has been initialized/migrated.
+func SetBeadsConfigValues(townRoot, rigDB string, values map[string]string) error {
+	if townRoot == "" {
+		return fmt.Errorf("townRoot cannot be empty")
+	}
+	if rigDB == "" {
+		return fmt.Errorf("rig database cannot be empty")
+	}
+	if len(values) == 0 {
+		return nil
+	}
+
+	rows := make([]string, 0, len(values))
+	for key, value := range values {
+		rows = append(rows, fmt.Sprintf("(%s, %s)", sqlLiteral(key), sqlLiteral(value)))
+	}
+	query := "REPLACE INTO config (`key`, `value`) VALUES " + strings.Join(rows, ", ")
+	if err := doltSQLWithRetry(townRoot, rigDB, query); err != nil {
+		return fmt.Errorf("writing config rows: %w", err)
+	}
+	return CommitServerWorkingSet(townRoot, rigDB, "gt: update beads config")
+}
+
+func sqlLiteral(value string) string {
+	return "'" + strings.ReplaceAll(value, "'", "''") + "'"
 }
 
 func issuePrefixForRigInit(townRoot, rigName string) string {

@@ -270,6 +270,24 @@ func TestGeminiProviderDefaults(t *testing.T) {
 	})
 }
 
+func TestDefaultRuntimeConfigUsesCanonicalBuiltinWhenRegistryShadowsClaude(t *testing.T) {
+	ResetRegistryForTesting()
+	t.Cleanup(ResetRegistryForTesting)
+	RegisterAgentForTesting("claude", AgentPresetInfo{
+		Name:    "claude",
+		Command: "env",
+		Args:    []string{"FOO=bar", "claude"},
+	})
+
+	cmd := DefaultRuntimeConfig().BuildCommand()
+	if !strings.Contains(cmd, "--dangerously-skip-permissions") {
+		t.Fatalf("DefaultRuntimeConfig().BuildCommand() = %q, want canonical Claude args", cmd)
+	}
+	if strings.Contains(cmd, "FOO=bar") {
+		t.Fatalf("DefaultRuntimeConfig().BuildCommand() used shadowed registry entry: %q", cmd)
+	}
+}
+
 func TestTownSettings_WithoutNewFields_LoadsDefaults(t *testing.T) {
 	t.Parallel()
 	// Simulate a pre-existing settings/config.json that has NO new config fields.

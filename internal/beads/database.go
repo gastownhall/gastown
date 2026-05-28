@@ -62,10 +62,11 @@ func StripBDTargetEnv(env []string) []string {
 	return filtered
 }
 
-// BuildPinnedBDEnv returns env for a bd subprocess pinned to beadsDir. BEADS_DIR
-// is the authoritative database selector; inherited explicit database selectors
-// are stripped because bd 1.0.x can resolve a different/stale view when both are
-// present, making newly-created routed beads invisible to gt hook/sling.
+// BuildPinnedBDEnv returns env for a bd subprocess pinned to beadsDir. Inherited
+// explicit database selectors are stripped first, then the database recorded in
+// the selected .beads/metadata.json is re-added. This prevents a stale inherited
+// selector from pointing at HQ while still giving server-mode bd commands the
+// exact Dolt database to query.
 func BuildPinnedBDEnv(base []string, beadsDir string) []string {
 	env := SuppressBDSideEffects(StripBDTargetEnv(base))
 	if beadsDir == "" {
@@ -73,6 +74,9 @@ func BuildPinnedBDEnv(base []string, beadsDir string) []string {
 	}
 	env = append(env, "BEADS_DIR="+beadsDir)
 	env = append(env, doltTargetEnvFromBeadsDir(beadsDir)...)
+	if dbEnv := DatabaseEnv(beadsDir); dbEnv != "" {
+		env = append(env, dbEnv)
+	}
 	return addGTDerivedDoltTargetEnv(env)
 }
 
@@ -81,7 +85,7 @@ func BuildPinnedBDEnv(base []string, beadsDir string) []string {
 // connection host/port from fallbackBeadsDir so routing can choose the database.
 func BuildRoutingBDEnv(base []string, fallbackBeadsDir string) []string {
 	env := SuppressBDSideEffects(StripBDTargetEnv(base))
-	env = append(env, doltTargetEnvFromBeadsDir(fallbackBeadsDir)...)
+	env = append(env, doltRoutingEnvFromBeadsDir(fallbackBeadsDir)...)
 	return addGTDerivedDoltTargetEnv(env)
 }
 
@@ -193,6 +197,27 @@ func doltTargetEnvFromBeadsDir(beadsDir string) []string {
 	}
 	meta := readDoltMetadata(beadsDir)
 	var env []string
+	if meta.Database == "" {
+		if townRoot := FindTownRoot(filepath.Dir(beadsDir)); townRoot != "" {
+			env = append(env, "BEADS_DOLT_DATA_DIR="+filepath.Join(townRoot, ".dolt-data"))
+		}
+	}
+	if meta.Host != "" {
+		env = append(env, "BEADS_DOLT_SERVER_HOST="+meta.Host)
+	}
+	if meta.Port != "" {
+		env = append(env, "BEADS_DOLT_SERVER_PORT="+meta.Port)
+		env = append(env, "BEADS_DOLT_PORT="+meta.Port)
+	}
+	return env
+}
+
+func doltRoutingEnvFromBeadsDir(beadsDir string) []string {
+	if beadsDir == "" {
+		return nil
+	}
+	meta := readDoltMetadata(beadsDir)
+	var env []string
 	if townRoot := FindTownRoot(filepath.Dir(beadsDir)); townRoot != "" {
 		env = append(env, "BEADS_DOLT_DATA_DIR="+filepath.Join(townRoot, ".dolt-data"))
 	}
@@ -207,8 +232,9 @@ func doltTargetEnvFromBeadsDir(beadsDir string) []string {
 }
 
 type doltMetadata struct {
-	Host string
-	Port string
+	Host     string
+	Port     string
+	Database string
 }
 
 func readDoltMetadata(beadsDir string) doltMetadata {
@@ -221,12 +247,14 @@ func readDoltMetadata(beadsDir string) doltMetadata {
 		return meta
 	}
 	var raw struct {
+		DoltDatabase   string `json:"dolt_database"`
 		DoltServerHost string `json:"dolt_server_host"`
 		DoltServerPort int    `json:"dolt_server_port"`
 	}
 	if json.Unmarshal(data, &raw) != nil {
 		return meta
 	}
+	meta.Database = strings.TrimSpace(raw.DoltDatabase)
 	meta.Host = strings.TrimSpace(raw.DoltServerHost)
 	if meta.Port == "" && raw.DoltServerPort > 0 {
 		meta.Port = strconv.Itoa(raw.DoltServerPort)

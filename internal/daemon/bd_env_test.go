@@ -54,7 +54,7 @@ func TestBdReadOnlyPinnedEnvUsesSelectedBeadsDir(t *testing.T) {
 
 	env := bdReadOnlyPinnedEnv(beadsDir)
 	assertSingleEnvValue(t, env, "BEADS_DIR", beadsDir)
-	assertEnvAbsent(t, env, "BEADS_DOLT_SERVER_DATABASE")
+	assertSingleEnvValue(t, env, "BEADS_DOLT_SERVER_DATABASE", "rigdb")
 	assertSingleEnvValue(t, env, "BEADS_DOLT_SERVER_PORT", "4407")
 	assertSingleEnvValue(t, env, "BEADS_DOLT_PORT", "4407")
 	assertSingleEnvValue(t, env, "BD_DOLT_AUTO_COMMIT", "off")
