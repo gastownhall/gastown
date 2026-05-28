@@ -87,7 +87,10 @@ func (m *Mailbox) storeListFromDir() ([]*Message, error) {
 			if seen[si.ID] {
 				continue
 			}
-			if si.Status == beadsdk.StatusOpen || string(si.Status) == "hooked" {
+			// Skip messages stamped gt:mail-closed — a jsonl reimport may have
+			// resurrected the status to open, but the durable label means the
+			// user already dismissed it from the inbox. (gst-dj2)
+			if (si.Status == beadsdk.StatusOpen || string(si.Status) == "hooked") && !sdkHasLabel(si, mailClosedLabel) {
 				seen[si.ID] = true
 				messages = append(messages, sdkIssueToMessage(si))
 			}
@@ -130,6 +133,9 @@ func (m *Mailbox) storeCloseInDir(id string) error {
 		}
 		return fmt.Errorf("store close message: %w", err)
 	}
+	// Stamp the durable dismissal marker so a jsonl reimport cannot resurrect
+	// this message into the inbox. Best-effort, mirroring the CLI path. (gst-dj2)
+	_ = m.store.AddLabel(ctx, id, mailClosedLabel, "")
 	return nil
 }
 
@@ -227,7 +233,19 @@ func (m *Mailbox) storeMarkUnread(id string) error {
 		}
 		return fmt.Errorf("store reopen message: %w", err)
 	}
+	// Strip the dismissal marker so the reopened message returns to the inbox. (gst-dj2)
+	_ = m.store.RemoveLabel(ctx, id, mailClosedLabel, "")
 	return nil
+}
+
+// sdkHasLabel reports whether an SDK issue carries the given label.
+func sdkHasLabel(si *beadsdk.Issue, label string) bool {
+	for _, l := range si.Labels {
+		if l == label {
+			return true
+		}
+	}
+	return false
 }
 
 // sdkIssueToMessage converts a beadsdk Issue to a mail Message by routing
