@@ -587,31 +587,12 @@ func (m *Manager) AddRig(opts AddRigOptions) (*Rig, error) {
 
 		// Tracked beads exist - try to detect prefix from existing issues
 		sourceBeadsConfig := filepath.Join(sourceBeadsDir, "config.yaml")
-		if info, err := os.Stat(sourceBeadsConfig); err == nil && !info.IsDir() {
-			if data, err := os.ReadFile(sourceBeadsConfig); err == nil {
-				originalSourceBeadsConfig := append([]byte(nil), data...)
-				originalSourceBeadsConfigMode := info.Mode().Perm()
-				restoreSourceBeadsConfig = func() error {
-					desired := originalSourceBeadsConfig
-					desiredMode := originalSourceBeadsConfigMode
-					if headData, err := exec.Command("git", "-C", mayorRigPath, "show", "HEAD:.beads/config.yaml").Output(); err == nil {
-						desired = headData
-						desiredMode = 0644
-					}
-					current, err := os.ReadFile(sourceBeadsConfig)
-					if err != nil {
-						return err
-					}
-					if string(current) != string(desired) {
-						if err := os.WriteFile(sourceBeadsConfig, desired, desiredMode); err != nil {
-							return fmt.Errorf("restoring tracked beads config: %w", err)
-						}
-					}
-					if err := os.Chmod(sourceBeadsConfig, desiredMode); err != nil {
-						return fmt.Errorf("restoring tracked beads config mode: %w", err)
-					}
-					return nil
+		if snapshot := beads.SnapshotTrackedConfigYAML(sourceBeadsDir); snapshot != nil {
+			restoreSourceBeadsConfig = func() error {
+				if err := beads.RestoreTrackedConfigYAML(snapshot); err != nil {
+					return fmt.Errorf("restoring tracked beads config: %w", err)
 				}
+				return nil
 			}
 		}
 		if sourcePrefix := detectBeadsPrefixFromConfig(sourceBeadsConfig); sourcePrefix != "" {

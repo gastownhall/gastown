@@ -107,6 +107,24 @@ func ConfigYAMLDisablesAutoExport(content string) bool {
 	return false
 }
 
+func configYAMLHasSyncRemote(beadsDir string) bool {
+	data, err := os.ReadFile(filepath.Join(beadsDir, "config.yaml"))
+	if err != nil {
+		return false
+	}
+	for _, line := range strings.Split(strings.ReplaceAll(string(data), "\r\n", "\n"), "\n") {
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "" || strings.HasPrefix(trimmed, "#") {
+			continue
+		}
+		if strings.HasPrefix(trimmed, "sync.remote:") {
+			value := strings.TrimSpace(strings.TrimPrefix(trimmed, "sync.remote:"))
+			return strings.Trim(value, `"'`) != ""
+		}
+	}
+	return false
+}
+
 func ensureConfigYAML(beadsDir, prefix string, onlyIfMissing bool) error {
 	configPath := filepath.Join(beadsDir, "config.yaml")
 	wantPrefix := "prefix: " + prefix

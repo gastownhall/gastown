@@ -1,12 +1,15 @@
 package beads
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"runtime"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/steveyegge/gastown/internal/config"
 	"github.com/steveyegge/gastown/internal/constants"
 )
 
@@ -130,6 +133,17 @@ func readMockBDLog(t *testing.T, logPath string) string {
 		t.Fatalf("read mock bd log: %v", err)
 	}
 	return string(data)
+}
+
+func requireLogLineContaining(t *testing.T, logOutput, needle string) string {
+	t.Helper()
+	for _, line := range strings.Split(strings.TrimSpace(logOutput), "\n") {
+		if strings.Contains(line, needle) {
+			return line
+		}
+	}
+	t.Fatalf("mock bd log missing %q:\n%s", needle, logOutput)
+	return ""
 }
 
 func TestFindTownRoot(t *testing.T) {
@@ -306,6 +320,7 @@ func TestEnsureCustomTypes(t *testing.T) {
 	})
 
 	t.Run("sentinel file triggers cache hit", func(t *testing.T) {
+		logPath := installMockBDRecorder(t)
 		tmpDir := t.TempDir()
 		beadsDir := filepath.Join(tmpDir, ".beads")
 		if err := os.MkdirAll(beadsDir, 0755); err != nil {
@@ -326,6 +341,14 @@ func TestEnsureCustomTypes(t *testing.T) {
 		err := EnsureCustomTypes(beadsDir)
 		if err != nil {
 			t.Errorf("expected success with sentinel file, got: %v", err)
+		}
+
+		logOutput := readMockBDLog(t, logPath)
+		if !strings.Contains(logOutput, "migrate --yes") {
+			t.Fatalf("mock bd log %q missing schema migration before sentinel hit", logOutput)
+		}
+		if strings.Contains(logOutput, "config set types.custom") {
+			t.Fatalf("matching sentinel should skip type reconfiguration:\n%s", logOutput)
 		}
 	})
 
@@ -363,6 +386,7 @@ func TestEnsureCustomTypes(t *testing.T) {
 	})
 
 	t.Run("in-memory cache prevents repeated calls", func(t *testing.T) {
+		logPath := installMockBDRecorder(t)
 		tmpDir := t.TempDir()
 		beadsDir := filepath.Join(tmpDir, ".beads")
 		if err := os.MkdirAll(beadsDir, 0755); err != nil {
@@ -383,11 +407,16 @@ func TestEnsureCustomTypes(t *testing.T) {
 			t.Fatal(err)
 		}
 
+		logBeforeSecondCall := readMockBDLog(t, logPath)
+
 		// Remove sentinel - second call should still succeed due to in-memory cache
 		os.Remove(sentinelPath)
 
 		if err := EnsureCustomTypes(beadsDir); err != nil {
 			t.Errorf("expected cache hit, got: %v", err)
+		}
+		if logAfterSecondCall := readMockBDLog(t, logPath); logAfterSecondCall != logBeforeSecondCall {
+			t.Fatalf("in-memory cache should avoid additional bd calls:\nbefore:\n%s\nafter:\n%s", logBeforeSecondCall, logAfterSecondCall)
 		}
 	})
 }
@@ -565,6 +594,133 @@ exit 0
 	}
 }
 
+func TestEnsureSchemaMigratedDoesNotCreateServerModeDoltDiscoveryDir(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("test uses Unix shell script mock for bd")
+	}
+
+	logPath := installMockBDRecorder(t)
+	ResetEnsuredDirs()
+
+	beadsDir := filepath.Join(t.TempDir(), ".beads")
+	if err := os.MkdirAll(beadsDir, 0755); err != nil {
+		t.Fatalf("mkdir beads: %v", err)
+	}
+	meta := `{"dolt_mode":"server","dolt_database":"rigdb"}`
+	if err := os.WriteFile(filepath.Join(beadsDir, "metadata.json"), []byte(meta), 0644); err != nil {
+		t.Fatalf("write metadata: %v", err)
+	}
+
+	if err := EnsureSchemaMigrated(beadsDir); err != nil {
+		t.Fatalf("EnsureSchemaMigrated: %v", err)
+	}
+
+	if _, err := os.Stat(filepath.Join(beadsDir, "dolt")); !os.IsNotExist(err) {
+		t.Fatalf("EnsureSchemaMigrated created local dolt discovery dir, stat err=%v", err)
+	}
+	if logOutput := readMockBDLog(t, logPath); !strings.Contains(logOutput, "migrate --yes") {
+		t.Fatalf("mock bd log missing schema migration:\n%s", logOutput)
+	}
+}
+
+func TestEnsureDatabaseInitializedUsesMutationEnvForRecoveryCommands(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("test uses Unix shell script mock for bd")
+	}
+
+	binDir := t.TempDir()
+	logPath := filepath.Join(binDir, "bd.log")
+	script := `#!/bin/sh
+printf 'args=%s beads=%s db=%s data_dir=%s auto=%s readonly=%s export=%s no_push=%s\n' "$*" "${BEADS_DIR:-<unset>}" "${BEADS_DOLT_SERVER_DATABASE:-<unset>}" "${BEADS_DOLT_DATA_DIR:-<unset>}" "${BD_DOLT_AUTO_COMMIT:-<unset>}" "${BD_READONLY:-<unset>}" "${BD_EXPORT_AUTO:-<unset>}" "${BD_NO_PUSH:-<unset>}" >> "$BD_LOG"
+
+cmd=""
+for arg in "$@"; do
+  case "$arg" in
+    --*) ;;
+    *) cmd="$arg"; break ;;
+  esac
+done
+
+target="${BEADS_DIR:-$(pwd)/.beads}"
+case "$cmd" in
+  migrate)
+    if [ -f "$target/.allow-migrate" ]; then
+      exit 0
+    fi
+    echo "Error: unknown database 'rigdb'" >&2
+    exit 1
+    ;;
+  init)
+    mkdir -p "$target/dolt"
+    touch "$target/.allow-migrate"
+    exit 0
+    ;;
+  config)
+    exit 0
+    ;;
+  *)
+    exit 0
+    ;;
+esac
+`
+	if err := os.WriteFile(filepath.Join(binDir, "bd"), []byte(script), 0755); err != nil {
+		t.Fatalf("write mock bd: %v", err)
+	}
+	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	t.Setenv("BD_LOG", logPath)
+	t.Setenv("BEADS_DIR", "/wrong")
+	t.Setenv("BEADS_DOLT_SERVER_DATABASE", "stale")
+	t.Setenv("BEADS_DOLT_DATA_DIR", "/wrong/data")
+	t.Setenv("BD_DOLT_AUTO_COMMIT", "off")
+	t.Setenv("BD_READONLY", "true")
+	t.Setenv("BD_EXPORT_AUTO", "true")
+	t.Setenv("BD_NO_PUSH", "false")
+
+	townDir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(townDir, "mayor"), 0755); err != nil {
+		t.Fatalf("mkdir mayor: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(townDir, "mayor", "town.json"), []byte("{}"), 0644); err != nil {
+		t.Fatalf("write town.json: %v", err)
+	}
+	beadsDir := filepath.Join(townDir, "testrig", ".beads")
+	if err := os.MkdirAll(beadsDir, 0755); err != nil {
+		t.Fatalf("mkdir beads: %v", err)
+	}
+	meta := `{"dolt_mode":"server","dolt_database":"rigdb","dolt_server_host":"127.0.0.1","dolt_server_port":4407}`
+	if err := os.WriteFile(filepath.Join(beadsDir, "metadata.json"), []byte(meta), 0644); err != nil {
+		t.Fatalf("write metadata: %v", err)
+	}
+
+	ResetEnsuredDirs()
+	if err := ensureDatabaseInitialized(beadsDir); err != nil {
+		t.Fatalf("ensureDatabaseInitialized: %v", err)
+	}
+
+	logOutput := readMockBDLog(t, logPath)
+	for _, line := range []string{
+		requireLogLineContaining(t, logOutput, "args=init --prefix gt --server --force"),
+		requireLogLineContaining(t, logOutput, "args=config set issue_prefix gt"),
+	} {
+		for _, want := range []string{
+			"beads=" + beadsDir,
+			"db=rigdb",
+			"data_dir=<unset>",
+			"auto=on",
+			"readonly=<unset>",
+			"export=false",
+			"no_push=true",
+		} {
+			if !strings.Contains(line, want) {
+				t.Fatalf("recovery mutation env log missing %q in line:\n%s\nfull log:\n%s", want, line, logOutput)
+			}
+		}
+		if strings.Contains(line, "stale") || strings.Contains(line, "/wrong") {
+			t.Fatalf("stale inherited env leaked into recovery mutation line:\n%s\nfull log:\n%s", line, logOutput)
+		}
+	}
+}
+
 func TestEnsureCustomStatuses(t *testing.T) {
 	ResetEnsuredDirs()
 
@@ -583,6 +739,7 @@ func TestEnsureCustomStatuses(t *testing.T) {
 	})
 
 	t.Run("sentinel file triggers cache hit", func(t *testing.T) {
+		logPath := installMockBDRecorder(t)
 		tmpDir := t.TempDir()
 		beadsDir := filepath.Join(tmpDir, ".beads")
 		if err := os.MkdirAll(beadsDir, 0755); err != nil {
@@ -602,6 +759,14 @@ func TestEnsureCustomStatuses(t *testing.T) {
 		err := EnsureCustomStatuses(beadsDir)
 		if err != nil {
 			t.Errorf("expected success with sentinel file, got: %v", err)
+		}
+
+		logOutput := readMockBDLog(t, logPath)
+		if !strings.Contains(logOutput, "migrate --yes") {
+			t.Fatalf("mock bd log %q missing schema migration before sentinel hit", logOutput)
+		}
+		if strings.Contains(logOutput, "config set status.custom") {
+			t.Fatalf("matching sentinel should skip status reconfiguration:\n%s", logOutput)
 		}
 	})
 
@@ -643,6 +808,7 @@ func TestEnsureCustomStatuses(t *testing.T) {
 	})
 
 	t.Run("in-memory cache prevents repeated calls", func(t *testing.T) {
+		logPath := installMockBDRecorder(t)
 		tmpDir := t.TempDir()
 		beadsDir := filepath.Join(tmpDir, ".beads")
 		if err := os.MkdirAll(beadsDir, 0755); err != nil {
@@ -663,11 +829,16 @@ func TestEnsureCustomStatuses(t *testing.T) {
 			t.Fatal(err)
 		}
 
+		logBeforeSecondCall := readMockBDLog(t, logPath)
+
 		// Remove sentinel - second call should still succeed due to in-memory cache
 		os.Remove(sentinelPath)
 
 		if err := EnsureCustomStatuses(beadsDir); err != nil {
 			t.Errorf("expected cache hit, got: %v", err)
+		}
+		if logAfterSecondCall := readMockBDLog(t, logPath); logAfterSecondCall != logBeforeSecondCall {
+			t.Fatalf("in-memory cache should avoid additional bd calls:\nbefore:\n%s\nafter:\n%s", logBeforeSecondCall, logAfterSecondCall)
 		}
 	})
 
@@ -766,6 +937,85 @@ esac
 			t.Fatalf("bd config set missing canonical statuses\nwant substring: %q\ngot:\n%s", want, logOutput)
 		}
 	})
+}
+
+func TestEnsureCustomStatusesUsesMutationEnvForConfigSet(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("test uses Unix shell script mock for bd")
+	}
+
+	binDir := t.TempDir()
+	logPath := filepath.Join(binDir, "bd.log")
+	script := `#!/bin/sh
+printf 'args=%s beads=%s auto=%s readonly=%s export=%s no_push=%s\n' "$*" "${BEADS_DIR:-<unset>}" "${BD_DOLT_AUTO_COMMIT:-<unset>}" "${BD_READONLY:-<unset>}" "${BD_EXPORT_AUTO:-<unset>}" "${BD_NO_PUSH:-<unset>}" >> "$BD_LOG"
+
+cmd=""
+for arg in "$@"; do
+  case "$arg" in
+    --*) ;;
+    *) cmd="$arg"; break ;;
+  esac
+done
+
+case "$cmd" in
+  config)
+    if echo "$*" | grep -q "get status.custom"; then
+      echo ""
+    fi
+    exit 0
+    ;;
+  migrate)
+    exit 0
+    ;;
+  *)
+    exit 0
+    ;;
+esac
+`
+	if err := os.WriteFile(filepath.Join(binDir, "bd"), []byte(script), 0755); err != nil {
+		t.Fatalf("write mock bd: %v", err)
+	}
+	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	t.Setenv("BD_LOG", logPath)
+	t.Setenv("BEADS_DIR", "/wrong")
+	t.Setenv("BD_DOLT_AUTO_COMMIT", "off")
+	t.Setenv("BD_READONLY", "true")
+	t.Setenv("BD_EXPORT_AUTO", "true")
+	t.Setenv("BD_NO_PUSH", "false")
+
+	townDir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(townDir, "mayor"), 0755); err != nil {
+		t.Fatalf("mkdir mayor: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(townDir, "mayor", "town.json"), []byte("{}"), 0644); err != nil {
+		t.Fatalf("write town.json: %v", err)
+	}
+	beadsDir := filepath.Join(townDir, "testrig", ".beads")
+	if err := os.MkdirAll(filepath.Join(beadsDir, "dolt"), 0755); err != nil {
+		t.Fatalf("mkdir beads dolt: %v", err)
+	}
+
+	ResetEnsuredDirs()
+	if err := EnsureCustomStatuses(beadsDir); err != nil {
+		t.Fatalf("EnsureCustomStatuses: %v", err)
+	}
+
+	logOutput := readMockBDLog(t, logPath)
+	line := requireLogLineContaining(t, logOutput, "args=config set status.custom")
+	for _, want := range []string{
+		"beads=" + beadsDir,
+		"auto=on",
+		"readonly=<unset>",
+		"export=false",
+		"no_push=true",
+	} {
+		if !strings.Contains(line, want) {
+			t.Fatalf("status mutation env log missing %q in line:\n%s\nfull log:\n%s", want, line, logOutput)
+		}
+	}
+	if strings.Contains(line, "/wrong") {
+		t.Fatalf("stale inherited env leaked into status mutation line:\n%s\nfull log:\n%s", line, logOutput)
+	}
 }
 
 func TestParseConfigOutput(t *testing.T) {
@@ -872,6 +1122,324 @@ func TestEnsureDatabaseInitialized(t *testing.T) {
 		}
 	})
 
+	t.Run("server metadata with missing database — init self heals", func(t *testing.T) {
+		if runtime.GOOS == "windows" {
+			t.Skip("test uses Unix shell script mock for bd")
+		}
+
+		binDir := t.TempDir()
+		logPath := filepath.Join(binDir, "bd.log")
+		script := `#!/bin/sh
+LOG_FILE='` + logPath + `'
+printf '%s\n' "$*" >> "$LOG_FILE"
+
+cmd=""
+for arg in "$@"; do
+  case "$arg" in
+    --*) ;;
+    *) cmd="$arg"; break ;;
+  esac
+done
+
+target="${BEADS_DIR:-$(pwd)/.beads}"
+case "$cmd" in
+  migrate)
+    if [ -f "$target/.allow-migrate" ]; then
+      exit 0
+    fi
+    echo "Error: unknown database 'testdb'" >&2
+    exit 1
+    ;;
+  init)
+    mkdir -p "$target/dolt"
+    touch "$target/.allow-migrate"
+    exit 0
+    ;;
+  config)
+    exit 0
+    ;;
+  *)
+    exit 0
+    ;;
+esac
+`
+		if err := os.WriteFile(filepath.Join(binDir, "bd"), []byte(script), 0755); err != nil {
+			t.Fatalf("write mock bd: %v", err)
+		}
+		t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+		ResetEnsuredDirs()
+
+		townDir := t.TempDir()
+		mayorDir := filepath.Join(townDir, "mayor")
+		os.MkdirAll(mayorDir, 0755)
+		os.WriteFile(filepath.Join(mayorDir, "town.json"), []byte("{}"), 0644)
+
+		rigDir := filepath.Join(townDir, "testrig")
+		beadsDir := filepath.Join(rigDir, ".beads")
+		os.MkdirAll(beadsDir, 0755)
+		meta := `{"dolt_mode":"server","dolt_database":"testdb"}`
+		os.WriteFile(filepath.Join(beadsDir, "metadata.json"), []byte(meta), 0644)
+
+		if err := ensureDatabaseInitialized(beadsDir); err != nil {
+			t.Fatalf("ensureDatabaseInitialized: %v", err)
+		}
+
+		logOutput := readMockBDLog(t, logPath)
+		firstMigrate := strings.Index(logOutput, "migrate --yes")
+		initCall := strings.Index(logOutput, "init --prefix gt --server")
+		lastMigrate := strings.LastIndex(logOutput, "migrate --yes")
+		if firstMigrate == -1 || initCall == -1 || lastMigrate == firstMigrate {
+			t.Fatalf("mock bd log missing migrate/init/migrate recovery sequence:\n%s", logOutput)
+		}
+		if !(firstMigrate < initCall && initCall < lastMigrate) {
+			t.Fatalf("mock bd log has wrong recovery order:\n%s", logOutput)
+		}
+	})
+
+	t.Run("server metadata with sync remote bootstraps without discard flags", func(t *testing.T) {
+		if runtime.GOOS == "windows" {
+			t.Skip("test uses Unix shell script mock for bd")
+		}
+
+		binDir := t.TempDir()
+		logPath := filepath.Join(binDir, "bd.log")
+		script := `#!/bin/sh
+LOG_FILE='` + logPath + `'
+printf '%s\n' "$*" >> "$LOG_FILE"
+
+cmd=""
+for arg in "$@"; do
+  case "$arg" in
+    --*) ;;
+    *) cmd="$arg"; break ;;
+  esac
+done
+
+target="${BEADS_DIR:-$(pwd)/.beads}"
+case "$cmd" in
+  migrate)
+    if [ -f "$target/.allow-migrate" ]; then
+      exit 0
+    fi
+    echo "Error: unknown database 'testdb'" >&2
+    exit 1
+    ;;
+  init)
+    echo "init should not run for configured sync.remote" >&2
+    exit 10
+    ;;
+  bootstrap)
+    args=" $*"
+    case "$args" in
+      *" --yes"*) ;;
+      *) echo "missing bootstrap --yes" >&2; exit 11 ;;
+    esac
+    for forbidden in " --force" " --reinit-local" " --discard-remote" " --destroy-token="; do
+      case "$args" in
+        *"$forbidden"*) echo "unexpected destructive flag $forbidden" >&2; exit 12 ;;
+      esac
+    done
+    touch "$target/.allow-migrate"
+    exit 0
+    ;;
+  config)
+    exit 0
+    ;;
+  *)
+    exit 0
+    ;;
+esac
+`
+		if err := os.WriteFile(filepath.Join(binDir, "bd"), []byte(script), 0755); err != nil {
+			t.Fatalf("write mock bd: %v", err)
+		}
+		t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+		ResetEnsuredDirs()
+
+		townDir := t.TempDir()
+		mayorDir := filepath.Join(townDir, "mayor")
+		os.MkdirAll(mayorDir, 0755)
+		os.WriteFile(filepath.Join(mayorDir, "town.json"), []byte("{}"), 0644)
+
+		rigDir := filepath.Join(townDir, "testrig")
+		beadsDir := filepath.Join(rigDir, ".beads")
+		os.MkdirAll(beadsDir, 0755)
+		meta := `{"dolt_mode":"server","dolt_database":"testdb"}`
+		os.WriteFile(filepath.Join(beadsDir, "metadata.json"), []byte(meta), 0644)
+		configYAML := "prefix: gt\nsync.remote: \"git+https://github.com/example/repo.git\"\n"
+		os.WriteFile(filepath.Join(beadsDir, "config.yaml"), []byte(configYAML), 0644)
+
+		if err := ensureDatabaseInitialized(beadsDir); err != nil {
+			t.Fatalf("ensureDatabaseInitialized: %v", err)
+		}
+
+		logOutput := readMockBDLog(t, logPath)
+		requireLogLineContaining(t, logOutput, "bootstrap --yes")
+		for _, forbidden := range []string{"--force", "--reinit-local", "--discard-remote", "--destroy-token="} {
+			if strings.Contains(logOutput, forbidden) {
+				t.Fatalf("mock bd log contains destructive flag %q:\n%s", forbidden, logOutput)
+			}
+		}
+	})
+
+	t.Run("server metadata with existing local database does not force init after transient unknown database", func(t *testing.T) {
+		if runtime.GOOS == "windows" {
+			t.Skip("test uses Unix shell script mock for bd")
+		}
+
+		binDir := t.TempDir()
+		logPath := filepath.Join(binDir, "bd.log")
+		script := `#!/bin/sh
+LOG_FILE='` + logPath + `'
+printf '%s\n' "$*" >> "$LOG_FILE"
+
+cmd=""
+for arg in "$@"; do
+  case "$arg" in
+    --*) ;;
+    *) cmd="$arg"; break ;;
+  esac
+done
+
+case "$cmd" in
+  migrate)
+    echo "Error: unknown database 'testdb'" >&2
+    exit 1
+    ;;
+  init)
+    echo "init should not run" >&2
+    exit 10
+    ;;
+  *)
+    exit 0
+    ;;
+esac
+`
+		if err := os.WriteFile(filepath.Join(binDir, "bd"), []byte(script), 0755); err != nil {
+			t.Fatalf("write mock bd: %v", err)
+		}
+		t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+		ResetEnsuredDirs()
+
+		townDir := t.TempDir()
+		if err := os.MkdirAll(filepath.Join(townDir, "mayor"), 0755); err != nil {
+			t.Fatalf("mkdir mayor: %v", err)
+		}
+		if err := os.WriteFile(filepath.Join(townDir, "mayor", "town.json"), []byte("{}"), 0644); err != nil {
+			t.Fatalf("write town.json: %v", err)
+		}
+		if err := os.MkdirAll(filepath.Join(townDir, ".dolt-data", "testdb", ".dolt"), 0755); err != nil {
+			t.Fatalf("mkdir local database: %v", err)
+		}
+
+		rigDir := filepath.Join(townDir, "testrig")
+		beadsDir := filepath.Join(rigDir, ".beads")
+		if err := os.MkdirAll(beadsDir, 0755); err != nil {
+			t.Fatalf("mkdir beads: %v", err)
+		}
+		meta := `{"dolt_mode":"server","dolt_database":"testdb"}`
+		if err := os.WriteFile(filepath.Join(beadsDir, "metadata.json"), []byte(meta), 0644); err != nil {
+			t.Fatalf("write metadata: %v", err)
+		}
+		configYAML := "prefix: gt\nsync.remote: \"git+https://github.com/example/repo.git\"\n"
+		if err := os.WriteFile(filepath.Join(beadsDir, "config.yaml"), []byte(configYAML), 0644); err != nil {
+			t.Fatalf("write config.yaml: %v", err)
+		}
+
+		err := ensureDatabaseInitialized(beadsDir)
+		if err == nil {
+			t.Fatal("expected migration error when server reports unknown database despite local database existing")
+		}
+		if !strings.Contains(err.Error(), "unknown database") {
+			t.Fatalf("ensureDatabaseInitialized error = %v, want unknown database", err)
+		}
+
+		logOutput := readMockBDLog(t, logPath)
+		if strings.Contains(logOutput, "init") {
+			t.Fatalf("forced init ran despite existing local database:\n%s", logOutput)
+		}
+	})
+
+	t.Run("server metadata with failed forced init retries recovery", func(t *testing.T) {
+		if runtime.GOOS == "windows" {
+			t.Skip("test uses Unix shell script mock for bd")
+		}
+
+		binDir := t.TempDir()
+		logPath := filepath.Join(binDir, "bd.log")
+		script := `#!/bin/sh
+LOG_FILE='` + logPath + `'
+printf '%s\n' "$*" >> "$LOG_FILE"
+
+cmd=""
+for arg in "$@"; do
+  case "$arg" in
+    --*) ;;
+    *) cmd="$arg"; break ;;
+  esac
+done
+
+target="${BEADS_DIR:-$(pwd)/.beads}"
+case "$cmd" in
+  migrate)
+    if [ -f "$target/.allow-migrate" ]; then
+      exit 0
+    fi
+    echo "Error: unknown database 'testdb'" >&2
+    exit 1
+    ;;
+  init)
+    mkdir -p "$target/dolt"
+    if [ ! -f "$target/.init-failed" ]; then
+      touch "$target/.init-failed"
+      echo "transient init failure" >&2
+      exit 1
+    fi
+    touch "$target/.allow-migrate"
+    exit 0
+    ;;
+  config)
+    exit 0
+    ;;
+  *)
+    exit 0
+    ;;
+esac
+`
+		if err := os.WriteFile(filepath.Join(binDir, "bd"), []byte(script), 0755); err != nil {
+			t.Fatalf("write mock bd: %v", err)
+		}
+		t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+		ResetEnsuredDirs()
+
+		townDir := t.TempDir()
+		mayorDir := filepath.Join(townDir, "mayor")
+		os.MkdirAll(mayorDir, 0755)
+		os.WriteFile(filepath.Join(mayorDir, "town.json"), []byte("{}"), 0644)
+
+		rigDir := filepath.Join(townDir, "testrig")
+		beadsDir := filepath.Join(rigDir, ".beads")
+		os.MkdirAll(beadsDir, 0755)
+		meta := `{"dolt_mode":"server","dolt_database":"testdb"}`
+		os.WriteFile(filepath.Join(beadsDir, "metadata.json"), []byte(meta), 0644)
+
+		if err := ensureDatabaseInitialized(beadsDir); err == nil {
+			t.Fatalf("expected transient forced init failure")
+		}
+		if _, err := os.Stat(filepath.Join(beadsDir, "dolt")); err != nil {
+			t.Fatalf("expected failed init path to leave dolt discovery dir: %v", err)
+		}
+
+		if err := ensureDatabaseInitialized(beadsDir); err != nil {
+			t.Fatalf("second ensureDatabaseInitialized: %v", err)
+		}
+
+		logOutput := readMockBDLog(t, logPath)
+		if got := strings.Count(logOutput, "init --prefix gt --server --force"); got != 2 {
+			t.Fatalf("expected forced init to be retried twice, got %d:\n%s", got, logOutput)
+		}
+	})
+
 	t.Run("no database artifacts — attempts bd init", func(t *testing.T) {
 		logPath := installMockBDRecorder(t)
 		beadsDir := filepath.Join(t.TempDir(), ".beads")
@@ -898,6 +1466,96 @@ func mustReadFile(t *testing.T, path string) []byte {
 		t.Fatalf("read %s: %v", path, err)
 	}
 	return data
+}
+
+func TestIsMissingServerDatabaseMigrationError(t *testing.T) {
+	tests := []struct {
+		name string
+		msg  string
+		want bool
+	}{
+		{
+			name: "unknown database",
+			msg:  "Error: unknown database 'rigdb'",
+			want: true,
+		},
+		{
+			name: "database name not found",
+			msg:  "database rigdb not found",
+			want: true,
+		},
+		{
+			name: "quoted database name does not exist",
+			msg:  `database "rig-db" does not exist`,
+			want: true,
+		},
+		{
+			name: "migration artifact not found",
+			msg:  "database migration file not found",
+			want: false,
+		},
+		{
+			name: "unrelated missing table",
+			msg:  "schema table not found",
+			want: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := isMissingServerDatabaseMigrationError(errors.New(tt.msg)); got != tt.want {
+				t.Fatalf("isMissingServerDatabaseMigrationError(%q) = %v, want %v", tt.msg, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestRestoreTrackedConfigYAMLRestoresDeletedSnapshot(t *testing.T) {
+	configPath := filepath.Join(t.TempDir(), "config.yaml")
+	snapshot := &TrackedConfigSnapshot{
+		path: configPath,
+		data: []byte("prefix: keep\nissue-prefix: keep\n"),
+		mode: 0600,
+	}
+
+	if err := restoreTrackedConfigYAML(snapshot); err != nil {
+		t.Fatalf("restoreTrackedConfigYAML: %v", err)
+	}
+	got := mustReadFile(t, configPath)
+	if string(got) != string(snapshot.data) {
+		t.Fatalf("restored config.yaml = %q, want %q", string(got), string(snapshot.data))
+	}
+	info, err := os.Stat(configPath)
+	if err != nil {
+		t.Fatalf("stat restored config.yaml: %v", err)
+	}
+	if info.Mode().Perm() != snapshot.mode {
+		t.Fatalf("restored mode = %v, want %v", info.Mode().Perm(), snapshot.mode)
+	}
+}
+
+func TestRestoreTrackedConfigYAMLRestoresModeDrift(t *testing.T) {
+	configPath := filepath.Join(t.TempDir(), "config.yaml")
+	data := []byte("prefix: keep\nissue-prefix: keep\n")
+	if err := os.WriteFile(configPath, data, 0644); err != nil {
+		t.Fatalf("write config.yaml: %v", err)
+	}
+	snapshot := &TrackedConfigSnapshot{
+		path: configPath,
+		data: data,
+		mode: 0600,
+	}
+
+	if err := restoreTrackedConfigYAML(snapshot); err != nil {
+		t.Fatalf("restoreTrackedConfigYAML: %v", err)
+	}
+	info, err := os.Stat(configPath)
+	if err != nil {
+		t.Fatalf("stat config.yaml: %v", err)
+	}
+	if info.Mode().Perm() != snapshot.mode {
+		t.Fatalf("restored mode = %v, want %v", info.Mode().Perm(), snapshot.mode)
+	}
 }
 
 func TestDetectPrefix(t *testing.T) {
@@ -984,9 +1642,20 @@ func TestDetectPrefix(t *testing.T) {
 		os.MkdirAll(mayorDir, 0755)
 		os.WriteFile(filepath.Join(mayorDir, "town.json"), []byte("{}"), 0644)
 
-		// Create rigs.json with a prefix for our rig
-		rigsJSON := `{"rigs": {"testrig": {"prefix": "tr"}}}`
-		os.WriteFile(filepath.Join(mayorDir, "rigs.json"), []byte(rigsJSON), 0644)
+		if err := config.SaveRigsConfig(filepath.Join(mayorDir, "rigs.json"), &config.RigsConfig{
+			Version: config.CurrentRigsVersion,
+			Rigs: map[string]config.RigEntry{
+				"testrig": {
+					GitURL:  "git@example.com:testrig.git",
+					AddedAt: time.Now(),
+					BeadsConfig: &config.BeadsConfig{
+						Prefix: "tr-",
+					},
+				},
+			},
+		}); err != nil {
+			t.Fatalf("SaveRigsConfig: %v", err)
+		}
 
 		// Create rig directory with .beads
 		rigDir := filepath.Join(townDir, "testrig")
@@ -994,11 +1663,37 @@ func TestDetectPrefix(t *testing.T) {
 		os.MkdirAll(beadsDir, 0755)
 
 		got := detectPrefix(beadsDir)
-		// GetRigPrefix should find "testrig" in rigs.json and return "tr".
-		// If the town structure isn't recognized (e.g., GetRigPrefix expects
-		// additional files), it falls back to "gt" — both are valid prefixes.
-		if got != "tr" && got != "gt" {
-			t.Errorf("detectPrefix() = %q, want %q or %q", got, "tr", "gt")
+		if got != "tr" {
+			t.Errorf("detectPrefix() = %q, want %q", got, "tr")
+		}
+	})
+
+	t.Run("non-routed rigs.json beats conflicting config.yaml", func(t *testing.T) {
+		townDir := t.TempDir()
+		mayorDir := filepath.Join(townDir, "mayor")
+		os.MkdirAll(mayorDir, 0755)
+		os.WriteFile(filepath.Join(mayorDir, "town.json"), []byte("{}"), 0644)
+		if err := config.SaveRigsConfig(filepath.Join(mayorDir, "rigs.json"), &config.RigsConfig{
+			Version: config.CurrentRigsVersion,
+			Rigs: map[string]config.RigEntry{
+				"testrig": {
+					GitURL:  "git@example.com:testrig.git",
+					AddedAt: time.Now(),
+					BeadsConfig: &config.BeadsConfig{
+						Prefix: "tr-",
+					},
+				},
+			},
+		}); err != nil {
+			t.Fatalf("SaveRigsConfig: %v", err)
+		}
+
+		beadsDir := filepath.Join(townDir, "testrig", ".beads")
+		os.MkdirAll(beadsDir, 0755)
+		os.WriteFile(filepath.Join(beadsDir, "config.yaml"), []byte("prefix: local\nissue-prefix: local\n"), 0644)
+
+		if got := detectPrefix(beadsDir); got != "tr" {
+			t.Errorf("detectPrefix() with conflicting non-routed config.yaml = %q, want %q", got, "tr")
 		}
 	})
 

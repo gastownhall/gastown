@@ -741,9 +741,6 @@ func initTownBeads(townPath string) error {
 		if err := seedPreinitializedTownBeadsConfig(townPath); err != nil {
 			return fmt.Errorf("seeding town beads config: %w", err)
 		}
-		if err := doltserver.CommitServerWorkingSet(townPath, "hq", "gt install: initialize town beads"); err != nil {
-			return fmt.Errorf("committing town beads schema: %w", err)
-		}
 	} else {
 		beadsEnv := withBeadsDirEnv(beadsDir)
 
@@ -810,21 +807,6 @@ func initTownBeads(townPath string) error {
 }
 
 func seedPreinitializedTownBeadsConfig(townPath string) error {
-	cfg := doltserver.DefaultConfig(townPath)
-	dsn := buildDoltDSNFromConfig(cfg, "hq", dsnOpts{
-		Timeout:      "5s",
-		ReadTimeout:  "5s",
-		WriteTimeout: "5s",
-	})
-	db, err := sql.Open("mysql", dsn)
-	if err != nil {
-		return err
-	}
-	defer db.Close()
-
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-
 	values := map[string]string{
 		"beads.role":       "maintainer",
 		"issue_prefix":     "hq",
@@ -832,12 +814,7 @@ func seedPreinitializedTownBeadsConfig(townPath string) error {
 		"allowed_prefixes": "hq,hq-cv",
 		"routing.mode":     "explicit",
 	}
-	for key, value := range values {
-		if _, err := db.ExecContext(ctx, "REPLACE INTO config (`key`, `value`) VALUES (?, ?)", key, value); err != nil {
-			return fmt.Errorf("setting %s: %w", key, err)
-		}
-	}
-	return nil
+	return doltserver.SetBeadsConfigValues(townPath, "hq", values)
 }
 
 // withBeadsDirEnv returns an environment with BEADS_DIR pinned to the target

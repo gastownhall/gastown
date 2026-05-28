@@ -521,16 +521,20 @@ func bdDepListRawIDsWithSchema(dir, issueID, direction, depType string, splitTar
 	// "up":   issueID is depended on → SELECT issue_id WHERE target = ?
 	selectExpr := targetExpr
 	rowKey := "depends_on_id"
-	whereExpr := "issue_id"
+	whereExpr := fmt.Sprintf("issue_id = '%s'", issueID)
 	if direction == "up" {
 		selectExpr = "issue_id"
 		rowKey = "issue_id"
-		whereExpr = targetExpr
+		if splitTarget {
+			whereExpr = fmt.Sprintf("'%s' IN (depends_on_issue_id, depends_on_wisp_id, depends_on_external)", issueID)
+		} else {
+			whereExpr = fmt.Sprintf("%s = '%s'", targetExpr, issueID)
+		}
 	} else if splitTarget {
 		selectExpr = targetExpr + " AS depends_on_id"
 	}
 
-	query := fmt.Sprintf("SELECT %s FROM dependencies WHERE %s = '%s'", selectExpr, whereExpr, issueID)
+	query := fmt.Sprintf("SELECT %s FROM dependencies WHERE %s", selectExpr, whereExpr)
 	if depType != "" {
 		query += fmt.Sprintf(" AND type = '%s'", depType)
 	}

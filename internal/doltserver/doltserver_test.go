@@ -2,6 +2,8 @@ package doltserver
 
 import (
 	"bytes"
+	"context"
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -3227,6 +3229,147 @@ func TestParseShowDatabases_PlainText(t *testing.T) {
 	}
 	if !found["hq"] || !found["gastown"] {
 		t.Errorf("expected hq and gastown, got %v", got)
+	}
+}
+
+type fakeConfigRowExecer struct {
+	calls []configRowExecCall
+}
+
+type configRowExecCall struct {
+	query string
+	args  []any
+}
+
+func (f *fakeConfigRowExecer) ExecContext(_ context.Context, query string, args ...any) (sql.Result, error) {
+	f.calls = append(f.calls, configRowExecCall{
+		query: query,
+		args:  append([]any(nil), args...),
+	})
+	return nil, nil
+}
+
+func TestReplaceBeadsConfigRowsUsesParameterizedValues(t *testing.T) {
+	execer := &fakeConfigRowExecer{}
+	values := map[string]string{
+		"issue_prefix": "gt",
+		"tricky":       "quote ' and backslash \\",
+	}
+
+	if err := ReplaceBeadsConfigRows(context.Background(), execer, values); err != nil {
+		t.Fatalf("ReplaceBeadsConfigRows: %v", err)
+	}
+	if len(execer.calls) != len(values) {
+		t.Fatalf("ExecContext calls = %d, want %d", len(execer.calls), len(values))
+	}
+
+	got := map[string]string{}
+	for _, call := range execer.calls {
+		if call.query != replaceBeadsConfigRowQuery {
+			t.Fatalf("query = %q, want %q", call.query, replaceBeadsConfigRowQuery)
+		}
+		if len(call.args) != 2 {
+			t.Fatalf("args len = %d, want 2", len(call.args))
+		}
+		key, ok := call.args[0].(string)
+		if !ok {
+			t.Fatalf("arg[0] type = %T, want string", call.args[0])
+		}
+		value, ok := call.args[1].(string)
+		if !ok {
+			t.Fatalf("arg[1] type = %T, want string", call.args[1])
+		}
+		got[key] = value
+	}
+	for key, want := range values {
+		if got[key] != want {
+			t.Fatalf("value for %q = %q, want %q", key, got[key], want)
+		}
+	}
+}
+
+func TestCommitServerWorkingSetQuotesHyphenatedDatabase(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("test uses Unix shell script mock for dolt")
+	}
+
+	townRoot := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(townRoot, ".dolt-data"), 0755); err != nil {
+		t.Fatalf("mkdir .dolt-data: %v", err)
+	}
+
+	binDir := t.TempDir()
+	logPath := filepath.Join(binDir, "dolt.log")
+	script := `#!/bin/sh
+printf '%s\n' "$*" >> '` + logPath + `'
+exit 0
+`
+	if err := os.WriteFile(filepath.Join(binDir, "dolt"), []byte(script), 0755); err != nil {
+		t.Fatalf("write mock dolt: %v", err)
+	}
+	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	if err := CommitServerWorkingSet(townRoot, "my-rig", "test commit"); err != nil {
+		t.Fatalf("CommitServerWorkingSet: %v", err)
+	}
+
+	data, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatalf("read dolt log: %v", err)
+	}
+	logOutput := string(data)
+	if strings.Contains(logOutput, "USE my-rig;") {
+		t.Fatalf("database identifier was not quoted:\n%s", logOutput)
+	}
+	for _, want := range []string{
+		"USE `my-rig`; CALL DOLT_ADD('-A')",
+		"USE `my-rig`; CALL DOLT_COMMIT('--allow-empty', '-m', 'test commit')",
+	} {
+		if !strings.Contains(logOutput, want) {
+			t.Fatalf("mock dolt log missing %q:\n%s", want, logOutput)
+		}
+	}
+}
+
+func TestValidateDoltDatabaseName(t *testing.T) {
+	for _, name := range []string{"hq", "gastown", "beads_gt-1"} {
+		if err := validateDoltDatabaseName(name); err != nil {
+			t.Errorf("validateDoltDatabaseName(%q) unexpected error: %v", name, err)
+		}
+	}
+	for _, name := range []string{"", "my rig", "rig/name", "rig.name", "rig`name", "rig;drop"} {
+		if err := validateDoltDatabaseName(name); err == nil {
+			t.Errorf("validateDoltDatabaseName(%q) = nil, want error", name)
+		}
+	}
+}
+
+func TestDoltConfigNetworkAddressPrefersLocalSocket(t *testing.T) {
+	orig := localDoltConfigSocketPath
+	localDoltConfigSocketPath = func(port int) string {
+		if port != 4407 {
+			t.Fatalf("socket probe port = %d, want 4407", port)
+		}
+		return "/tmp/test-dolt.sock"
+	}
+	t.Cleanup(func() { localDoltConfigSocketPath = orig })
+
+	network, address := doltConfigNetworkAddress(&Config{Port: 4407})
+	if network != "unix" || address != "/tmp/test-dolt.sock" {
+		t.Fatalf("network/address = %s/%s, want unix//tmp/test-dolt.sock", network, address)
+	}
+}
+
+func TestDoltConfigNetworkAddressUsesTCPForRemote(t *testing.T) {
+	orig := localDoltConfigSocketPath
+	localDoltConfigSocketPath = func(port int) string {
+		return "/tmp/test-dolt.sock"
+	}
+	t.Cleanup(func() { localDoltConfigSocketPath = orig })
+
+	network, address := doltConfigNetworkAddress(&Config{Host: "192.0.2.10", Port: 4407})
+	if network != "tcp" || address != "192.0.2.10:4407" {
+		t.Fatalf("network/address = %s/%s, want tcp/192.0.2.10:4407", network, address)
 	}
 }
 

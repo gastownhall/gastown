@@ -39,13 +39,14 @@ import (
 	"path/filepath"
 
 	"runtime"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
 	"syscall"
 	"time"
 
-	_ "github.com/go-sql-driver/mysql"
+	mysql "github.com/go-sql-driver/mysql"
 	"github.com/gofrs/flock"
 	beadssdk "github.com/steveyegge/beads"
 	"github.com/steveyegge/gastown/internal/atomicfile"
@@ -2022,6 +2023,32 @@ func Start(townRoot string) error {
 // DefaultDoltSocketPath is the default Unix socket Dolt creates.
 const DefaultDoltSocketPath = "/tmp/mysql.sock"
 
+var localDoltConfigSocketPath = func(port int) string {
+	socketPath := DefaultDoltSocketPath
+	if port != 0 && port != 3306 {
+		socketPath = fmt.Sprintf("/tmp/mysql.%d.sock", port)
+	}
+	info, err := os.Stat(socketPath)
+	if err != nil || info.Mode()&os.ModeSocket == 0 {
+		return ""
+	}
+	conn, err := net.DialTimeout("unix", socketPath, 100*time.Millisecond)
+	if err != nil {
+		return ""
+	}
+	_ = conn.Close()
+	return socketPath
+}
+
+func doltConfigNetworkAddress(config *Config) (string, string) {
+	if !config.IsRemote() {
+		if socketPath := localDoltConfigSocketPath(config.Port); socketPath != "" {
+			return "unix", socketPath
+		}
+	}
+	return "tcp", config.HostPort()
+}
+
 // cleanStaleDoltSocket removes the default Unix socket file that Dolt creates
 // at /tmp/mysql.sock. After a crash, this file lingers and prevents the next
 // server start from binding the Unix socket, causing a warning and TCP-only
@@ -2642,7 +2669,11 @@ func InitRig(townRoot, rigName string) (serverWasRunning bool, created bool, err
 	if running {
 		// Server is running: use CREATE DATABASE which both creates the
 		// directory and registers the database with the live server.
-		if err := serverExecSQL(townRoot, fmt.Sprintf("CREATE DATABASE `%s`", rigName)); err != nil {
+		quotedRigName, err := quoteDoltDatabaseName(rigName)
+		if err != nil {
+			return true, false, err
+		}
+		if err := serverExecSQL(townRoot, fmt.Sprintf("CREATE DATABASE %s", quotedRigName)); err != nil {
 			return true, false, fmt.Errorf("creating database on running server: %w", err)
 		}
 		// Wait for the new database to appear in the server's in-memory catalog.
@@ -2772,33 +2803,144 @@ func openRigStoreFromConfig(ctx context.Context, townRoot, beadsDir, rigName str
 	return beadssdk.OpenFromConfig(ctx, beadsDir)
 }
 
+// SQLExecer is the subset of *sql.DB and *sql.Tx used for parameterized config
+// row writes.
+type SQLExecer interface {
+	ExecContext(context.Context, string, ...any) (sql.Result, error)
+}
+
+const replaceBeadsConfigRowQuery = "REPLACE INTO config (`key`, `value`) VALUES (?, ?)"
+
+// ReplaceBeadsConfigRows writes Beads config rows through parameter binding.
+// Callers choose the transaction/commit boundary by passing either *sql.DB or
+// *sql.Tx as execer.
+func ReplaceBeadsConfigRows(ctx context.Context, execer SQLExecer, values map[string]string) error {
+	keys := make([]string, 0, len(values))
+	for key := range values {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	for _, key := range keys {
+		if _, err := execer.ExecContext(ctx, replaceBeadsConfigRowQuery, key, values[key]); err != nil {
+			return fmt.Errorf("setting %s: %w", key, err)
+		}
+	}
+	return nil
+}
+
 // SetBeadsConfigValues writes Beads config rows directly to a server-mode Dolt
-// database and commits the working set. Use this for immutable bd config keys
-// such as issue_prefix, after the schema has been initialized/migrated.
+// database using the shared parameterized writer and commits the working set.
+// This is the preferred path for immutable bd config keys such as issue_prefix
+// after the schema has been initialized/migrated; callers only fall back to
+// `bd config set` when the server SQL path is unavailable.
 func SetBeadsConfigValues(townRoot, rigDB string, values map[string]string) error {
 	if townRoot == "" {
 		return fmt.Errorf("townRoot cannot be empty")
 	}
-	if rigDB == "" {
-		return fmt.Errorf("rig database cannot be empty")
+	if err := validateDoltDatabaseName(rigDB); err != nil {
+		return err
 	}
 	if len(values) == 0 {
 		return nil
 	}
 
-	rows := make([]string, 0, len(values))
-	for key, value := range values {
-		rows = append(rows, fmt.Sprintf("(%s, %s)", sqlLiteral(key), sqlLiteral(value)))
-	}
-	query := "REPLACE INTO config (`key`, `value`) VALUES " + strings.Join(rows, ", ")
-	if err := doltSQLWithRetry(townRoot, rigDB, query); err != nil {
+	if err := setBeadsConfigValuesWithRetry(townRoot, rigDB, values); err != nil {
 		return fmt.Errorf("writing config rows: %w", err)
 	}
 	return CommitServerWorkingSet(townRoot, rigDB, "gt: update beads config")
 }
 
-func sqlLiteral(value string) string {
-	return "'" + strings.ReplaceAll(value, "'", "''") + "'"
+func setBeadsConfigValuesWithRetry(townRoot, rigDB string, values map[string]string) error {
+	const maxRetries = 5
+	const baseBackoff = 500 * time.Millisecond
+	const maxBackoff = 15 * time.Second
+
+	var lastErr error
+	for attempt := 1; attempt <= maxRetries; attempt++ {
+		if err := setBeadsConfigValuesOnce(townRoot, rigDB, values); err != nil {
+			lastErr = err
+			if !isDoltRetryableError(err) {
+				return err
+			}
+			if attempt < maxRetries {
+				backoff := baseBackoff
+				for i := 1; i < attempt; i++ {
+					backoff *= 2
+					if backoff > maxBackoff {
+						backoff = maxBackoff
+						break
+					}
+				}
+				time.Sleep(backoff)
+			}
+			continue
+		}
+		return nil
+	}
+	return fmt.Errorf("after %d retries: %w", maxRetries, lastErr)
+}
+
+func setBeadsConfigValuesOnce(townRoot, rigDB string, values map[string]string) error {
+	db, err := openDoltConfigDB(townRoot, rigDB)
+	if err != nil {
+		return err
+	}
+	defer db.Close()
+	db.SetConnMaxLifetime(5 * time.Second)
+	db.SetMaxOpenConns(1)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+
+	tx, err := db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin config transaction: %w", err)
+	}
+	if err := ReplaceBeadsConfigRows(ctx, tx, values); err != nil {
+		_ = tx.Rollback()
+		return err
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit config transaction: %w", err)
+	}
+	return nil
+}
+
+func openDoltConfigDB(townRoot, rigDB string) (*sql.DB, error) {
+	config := DefaultConfig(townRoot)
+	dsn := mysql.NewConfig()
+	dsn.User = config.User
+	dsn.Passwd = config.Password
+	dsn.Net, dsn.Addr = doltConfigNetworkAddress(config)
+	dsn.DBName = rigDB
+	dsn.Timeout = 5 * time.Second
+	dsn.ReadTimeout = 10 * time.Second
+	dsn.WriteTimeout = 10 * time.Second
+	db, err := sql.Open("mysql", dsn.FormatDSN())
+	if err != nil {
+		return nil, fmt.Errorf("opening mysql connection: %w", err)
+	}
+	return db, nil
+}
+
+func validateDoltDatabaseName(name string) error {
+	if name == "" {
+		return fmt.Errorf("rig database cannot be empty")
+	}
+	for _, r := range name {
+		if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == '_' || r == '-' {
+			continue
+		}
+		return fmt.Errorf("invalid rig database %q: must contain only alphanumeric, underscore, or dash", name)
+	}
+	return nil
+}
+
+func quoteDoltDatabaseName(name string) (string, error) {
+	if err := validateDoltDatabaseName(name); err != nil {
+		return "", err
+	}
+	return "`" + name + "`", nil
 }
 
 func issuePrefixForRigInit(townRoot, rigName string) string {
@@ -4492,7 +4634,11 @@ func waitForCatalog(townRoot, dbName string) error {
 	const baseBackoff = 100 * time.Millisecond
 	const maxBackoff = 2 * time.Second
 
-	query := fmt.Sprintf("USE %s", dbName)
+	quotedDBName, err := quoteDoltDatabaseName(dbName)
+	if err != nil {
+		return err
+	}
+	query := fmt.Sprintf("USE %s", quotedDBName)
 	var lastErr error
 	for attempt := 1; attempt <= maxAttempts; attempt++ {
 		if err := serverExecSQL(townRoot, query); err != nil {
@@ -4530,8 +4676,13 @@ func doltSQL(townRoot, rigDB, query string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 
+	quotedRigDB, err := quoteDoltDatabaseName(rigDB)
+	if err != nil {
+		return err
+	}
+
 	// Prepend USE <db> to select the target database.
-	fullQuery := fmt.Sprintf("USE %s; %s", rigDB, query)
+	fullQuery := fmt.Sprintf("USE %s; %s", quotedRigDB, query)
 	cmd := buildServerSQLCmd(ctx, config, "-q", fullQuery)
 	output, err := cmd.CombinedOutput()
 	if err != nil {

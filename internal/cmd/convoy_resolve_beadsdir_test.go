@@ -11,6 +11,84 @@ import (
 	"github.com/steveyegge/gastown/internal/constants"
 )
 
+func installConvoyResolveBDMock(t *testing.T) {
+	t.Helper()
+
+	binDir := t.TempDir()
+	if runtime.GOOS == "windows" {
+		psPath := filepath.Join(binDir, "bd.ps1")
+		psScript := `# Mock bd for convoy resolve tests.
+$cmd = ''
+foreach ($arg in $args) {
+  if ($arg -like '--*') { continue }
+  $cmd = $arg
+  break
+}
+$target = $env:BEADS_DIR
+if ([string]::IsNullOrEmpty($target)) {
+  $target = Join-Path (Get-Location) '.beads'
+}
+switch ($cmd) {
+  'init' {
+    New-Item -ItemType Directory -Force -Path (Join-Path $target 'dolt') | Out-Null
+    Set-Content -Path (Join-Path $target 'config.yaml') -Value @('prefix: gt', 'issue-prefix: gt-')
+    exit 0
+  }
+  'migrate' { exit 0 }
+  'config' {
+    if ($args -join ' ' -match 'get types.custom') {
+      Write-Output 'agent,role,rig,convoy,slot,queue,event,message,molecule,gate,merge-request'
+    }
+    exit 0
+  }
+  default { exit 0 }
+}
+`
+		cmdScript := "@echo off\r\npwsh -NoProfile -NoLogo -File \"" + psPath + "\" %*\r\n"
+		if err := os.WriteFile(psPath, []byte(psScript), 0644); err != nil {
+			t.Fatalf("write mock bd ps1: %v", err)
+		}
+		if err := os.WriteFile(filepath.Join(binDir, "bd.cmd"), []byte(cmdScript), 0644); err != nil {
+			t.Fatalf("write mock bd cmd: %v", err)
+		}
+	} else {
+		script := `#!/bin/sh
+cmd=""
+for arg in "$@"; do
+  case "$arg" in
+    --*) ;;
+    *) cmd="$arg"; break ;;
+  esac
+done
+
+target="${BEADS_DIR:-$(pwd)/.beads}"
+case "$cmd" in
+  init)
+    mkdir -p "$target/dolt"
+    printf 'prefix: gt\nissue-prefix: gt-\n' > "$target/config.yaml"
+    exit 0
+    ;;
+  migrate)
+    exit 0
+    ;;
+  config)
+    if echo "$*" | grep -q "get types.custom"; then
+      echo "agent,role,rig,convoy,slot,queue,event,message,molecule,gate,merge-request"
+    fi
+    exit 0
+    ;;
+  *)
+    exit 0
+    ;;
+esac
+`
+		if err := os.WriteFile(filepath.Join(binDir, "bd"), []byte(script), 0755); err != nil {
+			t.Fatalf("write mock bd: %v", err)
+		}
+	}
+	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+}
+
 // TestConvoyResolveBeadsDir_RegressionEmptyConvoy is a regression test for
 // hq-dt4: "Convoy add command reports success but issues don't appear in
 // convoy progress."
@@ -78,6 +156,7 @@ func TestConvoyResolveBeadsDir_RegressionEmptyConvoy(t *testing.T) {
 	// Subtest 2: Without ResolveBeadsDir, sentinel ends up in the wrong place.
 	// This test documents the buggy behavior that the fix prevents.
 	t.Run("without ResolveBeadsDir sentinel goes to wrong location", func(t *testing.T) {
+		installConvoyResolveBDMock(t)
 		beads.ResetEnsuredDirs()
 
 		townRoot := t.TempDir()
@@ -107,8 +186,8 @@ func TestConvoyResolveBeadsDir_RegressionEmptyConvoy(t *testing.T) {
 			t.Fatalf("ResolveBeadsDir(%q) = %q, want %q", townRoot, resolved, beadsDir)
 		}
 
-		// With the resolved path, EnsureCustomTypes finds the sentinel
-		// and succeeds — no bd call needed.
+		// With the resolved path, EnsureCustomTypes initializes/migrates the
+		// database and then finds the sentinel in the correct .beads directory.
 		if err := beads.EnsureCustomTypes(resolved); err != nil {
 			t.Fatalf("EnsureCustomTypes(resolved) failed: %v", err)
 		}
@@ -122,6 +201,7 @@ func TestConvoyResolveBeadsDir_RegressionEmptyConvoy(t *testing.T) {
 
 	// Subtest 3: ResolveBeadsDir + EnsureCustomTypes works correctly
 	t.Run("ResolveBeadsDir fixes the path before EnsureCustomTypes", func(t *testing.T) {
+		installConvoyResolveBDMock(t)
 		beads.ResetEnsuredDirs()
 
 		townRoot := t.TempDir()
@@ -130,7 +210,8 @@ func TestConvoyResolveBeadsDir_RegressionEmptyConvoy(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		// Pre-populate sentinel in .beads so we don't need a real bd.
+		// Pre-populate sentinel in .beads. EnsureCustomTypes should still use
+		// the resolved .beads path for initialization/migration.
 		currentTypes := strings.Join(constants.BeadsCustomTypesList(), ",")
 		if err := os.WriteFile(filepath.Join(beadsDir, ".gt-types-configured"), []byte(currentTypes+"\n"), 0644); err != nil {
 			t.Fatal(err)
@@ -149,6 +230,7 @@ func TestConvoyResolveBeadsDir_RegressionEmptyConvoy(t *testing.T) {
 
 	// Subtest 4: Same for EnsureCustomStatuses
 	t.Run("ResolveBeadsDir fixes the path before EnsureCustomStatuses", func(t *testing.T) {
+		installConvoyResolveBDMock(t)
 		beads.ResetEnsuredDirs()
 
 		townRoot := t.TempDir()
@@ -250,6 +332,7 @@ func TestConvoyCreate_SentinelPlacement(t *testing.T) {
 		t.Skip("skipping on windows — shell stubs")
 	}
 
+	installConvoyResolveBDMock(t)
 	beads.ResetEnsuredDirs()
 
 	townRoot := t.TempDir()
@@ -270,7 +353,8 @@ func TestConvoyCreate_SentinelPlacement(t *testing.T) {
 		t.Fatalf("resolved = %q, want %q", resolved, beadsDir)
 	}
 
-	// Pre-populate sentinels to avoid needing a real bd binary.
+	// Pre-populate sentinels. The bd mock covers initialization/migration while
+	// the assertions below verify sentinels stay in .beads, not the workspace root.
 	currentTypes := strings.Join(constants.BeadsCustomTypesList(), ",")
 	if err := os.WriteFile(filepath.Join(beadsDir, ".gt-types-configured"), []byte(currentTypes+"\n"), 0644); err != nil {
 		t.Fatal(err)

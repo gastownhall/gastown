@@ -374,7 +374,13 @@ case "$cmd" in
     printf '{"id":"pt-imported-polecat-shiny","title":"shiny","status":"open"}\n'
     exit 0
     ;;
-  slot|config|migrate|init|show|update)
+  config)
+    if echo "$*" | grep -q "get types.custom"; then
+      echo "agent,role,rig,convoy,slot,queue,event,message,molecule,gate,merge-request"
+    fi
+    exit 0
+    ;;
+  slot|migrate|init|show|update)
     exit 0
     ;;
   *)
@@ -450,6 +456,183 @@ func TestCreateAgentBead_UsesTownRootForCrossRigRoutes(t *testing.T) {
 	}
 	// Note: hook_bead slot is no longer set — bd slot removed in v0.62 (hq-l6mm5).
 	// Work bead status=hooked and assignee=<agent> is now the authoritative source.
+}
+
+func TestCreateAgentBead_PropagatesCustomTypeSetupError(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("test uses Unix shell script mock for bd")
+	}
+
+	binDir := t.TempDir()
+	logPath := filepath.Join(binDir, "bd.log")
+	script := `#!/bin/sh
+printf '%s\n' "$*" >> "$MOCK_BD_LOG"
+
+cmd=""
+for arg in "$@"; do
+  case "$arg" in
+    --*) ;;
+    *) cmd="$arg"; break ;;
+  esac
+done
+
+target="${BEADS_DIR:-$(pwd)/.beads}"
+case "$cmd" in
+  init)
+    mkdir -p "$target/dolt"
+    exit 0
+    ;;
+  migrate)
+    exit 0
+    ;;
+  config)
+    if echo "$*" | grep -q "set types.custom"; then
+      echo "custom type config refused" >&2
+      exit 42
+    fi
+    exit 0
+    ;;
+  create)
+    printf '{"id":"gt-test-polecat-shiny","title":"shiny","status":"open"}\n'
+    exit 0
+    ;;
+  *)
+    exit 0
+    ;;
+esac
+`
+	if err := os.WriteFile(filepath.Join(binDir, "bd"), []byte(script), 0755); err != nil {
+		t.Fatalf("write mock bd: %v", err)
+	}
+	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	t.Setenv("MOCK_BD_LOG", logPath)
+	ResetEnsuredDirs()
+
+	rigDir := t.TempDir()
+	beadsDir := filepath.Join(rigDir, ".beads")
+	if err := os.MkdirAll(beadsDir, 0755); err != nil {
+		t.Fatalf("mkdir beads: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(beadsDir, "config.yaml"), []byte("prefix: gt\n"), 0644); err != nil {
+		t.Fatalf("write config.yaml: %v", err)
+	}
+
+	bd := NewWithBeadsDir(rigDir, beadsDir)
+	_, err := bd.CreateAgentBead("gt-test-polecat-shiny", "shiny", &AgentFields{
+		RoleType:   "polecat",
+		Rig:        "test",
+		AgentState: "spawning",
+	})
+	if err == nil {
+		t.Fatal("CreateAgentBead succeeded after custom type setup failure")
+	}
+	if !strings.Contains(err.Error(), "configuring target custom issue types") {
+		t.Fatalf("CreateAgentBead error = %v, want custom type setup context", err)
+	}
+	if logOutput := readMockBDLog(t, logPath); strings.Contains(logOutput, "create --json") {
+		t.Fatalf("bd create ran after custom type setup failed:\n%s", logOutput)
+	}
+}
+
+func TestCreateAgentBead_RecoversMissingServerDatabaseBeforeCreate(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("test uses Unix shell script mock for bd")
+	}
+
+	binDir := t.TempDir()
+	logPath := filepath.Join(binDir, "bd.log")
+	script := `#!/bin/sh
+LOG_FILE='` + logPath + `'
+printf '%s\n' "$*" >> "$LOG_FILE"
+
+cmd=""
+for arg in "$@"; do
+  case "$arg" in
+    --*) ;;
+    *) cmd="$arg"; break ;;
+  esac
+done
+
+target="${BEADS_DIR:-$(pwd)/.beads}"
+case "$cmd" in
+  migrate)
+    if [ -f "$target/.allow-migrate" ]; then
+      exit 0
+    fi
+    echo "Error: unknown database 'testdb'" >&2
+    exit 1
+    ;;
+  init)
+    touch "$target/.allow-migrate"
+    exit 0
+    ;;
+  config)
+    if echo "$*" | grep -q "get types.custom"; then
+      echo "agent,role,rig,convoy,slot,queue,event,message,molecule,gate,merge-request"
+    fi
+    exit 0
+    ;;
+  create)
+    printf '{"id":"gt-test-polecat-shiny","title":"shiny","status":"open"}\n'
+    exit 0
+    ;;
+  *)
+    exit 0
+    ;;
+esac
+`
+	if err := os.WriteFile(filepath.Join(binDir, "bd"), []byte(script), 0755); err != nil {
+		t.Fatalf("write mock bd: %v", err)
+	}
+	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	ResetEnsuredDirs()
+
+	townDir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(townDir, "mayor"), 0755); err != nil {
+		t.Fatalf("mkdir mayor: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(townDir, "mayor", "town.json"), []byte("{}"), 0644); err != nil {
+		t.Fatalf("write town.json: %v", err)
+	}
+	townBeadsDir := filepath.Join(townDir, ".beads")
+	if err := os.MkdirAll(townBeadsDir, 0755); err != nil {
+		t.Fatalf("mkdir town beads: %v", err)
+	}
+	meta := `{"dolt_mode":"server","dolt_database":"testdb"}`
+	if err := os.WriteFile(filepath.Join(townBeadsDir, "metadata.json"), []byte(meta), 0644); err != nil {
+		t.Fatalf("write town metadata: %v", err)
+	}
+
+	rigDir := filepath.Join(townDir, "testrig")
+	beadsDir := filepath.Join(rigDir, ".beads")
+	if err := os.MkdirAll(beadsDir, 0755); err != nil {
+		t.Fatalf("mkdir beads: %v", err)
+	}
+
+	bd := NewWithBeadsDir(rigDir, beadsDir)
+	issue, err := bd.CreateAgentBead("gt-test-polecat-shiny", "shiny", &AgentFields{
+		RoleType:   "polecat",
+		Rig:        "test",
+		AgentState: "spawning",
+	})
+	if err != nil {
+		t.Fatalf("CreateAgentBead: %v", err)
+	}
+	if issue == nil || issue.ID != "gt-test-polecat-shiny" {
+		t.Fatalf("CreateAgentBead issue = %#v", issue)
+	}
+
+	logOutput := readMockBDLog(t, logPath)
+	firstMigrate := strings.Index(logOutput, "migrate --yes")
+	initCall := strings.Index(logOutput, "init --prefix gt --server --force")
+	configSet := strings.Index(logOutput, "config set types.custom")
+	createCall := strings.Index(logOutput, "create --json --id=gt-test-polecat-shiny")
+	if firstMigrate == -1 || initCall == -1 || configSet == -1 || createCall == -1 {
+		t.Fatalf("mock bd log missing recovery/config/create calls:\n%s", logOutput)
+	}
+	if !(firstMigrate < initCall && initCall < configSet && configSet < createCall) {
+		t.Fatalf("mock bd log has wrong recovery order:\n%s", logOutput)
+	}
 }
 
 func TestCreateAgentBead_ParsesMockCreateOutput(t *testing.T) {

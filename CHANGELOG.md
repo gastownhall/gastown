@@ -28,6 +28,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   nightly, Docker, and testcontainer paths to `2.0.7`, and validates the Dolt
   binary before beads-enabled install and doctor flows. This prevents mixed
   1.x/2.x clients from writing shared Dolt stores with incompatible behavior.
+- **Release build dependency discipline** — Release binaries stay CGO-off
+  across the GoReleaser matrix, with a v1.2 build audit documenting the
+  Go 1.26.2 toolchain and beads v1.0.4 dependency-surface impact.
 - **Release publishing hardening** — The npm release workflow now age-gates its
   npm self-update before publishing with provenance, reducing release risk from
   freshly published npm CLI versions.

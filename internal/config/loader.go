@@ -1168,7 +1168,7 @@ func resolveAgentConfigInternal(townRoot, rigPath string) *RuntimeConfig {
 	} else if townSettings.DefaultAgent != "" {
 		agentName = townSettings.DefaultAgent
 	} else {
-		return defaultClaudeRuntimeConfig()
+		agentName = string(AgentClaude)
 	}
 
 	if shouldUseCanonicalClaudeDefault(agentName, townSettings, rigSettings) {
@@ -1237,7 +1237,7 @@ func resolveAgentConfigWithOverrideInternal(townRoot, rigPath, agentOverride str
 	} else if townSettings.DefaultAgent != "" {
 		agentName = townSettings.DefaultAgent
 	} else {
-		return defaultClaudeRuntimeConfig(), string(AgentClaude), nil
+		agentName = string(AgentClaude)
 	}
 
 	// If an override is requested, validate it exists

@@ -346,6 +346,67 @@ func TestArgsAreReadOnlyClassifiesKnownReadCommands(t *testing.T) {
 	}
 }
 
+func TestRunWithStdinSkipsTrackedConfigSnapshotForReadOnlyCommands(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("test uses Unix shell script stubs")
+	}
+
+	ResetBdAllowStaleCacheForTest()
+	t.Cleanup(ResetBdAllowStaleCacheForTest)
+
+	binDir := t.TempDir()
+	gitLog := filepath.Join(binDir, "git.log")
+	bdScript := `#!/bin/sh
+if [ "$1" = "--allow-stale" ] && [ "$2" = "version" ]; then
+  echo "bd test"
+  exit 0
+fi
+if [ "$1" = "--allow-stale" ]; then
+  shift
+fi
+case "$1" in
+  show)
+    echo '{"id":"gt-123"}'
+    exit 0
+    ;;
+  *)
+    echo "unexpected bd args: $*" >&2
+    exit 2
+    ;;
+esac
+`
+	gitScript := `#!/bin/sh
+printf '%s\n' "$*" >> "$GIT_LOG"
+exit 2
+`
+	if err := os.WriteFile(filepath.Join(binDir, "bd"), []byte(bdScript), 0755); err != nil {
+		t.Fatalf("write bd stub: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(binDir, "git"), []byte(gitScript), 0755); err != nil {
+		t.Fatalf("write git stub: %v", err)
+	}
+	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	t.Setenv("GIT_LOG", gitLog)
+
+	workDir := t.TempDir()
+	beadsDir := filepath.Join(workDir, ".beads")
+	if err := os.MkdirAll(beadsDir, 0755); err != nil {
+		t.Fatalf("mkdir beads: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(beadsDir, "config.yaml"), []byte("prefix: gt\n"), 0644); err != nil {
+		t.Fatalf("write config.yaml: %v", err)
+	}
+
+	if _, err := (&Beads{workDir: workDir}).run("show", "gt-123", "--json"); err != nil {
+		t.Fatalf("run show: %v", err)
+	}
+	if data, err := os.ReadFile(gitLog); err == nil && len(data) > 0 {
+		t.Fatalf("read-only bd call unexpectedly probed git:\n%s", string(data))
+	} else if err != nil && !os.IsNotExist(err) {
+		t.Fatalf("read git log: %v", err)
+	}
+}
+
 func TestArgsAreReadOnlyFailsClosedForMutations(t *testing.T) {
 	cases := [][]string{
 		{"update", "gt-123", "--status=open"},

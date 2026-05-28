@@ -144,14 +144,12 @@ func (b *Beads) CreateRigBead(name string, fields *RigFields) (*Issue, error) {
 	id := RigBeadIDWithPrefix(prefix, name)
 	description := FormatRigDescription(name, fields)
 
-	if err := EnsureSchemaMigrated(b.getResolvedBeadsDir()); err != nil {
-		return nil, fmt.Errorf("migrating beads schema: %w", err)
-	}
-
 	// Ensure target database has custom types configured (including "rig").
-	// This matches what CreateAgentBead does — without it, bd rejects
-	// --type=rig on databases that haven't registered custom types yet.
-	_ = EnsureCustomTypes(b.getResolvedBeadsDir())
+	// This initializes and migrates the schema before config writes; without it,
+	// bd rejects --type=rig on databases that haven't registered custom types yet.
+	if err := EnsureCustomTypes(b.getResolvedBeadsDir()); err != nil {
+		return nil, fmt.Errorf("configuring rig custom issue types: %w", err)
+	}
 
 	args := []string{"create", "--json",
 		"--id=" + id,

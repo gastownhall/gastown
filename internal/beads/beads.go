@@ -584,7 +584,10 @@ func (b *Beads) runWithStdin(stdinData []byte, args ...string) (_ []byte, retErr
 	// Always explicitly set BEADS_DIR to prevent inherited env vars from
 	// causing prefix mismatches. Use explicit beadsDir if set, otherwise
 	// resolve from working directory.
-	trackedConfig := snapshotTrackedConfigYAML(beadsDir)
+	var trackedConfig *TrackedConfigSnapshot
+	if !ArgsAreReadOnly(fullArgs) {
+		trackedConfig = snapshotTrackedConfigYAML(beadsDir)
+	}
 	cmd := exec.CommandContext(ctx, "bd", fullArgs...) //nolint:gosec // G204: bd is a trusted internal tool
 	util.SetDetachedProcessGroup(cmd)
 	cmd.Dir = b.workDir
@@ -624,8 +627,12 @@ func (b *Beads) runWithStdin(stdinData []byte, args ...string) (_ []byte, retErr
 		}
 		err = cmd.Run()
 	}
-	if restoreErr := restoreTrackedConfigYAML(trackedConfig); restoreErr != nil && err == nil {
-		return nil, fmt.Errorf("restoring tracked config.yaml in %s: %w", beadsDir, restoreErr)
+	if restoreErr := restoreTrackedConfigYAML(trackedConfig); restoreErr != nil {
+		if err != nil {
+			err = errors.Join(err, fmt.Errorf("restoring tracked config.yaml in %s: %w", beadsDir, restoreErr))
+		} else {
+			return nil, fmt.Errorf("restoring tracked config.yaml in %s: %w", beadsDir, restoreErr)
+		}
 	}
 
 	if err != nil {

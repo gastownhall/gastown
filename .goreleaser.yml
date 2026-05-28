@@ -8,12 +8,16 @@ before:
     # Ensure dependencies are up to date
     - go mod tidy
 
+# Release binaries intentionally keep CGO disabled for every shipped target.
+# With beads v1.0.4, CGO-on builds pull the embedded Dolt/cloud SDK surface
+# into cmd/gt; the release audit in docs/release/gt-1.2-release-build-audit.md
+# records the validation evidence for this matrix.
 builds:
   - id: gt-linux-amd64
     main: ./cmd/gt
     binary: gt
     env:
-      - CGO_ENABLED=1
+      - CGO_ENABLED=0
     goos:
       - linux
     goarch:
@@ -29,9 +33,7 @@ builds:
     main: ./cmd/gt
     binary: gt
     env:
-      - CGO_ENABLED=1
-      - CC=aarch64-linux-gnu-gcc
-      - CXX=aarch64-linux-gnu-g++
+      - CGO_ENABLED=0
     goos:
       - linux
     goarch:
@@ -47,7 +49,7 @@ builds:
     main: ./cmd/gt
     binary: gt
     env:
-      - CGO_ENABLED=1
+      - CGO_ENABLED=0
     goos:
       - darwin
     goarch:
@@ -63,7 +65,7 @@ builds:
     main: ./cmd/gt
     binary: gt
     env:
-      - CGO_ENABLED=1
+      - CGO_ENABLED=0
     goos:
       - darwin
     goarch:
@@ -79,9 +81,7 @@ builds:
     main: ./cmd/gt
     binary: gt
     env:
-      - CGO_ENABLED=1
-      - CC=x86_64-w64-mingw32-gcc
-      - CXX=x86_64-w64-mingw32-g++
+      - CGO_ENABLED=0
     goos:
       - windows
     goarch:
