@@ -704,3 +704,36 @@ func TestMailboxLegacyAtomicArchive(t *testing.T) {
 	}
 }
 
+// TestInboxVisible guards the gst-dj2 regression: deleting/reading a message
+// closes its bead, but a subsequent .beads/issues.jsonl auto-import can
+// resurrect status=open. The durable mailClosedLabel must keep such a message
+// hidden so it does not reappear in the inbox after any bd activity.
+func TestInboxVisible(t *testing.T) {
+	tests := []struct {
+		name        string
+		status      string
+		labels      []string
+		allowHooked bool
+		want        bool
+	}{
+		{"open assignee visible", "open", nil, true, true},
+		{"open cc visible", "open", nil, false, true},
+		{"closed hidden", "closed", nil, true, false},
+		{"hooked visible when allowed", "hooked", nil, true, true},
+		{"hooked hidden for cc", "hooked", nil, false, false},
+		// The core regression: status resurrected to open by reimport, but the
+		// dismissal label persists, so the message must stay hidden.
+		{"reimported open but dismissed (assignee)", "open", []string{mailClosedLabel}, true, false},
+		{"reimported open but dismissed (cc)", "open", []string{mailClosedLabel}, false, false},
+		{"dismissed among other labels", "open", []string{"severity:high", mailClosedLabel}, true, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := inboxVisible(tt.status, tt.labels, tt.allowHooked); got != tt.want {
+				t.Errorf("inboxVisible(%q, %v, %v) = %v, want %v",
+					tt.status, tt.labels, tt.allowHooked, got, tt.want)
+			}
+		})
+	}
+}
+

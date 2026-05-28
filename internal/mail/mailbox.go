@@ -31,6 +31,32 @@ var (
 	ErrEmptyInbox      = errors.New("inbox is empty")
 )
 
+// mailClosedLabel marks a message bead that has been dismissed from the inbox
+// (deleted, marked read, or attached to a molecule — all of which close it).
+// The close writes status=closed to Dolt, but the next bd invocation auto-imports
+// .beads/issues.jsonl, whose exported row still carries status=open, resurrecting
+// the message back into the inbox. Labels live outside the issue row that the
+// reimport overwrites, so this marker survives and lets the inbox listing skip
+// the message durably. Stripped on reopen (MarkUnread) so mail can be brought
+// back. Mirrors the convoy auto-close fix (gst-4a3 / commit f146032d). (gst-dj2)
+const mailClosedLabel = "gt:mail-closed"
+
+// inboxVisible reports whether a message with the given status and labels
+// should appear in the inbox. A message stamped mailClosedLabel is hidden even
+// when its status is "open": deleting/reading a message closes it, but a
+// subsequent .beads/issues.jsonl auto-import can resurrect the status to open.
+// The label lives outside the reimported issue row, so it durably records that
+// the user already dismissed the message. allowHooked includes "hooked" status
+// (assignee queries surface auto-assigned handoff mail); CC queries pass false. (gst-dj2)
+func inboxVisible(status string, labels []string, allowHooked bool) bool {
+	for _, l := range labels {
+		if l == mailClosedLabel {
+			return false
+		}
+	}
+	return status == "open" || (allowHooked && status == "hooked")
+}
+
 // Mailbox manages messages for an identity via beads.
 // When store is non-nil, beads-mode methods use the in-process beadsdk.Storage
 // directly instead of shelling out to the bd CLI.
@@ -196,8 +222,8 @@ func (m *Mailbox) listFromDir(beadsDir string) ([]*Message, error) {
 			if seen[bm.ID] {
 				continue
 			}
-			// Assignee match: open or hooked status
-			if bm.Status == "open" || bm.Status == "hooked" {
+			// Assignee match: open or hooked status, unless dismissed. (gst-dj2)
+			if inboxVisible(bm.Status, bm.Labels, true) {
 				seen[bm.ID] = true
 				messages = append(messages, bm.ToMessage())
 			}
@@ -239,8 +265,8 @@ func (m *Mailbox) listFromDir(beadsDir string) ([]*Message, error) {
 			if seen[bm.ID] {
 				continue
 			}
-			// CC match: open status only
-			if bm.Status == "open" {
+			// CC match: open status only, unless dismissed. (gst-dj2)
+			if inboxVisible(bm.Status, bm.Labels, false) {
 				seen[bm.ID] = true
 				messages = append(messages, bm.ToMessage())
 			}
@@ -268,7 +294,7 @@ func (m *Mailbox) listWispMessages(beadsDir string, identities []string, seen ma
 			if seen[bm.ID] {
 				continue
 			}
-			if bm.Status == "open" || bm.Status == "hooked" {
+			if (bm.Status == "open" || bm.Status == "hooked") && !bm.HasLabel(mailClosedLabel) {
 				seen[bm.ID] = true
 				messages = append(messages, bm.ToMessage())
 			}
@@ -282,7 +308,7 @@ func (m *Mailbox) listWispMessages(beadsDir string, identities []string, seen ma
 			if seen[bm.ID] {
 				continue
 			}
-			if bm.Status == "open" {
+			if bm.Status == "open" && !bm.HasLabel(mailClosedLabel) {
 				seen[bm.ID] = true
 				messages = append(messages, bm.ToMessage())
 			}
@@ -576,7 +602,20 @@ func (m *Mailbox) closeInDir(id, beadsDir string) error {
 		return err
 	}
 
+	m.stampClosedLabel(id, beadsDir)
 	return nil
+}
+
+// stampClosedLabel adds mailClosedLabel to a message that has just been closed
+// in beadsDir, so a subsequent jsonl reimport cannot resurrect it into the
+// inbox. Best-effort: the close has already succeeded, and a label-add failure
+// only degrades to the pre-fix behavior (possible reappearance after reimport),
+// so the error is swallowed rather than failing the user's delete. (gst-dj2)
+func (m *Mailbox) stampClosedLabel(id, beadsDir string) {
+	args := []string{"label", "add", id, mailClosedLabel}
+	ctx, cancel := bdWriteCtx()
+	defer cancel()
+	_, _ = runBdCommand(ctx, args, m.workDir, beadsDir)
 }
 
 func (m *Mailbox) markReadLegacy(id string) error {
@@ -763,6 +802,7 @@ func (m *Mailbox) markUnreadBeads(id string) error {
 					}
 					return err2
 				}
+				m.unstampClosedLabel(id, m.beadsDir)
 				return nil
 			}
 			return ErrMessageNotFound
@@ -770,7 +810,18 @@ func (m *Mailbox) markUnreadBeads(id string) error {
 		return err
 	}
 
+	m.unstampClosedLabel(id, primary)
 	return nil
+}
+
+// unstampClosedLabel removes mailClosedLabel from a message that has just been
+// reopened, so MarkUnread restores it to the inbox. Best-effort: a removal
+// failure (including "does not have label") is harmless. (gst-dj2)
+func (m *Mailbox) unstampClosedLabel(id, beadsDir string) {
+	args := []string{"label", "remove", id, mailClosedLabel}
+	ctx, cancel := bdWriteCtx()
+	defer cancel()
+	_, _ = runBdCommand(ctx, args, m.workDir, beadsDir)
 }
 
 func (m *Mailbox) markUnreadLegacy(id string) error {
