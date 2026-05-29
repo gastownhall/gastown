@@ -167,6 +167,9 @@ func (m *Mailbox) listFromDir(beadsDir string) ([]*Message, error) {
 			"--json",
 			"--limit", "0",
 		}
+		// Read path — allow stale so cross-machine bd (Mac→GT2 Dolt over
+		// Tailscale) doesn't exceed bdReadTimeout and get SIGKILLed (gt-eni).
+		args = beads.MaybePrependAllowStale(args)
 
 		ctx, cancel := bdReadCtx()
 		stdout, err := runBdCommand(ctx, args, m.workDir, beadsDir)
@@ -213,6 +216,8 @@ func (m *Mailbox) listFromDir(beadsDir string) ([]*Message, error) {
 			"--json",
 			"--limit", "0",
 		}
+		// Read path — allow stale (gt-eni; see assignee query above).
+		args = beads.MaybePrependAllowStale(args)
 
 		ctx, cancel := bdReadCtx()
 		stdout, err := runBdCommand(ctx, args, m.workDir, beadsDir)
@@ -337,7 +342,7 @@ type wispSQLRow struct {
 
 // runWispSQL executes a bd sql --json query and converts results to BeadsMessages.
 func (m *Mailbox) runWispSQL(beadsDir, query string) []BeadsMessage {
-	args := []string{"sql", "--json", query}
+	args := beads.MaybePrependAllowStale([]string{"sql", "--json", query})
 	ctx, cancel := bdReadCtx()
 	stdout, err := runBdCommand(ctx, args, m.workDir, beadsDir)
 	cancel()
@@ -484,7 +489,7 @@ func (m *Mailbox) getFromDir(id, beadsDir string) (*Message, error) {
 		return m.storeGetFromDir(id)
 	}
 
-	args := []string{"show", id, "--json"}
+	args := beads.MaybePrependAllowStale([]string{"show", id, "--json"})
 
 	ctx, cancel := bdReadCtx()
 	defer cancel()
@@ -1274,7 +1279,7 @@ func (m *Mailbox) ListByThread(threadID string) ([]*Message, error) {
 }
 
 func (m *Mailbox) listByThreadBeads(threadID string) ([]*Message, error) {
-	args := []string{"message", "thread", threadID, "--json"}
+	args := beads.MaybePrependAllowStale([]string{"message", "thread", threadID, "--json"})
 
 	ctx, cancel := bdReadCtx()
 	defer cancel()
