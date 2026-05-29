@@ -193,15 +193,23 @@ func doltTargetEnvFromBeadsDir(beadsDir string) []string {
 	}
 	meta := readDoltMetadata(beadsDir)
 	var env []string
-	if townRoot := FindTownRoot(filepath.Dir(beadsDir)); townRoot != "" {
-		env = append(env, "BEADS_DOLT_DATA_DIR="+filepath.Join(townRoot, ".dolt-data"))
-	}
 	if meta.Host != "" {
 		env = append(env, "BEADS_DOLT_SERVER_HOST="+meta.Host)
 	}
 	if meta.Port != "" {
 		env = append(env, "BEADS_DOLT_SERVER_PORT="+meta.Port)
 		env = append(env, "BEADS_DOLT_PORT="+meta.Port)
+	}
+	// In server mode the running server owns the data; the host/port above is the
+	// connection target. Emitting BEADS_DOLT_DATA_DIR (the shared, multi-database
+	// town data dir) makes bd's mol resolution pick a database other than the one
+	// selected by the pinned .beads metadata, so a routed cross-rig bead (e.g. mi-)
+	// fails to resolve in `bd mol bond`. Only point at the data dir for embedded
+	// mode (no server host/port configured).
+	if meta.Host == "" && meta.Port == "" {
+		if townRoot := FindTownRoot(filepath.Dir(beadsDir)); townRoot != "" {
+			env = append(env, "BEADS_DOLT_DATA_DIR="+filepath.Join(townRoot, ".dolt-data"))
+		}
 	}
 	return env
 }
