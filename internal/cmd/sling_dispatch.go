@@ -175,7 +175,12 @@ func executeSling(params SlingParams) (*SlingResult, error) {
 	// Send LIFECYCLE:Shutdown to the witness when force-stealing a bead from a
 	// live polecat. Without this, the old polecat becomes a zombie — still running
 	// but unaware it lost its hook. Mirrors the same logic in runSling (sling.go).
-	if (info.Status == "hooked" || info.Status == "in_progress") && params.Force && info.Assignee != "" {
+	//
+	// The new polecat name is not known until the fresh spawn below, so we pass ""
+	// as newAgent; a fresh spawn never reuses a live polecat's name, so a live old
+	// session is necessarily distinct (hq-dr5).
+	if (info.Status == "hooked" || info.Status == "in_progress") && params.Force &&
+		shouldSignalReassignShutdown(info.Assignee, "", isHookedAgentDeadFn(info.Assignee)) {
 		assigneeParts := strings.Split(info.Assignee, "/")
 		if len(assigneeParts) >= 3 && assigneeParts[1] == "polecats" {
 			oldRigName := assigneeParts[0]

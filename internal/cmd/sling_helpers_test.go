@@ -288,3 +288,74 @@ exit 1
 		t.Fatalf("bd update invoked %s times, want 1", got)
 	}
 }
+
+// TestShouldSignalReassignShutdown guards the hq-dr5 race: a --force re-sling must
+// not send a name-addressed LIFECYCLE:Shutdown that could kill the freshly-slung
+// polecat when it reuses the old (dead) polecat's name.
+func TestShouldSignalReassignShutdown(t *testing.T) {
+	tests := []struct {
+		name         string
+		oldAssignee  string
+		newAgent     string
+		oldAgentDead bool
+		want         bool
+	}{
+		{
+			name:         "live and distinct -> signal (GH#1380 force-steal)",
+			oldAssignee:  "gastown/polecats/furiosa",
+			newAgent:     "gastown/polecats/nux",
+			oldAgentDead: false,
+			want:         true,
+		},
+		{
+			name:         "dead old session -> skip (nothing to shut down; name may be reused)",
+			oldAssignee:  "gastown/polecats/furiosa",
+			newAgent:     "gastown/polecats/nux",
+			oldAgentDead: true,
+			want:         false,
+		},
+		{
+			name:         "same name reused while alive -> skip (would kill the new polecat)",
+			oldAssignee:  "gastown/polecats/furiosa",
+			newAgent:     "gastown/polecats/furiosa",
+			oldAgentDead: false,
+			want:         false,
+		},
+		{
+			name:         "dead old + same name reused (the hq-dr5 repro) -> skip",
+			oldAssignee:  "forex_framework_2/polecats/furiosa",
+			newAgent:     "forex_framework_2/polecats/furiosa",
+			oldAgentDead: true,
+			want:         false,
+		},
+		{
+			name:         "executeSling: unknown new name, old alive -> signal (fresh spawn is distinct)",
+			oldAssignee:  "gastown/polecats/furiosa",
+			newAgent:     "",
+			oldAgentDead: false,
+			want:         true,
+		},
+		{
+			name:         "executeSling: unknown new name, old dead -> skip",
+			oldAssignee:  "gastown/polecats/furiosa",
+			newAgent:     "",
+			oldAgentDead: true,
+			want:         false,
+		},
+		{
+			name:         "no assignee -> skip",
+			oldAssignee:  "",
+			newAgent:     "gastown/polecats/nux",
+			oldAgentDead: false,
+			want:         false,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := shouldSignalReassignShutdown(tt.oldAssignee, tt.newAgent, tt.oldAgentDead); got != tt.want {
+				t.Errorf("shouldSignalReassignShutdown(%q, %q, %v) = %v, want %v",
+					tt.oldAssignee, tt.newAgent, tt.oldAgentDead, got, tt.want)
+			}
+		})
+	}
+}

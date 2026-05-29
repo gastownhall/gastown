@@ -801,9 +801,13 @@ func runSling(cmd *cobra.Command, args []string) (retErr error) {
 			oldRigName := assigneeParts[0]
 			oldPolecatName := assigneeParts[2]
 
-			// Send LIFECYCLE:Shutdown to witness - will auto-nuke if clean,
-			// otherwise create cleanup wisp for manual intervention
-			if townRoot != "" {
+			// Only signal a shutdown when the old polecat session is genuinely
+			// alive and distinct from the new target (hq-dr5) — otherwise the
+			// name-addressed shutdown could kill the freshly-slung polecat that
+			// reused the old name. Send LIFECYCLE:Shutdown to witness - will
+			// auto-nuke if clean, otherwise create cleanup wisp for manual
+			// intervention.
+			if shouldSignalReassignShutdown(info.Assignee, targetAgent, isHookedAgentDeadFn(info.Assignee)) && townRoot != "" {
 				router := mail.NewRouter(townRoot)
 				defer router.WaitPendingNotifications()
 				shutdownMsg := &mail.Message{

@@ -1203,6 +1203,35 @@ func resolveFormulaToTempFile(formulaName string) (resolved string, cleanup func
 // isHookedAgentDeadFn is a seam for tests. Production uses isHookedAgentDead.
 var isHookedAgentDeadFn = isHookedAgentDead
 
+// shouldSignalReassignShutdown decides whether a --force re-sling should send a
+// LIFECYCLE:Shutdown to the old polecat's witness (hq-dr5).
+//
+// The shutdown signal is name-addressed (Subject: "LIFECYCLE:Shutdown <name>"),
+// not generation-addressed. We must only signal when the old session is genuinely
+// ALIVE and DISTINCT from the new target:
+//   - If the old session is already dead, there is nothing to shut down. Worse, the
+//     dead polecat's name may be reused by the freshly-slung polecat, so a stale
+//     shutdown for that name would race in and kill the new session.
+//   - If the new target reuses the same name as the old assignee, the shutdown lands
+//     on the new polecat. Signaling would kill the polecat we just slung.
+//
+// oldAssignee is the bead's current assignee. newAgent is the resolved new target,
+// or "" when it is not yet known (executeSling spawns a fresh polecat afterward; a
+// fresh spawn never reuses a live polecat's name, so for that caller alive implies
+// distinct and "" is the correct value to pass).
+//
+// This preserves the GH#1380 behavior of force-stealing a bead from a live, distinct
+// polecat — the only case where the old polecat genuinely needs to be told to stop.
+func shouldSignalReassignShutdown(oldAssignee, newAgent string, oldAgentDead bool) bool {
+	if oldAssignee == "" || oldAgentDead {
+		return false
+	}
+	if newAgent != "" && newAgent == oldAssignee {
+		return false
+	}
+	return true
+}
+
 // isHookedAgentDead checks if the tmux session for a hooked assignee is dead.
 // Used by sling to auto-force re-sling when the previous agent has no active session (gt-pqf9x).
 // Returns true if the session is confirmed dead. Returns false if alive or if we
