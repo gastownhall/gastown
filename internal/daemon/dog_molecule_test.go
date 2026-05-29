@@ -86,6 +86,15 @@ func TestParseChildrenJSON(t *testing.T) {
 			wantCount: 2,
 		},
 		{
+			// bd `show --children --json` returns the map keyed by parent ID
+			// alongside a top-level integer "schema_version" key. The int value
+			// breaks map[string][]childInfo unmarshalling, so the parser must
+			// skip non-array keys.
+			name:      "envelope with schema_version (bd show --children)",
+			input:     `{"hq-wisp-root":[{"id":"hq-wisp-a","title":"Probe","status":"open"},{"id":"hq-wisp-b","title":"Report","status":"open"}],"schema_version":1}`,
+			wantCount: 2,
+		},
+		{
 			name:      "empty map wrapper",
 			input:     `{"hq-wisp-root":[]}`,
 			wantCount: 0,

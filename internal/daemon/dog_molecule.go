@@ -258,6 +258,23 @@ func parseChildrenJSON(raw string) ([]childInfo, error) {
 		return nil, nil
 	}
 
+	// bd's `show --children --json` envelope: {"<id>": [..children..], "schema_version": N}.
+	// The integer schema_version key breaks the map[string][]childInfo unmarshal above,
+	// so decode leniently and skip non-array keys.
+	var envelope map[string]json.RawMessage
+	if err := json.Unmarshal(data, &envelope); err == nil {
+		for key, rawVal := range envelope {
+			if key == "schema_version" {
+				continue
+			}
+			var children []childInfo
+			if err := json.Unmarshal(rawVal, &children); err == nil {
+				return children, nil
+			}
+		}
+		return nil, nil
+	}
+
 	return nil, fmt.Errorf("unrecognized JSON shape: %.200s", raw)
 }
 
