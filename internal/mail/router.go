@@ -1783,12 +1783,22 @@ func prioritySeverityLabel(priority Priority) string {
 	}
 }
 
+// senderHasMailbox reports whether a mail sender resolves to a real agent
+// mailbox that could receive a reply. Synthetic command identities such as
+// "gt-sling" (used by `gt sling --force` to signal LIFECYCLE:Shutdown) are not
+// routable addresses, so a reply-reminder pointing at them can never be
+// satisfied by `gt mail send` (hq-bj5).
+func senderHasMailbox(from string) bool {
+	return len(AddressToSessionIDs(from)) > 0
+}
+
 // enqueueReplyReminder queues a deferred nudge reminding the recipient to reply
 // via gt mail send rather than in chat. Best-effort: errors are logged, not returned.
 //
 // Skipped when:
 //   - No town root (can't use nudge queue)
 //   - Message type is TypeReply (recipient is already replying)
+//   - Sender is a synthetic command identity with no mailbox (e.g. gt-sling)
 //   - Configured delay is zero or negative (feature disabled)
 func (r *Router) enqueueReplyReminder(msg *Message, sessionID string) {
 	if r.townRoot == "" {
@@ -1796,6 +1806,9 @@ func (r *Router) enqueueReplyReminder(msg *Message, sessionID string) {
 	}
 	if msg.Type == TypeReply {
 		return // Already a reply — reminder would be redundant
+	}
+	if !senderHasMailbox(msg.From) {
+		return // Synthetic sender (e.g. gt-sling) has no mailbox to reply to
 	}
 	delay := config.LoadOperationalConfig(r.townRoot).GetMailConfig().ReplyReminderDelayD()
 	if delay <= 0 {

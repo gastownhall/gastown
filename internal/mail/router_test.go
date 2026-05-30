@@ -1968,6 +1968,60 @@ func TestEnqueueReplyReminder_Basic(t *testing.T) {
 	}
 }
 
+// TestEnqueueReplyReminder_SyntheticSenderSkipped verifies that no reply-reminder
+// is enqueued when the sender is a synthetic command identity with no mailbox
+// (e.g. "gt-sling" from `gt sling --force` LIFECYCLE:Shutdown). Reminding a
+// recipient to "reply to gt-sling" would queue a nudge that can never be
+// satisfied (hq-bj5).
+func TestEnqueueReplyReminder_SyntheticSenderSkipped(t *testing.T) {
+	townRoot := t.TempDir()
+	r := &Router{
+		workDir:  t.TempDir(),
+		townRoot: townRoot,
+	}
+	msg := &Message{
+		From:    "gt-sling",
+		To:      "gastown/witness",
+		Subject: "LIFECYCLE:Shutdown guzzle",
+		Type:    TypeTask,
+	}
+	sessionID := session.WitnessSessionName(session.PrefixFor("gastown"))
+
+	r.enqueueReplyReminder(msg, sessionID)
+
+	pending, err := nudge.Pending(townRoot, sessionID)
+	if err != nil {
+		t.Fatalf("Pending: %v", err)
+	}
+	if pending != 0 {
+		t.Errorf("expected 0 queued reminders for synthetic sender, got %d", pending)
+	}
+}
+
+// TestSenderHasMailbox verifies routability classification of mail senders.
+func TestSenderHasMailbox(t *testing.T) {
+	tests := []struct {
+		from string
+		want bool
+	}{
+		{"gt-sling", false},
+		{"gt-done", false},
+		{"system", false},
+		{"gastown", false},
+		{"overseer", true},
+		{"mayor/", true},
+		{"deacon/", true},
+		{"gastown/witness", true},
+		{"gastown/polecats/rust", true},
+		{"gastown/crew/alice", true},
+	}
+	for _, tt := range tests {
+		if got := senderHasMailbox(tt.from); got != tt.want {
+			t.Errorf("senderHasMailbox(%q) = %v, want %v", tt.from, got, tt.want)
+		}
+	}
+}
+
 func TestClearReplyReminders(t *testing.T) {
 	townRoot := t.TempDir()
 	r := &Router{workDir: t.TempDir(), townRoot: townRoot}
