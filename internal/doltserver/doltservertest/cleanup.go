@@ -1,4 +1,10 @@
-package testutil
+// Package doltservertest provides test helpers that depend on the doltserver
+// package. It lives outside internal/testutil so that testutil can stay free of
+// any doltserver import: the white-box "package doltserver" test files import
+// testutil (for StartIsolatedDoltContainer), and routing doltserver-dependent
+// helpers through testutil would close an import cycle
+// (doltserver test -> testutil -> doltserver).
+package doltservertest
 
 import (
 	"testing"
