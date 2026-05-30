@@ -235,9 +235,9 @@ func OpenDB(host string, port int, dbName string, readTimeout, writeTimeout time
 //
 // Usage:
 //
-//	join, where := parentExcludeJoin(dbName, splitTarget)
-//	query := fmt.Sprintf("SELECT ... FROM wisps w %s WHERE ... AND %s", dbName, join, where)
-func parentExcludeJoin(dbName string, splitTarget bool) (joinClause, whereCondition string) {
+//	join, where := parentExcludeJoin(splitTarget)
+//	query := fmt.Sprintf("SELECT ... FROM wisps w %s WHERE ... AND %s", join, where)
+func parentExcludeJoin(splitTarget bool) (joinClause, whereCondition string) {
 	targetExpr := beads.DependencyTargetExpr("wd", splitTarget)
 	joinClause = fmt.Sprintf(`LEFT JOIN (
 		SELECT DISTINCT wd.issue_id
@@ -250,15 +250,15 @@ func parentExcludeJoin(dbName string, splitTarget bool) (joinClause, whereCondit
 	return
 }
 
-func reapCandidatesQuery(dbName string, splitTarget bool) string {
-	parentJoin, parentWhere := parentExcludeJoin(dbName, splitTarget)
+func reapCandidatesQuery(splitTarget bool) string {
+	parentJoin, parentWhere := parentExcludeJoin(splitTarget)
 	return fmt.Sprintf(
 		"SELECT COUNT(*) FROM wisps w %s WHERE w.status IN ('open', 'hooked', 'in_progress') AND w.created_at < ? AND w.issue_type != 'agent' AND %s",
 		parentJoin, parentWhere)
 }
 
-func reapIDsQuery(dbName string, splitTarget bool) string {
-	parentJoin, parentWhere := parentExcludeJoin(dbName, splitTarget)
+func reapIDsQuery(splitTarget bool) string {
+	parentJoin, parentWhere := parentExcludeJoin(splitTarget)
 	whereClause := fmt.Sprintf(
 		"w.status IN ('open', 'hooked', 'in_progress') AND w.created_at < ? AND w.issue_type != 'agent' AND %s", parentWhere)
 	return fmt.Sprintf(
@@ -309,7 +309,7 @@ func Scan(db *sql.DB, dbName string, maxAge, purgeAge, mailDeleteAge, staleIssue
 	// agent beads, otherwise scan can report candidates that reap will never close.
 	// Uses LEFT JOIN anti-pattern instead of correlated EXISTS to avoid O(n*m) cost (gt-jd1z).
 	if err := retryDependencyTargetQuery(func(splitTarget bool) error {
-		return db.QueryRowContext(ctx, reapCandidatesQuery(dbName, splitTarget), now.Add(-maxAge)).Scan(&result.ReapCandidates)
+		return db.QueryRowContext(ctx, reapCandidatesQuery(splitTarget), now.Add(-maxAge)).Scan(&result.ReapCandidates)
 	}); err != nil {
 		return nil, fmt.Errorf("count reap candidates: %w", err)
 	}
@@ -380,7 +380,7 @@ func Reap(db *sql.DB, dbName string, maxAge time.Duration, dryRun bool) (*ReapRe
 
 	if dryRun {
 		if err := retryDependencyTargetQuery(func(splitTarget bool) error {
-			return db.QueryRowContext(ctx, reapCandidatesQuery(dbName, splitTarget), cutoff).Scan(&result.Reaped)
+			return db.QueryRowContext(ctx, reapCandidatesQuery(splitTarget), cutoff).Scan(&result.Reaped)
 		}); err != nil {
 			return nil, fmt.Errorf("dry-run count: %w", err)
 		}
@@ -406,7 +406,7 @@ func Reap(db *sql.DB, dbName string, maxAge time.Duration, dryRun bool) (*ReapRe
 		var rows *sql.Rows
 		err := retryDependencyTargetQuery(func(splitTarget bool) error {
 			var queryErr error
-			rows, queryErr = db.QueryContext(ctx, reapIDsQuery(dbName, splitTarget), cutoff)
+			rows, queryErr = db.QueryContext(ctx, reapIDsQuery(splitTarget), cutoff)
 			return queryErr
 		})
 		if err != nil {

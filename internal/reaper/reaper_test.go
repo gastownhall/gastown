@@ -51,7 +51,7 @@ func TestFormatJSON(t *testing.T) {
 }
 
 func TestParentExcludeJoin(t *testing.T) {
-	joinClause, whereCondition := parentExcludeJoin("testdb", false)
+	joinClause, whereCondition := parentExcludeJoin(false)
 
 	// JOIN clause should reference the correct database.
 	if joinClause == "" {
@@ -59,7 +59,7 @@ func TestParentExcludeJoin(t *testing.T) {
 	}
 	// parentExcludeJoin no longer qualifies table names with the database — the
 	// reaper connects to a specific database via the DSN, so unqualified names
-	// are correct. The dbName parameter is retained for API compatibility.
+	// are correct.
 
 	// JOIN should select wisps with open parents from wisp_dependencies.
 	if !contains(joinClause, "wisp_dependencies") {
@@ -87,8 +87,7 @@ func TestParentExcludeJoin(t *testing.T) {
 // positional shift: "FROM wisps w gt WHERE..." instead of "FROM wisps w LEFT JOIN...".
 func TestReapQueryNoDatabaseNameInjection(t *testing.T) {
 	// Reproduce the exact Sprintf call from Reap() to verify no dbName injection.
-	dbName := "gt"
-	parentJoin, parentWhere := parentExcludeJoin(dbName, false)
+	parentJoin, parentWhere := parentExcludeJoin(false)
 	whereClause := fmt.Sprintf(
 		"w.status IN ('open', 'hooked', 'in_progress') AND w.created_at < ? AND %s", parentWhere)
 
@@ -111,7 +110,7 @@ func TestReapQueryNoDatabaseNameInjection(t *testing.T) {
 }
 
 func TestParentExcludeJoinUsesSplitWispDependencyTarget(t *testing.T) {
-	joinClause, _ := parentExcludeJoin("testdb", true)
+	joinClause, _ := parentExcludeJoin(true)
 	targetExpr := "COALESCE(wd.depends_on_issue_id, wd.depends_on_wisp_id, wd.depends_on_external)"
 
 	if strings.Contains(joinClause, "wd.depends_on_id") {
@@ -271,7 +270,7 @@ func TestReapExcludesAgentBeads(t *testing.T) {
 // predicate as Reap() for stale open wisps. If Scan counts agent beads but Reap
 // excludes them, the operator sees scan>0 and reap=0 for the same cutoff.
 func TestScanExcludesAgentBeads(t *testing.T) {
-	query := reapCandidatesQuery("gt", false)
+	query := reapCandidatesQuery(false)
 	if !strings.Contains(query, "w.issue_type != 'agent'") {
 		t.Fatalf("expected Scan() eligibility query to exclude agent beads:\n%s", query)
 	}
