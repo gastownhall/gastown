@@ -251,7 +251,7 @@ jobs:
           registry-url: 'https://registry.npmjs.org'
 
       - name: Update npm for provenance support
-        run: npm install -g npm@latest
+        run: npm install -g npm@latest --min-release-age=7
 
       - name: Publish to npm
         run: |

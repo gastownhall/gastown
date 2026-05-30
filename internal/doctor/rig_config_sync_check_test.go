@@ -164,6 +164,83 @@ func TestRigConfigSyncCheck_AllConfigsPresent(t *testing.T) {
 	}
 }
 
+func TestRigConfigSyncCheck_FixDisablesRigAutoExport(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("fake bd stub is shell-specific")
+	}
+
+	tmpDir := t.TempDir()
+	mayorDir := filepath.Join(tmpDir, "mayor")
+	if err := os.MkdirAll(mayorDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	rigsJSON := `{
+		"version": 1,
+		"rigs": {
+			"testrig": {
+				"git_url": "https://github.com/test/test.git",
+				"beads": {"prefix": "tr"}
+			}
+		}
+	}`
+	if err := os.WriteFile(filepath.Join(mayorDir, "rigs.json"), []byte(rigsJSON), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	rigDir := filepath.Join(tmpDir, "testrig")
+	beadsDir := filepath.Join(rigDir, "mayor", "rig", ".beads")
+	if err := os.MkdirAll(beadsDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	configJSON := `{
+		"type": "rig",
+		"version": 1,
+		"name": "testrig",
+		"git_url": "https://github.com/test/test.git",
+		"beads": {"prefix": "tr"}
+	}`
+	if err := os.WriteFile(filepath.Join(rigDir, "config.json"), []byte(configJSON), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(beadsDir, "config.yaml"), []byte("prefix: tr\nissue-prefix: tr\nexport.auto: true\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(beadsDir, "metadata.json"), []byte(`{"dolt_mode":"embedded"}`), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	binDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(binDir, "bd"), []byte("#!/usr/bin/env bash\nif [ \"$1\" = show ]; then echo \"[{\\\"id\\\":\\\"$2\\\"}]\"; fi\nexit 0\n"), 0755); err != nil {
+		t.Fatalf("write fake bd: %v", err)
+	}
+	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	ctx := &CheckContext{TownRoot: tmpDir}
+	check := NewRigConfigSyncCheck()
+	result := check.Run(ctx)
+	if result.Status != StatusWarning {
+		t.Fatalf("expected StatusWarning, got %v: %s", result.Status, result.Message)
+	}
+	if len(check.missingExportCfg) != 1 || check.missingExportCfg[0] != "testrig" {
+		t.Fatalf("missingExportCfg = %#v, want [testrig]", check.missingExportCfg)
+	}
+
+	if err := check.Fix(ctx); err != nil {
+		t.Fatalf("Fix failed: %v", err)
+	}
+	data, err := os.ReadFile(filepath.Join(beadsDir, "config.yaml"))
+	if err != nil {
+		t.Fatalf("read config.yaml: %v", err)
+	}
+	if !strings.Contains(string(data), "export.auto: \"false\"\n") {
+		t.Fatalf("config.yaml did not disable export.auto:\n%s", string(data))
+	}
+	result = check.Run(ctx)
+	if result.Status != StatusOK {
+		t.Fatalf("Status after fix = %v, want %v: %s", result.Status, StatusOK, result.Message)
+	}
+}
+
 func TestRigConfigSyncCheck_FixCreatesMissingMetadata(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("fake bd stub is shell-specific")

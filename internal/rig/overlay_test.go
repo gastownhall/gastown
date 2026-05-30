@@ -264,7 +264,7 @@ func TestEnsureGitignorePatterns_CreatesNewFile(t *testing.T) {
 	}
 
 	// Check all required patterns are present (.beads/ intentionally excluded — see overlay.go)
-	patterns := []string{".runtime/", ".claude/", ".logs/", "__pycache__/", "state.json"}
+	patterns := []string{".runtime/", ".claude/", ".opencode/", ".logs/", "__pycache__/", "state.json"}
 	for _, pattern := range patterns {
 		if !containsLine(string(content), pattern) {
 			t.Errorf(".gitignore missing pattern %q", pattern)
@@ -302,7 +302,7 @@ func TestEnsureGitignorePatterns_AppendsToExisting(t *testing.T) {
 	}
 
 	// Should add required patterns (.beads/ intentionally excluded — see overlay.go)
-	patterns := []string{".runtime/", ".claude/", ".logs/", "__pycache__/", "state.json"}
+	patterns := []string{".runtime/", ".claude/", ".opencode/", ".logs/", "__pycache__/", "state.json"}
 	for _, pattern := range patterns {
 		if !containsLine(string(content), pattern) {
 			t.Errorf(".gitignore missing pattern %q", pattern)
@@ -316,7 +316,7 @@ func TestEnsureGitignorePatterns_SkipsExistingPatterns(t *testing.T) {
 	// Create existing .gitignore with some Gas Town patterns already.
 	// The broader ".claude/" covers ".claude/commands/", so it should
 	// not add the narrower pattern.
-	existing := ".runtime/\n.claude/\n"
+	existing := ".runtime/\n.claude/\n.opencode/\n"
 	if err := os.WriteFile(filepath.Join(tmpDir, ".gitignore"), []byte(existing), 0644); err != nil {
 		t.Fatalf("Failed to create .gitignore: %v", err)
 	}
@@ -341,6 +341,10 @@ func TestEnsureGitignorePatterns_SkipsExistingPatterns(t *testing.T) {
 	claudeCount := countOccurrences(string(content), ".claude/")
 	if claudeCount != 1 {
 		t.Errorf(".claude/ appears %d times, expected 1", claudeCount)
+	}
+	opencodeCount := countOccurrences(string(content), ".opencode/")
+	if opencodeCount != 1 {
+		t.Errorf(".opencode/ appears %d times, expected 1", opencodeCount)
 	}
 
 	// Should add missing patterns
@@ -368,7 +372,7 @@ func TestEnsureGitignorePatterns_RecognizesVariants(t *testing.T) {
 
 	// Create existing .gitignore with variant patterns (without trailing slash).
 	// ".claude" (no trailing slash) should be recognized as covering ".claude/commands/".
-	existing := ".runtime\n/.claude\n"
+	existing := ".runtime\n/.claude\n/.opencode\n"
 	if err := os.WriteFile(filepath.Join(tmpDir, ".gitignore"), []byte(existing), 0644); err != nil {
 		t.Fatalf("Failed to create .gitignore: %v", err)
 	}
@@ -394,13 +398,16 @@ func TestEnsureGitignorePatterns_RecognizesVariants(t *testing.T) {
 	if containsLine(string(content), ".claude/") {
 		t.Error(".claude/ should not be added when /.claude already covers it")
 	}
+	if containsLine(string(content), ".opencode/") {
+		t.Error(".opencode/ should not be added when /.opencode already covers it")
+	}
 }
 
 func TestEnsureGitignorePatterns_AllPatternsPresent(t *testing.T) {
 	tmpDir := t.TempDir()
 
 	// Create existing .gitignore with all required patterns.
-	existing := ".runtime/\n.claude/\n.beads/\n.logs/\n__pycache__/\nstate.json\nCLAUDE.md\nCLAUDE.local.md\nGEMINI.md\n"
+	existing := ".runtime/\n.claude/\n.opencode/\n.beads/\n.logs/\n__pycache__/\nstate.json\nCLAUDE.md\nCLAUDE.local.md\nGEMINI.md\n"
 	if err := os.WriteFile(filepath.Join(tmpDir, ".gitignore"), []byte(existing), 0644); err != nil {
 		t.Fatalf("Failed to create .gitignore: %v", err)
 	}
@@ -430,7 +437,7 @@ func TestEnsureGitignorePatterns_NarrowPatternPresent(t *testing.T) {
 	tmpDir := t.TempDir()
 
 	// Create .gitignore with the exact required patterns
-	existing := ".runtime/\n.claude/\n.logs/\n__pycache__/\nstate.json\nCLAUDE.md\nCLAUDE.local.md\nGEMINI.md\n"
+	existing := ".runtime/\n.claude/\n.opencode/\n.logs/\n__pycache__/\nstate.json\nCLAUDE.md\nCLAUDE.local.md\nGEMINI.md\n"
 	if err := os.WriteFile(filepath.Join(tmpDir, ".gitignore"), []byte(existing), 0644); err != nil {
 		t.Fatalf("Failed to create .gitignore: %v", err)
 	}

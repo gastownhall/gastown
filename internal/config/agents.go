@@ -357,7 +357,8 @@ var builtinPresets = map[AgentPreset]*AgentPresetInfo{
 		Args:    []string{}, // No CLI flags needed, YOLO via OPENCODE_PERMISSION env
 		Env: map[string]string{
 			// Auto-approve all tool calls (equivalent to --dangerously-skip-permissions)
-			"OPENCODE_PERMISSION": `{"*":"allow"}`,
+			"OPENCODE_PERMISSION":     `{"*":"allow"}`,
+			"OPENCODE_CONFIG_CONTENT": `{"lsp":true}`,
 		},
 		ProcessNames:        []string{"opencode", "node", "bun"}, // Runs as Node.js or Bun
 		SessionIDEnv:        "",                                  // OpenCode manages sessions internally

@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -224,6 +225,11 @@ func TestIsSlingConfigError(t *testing.T) {
 		{"no database", fmt.Errorf("no database found"), true},
 		{"database not found", fmt.Errorf("database not found"), true},
 		{"connection refused", fmt.Errorf("connection refused"), true},
+		{"circuit breaker", fmt.Errorf("Dolt circuit breaker is open: server appears down"), true},
+		{"server appears down", fmt.Errorf("server appears down"), true},
+		{"server down", fmt.Errorf("server down"), true},
+		{"server not running", fmt.Errorf("Dolt server is not running"), true},
+		{"server may not be running", fmt.Errorf("Dolt server may not be running"), true},
 		{"transient error", fmt.Errorf("optimistic lock failed"), false},
 		{"generic error", fmt.Errorf("something else"), false},
 	}
@@ -234,5 +240,51 @@ func TestIsSlingConfigError(t *testing.T) {
 				t.Errorf("isSlingConfigError(%v) = %v, want %v", tt.err, got, tt.want)
 			}
 		})
+	}
+}
+
+func TestHookBeadWithRetryFailsFastOnBdStderr(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("uses Unix shell script bd stub")
+	}
+	beads.ResetBdAllowStaleCacheForTest()
+	t.Cleanup(beads.ResetBdAllowStaleCacheForTest)
+
+	binDir := t.TempDir()
+	countPath := filepath.Join(binDir, "count")
+	script := fmt.Sprintf(`#!/bin/sh
+if [ "$1" = "--allow-stale" ]; then
+  echo "Error: unknown flag: --allow-stale" >&2
+  exit 0
+fi
+count=0
+if [ -f %[1]q ]; then count=$(cat %[1]q); fi
+count=$((count + 1))
+printf '%%s' "$count" > %[1]q
+echo "Dolt circuit breaker is open: server appears down" >&2
+exit 1
+`, countPath)
+	if err := os.WriteFile(filepath.Join(binDir, "bd"), []byte(script), 0o755); err != nil {
+		t.Fatalf("write bd stub: %v", err)
+	}
+	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	t.Setenv("GT_TEST_SKIP_HOOK_VERIFY", "1")
+
+	err := hookBeadWithRetry("gt-work", "gastown/polecats/rust", t.TempDir())
+	if err == nil {
+		t.Fatal("hookBeadWithRetry error = nil, want fail-fast error")
+	}
+	if !strings.Contains(err.Error(), "Dolt circuit breaker is open") {
+		t.Fatalf("error missing bd stderr: %v", err)
+	}
+	if !strings.Contains(err.Error(), "Safe next action") {
+		t.Fatalf("error missing reconciliation guidance: %v", err)
+	}
+	countBytes, readErr := os.ReadFile(countPath)
+	if readErr != nil {
+		t.Fatalf("read count: %v", readErr)
+	}
+	if got := strings.TrimSpace(string(countBytes)); got != "1" {
+		t.Fatalf("bd update invoked %s times, want 1", got)
 	}
 }

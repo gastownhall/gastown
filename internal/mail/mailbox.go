@@ -15,8 +15,8 @@ import (
 	"sync"
 	"time"
 
-	beadsdk "github.com/steveyegge/beads"
 	"github.com/gofrs/flock"
+	beadsdk "github.com/steveyegge/beads"
 	"github.com/steveyegge/gastown/internal/beads"
 	"github.com/steveyegge/gastown/internal/runtime"
 	"github.com/steveyegge/gastown/internal/telemetry"
@@ -534,6 +534,10 @@ func (m *Mailbox) MarkRead(id string) error {
 }
 
 func (m *Mailbox) markReadBeads(id string) error {
+	if err := m.acknowledgeDeliveryForPrimary(id); err != nil {
+		return err
+	}
+
 	// Resolve correct beadsDir based on bead ID prefix (GH#2423)
 	primary := beads.ResolveBeadsDirForID(m.beadsDir, id)
 	err := m.closeInDir(id, primary)
@@ -566,7 +570,7 @@ func (m *Mailbox) closeInDir(id, beadsDir string) error {
 		To: m.identity,
 	}, err)
 	if err != nil {
-		if bdErr, ok := err.(*bdError); ok && bdErr.ContainsError("not found") || bdErr.ContainsError("no issue found") {
+		if isBdNotFound(err) {
 			return ErrMessageNotFound
 		}
 		return err
@@ -614,6 +618,10 @@ func (m *Mailbox) MarkReadOnly(id string) error {
 }
 
 func (m *Mailbox) markReadOnlyBeads(id string) error {
+	if err := m.acknowledgeDeliveryForPrimary(id); err != nil {
+		return err
+	}
+
 	if m.store != nil {
 		return m.storeMarkReadOnly(id)
 	}
@@ -626,14 +634,14 @@ func (m *Mailbox) markReadOnlyBeads(id string) error {
 	defer cancel()
 	_, err := runBdCommand(ctx, args, m.workDir, primary)
 	if err != nil {
-		if bdErr, ok := err.(*bdError); ok && bdErr.ContainsError("not found") || bdErr.ContainsError("no issue found") {
+		if isBdNotFound(err) {
 			if primary != m.beadsDir {
 				// Cross-rig bead IDs (e.g. ne-*) may live in the home DB. See ne-bgr.
 				ctx2, cancel2 := bdWriteCtx()
 				defer cancel2()
 				_, err2 := runBdCommand(ctx2, args, m.workDir, m.beadsDir)
 				if err2 != nil {
-					if bdErr2, ok := err2.(*bdError); ok && bdErr2.ContainsError("not found") || bdErr2.ContainsError("no issue found") {
+					if isBdNotFound(err2) {
 						return ErrMessageNotFound
 					}
 					return err2
@@ -646,6 +654,29 @@ func (m *Mailbox) markReadOnlyBeads(id string) error {
 	}
 
 	return nil
+}
+
+func (m *Mailbox) acknowledgeDeliveryForPrimary(id string) error {
+	if m.legacy {
+		return nil
+	}
+	if m.store != nil {
+		return m.storeAcknowledgeDeliveryForPrimary(id)
+	}
+
+	msg, err := m.Get(id)
+	if err != nil {
+		return err
+	}
+	if msg == nil || msg.DeliveryState == "" || AddressToIdentity(msg.To) != m.identity {
+		return nil
+	}
+	return AcknowledgeDeliveryBead(m.workDir, m.beadsDir, id, m.identity)
+}
+
+func isBdNotFound(err error) bool {
+	bdErr, ok := err.(*bdError)
+	return ok && (bdErr.ContainsError("not found") || bdErr.ContainsError("no issue found"))
 }
 
 // MarkUnreadOnly marks a message as unread (removes "read" label).
@@ -671,14 +702,14 @@ func (m *Mailbox) markUnreadOnlyBeads(id string) error {
 	defer cancel()
 	_, err := runBdCommand(ctx, args, m.workDir, primary)
 	if err != nil {
-		if bdErr, ok := err.(*bdError); ok && bdErr.ContainsError("not found") || bdErr.ContainsError("no issue found") {
+		if isBdNotFound(err) {
 			if primary != m.beadsDir {
 				// Cross-rig bead IDs (e.g. ne-*) may live in the home DB. See ne-bgr.
 				ctx2, cancel2 := bdWriteCtx()
 				defer cancel2()
 				_, err2 := runBdCommand(ctx2, args, m.workDir, m.beadsDir)
 				if err2 != nil {
-					if bdErr2, ok := err2.(*bdError); ok && bdErr2.ContainsError("not found") || bdErr2.ContainsError("no issue found") {
+					if isBdNotFound(err2) {
 						return ErrMessageNotFound
 					}
 					if bdErr2, ok := err2.(*bdError); ok && bdErr2.ContainsError("does not have label") {
@@ -720,14 +751,14 @@ func (m *Mailbox) markUnreadBeads(id string) error {
 	defer cancel()
 	_, err := runBdCommand(ctx, args, m.workDir, primary)
 	if err != nil {
-		if bdErr, ok := err.(*bdError); ok && bdErr.ContainsError("not found") || bdErr.ContainsError("no issue found") {
+		if isBdNotFound(err) {
 			if primary != m.beadsDir {
 				// Cross-rig bead IDs (e.g. ne-*) may live in the home DB. See ne-bgr.
 				ctx2, cancel2 := bdWriteCtx()
 				defer cancel2()
 				_, err2 := runBdCommand(ctx2, args, m.workDir, m.beadsDir)
 				if err2 != nil {
-					if bdErr2, ok := err2.(*bdError); ok && bdErr2.ContainsError("not found") || bdErr2.ContainsError("no issue found") {
+					if isBdNotFound(err2) {
 						return ErrMessageNotFound
 					}
 					return err2
@@ -1153,7 +1184,7 @@ func (m *Mailbox) AcknowledgeDeliveries(recipientAddress string, messages []*Mes
 		if AddressToIdentity(msg.To) != recipientIdentity {
 			continue
 		}
-		if msg.DeliveryState == "" || msg.DeliveryState == DeliveryStateAcked {
+		if msg.DeliveryState == "" {
 			continue
 		}
 		toAck = append(toAck, msg)

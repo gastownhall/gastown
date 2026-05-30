@@ -112,6 +112,20 @@ func TestFormatEscalationDescription(t *testing.T) {
 				"last_reescalated_by: deacon",
 			},
 		},
+		{
+			name:  "fingerprint field",
+			title: "Repeated alert",
+			fields: &EscalationFields{
+				Severity:    "medium",
+				Reason:      "control-plane timeout",
+				EscalatedBy: "deacon",
+				EscalatedAt: "2024-01-15T10:00:00Z",
+				Fingerprint: "escalation-fp:abc123def456",
+			},
+			want: []string{
+				"fingerprint: escalation-fp:abc123def456",
+			},
+		},
 	}
 
 	for _, tt := range tests {
@@ -159,7 +173,8 @@ related_bead: gt-abc123
 original_severity: medium
 reescalation_count: 1
 last_reescalated_at: 2024-01-15T09:30:00Z
-last_reescalated_by: deacon`,
+last_reescalated_by: deacon
+fingerprint: escalation-fp:abc123def456`,
 			want: &EscalationFields{
 				Severity:          "high",
 				Reason:            "Build failed 3 times",
@@ -175,6 +190,7 @@ last_reescalated_by: deacon`,
 				ReescalationCount: 1,
 				LastReescalatedAt: "2024-01-15T09:30:00Z",
 				LastReescalatedBy: "deacon",
+				Fingerprint:       "escalation-fp:abc123def456",
 			},
 		},
 		{
@@ -241,6 +257,9 @@ last_reescalated_by: deacon`,
 			if got.LastReescalatedBy != tt.want.LastReescalatedBy {
 				t.Errorf("LastReescalatedBy = %q, want %q", got.LastReescalatedBy, tt.want.LastReescalatedBy)
 			}
+			if got.Fingerprint != tt.want.Fingerprint {
+				t.Errorf("Fingerprint = %q, want %q", got.Fingerprint, tt.want.Fingerprint)
+			}
 		})
 	}
 }
@@ -259,6 +278,7 @@ func TestEscalationFieldsRoundTrip(t *testing.T) {
 		ReescalationCount: 1,
 		LastReescalatedAt: "2024-06-15T11:30:00Z",
 		LastReescalatedBy: "deacon",
+		Fingerprint:       "escalation-fp:feedface1234",
 	}
 
 	formatted := FormatEscalationDescription("Escalation: Agent stuck", original)
@@ -299,6 +319,21 @@ func TestEscalationFieldsRoundTrip(t *testing.T) {
 	}
 	if parsed.LastReescalatedBy != original.LastReescalatedBy {
 		t.Errorf("LastReescalatedBy: got %q, want %q", parsed.LastReescalatedBy, original.LastReescalatedBy)
+	}
+	if parsed.Fingerprint != original.Fingerprint {
+		t.Errorf("Fingerprint: got %q, want %q", parsed.Fingerprint, original.Fingerprint)
+	}
+}
+
+func TestFilterEscalationRecordsSkipsMailMessages(t *testing.T) {
+	issues := []*Issue{
+		{ID: "hq-root", Labels: []string{"gt:escalation"}},
+		{ID: "hq-mail", Labels: []string{"gt:escalation", "gt:message"}},
+	}
+
+	got := filterEscalationRecords(issues)
+	if len(got) != 1 || got[0].ID != "hq-root" {
+		t.Fatalf("filterEscalationRecords() = %#v, want only root escalation", got)
 	}
 }
 
@@ -362,6 +397,7 @@ exit 0
 		Reason:      "multi-line\nreason\nwith embedded newlines",
 		EscalatedBy: "test/agent",
 		EscalatedAt: "2026-05-08T15:00:00Z",
+		Fingerprint: "escalation-fp:abc123def456",
 	}
 
 	if _, err := b.CreateEscalationBead("Test escalation", fields); err != nil {
@@ -377,6 +413,9 @@ exit 0
 	// Must use --body-file=- to read description from stdin.
 	if !strings.Contains(args, "--body-file=-") {
 		t.Errorf("expected --body-file=- in bd args, got:\n%s", args)
+	}
+	if !strings.Contains(args, "--labels=escalation-fp:abc123def456") {
+		t.Errorf("expected fingerprint label in bd args, got:\n%s", args)
 	}
 	// Must NOT pass --description=... at all (any --description value would
 	// embed the newline-containing structured description and fail bd 1.0.3+).

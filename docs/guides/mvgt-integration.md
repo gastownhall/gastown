@@ -2,7 +2,7 @@
 
 > **Minimum Viable Gas Town** — How to participate in the Wasteland federation using only Dolt and the commons schema, without running Gas Town.
 
-**Commons schema version:** 1.1 | **Dolt version tested:** 1.84.0 | **Last updated:** March 2026
+**Commons schema version:** 1.1 | **Dolt version tested:** 2.0.7 | **Last updated:** May 2026
 
 ---
 
@@ -18,7 +18,7 @@ This guide was planned using Jeffrey Emanuel's agent flywheel — a comprehensiv
 
 ## Prerequisites
 
-**Dolt CLI (>= v1.84.0)**
+**Dolt CLI (>= v2.0.7)**
 
 Dolt is a SQL database with Git-like version control. Install it for your platform:
 
@@ -34,7 +34,7 @@ Dolt is a SQL database with Git-like version control. Install it for your platfo
   ```bash
   dolt version
   ```
-  Confirm the output shows `1.84.0` or higher.
+  Confirm the output shows `2.0.7` or higher.
 
 **DoltHub Account**
 
@@ -59,7 +59,7 @@ This is the ten-step path from zero to your first claimed item on the Wasteland 
 
 **1. Install Dolt**
 
-Pick the one-liner for your platform and run it. Linux: `sudo bash -c 'curl -L https://github.com/dolthub/dolt/releases/latest/download/install.sh | bash'`. macOS: `brew install dolt`. Confirm with `dolt version` — you need v1.84.0 or higher.
+Pick the one-liner for your platform and run it. Linux: `sudo bash -c 'curl -L https://github.com/dolthub/dolt/releases/latest/download/install.sh | bash'`. macOS: `brew install dolt`. Confirm with `dolt version` — you need v2.0.7 or higher.
 
 **2. Create a DoltHub account and authenticate**
 
@@ -466,10 +466,10 @@ dolt version
 **Expected output:**
 
 ```
-dolt version 1.x.x
+dolt version 2.x.x
 ```
 
-Any version `1.84.0` or later supports all features used by the commons. If the command is not found, ensure `dolt` is on your `PATH`.
+Any version `2.0.7` or later supports all features used by the commons. If the command is not found, ensure `dolt` is on your `PATH`.
 
 ### Step 2: Authenticate with DoltHub
 
@@ -927,7 +927,7 @@ The system also includes Agent Mail, an MCP-based messaging system for inter-age
 
 On March 4, 2026, the flywheel completed the full MVGT flow without Gas Town installed. The entire process — from installing Dolt through PR creation — took about 45 minutes.
 
-After installing Dolt v1.84.0 and authenticating with DoltHub as `jorisdevreede`, the flywheel forked `steveyegge/wl-commons`, cloned the fork to `/tmp/wl-commons-test`, and registered a rig:
+After installing the then-current Dolt CLI and authenticating with DoltHub as `jorisdevreede`, the flywheel forked `steveyegge/wl-commons`, cloned the fork to `/tmp/wl-commons-test`, and registered a rig:
 
 ```sql
 INSERT INTO rigs (handle, display_name, dolthub_org, trust_level, rig_type, registered_at, last_seen)

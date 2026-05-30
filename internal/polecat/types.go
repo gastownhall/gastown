@@ -10,6 +10,7 @@ import "time"
 //
 //   - Working: Session active, doing assigned work (normal operation)
 //   - Idle: Work completed, session killed, sandbox preserved for reuse
+//   - ReviewNeeded: Session is live but no active work bead is attached
 //   - Stalled: Session stopped unexpectedly, was never nudged back to life
 //   - Zombie: Session called 'gt done' but cleanup failed - tried to die but couldn't
 //
@@ -42,6 +43,12 @@ const (
 	// immediately after. If a polecat remains in StateDone, it's a "zombie":
 	// the cleanup failed and the session is stuck.
 	StateDone State = "done"
+
+	// StateReviewNeeded means a tmux session is still live but no current hooked
+	// or assigned work bead exists, and cleanup status is not clean enough to
+	// reuse safely. This prevents reporting "working" with Issue:none without
+	// making the slot reusable before recovery decides what to do with the branch.
+	StateReviewNeeded State = "review-needed"
 
 	// StateStuck means the polecat has explicitly signaled it needs assistance.
 	// This is an intentional request for help from the polecat itself.

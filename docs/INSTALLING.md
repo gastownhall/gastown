@@ -10,7 +10,7 @@ Complete setup guide for Gas Town multi-agent orchestrator.
 |------|---------|-------|---------|
 | **Go** | 1.25.8+ | `go version` | See [golang.org](https://go.dev/doc/install) |
 | **Git** | 2.20+ | `git --version` | See below |
-| **Dolt** | >= 1.84.0 | `dolt version` | macOS: `brew install dolt`; other platforms: see [dolthub/dolt](https://github.com/dolthub/dolt?tab=readme-ov-file#installation) |
+| **Dolt** | >= 2.0.7 | `dolt version` | macOS: `brew install dolt`; other platforms: see [dolthub/dolt](https://github.com/dolthub/dolt?tab=readme-ov-file#installation) |
 | **Beads** | >= 0.55.4 | `bd version` | Installed by `brew install gastown`, or from source with `go install github.com/steveyegge/beads/cmd/bd@latest` |
 
 ### Optional (for Full Stack Mode)
@@ -74,7 +74,7 @@ sudo dnf install -y tmux
 # Check all prerequisites
 go version        # Should show go1.25.8 or higher
 git --version     # Should show 2.20 or higher
-dolt version      # Should show 1.84.0 or higher
+dolt version      # Should show 2.0.7 or higher
 tmux -V           # (Optional) Should show 3.0 or higher
 ```
 

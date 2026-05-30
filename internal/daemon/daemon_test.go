@@ -1,10 +1,12 @@
 package daemon
 
 import (
+	"bytes"
 	"encoding/json"
 	"io"
 	"log"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"slices"
@@ -79,6 +81,130 @@ func TestCleanupLegacySocketSessionsRunsOnce(t *testing.T) {
 	d.cleanupLegacySocketSessions()
 	if calls != 1 {
 		t.Fatalf("cleanup calls after second invocation = %d, want 1", calls)
+	}
+}
+
+func TestSyncWorkspaceRefusesTownRootWorkDir(t *testing.T) {
+	townRoot := t.TempDir()
+	cmd := exec.Command("git", "init")
+	cmd.Dir = townRoot
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("git init: %v\n%s", err, out)
+	}
+	for _, args := range [][]string{{"config", "user.email", "test@test.com"}, {"config", "user.name", "Test User"}} {
+		cmd = exec.Command("git", args...)
+		cmd.Dir = townRoot
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+	}
+	if err := os.WriteFile(filepath.Join(townRoot, "README.md"), []byte("# Town\n"), 0644); err != nil {
+		t.Fatalf("write README: %v", err)
+	}
+	cmd = exec.Command("git", "add", "README.md")
+	cmd.Dir = townRoot
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("git add: %v\n%s", err, out)
+	}
+	cmd = exec.Command("git", "commit", "-m", "initial")
+	cmd.Dir = townRoot
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("git commit: %v\n%s", err, out)
+	}
+
+	writeDaemonTownFile(t, townRoot, "mayor/town.json", `{"name":"test-town"}\n`)
+	writeDaemonTownFile(t, townRoot, "mayor/rigs.json", `{"rigs":[]}\n`)
+	writeDaemonTownFile(t, townRoot, ".dolt-data/gastown/.dolt/noms/manifest", "manifest\n")
+	writeDaemonTownFile(t, townRoot, ".runtime/sentinel", "runtime\n")
+	writeDaemonTownFile(t, townRoot, ".beads/metadata.json", `{"prefix":"hq"}\n`)
+	writeDaemonTownFile(t, townRoot, "daemon/daemon.pid", "12345\n")
+	writeDaemonTownFile(t, townRoot, "user-work.txt", "user work\n")
+
+	headBefore := daemonGitOutput(t, townRoot, "rev-parse", "HEAD")
+	filesBefore := snapshotDaemonTownFiles(t, townRoot)
+	var logBuf bytes.Buffer
+	d := &Daemon{
+		config: DefaultConfig(townRoot),
+		logger: log.New(&logBuf, "", 0),
+	}
+	d.syncWorkspace(townRoot)
+
+	if !strings.Contains(logBuf.String(), "refusing daemon git sync") {
+		t.Fatalf("log = %q, want refusal", logBuf.String())
+	}
+	if got := daemonGitOutput(t, townRoot, "rev-parse", "HEAD"); got != headBefore {
+		t.Fatalf("HEAD changed: got %s, want %s", got, headBefore)
+	}
+	assertDaemonTownFilesPreserved(t, townRoot, filesBefore)
+
+	nestedRig := filepath.Join(townRoot, "gastown")
+	if err := os.MkdirAll(nestedRig, 0755); err != nil {
+		t.Fatalf("mkdir nested rig: %v", err)
+	}
+	logBuf.Reset()
+	d.syncWorkspace(nestedRig)
+	if !strings.Contains(logBuf.String(), "refusing daemon git sync") {
+		t.Fatalf("nested log = %q, want refusal", logBuf.String())
+	}
+	if got := daemonGitOutput(t, townRoot, "rev-parse", "HEAD"); got != headBefore {
+		t.Fatalf("HEAD changed after nested sync: got %s, want %s", got, headBefore)
+	}
+	assertDaemonTownFilesPreserved(t, townRoot, filesBefore)
+}
+
+func writeDaemonTownFile(t *testing.T, root, rel, contents string) {
+	t.Helper()
+	path := filepath.Join(root, filepath.FromSlash(rel))
+	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+		t.Fatalf("mkdir %s: %v", filepath.Dir(path), err)
+	}
+	if err := os.WriteFile(path, []byte(contents), 0644); err != nil {
+		t.Fatalf("write %s: %v", rel, err)
+	}
+}
+
+func daemonGitOutput(t *testing.T, dir string, args ...string) string {
+	t.Helper()
+	cmd := exec.Command("git", args...)
+	cmd.Dir = dir
+	out, err := cmd.Output()
+	if err != nil {
+		t.Fatalf("git %v: %v", args, err)
+	}
+	return strings.TrimSpace(string(out))
+}
+
+func snapshotDaemonTownFiles(t *testing.T, root string) map[string]string {
+	t.Helper()
+	files := make(map[string]string)
+	for _, rel := range []string{
+		"mayor/town.json",
+		"mayor/rigs.json",
+		".dolt-data/gastown/.dolt/noms/manifest",
+		".runtime/sentinel",
+		".beads/metadata.json",
+		"daemon/daemon.pid",
+		"user-work.txt",
+	} {
+		contents, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(rel)))
+		if err != nil {
+			t.Fatalf("read %s: %v", rel, err)
+		}
+		files[rel] = string(contents)
+	}
+	return files
+}
+
+func assertDaemonTownFilesPreserved(t *testing.T, root string, before map[string]string) {
+	t.Helper()
+	for rel, want := range before {
+		contents, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(rel)))
+		if err != nil {
+			t.Fatalf("read preserved %s: %v", rel, err)
+		}
+		if got := string(contents); got != want {
+			t.Fatalf("%s changed: got %q, want %q", rel, got, want)
+		}
 	}
 }
 

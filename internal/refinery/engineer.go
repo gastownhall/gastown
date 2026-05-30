@@ -2079,8 +2079,10 @@ func (e *Engineer) checkAndCloseCompletedConvoys(townRoot, townBeads string) []c
 
 // notifyConvoyCompletion sends notifications to convoy owner and notify addresses.
 func (e *Engineer) notifyConvoyCompletion(townRoot, convoyID, title, description string) {
-	// ZFC: Use typed accessor instead of parsing description text
-	fields := beads.ParseConvoyFields(&beads.Issue{Description: description})
+	fields, shouldNotify := e.claimConvoyCompletionNotification(townRoot, convoyID, description)
+	if !shouldNotify {
+		return
+	}
 	for _, addr := range fields.NotificationAddresses() {
 		mailCmd := exec.Command("gt", "mail", "send", addr,
 			"-s", fmt.Sprintf("🚚 Convoy landed: %s", title),
@@ -2091,6 +2093,45 @@ func (e *Engineer) notifyConvoyCompletion(townRoot, convoyID, title, description
 			_, _ = fmt.Fprintf(e.output, "[Engineer] Warning: could not notify %s: %v\n", addr, err)
 		}
 	}
+}
+
+func (e *Engineer) claimConvoyCompletionNotification(townRoot, convoyID, fallbackDescription string) (*beads.ConvoyFields, bool) {
+	townBeads := filepath.Join(townRoot, ".beads")
+	description := fallbackDescription
+
+	readEnv := beads.BuildReadOnlyPinnedBDEnv(os.Environ(), townBeads)
+	showArgs := beads.MaybePrependAllowStaleWithEnv(readEnv, []string{"show", convoyID, "--json"})
+	showCmd := beads.Command(townBeads, townBeads, beads.ReadOnlyPinned, showArgs...)
+	var showOut bytes.Buffer
+	showCmd.Stdout = &showOut
+	if err := showCmd.Run(); err == nil && showOut.Len() > 0 {
+		var convoys []struct {
+			Description string `json:"description"`
+		}
+		if err := json.Unmarshal(showOut.Bytes(), &convoys); err == nil && len(convoys) > 0 {
+			description = convoys[0].Description
+		}
+	}
+
+	fields := beads.ParseConvoyFields(&beads.Issue{Description: description})
+	if fields == nil {
+		fields = &beads.ConvoyFields{}
+	}
+	if fields.CompletionNotifiedAt != "" {
+		return fields, false
+	}
+
+	fields.CompletionNotifiedAt = time.Now().UTC().Format(time.RFC3339)
+	newDesc := beads.SetConvoyFields(&beads.Issue{Description: description}, fields)
+	mutationEnv := beads.BuildMutationPinnedBDEnv(os.Environ(), townBeads)
+	updateArgs := beads.MaybePrependAllowStaleWithEnv(mutationEnv, []string{"update", convoyID, "--description=" + newDesc})
+	updateCmd := beads.Command(townBeads, townBeads, beads.MutationPinned, updateArgs...)
+	if err := updateCmd.Run(); err != nil {
+		_, _ = fmt.Fprintf(e.output, "[Engineer] Warning: could not record convoy completion notification state for %s: %v\n", convoyID, err)
+		return fields, false
+	}
+
+	return fields, true
 }
 
 // landConvoySwarm checks if a completed convoy has an associated swarm with an

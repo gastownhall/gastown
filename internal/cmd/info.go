@@ -75,6 +75,20 @@ type VersionChange struct {
 // versionChanges contains agent-actionable changes for recent versions
 var versionChanges = []VersionChange{
 	{
+		Version: "1.2.0",
+		Date:    "2026-05-27",
+		Changes: []string{
+			"NEW: Scheduler capacity now separates working, recovery, reusable-idle, pending-MR, reservation, and free buckets.",
+			"CHANGED: Dolt minimum version is now 2.0.7; GT validates the binary before beads-enabled installs.",
+			"FIX: Scheduler status/list/run latency hot paths avoid repeated expensive recovery classification.",
+			"FIX: Polecat recovery classification preserves real local work while avoiding false recovery blocks for terminal or pending-MR lanes.",
+			"FIX: Polecat nuke dry-runs fail closed for dirty, unknown, or unsafe lanes unless --force is explicit.",
+			"FIX: Dolt diagnostics use live managed-server metadata instead of stale legacy pidfile assumptions.",
+			"FIX: Test Dolt server custody and listener classification reduce leaked random-port Dolt processes.",
+			"FIX: Witness-to-Deacon notification throttling reduces duplicate low-actionability mail floods while preserving critical alerts.",
+		},
+	},
+	{
 		Version: "1.0.0",
 		Date:    "2026-04-02",
 		Changes: []string{

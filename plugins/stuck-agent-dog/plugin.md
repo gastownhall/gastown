@@ -173,7 +173,11 @@ echo "Health summary: ${#CRASHED[@]} crashed, ${#STUCK[@]} stuck, $HEALTHY healt
 
 ## Step 3: Check deacon health
 
-The deacon session is `hq-deacon`. Check heartbeat staleness.
+The deacon session is `hq-deacon`. Check heartbeat staleness from the JSON
+`timestamp` field in `deacon/heartbeat.json` (fall back to file mtime only if
+the timestamp is missing or malformed). A live Deacon with no `in_progress` work
+is not an actionable stuck-heartbeat event; log and skip so idle patrol backoff
+does not produce escalation noise.
 
 ```bash
 echo ""
@@ -194,8 +198,8 @@ else
       NOW=$(date +%s)
       HEARTBEAT_AGE=$(( NOW - HEARTBEAT_TIME ))
 
-      if [ "$HEARTBEAT_AGE" -gt 900 ]; then
-        echo "  STUCK: Deacon heartbeat stale (${HEARTBEAT_AGE}s old, >15m threshold)"
+      if [ "$HEARTBEAT_AGE" -gt 1200 ]; then
+        echo "  STUCK: Deacon heartbeat stale (${HEARTBEAT_AGE}s old, >20m threshold)"
         DEACON_ISSUE="stuck_heartbeat_${HEARTBEAT_AGE}s"
       else
         echo "  OK: Deacon heartbeat ${HEARTBEAT_AGE}s old"
@@ -235,6 +239,8 @@ For DEACON stuck (stale heartbeat):
 - If output shows active work (recent timestamps, command output), the heartbeat
   file may just be stale — nudge instead of kill
 - If output shows no recent activity, restart is warranted
+- Use a stable escalation fingerprint (`stuck-agent-dog:deacon:stuck-heartbeat`)
+  for stale-heartbeat events; do not include the age seconds in the fingerprint.
 
 **Decision framework:**
 1. If agent is clearly dead (no process, no output) → restart

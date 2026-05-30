@@ -30,3 +30,16 @@ func TestWitnessStartAgentFlag(t *testing.T) {
 		t.Errorf("expected --agent usage to mention overrides town default, got %q", flag.Usage)
 	}
 }
+
+func TestWitnessStartForegroundFlagHidden(t *testing.T) {
+	flag := witnessStartCmd.Flags().Lookup("foreground")
+	if flag == nil {
+		t.Fatal("expected hidden compatibility --foreground flag")
+	}
+	if !flag.Hidden {
+		t.Fatal("expected --foreground to be hidden")
+	}
+	if strings.Contains(witnessStartCmd.Long, "--foreground") {
+		t.Fatalf("witness start help should not advertise --foreground:\n%s", witnessStartCmd.Long)
+	}
+}

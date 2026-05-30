@@ -10,6 +10,7 @@ var (
 	escalateReason      string
 	escalateSource      string
 	escalateRelatedBead string
+	escalateFingerprint string
 	escalateJSON        bool
 	escalateListJSON    bool
 	escalateListAll     bool
@@ -52,6 +53,7 @@ CONFIGURATION:
 Examples:
   gt escalate "Build failing" --severity critical --reason "CI blocked"
   gt escalate "Need API credentials" --severity high --source "plugin:rebuild-gt"
+  gt escalate "Deacon await-signal timeout" --severity medium --source deacon --fingerprint deacon:await-signal:hq-deacon
   gt escalate "Code review requested" --reason "PR #123 ready"
   gt escalate list                          # Show open escalations
   gt escalate ack hq-abc123                 # Acknowledge
@@ -142,6 +144,7 @@ func init() {
 	escalateCmd.Flags().StringVarP(&escalateReason, "reason", "r", "", "Detailed reason for escalation")
 	escalateCmd.Flags().StringVar(&escalateSource, "source", "", "Source identifier (e.g., plugin:rebuild-gt, patrol:deacon)")
 	escalateCmd.Flags().StringVar(&escalateRelatedBead, "related", "", "Related bead ID (task, bug, etc.)")
+	escalateCmd.Flags().StringVar(&escalateFingerprint, "fingerprint", "", "Stable duplicate-suppression key for repeated alerts")
 	escalateCmd.Flags().BoolVar(&escalateJSON, "json", false, "Output as JSON")
 	escalateCmd.Flags().BoolVarP(&escalateDryRun, "dry-run", "n", false, "Show what would be done without executing")
 	escalateCmd.Flags().BoolVar(&escalateStdin, "stdin", false, "Read reason from stdin (avoids shell quoting issues)")

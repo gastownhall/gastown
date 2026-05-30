@@ -83,7 +83,7 @@ jobs:
 
       - name: Install Dolt
         run: |
-          curl -L https://github.com/dolthub/dolt/releases/latest/download/install.sh | sudo bash
+          curl -L https://github.com/dolthub/dolt/releases/download/v2.0.7/install.sh | sudo bash
 
       - name: Install gotestsum
         run: go install gotest.tools/gotestsum@latest
@@ -164,10 +164,10 @@ jobs:
 
       - name: Install Dolt
         run: |
-          curl -L https://github.com/dolthub/dolt/releases/latest/download/install.sh | sudo bash
+          curl -L https://github.com/dolthub/dolt/releases/download/v2.0.7/install.sh | sudo bash
 
       - name: Pre-pull Dolt Docker image
-        run: docker pull dolthub/dolt-sql-server:1.83.0
+        run: docker pull dolthub/dolt-sql-server:2.0.7
 
       - name: Cache beads (bd)
         id: cache-beads-int

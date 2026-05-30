@@ -7,8 +7,10 @@ import (
 	"io"
 	"net"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -236,6 +238,159 @@ func TestDoltProcessMatchesTownPaths(t *testing.T) {
 			got := doltProcessMatchesTownPaths(expectedDir, tt.actualDataDir, tt.actualConfigPath, tt.actualCWD, tt.stateDataDir)
 			if got != tt.want {
 				t.Fatalf("doltProcessMatchesTownPaths(...) = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestContainsPathBoundary(t *testing.T) {
+	tests := []struct {
+		name string
+		line string
+		path string
+		want bool
+	}{
+		{name: "empty path", line: "/tmp/gt", path: "", want: false},
+		{name: "exact at end", line: "--data-dir /tmp/gt", path: "/tmp/gt", want: true},
+		{name: "path separator", line: "--data-dir /tmp/gt/.dolt-data", path: "/tmp/gt", want: true},
+		{name: "space boundary", line: "/tmp/gt --port 3307", path: "/tmp/gt", want: true},
+		{name: "tab boundary", line: "/tmp/gt\t--port 3307", path: "/tmp/gt", want: true},
+		{name: "reject sibling prefix", line: "/tmp/gt-old --port 3307", path: "/tmp/gt", want: false},
+		{name: "later match after rejected prefix", line: "/tmp/gt-old /tmp/gt/.beads", path: "/tmp/gt", want: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := containsPathBoundary(tt.line, tt.path)
+			if got != tt.want {
+				t.Fatalf("containsPathBoundary(%q, %q) = %v, want %v", tt.line, tt.path, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestFindIdleMonitorProcessesFromPS(t *testing.T) {
+	const townRoot = "/tmp/gt"
+	const port = 3307
+	pidLines := []struct {
+		line string
+		want []int
+	}{
+		{line: "101 bd dolt idle-monitor --data-dir /tmp/gt/.beads/dolt", want: []int{101}},
+		{line: "102 bd dolt idle-monitor --data-dir /tmp/gt-old/.beads/dolt", want: nil},
+		{line: "103 bd dolt idle-monitor --port 3307", want: []int{103}},
+		{line: "104 bd dolt idle-monitor -p 3307", want: []int{104}},
+		{line: "105 bd dolt idle-monitor --port=3307", want: []int{105}},
+		{line: "106 bd dolt idle-monitor --port=33070", want: nil},
+		{line: "107 bd idle-monitor --port 3307", want: nil},
+		{line: "108 bd dolt monitor --port 3307", want: nil},
+		{line: "109 grep bd dolt idle-monitor --port 3307", want: nil},
+		{line: "110 /home/grep/bin/bd dolt idle-monitor --port 3307", want: []int{110}},
+		{line: "notapid bd dolt idle-monitor --port 3307", want: nil},
+	}
+
+	for _, tt := range pidLines {
+		t.Run(tt.line, func(t *testing.T) {
+			got := findIdleMonitorProcessesFromPS(tt.line, townRoot, townRoot, port)
+			if len(got) != len(tt.want) {
+				t.Fatalf("got %v, want %v", got, tt.want)
+			}
+			for i := range got {
+				if got[i] != tt.want[i] {
+					t.Fatalf("got %v, want %v", got, tt.want)
+				}
+			}
+		})
+	}
+}
+
+func TestFindOwnedDoltTestServerCandidatesFromPS(t *testing.T) {
+	townRoot := "/tmp/gt"
+	dataDir := "/tmp/gt/.dolt-data"
+	output := strings.Join([]string{
+		"101 dolt sql-server --config /tmp/gt/.dolt-data/config.yaml",
+		"102 dolt sql-server --config /tmp/gt-old/.dolt-data/config.yaml",
+		"103 grep dolt sql-server /tmp/gt/.dolt-data/config.yaml",
+		"104 dolt sql-server --data-dir /tmp/gt/.dolt-data",
+		"105 /usr/bin/dolt sql-server --config=/tmp/gt/.dolt-data/config.yaml",
+		"106 dolt status /tmp/gt/.dolt-data",
+		"107 dolt sql-server --port 3307",
+	}, "\n")
+
+	got := findOwnedDoltTestServerCandidatesFromPS(output, townRoot, dataDir)
+	want := []int{101, 104, 105}
+	if len(got) != len(want) {
+		t.Fatalf("got %v, want %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("got %v, want %v", got, want)
+		}
+	}
+}
+
+func TestReapOwnedTestServersRefusesNonTempRoot(t *testing.T) {
+	if _, err := ReapOwnedTestServers(string(filepath.Separator)); err == nil {
+		t.Fatal("expected non-temp root to be rejected")
+	}
+}
+
+func TestReapOwnedTestServersIgnoresNonDoltPID(t *testing.T) {
+	townRoot := t.TempDir()
+	config := DefaultConfig(townRoot)
+	if err := os.MkdirAll(filepath.Dir(config.PidFile), 0755); err != nil {
+		t.Fatal(err)
+	}
+	cmd := exec.Command(os.Args[0], "-test.run=^TestReapOwnedTestServersHelperProcess$")
+	cmd.Env = append(os.Environ(), "GT_DOLT_REAP_HELPER=1")
+	if err := cmd.Start(); err != nil {
+		t.Fatalf("start helper process: %v", err)
+	}
+	t.Cleanup(func() {
+		if cmd.Process != nil {
+			_ = cmd.Process.Kill()
+			_, _ = cmd.Process.Wait()
+		}
+	})
+	if err := os.WriteFile(config.PidFile, []byte(strconv.Itoa(cmd.Process.Pid)), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	stopped, err := ReapOwnedTestServers(townRoot)
+	if err != nil {
+		t.Fatalf("ReapOwnedTestServers: %v", err)
+	}
+	if stopped != 0 {
+		t.Fatalf("stopped = %d, want 0", stopped)
+	}
+	if !processIsAlive(cmd.Process.Pid) {
+		t.Fatalf("non-Dolt child process %d was killed", cmd.Process.Pid)
+	}
+}
+
+func TestReapOwnedTestServersHelperProcess(t *testing.T) {
+	if os.Getenv("GT_DOLT_REAP_HELPER") != "1" {
+		return
+	}
+	time.Sleep(30 * time.Second)
+	os.Exit(0)
+}
+
+func TestIsDoltSQLServerArgs(t *testing.T) {
+	tests := []struct {
+		name string
+		args []string
+		want bool
+	}{
+		{name: "plain dolt", args: []string{"dolt", "sql-server", "--config", "/tmp/gt/.dolt-data/config.yaml"}, want: true},
+		{name: "absolute dolt", args: []string{"/usr/bin/dolt", "sql-server"}, want: true},
+		{name: "not sql server", args: []string{"dolt", "status"}, want: false},
+		{name: "grep", args: []string{"grep", "dolt", "sql-server"}, want: false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := isDoltSQLServerArgs(tt.args); got != tt.want {
+				t.Fatalf("isDoltSQLServerArgs(%v) = %v, want %v", tt.args, got, tt.want)
 			}
 		})
 	}
@@ -2092,6 +2247,92 @@ func TestInitRig_InvalidCharacters(t *testing.T) {
 	}
 }
 
+func TestIssuePrefixForRigInit_PrefersRoutes(t *testing.T) {
+	townRoot := t.TempDir()
+	beadsDir := filepath.Join(townRoot, ".beads")
+	if err := os.MkdirAll(beadsDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	routes := []byte(`{"prefix":"tr-","path":"testrig/mayor/rig"}` + "\n")
+	if err := os.WriteFile(filepath.Join(beadsDir, "routes.jsonl"), routes, 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	if got := issuePrefixForRigInit(townRoot, "testrig"); got != "tr" {
+		t.Fatalf("issuePrefixForRigInit() = %q, want tr", got)
+	}
+}
+
+func TestIssuePrefixForRigInit_PrefersRigsConfigBeforeFallback(t *testing.T) {
+	townRoot := t.TempDir()
+	mayorDir := filepath.Join(townRoot, "mayor")
+	if err := os.MkdirAll(mayorDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	rigsJSON := []byte(`{"version":1,"rigs":{"testrig":{"beads":{"prefix":"tc-"}}}}`)
+	if err := os.WriteFile(filepath.Join(mayorDir, "rigs.json"), rigsJSON, 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	if got := issuePrefixForRigInit(townRoot, "testrig"); got != "tc" {
+		t.Fatalf("issuePrefixForRigInit() = %q, want tc", got)
+	}
+}
+
+func TestIssuePrefixForRigInit_FallsBackToRigName(t *testing.T) {
+	townRoot := t.TempDir()
+
+	if got := issuePrefixForRigInit(townRoot, "newrig"); got != "newrig" {
+		t.Fatalf("issuePrefixForRigInit() = %q, want newrig", got)
+	}
+}
+
+func TestInitRigSeedsIssuePrefixEmbedded(t *testing.T) {
+	if _, err := exec.LookPath("dolt"); err != nil {
+		t.Skip("dolt binary not available")
+	}
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("free port: %v", err)
+	}
+	port := listener.Addr().(*net.TCPAddr).Port
+	if err := listener.Close(); err != nil {
+		t.Fatalf("close free port listener: %v", err)
+	}
+	t.Setenv("GT_DOLT_PORT", strconv.Itoa(port))
+
+	townRoot := t.TempDir()
+	beadsDir := filepath.Join(townRoot, ".beads")
+	if err := os.MkdirAll(beadsDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	routes := []byte(`{"prefix":"tr-","path":"testrig/mayor/rig"}` + "\n")
+	if err := os.WriteFile(filepath.Join(beadsDir, "routes.jsonl"), routes, 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	_, created, err := InitRig(townRoot, "testrig")
+	if err != nil {
+		if strings.Contains(err.Error(), "initializing Dolt database") {
+			t.Skipf("dolt init unavailable in test environment: %v", err)
+		}
+		t.Fatalf("InitRig: %v", err)
+	}
+	if !created {
+		t.Fatal("InitRig created = false, want true")
+	}
+
+	cmd := exec.Command("dolt", "sql", "-q", "SELECT value FROM config WHERE `key` = 'issue_prefix'")
+	cmd.Dir = RigDatabaseDir(townRoot, "testrig")
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("query issue_prefix: %v\n%s", err, out)
+	}
+	if !strings.Contains(string(out), "tr") {
+		t.Fatalf("issue_prefix query missing tr:\n%s", out)
+	}
+}
+
 // =============================================================================
 // Catalog race condition tests (isDoltRetryableError coverage)
 // =============================================================================
@@ -2286,6 +2527,58 @@ func TestLoadState_CorruptJSON(t *testing.T) {
 	_, err := LoadState(townRoot)
 	if err == nil {
 		t.Fatal("expected error for corrupt state file")
+	}
+}
+
+func TestRefreshPIDStateFromLiveInfo(t *testing.T) {
+	townRoot := t.TempDir()
+	config := DefaultConfig(townRoot)
+	if err := os.MkdirAll(filepath.Dir(config.PidFile), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(config.PidFile, []byte("999999\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := SaveState(townRoot, &State{Running: true, PID: 999999, Port: config.Port, DataDir: config.DataDir}); err != nil {
+		t.Fatal(err)
+	}
+
+	changed, err := refreshPIDStateFromLiveInfo(townRoot, config, 12345)
+	if err != nil {
+		t.Fatalf("refreshPIDStateFromLiveInfo: %v", err)
+	}
+	if !changed {
+		t.Fatal("expected stale PID state to change")
+	}
+
+	pidData, err := os.ReadFile(config.PidFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.TrimSpace(string(pidData)) != "12345" {
+		t.Fatalf("pid file = %q, want 12345", string(pidData))
+	}
+	state, err := LoadState(townRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !state.Running || state.PID != 12345 || state.Port != config.Port || state.DataDir != config.DataDir {
+		t.Fatalf("state not refreshed: %#v", state)
+	}
+}
+
+func TestRefreshPIDStateFromLiveInfoInvalidPIDNoop(t *testing.T) {
+	townRoot := t.TempDir()
+	config := DefaultConfig(townRoot)
+	changed, err := refreshPIDStateFromLiveInfo(townRoot, config, 0)
+	if err != nil {
+		t.Fatalf("refreshPIDStateFromLiveInfo: %v", err)
+	}
+	if changed {
+		t.Fatal("invalid PID should not change state")
+	}
+	if _, err := os.Stat(config.PidFile); !os.IsNotExist(err) {
+		t.Fatalf("pid file should not exist, err=%v", err)
 	}
 }
 

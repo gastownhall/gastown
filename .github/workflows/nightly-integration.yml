@@ -40,11 +40,11 @@ jobs:
 
       - name: Install Dolt
         run: |
-          curl -sL https://github.com/dolthub/dolt/releases/latest/download/dolt-linux-amd64.tar.gz | tar xz
+          curl -sL https://github.com/dolthub/dolt/releases/download/v2.0.7/dolt-linux-amd64.tar.gz | tar xz
           mv dolt-linux-amd64/bin/dolt ~/go/bin/dolt
 
       - name: Pre-pull Dolt Docker image
-        run: docker pull dolthub/dolt-sql-server:1.83.0
+        run: docker pull dolthub/dolt-sql-server:2.0.7
 
       - name: Add to PATH
         run: echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"

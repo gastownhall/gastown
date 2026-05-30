@@ -214,13 +214,6 @@ func AgentEnv(cfg AgentEnvConfig) map[string]string {
 		effort = "high"
 	}
 	env["CLAUDE_CODE_EFFORT_LEVEL"] = effort
-	if shellEffort := os.Getenv("CLAUDE_CODE_EFFORT_LEVEL"); shellEffort != "" {
-		fmt.Fprintf(os.Stderr,
-			"notice: CLAUDE_CODE_EFFORT_LEVEL=%s env var is deprecated and ignored; "+
-				"%s effort resolved to %q via config. "+
-				"Set per-role effort with role_effort in settings or gt config cost-tier.\n",
-			shellEffort, cfg.Role, effort)
-	}
 
 	// Clear CLAUDECODE to prevent nested session detection in Claude Code v2.x.
 	// When gt sling is invoked from within a Claude Code session, CLAUDECODE=1
@@ -548,7 +541,7 @@ func ShellQuote(s string) string {
 }
 
 // psQuote quotes a value for use in PowerShell $env: assignments.
-// Uses single quotes with embedded single quotes doubled ('').
+// Uses single quotes and doubles embedded single quotes.
 func psQuote(s string) string {
 	return "'" + strings.ReplaceAll(s, "'", "''") + "'"
 }

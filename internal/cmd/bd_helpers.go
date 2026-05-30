@@ -24,6 +24,7 @@ type bdCmd struct {
 	env        []string
 	stderr     io.Writer
 	autoCommit bool
+	allowStale bool
 	gtRoot     string
 	beadsDir   string
 	routing    bool
@@ -50,6 +51,14 @@ func BdCmd(args ...string) *bdCmd {
 // needs to see the changes from previous calls.
 func (b *bdCmd) WithAutoCommit() *bdCmd {
 	b.autoCommit = true
+	return b
+}
+
+// AllowStale requests bd's stale-read bypass when the installed bd supports it.
+// Unsupported bd versions silently omit the flag so callers can share one
+// compatibility path instead of hardcoding version-specific arguments.
+func (b *bdCmd) AllowStale() *bdCmd {
+	b.allowStale = true
 	return b
 }
 
@@ -198,26 +207,60 @@ func (b *bdCmd) buildContextCommand(ctx context.Context) *exec.Cmd {
 	return cmd
 }
 
-func wrapBdCmdTimeout(ctx context.Context, err error) error {
+func (b *bdCmd) wrapTimeout(err error, deadline time.Duration) error {
 	if err == nil {
 		return nil
 	}
-	if ctx.Err() == context.DeadlineExceeded || strings.Contains(err.Error(), context.DeadlineExceeded.Error()) {
-		return fmt.Errorf("bd command timed out after %v: %w", resolveBdCmdTimeout(), err)
+	if strings.Contains(err.Error(), context.DeadlineExceeded.Error()) {
+		return fmt.Errorf("%s timed out after %v: %w", b.argsDesc(), deadline, err)
 	}
 	return err
 }
 
-// resolvedArgs returns the final args, stripping --allow-stale if bd doesn't support it.
+func (b *bdCmd) wrapCommandError(ctx context.Context, err error, deadline time.Duration) error {
+	if err == nil {
+		return nil
+	}
+	if ctx.Err() == context.DeadlineExceeded {
+		return fmt.Errorf("%s timed out after %v: %w", b.argsDesc(), deadline, err)
+	}
+	return b.wrapTimeout(err, deadline)
+}
+
+func (b *bdCmd) argsDesc() string {
+	desc := "bd"
+	if len(b.args) > 0 {
+		desc += " " + b.args[0]
+	}
+	if len(b.args) > 1 {
+		desc += fmt.Sprintf(" ... (%d args)", len(b.args))
+	}
+	if b.beadsDir != "" {
+		desc += fmt.Sprintf(" beads_dir=%s", b.beadsDir)
+	}
+	if b.dir != "" {
+		desc += fmt.Sprintf(" cwd=%s", b.dir)
+	}
+	return desc
+}
+
+// resolvedArgs returns the final args, normalizing requested stale-read support
+// to bd's global flag position when supported and stripping it when unsupported.
 func (b *bdCmd) resolvedArgs() []string {
-	if beads.BdSupportsAllowStale() {
+	filtered := make([]string, 0, len(b.args))
+	requestedAllowStale := b.allowStale
+	for _, a := range b.args {
+		if a == "--allow-stale" {
+			requestedAllowStale = true
+			continue
+		}
+		filtered = append(filtered, a)
+	}
+	if !requestedAllowStale {
 		return b.args
 	}
-	filtered := make([]string, 0, len(b.args))
-	for _, a := range b.args {
-		if a != "--allow-stale" {
-			filtered = append(filtered, a)
-		}
+	if beads.BdSupportsAllowStaleWithEnv(b.buildEnv()) {
+		return append([]string{"--allow-stale"}, filtered...)
 	}
 	return filtered
 }
@@ -225,9 +268,10 @@ func (b *bdCmd) resolvedArgs() []string {
 // Run builds and runs the command, returning any error.
 // This is a convenience method equivalent to Build().Run().
 func (b *bdCmd) Run() error {
-	ctx, cancel := context.WithTimeout(context.Background(), resolveBdCmdTimeout())
+	deadline := resolveBdCmdTimeout()
+	ctx, cancel := context.WithTimeout(context.Background(), deadline)
 	defer cancel()
-	return wrapBdCmdTimeout(ctx, b.buildContextCommand(ctx).Run())
+	return b.wrapCommandError(ctx, b.buildContextCommand(ctx).Run(), deadline)
 }
 
 // Output builds and runs the command, returning stdout and any error.
@@ -235,17 +279,19 @@ func (b *bdCmd) Run() error {
 // Note: Output() captures stdout but Stderr must still be configured
 // separately if you want to capture stderr instead of it going to os.Stderr.
 func (b *bdCmd) Output() ([]byte, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), resolveBdCmdTimeout())
+	deadline := resolveBdCmdTimeout()
+	ctx, cancel := context.WithTimeout(context.Background(), deadline)
 	defer cancel()
 	out, err := b.buildContextCommand(ctx).Output()
-	return out, wrapBdCmdTimeout(ctx, err)
+	return out, b.wrapCommandError(ctx, err, deadline)
 }
 
 // CombinedOutput builds and runs the command, returning combined stdout+stderr.
 // This overrides the configured Stderr writer to capture both streams.
 // Useful for including command output in error messages.
 func (b *bdCmd) CombinedOutput() ([]byte, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), resolveBdCmdTimeout())
+	deadline := resolveBdCmdTimeout()
+	ctx, cancel := context.WithTimeout(context.Background(), deadline)
 	defer cancel()
 	args := b.resolvedArgs()
 	cmd := exec.CommandContext(ctx, "bd", args...)
@@ -253,5 +299,5 @@ func (b *bdCmd) CombinedOutput() ([]byte, error) {
 	cmd.Dir = b.dir
 	cmd.Env = b.buildEnv()
 	out, err := cmd.CombinedOutput()
-	return out, wrapBdCmdTimeout(ctx, err)
+	return out, b.wrapCommandError(ctx, err, deadline)
 }

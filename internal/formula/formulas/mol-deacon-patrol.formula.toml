@@ -437,6 +437,12 @@ This command:
 - Auto-closes convoys where all tracked work is complete
 - Sends notifications to convoy owners
 
+If `gt convoy check` times out while `gt dolt status` is healthy, treat it as a
+control-plane wait timeout, not a Dolt outage. Escalate at MEDIUM at most and use
+a stable fingerprint such as `deacon:convoy-check:<convoy-id>` so repeated patrols
+do not create duplicate alerts. Reserve HIGH/CRITICAL for evidence that Dolt is
+unreachable or down.
+
 **Note**: Convoys support cross-prefix tracking (e.g., hq-* convoy can track gt-*, bd-* issues).
 The `gt convoy` commands handle cross-rig issue resolution automatically.
 
@@ -1211,6 +1217,12 @@ gt agent state hq-deacon --set idle=0
 The idle counter was auto-incremented. Continue to next patrol cycle
 (the longer backoff will apply next time).
 
+`await-signal` timeout is normal idle control flow. Do not escalate it as a Dolt
+outage unless `gt dolt status` or `gt health --json` proves Dolt is unreachable.
+If an outer shell/tool timeout interrupts this command while Dolt is healthy,
+escalate at MEDIUM at most with fingerprint `deacon:await-signal:hq-deacon` and
+include the timeout, agent bead, and Dolt status in the reason.
+
 ## Effort-Based Patrol Routing
 
 After await-signal returns, check the EFFORT directive in the output:
@@ -1244,10 +1256,18 @@ gt patrol report --summary "<brief summary>" \
 The --steps flag is REQUIRED. List ALL 26 steps with their actual status.
 Steps you executed get OK, steps you skipped get SKIP.
 This closes the current patrol wisp and automatically creates a new one.
-4. Continue executing from the first step of the new patrol cycle
+4. Hand off immediately so a fresh Deacon session picks up the newly-created
+   patrol wisp from the hook:
+```bash
+gt handoff -s "Deacon patrol handoff" -m "Patrol cycle reported; continue with the newly-created patrol wisp from hook."
+```
+
+Do NOT end your turn at the prompt after `gt patrol report`. The handoff is
+mandatory even when context is low; otherwise the patrol loop can stall between
+cycles with work waiting on the hook.
 
 **If context HIGH** (approaching limit):
-1. Write handoff mail with notable observations:
+1. Include notable observations in the same handoff message:
 ```bash
 gt handoff -s "Deacon patrol handoff" -m "<observations>"
 ```

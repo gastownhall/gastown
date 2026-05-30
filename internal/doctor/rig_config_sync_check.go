@@ -27,6 +27,7 @@ type RigConfigSyncCheck struct {
 	missingDoltDB    []string         // Rigs missing Dolt database
 	missingMetadata  []string         // Rigs missing metadata.json
 	missingPrefixCfg []string         // Rigs missing issue-prefix in config.yaml
+	missingExportCfg []string         // Rigs missing export.auto=false in config.yaml
 	dbNameMismatches []dbMismatch     // Dolt database name doesn't match prefix
 	dbCheckErrors    []string         // Rigs whose Dolt DB status could not be verified
 }
@@ -82,6 +83,7 @@ func (c *RigConfigSyncCheck) Run(ctx *CheckContext) *CheckResult {
 	c.missingDoltDB = nil
 	c.missingMetadata = nil
 	c.missingPrefixCfg = nil
+	c.missingExportCfg = nil
 	c.dbNameMismatches = nil
 	c.dbCheckErrors = nil
 	var details []string
@@ -139,12 +141,17 @@ func (c *RigConfigSyncCheck) Run(ctx *CheckContext) *CheckResult {
 			continue
 		}
 
-		// Check issue-prefix in config.yaml
+		// Check required Gas Town defaults in config.yaml.
 		configYamlPath := filepath.Join(beadsDir, "config.yaml")
 		if data, err := os.ReadFile(configYamlPath); err == nil {
-			if !strings.Contains(string(data), "issue-prefix:") && expectedPrefix != "" {
+			content := string(data)
+			if !strings.Contains(content, "issue-prefix:") && expectedPrefix != "" {
 				c.missingPrefixCfg = append(c.missingPrefixCfg, rigName)
 				details = append(details, fmt.Sprintf("Rig %s .beads/config.yaml missing issue-prefix", rigName))
+			}
+			if !beads.ConfigYAMLDisablesAutoExport(content) {
+				c.missingExportCfg = append(c.missingExportCfg, rigName)
+				details = append(details, fmt.Sprintf("Rig %s .beads/config.yaml must disable export.auto", rigName))
 			}
 		}
 
@@ -232,7 +239,7 @@ func (c *RigConfigSyncCheck) Run(ctx *CheckContext) *CheckResult {
 	}
 
 	// Check for summary
-	issueCount := len(c.missingConfig) + len(c.prefixMismatches) + len(c.missingRigBeads) + len(c.missingDoltDB) + len(c.missingMetadata) + len(c.missingPrefixCfg) + len(c.dbNameMismatches) + len(c.dbCheckErrors)
+	issueCount := len(c.missingConfig) + len(c.prefixMismatches) + len(c.missingRigBeads) + len(c.missingDoltDB) + len(c.missingMetadata) + len(c.missingPrefixCfg) + len(c.missingExportCfg) + len(c.dbNameMismatches) + len(c.dbCheckErrors)
 	if issueCount == 0 {
 		return &CheckResult{
 			Name:    c.Name(),
@@ -259,6 +266,9 @@ func (c *RigConfigSyncCheck) Run(ctx *CheckContext) *CheckResult {
 	}
 	if len(c.missingPrefixCfg) > 0 {
 		parts = append(parts, fmt.Sprintf("%d missing issue-prefix", len(c.missingPrefixCfg)))
+	}
+	if len(c.missingExportCfg) > 0 {
+		parts = append(parts, fmt.Sprintf("%d export.auto drift", len(c.missingExportCfg)))
 	}
 	if len(c.dbNameMismatches) > 0 {
 		parts = append(parts, fmt.Sprintf("%d DB name mismatch(es)", len(c.dbNameMismatches)))
@@ -348,6 +358,18 @@ func (c *RigConfigSyncCheck) Fix(ctx *CheckContext) error {
 			if err := os.WriteFile(configYamlPath, []byte(content), 0644); err != nil {
 				return fmt.Errorf("could not update config.yaml for %s: %w", rigName, err)
 			}
+		}
+	}
+
+	// Fix missing or enabled auto-export in config.yaml.
+	for _, rigName := range c.missingExportCfg {
+		entry, ok := rigsConfig.Rigs[rigName]
+		if !ok || entry.BeadsConfig == nil {
+			continue
+		}
+		beadsDir := doltserver.FindRigBeadsDir(ctx.TownRoot, rigName)
+		if err := beads.EnsureConfigYAML(beadsDir, entry.BeadsConfig.Prefix); err != nil {
+			return fmt.Errorf("could not update export.auto for %s: %w", rigName, err)
 		}
 	}
 

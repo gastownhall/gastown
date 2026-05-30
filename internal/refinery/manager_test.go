@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -43,6 +44,17 @@ func setupTestManager(t *testing.T) (*Manager, string) {
 	}
 
 	return NewManager(r), rigPath
+}
+
+func TestManager_StartForegroundDeprecated(t *testing.T) {
+	mgr, _ := setupTestManager(t)
+	err := mgr.Start(true, "")
+	if err == nil {
+		t.Fatal("expected foreground mode deprecation error")
+	}
+	if !strings.Contains(err.Error(), "foreground mode is deprecated") {
+		t.Fatalf("unexpected error: %v", err)
+	}
 }
 
 func TestManager_SessionName(t *testing.T) {
@@ -110,14 +122,14 @@ func TestManager_Queue_FiltersClosedMergeRequests(t *testing.T) {
 	}
 
 	openIssue, err := b.Create(beads.CreateOptions{
-		Title: "Open MR",
+		Title:  "Open MR",
 		Labels: []string{"gt:merge-request"},
 	})
 	if err != nil {
 		t.Fatalf("create open merge-request issue: %v", err)
 	}
 	closedIssue, err := b.Create(beads.CreateOptions{
-		Title: "Closed MR",
+		Title:  "Closed MR",
 		Labels: []string{"gt:merge-request"},
 	})
 	if err != nil {
@@ -226,7 +238,7 @@ func TestManager_PostMerge_ClosesMRAndSourceIssue(t *testing.T) {
 
 	// Create a source issue
 	srcIssue, err := b.Create(beads.CreateOptions{
-		Title: "Implement feature X",
+		Title:  "Implement feature X",
 		Labels: []string{"gt:task"},
 	})
 	if err != nil {

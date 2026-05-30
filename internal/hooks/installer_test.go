@@ -192,13 +192,34 @@ func TestOpenCodeTemplateFailureDiagnostics(t *testing.T) {
 		"timeout:",
 		"stdout_tail:",
 		"stderr_tail:",
-		"timeout 10s gt dolt status 2>&1",
+		"timeout 10s ${gtCommand()} dolt status 2>&1",
 		"dolt_status_tail:",
 		"suggested_recovery:",
 	} {
 		if !strings.Contains(content, want) {
 			t.Fatalf("opencode template missing diagnostic field %q", want)
 		}
+	}
+}
+
+func TestOpenCodeTemplateUsesHookPrime(t *testing.T) {
+	template, err := templateFS.ReadFile("templates/opencode/gastown.js")
+	if err != nil {
+		t.Fatalf("read opencode template: %v", err)
+	}
+	content := string(template)
+	for _, want := range []string{
+		"GT_HOOK_SOURCE=",
+		"GT_SESSION_ID=",
+		"prime --hook",
+		"gt prime --hook",
+	} {
+		if !strings.Contains(content, want) {
+			t.Fatalf("opencode template missing hook prime field %q", want)
+		}
+	}
+	if strings.Contains(content, "gt mail check --inject") {
+		t.Fatal("opencode template should let gt prime --hook handle mail injection")
 	}
 }
 

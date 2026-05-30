@@ -270,6 +270,28 @@ func TestRunStatusWatch_RejectsJSONCombo(t *testing.T) {
 	}
 }
 
+func TestTryStatusDetailLockContention(t *testing.T) {
+	townRoot := t.TempDir()
+
+	release, ok := tryStatusDetailLock(townRoot)
+	if !ok {
+		t.Fatal("first status detail lock should be acquired")
+	}
+
+	if release2, ok := tryStatusDetailLock(townRoot); ok {
+		release2()
+		t.Fatal("second status detail lock should fail while first is held")
+	}
+
+	release()
+
+	release3, ok := tryStatusDetailLock(townRoot)
+	if !ok {
+		t.Fatal("status detail lock should be reusable after release")
+	}
+	release3()
+}
+
 func TestIsKnownAgent(t *testing.T) {
 	t.Parallel()
 

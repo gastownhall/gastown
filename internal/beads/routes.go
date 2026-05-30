@@ -287,7 +287,7 @@ func GetRigPathForPrefix(townRoot, prefix string) string {
 
 // GetRigDirForName returns the rig directory path for a named rig.
 // The rig directory is the parent of the rig's .beads database and is the
-// value expected by bd create --repo. Returns empty string if the rig is not
+// directory that contains the rig's .beads database. Returns empty string if the rig is not
 // found in routes or is town-level (path=".").
 func GetRigDirForName(townRoot, rigName string) string {
 	beadsDir := filepath.Join(townRoot, ".beads")

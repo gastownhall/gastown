@@ -59,8 +59,7 @@ sandboxes). There is no "idle" state - polecats either have work or don't exist.
 Examples:
   gt witness start greenplace
   gt witness start greenplace --agent codex
-  gt witness start greenplace --env ANTHROPIC_MODEL=claude-3-haiku
-  gt witness start greenplace --foreground`,
+  gt witness start greenplace --env ANTHROPIC_MODEL=claude-3-haiku`,
 	Args: cobra.ExactArgs(1),
 	RunE: runWitnessStart,
 }
@@ -122,6 +121,7 @@ Examples:
 func init() {
 	// Start flags
 	witnessStartCmd.Flags().BoolVar(&witnessForeground, "foreground", false, "Run in foreground (default: background)")
+	_ = witnessStartCmd.Flags().MarkHidden("foreground")
 	witnessStartCmd.Flags().StringVar(&witnessAgentOverride, "agent", "", "Agent alias to run the Witness with (overrides town default)")
 	witnessStartCmd.Flags().StringArrayVar(&witnessEnvOverrides, "env", nil, "Environment variable override (KEY=VALUE, can be repeated)")
 
@@ -164,6 +164,9 @@ func runWitnessStart(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
+	if witnessForeground {
+		return fmt.Errorf("foreground mode is deprecated; use background mode (remove --foreground flag)")
+	}
 
 	fmt.Printf("Starting witness for %s...\n", rigName)
 
@@ -174,12 +177,6 @@ func runWitnessStart(cmd *cobra.Command, args []string) error {
 			return nil
 		}
 		return fmt.Errorf("starting witness: %w", err)
-	}
-
-	if witnessForeground {
-		fmt.Printf("%s Note: Foreground mode no longer runs patrol loop\n", style.Dim.Render("⚠"))
-		fmt.Printf("  %s\n", style.Dim.Render("Patrol logic is now handled by mol-witness-patrol molecule"))
-		return nil
 	}
 
 	fmt.Printf("%s Witness started for %s\n", style.Bold.Render("✓"), rigName)

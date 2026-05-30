@@ -2962,7 +2962,7 @@ func TestFillRuntimeDefaults(t *testing.T) {
 			Provider:      "codex",
 			Command:       "opencode",
 			Args:          []string{"-m", "gpt-5"},
-			Env:           map[string]string{"OPENCODE_PERMISSION": `{"*":"allow"}`},
+			Env:           map[string]string{"OPENCODE_PERMISSION": `{"*":"allow"}`, "OPENCODE_CONFIG_CONTENT": `{"lsp":false}`},
 			InitialPrompt: "test prompt",
 			PromptMode:    "none",
 			ResolvedAgent: "opencode",
@@ -2993,6 +2993,9 @@ func TestFillRuntimeDefaults(t *testing.T) {
 		}
 		if result.Env["OPENCODE_PERMISSION"] != input.Env["OPENCODE_PERMISSION"] {
 			t.Errorf("Env: got %v, want %v", result.Env, input.Env)
+		}
+		if result.Env["OPENCODE_CONFIG_CONTENT"] != input.Env["OPENCODE_CONFIG_CONTENT"] {
+			t.Errorf("OPENCODE_CONFIG_CONTENT was not preserved: got %v, want %v", result.Env, input.Env)
 		}
 		if result.InitialPrompt != input.InitialPrompt {
 			t.Errorf("InitialPrompt: got %q, want %q", result.InitialPrompt, input.InitialPrompt)
@@ -3581,6 +3584,9 @@ func TestLookupAgentConfigPreservesCustomFields(t *testing.T) {
 	}
 	if rc.Env["OPENCODE_PERMISSION"] != `{"*":"allow"}` {
 		t.Errorf("Env was not preserved: got %v", rc.Env)
+	}
+	if rc.Env["OPENCODE_CONFIG_CONTENT"] != `{"lsp":true}` {
+		t.Errorf("OpenCode LSP default missing: got %v", rc.Env)
 	}
 	if rc.Tmux == nil || len(rc.Tmux.ProcessNames) != 2 {
 		t.Errorf("Tmux.ProcessNames not preserved: got %+v", rc.Tmux)

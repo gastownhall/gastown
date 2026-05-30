@@ -29,10 +29,10 @@ func TestMatchPattern(t *testing.T) {
 		{"gastown/crew/*", "gastown/polecats/Toast", false},
 
 		// Different path lengths
-		{"gastown/*", "gastown/crew/max", false},      // * matches single segment
-		{"gastown/*/*", "gastown/crew/max", true},     // Multiple wildcards
-		{"*/*", "gastown/witness", true},              // Both wildcards
-		{"*/*/*", "gastown/crew/max", true},           // Three-level wildcard
+		{"gastown/*", "gastown/crew/max", false},  // * matches single segment
+		{"gastown/*/*", "gastown/crew/max", true}, // Multiple wildcards
+		{"*/*", "gastown/witness", true},          // Both wildcards
+		{"*/*/*", "gastown/crew/max", true},       // Three-level wildcard
 	}
 
 	for _, tt := range tests {
@@ -65,12 +65,12 @@ func TestAgentBeadIDToAddress(t *testing.T) {
 
 		// Named agents
 		{"gt-gastown-crew-max", "gastown/crew/max"},
-		{"gt-gastown-polecat-Toast", "gastown/polecat/Toast"},
+		{"gt-gastown-polecat-Toast", "gastown/polecats/Toast"},
 		{"gt-beads-crew-wolf", "beads/crew/wolf"},
 
 		// Agent with hyphen in name
 		{"gt-gastown-crew-max-v2", "gastown/crew/max-v2"},
-		{"gt-gastown-polecat-my-agent", "gastown/polecat/my-agent"},
+		{"gt-gastown-polecat-my-agent", "gastown/polecats/my-agent"},
 
 		// Invalid
 		{"invalid", ""},

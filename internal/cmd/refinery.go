@@ -10,8 +10,8 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/steveyegge/gastown/internal/beads"
 	"github.com/steveyegge/gastown/internal/refinery"
-	"github.com/steveyegge/gastown/internal/session"
 	"github.com/steveyegge/gastown/internal/rig"
+	"github.com/steveyegge/gastown/internal/session"
 	"github.com/steveyegge/gastown/internal/style"
 	"github.com/steveyegge/gastown/internal/tmux"
 	"github.com/steveyegge/gastown/internal/workspace"
@@ -61,7 +61,6 @@ If rig is not specified, infers it from the current directory.
 
 Examples:
   gt refinery start greenplace
-  gt refinery start greenplace --foreground
   gt refinery start              # infer rig from cwd`,
 	Args: cobra.MaximumNArgs(1),
 	RunE: runRefineryStart,
@@ -229,6 +228,7 @@ var refineryBlockedJSON bool
 func init() {
 	// Start flags
 	refineryStartCmd.Flags().BoolVar(&refineryForeground, "foreground", false, "Run in foreground (default: background)")
+	_ = refineryStartCmd.Flags().MarkHidden("foreground")
 	refineryStartCmd.Flags().StringVar(&refineryAgentOverride, "agent", "", "Agent alias to run the Refinery with (overrides town default)")
 
 	// Attach flags
@@ -307,6 +307,9 @@ func runRefineryStart(cmd *cobra.Command, args []string) error {
 	if err := checkRigNotParkedOrDocked(rigName); err != nil {
 		return err
 	}
+	if refineryForeground {
+		return fmt.Errorf("foreground mode is deprecated; use background mode (remove --foreground flag)")
+	}
 
 	fmt.Printf("Starting refinery for %s...\n", rigName)
 
@@ -316,11 +319,6 @@ func runRefineryStart(cmd *cobra.Command, args []string) error {
 			return nil
 		}
 		return fmt.Errorf("starting refinery: %w", err)
-	}
-
-	if refineryForeground {
-		// This will block until stopped
-		return nil
 	}
 
 	fmt.Printf("%s Refinery started for %s\n", style.Bold.Render("✓"), rigName)

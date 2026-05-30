@@ -221,6 +221,9 @@ func runBatchSling(beadIDs []string, rigName string, townBeadsDir string) error 
 			}
 		}
 	}
+	if successCount == 0 && len(beadIDs) > 0 {
+		return fmt.Errorf("batch sling failed: 0/%d succeeded", len(beadIDs))
+	}
 
 	return nil
 }

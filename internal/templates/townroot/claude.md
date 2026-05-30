@@ -32,6 +32,9 @@ diagnostics:
 {{cmd}} escalate -s HIGH "Dolt: <describe symptom>"
 ```
 
+For Dolt outages and non-Dolt GT behavior mismatches, include the RCA capture checklist
+from `docs/dolt-health-guide.md` in the escalation or follow-up bead.
+
 **Do NOT just `{{cmd}} dolt stop && {{cmd}} dolt start` without steps 1-2.**
 **Do NOT use `kill -QUIT` for routine diagnostics.** Dolt 1.86.5 terminates
 `sql-server` after SIGQUIT; only use it if the current Dolt version has been

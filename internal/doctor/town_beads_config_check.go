@@ -12,7 +12,7 @@ import (
 // town beads are enabled.
 type TownBeadsConfigCheck struct {
 	FixableCheck
-	missingConfig bool
+	needsRepair bool
 }
 
 // NewTownBeadsConfigCheck creates a town-level beads config check.
@@ -30,7 +30,7 @@ func NewTownBeadsConfigCheck() *TownBeadsConfigCheck {
 
 // Run checks if town-level config.yaml exists when town .beads exists.
 func (c *TownBeadsConfigCheck) Run(ctx *CheckContext) *CheckResult {
-	c.missingConfig = false
+	c.needsRepair = false
 
 	beadsDir := filepath.Join(ctx.TownRoot, ".beads")
 	if _, err := os.Stat(beadsDir); os.IsNotExist(err) {
@@ -51,13 +51,32 @@ func (c *TownBeadsConfigCheck) Run(ctx *CheckContext) *CheckResult {
 
 	configPath := filepath.Join(beadsDir, "config.yaml")
 	if _, err := os.Stat(configPath); os.IsNotExist(err) {
-		c.missingConfig = true
+		c.needsRepair = true
 		return &CheckResult{
 			Name:     c.Name(),
 			Status:   StatusError,
 			Message:  "Missing town .beads/config.yaml",
 			Details:  []string{"Fix will create config.yaml without modifying existing metadata or configs."},
 			FixHint:  "Run 'gt doctor --fix' to create config.yaml",
+			Category: c.CheckCategory,
+		}
+	} else if err != nil {
+		return &CheckResult{
+			Name:     c.Name(),
+			Status:   StatusWarning,
+			Message:  fmt.Sprintf("Could not read town .beads/config.yaml: %v", err),
+			Category: c.CheckCategory,
+		}
+	}
+
+	if data, err := os.ReadFile(configPath); err == nil && !beads.ConfigYAMLDisablesAutoExport(string(data)) {
+		c.needsRepair = true
+		return &CheckResult{
+			Name:     c.Name(),
+			Status:   StatusWarning,
+			Message:  "Town beads config.yaml must disable export.auto",
+			Details:  []string{"Fix will set export.auto: \"false\" to prevent non-actionable bd auto-export git-add warnings in server-mode runtime beads dirs."},
+			FixHint:  "Run 'gt doctor --fix' to repair config.yaml",
 			Category: c.CheckCategory,
 		}
 	} else if err != nil {
@@ -77,11 +96,12 @@ func (c *TownBeadsConfigCheck) Run(ctx *CheckContext) *CheckResult {
 	}
 }
 
-// Fix creates town-level .beads/config.yaml only when missing.
+// Fix creates or repairs town-level .beads/config.yaml.
 func (c *TownBeadsConfigCheck) Fix(ctx *CheckContext) error {
-	if !c.missingConfig {
+	if !c.needsRepair {
 		return nil
 	}
 	beadsDir := filepath.Join(ctx.TownRoot, ".beads")
-	return beads.EnsureConfigYAMLFromMetadataIfMissing(beadsDir, "hq")
+	prefix := beads.ConfigDefaultsFromMetadata(beadsDir, "hq")
+	return beads.EnsureConfigYAML(beadsDir, prefix)
 }

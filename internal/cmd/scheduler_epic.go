@@ -1,12 +1,10 @@
 package cmd
 
 import (
-	"bytes"
 	"encoding/json"
 	"fmt"
-	"os/exec"
+	"io"
 	"path/filepath"
-	"strings"
 	"time"
 
 	"github.com/steveyegge/gastown/internal/beads"
@@ -352,26 +350,24 @@ func getEpicChildren(epicID string) ([]epicChild, error) {
 // silently drops cross-database dependencies. Used as fallback when bd sql
 // is not available.
 func bdDepListFallback(dir, epicID string) ([]string, error) {
-	depArgs := beads.MaybePrependAllowStale([]string{"dep", "list", epicID,
-		"--direction=down", "--type=depends_on", "--json"})
-	depCmd := exec.Command("bd", depArgs...)
-	depCmd.Dir = dir
-	var stdout bytes.Buffer
-	depCmd.Stdout = &stdout
-
-	var stderr bytes.Buffer
-	depCmd.Stderr = &stderr
-	if err := depCmd.Run(); err != nil {
-		if stdout.Len() == 0 && stderr.Len() == 0 {
+	stdout, err := BdCmd("dep", "list", epicID,
+		"--direction=down", "--type=depends_on", "--json").
+		AllowStale().
+		Dir(dir).
+		StripBeadsDir().
+		Stderr(io.Discard).
+		Output()
+	if err != nil {
+		if len(stdout) == 0 {
 			return nil, nil
 		}
-		return nil, fmt.Errorf("bd dep list %s: %w (stderr: %s)", epicID, err, strings.TrimSpace(stderr.String()))
+		return nil, fmt.Errorf("bd dep list %s: %w", epicID, err)
 	}
 
 	var deps []struct {
 		ID string `json:"id"`
 	}
-	if err := json.Unmarshal(stdout.Bytes(), &deps); err != nil {
+	if err := json.Unmarshal(stdout, &deps); err != nil {
 		return nil, fmt.Errorf("parsing dependency list: %w", err)
 	}
 

@@ -1595,13 +1595,6 @@ func (r *Router) GetMailbox(address string) (*Mailbox, error) {
 // Supports mayor/, deacon/, rig/crew/name, rig/polecats/name, and rig/name addresses.
 // Respects agent DND/muted state - skips notification if recipient has DND enabled.
 func (r *Router) notifyRecipient(msg *Message) error {
-	// Check DND status before attempting notification
-	if r.townRoot != "" {
-		if r.isRecipientMuted(msg.To) {
-			return nil // Recipient has DND enabled, skip notification
-		}
-	}
-
 	sessionIDs := AddressToSessionIDs(msg.To)
 	if len(sessionIDs) == 0 {
 		return nil // Unable to determine session ID
@@ -1612,23 +1605,43 @@ func (r *Router) notifyRecipient(msg *Message) error {
 		timeout = DefaultIdleNotifyTimeout
 	}
 
-	// Try each possible session ID until we find one that exists.
-	// This handles the ambiguity where canonical addresses (rig/name) don't
-	// distinguish between crew workers (gt-rig-crew-name) and polecats (gt-rig-name).
+	notification := formatNotificationMessage(msg)
+	priority := nudgePriorityForMailPriority(msg.Priority)
+	notified := 0
+	var errs []string
+	noTmuxServer := false
+
+	// Try every possible session ID. Canonical aliases (rig/name) can map to both
+	// crew and polecat sessions, and stopping after the first active session makes
+	// mail disappear for the other active alias owner.
 	for _, sessionID := range sessionIDs {
+		if r.isSessionMuted(sessionID) {
+			continue
+		}
+
 		hasSession, err := r.tmux.HasSession(sessionID)
-		if err != nil || !hasSession {
+		if errors.Is(err, tmux.ErrNoServer) {
+			noTmuxServer = true
+			break
+		}
+		if err != nil {
+			errs = append(errs, fmt.Sprintf("%s: %v", sessionID, err))
+			continue
+		}
+		if !hasSession {
 			continue
 		}
 
 		// Overseer is a human operator - use a visible banner instead of NudgeSession
 		// (which types into Claude's input and would disrupt the human's terminal).
 		if msg.To == "overseer" {
-			return r.tmux.SendNotificationBanner(sessionID, msg.From, msg.Subject)
+			if err := r.tmux.SendNotificationBanner(sessionID, msg.From, msg.Subject); err != nil {
+				errs = append(errs, fmt.Sprintf("%s: %v", sessionID, err))
+				continue
+			}
+			notified++
+			continue
 		}
-
-		notification := formatNotificationMessage(msg)
-		priority := nudgePriorityForMailPriority(msg.Priority)
 
 		// Wait-idle-first delivery: try direct nudge if the agent is idle,
 		// fall back to cooperative queue if busy. WaitForIdle requires 2
@@ -1640,16 +1653,22 @@ func (r *Router) notifyRecipient(msg *Message) error {
 			// Agent is idle — deliver directly for immediate wakeup.
 			if err := r.tmux.NudgeSession(sessionID, notification); err == nil {
 				r.enqueueReplyReminder(msg, sessionID)
-				return nil
+				notified++
+				continue
 			} else if errors.Is(err, tmux.ErrSessionNotFound) {
 				continue
 			} else if errors.Is(err, tmux.ErrNoServer) {
-				return nil
+				noTmuxServer = true
+				break
+			} else {
+				errs = append(errs, fmt.Sprintf("%s: %v", sessionID, err))
+				continue
 			}
 		} else if errors.Is(waitErr, tmux.ErrSessionNotFound) {
 			continue
 		} else if errors.Is(waitErr, tmux.ErrNoServer) {
-			return nil
+			noTmuxServer = true
+			break
 		} else if r.townRoot != "" {
 			// Timeout (agent busy) — queue for cooperative delivery
 			// at the next turn boundary.
@@ -1661,33 +1680,71 @@ func (r *Router) notifyRecipient(msg *Message) error {
 				ThreadID: msg.ThreadID,
 				Severity: prioritySeverityLabel(msg.Priority),
 			}); err != nil {
-				return err
+				errs = append(errs, fmt.Sprintf("%s: %v", sessionID, err))
+				continue
 			}
 			r.enqueueReplyReminder(msg, sessionID)
-			return nil
+			notified++
+			continue
 		}
 		// No town root available — last resort direct delivery.
 		err = r.tmux.NudgeSession(sessionID, notification)
 		if err == nil {
 			r.enqueueReplyReminder(msg, sessionID)
+			notified++
+			continue
 		}
-		return err
+		if errors.Is(err, tmux.ErrNoServer) {
+			noTmuxServer = true
+			break
+		}
+		errs = append(errs, fmt.Sprintf("%s: %v", sessionID, err))
 	}
-	// No tmux session found - enqueue nudge for ACP/propeller delivery
-	// This handles headless ACP mode where there's no tmux session
-	if r.townRoot != "" && len(sessionIDs) > 0 {
-		notification := formatNotificationMessage(msg)
-		return nudge.Enqueue(r.townRoot, sessionIDs[0], nudge.QueuedNudge{
-			Sender:   msg.From,
-			Message:  notification,
-			Priority: nudgePriorityForMailPriority(msg.Priority),
-			Kind:     nudgeKindForMessage(msg),
-			ThreadID: msg.ThreadID,
-			Severity: prioritySeverityLabel(msg.Priority),
-		})
+
+	if notified == 0 && r.townRoot != "" && (noTmuxServer || len(errs) == 0) {
+		// No tmux session found - enqueue for ACP/propeller delivery. For
+		// ambiguous aliases, queue every candidate rather than silently choosing
+		// the first session ID.
+		for _, sessionID := range sessionIDs {
+			if r.isSessionMuted(sessionID) {
+				continue
+			}
+			if err := nudge.Enqueue(r.townRoot, sessionID, nudge.QueuedNudge{
+				Sender:   msg.From,
+				Message:  notification,
+				Priority: priority,
+				Kind:     nudgeKindForMessage(msg),
+				ThreadID: msg.ThreadID,
+				Severity: prioritySeverityLabel(msg.Priority),
+			}); err != nil {
+				errs = append(errs, fmt.Sprintf("%s: %v", sessionID, err))
+				continue
+			}
+			notified++
+		}
+	}
+
+	if len(errs) > 0 {
+		if notified > 0 {
+			fmt.Fprintf(os.Stderr, "Warning: mail notification partially failed: %s\n", strings.Join(errs, "; "))
+			return nil
+		}
+		return fmt.Errorf("mail notification failed: %s", strings.Join(errs, "; "))
 	}
 
 	return nil // No active session found
+}
+
+func (r *Router) isSessionMuted(sessionID string) bool {
+	if r.townRoot == "" || sessionID == "" || sessionID == session.OverseerSessionName() {
+		return false
+	}
+	bd := beads.New(r.townRoot)
+	level, err := bd.GetAgentNotificationLevel(sessionID)
+	if err != nil {
+		return false
+	}
+	return level == beads.NotifyMuted
 }
 
 func nudgeKindForMessage(msg *Message) string {
@@ -1832,6 +1889,9 @@ func addressToAgentBeadID(address string) string {
 	case strings.HasPrefix(target, "crew/"):
 		crewName := strings.TrimPrefix(target, "crew/")
 		return session.CrewSessionName(rigPrefix, crewName)
+	case strings.HasPrefix(target, "polecat/"):
+		pcName := strings.TrimPrefix(target, "polecat/")
+		return session.PolecatSessionName(rigPrefix, pcName)
 	case strings.HasPrefix(target, "polecats/"):
 		pcName := strings.TrimPrefix(target, "polecats/")
 		return session.PolecatSessionName(rigPrefix, pcName)
@@ -1873,11 +1933,15 @@ func AddressToSessionIDs(address string) []string {
 	target := parts[1]
 	rigPrefix := session.PrefixFor(rig)
 
-	// If target already has crew/ or polecats/ prefix, use it directly
+	// If target already has crew/, polecat/, or polecats/ prefix, use it directly
 	// e.g., "gastown/crew/holden" → "gt-crew-holden"
 	if strings.HasPrefix(target, "crew/") {
 		crewName := strings.TrimPrefix(target, "crew/")
 		return []string{session.CrewSessionName(rigPrefix, crewName)}
+	}
+	if strings.HasPrefix(target, "polecat/") {
+		polecatName := strings.TrimPrefix(target, "polecat/")
+		return []string{session.PolecatSessionName(rigPrefix, polecatName)}
 	}
 	if strings.HasPrefix(target, "polecats/") {
 		polecatName := strings.TrimPrefix(target, "polecats/")

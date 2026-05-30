@@ -82,17 +82,37 @@ func normalizeDoltDatabasePrefix(dbName string) string {
 	return name
 }
 
+// ConfigYAMLDisablesAutoExport reports whether config.yaml content explicitly
+// disables bd's post-run auto-export. Comments do not count as configuration.
+func ConfigYAMLDisablesAutoExport(content string) bool {
+	for _, line := range strings.Split(strings.ReplaceAll(content, "\r\n", "\n"), "\n") {
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "" || strings.HasPrefix(trimmed, "#") {
+			continue
+		}
+		if strings.HasPrefix(trimmed, "export.auto:") {
+			value := strings.TrimSpace(strings.TrimPrefix(trimmed, "export.auto:"))
+			value = strings.Trim(value, `"'`)
+			return strings.EqualFold(value, "false")
+		}
+	}
+	return false
+}
+
 func ensureConfigYAML(beadsDir, prefix string, onlyIfMissing bool) error {
 	configPath := filepath.Join(beadsDir, "config.yaml")
 	wantPrefix := "prefix: " + prefix
 	wantIssuePrefix := "issue-prefix: " + prefix
 	// Gas Town rigs should disable idle-monitor to use centralized Dolt server
 	wantIdleTimeout := "dolt.idle-timeout: \"0\""
+	// Gas Town stores beads in Dolt/server-mode runtime directories that are often
+	// redirected or gitignored; bd's post-run auto-export git-add is noisy there.
+	wantExportAuto := "export.auto: \"false\""
 
 	data, err := os.ReadFile(configPath)
 	if os.IsNotExist(err) {
 		// New config: include all Gas Town defaults
-		content := wantPrefix + "\n" + wantIssuePrefix + "\n" + wantIdleTimeout + "\n"
+		content := wantPrefix + "\n" + wantIssuePrefix + "\n" + wantIdleTimeout + "\n" + wantExportAuto + "\n"
 		return os.WriteFile(configPath, []byte(content), 0644)
 	}
 	if err != nil {
@@ -107,6 +127,7 @@ func ensureConfigYAML(beadsDir, prefix string, onlyIfMissing bool) error {
 	foundPrefix := false
 	foundIssuePrefix := false
 	foundIdleTimeout := false
+	foundExportAuto := false
 
 	for i, line := range lines {
 		trimmed := strings.TrimSpace(line)
@@ -125,6 +146,11 @@ func ensureConfigYAML(beadsDir, prefix string, onlyIfMissing bool) error {
 			foundIdleTimeout = true
 			continue
 		}
+		if strings.HasPrefix(trimmed, "export.auto:") {
+			lines[i] = wantExportAuto
+			foundExportAuto = true
+			continue
+		}
 	}
 
 	if !foundPrefix {
@@ -135,6 +161,9 @@ func ensureConfigYAML(beadsDir, prefix string, onlyIfMissing bool) error {
 	}
 	if !foundIdleTimeout {
 		lines = append(lines, wantIdleTimeout)
+	}
+	if !foundExportAuto {
+		lines = append(lines, wantExportAuto)
 	}
 
 	newContent := strings.Join(lines, "\n")

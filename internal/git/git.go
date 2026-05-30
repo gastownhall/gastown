@@ -17,6 +17,8 @@ import (
 	"github.com/steveyegge/gastown/internal/util"
 )
 
+var errNoComparisonRefs = errors.New("no comparison refs resolved")
+
 // GitError contains raw output from a git command for agent observation.
 // ZFC: Callers observe the raw output and decide what to do.
 // The error interface methods provide human-readable messages, but agents
@@ -65,6 +67,10 @@ type Git struct {
 	gitDir  string // Optional: explicit git directory (for bare repos)
 }
 
+// ErrUnsafeTownRootGitMutation is returned when a mutating git operation would
+// act on the Gas Town town-root repository or town-root runtime paths.
+var ErrUnsafeTownRootGitMutation = errors.New("unsafe git mutation targets Gas Town town root")
+
 // NewGit creates a new Git wrapper for the given directory.
 func NewGit(workDir string) *Git {
 	return &Git{workDir: workDir}
@@ -90,6 +96,10 @@ func (g *Git) IsRepo() bool {
 
 // run executes a git command and returns stdout.
 func (g *Git) run(args ...string) (string, error) {
+	if err := g.guardUnsafeTownRootMutation(args); err != nil {
+		return "", err
+	}
+
 	// If gitDir is set (bare repo), prepend --git-dir flag
 	if g.gitDir != "" {
 		args = append([]string{"--git-dir=" + g.gitDir}, args...)
@@ -121,6 +131,10 @@ const pushTimeout = 60 * time.Second
 // runWithTimeout executes a git command with a deadline. If the command does
 // not finish within the timeout, the process is killed and an error is returned.
 func (g *Git) runWithTimeout(timeout time.Duration, args ...string) (_ string, _ error) { //nolint:unparam // string return kept for consistency with Run()
+	if err := g.guardUnsafeTownRootMutation(args); err != nil {
+		return "", err
+	}
+
 	if g.gitDir != "" {
 		args = append([]string{"--git-dir=" + g.gitDir}, args...)
 	}
@@ -157,6 +171,10 @@ func (g *Git) runWithEnv(args []string, extraEnv []string) (_ string, _ error) {
 // runWithEnvAndTimeout executes a git command with extra env vars and an
 // optional timeout. Pass 0 for no timeout.
 func (g *Git) runWithEnvAndTimeout(args []string, extraEnv []string, timeout time.Duration) (_ string, _ error) {
+	if err := g.guardUnsafeTownRootMutation(args); err != nil {
+		return "", err
+	}
+
 	if g.gitDir != "" {
 		args = append([]string{"--git-dir=" + g.gitDir}, args...)
 	}
@@ -195,6 +213,357 @@ func (g *Git) runWithEnvAndTimeout(args []string, extraEnv []string, timeout tim
 		return "", g.wrapError(err, stdout.String(), stderr.String(), args)
 	}
 	return strings.TrimSpace(stdout.String()), nil
+}
+
+func (g *Git) guardUnsafeTownRootMutation(args []string) error {
+	cmd, rest := gitSubcommand(args)
+	if cmd == "" {
+		return nil
+	}
+	effectiveWorkDir := gitEffectiveWorkDir(args, g.workDir)
+
+	if gitSubcommandMutatesWorktree(cmd, rest) {
+		if err := EnsureSafeMutationWorkDir(effectiveWorkDir); err != nil {
+			return fmt.Errorf("%w: git %s", err, strings.Join(args, " "))
+		}
+	}
+
+	for _, target := range protectedWorktreeTargets(cmd, rest, effectiveWorkDir) {
+		return fmt.Errorf("%w: git worktree target %s", ErrUnsafeTownRootGitMutation, target)
+	}
+
+	return nil
+}
+
+func gitEffectiveWorkDir(args []string, workDir string) string {
+	effective := workDir
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
+		switch {
+		case arg == "-C" && i+1 < len(args):
+			effective = gitPathAbs(args[i+1], effective)
+			i++
+		case arg == "--work-tree" && i+1 < len(args):
+			effective = gitPathAbs(args[i+1], effective)
+			i++
+		case strings.HasPrefix(arg, "--work-tree="):
+			effective = gitPathAbs(strings.TrimPrefix(arg, "--work-tree="), effective)
+		case arg == "-c" || arg == "--git-dir" || arg == "--namespace" || arg == "--config-env" || arg == "--exec-path":
+			i++
+		case strings.HasPrefix(arg, "--git-dir=") || strings.HasPrefix(arg, "--namespace=") || strings.HasPrefix(arg, "--config-env=") || strings.HasPrefix(arg, "--exec-path="):
+			continue
+		case strings.HasPrefix(arg, "-"):
+			continue
+		default:
+			return effective
+		}
+	}
+	return effective
+}
+
+// EnsureSafeMutationWorkDir fails when workDir's effective git worktree is the
+// Gas Town town root. Raw git callsites use this before mutating commands.
+func EnsureSafeMutationWorkDir(workDir string) error {
+	if workDir == "" {
+		return nil
+	}
+
+	topLevel, ok := gitTopLevel(workDir)
+	if !ok {
+		return nil
+	}
+	if isTownRoot(topLevel) {
+		return fmt.Errorf("%w: %s resolves to town root git worktree %s", ErrUnsafeTownRootGitMutation, workDir, topLevel)
+	}
+	return nil
+}
+
+func gitTopLevel(workDir string) (string, bool) {
+	cmd := exec.Command("git", "-C", workDir, "rev-parse", "--show-toplevel")
+	util.SetDetachedProcessGroup(cmd)
+	out, err := cmd.Output()
+	if err != nil {
+		return "", false
+	}
+	topLevel := strings.TrimSpace(string(out))
+	if topLevel == "" {
+		return "", false
+	}
+	abs, err := filepath.Abs(topLevel)
+	if err != nil {
+		return filepath.Clean(topLevel), true
+	}
+	return filepath.Clean(abs), true
+}
+
+func isTownRoot(path string) bool {
+	return fileExists(filepath.Join(path, "mayor", "town.json")) || fileExists(filepath.Join(path, "mayor", "rigs.json"))
+}
+
+func fileExists(path string) bool {
+	info, err := os.Stat(path)
+	return err == nil && !info.IsDir()
+}
+
+func gitSubcommand(args []string) (string, []string) {
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
+		switch {
+		case arg == "-C" || arg == "-c" || arg == "--git-dir" || arg == "--work-tree" || arg == "--namespace" || arg == "--config-env" || arg == "--exec-path":
+			i++
+			continue
+		case strings.HasPrefix(arg, "--git-dir=") || strings.HasPrefix(arg, "--work-tree=") || strings.HasPrefix(arg, "--namespace=") || strings.HasPrefix(arg, "--config-env=") || strings.HasPrefix(arg, "--exec-path="):
+			continue
+		case arg == "--no-pager" || arg == "--bare" || arg == "--literal-pathspecs" || arg == "--no-replace-objects":
+			continue
+		case strings.HasPrefix(arg, "-"):
+			continue
+		default:
+			return arg, args[i+1:]
+		}
+	}
+	return "", nil
+}
+
+func gitSubcommandMutatesWorktree(cmd string, args []string) bool {
+	switch cmd {
+	case "checkout", "switch", "restore", "reset", "clean", "merge", "rebase", "pull", "rm", "mv", "cherry-pick", "revert", "am", "apply", "checkout-index", "read-tree", "sparse-checkout":
+		return true
+	case "stash":
+		return stashArgsMutate(args)
+	case "submodule":
+		return submoduleArgsMutate(args)
+	case "branch":
+		return branchArgsMutate(args)
+	case "worktree":
+		return worktreeArgsMutate(args)
+	case "symbolic-ref":
+		return symbolicRefArgsMutate(args)
+	case "update-ref":
+		return true
+	default:
+		return false
+	}
+}
+
+func stashArgsMutate(args []string) bool {
+	if len(args) == 0 {
+		return true
+	}
+	switch args[0] {
+	case "list", "show":
+		return false
+	default:
+		return true
+	}
+}
+
+func submoduleArgsMutate(args []string) bool {
+	cmd := firstNonOptionSubcommand(args)
+	if cmd == "" {
+		return false
+	}
+	switch cmd {
+	case "update", "add", "deinit", "sync", "set-url", "set-branch", "absorbgitdirs":
+		return true
+	default:
+		return false
+	}
+}
+
+func firstNonOptionSubcommand(args []string) string {
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
+		if arg == "--" {
+			if i+1 < len(args) {
+				return args[i+1]
+			}
+			return ""
+		}
+		if strings.HasPrefix(arg, "-") {
+			continue
+		}
+		return arg
+	}
+	return ""
+}
+
+func branchArgsMutate(args []string) bool {
+	if len(args) == 0 {
+		return false
+	}
+	readOnly := false
+	for _, arg := range args {
+		switch arg {
+		case "--show-current", "--list", "-l", "-r", "-a", "--contains", "--merged", "--no-merged", "--points-at":
+			readOnly = true
+		case "-d", "-D", "-f", "-m", "-M", "-c", "-C", "--delete", "--move", "--copy", "--force", "--set-upstream-to", "--unset-upstream", "--track":
+			return true
+		}
+		if strings.HasPrefix(arg, "--format") {
+			readOnly = true
+		}
+	}
+	for _, arg := range args {
+		if strings.HasPrefix(arg, "-") {
+			continue
+		}
+		return !readOnly
+	}
+	return false
+}
+
+func worktreeArgsMutate(args []string) bool {
+	if len(args) == 0 {
+		return false
+	}
+	switch args[0] {
+	case "add", "remove", "move", "prune":
+		return true
+	default:
+		return false
+	}
+}
+
+func symbolicRefArgsMutate(args []string) bool {
+	nonOptions := 0
+	for _, arg := range args {
+		if !strings.HasPrefix(arg, "-") {
+			nonOptions++
+		}
+	}
+	return nonOptions > 1
+}
+
+func protectedWorktreeTargets(cmd string, args []string, baseDir string) []string {
+	if cmd != "worktree" || len(args) == 0 {
+		return nil
+	}
+
+	var targets []string
+	switch args[0] {
+	case "add":
+		if target := firstWorktreeAddTarget(args[1:]); target != "" {
+			targets = append(targets, target)
+		}
+	case "remove":
+		if target := firstNonOptionPath(args[1:], nil); target != "" {
+			targets = append(targets, target)
+		}
+	case "move":
+		targets = append(targets, nonOptionPaths(args[1:], nil, 2)...)
+	}
+
+	protected := make([]string, 0, len(targets))
+	for _, target := range targets {
+		abs := gitPathAbs(target, baseDir)
+		if _, ok := protectedTownRuntimePath(abs); ok {
+			protected = append(protected, abs)
+		}
+	}
+	return protected
+}
+
+func firstWorktreeAddTarget(args []string) string {
+	valueOptions := map[string]bool{"-b": true, "-B": true, "--orphan": true, "--reason": true}
+	return firstNonOptionPath(args, valueOptions)
+}
+
+func firstNonOptionPath(args []string, valueOptions map[string]bool) string {
+	paths := nonOptionPaths(args, valueOptions, 1)
+	if len(paths) == 0 {
+		return ""
+	}
+	return paths[0]
+}
+
+func nonOptionPaths(args []string, valueOptions map[string]bool, limit int) []string {
+	paths := make([]string, 0, limit)
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
+		if valueOptions[arg] {
+			i++
+			continue
+		}
+		if strings.HasPrefix(arg, "--reason=") || strings.HasPrefix(arg, "--orphan=") {
+			continue
+		}
+		if strings.HasPrefix(arg, "-") {
+			continue
+		}
+		paths = append(paths, arg)
+		if len(paths) == limit {
+			return paths
+		}
+	}
+	return paths
+}
+
+func gitPathAbs(path, baseDir string) string {
+	if baseDir == "" {
+		baseDir = "."
+	}
+	if !filepath.IsAbs(path) {
+		path = filepath.Join(baseDir, path)
+	}
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		return filepath.Clean(path)
+	}
+	return filepath.Clean(resolveExistingSymlinkAncestors(abs))
+}
+
+func resolveExistingSymlinkAncestors(path string) string {
+	if resolved, err := filepath.EvalSymlinks(path); err == nil {
+		return resolved
+	}
+	for dir := filepath.Dir(path); ; dir = filepath.Dir(dir) {
+		if resolved, err := filepath.EvalSymlinks(dir); err == nil {
+			rel, relErr := filepath.Rel(dir, path)
+			if relErr != nil || rel == "." {
+				return resolved
+			}
+			return filepath.Join(resolved, rel)
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			return path
+		}
+	}
+}
+
+func protectedTownRuntimePath(path string) (string, bool) {
+	abs := filepath.Clean(path)
+	for dir := abs; ; dir = filepath.Dir(dir) {
+		if isTownRoot(dir) {
+			if samePath(abs, dir) {
+				return dir, true
+			}
+			rel, err := filepath.Rel(dir, abs)
+			if err != nil {
+				return "", false
+			}
+			first := rel
+			if idx := strings.IndexRune(rel, filepath.Separator); idx >= 0 {
+				first = rel[:idx]
+			}
+			switch first {
+			case "mayor", ".dolt-data", ".runtime", ".beads", "daemon":
+				return dir, true
+			default:
+				return "", false
+			}
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			return "", false
+		}
+	}
+}
+
+func samePath(a, b string) bool {
+	rel, err := filepath.Rel(a, b)
+	return err == nil && rel == "."
 }
 
 // wrapError wraps git errors with context.
@@ -238,6 +607,11 @@ type cloneOptions struct {
 // cloneInternal runs `git clone` in an isolated temp directory, moves the result
 // to dest, and applies post-clone configuration (hooks or refspec).
 func (g *Git) cloneInternal(url, dest string, opts cloneOptions) error {
+	dest = gitPathAbs(dest, "")
+	if _, ok := protectedTownRuntimePath(dest); ok {
+		return fmt.Errorf("%w: clone destination %s", ErrUnsafeTownRootGitMutation, dest)
+	}
+
 	// Ensure destination directory's parent exists
 	destParent := filepath.Dir(dest)
 	if err := os.MkdirAll(destParent, 0755); err != nil {
@@ -704,11 +1078,19 @@ type GitStatus struct {
 	Added     []string
 	Deleted   []string
 	Untracked []string
+	Unmerged  []string
+}
+
+type porcelainStatusEntry struct {
+	Code       string
+	Path       string
+	SourcePath string
+	Unmerged   bool
 }
 
 // Status returns the current git status.
 func (g *Git) Status() (*GitStatus, error) {
-	out, err := g.run("status", "--porcelain")
+	out, err := g.run("status", "--porcelain", "-uall")
 	if err != nil {
 		return nil, err
 	}
@@ -726,13 +1108,20 @@ func (g *Git) Status() (*GitStatus, error) {
 
 	status.Clean = false
 	for _, line := range strings.Split(out, "\n") {
-		if len(line) < 3 {
+		entry, ok := parsePorcelainStatusEntry(line)
+		if !ok {
 			continue
 		}
-		code := line[:2]
-		file := line[3:]
+		code := entry.Code
+		file := entry.Path
 
 		switch {
+		case entry.Unmerged:
+			status.Unmerged = append(status.Unmerged, entry.paths()...)
+		case strings.Contains(code, "?"):
+			status.Untracked = append(status.Untracked, file)
+		case strings.ContainsAny(code, "RC"):
+			status.Modified = append(status.Modified, entry.paths()...)
 		case strings.Contains(code, "M"):
 			status.Modified = append(status.Modified, file)
 		case strings.Contains(code, "A"):
@@ -742,18 +1131,59 @@ func (g *Git) Status() (*GitStatus, error) {
 			if !skipWorktree[file] {
 				status.Deleted = append(status.Deleted, file)
 			}
-		case strings.Contains(code, "?"):
-			status.Untracked = append(status.Untracked, file)
+		default:
+			// Unknown porcelain statuses still represent local work. Returning the
+			// path is safer than letting cleanup/recovery treat the worktree as clean.
+			status.Modified = append(status.Modified, file)
 		}
 	}
 
 	// Recheck clean: if all entries were skip-worktree deletions, we're actually clean.
 	if len(status.Modified) == 0 && len(status.Added) == 0 &&
-		len(status.Deleted) == 0 && len(status.Untracked) == 0 {
+		len(status.Deleted) == 0 && len(status.Untracked) == 0 && len(status.Unmerged) == 0 {
 		status.Clean = true
 	}
 
 	return status, nil
+}
+
+func parsePorcelainStatusEntry(line string) (porcelainStatusEntry, bool) {
+	if len(line) < 3 {
+		return porcelainStatusEntry{}, false
+	}
+
+	entry := porcelainStatusEntry{
+		Code:     line[:2],
+		Path:     line[3:],
+		Unmerged: isUnmergedPorcelainStatus(line[:2]),
+	}
+	if strings.ContainsAny(entry.Code, "RC") {
+		entry.SourcePath, entry.Path = porcelainRenameCopyPaths(entry.Path)
+	}
+	return entry, true
+}
+
+func (e porcelainStatusEntry) paths() []string {
+	if e.SourcePath == "" || e.SourcePath == e.Path {
+		return []string{e.Path}
+	}
+	return []string{e.SourcePath, e.Path}
+}
+
+func porcelainRenameCopyPaths(path string) (string, string) {
+	if idx := strings.LastIndex(path, " -> "); idx >= 0 {
+		return path[:idx], path[idx+4:]
+	}
+	return "", path
+}
+
+func isUnmergedPorcelainStatus(code string) bool {
+	switch code {
+	case "DD", "AU", "UD", "UA", "DU", "AA", "UU":
+		return true
+	default:
+		return strings.Contains(code, "U")
+	}
 }
 
 // skipWorktreeFiles returns a set of file paths that have the skip-worktree
@@ -1308,6 +1738,10 @@ func (g *Git) CheckConflicts(source, target string) ([]string, error) {
 // runMergeCheck runs a git merge command and returns error info from both stdout and stderr.
 // ZFC: Returns GitError with raw output for agent observation.
 func (g *Git) runMergeCheck(args ...string) (string, error) {
+	if err := g.guardUnsafeTownRootMutation(args); err != nil {
+		return "", err
+	}
+
 	cmd := exec.Command("git", args...)
 	util.SetDetachedProcessGroup(cmd)
 	cmd.Dir = g.workDir
@@ -1747,6 +2181,10 @@ func IsSparseCheckoutConfigured(repoPath string) bool {
 // RemoveSparseCheckout disables sparse checkout for a repo/worktree and restores all files.
 // This is used by doctor to clean up legacy sparse checkout configurations.
 func RemoveSparseCheckout(repoPath string) error {
+	if err := EnsureSafeMutationWorkDir(repoPath); err != nil {
+		return err
+	}
+
 	// Use git sparse-checkout disable which properly restores hidden files
 	cmd := exec.Command("git", "-C", repoPath, "sparse-checkout", "disable")
 	util.SetDetachedProcessGroup(cmd)
@@ -1979,6 +2417,27 @@ func (g *Git) StashCount() (int, error) {
 	return count, nil
 }
 
+// StashCountAll returns the total number of repo-wide stashes visible from the
+// worktree. Git stores stashes in the shared repository, so callers must not use
+// this as per-worktree risk; use StashCount for current-branch risk instead.
+func (g *Git) StashCountAll() (int, error) {
+	out, err := g.run("stash", "list")
+	if err != nil {
+		return 0, err
+	}
+	if out == "" {
+		return 0, nil
+	}
+
+	count := 0
+	for _, line := range strings.Split(out, "\n") {
+		if line != "" {
+			count++
+		}
+	}
+	return count, nil
+}
+
 // StashEntry represents one entry from `git stash list`, scoped to the current branch.
 type StashEntry struct {
 	Ref     string // e.g. "stash@{2}"
@@ -2046,30 +2505,18 @@ func (g *Git) StashPop(ref string) error {
 // Returns 0 if there is no upstream or exact remote branch configured.
 func (g *Git) UnpushedCommits() (int, error) {
 	branch, branchErr := g.CurrentBranch()
-	hasBranch := branchErr == nil && branch != "" && branch != "HEAD"
-
-	// Get the upstream branch
-	upstream, err := g.run("rev-parse", "--abbrev-ref", "@{u}")
-	if err == nil {
-		if !hasBranch || upstream == "origin/"+branch {
-			return g.countCommitsAhead(upstream)
-		}
-
-		if count, found, remoteErr := g.unpushedFromExactRemoteBranch(branch, "origin"); remoteErr == nil && found {
-			return count, nil
-		}
-		return g.countCommitsAhead(upstream)
+	if branchErr != nil || branch == "" || branch == "HEAD" {
+		branch = ""
 	}
 
-	if hasBranch {
-		if count, found, remoteErr := g.unpushedFromExactRemoteBranch(branch, "origin"); remoteErr == nil && found {
-			return count, nil
+	status, err := g.BranchPreservationStatus(branch, "origin", nil)
+	if err != nil {
+		if errors.Is(err, errNoComparisonRefs) {
+			return 0, nil
 		}
+		return 0, err
 	}
-
-	// No upstream configured - this is common for polecat branches.
-	// If there is no exact remote branch either, return 0 (benefit of the doubt).
-	return 0, nil
+	return status.UnpreservedPatchCount, nil
 }
 
 func (g *Git) countCommitsAhead(base string) (int, error) {
@@ -2097,6 +2544,184 @@ func (g *Git) unpushedFromExactRemoteBranch(localBranch, remote string) (int, bo
 	return count, true, err
 }
 
+// BranchPreservationStatus describes whether HEAD is already preserved on a
+// durable branch, and how many patch-unique commits remain if it is not.
+type BranchPreservationStatus struct {
+	Preserved             bool
+	ComparisonBase        string
+	UnpreservedPatchCount int
+	Evidence              string
+}
+
+// BranchPreservationStatus checks whether HEAD is safe relative to the actual
+// custody target for the branch. It prefers proof from the exact pushed source
+// branch, then explicit target branches, then upstream. It only falls back to the
+// remote default branch when no target/custody/upstream evidence exists.
+func (g *Git) BranchPreservationStatus(localBranch, remote string, targets []string) (BranchPreservationStatus, error) {
+	return g.branchPreservationStatus(localBranch, remote, targets, true)
+}
+
+// BranchTargetStatus checks whether HEAD is already represented on the branch's
+// target/custody refs. Unlike BranchPreservationStatus, the exact pushed source
+// branch is not enough evidence because pushed-but-unsubmitted work still needs
+// merge-queue recovery.
+func (g *Git) BranchTargetStatus(localBranch, remote string, targets []string) (BranchPreservationStatus, error) {
+	return g.branchPreservationStatus(localBranch, remote, targets, false)
+}
+
+func (g *Git) branchPreservationStatus(localBranch, remote string, targets []string, includeExactBranch bool) (BranchPreservationStatus, error) {
+	if remote == "" {
+		remote = "origin"
+	}
+	var result BranchPreservationStatus
+	var candidates []string
+	hasEvidence := len(nonEmptyUnique(targets)) > 0
+
+	if includeExactBranch && localBranch != "" && localBranch != "HEAD" {
+		if remoteSHA, err := g.PushRemoteBranchTip(remote, localBranch); err == nil && remoteSHA != "" {
+			hasEvidence = true
+			result.ComparisonBase = remote + "/" + localBranch
+			if contains, containsErr := g.refContainsHead(remoteSHA); containsErr == nil && contains {
+				result.Preserved = true
+				result.UnpreservedPatchCount = 0
+				result.Evidence = "exact_remote_branch"
+				return result, nil
+			}
+			candidates = append(candidates, remoteSHA)
+		}
+	}
+
+	for _, target := range nonEmptyUnique(targets) {
+		if ref, ok := g.resolveComparisonRef(target, remote); ok {
+			candidates = append(candidates, ref)
+		}
+	}
+
+	if upstream, err := g.run("rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"); err == nil && strings.TrimSpace(upstream) != "" {
+		upstream = strings.TrimSpace(upstream)
+		if includeExactBranch || !isPolecatSelfUpstream(localBranch, remote, upstream) {
+			hasEvidence = true
+			candidates = append(candidates, upstream)
+		}
+	}
+
+	if !hasEvidence {
+		for _, ref := range []string{remote + "/" + g.RemoteDefaultBranch(), remote + "/main", remote + "/master"} {
+			if resolved, ok := g.resolveComparisonRef(ref, remote); ok {
+				candidates = append(candidates, resolved)
+			}
+		}
+	}
+
+	candidates = nonEmptyUnique(candidates)
+	if len(candidates) == 0 {
+		if hasEvidence {
+			return result, fmt.Errorf("no target/custody refs resolved")
+		}
+		return result, errNoComparisonRefs
+	}
+
+	var lastErr error
+	for _, ref := range candidates {
+		candidate, err := g.preservationAgainstRef(ref)
+		if err != nil {
+			lastErr = err
+			continue
+		}
+		candidate.Evidence = "comparison_ref"
+		if candidate.Preserved {
+			return candidate, nil
+		}
+		if result.ComparisonBase == "" {
+			result = candidate
+		}
+	}
+	if result.ComparisonBase != "" {
+		return result, nil
+	}
+	if lastErr != nil {
+		return result, lastErr
+	}
+	return result, fmt.Errorf("no usable comparison refs")
+}
+
+func isPolecatSelfUpstream(localBranch, remote, upstream string) bool {
+	return strings.HasPrefix(localBranch, "polecat/") && upstream == remote+"/"+localBranch
+}
+
+func (g *Git) refContainsHead(ref string) (bool, error) {
+	head, err := g.Rev("HEAD")
+	if err != nil {
+		return false, err
+	}
+	if strings.TrimSpace(ref) == strings.TrimSpace(head) {
+		return true, nil
+	}
+	return g.IsAncestor("HEAD", ref)
+}
+
+func (g *Git) resolveComparisonRef(ref, remote string) (string, bool) {
+	ref = strings.TrimSpace(ref)
+	if ref == "" {
+		return "", false
+	}
+	for _, candidate := range comparisonRefCandidates(ref, remote) {
+		if ok, err := g.RefExists(candidate); err == nil && ok {
+			return candidate, true
+		}
+	}
+	return "", false
+}
+
+func comparisonRefCandidates(ref, remote string) []string {
+	if strings.HasPrefix(ref, "refs/") || strings.HasPrefix(ref, remote+"/") {
+		return []string{ref}
+	}
+	branch := strings.TrimPrefix(ref, "origin/")
+	return []string{ref, remote + "/" + branch}
+}
+
+func (g *Git) preservationAgainstRef(ref string) (BranchPreservationStatus, error) {
+	status := BranchPreservationStatus{ComparisonBase: ref}
+	if contains, err := g.refContainsHead(ref); err == nil && contains {
+		status.Preserved = true
+		return status, nil
+	}
+	out, err := g.Cherry(ref, "HEAD")
+	if err != nil {
+		return status, err
+	}
+	status.UnpreservedPatchCount = CountCherryUnmergedCommits(out)
+	status.Preserved = status.UnpreservedPatchCount == 0
+	return status, nil
+}
+
+// CountCherryUnmergedCommits counts `git cherry` lines whose patches are not
+// present on the comparison base.
+func CountCherryUnmergedCommits(out string) int {
+	count := 0
+	for _, line := range strings.Split(strings.TrimSpace(out), "\n") {
+		if strings.HasPrefix(strings.TrimSpace(line), "+") {
+			count++
+		}
+	}
+	return count
+}
+
+func nonEmptyUnique(values []string) []string {
+	seen := make(map[string]bool, len(values))
+	var out []string
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value == "" || seen[value] {
+			continue
+		}
+		seen[value] = true
+		out = append(out, value)
+	}
+	return out
+}
+
 // UncommittedWorkStatus contains information about uncommitted work in a repo.
 type UncommittedWorkStatus struct {
 	HasUncommittedChanges bool
@@ -2105,11 +2730,12 @@ type UncommittedWorkStatus struct {
 	// Details for error messages
 	ModifiedFiles  []string
 	UntrackedFiles []string
+	UnmergedFiles  []string
 }
 
 // Clean returns true if there is no uncommitted work.
 func (s *UncommittedWorkStatus) Clean() bool {
-	return !s.HasUncommittedChanges && s.StashCount == 0 && s.UnpushedCommits == 0
+	return !s.HasUncommittedChanges && s.StashCount == 0 && s.UnpushedCommits == 0 && len(s.UnmergedFiles) == 0
 }
 
 // CleanExcludingBeads returns true if the only uncommitted changes are .beads/ files.
@@ -2117,7 +2743,7 @@ func (s *UncommittedWorkStatus) Clean() bool {
 // across worktrees and shouldn't block cleanup.
 func (s *UncommittedWorkStatus) CleanExcludingBeads() bool {
 	// Stashes and unpushed commits always count as uncommitted work
-	if s.StashCount > 0 || s.UnpushedCommits > 0 {
+	if s.StashCount > 0 || s.UnpushedCommits > 0 || len(s.UnmergedFiles) > 0 {
 		return false
 	}
 
@@ -2143,39 +2769,74 @@ func isBeadsPath(path string) bool {
 	return strings.Contains(path, ".beads/") || strings.Contains(path, ".beads\\")
 }
 
-// isGasTownRuntimePath returns true if the path is a Gas Town or Cursor runtime
-// artifact that should not block gt done. These paths are managed by the toolchain,
-// not by the developer, and are normally gitignored via EnsureGitignorePatterns.
-func isGasTownRuntimePath(path string) bool {
-	prefixes := []string{
-		".beads/", ".beads\\",
-		".claude/", ".claude\\",
-		".runtime/", ".runtime\\",
-		".logs/", ".logs\\",
-		"__pycache__/", "__pycache__\\",
+// runtimeArtifactRoot returns the path that should be reset when a runtime artifact
+// is staged. Directory artifacts return the directory root so large trees like
+// nested node_modules are unstaged with one pathspec instead of thousands.
+func runtimeArtifactRoot(path string) (string, bool) {
+	path = strings.TrimPrefix(filepath.ToSlash(strings.ReplaceAll(path, "\\", "/")), "./")
+	bare := strings.TrimSuffix(path, "/")
+	if bare == "" {
+		return "", false
 	}
-	for _, prefix := range prefixes {
-		if strings.HasPrefix(path, prefix) || strings.Contains(path, "/"+prefix) {
-			return true
+
+	parts := strings.Split(bare, "/")
+	for i, part := range parts {
+		switch part {
+		case ".beads", ".claude", ".opencode", ".runtime", ".logs", "__pycache__", "node_modules", ".vite", ".pytest_cache", ".mypy_cache", ".ruff_cache", ".cache", "coverage", "htmlcov":
+			return strings.Join(parts[:i+1], "/") + "/", true
 		}
 	}
-	// Also match bare directory entries from git status (e.g. ".claude/")
-	bare := strings.TrimSuffix(strings.TrimSuffix(path, "/"), "\\")
-	for _, name := range []string{".beads", ".claude", ".runtime", ".logs", "__pycache__"} {
-		if bare == name {
-			return true
-		}
+
+	base := filepath.Base(bare)
+	lower := strings.ToLower(base)
+	if base == "CLAUDE.local.md" || base == ".DS_Store" || strings.HasSuffix(lower, ".db") || strings.HasSuffix(lower, ".pyc") || strings.HasSuffix(lower, ".pyo") {
+		return bare, true
 	}
-	// CLAUDE.local.md is a Gas Town overlay file written by CreatePolecatCLAUDEmd.
-	// It must not be staged by the auto-commit safety net or committed to the repo.
-	if bare == "CLAUDE.local.md" {
-		return true
-	}
-	return false
+
+	return "", false
 }
 
-// CleanExcludingRuntime returns true if the only uncommitted changes are Gas Town
-// runtime artifacts (.beads/, .claude/, .runtime/, .logs/, __pycache__/).
+// isGasTownRuntimePath returns true if the path is a runtime artifact that should
+// not block gt done. These paths are managed by tooling or test/build commands,
+// not by the developer, and must not be auto-saved into polecat MRs.
+func isGasTownRuntimePath(path string) bool {
+	_, ok := runtimeArtifactRoot(path)
+	return ok
+}
+
+// RuntimeArtifactPaths returns deduplicated pathspecs for runtime artifacts in the
+// current uncommitted work. Callers can pass the result to git reset after git add
+// to keep generated state out of safety-net commits.
+func (s *UncommittedWorkStatus) RuntimeArtifactPaths() []string {
+	seen := make(map[string]bool)
+	var paths []string
+	for _, f := range append(append([]string{}, s.ModifiedFiles...), s.UntrackedFiles...) {
+		root, ok := runtimeArtifactRoot(f)
+		if !ok || seen[root] {
+			continue
+		}
+		seen[root] = true
+		paths = append(paths, root)
+	}
+	return paths
+}
+
+// NonRuntimePaths returns uncommitted paths that are not covered by the runtime
+// artifact policy. Recovery checks use this to ignore generated tool state while
+// still blocking on real source changes.
+func (s *UncommittedWorkStatus) NonRuntimePaths() []string {
+	var paths []string
+	paths = append(paths, s.UnmergedFiles...)
+	for _, f := range append(append([]string{}, s.ModifiedFiles...), s.UntrackedFiles...) {
+		if !isGasTownRuntimePath(f) {
+			paths = append(paths, f)
+		}
+	}
+	return paths
+}
+
+// CleanExcludingRuntime returns true if the only uncommitted changes are
+// runtime artifacts covered by the centralized exclusion policy.
 // Used by gt done to avoid blocking completion on toolchain-managed files.
 //
 // Note: UnpushedCommits and StashCount are intentionally NOT checked here. This
@@ -2184,6 +2845,10 @@ func isGasTownRuntimePath(path string) bool {
 // survive worktree deletion — both are handled separately and shouldn't block
 // completion on runtime-only dirt (gas-7vg).
 func (s *UncommittedWorkStatus) CleanExcludingRuntime() bool {
+	if len(s.UnmergedFiles) > 0 {
+		return false
+	}
+
 	for _, f := range s.ModifiedFiles {
 		if !isGasTownRuntimePath(f) {
 			return false
@@ -2203,7 +2868,10 @@ func (s *UncommittedWorkStatus) CleanExcludingRuntime() bool {
 func (s *UncommittedWorkStatus) String() string {
 	var issues []string
 	if s.HasUncommittedChanges {
-		issues = append(issues, fmt.Sprintf("%d uncommitted change(s)", len(s.ModifiedFiles)+len(s.UntrackedFiles)))
+		issues = append(issues, fmt.Sprintf("%d uncommitted change(s)", len(s.ModifiedFiles)+len(s.UntrackedFiles)+len(s.UnmergedFiles)))
+	}
+	if len(s.UnmergedFiles) > 0 {
+		issues = append(issues, fmt.Sprintf("unmerged: %s", strings.Join(s.UnmergedFiles, ", ")))
 	}
 	if s.StashCount > 0 {
 		issues = append(issues, fmt.Sprintf("%d stash(es)", s.StashCount))
@@ -2230,6 +2898,7 @@ func (g *Git) CheckUncommittedWork() (*UncommittedWorkStatus, error) {
 	status.ModifiedFiles = append(gitStatus.Modified, gitStatus.Added...)
 	status.ModifiedFiles = append(status.ModifiedFiles, gitStatus.Deleted...)
 	status.UntrackedFiles = gitStatus.Untracked
+	status.UnmergedFiles = gitStatus.Unmerged
 
 	// Check stashes
 	stashCount, err := g.StashCount()
@@ -2252,87 +2921,11 @@ func (g *Git) CheckUncommittedWork() (*UncommittedWorkStatus, error) {
 // Returns (pushed bool, unpushedCount int, err).
 // This handles polecat branches that don't have upstream tracking configured.
 func (g *Git) BranchPushedToRemote(localBranch, remote string) (bool, int, error) {
-	remoteBranch := remote + "/" + localBranch
-
-	// Resolve the push URL: with a split fetch/push configuration (e.g.,
-	// polecats pushing to a local bare repo), ls-remote against the remote
-	// name resolves the fetch URL (GitHub) not the push target.
-	lsTarget := remote
-	if fetchURL, ferr := g.RemoteURL(remote); ferr == nil {
-		if pushURL, perr := g.GetPushURL(remote); perr == nil && pushURL != fetchURL {
-			lsTarget = pushURL
-		}
-	}
-
-	// Check if the remote branch exists via ls-remote and save the output.
-	// The output contains the SHA which we reuse in the fallback path below,
-	// avoiding a redundant second ls-remote call.
-	lsOut, err := g.run("ls-remote", "--heads", lsTarget, localBranch)
+	status, err := g.BranchPreservationStatus(localBranch, remote, nil)
 	if err != nil {
-		return false, 0, fmt.Errorf("checking remote branch: %w", err)
+		return false, 0, err
 	}
-
-	if lsOut == "" {
-		// Remote branch doesn't exist - count commits since origin/main (or HEAD if that fails)
-		count, err := g.run("rev-list", "--count", "origin/main..HEAD")
-		if err != nil {
-			// Fallback: just count all commits on HEAD
-			count, err = g.run("rev-list", "--count", "HEAD")
-			if err != nil {
-				return false, 0, fmt.Errorf("counting commits: %w", err)
-			}
-		}
-		var n int
-		_, err = fmt.Sscanf(count, "%d", &n)
-		if err != nil {
-			return false, 0, fmt.Errorf("parsing commit count: %w", err)
-		}
-		// If there are any commits since main, branch is not pushed
-		return n == 0, n, nil
-	}
-
-	// Remote branch exists - fetch to ensure we have the local tracking ref
-	// This handles the case where we just pushed and origin/branch doesn't exist locally yet
-	_, fetchErr := g.run("fetch", remote, localBranch)
-
-	// In worktrees, the fetch may not update refs/remotes/origin/<branch> due to
-	// missing refspecs. If the remote ref doesn't exist locally, create it from FETCH_HEAD.
-	// See: gt-cehl8 (gt done fails in worktrees due to missing origin tracking ref)
-	remoteRef := "refs/remotes/" + remoteBranch
-	if _, err := g.run("rev-parse", "--verify", remoteRef); err != nil {
-		// Remote ref doesn't exist locally - update it from FETCH_HEAD if fetch succeeded.
-		// Best-effort: if this fails, the code below falls back to the saved ls-remote SHA.
-		if fetchErr == nil {
-			_, _ = g.run("update-ref", remoteRef, "FETCH_HEAD")
-		}
-	}
-
-	// Check if local is ahead
-	count, err := g.run("rev-list", "--count", remoteBranch+"..HEAD")
-	if err != nil {
-		// Fallback: If we can't use the tracking ref (possibly missing remote.origin.fetch),
-		// use the SHA from the ls-remote call above instead of hitting the network again.
-		// See: gt-0eh3r (gt done fails in worktree with missing remote.origin.fetch config)
-		parts := strings.Fields(strings.TrimSpace(lsOut))
-		if len(parts) == 0 {
-			return false, 0, fmt.Errorf("counting unpushed commits: %w (invalid ls-remote output)", err)
-		}
-		remoteSHA := parts[0]
-
-		// Count commits from remote SHA to HEAD
-		count, err = g.run("rev-list", "--count", remoteSHA+"..HEAD")
-		if err != nil {
-			return false, 0, fmt.Errorf("counting unpushed commits (fallback): %w", err)
-		}
-	}
-
-	var n int
-	_, err = fmt.Sscanf(count, "%d", &n)
-	if err != nil {
-		return false, 0, fmt.Errorf("parsing unpushed count: %w", err)
-	}
-
-	return n == 0, n, nil
+	return status.Preserved, status.UnpreservedPatchCount, nil
 }
 
 // PrunedBranch represents a local branch that was pruned (or would be pruned in dry-run).
@@ -2438,6 +3031,9 @@ func InitSubmodules(repoPath string, referencePath ...string) error {
 	if !hasTrackedGitmodules(repoPath) {
 		return nil
 	}
+	if err := EnsureSafeMutationWorkDir(repoPath); err != nil {
+		return err
+	}
 
 	args := []string{"-C", repoPath, "submodule", "update", "--init", "--recursive"}
 
@@ -2477,6 +3073,10 @@ func hasTrackedGitmodules(repoPath string) bool {
 // InitSparseCheckout initializes sparse checkout with cone mode and configures
 // the given paths. If paths is empty, initializes with cone mode only (checkout root files).
 func InitSparseCheckout(repoPath string, paths []string) error {
+	if err := EnsureSafeMutationWorkDir(repoPath); err != nil {
+		return err
+	}
+
 	// Initialize sparse checkout in cone mode
 	cmd := exec.Command("git", "-C", repoPath, "sparse-checkout", "init", "--cone")
 	util.SetDetachedProcessGroup(cmd)

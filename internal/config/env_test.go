@@ -19,8 +19,8 @@ func TestAgentEnv_Mayor(t *testing.T) {
 	assertEnv(t, env, "GIT_AUTHOR_NAME", "mayor")
 	assertEnv(t, env, "GT_ROOT", "/town")
 	assertEnv(t, env, "GIT_CEILING_DIRECTORIES", "/town") // prevents git walking to umbrella
-	assertEnv(t, env, "NODE_OPTIONS", "")                  // cleared to prevent debugger inheritance
-	assertEnv(t, env, "CLAUDECODE", "")                    // cleared to prevent nested session detection
+	assertEnv(t, env, "NODE_OPTIONS", "")                 // cleared to prevent debugger inheritance
+	assertEnv(t, env, "CLAUDECODE", "")                   // cleared to prevent nested session detection
 	assertNotSet(t, env, "GT_RIG")
 }
 
@@ -55,8 +55,8 @@ func TestAgentEnv_Polecat(t *testing.T) {
 	assertEnv(t, env, "GIT_AUTHOR_NAME", "Toast")
 	assertEnv(t, env, "BEADS_AGENT_NAME", "myrig/Toast")
 	assertEnv(t, env, "BD_DOLT_AUTO_COMMIT", "off") // gt-5cc2p: prevent manifest contention
-	assertEnv(t, env, "NODE_OPTIONS", "")            // cleared to prevent debugger inheritance
-	assertEnv(t, env, "CLAUDECODE", "")              // cleared to prevent nested session detection
+	assertEnv(t, env, "NODE_OPTIONS", "")           // cleared to prevent debugger inheritance
+	assertEnv(t, env, "CLAUDECODE", "")             // cleared to prevent nested session detection
 }
 
 func TestAgentEnv_Crew(t *testing.T) {
@@ -1245,7 +1245,7 @@ func TestAgentEnv_InjectsDoltPort(t *testing.T) {
 }
 
 func TestAgentEnv_NoDoltPortWithoutTownRoot(t *testing.T) {
-	t.Setenv("GT_DOLT_PORT", "")   // isolate from live Dolt server
+	t.Setenv("GT_DOLT_PORT", "")    // isolate from live Dolt server
 	t.Setenv("BEADS_DOLT_PORT", "") // isolate from live Dolt server
 	env := AgentEnv(AgentEnvConfig{
 		Role: "mayor",
@@ -1255,7 +1255,7 @@ func TestAgentEnv_NoDoltPortWithoutTownRoot(t *testing.T) {
 }
 
 func TestAgentEnv_NoDoltPortWithoutConfig(t *testing.T) {
-	t.Setenv("GT_DOLT_PORT", "")   // isolate from live Dolt server
+	t.Setenv("GT_DOLT_PORT", "")    // isolate from live Dolt server
 	t.Setenv("BEADS_DOLT_PORT", "") // isolate from live Dolt server
 	tmpDir := t.TempDir()
 	env := AgentEnv(AgentEnvConfig{
@@ -1311,12 +1311,17 @@ func TestAgentEnv_EffortLevel(t *testing.T) {
 	t.Run("ignores shell env var", func(t *testing.T) {
 		// The env var is deprecated — config takes over, falling back to "high"
 		t.Setenv("CLAUDE_CODE_EFFORT_LEVEL", "max")
-		env := AgentEnv(AgentEnvConfig{
-			Role:     "crew",
-			TownRoot: "/tmp/nonexistent-town",
+		stderr := captureStderr(t, func() {
+			env := AgentEnv(AgentEnvConfig{
+				Role:     "crew",
+				TownRoot: "/tmp/nonexistent-town",
+			})
+			if got := env["CLAUDE_CODE_EFFORT_LEVEL"]; got != "high" {
+				t.Errorf("CLAUDE_CODE_EFFORT_LEVEL = %q, want %q (env var should be ignored)", got, "high")
+			}
 		})
-		if got := env["CLAUDE_CODE_EFFORT_LEVEL"]; got != "high" {
-			t.Errorf("CLAUDE_CODE_EFFORT_LEVEL = %q, want %q (env var should be ignored)", got, "high")
+		if stderr != "" {
+			t.Fatalf("AgentEnv emitted stderr for ignored CLAUDE_CODE_EFFORT_LEVEL: %q", stderr)
 		}
 	})
 

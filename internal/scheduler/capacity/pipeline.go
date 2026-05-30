@@ -4,13 +4,15 @@ import "strings"
 
 // PendingBead represents a bead that is scheduled and ready for dispatch evaluation.
 type PendingBead struct {
-	ID          string             // Context bead ID (sling context)
-	WorkBeadID  string             // The actual work bead ID
-	Title       string
-	TargetRig   string
-	Description string
-	Labels      []string
-	Context     *SlingContextFields // Parsed sling params from context bead
+	ID              string // Context bead ID (sling context)
+	WorkBeadID      string // The actual work bead ID
+	Title           string
+	TargetRig       string
+	Description     string
+	Labels          []string
+	Context         *SlingContextFields // Parsed sling params from context bead
+	ContextWorkDir  string              // Work dir for the DB where the context was discovered.
+	ContextBeadsDir string              // Resolved .beads dir where the context was discovered.
 }
 
 // SlingContextFields holds scheduling parameters stored on a sling context bead.

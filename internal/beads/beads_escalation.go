@@ -27,6 +27,7 @@ type EscalationFields struct {
 	ReescalationCount int    // Number of times this has been re-escalated
 	LastReescalatedAt string // When last re-escalated (empty if never)
 	LastReescalatedBy string // Who last re-escalated (empty if never)
+	Fingerprint       string // Stable duplicate-suppression label
 }
 
 // FormatEscalationDescription creates a description string from escalation fields.
@@ -95,6 +96,11 @@ func FormatEscalationDescription(title string, fields *EscalationFields) string 
 	} else {
 		lines = append(lines, "last_reescalated_by: null")
 	}
+	if fields.Fingerprint != "" {
+		lines = append(lines, fmt.Sprintf("fingerprint: %s", fields.Fingerprint))
+	} else {
+		lines = append(lines, "fingerprint: null")
+	}
 
 	return strings.Join(lines, "\n")
 }
@@ -151,6 +157,8 @@ func ParseEscalationFields(description string) *EscalationFields {
 			fields.LastReescalatedAt = value
 		case "last_reescalated_by":
 			fields.LastReescalatedBy = value
+		case "fingerprint":
+			fields.Fingerprint = value
 		}
 	}
 
@@ -183,6 +191,9 @@ func (b *Beads) CreateEscalationBead(title string, fields *EscalationFields) (*I
 	// Add severity as a label for easy filtering
 	if fields != nil && fields.Severity != "" {
 		args = append(args, fmt.Sprintf("--labels=severity:%s", fields.Severity))
+	}
+	if fields != nil && fields.Fingerprint != "" {
+		args = append(args, "--labels="+fields.Fingerprint)
 	}
 
 	// Default actor from BD_ACTOR env var for provenance tracking
@@ -300,7 +311,30 @@ func (b *Beads) ListEscalations() ([]*Issue, error) {
 		return nil, fmt.Errorf("parsing bd list output: %w", err)
 	}
 
-	return issues, nil
+	return filterEscalationRecords(issues), nil
+}
+
+// ListEscalationsByFingerprint returns open escalation beads matching a stable fingerprint label.
+func (b *Beads) ListEscalationsByFingerprint(fingerprintLabel string) ([]*Issue, error) {
+	if fingerprintLabel == "" {
+		return nil, nil
+	}
+	out, err := b.run("list",
+		"--label=gt:escalation",
+		"--label="+fingerprintLabel,
+		"--status=open",
+		"--json",
+	)
+	if err != nil {
+		return nil, err
+	}
+
+	var issues []*Issue
+	if err := json.Unmarshal(out, &issues); err != nil {
+		return nil, fmt.Errorf("parsing bd list output: %w", err)
+	}
+
+	return filterEscalationRecords(issues), nil
 }
 
 // ListEscalationsBySeverity returns open escalation beads filtered by severity.
@@ -320,7 +354,18 @@ func (b *Beads) ListEscalationsBySeverity(severity string) ([]*Issue, error) {
 		return nil, fmt.Errorf("parsing bd list output: %w", err)
 	}
 
-	return issues, nil
+	return filterEscalationRecords(issues), nil
+}
+
+func filterEscalationRecords(issues []*Issue) []*Issue {
+	filtered := issues[:0]
+	for _, issue := range issues {
+		if HasLabel(issue, "gt:message") {
+			continue
+		}
+		filtered = append(filtered, issue)
+	}
+	return filtered
 }
 
 // ListStaleEscalations returns escalations older than the given threshold.

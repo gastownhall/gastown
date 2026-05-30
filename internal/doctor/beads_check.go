@@ -256,8 +256,8 @@ type rigsConfigBeadsConfig struct {
 }
 
 type rigsConfigFile struct {
-	Version int                         `json:"version"`
-	Rigs    map[string]rigsConfigEntry  `json:"rigs"`
+	Version int                        `json:"version"`
+	Rigs    map[string]rigsConfigEntry `json:"rigs"`
 }
 
 func loadRigsConfig(path string) (*rigsConfigFile, error) {
@@ -295,6 +295,8 @@ type realDBPrefixGetter struct{}
 func (r *realDBPrefixGetter) GetDBPrefix(rigPath string) (string, error) {
 	cmd := exec.Command("bd", "config", "get", "issue_prefix")
 	cmd.Dir = rigPath
+	beadsDir := beads.ResolveBeadsDir(rigPath)
+	cmd.Env = append(stripEnvPrefixes(os.Environ(), "BEADS_DIR=", "BEADS_DB=", "BEADS_DOLT_SERVER_DATABASE="), beadsCommandEnv(beadsDir)...)
 	output, err := cmd.Output()
 	if err != nil {
 		return "", err
@@ -317,14 +319,39 @@ func (r *realDBPrefixGetter) GetDBPrefix(rigPath string) (string, error) {
 // would overwrite the shared database's prefix with the rig's prefix.
 type DatabasePrefixCheck struct {
 	FixableCheck
-	mismatches     []databasePrefixMismatch
-	prefixGetter   dbPrefixGetter
+	mismatches   []databasePrefixMismatch
+	prefixGetter dbPrefixGetter
 }
 
 type databasePrefixMismatch struct {
 	rigPath      string
 	routesPrefix string // From routes.jsonl (without trailing hyphen)
 	dbPrefix     string // From database config
+}
+
+type beadsMetadata struct {
+	DoltDatabase string `json:"dolt_database"`
+}
+
+func readBeadsDoltDatabase(beadsDir string) string {
+	data, err := os.ReadFile(filepath.Join(beadsDir, "metadata.json"))
+	if err != nil {
+		return ""
+	}
+
+	var metadata beadsMetadata
+	if err := json.Unmarshal(data, &metadata); err != nil {
+		return ""
+	}
+	return strings.TrimSpace(metadata.DoltDatabase)
+}
+
+func beadsCommandEnv(beadsDir string) []string {
+	env := []string{"BEADS_DIR=" + beadsDir}
+	if db := readBeadsDoltDatabase(beadsDir); db != "" {
+		env = append(env, "BEADS_DOLT_SERVER_DATABASE="+db)
+	}
+	return env
 }
 
 // NewDatabasePrefixCheck creates a new database prefix check.
@@ -467,6 +494,8 @@ func (c *DatabasePrefixCheck) Fix(ctx *CheckContext) error {
 
 		cmd := exec.Command("bd", "config", "set", "issue_prefix", m.routesPrefix)
 		cmd.Dir = filepath.Join(ctx.TownRoot, m.rigPath)
+		beadsDir := beads.ResolveBeadsDir(cmd.Dir)
+		cmd.Env = append(stripEnvPrefixes(os.Environ(), "BEADS_DIR=", "BEADS_DB=", "BEADS_DOLT_SERVER_DATABASE="), beadsCommandEnv(beadsDir)...)
 		if output, err := cmd.CombinedOutput(); err != nil {
 			return fmt.Errorf("updating %s: %s", m.rigPath, strings.TrimSpace(string(output)))
 		}

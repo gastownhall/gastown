@@ -43,3 +43,16 @@ func TestRefineryRestartAgentFlag(t *testing.T) {
 		t.Errorf("expected --agent usage to mention overrides town default, got %q", flag.Usage)
 	}
 }
+
+func TestRefineryStartForegroundFlagHidden(t *testing.T) {
+	flag := refineryStartCmd.Flags().Lookup("foreground")
+	if flag == nil {
+		t.Fatal("expected hidden compatibility --foreground flag")
+	}
+	if !flag.Hidden {
+		t.Fatal("expected --foreground to be hidden")
+	}
+	if strings.Contains(refineryStartCmd.Long, "--foreground") {
+		t.Fatalf("refinery start help should not advertise --foreground:\n%s", refineryStartCmd.Long)
+	}
+}

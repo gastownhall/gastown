@@ -187,6 +187,9 @@ timeout /t 5 /nobreak >NUL
 	if !strings.Contains(err.Error(), "timed out") {
 		t.Fatalf("error = %v, want timeout", err)
 	}
+	if !strings.Contains(err.Error(), "bd list") {
+		t.Fatalf("error = %v, want command description bd list in timeout message", err)
+	}
 	if elapsed > 4*time.Second {
 		t.Fatalf("timeout took %v, want under 4s", elapsed)
 	}
@@ -223,6 +226,12 @@ func TestBdCmd_Chaining(t *testing.T) {
 	// Each method should return the same pointer for fluent chaining
 	if bdc.WithAutoCommit() != bdc {
 		t.Error("WithAutoCommit() should return receiver for chaining")
+	}
+	if bdc.AllowStale() != bdc {
+		t.Error("AllowStale() should return receiver for chaining")
+	}
+	if !bdc.allowStale {
+		t.Error("AllowStale() should mark stale-read compatibility as requested")
 	}
 	if bdc.WithGTRoot("/test") != bdc {
 		t.Error("WithGTRoot() should return receiver for chaining")
@@ -560,8 +569,8 @@ func TestBdCmd_WithBeadsDir_OverridesInheritedDoltTarget(t *testing.T) {
 	if envMap["BEADS_DIR"] != beadsDir {
 		t.Errorf("BEADS_DIR = %q, want %q", envMap["BEADS_DIR"], beadsDir)
 	}
-	if envMap["BEADS_DOLT_SERVER_DATABASE"] != "rigdb" {
-		t.Errorf("BEADS_DOLT_SERVER_DATABASE = %q, want rigdb", envMap["BEADS_DOLT_SERVER_DATABASE"])
+	if _, ok := envMap["BEADS_DOLT_SERVER_DATABASE"]; ok {
+		t.Errorf("BEADS_DOLT_SERVER_DATABASE should be absent when BEADS_DIR is pinned, got %q", envMap["BEADS_DOLT_SERVER_DATABASE"])
 	}
 	if envMap["BEADS_DOLT_SERVER_HOST"] != "127.0.0.1" {
 		t.Errorf("BEADS_DOLT_SERVER_HOST = %q, want 127.0.0.1", envMap["BEADS_DOLT_SERVER_HOST"])

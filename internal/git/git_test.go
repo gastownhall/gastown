@@ -1,6 +1,7 @@
 package git
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -41,6 +42,249 @@ func initTestRepo(t *testing.T) string {
 	_ = cmd.Run()
 
 	return dir
+}
+
+type townRootSafetySnapshot struct {
+	Head   string
+	Branch string
+	Files  map[string]string
+}
+
+func initTownRootSafetyRepo(t *testing.T) string {
+	t.Helper()
+
+	root := initTestRepo(t)
+	g := NewGit(root)
+	cmd := exec.Command("git", "branch", "polecat/safety")
+	cmd.Dir = root
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("create safety branch: %v\n%s", err, out)
+	}
+	if err := os.WriteFile(filepath.Join(root, "tracked.txt"), []byte("committed\n"), 0644); err != nil {
+		t.Fatalf("write tracked file: %v", err)
+	}
+	if err := g.Add("tracked.txt"); err != nil {
+		t.Fatalf("git add tracked: %v", err)
+	}
+	if err := g.Commit("add tracked file"); err != nil {
+		t.Fatalf("git commit tracked: %v", err)
+	}
+
+	writeTownSafetyFile(t, root, "mayor/town.json", `{"name":"test-town"}\n`)
+	writeTownSafetyFile(t, root, "mayor/rigs.json", `{"rigs":[]}\n`)
+	writeTownSafetyFile(t, root, ".dolt-data/gastown/.dolt/noms/manifest", "manifest sentinel\n")
+	writeTownSafetyFile(t, root, ".runtime/sentinel", "runtime sentinel\n")
+	writeTownSafetyFile(t, root, ".beads/metadata.json", `{"prefix":"hq"}\n`)
+	writeTownSafetyFile(t, root, "daemon/daemon.pid", "12345\n")
+	writeTownSafetyFile(t, root, "user-work.txt", "untracked user work\n")
+	writeTownSafetyFile(t, root, "tracked.txt", "dirty tracked work\n")
+
+	return root
+}
+
+func writeTownSafetyFile(t *testing.T, root, rel, contents string) {
+	t.Helper()
+	path := filepath.Join(root, filepath.FromSlash(rel))
+	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+		t.Fatalf("mkdir %s: %v", filepath.Dir(path), err)
+	}
+	if err := os.WriteFile(path, []byte(contents), 0644); err != nil {
+		t.Fatalf("write %s: %v", rel, err)
+	}
+}
+
+func snapshotTownRootSafety(t *testing.T, root string) townRootSafetySnapshot {
+	t.Helper()
+	g := NewGit(root)
+	head, err := g.Rev("HEAD")
+	if err != nil {
+		t.Fatalf("rev HEAD: %v", err)
+	}
+	branch, err := g.CurrentBranch()
+	if err != nil {
+		t.Fatalf("current branch: %v", err)
+	}
+	s := townRootSafetySnapshot{
+		Head:   head,
+		Branch: branch,
+		Files:  make(map[string]string),
+	}
+	for _, rel := range townRootSafetyFiles() {
+		path := filepath.Join(root, filepath.FromSlash(rel))
+		contents, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatalf("read %s: %v", rel, err)
+		}
+		s.Files[rel] = string(contents)
+	}
+	return s
+}
+
+func townRootSafetyFiles() []string {
+	return []string{
+		"mayor/town.json",
+		"mayor/rigs.json",
+		".dolt-data/gastown/.dolt/noms/manifest",
+		".runtime/sentinel",
+		".beads/metadata.json",
+		"daemon/daemon.pid",
+		"user-work.txt",
+		"tracked.txt",
+	}
+}
+
+func assertTownRootSafetyPreserved(t *testing.T, root string, before townRootSafetySnapshot) {
+	t.Helper()
+	after := snapshotTownRootSafety(t, root)
+	if after.Head != before.Head {
+		t.Fatalf("HEAD changed: got %s, want %s", after.Head, before.Head)
+	}
+	if after.Branch != before.Branch {
+		t.Fatalf("branch changed: got %s, want %s", after.Branch, before.Branch)
+	}
+	for rel, want := range before.Files {
+		if got := after.Files[rel]; got != want {
+			t.Fatalf("%s changed: got %q, want %q", rel, got, want)
+		}
+	}
+}
+
+func requireTownRootSafetyError(t *testing.T, err error) {
+	t.Helper()
+	if !errors.Is(err, ErrUnsafeTownRootGitMutation) {
+		t.Fatalf("error = %v, want ErrUnsafeTownRootGitMutation", err)
+	}
+}
+
+func TestTownRootMutatingGitCommandsAreBlocked(t *testing.T) {
+	tests := []struct {
+		name string
+		run  func(*Git) error
+	}{
+		{name: "checkout", run: func(g *Git) error { return g.Checkout("polecat/safety") }},
+		{name: "checkout new branch", run: func(g *Git) error { return g.CheckoutNewBranch("polecat/new", "polecat/safety") }},
+		{name: "checkout reset branch", run: func(g *Git) error { return g.CheckoutResetBranch("polecat/reset", "polecat/safety") }},
+		{name: "reset hard", run: func(g *Git) error { return g.ResetHard("polecat/safety") }},
+		{name: "clean force", run: func(g *Git) error { return g.CleanForce() }},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			root := initTownRootSafetyRepo(t)
+			before := snapshotTownRootSafety(t, root)
+			err := tt.run(NewGit(root))
+			requireTownRootSafetyError(t, err)
+			assertTownRootSafetyPreserved(t, root, before)
+		})
+	}
+}
+
+func TestTownRootReadOnlyStashListIsAllowed(t *testing.T) {
+	root := initTownRootSafetyRepo(t)
+	count, err := NewGit(root).StashCount()
+	if err != nil {
+		t.Fatalf("stash count should be allowed: %v", err)
+	}
+	if count != 0 {
+		t.Fatalf("stash count = %d, want 0", count)
+	}
+}
+
+func TestNestedWorkDirResolvingToTownRootGitIsBlocked(t *testing.T) {
+	root := initTownRootSafetyRepo(t)
+	rigDir := filepath.Join(root, "gastown")
+	if err := os.MkdirAll(rigDir, 0755); err != nil {
+		t.Fatalf("mkdir rig dir: %v", err)
+	}
+	cmd := exec.Command("git", "-C", rigDir, "rev-parse", "--show-toplevel")
+	out, err := cmd.Output()
+	if err != nil {
+		t.Fatalf("raw git top-level: %v", err)
+	}
+	if got := strings.TrimSpace(string(out)); got != root {
+		t.Fatalf("raw git top-level = %q, want %q", got, root)
+	}
+
+	before := snapshotTownRootSafety(t, root)
+	for _, tt := range []struct {
+		name string
+		run  func(*Git) error
+	}{
+		{name: "checkout", run: func(g *Git) error { return g.Checkout("polecat/safety") }},
+		{name: "reset hard", run: func(g *Git) error { return g.ResetHard("polecat/safety") }},
+		{name: "clean force", run: func(g *Git) error { return g.CleanForce() }},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			err = tt.run(NewGit(rigDir))
+			requireTownRootSafetyError(t, err)
+			assertTownRootSafetyPreserved(t, root, before)
+		})
+	}
+}
+
+func TestWorktreeAddCannotTargetTownRootRuntimePaths(t *testing.T) {
+	root := initTownRootSafetyRepo(t)
+	before := snapshotTownRootSafety(t, root)
+
+	src := initTestRepo(t)
+	bareDir := filepath.Join(t.TempDir(), ".repo.git")
+	cmd := exec.Command("git", "clone", "--bare", src, bareDir)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("clone bare: %v\n%s", err, out)
+	}
+
+	for i, target := range []string{
+		root,
+		filepath.Join(root, "mayor", "bad-worktree"),
+		filepath.Join(root, ".dolt-data", "bad-worktree"),
+		filepath.Join(root, ".runtime", "bad-worktree"),
+		filepath.Join(root, ".beads", "bad-worktree"),
+		filepath.Join(root, "daemon", "bad-worktree"),
+	} {
+		t.Run(filepath.Base(filepath.Dir(target))+"/"+filepath.Base(target), func(t *testing.T) {
+			err := NewGitWithDir(bareDir, "").WorktreeAddFromRef(target, fmt.Sprintf("polecat/town-root-%d", i), "HEAD")
+			requireTownRootSafetyError(t, err)
+			assertTownRootSafetyPreserved(t, root, before)
+		})
+	}
+
+	link := filepath.Join(t.TempDir(), "townlink")
+	if err := os.Symlink(root, link); err != nil {
+		t.Skipf("symlink unavailable: %v", err)
+	}
+	err := NewGitWithDir(bareDir, "").WorktreeAddFromRef(filepath.Join(link, ".runtime", "linked-worktree"), "polecat/town-root-symlink", "HEAD")
+	requireTownRootSafetyError(t, err)
+	assertTownRootSafetyPreserved(t, root, before)
+}
+
+func TestCloneCannotTargetTownRootRuntimePaths(t *testing.T) {
+	root := initTownRootSafetyRepo(t)
+	before := snapshotTownRootSafety(t, root)
+	src := initTestRepo(t)
+
+	err := NewGit(t.TempDir()).Clone(src, root)
+	requireTownRootSafetyError(t, err)
+	assertTownRootSafetyPreserved(t, root, before)
+
+	link := filepath.Join(t.TempDir(), "townlink")
+	if err := os.Symlink(root, link); err != nil {
+		t.Skipf("symlink unavailable: %v", err)
+	}
+	err = NewGit(t.TempDir()).Clone(src, filepath.Join(link, ".dolt-data", "clone"))
+	requireTownRootSafetyError(t, err)
+	assertTownRootSafetyPreserved(t, root, before)
+
+	oldWd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("get cwd: %v", err)
+	}
+	if err := os.Chdir(root); err != nil {
+		t.Fatalf("chdir town root: %v", err)
+	}
+	t.Cleanup(func() { _ = os.Chdir(oldWd) })
+	err = NewGit(t.TempDir()).Clone(src, filepath.Join(".runtime", "relative-clone"))
+	requireTownRootSafetyError(t, err)
+	assertTownRootSafetyPreserved(t, root, before)
 }
 
 func TestIsRepo(t *testing.T) {
@@ -1594,6 +1838,13 @@ func TestStashCount_FiltersByBranch(t *testing.T) {
 	if count != 0 {
 		t.Errorf("StashCount from worktree = %d, want 0 (stash belongs to different branch)", count)
 	}
+	totalCount, err := wtGit.StashCountAll()
+	if err != nil {
+		t.Fatalf("StashCountAll: %v", err)
+	}
+	if totalCount != 1 {
+		t.Errorf("StashCountAll from worktree = %d, want 1 shared repo stash", totalCount)
+	}
 
 	// StashCount from main repo should be 1
 	mainCount, err := g.StashCount()
@@ -1624,6 +1875,13 @@ func TestStashCount_FiltersByBranch(t *testing.T) {
 	}
 	if count != 1 {
 		t.Errorf("StashCount from worktree after own stash = %d, want 1", count)
+	}
+	totalCount, err = wtGit.StashCountAll()
+	if err != nil {
+		t.Fatalf("StashCountAll after own stash: %v", err)
+	}
+	if totalCount != 2 {
+		t.Errorf("StashCountAll from worktree after own stash = %d, want 2 repo-wide stashes", totalCount)
 	}
 
 	// Main repo should still see 1 (only its own stash)
@@ -1907,16 +2165,33 @@ func TestIsGasTownRuntimePath(t *testing.T) {
 		{".runtime/", true},
 		{".runtime/state.json", true},
 		{".runtime", true},
+		{".opencode/", true},
+		{".opencode/plugins/gastown.js", true},
+		{".opencode/commands/handoff.md", true},
 		{".beads/", true},
 		{".beads/db.json", true},
+		{".beads\\db.json", true},
+		{".beads/.runtime/state.json", true},
 		{".logs/agent.log", true},
 		{"__pycache__/", true},
 		{"__pycache__/foo.cpython-312.pyc", true},
 		{"src/__pycache__/bar.pyc", true},
+		{"services/cyrus/workflow-cyrus-edge/node_modules/pkg/index.js", true},
+		{"services\\cyrus\\workflow-cyrus-edge\\node_modules\\pkg\\index.js", true},
+		{"dashboard/public/meridian-dashboard/.vite/vitest/hash/results.json", true},
+		{"services/workflows/collateral-internal/execution_log.db", true},
+		{"api/.pytest_cache/v/cache/nodeids", true},
+		{"api/.mypy_cache/3.12/module.meta.json", true},
+		{"api/.ruff_cache/0.8.0/cache", true},
+		{"coverage/lcov.info", true},
+		{"htmlcov/index.html", true},
+		{"src/module.pyc", true},
+		{"frontend/.DS_Store", true},
 		{"src/main.go", false},
 		{"README.md", false},
 		{".gitignore", false},
 		{"claude-stuff/foo", false},
+		{"src/coverage_report.go", false},
 	}
 
 	for _, tt := range tests {
@@ -1939,7 +2214,7 @@ func TestCleanExcludingRuntime(t *testing.T) {
 			name: "only runtime artifacts",
 			s: UncommittedWorkStatus{
 				HasUncommittedChanges: true,
-				UntrackedFiles:        []string{".claude/", ".runtime/state.json"},
+				UntrackedFiles:        []string{".claude/", ".opencode/plugins/gastown.js", ".runtime/state.json"},
 			},
 			want: true,
 		},
@@ -1948,6 +2223,14 @@ func TestCleanExcludingRuntime(t *testing.T) {
 			s: UncommittedWorkStatus{
 				HasUncommittedChanges: true,
 				ModifiedFiles:         []string{"src/main.go"},
+			},
+			want: false,
+		},
+		{
+			name: "runtime path conflict blocks",
+			s: UncommittedWorkStatus{
+				HasUncommittedChanges: true,
+				UnmergedFiles:         []string{".opencode/plugins/gastown.js"},
 			},
 			want: false,
 		},
@@ -2003,6 +2286,20 @@ func TestCleanExcludingRuntime(t *testing.T) {
 			want: true,
 		},
 		{
+			name: "nested dependency and cache artifacts",
+			s: UncommittedWorkStatus{
+				HasUncommittedChanges: true,
+				UntrackedFiles: []string{
+					"services/cyrus/workflow-cyrus-edge/node_modules/pkg/index.js",
+					"dashboard/public/meridian-dashboard/.vite/vitest/hash/results.json",
+					"services/workflows/collateral-internal/execution_log.db",
+					"api/.pytest_cache/v/cache/nodeids",
+					"src/__pycache__/module.cpython-312.pyc",
+				},
+			},
+			want: true,
+		},
+		{
 			// CLAUDE.local.md is a Gas Town overlay file (gt-p35) that must not
 			// block gt done or be auto-committed.
 			name: "CLAUDE.local.md is runtime artifact",
@@ -2021,6 +2318,251 @@ func TestCleanExcludingRuntime(t *testing.T) {
 				t.Errorf("CleanExcludingRuntime() = %v, want %v", got, tt.want)
 			}
 		})
+	}
+}
+
+func TestRuntimeArtifactPaths(t *testing.T) {
+	status := UncommittedWorkStatus{
+		HasUncommittedChanges: true,
+		ModifiedFiles: []string{
+			"services/workflows/collateral-internal/execution_log.db",
+			"src/handler.go",
+		},
+		UntrackedFiles: []string{
+			".opencode/plugins/gastown.js",
+			"services/cyrus/workflow-cyrus-edge/node_modules/pkg/index.js",
+			"services/cyrus/workflow-cyrus-edge/node_modules/pkg/package.json",
+			"dashboard/public/meridian-dashboard/.vite/vitest/hash/results.json",
+			"api/.pytest_cache/v/cache/nodeids",
+			"src/__pycache__/module.cpython-312.pyc",
+			"cmd/new_feature.go",
+		},
+	}
+
+	got := status.RuntimeArtifactPaths()
+	want := []string{
+		"services/workflows/collateral-internal/execution_log.db",
+		".opencode/",
+		"services/cyrus/workflow-cyrus-edge/node_modules/",
+		"dashboard/public/meridian-dashboard/.vite/",
+		"api/.pytest_cache/",
+		"src/__pycache__/",
+	}
+	if len(got) != len(want) {
+		t.Fatalf("RuntimeArtifactPaths() = %#v, want %#v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("RuntimeArtifactPaths()[%d] = %q, want %q (all: %#v)", i, got[i], want[i], got)
+		}
+	}
+}
+
+func TestParsePorcelainStatusEntryPreservesRenameCopySourceAndConflict(t *testing.T) {
+	tests := []struct {
+		name       string
+		line       string
+		wantCode   string
+		wantSource string
+		wantPath   string
+		wantPaths  []string
+		unmerged   bool
+	}{
+		{
+			name:       "rename",
+			line:       "R  README.md -> .opencode/plugins/gastown.js",
+			wantCode:   "R ",
+			wantSource: "README.md",
+			wantPath:   ".opencode/plugins/gastown.js",
+			wantPaths:  []string{"README.md", ".opencode/plugins/gastown.js"},
+		},
+		{
+			name:       "copy",
+			line:       "C  README.md -> .opencode/plugins/gastown.js",
+			wantCode:   "C ",
+			wantSource: "README.md",
+			wantPath:   ".opencode/plugins/gastown.js",
+			wantPaths:  []string{"README.md", ".opencode/plugins/gastown.js"},
+		},
+		{
+			name:      "unmerged",
+			line:      "UU .opencode/plugins/gastown.js",
+			wantCode:  "UU",
+			wantPath:  ".opencode/plugins/gastown.js",
+			wantPaths: []string{".opencode/plugins/gastown.js"},
+			unmerged:  true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, ok := parsePorcelainStatusEntry(tt.line)
+			if !ok {
+				t.Fatal("parsePorcelainStatusEntry returned ok=false")
+			}
+			if got.Code != tt.wantCode || got.SourcePath != tt.wantSource || got.Path != tt.wantPath || got.Unmerged != tt.unmerged {
+				t.Fatalf("parsePorcelainStatusEntry(%q) = %+v", tt.line, got)
+			}
+			if paths := got.paths(); strings.Join(paths, "\x00") != strings.Join(tt.wantPaths, "\x00") {
+				t.Fatalf("paths = %v, want %v", paths, tt.wantPaths)
+			}
+		})
+	}
+}
+
+func TestCheckUncommittedWorkCapturesPorcelainRenameAndUnmergedPaths(t *testing.T) {
+	t.Run("rename to real path blocks", func(t *testing.T) {
+		dir := initTestRepo(t)
+		runGitTestCmd(t, dir, "mv", "README.md", "renamed.md")
+
+		status, err := NewGit(dir).CheckUncommittedWork()
+		if err != nil {
+			t.Fatalf("CheckUncommittedWork: %v", err)
+		}
+		if !status.HasUncommittedChanges {
+			t.Fatal("rename should mark worktree dirty")
+		}
+		want := []string{"README.md", "renamed.md"}
+		if got := status.NonRuntimePaths(); strings.Join(got, "\x00") != strings.Join(want, "\x00") {
+			t.Fatalf("NonRuntimePaths = %v, want %v", got, want)
+		}
+		if status.CleanExcludingRuntime() {
+			t.Fatal("rename to real path must block runtime-excluding clean check")
+		}
+	})
+
+	t.Run("rename from real path to runtime path blocks", func(t *testing.T) {
+		dir := initTestRepo(t)
+		if err := os.MkdirAll(filepath.Join(dir, ".opencode", "plugins"), 0755); err != nil {
+			t.Fatalf("mkdir opencode plugins: %v", err)
+		}
+		runGitTestCmd(t, dir, "mv", "README.md", ".opencode/plugins/gastown.js")
+
+		status, err := NewGit(dir).CheckUncommittedWork()
+		if err != nil {
+			t.Fatalf("CheckUncommittedWork: %v", err)
+		}
+		if !status.HasUncommittedChanges {
+			t.Fatal("runtime rename should still mark raw worktree dirty")
+		}
+		if got := status.NonRuntimePaths(); len(got) != 1 || got[0] != "README.md" {
+			t.Fatalf("NonRuntimePaths = %v, want [README.md]", got)
+		}
+		if status.CleanExcludingRuntime() {
+			t.Fatal("real source renamed to runtime destination must block runtime-excluding clean check")
+		}
+	})
+
+	t.Run("rename from runtime path to runtime path is ignored by runtime filter", func(t *testing.T) {
+		dir := initTestRepo(t)
+		if err := os.MkdirAll(filepath.Join(dir, ".opencode", "plugins"), 0755); err != nil {
+			t.Fatalf("mkdir opencode plugins: %v", err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, ".opencode", "plugins", "old.js"), []byte("runtime\n"), 0644); err != nil {
+			t.Fatalf("write runtime source: %v", err)
+		}
+		runGitTestCmd(t, dir, "add", ".opencode/plugins/old.js")
+		runGitTestCmd(t, dir, "commit", "-m", "add tracked runtime source")
+		runGitTestCmd(t, dir, "mv", ".opencode/plugins/old.js", ".opencode/plugins/gastown.js")
+
+		status, err := NewGit(dir).CheckUncommittedWork()
+		if err != nil {
+			t.Fatalf("CheckUncommittedWork: %v", err)
+		}
+		if !status.HasUncommittedChanges {
+			t.Fatal("runtime rename should still mark raw worktree dirty")
+		}
+		if got := status.NonRuntimePaths(); len(got) != 0 {
+			t.Fatalf("NonRuntimePaths = %v, want none for runtime-only rename", got)
+		}
+		if !status.CleanExcludingRuntime() {
+			t.Fatal("runtime-only rename should be clean excluding runtime")
+		}
+	})
+
+	t.Run("unmerged runtime conflict blocks", func(t *testing.T) {
+		dir := initTestRepo(t)
+		runGitTestCmd(t, dir, "branch", "-M", "main")
+		if err := os.MkdirAll(filepath.Join(dir, ".opencode", "plugins"), 0755); err != nil {
+			t.Fatalf("mkdir opencode plugins: %v", err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, ".opencode", "plugins", "gastown.js"), []byte("base\n"), 0644); err != nil {
+			t.Fatalf("write base runtime conflict file: %v", err)
+		}
+		runGitTestCmd(t, dir, "add", ".opencode/plugins/gastown.js")
+		runGitTestCmd(t, dir, "commit", "-m", "add runtime conflict base")
+		runGitTestCmd(t, dir, "switch", "-c", "side")
+		if err := os.WriteFile(filepath.Join(dir, ".opencode", "plugins", "gastown.js"), []byte("side\n"), 0644); err != nil {
+			t.Fatalf("write side runtime conflict file: %v", err)
+		}
+		runGitTestCmd(t, dir, "commit", "-am", "side runtime change")
+		runGitTestCmd(t, dir, "switch", "main")
+		if err := os.WriteFile(filepath.Join(dir, ".opencode", "plugins", "gastown.js"), []byte("main\n"), 0644); err != nil {
+			t.Fatalf("write main runtime conflict file: %v", err)
+		}
+		runGitTestCmd(t, dir, "commit", "-am", "main runtime change")
+		runGitTestCmdWantFailure(t, dir, "merge", "side")
+
+		status, err := NewGit(dir).CheckUncommittedWork()
+		if err != nil {
+			t.Fatalf("CheckUncommittedWork: %v", err)
+		}
+		if got := status.NonRuntimePaths(); len(got) != 1 || got[0] != ".opencode/plugins/gastown.js" {
+			t.Fatalf("NonRuntimePaths = %v, want [.opencode/plugins/gastown.js]", got)
+		}
+		if status.CleanExcludingRuntime() {
+			t.Fatal("runtime unmerged conflict must block runtime-excluding clean check")
+		}
+	})
+
+	t.Run("unmerged conflict blocks", func(t *testing.T) {
+		dir := initTestRepo(t)
+		runGitTestCmd(t, dir, "branch", "-M", "main")
+		if err := os.WriteFile(filepath.Join(dir, "conflict.txt"), []byte("base\n"), 0644); err != nil {
+			t.Fatalf("write base conflict file: %v", err)
+		}
+		runGitTestCmd(t, dir, "add", "conflict.txt")
+		runGitTestCmd(t, dir, "commit", "-m", "add conflict base")
+		runGitTestCmd(t, dir, "switch", "-c", "side")
+		if err := os.WriteFile(filepath.Join(dir, "conflict.txt"), []byte("side\n"), 0644); err != nil {
+			t.Fatalf("write side conflict file: %v", err)
+		}
+		runGitTestCmd(t, dir, "commit", "-am", "side change")
+		runGitTestCmd(t, dir, "switch", "main")
+		if err := os.WriteFile(filepath.Join(dir, "conflict.txt"), []byte("main\n"), 0644); err != nil {
+			t.Fatalf("write main conflict file: %v", err)
+		}
+		runGitTestCmd(t, dir, "commit", "-am", "main change")
+		runGitTestCmdWantFailure(t, dir, "merge", "side")
+
+		status, err := NewGit(dir).CheckUncommittedWork()
+		if err != nil {
+			t.Fatalf("CheckUncommittedWork: %v", err)
+		}
+		if got := status.NonRuntimePaths(); len(got) != 1 || got[0] != "conflict.txt" {
+			t.Fatalf("NonRuntimePaths = %v, want [conflict.txt]", got)
+		}
+		if status.CleanExcludingRuntime() {
+			t.Fatal("unmerged conflict must block runtime-excluding clean check")
+		}
+	})
+}
+
+func runGitTestCmd(t *testing.T, dir string, args ...string) {
+	t.Helper()
+	cmd := exec.Command("git", args...)
+	cmd.Dir = dir
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("git %v failed: %v\n%s", args, err, out)
+	}
+}
+
+func runGitTestCmdWantFailure(t *testing.T, dir string, args ...string) {
+	t.Helper()
+	cmd := exec.Command("git", args...)
+	cmd.Dir = dir
+	if out, err := cmd.CombinedOutput(); err == nil {
+		t.Fatalf("git %v unexpectedly succeeded\n%s", args, out)
 	}
 }
 

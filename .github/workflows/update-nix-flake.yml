@@ -1,0 +1,163 @@
+name: Update Nix Flake
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Semantic version to write into flake.nix, without leading v"
+        required: true
+        type: string
+      base_branch:
+        description: "Branch the generated PR should target"
+        required: true
+        default: "release/v1.2.0"
+        type: string
+      pr_branch:
+        description: "Branch to create or update for the generated PR"
+        required: false
+        default: ""
+        type: string
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  update-nix-flake:
+    name: Update flake.nix
+    if: ${{ github.repository == 'gastownhall/gastown' }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout target branch
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        with:
+          ref: ${{ inputs.base_branch }}
+          fetch-depth: 0
+
+      - name: Set up Go
+        uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6
+        with:
+          go-version: '1.26'
+          cache: true
+
+      - name: Configure git
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Update flake version and vendor hash
+        id: update
+        env:
+          VERSION: ${{ inputs.version }}
+          BASE_BRANCH: ${{ inputs.base_branch }}
+          INPUT_PR_BRANCH: ${{ inputs.pr_branch }}
+        run: |
+          set -euo pipefail
+
+          if ! [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "ERROR: version must match X.Y.Z, got '$VERSION'" >&2
+            exit 1
+          fi
+
+          if [ -n "$INPUT_PR_BRANCH" ]; then
+            PR_BRANCH="$INPUT_PR_BRANCH"
+          else
+            PR_BRANCH="automation/update-nix-flake-v${VERSION}"
+          fi
+
+          git switch -C "$PR_BRANCH"
+
+          perl -0pi -e 's/(pname = "gt";\n\s*version = ")[^"]+(";)/$1$ENV{VERSION}$2/s' flake.nix
+
+          tmp_dir=".tmp-nix-vendor"
+          rm -rf "$tmp_dir"
+          mkdir -p "$tmp_dir"
+          trap 'rm -rf "$tmp_dir"' EXIT
+
+          GOFLAGS="-mod=readonly" go mod vendor -o "$tmp_dir/vendor" 2>/dev/null || go mod vendor -o "$tmp_dir/vendor"
+
+          new_hash="$(
+            docker run --rm \
+              -v "$PWD:/repo:ro" \
+              -w /repo \
+              nixos/nix:latest \
+              nix --extra-experimental-features nix-command hash path "$tmp_dir/vendor"
+          )"
+
+          if [ -z "$new_hash" ]; then
+            echo "ERROR: failed to compute vendorHash" >&2
+            exit 1
+          fi
+
+          NEW_HASH="$new_hash" perl -0pi -e 's/vendorHash = "[^"]+";/vendorHash = "$ENV{NEW_HASH}";/' flake.nix
+
+          echo "pr_branch=$PR_BRANCH" >> "$GITHUB_OUTPUT"
+
+          if git diff --quiet -- flake.nix; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            echo "flake.nix already matches version $VERSION and vendorHash $new_hash"
+            exit 0
+          fi
+
+          echo "changed=true" >> "$GITHUB_OUTPUT"
+          git diff -- flake.nix
+
+      - name: Commit and push
+        if: steps.update.outputs.changed == 'true'
+        env:
+          VERSION: ${{ inputs.version }}
+          PR_BRANCH: ${{ steps.update.outputs.pr_branch }}
+        run: |
+          set -euo pipefail
+          git add flake.nix
+          git commit -m "chore: update nix flake for v${VERSION}"
+          if git ls-remote --exit-code --heads origin "$PR_BRANCH" >/dev/null 2>&1; then
+            git fetch origin "$PR_BRANCH:refs/remotes/origin/$PR_BRANCH"
+            git push --force-with-lease origin "HEAD:${PR_BRANCH}"
+          else
+            git push origin "HEAD:${PR_BRANCH}"
+          fi
+
+      - name: Open or update pull request
+        if: steps.update.outputs.changed == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ inputs.version }}
+          BASE_BRANCH: ${{ inputs.base_branch }}
+          PR_BRANCH: ${{ steps.update.outputs.pr_branch }}
+        run: |
+          set -euo pipefail
+
+          title="chore: update nix flake for v${VERSION}"
+          body="$(cat <<BODY
+          Updates flake.nix for v${VERSION}.
+
+          - Sets the Nix package version to ${VERSION}
+          - Recomputes vendorHash from the Go module vendor tree using a disposable nixos/nix container
+
+          This workflow only updates packaging metadata. It does not publish a release.
+          BODY
+          )"
+
+          pr_number="$(gh pr list \
+            --repo "$GITHUB_REPOSITORY" \
+            --head "$PR_BRANCH" \
+            --base "$BASE_BRANCH" \
+            --state open \
+            --json number \
+            --jq '.[0].number // ""')"
+
+          if [ -n "$pr_number" ]; then
+            gh pr edit "$pr_number" \
+              --repo "$GITHUB_REPOSITORY" \
+              --title "$title" \
+              --body "$body" \
+              --base "$BASE_BRANCH"
+          else
+            gh pr create \
+              --repo "$GITHUB_REPOSITORY" \
+              --base "$BASE_BRANCH" \
+              --head "$PR_BRANCH" \
+              --title "$title" \
+              --body "$body"
+          fi

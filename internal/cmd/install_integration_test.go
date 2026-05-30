@@ -4,13 +4,17 @@ package cmd
 
 import (
 	"encoding/json"
+	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 
 	"github.com/steveyegge/gastown/internal/config"
+	"github.com/steveyegge/gastown/internal/testutil"
+	"gopkg.in/yaml.v3"
 )
 
 // TestInstallCreatesCorrectStructure validates that a fresh gt install
@@ -22,21 +26,20 @@ func TestInstallCreatesCorrectStructure(t *testing.T) {
 	// Build gt binary for testing
 	gtBinary := buildGT(t)
 
-	// HOME is overridden for isolation; configure git identity so EnsureDoltIdentity works.
-	env := append(os.Environ(), "HOME="+tmpDir)
+	// HOME and Dolt port are overridden for isolation; configure git identity so EnsureDoltIdentity works.
+	env, doltPort := isolatedE2EDoltEnv(t, tmpDir)
 	configureGitIdentity(t, env)
-
-	// Kill any stale dolt from a previous test to avoid port 3307 conflict.
-	_ = exec.Command("pkill", "-f", "dolt sql-server").Run()
-	t.Cleanup(func() { _ = exec.Command("pkill", "-f", "dolt sql-server").Run() })
+	testutil.ReapOwnedDoltOnCleanup(t, hqPath)
 
 	// Run gt install
-	cmd := exec.Command(gtBinary, "install", hqPath, "--name", "test-town")
+	cmd := exec.Command(gtBinary, "install", hqPath, "--name", "test-town", "--dolt-port", doltPort)
+	cmd.Dir = tmpDir
 	cmd.Env = env
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		t.Fatalf("gt install failed: %v\nOutput: %s", err, output)
 	}
+	assertDoltConfigPort(t, hqPath, doltPort)
 
 	// Verify directory structure
 	assertDirExists(t, hqPath, "HQ root")
@@ -88,21 +91,20 @@ func TestInstallBeadsHasCorrectPrefix(t *testing.T) {
 	// Build gt binary for testing
 	gtBinary := buildGT(t)
 
-	// HOME is overridden for isolation; configure git identity so EnsureDoltIdentity works.
-	env := append(os.Environ(), "HOME="+tmpDir)
+	// HOME and Dolt port are overridden for isolation; configure git identity so EnsureDoltIdentity works.
+	env, doltPort := isolatedE2EDoltEnv(t, tmpDir)
 	configureGitIdentity(t, env)
-
-	// Kill any stale dolt from a previous test to avoid port 3307 conflict.
-	_ = exec.Command("pkill", "-f", "dolt sql-server").Run()
-	t.Cleanup(func() { _ = exec.Command("pkill", "-f", "dolt sql-server").Run() })
+	testutil.ReapOwnedDoltOnCleanup(t, hqPath)
 
 	// Run gt install (includes beads init by default)
-	cmd := exec.Command(gtBinary, "install", hqPath)
+	cmd := exec.Command(gtBinary, "install", hqPath, "--dolt-port", doltPort)
+	cmd.Dir = tmpDir
 	cmd.Env = env
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		t.Fatalf("gt install failed: %v\nOutput: %s", err, output)
 	}
+	assertDoltConfigPort(t, hqPath, doltPort)
 
 	// Verify .beads/ directory exists
 	beadsDir := filepath.Join(hqPath, ".beads")
@@ -352,21 +354,20 @@ func TestInstallFormulasProvisioned(t *testing.T) {
 
 	gtBinary := buildGT(t)
 
-	// HOME is overridden for isolation; configure git identity so EnsureDoltIdentity works.
-	env := append(os.Environ(), "HOME="+tmpDir)
+	// HOME and Dolt port are overridden for isolation; configure git identity so EnsureDoltIdentity works.
+	env, doltPort := isolatedE2EDoltEnv(t, tmpDir)
 	configureGitIdentity(t, env)
-
-	// Kill any stale dolt from a previous test to avoid port 3307 conflict.
-	_ = exec.Command("pkill", "-f", "dolt sql-server").Run()
-	t.Cleanup(func() { _ = exec.Command("pkill", "-f", "dolt sql-server").Run() })
+	testutil.ReapOwnedDoltOnCleanup(t, hqPath)
 
 	// Run gt install (includes beads and formula provisioning)
-	cmd := exec.Command(gtBinary, "install", hqPath)
+	cmd := exec.Command(gtBinary, "install", hqPath, "--dolt-port", doltPort)
+	cmd.Dir = tmpDir
 	cmd.Env = env
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		t.Fatalf("gt install failed: %v\nOutput: %s", err, output)
 	}
+	assertDoltConfigPort(t, hqPath, doltPort)
 
 	// Verify .beads/formulas/ directory exists
 	formulasDir := filepath.Join(hqPath, ".beads", "formulas")
@@ -504,6 +505,30 @@ func assertFileExists(t *testing.T, path, name string) {
 	}
 }
 
+func assertDoltConfigPort(t *testing.T, hqPath, wantPort string) {
+	t.Helper()
+	configPath := filepath.Join(hqPath, ".dolt-data", "config.yaml")
+	data, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatalf("reading Dolt config %s: %v", configPath, err)
+	}
+	var cfg struct {
+		Listener struct {
+			Port int `yaml:"port"`
+		} `yaml:"listener"`
+	}
+	if err := yaml.Unmarshal(data, &cfg); err != nil {
+		t.Fatalf("parsing Dolt config %s: %v", configPath, err)
+	}
+	want, err := strconv.Atoi(wantPort)
+	if err != nil {
+		t.Fatalf("invalid expected Dolt port %q: %v", wantPort, err)
+	}
+	if cfg.Listener.Port != want {
+		t.Fatalf("Dolt config port = %d, want isolated port %d\n%s", cfg.Listener.Port, want, data)
+	}
+}
+
 func assertSlotValue(t *testing.T, townRoot, issueID, slot, want string) {
 	t.Helper()
 	cmd := exec.Command("bd", "--json", "slot", "show", issueID)
@@ -550,19 +575,17 @@ func TestInstallDoctorClean(t *testing.T) {
 	hqPath := filepath.Join(tmpDir, "test-hq")
 	gtBinary := buildGT(t)
 
-	// Clean environment for predictable behavior
-	env := cleanE2EEnv()
-	env = append(env, "HOME="+tmpDir)
-
-	// Kill any stale dolt from previous test BEFORE install to avoid port 3307 conflict.
-	_ = exec.Command("pkill", "-f", "dolt sql-server").Run()
+	// Clean environment and isolated Dolt port for predictable, non-destructive behavior.
+	env, doltPort := isolatedE2EDoltEnv(t, tmpDir)
+	testutil.ReapOwnedDoltOnCleanup(t, hqPath)
 
 	// Set up git identity in the test's temp HOME so EnsureDoltIdentity can copy it.
 	configureGitIdentity(t, env)
 
 	// 1. Install town with git (now includes dolt identity, HQ init, server start)
 	t.Run("install", func(t *testing.T) {
-		runGTCmd(t, gtBinary, tmpDir, env, "install", hqPath, "--name", "test-town", "--git")
+		runGTCmd(t, gtBinary, tmpDir, env, "install", hqPath, "--name", "test-town", "--git", "--dolt-port", doltPort)
+		assertDoltConfigPort(t, hqPath, doltPort)
 	})
 	t.Cleanup(func() {
 		cmd := exec.Command(gtBinary, "dolt", "stop")
@@ -684,19 +707,17 @@ func TestInstallWithDaemon(t *testing.T) {
 	hqPath := filepath.Join(tmpDir, "test-hq")
 	gtBinary := buildGT(t)
 
-	// Clean environment for predictable behavior
-	env := cleanE2EEnv()
-	env = append(env, "HOME="+tmpDir)
-
-	// Kill any stale dolt from previous test BEFORE install to avoid port 3307 conflict.
-	_ = exec.Command("pkill", "-f", "dolt sql-server").Run()
+	// Clean environment and isolated Dolt port for predictable, non-destructive behavior.
+	env, doltPort := isolatedE2EDoltEnv(t, tmpDir)
+	testutil.ReapOwnedDoltOnCleanup(t, hqPath)
 
 	// Set up git identity in the test's temp HOME so EnsureDoltIdentity can copy it.
 	configureGitIdentity(t, env)
 
 	// 1. Install town with git (now includes dolt identity, HQ init, server start)
 	t.Run("install", func(t *testing.T) {
-		runGTCmd(t, gtBinary, tmpDir, env, "install", hqPath, "--name", "test-town", "--git")
+		runGTCmd(t, gtBinary, tmpDir, env, "install", hqPath, "--name", "test-town", "--git", "--dolt-port", doltPort)
+		assertDoltConfigPort(t, hqPath, doltPort)
 	})
 	t.Cleanup(func() {
 		cmd := exec.Command(gtBinary, "dolt", "stop")
@@ -767,20 +788,40 @@ func TestInstallWithDaemon(t *testing.T) {
 	})
 }
 
-// cleanE2EEnv returns os.Environ() with GT_* variables removed, except Dolt
-// test routing variables so subprocesses connect to the ephemeral Dolt test
-// server started by TestMain instead of defaulting to port 3307.
+// cleanE2EEnv returns os.Environ() with Gas Town and Beads routing variables
+// removed. E2E tests add an explicit isolated Dolt port per test instead of
+// inheriting production/default Dolt routing from the developer environment.
 func cleanE2EEnv() []string {
 	var clean []string
 	for _, env := range os.Environ() {
-		if strings.HasPrefix(env, "GT_") &&
-			!strings.HasPrefix(env, "GT_DOLT_PORT=") &&
-			!strings.HasPrefix(env, "GT_TEST_EXTERNAL_DOLT=") {
+		if strings.HasPrefix(env, "GT_") || strings.HasPrefix(env, "BD_") || strings.HasPrefix(env, "BEADS_") {
 			continue
 		}
 		clean = append(clean, env)
 	}
 	return clean
+}
+
+func isolatedE2EDoltEnv(t *testing.T, homeDir string) ([]string, string) {
+	t.Helper()
+	port := strconv.Itoa(freeE2EDoltPort(t))
+	env := append(cleanE2EEnv(),
+		"HOME="+homeDir,
+		"GT_DOLT_PORT="+port,
+		"BEADS_DOLT_PORT="+port,
+		"BEADS_DOLT_AUTO_START=0",
+	)
+	return env, port
+}
+
+func freeE2EDoltPort(t *testing.T) int {
+	t.Helper()
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("allocate free TCP port: %v", err)
+	}
+	defer ln.Close()
+	return ln.Addr().(*net.TCPAddr).Port
 }
 
 // configureGitIdentity sets git global config in the test's temp HOME directory.

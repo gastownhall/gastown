@@ -577,10 +577,11 @@ func normalizeAddress(s string) string {
 		}
 	}
 
-	// Normalize crew/ and polecats/ to canonical form:
+	// Normalize crew/, polecat/, and polecats/ to canonical form:
 	// "rig/crew/name" → "rig/name"
+	// "rig/polecat/name" → "rig/name" (legacy singular input)
 	// "rig/polecats/name" → "rig/name"
-	if len(parts) == 3 && (parts[1] == "crew" || parts[1] == "polecats") {
+	if len(parts) == 3 && (parts[1] == "crew" || parts[1] == "polecat" || parts[1] == "polecats") {
 		return parts[0] + "/" + parts[2]
 	}
 

@@ -3,7 +3,6 @@ package mail
 import (
 	"encoding/json"
 	"fmt"
-	"os"
 	"strings"
 	"time"
 
@@ -72,9 +71,10 @@ func DeliveryAckLabelSequence(recipientIdentity string, at time.Time, existingLa
 	}
 }
 
-// AcknowledgeDeliveryBead writes phase-2 delivery ack labels for a bead.
-// It reads existing labels for idempotent retry (reusing prior timestamps),
-// then writes the ack label sequence. Uses runBdCommand with timeouts.
+// AcknowledgeDeliveryBead writes phase-2 delivery ack labels for a bead and
+// converges terminal state by removing delivery:pending after delivery:acked is
+// durable. It is safe to call for already-acked messages and no-ops for beads
+// without delivery labels.
 //
 // If beadID routes to a different rig than beadsDir, BEADS_DIR is stripped
 // ("") so bd performs its own prefix-based routing via routes.jsonl. Pinning
@@ -85,12 +85,16 @@ func AcknowledgeDeliveryBead(workDir, beadsDir, beadID, recipientIdentity string
 	beadsDir = routedBeadsDirForID(beadsDir, beadID)
 	existingLabels, readErr := readBeadLabelsShared(workDir, beadsDir, beadID)
 	if readErr != nil {
-		// Log but proceed with empty labels — fresh timestamp is acceptable
-		// degradation vs blocking the ack entirely.
-		fmt.Fprintf(os.Stderr, "delivery ack: could not read labels for %s: %v (proceeding with fresh timestamp)\n", beadID, readErr)
+		return readErr
 	}
 
-	for _, label := range deliveryAckLabelsToWrite(recipientIdentity, timeNow().UTC(), existingLabels) {
+	state, _, _ := ParseDeliveryLabels(existingLabels)
+	if state == "" {
+		return nil
+	}
+
+	toWrite := deliveryAckLabelsToWrite(recipientIdentity, timeNow().UTC(), existingLabels)
+	for _, label := range toWrite {
 		args := []string{"label", "add", beadID, label}
 		ctx, cancel := bdWriteCtx()
 		_, err := runBdCommand(ctx, args, workDir, beadsDir)
@@ -103,7 +107,45 @@ func AcknowledgeDeliveryBead(workDir, beadsDir, beadID, recipientIdentity string
 		}
 		return err
 	}
+
+	labelsAfterAck := append(append([]string{}, existingLabels...), toWrite...)
+	if deliveryPendingRemovalNeeded(labelsAfterAck) {
+		return removeDeliveryPendingLabel(workDir, beadsDir, beadID)
+	}
 	return nil
+}
+
+func deliveryPendingRemovalNeeded(labels []string) bool {
+	hasPending := false
+	hasAcked := false
+	for _, label := range labels {
+		switch label {
+		case DeliveryLabelPending:
+			hasPending = true
+		case DeliveryLabelAcked:
+			hasAcked = true
+		}
+	}
+	return hasPending && hasAcked
+}
+
+func removeDeliveryPendingLabel(workDir, beadsDir, beadID string) error {
+	args := []string{"label", "remove", beadID, DeliveryLabelPending}
+	ctx, cancel := bdWriteCtx()
+	_, err := runBdCommand(ctx, args, workDir, beadsDir)
+	cancel()
+	if err == nil {
+		return nil
+	}
+	if bdErr, ok := err.(*bdError); ok {
+		switch {
+		case bdErr.ContainsError("does not have label"):
+			return nil
+		case bdErr.ContainsError("not found") || bdErr.ContainsError("no issue found"):
+			return ErrMessageNotFound
+		}
+	}
+	return err
 }
 
 // deliveryAckLabelsToWrite returns the idempotent ack labels that are not
@@ -150,6 +192,9 @@ func readBeadLabelsShared(workDir, beadsDir, id string) ([]string, error) {
 	defer cancel()
 	stdout, err := runBdCommand(ctx, args, workDir, beadsDir)
 	if err != nil {
+		if bdErr, ok := err.(*bdError); ok && (bdErr.ContainsError("not found") || bdErr.ContainsError("no issue found")) {
+			return nil, ErrMessageNotFound
+		}
 		return nil, fmt.Errorf("bd show %s: %w", id, err)
 	}
 	var bms []BeadsMessage

@@ -7,7 +7,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"time"
 
@@ -24,7 +23,6 @@ import (
 	"github.com/steveyegge/gastown/internal/telemetry"
 	"github.com/steveyegge/gastown/internal/templates"
 	"github.com/steveyegge/gastown/internal/tmux"
-	"github.com/steveyegge/gastown/internal/townlog"
 	"github.com/steveyegge/gastown/internal/workspace"
 )
 
@@ -353,6 +351,10 @@ func runDone(cmd *cobra.Command, args []string) (retErr error) {
 		// Re-check to get file details (cleanup detection already confirmed uncommitted changes)
 		workStatus, err := g.CheckUncommittedWork()
 		if err == nil && workStatus.HasUncommittedChanges && !workStatus.CleanExcludingRuntime() {
+			if len(workStatus.UnmergedFiles) > 0 {
+				return fmt.Errorf("cannot auto-save unmerged conflicts: %s\nResolve conflicts first, or use --status DEFERRED to exit without completing", strings.Join(workStatus.UnmergedFiles, ", "))
+			}
+
 			fmt.Printf("\n%s Uncommitted changes detected — auto-saving to prevent work loss\n", style.Bold.Render("⚠"))
 			fmt.Printf("  Files: %s\n\n", workStatus.String())
 
@@ -370,9 +372,9 @@ func runDone(cmd *cobra.Command, args []string) (retErr error) {
 						_ = g.ResetFiles("CLAUDE.md")
 					}
 				}
-				// Unstage runtime/ephemeral directories (mirrors checkpoint_dog exclusions).
-				for _, dir := range []string{".beads/", ".claude/", ".runtime/", "__pycache__/"} {
-					_ = g.ResetFiles(dir)
+				// Unstage runtime/ephemeral artifacts using the centralized git policy.
+				for _, path := range workStatus.RuntimeArtifactPaths() {
+					_ = g.ResetFiles(path)
 				}
 				// Unstage deletions of tracked files. A safety-net auto-commit should
 				// preserve work (additions + modifications), never destroy it (deletions).
@@ -499,7 +501,7 @@ func runDone(cmd *cobra.Command, args []string) (retErr error) {
 		}
 
 		// Block if there are uncommitted changes (would be lost on completion).
-		// Runtime artifacts (.claude/, .beads/, .runtime/, __pycache__/) are
+		// Runtime artifacts (.claude/, .opencode/, .beads/, .runtime/, __pycache__/) are
 		// excluded — these are toolchain-managed and normally gitignored.
 		// Without this filter, gt done fails on virtually every polecat because
 		// Cursor creates .claude/ at runtime in every workspace.
@@ -1348,7 +1350,7 @@ func runDone(cmd *cobra.Command, args []string) (retErr error) {
 
 notifyWitness:
 	// Nudge refinery — MR bead is already on main (transaction-based shared main).
-	if mrID != "" {
+	if shouldNudgeRefinery(exitType, mrID) {
 		nudgeRefinery(rigName, "MERGE_READY received - check inbox for pending work")
 	}
 
@@ -1590,6 +1592,16 @@ func verifyPushedCommitWithBareFallback(g *git.Git, townRoot, rigName, branch, c
 		return nil
 	}
 	return verifyErr
+}
+
+// shouldNudgeRefinery reports whether a gt done invocation may wake the
+// refinery. Only COMPLETED exits create an MR bead; DEFERRED and ESCALATED
+// exits (polecats finishing operational tasks with no code changes) must
+// never emit MQ_SUBMIT, or the refinery wakes from backoff to find an empty
+// merge queue (gh#3885). The exitType check is defensive: it holds the
+// invariant even if a future code path populates mrID outside COMPLETED.
+func shouldNudgeRefinery(exitType, mrID string) bool {
+	return exitType == ExitCompleted && mrID != ""
 }
 
 // setDoneIntentLabel writes a done-intent:<type>:<unix-ts> label on the agent bead
@@ -1955,117 +1967,12 @@ func parseCleanupStatus(s string) polecat.CleanupStatus {
 	}
 }
 
-// selfNukePolecat deletes this polecat's worktree.
-// DEPRECATED (gt-4ac): No longer called from gt done. Polecats now go idle
-// instead of self-nuking. Kept for explicit nuke scenarios.
-// This is safe because:
-// 1. Work has been pushed to origin (verified below)
-// 2. We're about to exit anyway
-// 3. Unix allows deleting directories while processes run in them
-func selfNukePolecat(roleInfo RoleInfo, _ string) error {
-	if roleInfo.Role != RolePolecat || roleInfo.Polecat == "" || roleInfo.Rig == "" {
-		return fmt.Errorf("not a polecat: role=%s, polecat=%s, rig=%s", roleInfo.Role, roleInfo.Polecat, roleInfo.Rig)
-	}
-
-	// Get polecat manager using existing helper
-	mgr, _, err := getPolecatManager(roleInfo.Rig)
-	if err != nil {
-		return fmt.Errorf("getting polecat manager: %w", err)
-	}
-
-	// Verify branch actually exists on a remote before nuking local copy.
-	// If push didn't land (no remote, auth failure, etc.), preserve worktree
-	// so Witness/Refinery can still access the branch.
-	clonePath := mgr.ClonePath(roleInfo.Polecat)
-	polecatGit := git.NewGit(clonePath)
-	remotes, err := polecatGit.Remotes()
-	if err != nil || len(remotes) == 0 {
-		return fmt.Errorf("no git remotes configured — preserving worktree to prevent data loss")
-	}
-	branchName, err := polecatGit.CurrentBranch()
-	if err != nil {
-		return fmt.Errorf("cannot determine current branch — preserving worktree: %w", err)
-	}
-	pushed := false
-	for _, remote := range remotes {
-		exists, err := polecatGit.RemoteBranchExists(remote, branchName)
-		if err == nil && exists {
-			pushed = true
-			break
-		}
-	}
-	if !pushed {
-		return fmt.Errorf("branch %s not found on any remote — preserving worktree", branchName)
-	}
-
-	// Use nuclear=true since we verified the branch is pushed
-	// selfNuke=true because polecat is deleting its own worktree from inside it
-	if err := mgr.RemoveWithOptions(roleInfo.Polecat, true, true, true); err != nil {
-		return fmt.Errorf("removing worktree: %w", err)
-	}
-
-	return nil
-}
-
 // isPolecatActor checks if a BD_ACTOR value represents a polecat.
 // Polecat actors have format: rigname/polecats/polecatname
 // Non-polecat actors have formats like: gastown/crew/name, rigname/witness, etc.
 func isPolecatActor(actor string) bool {
 	parts := strings.Split(actor, "/")
 	return len(parts) >= 2 && parts[1] == "polecats"
-}
-
-// selfKillSession terminates the polecat's own tmux session after logging the event.
-// DEPRECATED (gt-hdf8): No longer called from gt done. Polecats now transition to
-// IDLE with session preserved instead of self-killing. Kept for explicit kill scenarios
-// (e.g., Witness-directed termination).
-//
-// The polecat determines its session from environment variables:
-// - GT_RIG: the rig name
-// - GT_POLECAT: the polecat name
-// Session name format: gt-<rig>-<polecat>
-func selfKillSession(townRoot string, roleInfo RoleInfo) error {
-	// Get session info from environment (set at session startup)
-	rigName := os.Getenv("GT_RIG")
-	polecatName := os.Getenv("GT_POLECAT")
-
-	// Fall back to roleInfo if env vars not set (shouldn't happen but be safe)
-	if rigName == "" {
-		rigName = roleInfo.Rig
-	}
-	if polecatName == "" {
-		polecatName = roleInfo.Polecat
-	}
-
-	if rigName == "" || polecatName == "" {
-		return fmt.Errorf("cannot determine session: rig=%q, polecat=%q", rigName, polecatName)
-	}
-
-	sessionName := session.PolecatSessionName(session.PrefixFor(rigName), polecatName)
-	agentID := fmt.Sprintf("%s/polecats/%s", rigName, polecatName)
-
-	// Log to townlog (human-readable audit log)
-	if townRoot != "" {
-		logger := townlog.NewLogger(townRoot)
-		_ = logger.Log(townlog.EventKill, agentID, "self-clean: done means idle")
-	}
-
-	// Log to events (JSON audit log with structured payload)
-	_ = events.LogFeed(events.TypeSessionDeath, agentID,
-		events.SessionDeathPayload(sessionName, agentID, "self-clean: done means idle", "gt done"))
-
-	// Kill our own tmux session with proper process cleanup
-	// This will terminate Claude and all child processes, completing the self-cleaning cycle.
-	// We use KillSessionWithProcessesExcluding to ensure no orphaned processes are left behind,
-	// while excluding our own PID to avoid killing ourselves before cleanup completes.
-	// The tmux kill-session at the end will terminate us along with the session.
-	t := tmux.NewTmux()
-	myPID := strconv.Itoa(os.Getpid())
-	if err := t.KillSessionWithProcessesExcluding(sessionName, []string{myPID}); err != nil {
-		return fmt.Errorf("killing session %s: %w", sessionName, err)
-	}
-
-	return nil
 }
 
 // stripOverlayCLAUDEmd detects and removes Gas Town overlay content from CLAUDE.md

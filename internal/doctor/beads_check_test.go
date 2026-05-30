@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
+	"strings"
 	"testing"
 )
 
@@ -328,8 +330,8 @@ func TestDatabasePrefixCheck_NoBeadsDir(t *testing.T) {
 
 // mockDBPrefixGetter returns canned prefixes by directory for testing.
 type mockDBPrefixGetter struct {
-	prefixes   map[string]string // rigPath -> prefix
-	setCalls   []prefixSetCall   // recorded Fix calls (not used by getter, but handy for the mock)
+	prefixes map[string]string // rigPath -> prefix
+	setCalls []prefixSetCall   // recorded Fix calls (not used by getter, but handy for the mock)
 }
 
 type prefixSetCall struct {
@@ -443,6 +445,104 @@ func TestDatabasePrefixCheck_DetectsMismatchForOwnDB(t *testing.T) {
 	m := check.mismatches[0]
 	if m.routesPrefix != "mm" || m.dbPrefix != "wrong" {
 		t.Errorf("unexpected mismatch data: routes=%q db=%q", m.routesPrefix, m.dbPrefix)
+	}
+}
+
+func TestDatabasePrefixCheck_UsesMetadataDatabaseEnv(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("fake bd stub is shell-specific")
+	}
+
+	tmpDir := t.TempDir()
+	townBeads := filepath.Join(tmpDir, ".beads")
+	if err := os.MkdirAll(townBeads, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(townBeads, "routes.jsonl"), []byte("{\"prefix\":\"gt-\",\"path\":\"gastown/mayor/rig\"}\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	rigPath := filepath.Join(tmpDir, "gastown", "mayor", "rig")
+	beadsDir := filepath.Join(rigPath, ".beads")
+	if err := os.MkdirAll(beadsDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(beadsDir, "metadata.json"), []byte(`{"dolt_mode":"server","dolt_database":"gastown"}`), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	binDir := t.TempDir()
+	script := `#!/usr/bin/env bash
+if [ "$1 $2 $3" = "config get issue_prefix" ]; then
+  if [ "$BEADS_DIR" = "$EXPECT_BEADS_DIR" ] && [ "$BEADS_DOLT_SERVER_DATABASE" = "gastown" ]; then
+    printf 'gt\n'
+  else
+    printf 'hq\n'
+  fi
+  exit 0
+fi
+exit 1
+`
+	if err := os.WriteFile(filepath.Join(binDir, "bd"), []byte(script), 0755); err != nil {
+		t.Fatalf("write fake bd: %v", err)
+	}
+	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	t.Setenv("EXPECT_BEADS_DIR", beadsDir)
+	t.Setenv("BEADS_DOLT_SERVER_DATABASE", "stale")
+	t.Setenv("BEADS_DIR", filepath.Join(tmpDir, "wrong", ".beads"))
+
+	check := NewDatabasePrefixCheck()
+	result := check.Run(&CheckContext{TownRoot: tmpDir})
+	if result.Status != StatusOK {
+		t.Fatalf("expected StatusOK with metadata-selected database, got %v: %s details=%v", result.Status, result.Message, result.Details)
+	}
+}
+
+func TestDatabasePrefixCheck_FixUsesMetadataDatabaseEnv(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("fake bd stub is shell-specific")
+	}
+
+	tmpDir := t.TempDir()
+	rigPath := filepath.Join(tmpDir, "gastown", "mayor", "rig")
+	beadsDir := filepath.Join(rigPath, ".beads")
+	if err := os.MkdirAll(beadsDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(beadsDir, "metadata.json"), []byte(`{"dolt_mode":"server","dolt_database":"gastown"}`), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	logPath := filepath.Join(t.TempDir(), "bd.log")
+	binDir := t.TempDir()
+	script := `#!/usr/bin/env bash
+printf 'args=%s db=%s beads=%s\n' "$*" "${BEADS_DOLT_SERVER_DATABASE:-<unset>}" "${BEADS_DIR:-<unset>}" >> "$BD_LOG"
+exit 0
+`
+	if err := os.WriteFile(filepath.Join(binDir, "bd"), []byte(script), 0755); err != nil {
+		t.Fatalf("write fake bd: %v", err)
+	}
+	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	t.Setenv("BD_LOG", logPath)
+	t.Setenv("BEADS_DOLT_SERVER_DATABASE", "stale")
+	t.Setenv("BEADS_DIR", filepath.Join(tmpDir, "wrong", ".beads"))
+
+	check := NewDatabasePrefixCheck()
+	check.mismatches = []databasePrefixMismatch{{rigPath: "gastown/mayor/rig", routesPrefix: "gt", dbPrefix: "hq"}}
+	if err := check.Fix(&CheckContext{TownRoot: tmpDir}); err != nil {
+		t.Fatalf("Fix failed: %v", err)
+	}
+
+	logData, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatalf("read bd log: %v", err)
+	}
+	log := string(logData)
+	if !strings.Contains(log, "args=config set issue_prefix gt") || !strings.Contains(log, "db=gastown") || !strings.Contains(log, "beads="+beadsDir) {
+		t.Fatalf("bd config set did not use metadata database env; log:\n%s", log)
+	}
+	if strings.Contains(log, "stale") || strings.Contains(log, filepath.Join(tmpDir, "wrong", ".beads")) {
+		t.Fatalf("stale beads env leaked into fix command; log:\n%s", log)
 	}
 }
 

@@ -496,9 +496,17 @@ func AgentBeadIDToAddress(id string) string {
 			rig := strings.Join(parts[:i], "-")
 			if i+1 < len(parts) {
 				name := strings.Join(parts[i+1:], "-")
-				return rig + "/" + parts[i] + "/" + name
+				role := parts[i]
+				if role == constants.RolePolecat {
+					role = "polecats"
+				}
+				return rig + "/" + role + "/" + name
 			}
-			return rig + "/" + parts[i]
+			role := parts[i]
+			if role == constants.RolePolecat {
+				role = "polecats"
+			}
+			return rig + "/" + role
 		case "dog":
 			// Town-level named: gt-dog-alpha
 			if i+1 < len(parts) {

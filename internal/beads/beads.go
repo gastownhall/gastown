@@ -16,6 +16,7 @@ import (
 	"time"
 
 	beadsdk "github.com/steveyegge/beads"
+	gtlock "github.com/steveyegge/gastown/internal/lock"
 	"github.com/steveyegge/gastown/internal/runtime"
 	"github.com/steveyegge/gastown/internal/telemetry"
 	"github.com/steveyegge/gastown/internal/util"
@@ -89,7 +90,8 @@ func BdSupportsAllowStaleWithEnv(env []string) bool {
 	// Check output for "unknown flag" to detect lack of support. Treat probe
 	// errors/timeouts as unsupported so higher-level commands fail closed
 	// instead of hanging on a wedged bd subprocess.
-	supported := err == nil && !strings.Contains(combinedOut.String(), "unknown flag")
+	probeOut := strings.TrimSpace(combinedOut.String())
+	supported := err == nil && probeOut != "" && !strings.Contains(probeOut, "unknown flag")
 
 	bdAllowStaleMu.Lock()
 	if bdAllowStalePath != bdPath {
@@ -306,7 +308,7 @@ type CreateOptions struct {
 	Parent      string
 	Actor       string // Who is creating this issue (populates created_by)
 	Ephemeral   bool   // Create as ephemeral (wisp) - not synced to git
-	Rig         string // Target rig database (e.g., "gantry"). When set, routes bd create to the rig's directory via --repo.
+	Rig         string // Target rig database (e.g., "gantry"). When set, binds create to the rig's .beads directory.
 }
 
 // UpdateOptions specifies options for updating an issue.
@@ -523,6 +525,8 @@ func (b *Beads) Init(prefix string) error {
 // Investigation: dc-1pq8 (forensic report 2026-05-02).
 const bdSubprocessTimeout = 60 * time.Second
 
+const bdReadThrottleTimeout = 5 * time.Second
+
 // resolveBdSubprocessTimeout returns the configured timeout, honoring the
 // GT_BD_TIMEOUT_SEC env var override (must parse as a positive integer).
 func resolveBdSubprocessTimeout() time.Duration {
@@ -561,6 +565,15 @@ func (b *Beads) runWithStdin(stdinData []byte, args ...string) (_ []byte, retErr
 	beadsDir := b.getResolvedBeadsDir()
 	runEnv := append(b.buildRunEnv(), "BEADS_DIR="+beadsDir)
 	fullArgs := MaybePrependAllowStaleWithEnv(runEnv, args)
+	if shouldThrottleBDRead(fullArgs) {
+		unlock, err := b.acquireBDReadThrottle(bdReadThrottleTimeout)
+		if err != nil {
+			return nil, fmt.Errorf("bd %s: %w", strings.Join(fullArgs, " "), err)
+		}
+		if unlock != nil {
+			defer unlock()
+		}
+	}
 
 	// Bound the subprocess runtime so a slow Dolt response doesn't leave bd
 	// blocking forever (under memory pressure that invites Jetsam SIGKILL).
@@ -623,6 +636,42 @@ func (b *Beads) runWithStdin(stdinData []byte, args ...string) (_ []byte, retErr
 	}
 
 	return stripStdoutWarnings(stdout.Bytes()), nil
+}
+
+func shouldThrottleBDRead(args []string) bool {
+	for _, arg := range args {
+		if strings.HasPrefix(arg, "-") {
+			continue
+		}
+		return arg == "list"
+	}
+	return false
+}
+
+func (b *Beads) acquireBDReadThrottle(timeout time.Duration) (func(), error) {
+	townRoot := b.getTownRoot()
+	if townRoot == "" {
+		return nil, nil
+	}
+	lockDir := filepath.Join(townRoot, ".runtime")
+	if err := os.MkdirAll(lockDir, 0755); err != nil {
+		return nil, err
+	}
+	lockPath := filepath.Join(lockDir, "bd-list-read.flock")
+	deadline := time.Now().Add(timeout)
+	for {
+		unlock, ok, err := gtlock.FlockTryAcquire(lockPath)
+		if err != nil {
+			return nil, err
+		}
+		if ok {
+			return unlock, nil
+		}
+		if time.Now().After(deadline) {
+			return nil, fmt.Errorf("timed out waiting for bd list read throttle")
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
 }
 
 // runWithRouting executes a bd command without setting BEADS_DIR, allowing bd's
@@ -722,12 +771,19 @@ func (b *Beads) buildRunEnv() []string {
 	if b.isolated {
 		env := filterBeadsEnv(os.Environ())
 		if b.serverPort > 0 {
+			env = stripEnvPrefixes(env, "GT_DOLT_PORT=", "BEADS_DOLT_PORT=", "BEADS_DOLT_AUTO_START=")
 			env = append(env, fmt.Sprintf("GT_DOLT_PORT=%d", b.serverPort))
 			env = append(env, fmt.Sprintf("BEADS_DOLT_PORT=%d", b.serverPort))
+			env = append(env, "BEADS_DOLT_AUTO_START=0")
 		}
 		return SuppressBDSideEffects(env)
 	}
-	return BuildPinnedBDEnv(os.Environ(), b.getResolvedBeadsDir())
+	// runWithStdin appends BEADS_DIR after probing bd --allow-stale support, so
+	// keep buildRunEnv focused on Dolt target isolation and avoid duplicate
+	// first-match-sensitive BEADS_DIR entries.
+	env := BuildPinnedBDEnv(os.Environ(), b.getResolvedBeadsDir())
+	env = stripEnvKey(env, "BEADS_DIR")
+	return stripEnvKey(env, "BEADS_DOLT_SERVER_PORT")
 }
 
 // buildRoutingEnv builds the environment for runWithRouting() calls.
@@ -737,12 +793,15 @@ func (b *Beads) buildRoutingEnv() []string {
 	if b.isolated {
 		env := filterBeadsEnv(os.Environ())
 		if b.serverPort > 0 {
+			env = stripEnvPrefixes(env, "GT_DOLT_PORT=", "BEADS_DOLT_PORT=", "BEADS_DOLT_AUTO_START=")
 			env = append(env, fmt.Sprintf("GT_DOLT_PORT=%d", b.serverPort))
 			env = append(env, fmt.Sprintf("BEADS_DOLT_PORT=%d", b.serverPort))
+			env = append(env, "BEADS_DOLT_AUTO_START=0")
 		}
 		return SuppressBDSideEffects(env)
 	}
-	return BuildRoutingBDEnv(os.Environ(), b.getResolvedBeadsDir())
+	env := BuildRoutingBDEnv(os.Environ(), b.getResolvedBeadsDir())
+	return stripEnvKey(env, "BEADS_DOLT_SERVER_PORT")
 }
 
 // filterBeadsEnv removes beads-related environment variables from the given
@@ -810,27 +869,29 @@ func translateDoltPort(env []string) []string {
 
 // overrideDoltEnvFromBeadsDir replaces inherited BEADS_DOLT_* values with the
 // authoritative connection data for the selected beads directory when present.
-// This prevents a parent shell's stale Dolt port from routing bd commands to
-// the wrong server when the command explicitly targets another rig's .beads dir.
+// This prevents a parent shell's stale Dolt config from routing bd commands to
+// the wrong server/database when the command explicitly targets a .beads dir.
 func overrideDoltEnvFromBeadsDir(env []string, beadsDir string) []string {
-	port, host := doltConnectionFromBeadsDir(beadsDir)
+	env = stripEnvPrefixes(env, "BEADS_DOLT_")
+	port, host, database := doltConnectionFromBeadsDir(beadsDir)
 	if port != "" {
-		env = stripEnvPrefixes(env, "BEADS_DOLT_PORT=")
 		env = append(env, "BEADS_DOLT_PORT="+port)
 	}
 	if host != "" {
-		env = stripEnvPrefixes(env, "BEADS_DOLT_SERVER_HOST=")
 		env = append(env, "BEADS_DOLT_SERVER_HOST="+host)
+	}
+	if database != "" {
+		env = append(env, "BEADS_DOLT_SERVER_DATABASE="+database)
 	}
 	return env
 }
 
 // doltConnectionFromBeadsDir reads the preferred Dolt connection info for a
 // beads directory. The per-directory port file is authoritative when present;
-// metadata.json is used as a fallback and to supply the server host.
-func doltConnectionFromBeadsDir(beadsDir string) (port string, host string) {
+// metadata.json is used as a fallback and to supply the server host/database.
+func doltConnectionFromBeadsDir(beadsDir string) (port string, host string, database string) {
 	if beadsDir == "" {
-		return "", ""
+		return "", "", ""
 	}
 
 	if data, err := os.ReadFile(filepath.Join(beadsDir, "dolt-server.port")); err == nil {
@@ -839,22 +900,24 @@ func doltConnectionFromBeadsDir(beadsDir string) (port string, host string) {
 
 	data, err := os.ReadFile(filepath.Join(beadsDir, "metadata.json"))
 	if err != nil {
-		return port, ""
+		return port, "", ""
 	}
 
 	var meta struct {
 		DoltServerPort int    `json:"dolt_server_port"`
 		DoltServerHost string `json:"dolt_server_host"`
+		DoltDatabase   string `json:"dolt_database"`
 	}
 	if err := json.Unmarshal(data, &meta); err != nil {
-		return port, ""
+		return port, "", ""
 	}
 
 	if port == "" && meta.DoltServerPort > 0 {
 		port = strconv.Itoa(meta.DoltServerPort)
 	}
 	host = strings.TrimSpace(meta.DoltServerHost)
-	return port, host
+	database = strings.TrimSpace(meta.DoltDatabase)
+	return port, host, database
 }
 
 // stripEnvPrefixes removes entries matching any of the given prefixes from an

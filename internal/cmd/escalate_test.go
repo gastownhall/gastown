@@ -158,6 +158,26 @@ func TestDeliveryStatusJSONContainsSuccessfulMailPathDetails(t *testing.T) {
 	}
 }
 
+func TestEscalationFingerprintLabel(t *testing.T) {
+	got := escalationFingerprintLabel(" deacon:await-signal:hq-deacon ")
+	trimmed := escalationFingerprintLabel("deacon:await-signal:hq-deacon")
+	if got != trimmed {
+		t.Fatalf("fingerprint should trim whitespace: %q != %q", got, trimmed)
+	}
+	if !strings.HasPrefix(got, "escalation-fp:") {
+		t.Fatalf("fingerprint label %q missing prefix", got)
+	}
+	if len(got) != len("escalation-fp:")+12 {
+		t.Fatalf("fingerprint label %q has length %d, want %d", got, len(got), len("escalation-fp:")+12)
+	}
+	if got == escalationFingerprintLabel("deacon:convoy-check:hq-cv-123") {
+		t.Fatal("different raw fingerprints should produce different labels")
+	}
+	if escalationFingerprintLabel(" ") != "" {
+		t.Fatal("blank fingerprint should produce empty label")
+	}
+}
+
 func TestSeverityEmoji(t *testing.T) {
 	tests := []struct {
 		severity string

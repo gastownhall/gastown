@@ -255,13 +255,14 @@ func SetAttachmentFields(issue *Issue, fields *AttachmentFields) string {
 // ConvoyFields holds the structured fields for a convoy bead.
 // These fields are stored as key: value lines in the issue description.
 type ConvoyFields struct {
-	Owner         string // Convoy owner address (e.g., "mayor/")
-	Notify        string // Additional notification address
-	Molecule      string // Associated molecule/swarm ID
-	Merge         string // Merge strategy
-	BaseBranch    string // Target branch for polecats (e.g., "feat/extraction-review")
-	Watchers      string // Comma-separated mail notification addresses (added via gt convoy watch)
-	NudgeWatchers string // Comma-separated nudge notification addresses (added via gt convoy watch --nudge)
+	Owner                string // Convoy owner address (e.g., "mayor/")
+	Notify               string // Additional notification address
+	Molecule             string // Associated molecule/swarm ID
+	Merge                string // Merge strategy
+	BaseBranch           string // Target branch for polecats (e.g., "feat/extraction-review")
+	Watchers             string // Comma-separated mail notification addresses (added via gt convoy watch)
+	NudgeWatchers        string // Comma-separated nudge notification addresses (added via gt convoy watch --nudge)
+	CompletionNotifiedAt string // RFC3339 timestamp when completion notifications were claimed/sent
 }
 
 // ParseConvoyFields extracts convoy fields from an issue's description.
@@ -312,6 +313,9 @@ func ParseConvoyFields(issue *Issue) *ConvoyFields {
 			hasFields = true
 		case "nudge_watchers", "nudge-watchers", "nudgewatchers":
 			fields.NudgeWatchers = value
+			hasFields = true
+		case "completion_notified_at", "completion-notified-at", "completionnotifiedat":
+			fields.CompletionNotifiedAt = value
 			hasFields = true
 		}
 	}
@@ -470,6 +474,9 @@ func FormatConvoyFields(fields *ConvoyFields) string {
 	if fields.NudgeWatchers != "" {
 		lines = append(lines, "nudge_watchers: "+fields.NudgeWatchers)
 	}
+	if fields.CompletionNotifiedAt != "" {
+		lines = append(lines, "completion_notified_at: "+fields.CompletionNotifiedAt)
+	}
 
 	return strings.Join(lines, "\n")
 }
@@ -508,17 +515,20 @@ func SetConvoyFields(issue *Issue, fields *ConvoyFields) string {
 
 	// Known convoy field keys (lowercase)
 	convoyKeys := map[string]bool{
-		"owner":           true,
-		"notify":          true,
-		"merge":           true,
-		"molecule":        true,
-		"base_branch":     true,
-		"base-branch":     true,
-		"basebranch":      true,
-		"watchers":        true,
-		"nudge_watchers":  true,
-		"nudge-watchers":  true,
-		"nudgewatchers":   true,
+		"owner":                  true,
+		"notify":                 true,
+		"merge":                  true,
+		"molecule":               true,
+		"base_branch":            true,
+		"base-branch":            true,
+		"basebranch":             true,
+		"watchers":               true,
+		"nudge_watchers":         true,
+		"nudge-watchers":         true,
+		"nudgewatchers":          true,
+		"completion_notified_at": true,
+		"completion-notified-at": true,
+		"completionnotifiedat":   true,
 	}
 
 	// Collect non-convoy lines from existing description

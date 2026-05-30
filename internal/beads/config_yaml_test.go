@@ -50,6 +50,9 @@ func TestEnsureConfigYAMLFromMetadataIfMissing_UsesMetadataPrefix(t *testing.T) 
 	if !strings.Contains(got, "issue-prefix: foo\n") {
 		t.Fatalf("config.yaml missing metadata issue-prefix: %q", got)
 	}
+	if !strings.Contains(got, "export.auto: \"false\"\n") {
+		t.Fatalf("config.yaml missing export.auto default: %q", got)
+	}
 }
 
 func TestConfigDefaultsFromMetadata_FallsBackToDoltDatabase(t *testing.T) {
@@ -99,5 +102,57 @@ func TestEnsureConfigYAMLFromMetadataIfMissing_StripsLegacyBeadsPrefixFromDoltDa
 	}
 	if !strings.Contains(got, "issue-prefix: hq\n") {
 		t.Fatalf("config.yaml missing normalized issue-prefix: %q", got)
+	}
+}
+
+func TestEnsureConfigYAML_DisablesAutoExport(t *testing.T) {
+	beadsDir := t.TempDir()
+	configPath := filepath.Join(beadsDir, "config.yaml")
+	original := "prefix: old\nissue-prefix: old\ndolt.idle-timeout: \"30\"\nexport.auto: true\nsync.mode: dolt-native\n"
+	if err := os.WriteFile(configPath, []byte(original), 0644); err != nil {
+		t.Fatalf("write config.yaml: %v", err)
+	}
+
+	if err := EnsureConfigYAML(beadsDir, "gt"); err != nil {
+		t.Fatalf("EnsureConfigYAML: %v", err)
+	}
+
+	data, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatalf("read config.yaml: %v", err)
+	}
+	got := string(data)
+	for _, want := range []string{
+		"prefix: gt\n",
+		"issue-prefix: gt\n",
+		"dolt.idle-timeout: \"0\"\n",
+		"export.auto: \"false\"\n",
+		"sync.mode: dolt-native\n",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("config.yaml missing %q after repair:\n%s", want, got)
+		}
+	}
+}
+
+func TestConfigYAMLDisablesAutoExport(t *testing.T) {
+	tests := []struct {
+		name    string
+		content string
+		want    bool
+	}{
+		{"double quoted false", "export.auto: \"false\"\n", true},
+		{"single quoted false", "export.auto: 'false'\n", true},
+		{"bare false", "export.auto: false\n", true},
+		{"true", "export.auto: true\n", false},
+		{"missing", "prefix: hq\n", false},
+		{"comment only", "# export.auto: false\n", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := ConfigYAMLDisablesAutoExport(tt.content); got != tt.want {
+				t.Fatalf("ConfigYAMLDisablesAutoExport() = %v, want %v", got, tt.want)
+			}
+		})
 	}
 }

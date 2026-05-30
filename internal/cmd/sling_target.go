@@ -3,6 +3,7 @@ package cmd
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/steveyegge/gastown/internal/session"
@@ -115,18 +116,19 @@ func resolveSelfTarget() (agentID string, pane string, hookRoot string, err erro
 
 // ResolveTargetOptions controls target resolution behavior.
 type ResolveTargetOptions struct {
-	DryRun       bool
-	Force        bool
-	Create       bool
-	Account      string
-	Agent        string
-	NoBoot       bool
-	HookBead     string // Bead ID to set atomically during polecat spawn (empty = skip)
-	BeadID       string // For cross-rig guard checks (empty = skip guard)
-	TownRoot     string
-	WorkDesc     string // Description for dog dispatch (defaults to HookBead if empty)
-	BaseBranch   string // Override base branch for polecat worktree
-	ResumeBranch string // Existing branch to resume (e.g. PR head); mutually exclusive with BaseBranch
+	DryRun               bool
+	Force                bool
+	Create               bool
+	Account              string
+	Agent                string
+	NoBoot               bool
+	HookBead             string // Bead ID to set atomically during polecat spawn (empty = skip)
+	BeadID               string // For cross-rig guard checks (empty = skip guard)
+	TownRoot             string
+	WorkDesc             string // Description for dog dispatch (defaults to HookBead if empty)
+	BaseBranch           string // Override base branch for polecat worktree
+	ResumeBranch         string // Existing branch to resume (e.g. PR head); mutually exclusive with BaseBranch
+	SkipPolecatAdmission bool   // Caller already holds a capacity reservation
 }
 
 // ResolvedTarget holds the results of target resolution.
@@ -230,13 +232,15 @@ func resolveTarget(target string, opts ResolveTargetOptions) (*ResolvedTarget, e
 		}
 		fmt.Printf("Target is rig '%s', spawning fresh polecat...\n", rigName)
 		spawnOpts := SlingSpawnOptions{
-			Force:        opts.Force,
-			Account:      opts.Account,
-			Create:       opts.Create,
-			HookBead:     opts.HookBead,
-			Agent:        opts.Agent,
-			BaseBranch:   opts.BaseBranch,
-			ResumeBranch: opts.ResumeBranch,
+			TownRoot:      opts.TownRoot,
+			Force:         opts.Force,
+			Account:       opts.Account,
+			Create:        opts.Create,
+			HookBead:      opts.HookBead,
+			Agent:         opts.Agent,
+			BaseBranch:    opts.BaseBranch,
+			ResumeBranch:  opts.ResumeBranch,
+			SkipAdmission: opts.SkipPolecatAdmission,
 		}
 		spawnInfo, err := spawnPolecatForSling(rigName, spawnOpts)
 		if err != nil {
@@ -257,43 +261,41 @@ func resolveTarget(target string, opts ResolveTargetOptions) (*ResolvedTarget, e
 	// resolve here, getting their pane for nudge delivery (gt-in7b).
 	agentID, pane, workDir, err := resolveTargetAgentFn(target)
 	if err != nil {
-		if isPolecatTarget(target) {
-			parts := strings.Split(target, "/")
-			if len(parts) >= 3 && parts[1] == "polecats" {
-				rigName := parts[0]
-				if opts.BeadID != "" && !opts.Force {
-					if err := checkCrossRigGuard(opts.BeadID, rigName+"/polecats/_", opts.TownRoot); err != nil {
-						return nil, err
-					}
+		if rigName, ok := missingPolecatTargetRig(target, opts.Create, opts.TownRoot); ok {
+			if opts.BeadID != "" && !opts.Force {
+				if err := checkCrossRigGuard(opts.BeadID, rigName+"/polecats/_", opts.TownRoot); err != nil {
+					return nil, err
 				}
-				if opts.BeadID != "" {
-					if err := verifyBeadExistsInTargetRigDatabase(opts.BeadID, rigName, opts.TownRoot); err != nil {
-						return nil, err
-					}
-				}
-				fmt.Printf("Target polecat has no active session, spawning fresh polecat in rig '%s'...\n", rigName)
-				spawnOpts := SlingSpawnOptions{
-					Force:        opts.Force,
-					Account:      opts.Account,
-					Create:       opts.Create,
-					HookBead:     opts.HookBead,
-					Agent:        opts.Agent,
-					BaseBranch:   opts.BaseBranch,
-					ResumeBranch: opts.ResumeBranch,
-				}
-				spawnInfo, spawnErr := spawnPolecatForSling(rigName, spawnOpts)
-				if spawnErr != nil {
-					return nil, fmt.Errorf("spawning polecat to replace dead polecat: %w", spawnErr)
-				}
-				result.Agent = spawnInfo.AgentID()
-				result.NewPolecatInfo = spawnInfo
-				result.WorkDir = spawnInfo.ClonePath
-				result.HookSetAtomically = opts.HookBead != ""
-				if !opts.NoBoot {
-					wakeRigAgents(rigName)
-				}
-				return result, nil
 			}
+			if opts.BeadID != "" {
+				if err := verifyBeadExistsInTargetRigDatabase(opts.BeadID, rigName, opts.TownRoot); err != nil {
+					return nil, err
+				}
+			}
+			fmt.Printf("Target polecat has no active session, spawning fresh polecat in rig '%s'...\n", rigName)
+			spawnOpts := SlingSpawnOptions{
+				TownRoot:      opts.TownRoot,
+				Force:         opts.Force,
+				Account:       opts.Account,
+				Create:        opts.Create,
+				HookBead:      opts.HookBead,
+				Agent:         opts.Agent,
+				BaseBranch:    opts.BaseBranch,
+				ResumeBranch:  opts.ResumeBranch,
+				SkipAdmission: opts.SkipPolecatAdmission,
+			}
+			spawnInfo, spawnErr := spawnPolecatForSling(rigName, spawnOpts)
+			if spawnErr != nil {
+				return nil, fmt.Errorf("spawning polecat to replace dead polecat: %w", spawnErr)
+			}
+			result.Agent = spawnInfo.AgentID()
+			result.NewPolecatInfo = spawnInfo
+			result.WorkDir = spawnInfo.ClonePath
+			result.HookSetAtomically = opts.HookBead != ""
+			if !opts.NoBoot {
+				wakeRigAgents(rigName)
+			}
+			return result, nil
 		}
 		return nil, fmt.Errorf("resolving target: %w", err)
 	}
@@ -310,4 +312,27 @@ func resolveTarget(target string, opts ResolveTargetOptions) (*ResolvedTarget, e
 	result.Pane = pane
 	result.WorkDir = workDir
 	return result, nil
+}
+
+func missingPolecatTargetRig(target string, allowShorthand bool, townRoot string) (string, bool) {
+	if isPolecatTarget(target) {
+		parts := strings.Split(target, "/")
+		return parts[0], true
+	}
+	if !allowShorthand {
+		return "", false
+	}
+	parts := strings.Split(target, "/")
+	if len(parts) != 2 || knownRoles[strings.ToLower(parts[1])] {
+		return "", false
+	}
+	if townRoot == "" {
+		townRoot = detectTownRootFromCwd()
+	}
+	if townRoot != "" {
+		if info, err := os.Stat(filepath.Join(townRoot, parts[0], "crew", parts[1])); err == nil && info.IsDir() {
+			return "", false
+		}
+	}
+	return parts[0], true
 }

@@ -148,6 +148,51 @@ func (m *Mailbox) storeMarkReadOnly(id string) error {
 	return nil
 }
 
+func (m *Mailbox) storeAcknowledgeDeliveryForPrimary(id string) error {
+	ctx, cancel := mailStoreCtx()
+	defer cancel()
+
+	si, err := m.store.GetIssue(ctx, id)
+	if err != nil {
+		if strings.Contains(err.Error(), "not found") {
+			return ErrMessageNotFound
+		}
+		return fmt.Errorf("store get message for delivery ack: %w", err)
+	}
+	if AddressToIdentity(si.Assignee) != m.identity {
+		return nil
+	}
+	state, _, _ := ParseDeliveryLabels(si.Labels)
+	if state == "" {
+		return nil
+	}
+
+	toWrite := deliveryAckLabelsToWrite(m.identity, timeNow().UTC(), si.Labels)
+	for _, label := range toWrite {
+		if err := m.store.AddLabel(ctx, id, label, ""); err != nil {
+			if strings.Contains(err.Error(), "not found") {
+				return ErrMessageNotFound
+			}
+			return fmt.Errorf("store delivery ack: %w", err)
+		}
+	}
+
+	labelsAfterAck := append(append([]string{}, si.Labels...), toWrite...)
+	if !deliveryPendingRemovalNeeded(labelsAfterAck) {
+		return nil
+	}
+	if err := m.store.RemoveLabel(ctx, id, DeliveryLabelPending, ""); err != nil {
+		if strings.Contains(err.Error(), "not found") {
+			return ErrMessageNotFound
+		}
+		if strings.Contains(err.Error(), "does not have label") {
+			return nil
+		}
+		return fmt.Errorf("store delivery convergence: %w", err)
+	}
+	return nil
+}
+
 // storeMarkUnreadOnly removes a "read" label using the in-process store.
 func (m *Mailbox) storeMarkUnreadOnly(id string) error {
 	ctx, cancel := mailStoreCtx()

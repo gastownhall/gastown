@@ -11,7 +11,7 @@
 
 FROM golang:1.26-alpine
 
-ARG DOLT_VERSION=1.82.4
+ARG DOLT_VERSION=2.0.7
 ARG BD_VERSION=v0.57.0
 
 # Install dependencies including CGO build requirements for beads daemon

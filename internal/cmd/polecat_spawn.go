@@ -50,13 +50,15 @@ func (s *SpawnedPolecatInfo) SessionStarted() bool {
 
 // SlingSpawnOptions contains options for spawning a polecat via sling.
 type SlingSpawnOptions struct {
-	Force        bool   // Force spawn even if polecat has uncommitted work
-	Account      string // Claude Code account handle to use
-	Create       bool   // Create polecat if it doesn't exist (currently always true for sling)
-	HookBead     string // Bead ID to set as hook_bead at spawn time (atomic assignment)
-	Agent        string // Agent override for this spawn (e.g., "gemini", "codex", "claude-haiku")
-	BaseBranch   string // Override base branch for polecat worktree (e.g., "develop", "release/v2")
-	ResumeBranch string // Resume an existing branch (e.g. PR head) instead of creating polecat/<name>/<bead>@<ts>
+	TownRoot      string // Gas Town workspace root; falls back to cwd when empty
+	Force         bool   // Force spawn even if polecat has uncommitted work
+	Account       string // Claude Code account handle to use
+	Create        bool   // Create polecat if it doesn't exist (currently always true for sling)
+	HookBead      string // Bead ID to set as hook_bead at spawn time (atomic assignment)
+	Agent         string // Agent override for this spawn (e.g., "gemini", "codex", "claude-haiku")
+	BaseBranch    string // Override base branch for polecat worktree (e.g., "develop", "release/v2")
+	ResumeBranch  string // Resume an existing branch (e.g. PR head) instead of creating polecat/<name>/<bead>@<ts>
+	SkipAdmission bool   // Caller already holds a polecat admission reservation
 }
 
 // SpawnPolecatForSling creates a fresh polecat and optionally starts its session.
@@ -64,9 +66,13 @@ type SlingSpawnOptions struct {
 // The caller (sling) handles hook attachment and nudging.
 func SpawnPolecatForSling(rigName string, opts SlingSpawnOptions) (*SpawnedPolecatInfo, error) {
 	// Find workspace
-	townRoot, err := workspace.FindFromCwdOrError()
-	if err != nil {
-		return nil, fmt.Errorf("not in a Gas Town workspace: %w", err)
+	townRoot := opts.TownRoot
+	if townRoot == "" {
+		var err error
+		townRoot, err = workspace.FindFromCwdOrError()
+		if err != nil {
+			return nil, fmt.Errorf("not in a Gas Town workspace: %w", err)
+		}
 	}
 
 	// Load rig config
@@ -100,19 +106,21 @@ func SpawnPolecatForSling(rigName string, opts SlingSpawnOptions) (*SpawnedPolec
 		return nil, fmt.Errorf("admission control: %w", err)
 	}
 
-	// Polecat count cap (clown show #22): refuse to spawn if there are already
-	// too many working polecats. This is a last-resort safety net for the direct-dispatch
-	// path. For configurable capacity gating, use scheduler.max_polecats in town settings
-	// (see internal/scheduler/capacity/).
-	// Uses countWorkingPolecats to exclude idle polecats (completed work, no hook bead)
-	// that are available for re-sling under the persistent polecat model.
-	const defaultMaxActivePolecats = 25
-	workingCount := countWorkingPolecats()
-	if workingCount >= defaultMaxActivePolecats {
-		return nil, fmt.Errorf("polecat cap reached: %d working polecats (max %d). "+
-			"This is a safety limit to prevent spawn storms. "+
-			"Investigate why polecats are accumulating before spawning more",
-			workingCount, defaultMaxActivePolecats)
+	if blocked, reason := IsRigParkedOrDocked(townRoot, rigName); blocked {
+		undoCmd := "gt rig unpark"
+		if reason == "docked" {
+			undoCmd = "gt rig undock"
+		}
+		return nil, fmt.Errorf("cannot sling to %s rig %q\n%s %s", reason, rigName, undoCmd, rigName)
+	}
+
+	var admission *polecatAdmissionHandle
+	if !opts.SkipAdmission {
+		admission, _, err = acquirePolecatAdmissionFn(townRoot, rigName, opts.HookBead, "spawn-or-reuse")
+		if err != nil {
+			return nil, err
+		}
+		defer admission.Release()
 	}
 
 	// Per-bead respawn circuit breaker (clown show #22):

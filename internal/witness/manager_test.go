@@ -5,7 +5,19 @@ import (
 	"testing"
 
 	"github.com/steveyegge/gastown/internal/beads"
+	"github.com/steveyegge/gastown/internal/rig"
 )
+
+func TestManagerStartForegroundDeprecated(t *testing.T) {
+	mgr := NewManager(&rig.Rig{Name: "testrig", Path: t.TempDir()})
+	err := mgr.Start(true, "", nil)
+	if err == nil {
+		t.Fatal("expected foreground mode deprecation error")
+	}
+	if !strings.Contains(err.Error(), "foreground mode is deprecated") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
 
 func TestBuildWitnessStartCommand_UsesRoleConfig(t *testing.T) {
 	t.Parallel()

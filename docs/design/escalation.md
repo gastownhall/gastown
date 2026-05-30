@@ -118,6 +118,10 @@ gt escalate -s <MEDIUM|HIGH|CRITICAL> "Short description" \
 Flags: `-s` severity (required), `-m` body, `--source` origin identifier,
 `--to` route to tier (deacon/mayor/overseer), `--dry-run`, `--json`.
 
+For Dolt outages or GT behavior mismatches that involve Dolt-backed state, add
+the RCA capture checklist from `docs/dolt-health-guide.md` to the escalation
+body or the follow-up bead before restarting services.
+
 ### gt escalate ack
 
 Acknowledge an escalation (prevents re-escalation).

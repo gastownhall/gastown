@@ -3,6 +3,8 @@
   "hasCompletedOnboarding": true,
   "theme": "dark",
   "editorMode": "normal",
+  "feedbackSurveyRate": 0,
+  "awaySummaryEnabled": false,
   "permissions": {
     "defaultMode": "bypassPermissions"
   },

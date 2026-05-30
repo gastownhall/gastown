@@ -11,6 +11,44 @@ RIGS_JSON_PATH="${TOWN_ROOT}/mayor/rigs.json"
 
 log() { echo "[stuck-agent-dog] $*"; }
 
+heartbeat_epoch() {
+  local file="$1"
+  local ts=""
+
+  ts=$(jq -r '(.timestamp // empty) | sub("\\.[0-9]+Z$"; "Z") | fromdateiso8601? // empty' "$file" 2>/dev/null || true)
+  if [ -n "$ts" ]; then
+    echo "$ts"
+    return 0
+  fi
+
+  # Fallback for malformed legacy files: use mtime rather than failing open.
+  stat -f %m "$file" 2>/dev/null || stat -c %Y "$file" 2>/dev/null
+}
+
+has_in_progress_work() {
+  local locations=("$TOWN_ROOT")
+  local rig=""
+  local prefix=""
+  local loc=""
+  local output=""
+  local count=""
+
+  while IFS='|' read -r rig prefix; do
+    [ -z "$rig" ] && continue
+    [ -d "$TOWN_ROOT/$rig" ] && locations+=("$TOWN_ROOT/$rig")
+  done <<< "$RIG_PREFIX_MAP"
+
+  for loc in "${locations[@]}"; do
+    output=$(cd "$loc" && bd list --status=in_progress --json --limit=1 2>/dev/null) || return 0
+    count=$(printf '%s' "$output" | jq 'length' 2>/dev/null || echo 1)
+    if [ "${count:-1}" -gt 0 ]; then
+      return 0
+    fi
+  done
+
+  return 1
+}
+
 # --- Enumerate agents ---------------------------------------------------------
 
 log "=== Checking agent health ==="
@@ -93,6 +131,7 @@ log "=== Deacon Health ==="
 
 DEACON_SESSION="hq-deacon"
 DEACON_ISSUE=""
+DEACON_PROCESS_ALIVE=0
 
 if ! tmux has-session -t "$DEACON_SESSION" 2>/dev/null; then
   log "  CRASHED: Deacon session is dead"
@@ -105,17 +144,22 @@ else
     DEACON_ISSUE="zombie"
   else
     log "  Process alive: pid=$DEACON_PID comm=$DEACON_COMM"
+    DEACON_PROCESS_ALIVE=1
   fi
 
   HEARTBEAT_FILE="$TOWN_ROOT/deacon/heartbeat.json"
-  if [ -f "$HEARTBEAT_FILE" ]; then
-    HEARTBEAT_TIME=$(stat -f %m "$HEARTBEAT_FILE" 2>/dev/null || stat -c %Y "$HEARTBEAT_FILE" 2>/dev/null)
+  if [ -z "$DEACON_ISSUE" ] && [ -f "$HEARTBEAT_FILE" ]; then
+    HEARTBEAT_TIME=$(heartbeat_epoch "$HEARTBEAT_FILE" || true)
     NOW=$(date +%s)
-    HEARTBEAT_AGE=$(( NOW - HEARTBEAT_TIME ))
+    HEARTBEAT_AGE=$(( NOW - ${HEARTBEAT_TIME:-0} ))
 
     if [ "$HEARTBEAT_AGE" -gt 1200 ]; then
-      log "  STUCK: Deacon heartbeat stale (${HEARTBEAT_AGE}s old, >20m threshold)"
-      DEACON_ISSUE="stuck_heartbeat_${HEARTBEAT_AGE}s"
+      if [ "$DEACON_PROCESS_ALIVE" -eq 1 ] && ! has_in_progress_work; then
+        log "  SKIP: Deacon heartbeat stale (${HEARTBEAT_AGE}s old) but process is alive and no in_progress work exists"
+      else
+        log "  STUCK: Deacon heartbeat stale (${HEARTBEAT_AGE}s old, >20m threshold)"
+        DEACON_ISSUE="stuck_heartbeat_${HEARTBEAT_AGE}s"
+      fi
     else
       log "  OK: Deacon heartbeat ${HEARTBEAT_AGE}s old"
     fi
@@ -163,8 +207,19 @@ done
 
 # Deacon issues: escalate
 if [ -n "$DEACON_ISSUE" ]; then
-  log "Escalating deacon issue: $DEACON_ISSUE"
-  gt escalate "Deacon $DEACON_ISSUE detected by stuck-agent-dog" -s HIGH 2>/dev/null || true
+	log "Escalating deacon issue: $DEACON_ISSUE"
+	DEACON_SEVERITY="HIGH"
+	DEACON_FINGERPRINT="stuck-agent-dog:deacon:$DEACON_ISSUE"
+	case "$DEACON_ISSUE" in
+		stuck_heartbeat_*)
+			DEACON_SEVERITY="MEDIUM"
+			DEACON_FINGERPRINT="stuck-agent-dog:deacon:stuck-heartbeat"
+			;;
+	esac
+	gt escalate "Deacon $DEACON_ISSUE detected by stuck-agent-dog" \
+		-s "$DEACON_SEVERITY" \
+		--source "plugin:stuck-agent-dog" \
+		--fingerprint "$DEACON_FINGERPRINT" 2>/dev/null || true
 fi
 
 # --- Report -------------------------------------------------------------------

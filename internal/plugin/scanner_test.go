@@ -435,7 +435,7 @@ func TestParsePluginMD_StuckAgentDogUsesCanonicalHeartbeatPath(t *testing.T) {
 	if !strings.Contains(plugin.Instructions, "could not parse rigs.json") {
 		t.Fatalf("expected fail-safe rigs.json parse handling in instructions, got:\n%s", plugin.Instructions)
 	}
-	if !strings.Contains(plugin.Instructions, ">15m threshold") {
+	if !strings.Contains(plugin.Instructions, ">20m threshold") {
 		t.Fatalf("expected canonical deacon very-stale threshold in instructions, got:\n%s", plugin.Instructions)
 	}
 }

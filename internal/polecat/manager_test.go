@@ -279,6 +279,40 @@ func TestRemoveNotFound(t *testing.T) {
 	}
 }
 
+func TestActiveWorkBeadsForCleanupFiltersAssignedIssues(t *testing.T) {
+	issues := []*beads.Issue{
+		{ID: "open-work", Status: "open", Type: "task"},
+		{ID: "progress-work", Status: "in_progress", Type: "task"},
+		{ID: "hooked-work", Status: beads.StatusHooked, Type: "task"},
+		{ID: "closed-work", Status: "closed", Type: "task"},
+		{ID: "agent", Status: "open", Type: "agent"},
+		{ID: "protected", Status: "open", Type: "task", Labels: []string{"gt:keep"}},
+		{ID: "deferred", Status: "deferred", Type: "task"},
+		nil,
+	}
+
+	got := activeWorkBeadsForCleanup(issues)
+	want := []string{"open-work", "progress-work", "hooked-work"}
+	if len(got) != len(want) {
+		t.Fatalf("got %d issue(s), want %d: %#v", len(got), len(want), got)
+	}
+	for i := range got {
+		if got[i].ID != want[i] {
+			t.Fatalf("got IDs %v, want %v", issueIDs(got), want)
+		}
+	}
+}
+
+func issueIDs(issues []*beads.Issue) []string {
+	ids := make([]string, 0, len(issues))
+	for _, issue := range issues {
+		if issue != nil {
+			ids = append(ids, issue.ID)
+		}
+	}
+	return ids
+}
+
 func TestPolecatDir(t *testing.T) {
 	r := &rig.Rig{
 		Name: "test-rig",
@@ -855,6 +889,11 @@ func TestIsDoltConfigError(t *testing.T) {
 		{"no database", fmt.Errorf("no database found at path"), true},
 		{"database not found", fmt.Errorf("database not found"), true},
 		{"connection refused", fmt.Errorf("dial tcp: connection refused"), true},
+		{"circuit breaker", fmt.Errorf("Dolt circuit breaker is open: server appears down"), true},
+		{"server appears down", fmt.Errorf("server appears down"), true},
+		{"server down", fmt.Errorf("server down"), true},
+		{"server not running", fmt.Errorf("Dolt server is not running"), true},
+		{"server may not be running", fmt.Errorf("Dolt server may not be running"), true},
 		{"configure custom types", fmt.Errorf("configure custom types in /path: exit 1"), true},
 		{"identity mismatch", fmt.Errorf("identity mismatch: local project_id != database project_id"), true},
 		{"Unknown database", fmt.Errorf("Unknown database 'gastown'"), true},

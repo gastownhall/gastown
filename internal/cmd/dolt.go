@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
@@ -10,6 +11,7 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
+	"github.com/steveyegge/gastown/internal/beads"
 	"github.com/steveyegge/gastown/internal/daemon"
 	"github.com/steveyegge/gastown/internal/doltserver"
 	"github.com/steveyegge/gastown/internal/style"
@@ -588,6 +590,7 @@ func runDoltStatus(cmd *cobra.Command, args []string) error {
 				config.HostPort())
 		}
 		fmt.Printf("  Connection: %s\n", doltserver.GetConnectionString(townRoot))
+		printBeadsRuntimeConfig(townRoot)
 		if running {
 			metrics := doltserver.GetHealthMetrics(townRoot)
 			fmt.Printf("\n  %s\n", style.Bold.Render("Resource Metrics:"))
@@ -627,6 +630,7 @@ func runDoltStatus(cmd *cobra.Command, args []string) error {
 				}
 			}
 			fmt.Printf("  Connection: %s\n", doltserver.GetConnectionString(townRoot))
+			printBeadsRuntimeConfig(townRoot)
 		}
 
 		// Resource metrics
@@ -699,6 +703,86 @@ func runDoltStatus(cmd *cobra.Command, args []string) error {
 	}
 
 	return nil
+}
+
+type beadsRuntimeConfig struct {
+	Source   string
+	Database string
+	Host     string
+	Port     int
+}
+
+func currentBeadsRuntimeConfig(townRoot string) (beadsRuntimeConfig, bool) {
+	cwd, err := os.Getwd()
+	if err != nil {
+		return beadsRuntimeConfig{}, false
+	}
+	return readBeadsRuntimeConfig(beads.ResolveBeadsDir(cwd), townRoot)
+}
+
+func readBeadsRuntimeConfig(beadsDir, townRoot string) (beadsRuntimeConfig, bool) {
+	metadataPath := filepath.Join(beadsDir, "metadata.json")
+	data, err := os.ReadFile(metadataPath)
+	if err != nil {
+		return beadsRuntimeConfig{}, false
+	}
+
+	var metadata struct {
+		Backend        string `json:"backend"`
+		Database       string `json:"database"`
+		DoltMode       string `json:"dolt_mode"`
+		DoltDatabase   string `json:"dolt_database"`
+		DoltServerHost string `json:"dolt_server_host"`
+		DoltServerPort int    `json:"dolt_server_port"`
+	}
+	if err := json.Unmarshal(data, &metadata); err != nil {
+		return beadsRuntimeConfig{}, false
+	}
+	if metadata.Backend != "dolt" || metadata.DoltMode != "server" {
+		return beadsRuntimeConfig{}, false
+	}
+
+	host := metadata.DoltServerHost
+	if host == "" {
+		host = "127.0.0.1"
+	}
+	port := metadata.DoltServerPort
+	if port == 0 {
+		port = doltserver.DefaultConfig(townRoot).Port
+	}
+	database := metadata.DoltDatabase
+	if database == "" {
+		database = metadata.Database
+	}
+
+	return beadsRuntimeConfig{
+		Source:   metadataPath,
+		Database: database,
+		Host:     host,
+		Port:     port,
+	}, true
+}
+
+func printBeadsRuntimeConfig(townRoot string) {
+	cfg, ok := currentBeadsRuntimeConfig(townRoot)
+	if !ok {
+		return
+	}
+	parts := []string{"server metadata"}
+	if cfg.Database != "" {
+		parts = append(parts, "database "+cfg.Database)
+	}
+	if cfg.Host != "" && cfg.Port > 0 {
+		parts = append(parts, netJoinHostPort(cfg.Host, cfg.Port))
+	}
+	if cfg.Source != "" {
+		parts = append(parts, "from "+cfg.Source)
+	}
+	fmt.Printf("  Beads client: %s\n", strings.Join(parts, ", "))
+}
+
+func netJoinHostPort(host string, port int) string {
+	return host + ":" + strconv.Itoa(port)
 }
 
 func runDoltLogs(cmd *cobra.Command, args []string) error {
