@@ -105,11 +105,16 @@ id = "inbox-check"
 title = "Handle callbacks from agents"
 needs = ["heartbeat"]
 description = """
-First, clean up wisps from previous cycles (closed wisps + abandoned wisps):
+First, clean up CLOSED wisps from previous cycles:
 ```bash
 bd mol wisp gc --closed --force
-bd mol wisp gc --age 1h --force
 ```
+
+> ⚠️ hq-3pp: do NOT add an unscoped age-based gc (`bd mol wisp gc --age ...`) here.
+> It reaps step wisps by their per-step updated_at and deletes THIS patrol molecule's
+> own not-yet-run steps, silently auto-closing the patrol at ~2-3/26. `--closed` is
+> safe (closed wisps only, cannot touch open steps). Abandoned-wisp reaping for dead
+> sessions belongs in a separate dog task that runs OUTSIDE any patrol molecule.
 
 Then handle callbacks from agents.
 
