@@ -158,9 +158,15 @@ const (
 	// DefaultBatchSize is the number of rows per batch DELETE operation.
 	DefaultBatchSize = 100
 	// DefaultAlertThreshold is the open-wisp count above which callers should
-	// surface a warning. Sized above the natural steady-state for the current
-	// dog/deacon emit rate (~23 wisps/h × 24h TTL ≈ 550). See hq-57jr8.
-	DefaultAlertThreshold = 800
+	// surface a warning. This must fire on genuine runaway accumulation, NOT on
+	// normal operation. The open-wisp count is dominated by healthy, recent
+	// wisps (observed steady-state ~1966 open in a busy town); only wisps that
+	// are stale or have orphaned parents AND are past max-age are ever
+	// reap-eligible (typically ~15-25). The previous value of 800 sat below the
+	// healthy open count, so it false-alarmed HIGH every scan despite nothing
+	// being wrong. Raised to 3000 so the alert tracks runaway growth rather than
+	// the normal working set. See hq-57jr8.
+	DefaultAlertThreshold = 3000
 )
 
 // ValidateDBName returns an error if the database name is unsafe.
