@@ -829,6 +829,17 @@ func runDone(cmd *cobra.Command, args []string) (retErr error) {
 					} else {
 						prURL = strings.TrimSpace(string(prOutput))
 						fmt.Printf("%s GitHub PR created: %s\n", style.Bold.Render("✓"), prURL)
+						// Parse PR number from URL and set external_ref on the issue bead.
+						if parts := strings.Split(prURL, "/"); len(parts) > 0 {
+							if prNum := parts[len(parts)-1]; prNum != "" {
+								if _, numErr := strconv.Atoi(prNum); numErr == nil {
+									externalRef := "PR#" + prNum
+									if refErr := bd.Update(issueID, beads.UpdateOptions{ExternalRef: &externalRef}); refErr != nil {
+										style.PrintWarning("could not set external_ref on %s: %v", issueID, refErr)
+									}
+								}
+							}
+						}
 					}
 				} else {
 					fmt.Printf("%s\n", style.Dim.Render("Work stays on feature branch for human review."))

@@ -347,6 +347,9 @@ func (b *Beads) storeUpdate(id string, opts UpdateOptions) error {
 	if opts.Assignee != nil {
 		updates["assignee"] = *opts.Assignee
 	}
+	if opts.ExternalRef != nil {
+		updates["external_ref"] = *opts.ExternalRef
+	}
 
 	actor := b.getActor()
 
