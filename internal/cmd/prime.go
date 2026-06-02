@@ -689,7 +689,7 @@ func checkSlungWork(ctx RoleContext, hookedBead *beads.Issue) bool {
 		return false
 	}
 
-	attachment := beads.ParseAttachmentFields(hookedBead)
+	attachment := workflowAttachmentForHookedBead(hookedBead)
 	hasWorkflow := hasWorkflowAttachment(attachment)
 
 	outputAutonomousDirective(ctx, hookedBead, hasWorkflow)
@@ -924,7 +924,7 @@ func outputAutonomousDirective(ctx RoleContext, hookedBead *beads.Issue, hasMole
 		fmt.Println("3. Work through molecule steps in order - see CURRENT STEP below")
 		fmt.Println("4. Close each step with `bd close <step-id>`, then check `bd mol current` for next step")
 	} else {
-		fmt.Printf("2. Then IMMEDIATELY run: `bd show %s`\n", hookedBead.ID)
+		fmt.Printf("2. Then IMMEDIATELY continue from the hooked bead details for `%s`\n", hookedBead.ID)
 		fmt.Println("3. Begin execution - no waiting for user input")
 	}
 
@@ -1001,6 +1001,15 @@ func outputMoleculeWorkflow(ctx RoleContext, attachment *beads.AttachmentFields)
 
 	// Show inline formula steps from the embedded binary (root-only: no child wisps to query).
 	if attachment.AttachedFormula != "" {
+		if isPatrolFormulaName(attachment.AttachedFormula) {
+			fmt.Println()
+			fmt.Println("Patrol formula detected. Detailed execution guidance is already in the role context above.")
+			fmt.Println("Use the checklist below to track step order, then begin with Step 1 immediately.")
+			showFormulaSteps(attachment.AttachedFormula, "Formula Checklist", ctx.TownRoot, ctx.Rig, attachmentFormulaVars(attachment))
+			fmt.Println()
+			fmt.Printf("%s\n", style.Bold.Render("Work through the patrol checklist in order."))
+			return
+		}
 		showFormulaStepsFull(attachment.AttachedFormula, ctx.TownRoot, ctx.Rig, attachmentFormulaVars(attachment))
 		fmt.Println()
 		fmt.Printf("%s\n", style.Bold.Render("Work through ALL steps above, including submit and cleanup."))
@@ -1014,6 +1023,10 @@ func outputMoleculeWorkflow(ctx RoleContext, attachment *beads.AttachmentFields)
 	fmt.Println()
 	fmt.Printf("%s\n", style.Bold.Render("Follow the molecule steps above, NOT the base bead."))
 	fmt.Println("The base bead is just a container. The molecule steps define your workflow.")
+}
+
+func isPatrolFormulaName(formulaName string) bool {
+	return strings.HasSuffix(strings.TrimSpace(formulaName), "-patrol")
 }
 
 // outputRalphLoopDirective emits inline iterative work instructions for ralph mode.

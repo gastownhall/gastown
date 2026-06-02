@@ -88,3 +88,21 @@ func TestOutputMoleculeStatus_FormulaWispShowsWorkflowContext(t *testing.T) {
 		t.Fatalf("expected workflow next action, got:\n%s", output)
 	}
 }
+
+func TestWorkflowAttachmentForHookedBead_InfersFormulaFromMoleculeTitle(t *testing.T) {
+	attachment := workflowAttachmentForHookedBead(&beads.Issue{
+		ID:    "hq-wisp-7hzt1",
+		Title: "mol-refinery-patrol",
+		Type:  "molecule",
+	})
+
+	if attachment == nil {
+		t.Fatal("expected inferred attachment, got nil")
+	}
+	if attachment.AttachedFormula != "mol-refinery-patrol" {
+		t.Fatalf("AttachedFormula = %q, want %q", attachment.AttachedFormula, "mol-refinery-patrol")
+	}
+	if attachment.AttachedMolecule != "" {
+		t.Fatalf("AttachedMolecule = %q, want empty", attachment.AttachedMolecule)
+	}
+}

@@ -915,6 +915,34 @@ func TestCheckSlungWork_StandaloneFormulaUsesWorkflowOutput(t *testing.T) {
 	}
 }
 
+func TestCheckSlungWork_MoleculeHookInfersWorkflowFromTitle(t *testing.T) {
+	ctx := RoleContext{Role: RoleRefinery, Rig: "chatehr"}
+	hookedBead := &beads.Issue{
+		ID:          "hq-wisp-7hzt1",
+		Title:       "mol-refinery-patrol",
+		Type:        "molecule",
+		Description: "Merge queue processor patrol loop.",
+	}
+
+	var found bool
+	output := captureStdout(t, func() {
+		found = checkSlungWork(ctx, hookedBead)
+	})
+
+	if !found {
+		t.Fatalf("checkSlungWork() = false, want true")
+	}
+	if !strings.Contains(output, "ATTACHED FORMULA") {
+		t.Fatalf("expected inferred workflow output, got:\n%s", output)
+	}
+	if strings.Contains(output, "Then IMMEDIATELY run: `bd show") {
+		t.Fatalf("should not instruct cross-rig bd show for molecule patrol wisps, got:\n%s", output)
+	}
+	if !strings.Contains(output, "mol-refinery-patrol") {
+		t.Fatalf("expected inferred formula name in output, got:\n%s", output)
+	}
+}
+
 // TestCompactResumeReminder_PolecatGetsGtDone verifies that polecats get a
 // gt done reminder after context compaction. This is the regression test for
 // the polecats-no-gt-done bug: after long work sessions, compaction drops the

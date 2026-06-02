@@ -276,7 +276,6 @@ func outputMoleculeContext(ctx RoleContext) {
 
 	// For Refinery, use special patrol molecule handling (auto-bonds on startup)
 	if ctx.Role == RoleRefinery {
-		outputRefineryPatrolContext(ctx)
 		return
 	}
 
@@ -335,30 +334,6 @@ func outputWitnessPatrolContext(ctx RoleContext) {
 	}
 	outputPatrolContext(cfg)
 	showFormulaSteps(constants.MolWitnessPatrol, "Patrol Steps", ctx.TownRoot, ctx.Rig, extraVars)
-}
-
-// outputRefineryPatrolContext shows patrol molecule status for the Refinery.
-// Refinery AUTO-BONDS its patrol molecule on startup if one isn't already running.
-func outputRefineryPatrolContext(ctx RoleContext) {
-	if stopped, reason := IsRigParkedOrDocked(ctx.TownRoot, ctx.Rig); stopped {
-		fmt.Printf("\n⏸️  Rig %s is %s — skipping patrol wisp generation.\n", ctx.Rig, reason)
-		return
-	}
-	cfg := PatrolConfig{
-		RoleName:      "refinery",
-		PatrolMolName: constants.MolRefineryPatrol,
-		BeadsDir:      ctx.TownRoot,
-		Assignee:      ctx.Rig + "/refinery",
-		HeaderEmoji:   "🔧",
-		HeaderTitle:   "Refinery Patrol Status",
-		ExtraVars:     buildRefineryPatrolVars(ctx),
-		WorkLoopSteps: []string{
-			"Work through each patrol step in sequence (see checklist below)",
-			"At cycle end:\n   - If context LOW:\n     * Report and loop: `" + cli.Name() + " patrol report --summary \"<brief summary of observations>\"`\n     * This closes the current patrol and starts a new cycle\n   - If context HIGH:\n     * Send handoff: `" + cli.Name() + " handoff -s \"Refinery patrol\" -m \"<observations>\"`\n     * Exit cleanly (daemon respawns fresh session)",
-		},
-	}
-	outputPatrolContext(cfg)
-	showFormulaStepsFull(constants.MolRefineryPatrol, ctx.TownRoot, ctx.Rig, cfg.ExtraVars)
 }
 
 // buildWitnessPatrolVars returns --var key=value strings for the witness

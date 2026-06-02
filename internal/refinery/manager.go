@@ -191,7 +191,7 @@ func (m *Manager) Start(foreground bool, agentOverride string) error {
 		Recipient: session.BeaconRecipient("refinery", "", m.rig.Name),
 		Sender:    "deacon",
 		Topic:     "patrol",
-	}, "Run `gt prime --hook` and begin patrol.")
+	}, "SessionStart already injected `gt prime --hook`. Continue from the hooked patrol context and begin patrol.")
 
 	command, err := config.BuildStartupCommandFromConfig(config.AgentEnvConfig{
 		Role:             "refinery",
