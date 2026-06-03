@@ -86,7 +86,10 @@ func (m *Manager) Status() (*tmux.SessionInfo, error) {
 }
 
 // witnessDir returns the working directory for the witness.
-// Prefers witness/rig/, falls back to witness/, then rig root.
+// Prefers witness/rig/, then witness/, creating witness/ if neither exists.
+// Falling back to the rig root is intentionally avoided: rig roots are only
+// 1 level deep from the town root, which causes SetupRedirect to fail with
+// "must be at least 2 levels deep" (beads_redirect.go: ComputeRedirectTarget).
 func (m *Manager) witnessDir() string {
 	witnessRigDir := filepath.Join(m.rig.Path, "witness", "rig")
 	if _, err := os.Stat(witnessRigDir); err == nil {
@@ -98,6 +101,11 @@ func (m *Manager) witnessDir() string {
 		return witnessDir
 	}
 
+	// No dedicated witness directory — create one rather than falling back to
+	// the rig root, which is only 1 level deep and breaks SetupRedirect.
+	if err := os.MkdirAll(witnessDir, 0755); err == nil {
+		return witnessDir
+	}
 	return m.rig.Path
 }
 
