@@ -228,6 +228,37 @@ GATE: Cannot proceed to merge without fix OR bead filed
 ```
 **FORBIDDEN**: Note failure and merge without tracking.
 
+### CodeRabbit Pre-Merge Gate
+
+When `merge_queue.code_rabbit.enabled=true`, the Engineer runs a CodeRabbit gate
+**before** quality gates on every MR that has an open GitHub PR:
+
+| Condition | Action |
+|-----------|--------|
+| No CR review + PR age < `min_age_for_skip` (default 10m) | Wait — defer to next poll |
+| No CR review + PR age ≥ `min_age_for_skip` | Proceed — CR likely skipped (docs-only, etc.) |
+| CR state = APPROVED | Proceed |
+| CR state = COMMENTED + actionable markers (🛠️/⚠️/🧹/Nitpick/actionable comment) | Park — add `cr-findings-open` label, nudge mayor |
+| CR state = CHANGES_REQUESTED | Park — add `cr-findings-open` label, nudge mayor |
+
+**Park behaviour:** The MR stays in queue. On next poll, the gate re-evaluates.
+Remove the `cr-findings-open` label from the MR bead after CR findings are addressed
+to allow the next poll to re-check CR status.
+
+**Fail-open:** GitHub API errors skip the gate (merge proceeds normally). The gate
+only applies to branches with an open PR; direct-merge branches without PRs skip it.
+
+Configure in `config.json`:
+```json
+"merge_queue": {
+  "code_rabbit": {
+    "enabled": true,
+    "min_age_for_skip": "10m",
+    "park_label": "cr-findings-open"
+  }
+}
+```
+
 **merge-push**: Merge to effective target and push immediately
 ```bash
 ## Resolve <merge-target> per Target Resolution Rule above.
