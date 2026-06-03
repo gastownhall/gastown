@@ -162,6 +162,86 @@ func TestBuildRoutingBDEnvStripsDatabaseButKeepsSelectedConnection(t *testing.T)
 	}
 }
 
+// TestBuildPinnedBDEnv_ServerModeOmitsSharedDataDir is a regression test for
+// gastownhall/gastown#4140. When the pinned beads dir's metadata.json names a
+// server host/port (server mode), BuildPinnedBDEnv must NOT emit
+// BEADS_DOLT_DATA_DIR — the shared multi-database town data dir would override
+// the pinned database selection and make `bd mol bond` resolve routed
+// cross-rig beads against the wrong database.
+//
+// The previous tests above use a beadsDir under t.TempDir() with no
+// mayor/town.json above it, so FindTownRoot returned "" and the bug was
+// invisible. This test creates the town root explicitly so the regression
+// path is exercised.
+func TestBuildPinnedBDEnv_ServerModeOmitsSharedDataDir(t *testing.T) {
+	townRoot := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(townRoot, "mayor"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(townRoot, "mayor", "town.json"), []byte(`{}`), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	rigBeadsDir := filepath.Join(townRoot, "minerals", ".beads")
+	if err := os.MkdirAll(rigBeadsDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	metadata := []byte(`{"dolt_database":"minerals","dolt_server_host":"127.0.0.1","dolt_server_port":3307}`)
+	if err := os.WriteFile(filepath.Join(rigBeadsDir, "metadata.json"), metadata, 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	env := BuildPinnedBDEnv([]string{"PATH=/usr/bin"}, rigBeadsDir)
+	got := envMap(env)
+
+	if value, ok := got["BEADS_DOLT_DATA_DIR"]; ok {
+		t.Fatalf("BEADS_DOLT_DATA_DIR should be omitted in server mode (would clobber the pinned database for routed cross-rig beads), got %q in %v", value, env)
+	}
+	if got["BEADS_DOLT_SERVER_HOST"] != "127.0.0.1" {
+		t.Fatalf("BEADS_DOLT_SERVER_HOST = %q, want 127.0.0.1 in %v", got["BEADS_DOLT_SERVER_HOST"], env)
+	}
+	if got["BEADS_DOLT_SERVER_PORT"] != "3307" || got["BEADS_DOLT_PORT"] != "3307" {
+		t.Fatalf("ports = server:%q legacy:%q, want 3307 in %v", got["BEADS_DOLT_SERVER_PORT"], got["BEADS_DOLT_PORT"], env)
+	}
+}
+
+// TestBuildPinnedBDEnv_EmbeddedModeKeepsSharedDataDir verifies the
+// complement of the regression case: when metadata.json has no server
+// host/port (embedded mode), BEADS_DOLT_DATA_DIR IS still emitted so bd can
+// locate the on-disk data.
+func TestBuildPinnedBDEnv_EmbeddedModeKeepsSharedDataDir(t *testing.T) {
+	townRoot := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(townRoot, "mayor"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(townRoot, "mayor", "town.json"), []byte(`{}`), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	beadsDir := filepath.Join(townRoot, ".beads")
+	if err := os.MkdirAll(beadsDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	// Embedded mode: metadata names a database but no server connection.
+	if err := os.WriteFile(filepath.Join(beadsDir, "metadata.json"), []byte(`{"dolt_database":"hq"}`), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	env := BuildPinnedBDEnv([]string{"PATH=/usr/bin"}, beadsDir)
+	got := envMap(env)
+
+	wantDataDir := filepath.Join(townRoot, ".dolt-data")
+	if got["BEADS_DOLT_DATA_DIR"] != wantDataDir {
+		t.Fatalf("BEADS_DOLT_DATA_DIR = %q, want %q in %v", got["BEADS_DOLT_DATA_DIR"], wantDataDir, env)
+	}
+	if _, ok := got["BEADS_DOLT_SERVER_HOST"]; ok {
+		t.Fatalf("BEADS_DOLT_SERVER_HOST should be unset in embedded mode, env=%v", env)
+	}
+	if _, ok := got["BEADS_DOLT_SERVER_PORT"]; ok {
+		t.Fatalf("BEADS_DOLT_SERVER_PORT should be unset in embedded mode, env=%v", env)
+	}
+}
+
 func TestBuildPinnedBDEnvFallsBackToGTDoltPort(t *testing.T) {
 	beadsDir := filepath.Join(t.TempDir(), ".beads")
 	if err := os.MkdirAll(beadsDir, 0755); err != nil {
