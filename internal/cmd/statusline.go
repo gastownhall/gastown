@@ -111,7 +111,7 @@ func runStatusLine(cmd *cobra.Command, args []string) error {
 }
 
 // runWorkerStatusLine outputs status for crew or polecat sessions.
-func runWorkerStatusLine(t *tmux.Tmux, session, rigName, polecat, crew, issue string) error {
+func runWorkerStatusLine(_ *tmux.Tmux, _, _ string, polecat, crew, issue string) error {
 	// Determine agent type and identity
 	var icon string
 	if polecat != "" {
@@ -438,7 +438,7 @@ func runWitnessStatusLine(t *tmux.Tmux, rigName string) error {
 
 // runRefineryStatusLine outputs status for a refinery session.
 // Shows: MQ length, current item, hook or mail preview
-func runRefineryStatusLine(t *tmux.Tmux, rigName string) error {
+func runRefineryStatusLine(_ *tmux.Tmux, rigName string) error {
 	if rigName == "" {
 		// Try to extract from session name: <prefix>-refinery
 		if identity, err := session.ParseSessionName(statusLineSession); err == nil && identity.Role == session.RoleRefinery {

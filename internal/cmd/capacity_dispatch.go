@@ -591,7 +591,7 @@ func dispatchSingleBead(b capacity.PendingBead, townRoot, _ string) (*SlingResul
 	return result, nil
 }
 
-func validateDryRunDispatchPlan(townRoot string, cycle *capacity.DispatchCycle, plan capacity.DispatchPlan) capacity.DispatchPlan {
+func validateDryRunDispatchPlan(townRoot string, _ *capacity.DispatchCycle, plan capacity.DispatchPlan) capacity.DispatchPlan {
 	if len(plan.ToDispatch) == 0 {
 		return plan
 	}

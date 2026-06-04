@@ -457,7 +457,7 @@ func protectedWorktreeTargets(cmd string, args []string, baseDir string) []strin
 	protected := make([]string, 0, len(targets))
 	for _, target := range targets {
 		abs := gitPathAbs(target, baseDir)
-		if _, ok := protectedTownRuntimePath(abs); ok {
+		if protectedTownRuntimePath(abs) {
 			protected = append(protected, abs)
 		}
 	}
@@ -532,16 +532,16 @@ func resolveExistingSymlinkAncestors(path string) string {
 	}
 }
 
-func protectedTownRuntimePath(path string) (string, bool) {
+func protectedTownRuntimePath(path string) bool {
 	abs := filepath.Clean(path)
 	for dir := abs; ; dir = filepath.Dir(dir) {
 		if isTownRoot(dir) {
 			if samePath(abs, dir) {
-				return dir, true
+				return true
 			}
 			rel, err := filepath.Rel(dir, abs)
 			if err != nil {
-				return "", false
+				return false
 			}
 			first := rel
 			if idx := strings.IndexRune(rel, filepath.Separator); idx >= 0 {
@@ -549,14 +549,14 @@ func protectedTownRuntimePath(path string) (string, bool) {
 			}
 			switch first {
 			case "mayor", ".dolt-data", ".runtime", ".beads", "daemon":
-				return dir, true
+				return true
 			default:
-				return "", false
+				return false
 			}
 		}
 		parent := filepath.Dir(dir)
 		if parent == dir {
-			return "", false
+			return false
 		}
 	}
 }
@@ -608,7 +608,7 @@ type cloneOptions struct {
 // to dest, and applies post-clone configuration (hooks or refspec).
 func (g *Git) cloneInternal(url, dest string, opts cloneOptions) error {
 	dest = gitPathAbs(dest, "")
-	if _, ok := protectedTownRuntimePath(dest); ok {
+	if protectedTownRuntimePath(dest) {
 		return fmt.Errorf("%w: clone destination %s", ErrUnsafeTownRootGitMutation, dest)
 	}
 
