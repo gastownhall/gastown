@@ -1483,6 +1483,59 @@ func (g *Git) IsPRApproved(prNumber int) (bool, error) {
 	return result.ReviewDecision == "APPROVED", nil
 }
 
+// CRReview holds the result of a CodeRabbit review on a GitHub PR.
+type CRReview struct {
+	State       string    // "APPROVED", "CHANGES_REQUESTED", "COMMENTED"
+	Body        string    // Review body text
+	SubmittedAt time.Time // When the review was submitted
+}
+
+// GetPRCodeRabbitStatus fetches CodeRabbit's latest review state for a PR
+// and the PR's creation time (for age-based skip logic).
+// Returns nil review (and zero time) if CodeRabbit has not reviewed the PR.
+func (g *Git) GetPRCodeRabbitStatus(prNumber int) (*CRReview, time.Time, error) {
+	cmd := exec.Command("gh", "pr", "view", fmt.Sprintf("%d", prNumber),
+		"--json", "createdAt,reviews")
+	cmd.Dir = g.workDir
+	out, err := cmd.Output()
+	if err != nil {
+		return nil, time.Time{}, fmt.Errorf("gh pr view failed: %w", err)
+	}
+
+	var data struct {
+		CreatedAt time.Time `json:"createdAt"`
+		Reviews   []struct {
+			Author struct {
+				Login string `json:"login"`
+			} `json:"author"`
+			State       string    `json:"state"`
+			Body        string    `json:"body"`
+			SubmittedAt time.Time `json:"submittedAt"`
+		} `json:"reviews"`
+	}
+	if err := json.Unmarshal(bytes.TrimSpace(out), &data); err != nil {
+		return nil, time.Time{}, fmt.Errorf("failed to parse gh pr view output: %w", err)
+	}
+
+	// Find the latest CodeRabbit review (most recently submitted)
+	var latest *CRReview
+	for _, r := range data.Reviews {
+		if r.Author.Login != "coderabbitai[bot]" {
+			continue
+		}
+		if latest == nil || r.SubmittedAt.After(latest.SubmittedAt) {
+			cr := &CRReview{
+				State:       r.State,
+				Body:        r.Body,
+				SubmittedAt: r.SubmittedAt,
+			}
+			latest = cr
+		}
+	}
+
+	return latest, data.CreatedAt, nil
+}
+
 // GhPrMerge merges a GitHub PR using the gh CLI, respecting branch protection rules.
 // The method parameter should be "merge", "squash", or "rebase".
 // Returns the merge commit SHA on success.

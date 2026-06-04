@@ -177,6 +177,10 @@ type MergeQueueConfig struct {
 	// Batch holds configuration for the batch-then-bisect merge queue.
 	// When nil or MaxBatchSize <= 1, batching is disabled and MRs process sequentially.
 	Batch *BatchConfig `json:"batch,omitempty"`
+
+	// CodeRabbit configures the CodeRabbit AI review pre-merge gate.
+	// When nil, the gate is disabled.
+	CodeRabbit *CodeRabbitConfig `json:"code_rabbit,omitempty"`
 }
 
 // DefaultMergeQueueConfig returns sensible defaults for merge queue configuration.
@@ -268,6 +272,10 @@ type Engineer struct {
 	mergeSlotRelease      func(holder string) error
 	mergeSlotMaxRetries   int           // Max retries for slot acquisition (0 = no retry)
 	mergeSlotRetryBackoff time.Duration // Initial backoff between retries
+	// crFindPR returns the GitHub PR number for a branch (0 if none). Injectable for testing.
+	crFindPR   func(branch string) (int, error)
+	// crGetStatus returns CodeRabbit's review for a PR and the PR's creation time. Injectable for testing.
+	crGetStatus func(prNumber int) (*git.CRReview, time.Time, error)
 }
 
 // NewEngineer creates a new Engineer for the given rig.
@@ -282,11 +290,12 @@ func NewEngineer(r *rig.Rig) *Engineer {
 		gitDir = filepath.Join(r.Path, "mayor", "rig")
 	}
 	beadsClient := beads.New(r.Path)
+	gitClient := git.NewGit(gitDir)
 
 	return &Engineer{
 		rig:     r,
 		beads:   beadsClient,
-		git:     git.NewGit(gitDir),
+		git:     gitClient,
 		config:  cfg,
 		workDir: gitDir,
 		output:  os.Stdout,
@@ -302,6 +311,8 @@ func NewEngineer(r *rig.Rig) *Engineer {
 		},
 		mergeSlotMaxRetries:   10,
 		mergeSlotRetryBackoff: 500 * time.Millisecond,
+		crFindPR:              gitClient.FindPRNumber,
+		crGetStatus:           crGetStatusFromGit(gitClient),
 	}
 }
 
@@ -354,6 +365,11 @@ func (e *Engineer) LoadConfig() error {
 		MergeStrategy        *string                   `json:"merge_strategy"`
 		VCSProvider          *string                   `json:"vcs_provider"`
 		RequireReview        *bool                     `json:"require_review"`
+		CodeRabbit           *struct {
+			Enabled       *bool   `json:"enabled"`
+			MinAgeForSkip *string `json:"min_age_for_skip"`
+			ParkLabel     *string `json:"park_label"`
+		} `json:"code_rabbit"`
 	}
 
 	if err := json.Unmarshal(rawConfig.MergeQueue, &mqRaw); err != nil {
@@ -442,6 +458,25 @@ func (e *Engineer) LoadConfig() error {
 		e.config.RequireReview = mqRaw.RequireReview
 	}
 
+	// Parse code_rabbit configuration.
+	if mqRaw.CodeRabbit != nil {
+		cr := &CodeRabbitConfig{}
+		if mqRaw.CodeRabbit.Enabled != nil {
+			cr.Enabled = *mqRaw.CodeRabbit.Enabled
+		}
+		if mqRaw.CodeRabbit.MinAgeForSkip != nil && *mqRaw.CodeRabbit.MinAgeForSkip != "" {
+			dur, err := time.ParseDuration(*mqRaw.CodeRabbit.MinAgeForSkip)
+			if err != nil {
+				return fmt.Errorf("invalid code_rabbit.min_age_for_skip %q: %w", *mqRaw.CodeRabbit.MinAgeForSkip, err)
+			}
+			cr.MinAgeForSkip = dur
+		}
+		if mqRaw.CodeRabbit.ParkLabel != nil {
+			cr.ParkLabel = *mqRaw.CodeRabbit.ParkLabel
+		}
+		e.config.CodeRabbit = cr
+	}
+
 	// Initialize the PR provider when merge_strategy=pr.
 	if e.config.MergeStrategy == "pr" {
 		if err := e.initPRProvider(); err != nil {
@@ -494,6 +529,8 @@ type ProcessResult struct {
 	BranchNotFound bool // Source branch no longer exists (e.g. cleaned up after cherry-pick)
 	NoMerge        bool // Source issue has no_merge flag — intentionally blocked, not a failure
 	NeedsApproval  bool // PR exists but lacks required approving review (merge_strategy=pr)
+	CRParked       bool // PR has open CodeRabbit findings — parked with label, will retry
+	CRWait         bool // CodeRabbit hasn't reviewed yet — waiting (no label), will retry
 }
 
 // doMerge performs the actual git merge operation.
@@ -557,6 +594,28 @@ func (e *Engineer) doMerge(ctx context.Context, branch, target, sourceIssue stri
 			Success:  false,
 			Conflict: true,
 			Error:    fmt.Sprintf("merge conflicts in: %v", conflicts),
+		}
+	}
+
+	// Step 3.2: CodeRabbit gate — park PRs with open AI review findings.
+	// Runs before quality gates so we don't waste time running tests on a PR
+	// that CR has already flagged. Fail-open: API errors skip the gate.
+	if crResult := e.checkCodeRabbitGate(ctx, branch); crResult != nil {
+		if crResult.ShouldPark {
+			_, _ = fmt.Fprintf(e.output, "[Engineer] CodeRabbit gate: parking — %s\n", crResult.Reason)
+			return ProcessResult{
+				Success:  false,
+				CRParked: true,
+				Error:    crResult.Reason,
+			}
+		}
+		if crResult.ShouldWait {
+			_, _ = fmt.Fprintf(e.output, "[Engineer] CodeRabbit gate: waiting — %s\n", crResult.Reason)
+			return ProcessResult{
+				Success: false,
+				CRWait:  true,
+				Error:   crResult.Reason,
+			}
 		}
 	}
 
@@ -1317,6 +1376,44 @@ func (e *Engineer) HandleMRInfoFailure(mr *MRInfo, result ProcessResult) {
 	// No polecat notification needed; the PR just needs a human review on GitHub.
 	if result.NeedsApproval {
 		_, _ = fmt.Fprintf(e.output, "[Engineer] MR %s: PR awaiting human approval, will retry next poll\n", mr.ID)
+		return
+	}
+
+	// CRWait: CodeRabbit hasn't posted a review yet but the PR is new.
+	// Quiet retry — no label, no escalation. CR is still running.
+	if result.CRWait {
+		_, _ = fmt.Fprintf(e.output, "[Engineer] MR %s: waiting for CodeRabbit review, will retry next poll\n", mr.ID)
+		return
+	}
+
+	// CRParked: CodeRabbit posted actionable findings or requested changes.
+	// Add a beads label to the MR bead (first occurrence only) and nudge mayor.
+	if result.CRParked {
+		parkLabel := e.crParkLabel()
+		_, _ = fmt.Fprintf(e.output, "[Engineer] MR %s: CR findings open — parking (%s)\n", mr.ID, result.Error)
+
+		// Only label + escalate once; subsequent polls are silent retries.
+		if mr.ID != "" {
+			mrBead, showErr := e.beads.Show(mr.ID)
+			alreadyLabelled := showErr == nil && mrBead != nil && beads.HasLabel(mrBead, parkLabel)
+			if !alreadyLabelled {
+				if labelErr := e.beads.Update(mr.ID, beads.UpdateOptions{AddLabels: []string{parkLabel}}); labelErr != nil {
+					_, _ = fmt.Fprintf(e.output, "[Engineer] Warning: failed to add %s label to MR %s: %v\n", parkLabel, mr.ID, labelErr)
+				} else {
+					_, _ = fmt.Fprintf(e.output, "[Engineer] Added %s label to MR %s\n", parkLabel, mr.ID)
+				}
+				// Nudge mayor so they can decide to address or suppress CR findings.
+				nudgeMsg := fmt.Sprintf("CR_PARKED: MR %s branch=%s reason=%q — address CodeRabbit findings or suppress to unblock merge",
+					mr.ID, mr.Branch, result.Error)
+				nudgeCmd := exec.Command("gt", "nudge", "mayor/", nudgeMsg)
+				util.SetDetachedProcessGroup(nudgeCmd)
+				nudgeCmd.Dir = e.workDir
+				if err := nudgeCmd.Run(); err != nil {
+					_, _ = fmt.Fprintf(e.output, "[Engineer] Warning: failed to nudge mayor about CR parking: %v\n", err)
+				}
+			}
+		}
+		_, _ = fmt.Fprintln(e.output, "[Engineer] MR remains in queue, will re-check CR status next poll")
 		return
 	}
 
