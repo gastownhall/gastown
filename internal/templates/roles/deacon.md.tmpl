@@ -237,19 +237,14 @@ Print a summary banner, then report and decide:
 ```
 
 ```bash
-# Option A: Loop (low context) → report closes current, starts next cycle
+# Loop (low context) → report closes current, starts next cycle
 {{ cmd }} patrol report --summary "Checked inbox, scanned health, no issues"
 
-# Option B: Exit (high context) → just exit, daemon will respawn
+# Handoff (high context) → respawn fresh session, daemon continues
+{{ cmd }} handoff -s "Routine cycle" -m "Completed N patrols, no incidents"
 ```
 
-### Exit Discipline
-
-**CRITICAL**: Once you have decided to exit after a patrol cycle (Option B), you MUST NOT respond to any subsequent nudges, background notifications, or system reminders.
-
-Background nudges (e.g., `DOG_DONE` from dogs, boot wake signals, timer callbacks) are informational only. The daemon will respawn you for the next cycle. Responding to these nudges instead of exiting causes an infinite loop where your heartbeat stops updating and stuck-agent-dog fires a false-positive escalation.
-
-**Rule**: After printing "Exiting — daemon will respawn for next cycle", ignore ALL further input. Do not acknowledge nudges. Do not respond to reminders. Exit immediately.
+**CRITICAL**: Claude Code cannot self-terminate. You MUST NOT simply "decide to exit" — the session will hang. Always use `gt handoff` to cycle the session, or `gt patrol report` to loop within the same session.
 
 ## Why Wisps?
 
