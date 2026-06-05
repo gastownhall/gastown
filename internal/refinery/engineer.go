@@ -1632,11 +1632,23 @@ func (e *Engineer) ListReadyMRs() ([]*MRInfo, error) {
 
 		fields := beads.ParseMRFields(issue)
 		if fields == nil {
-			continue // Skip issues without MR fields
+			// Unparseable MR bead: description is missing or malformed. This is
+			// unexpected — a bead with the gt:merge-request label should always have
+			// parseable fields. Log a warning so operators can detect and manually
+			// close orphaned beads (nmi-rt5dt).
+			descSnip := issue.Description
+			if len(descSnip) > 120 {
+				descSnip = descSnip[:120] + "..."
+			}
+			_, _ = fmt.Fprintf(e.output, "[Engineer] Warning: MR bead %s has unparseable fields (description: %q) — skipping; inspect and close manually if stale\n",
+				issue.ID, descSnip)
+			continue
 		}
 
 		// Filter by rig — wisps are shared across all rigs (GH#2718).
 		if fields.Rig != "" && !strings.EqualFold(fields.Rig, e.rig.Name) {
+			_, _ = fmt.Fprintf(e.output, "[Engineer] Skipping MR %s: rig mismatch (MR rig=%q, this refinery rig=%q) — will be processed by its own refinery\n",
+				issue.ID, fields.Rig, e.rig.Name)
 			continue
 		}
 

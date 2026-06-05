@@ -633,11 +633,18 @@ func (m *Manager) PostMerge(idOrBranch string) (*PostMergeResult, error) {
 	// The source issue may have an attached molecule (wisp) whose open steps
 	// would block a normal bd close. ForceCloseWithReason bypasses this,
 	// matching how gt done handles closures for the no-MR path.
+	//
+	// Use ResolveRoutingTarget so cross-rig issues (e.g. nmi-* submitted to a
+	// gastown refinery) are closed in their own DB rather than the MR's rig DB.
 	if mr.IssueID != "" {
+		townRoot := filepath.Dir(m.rig.Path)
+		rigBeadsDir := beads.ResolveBeadsDir(m.rig.BeadsPath())
+		sourceBeadsDir := beads.ResolveRoutingTarget(townRoot, mr.IssueID, rigBeadsDir)
+		bSource := beads.NewWithBeadsDir(townRoot, sourceBeadsDir)
 		closeReason := fmt.Sprintf("Merged in %s", mr.ID)
-		if err := b.ForceCloseWithReason(closeReason, mr.IssueID); err != nil {
+		if err := bSource.ForceCloseWithReason(closeReason, mr.IssueID); err != nil {
 			// Check if already closed (by polecat's gt done) — that's fine
-			if issue, showErr := b.Show(mr.IssueID); showErr == nil && beads.IssueStatus(issue.Status).IsTerminal() {
+			if issue, showErr := bSource.Show(mr.IssueID); showErr == nil && beads.IssueStatus(issue.Status).IsTerminal() {
 				_, _ = fmt.Fprintf(m.output, "  %s source issue already closed: %s\n", style.Dim.Render("○"), mr.IssueID)
 				result.SourceIssueClosed = true
 			} else {
