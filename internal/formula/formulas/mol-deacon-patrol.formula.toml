@@ -1267,11 +1267,11 @@ mandatory even when context is low; otherwise the patrol loop can stall between
 cycles with work waiting on the hook.
 
 **If context HIGH** (approaching limit):
-1. Include notable observations in the same handoff message:
+1. Hand off with notable observations:
 ```bash
 gt handoff -s "Deacon patrol handoff" -m "<observations>"
 ```
-2. Exit cleanly - the daemon will respawn a fresh Deacon session
+`gt handoff` respawns the session atomically — the daemon does NOT need to restart you.
 
-**IMPORTANT**: You must either report and loop (context LOW) or exit (context HIGH).
+**IMPORTANT**: You must either report+handoff (context LOW) or handoff directly (context HIGH).
 Never leave the session idle without work on your hook."""
