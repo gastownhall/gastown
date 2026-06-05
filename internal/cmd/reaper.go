@@ -550,6 +550,78 @@ Normally the daemon dispatches a Dog to execute the mol-dog-reaper formula.`,
 	},
 }
 
+var reaperCleanDanglingCmd = &cobra.Command{
+	Use:   "clean-dangling",
+	Short: "Delete dangling parent references from wisp_dependencies",
+	Long: `Delete wisp_dependencies rows where the referenced parent no longer
+exists in wisps or issues. This prevents accumulation of dangling parent refs
+when parent wisps are purged or deleted outside the reaper's normal flow.`,
+	RunE: func(cmd *cobra.Command, args []string) error {
+		databases := reaperDatabaseNames()
+
+		var results []*reaper.CleanDanglingRefsResult
+		for i, dbName := range databases {
+			if err := waitBeforeReaperDatabase(i); err != nil {
+				return err
+			}
+			if err := reaper.ValidateDBName(dbName); err != nil {
+				fmt.Fprintf(os.Stderr, "skip invalid db: %s\n", dbName)
+				continue
+			}
+
+			db, err := reaper.OpenDB(reaperHost, reaperPort, dbName, 30*time.Second, 30*time.Second)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "%s: connect error: %v\n", dbName, err)
+				continue
+			}
+
+			if ok, err := reaper.HasReaperSchema(db); err != nil {
+				fmt.Fprintf(os.Stderr, "%s: schema check error: %v\n", dbName, err)
+				db.Close()
+				continue
+			} else if !ok {
+				db.Close()
+				continue
+			}
+
+			result, err := reaper.CleanDanglingRefs(db, dbName, reaperDryRun)
+			db.Close()
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "%s: clean-dangling error: %v\n", dbName, err)
+				continue
+			}
+			results = append(results, result)
+		}
+
+		if reaperJSON {
+			fmt.Println(reaper.FormatJSON(results))
+		} else {
+			var totalDeleted int
+			for _, r := range results {
+				prefix := ""
+				if r.DryRun {
+					prefix = "[DRY RUN] would "
+				}
+				fmt.Printf("%s: %sdeleted %d dangling parent refs\n",
+					r.Database, prefix, r.Deleted)
+				for _, a := range r.Anomalies {
+					fmt.Printf("  %s %s\n", style.Warning.Render("ANOMALY:"), a.Message)
+				}
+				totalDeleted += r.Deleted
+			}
+			if len(results) > 1 {
+				prefix := ""
+				if reaperDryRun {
+					prefix = "[DRY RUN] "
+				}
+				fmt.Printf("\n%sClean-dangling summary (%d databases): deleted %d dangling parent refs\n",
+					prefix, len(results), totalDeleted)
+			}
+		}
+		return nil
+	},
+}
+
 func init() {
 	// Shared flags
 	// GH#2601: Default host/port from env vars for non-localhost setups.
@@ -570,18 +642,18 @@ func init() {
 		}
 	}
 
-	for _, cmd := range []*cobra.Command{reaperScanCmd, reaperReapCmd, reaperPurgeCmd, reaperAutoCloseCmd, reaperRunCmd, reaperDatabasesCmd} {
+	for _, cmd := range []*cobra.Command{reaperScanCmd, reaperReapCmd, reaperPurgeCmd, reaperAutoCloseCmd, reaperRunCmd, reaperDatabasesCmd, reaperCleanDanglingCmd} {
 		cmd.Flags().StringVar(&reaperDB, "db", "", "Database name (required for single-db commands)")
 		cmd.Flags().StringVar(&reaperHost, "host", defaultHost, "Dolt server host (env: GT_DOLT_HOST)")
 		cmd.Flags().IntVar(&reaperPort, "port", defaultPort, "Dolt server port (env: GT_DOLT_PORT)")
 		cmd.Flags().BoolVar(&reaperDryRun, "dry-run", false, "Report what would happen without acting")
 	}
-	for _, cmd := range []*cobra.Command{reaperScanCmd, reaperReapCmd, reaperPurgeCmd, reaperAutoCloseCmd, reaperRunCmd} {
+	for _, cmd := range []*cobra.Command{reaperScanCmd, reaperReapCmd, reaperPurgeCmd, reaperAutoCloseCmd, reaperRunCmd, reaperCleanDanglingCmd} {
 		cmd.Flags().StringVar(&reaperDBDelay, "db-delay", "250ms", "Delay between databases to reduce Dolt load")
 	}
 
 	// JSON output flag for single-db commands
-	for _, cmd := range []*cobra.Command{reaperScanCmd, reaperReapCmd, reaperPurgeCmd, reaperAutoCloseCmd, reaperDatabasesCmd} {
+	for _, cmd := range []*cobra.Command{reaperScanCmd, reaperReapCmd, reaperPurgeCmd, reaperAutoCloseCmd, reaperDatabasesCmd, reaperCleanDanglingCmd} {
 		cmd.Flags().BoolVar(&reaperJSON, "json", false, "Output as JSON")
 	}
 
@@ -603,6 +675,7 @@ func init() {
 	reaperCmd.AddCommand(reaperPurgeCmd)
 	reaperCmd.AddCommand(reaperAutoCloseCmd)
 	reaperCmd.AddCommand(reaperRunCmd)
+	reaperCmd.AddCommand(reaperCleanDanglingCmd)
 
 	rootCmd.AddCommand(reaperCmd)
 }

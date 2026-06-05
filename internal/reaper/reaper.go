@@ -1027,6 +1027,93 @@ func ClosePluginDispatches(db *sql.DB, dbName string, maxAge time.Duration, dryR
 	return result, nil
 }
 
+// CleanDanglingRefsResult holds the results of cleaning dangling parent references.
+type CleanDanglingRefsResult struct {
+	Database string    `json:"database"`
+	Deleted  int       `json:"deleted"`
+	DryRun   bool      `json:"dry_run,omitempty"`
+	Anomalies []Anomaly `json:"anomalies,omitempty"`
+}
+
+// CleanDanglingRefs deletes wisp_dependencies rows where the referenced parent
+// no longer exists in wisps or issues. This prevents accumulation of dangling
+// parent refs when parent wisps are purged outside the reaper's normal flow
+// (e.g. manual deletion, or deletion from other databases).
+func CleanDanglingRefs(db *sql.DB, dbName string, dryRun bool) (*CleanDanglingRefsResult, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+
+	result := &CleanDanglingRefsResult{Database: dbName, DryRun: dryRun}
+
+	wdDC, err := detectTableDepColumns(db, "wisp_dependencies")
+	if err != nil {
+		return nil, fmt.Errorf("detect dep schema: %w", err)
+	}
+
+	// Count dangling refs before deleting.
+	countQuery := fmt.Sprintf(`
+		SELECT COUNT(*) FROM wisp_dependencies wd
+		LEFT JOIN wisps pw ON pw.id = wd.%s LEFT JOIN issues pi ON pi.id = wd.%s
+		WHERE wd.type = 'parent-child' AND pw.id IS NULL AND pi.id IS NULL`,
+		wdDC.wispCol, wdDC.issueCol)
+	var count int
+	if err := db.QueryRowContext(ctx, countQuery).Scan(&count); err != nil {
+		return nil, fmt.Errorf("count dangling refs: %w", err)
+	}
+
+	if count == 0 {
+		return result, nil
+	}
+
+	if dryRun {
+		result.Deleted = count
+		return result, nil
+	}
+
+	if _, err := db.ExecContext(ctx, "SET @@autocommit = 0"); err != nil {
+		return nil, fmt.Errorf("disable autocommit: %w", err)
+	}
+	defer func() {
+		_, _ = db.ExecContext(context.Background(), "SET @@autocommit = 1")
+	}()
+
+	// Use DELETE with LEFT JOIN anti-pattern to remove dangling refs.
+	// Dolt supports DELETE with JOIN via USING syntax.
+	deleteQuery := fmt.Sprintf(`
+		DELETE wd FROM wisp_dependencies wd
+		LEFT JOIN wisps pw ON pw.id = wd.%s
+		LEFT JOIN issues pi ON pi.id = wd.%s
+		WHERE wd.type = 'parent-child' AND pw.id IS NULL AND pi.id IS NULL`,
+		wdDC.wispCol, wdDC.issueCol)
+	sqlResult, err := db.ExecContext(ctx, deleteQuery)
+	if err != nil {
+		return nil, fmt.Errorf("delete dangling refs: %w", err)
+	}
+	deleted, _ := sqlResult.RowsAffected()
+	result.Deleted = int(deleted)
+
+	if result.Deleted > 0 {
+		if _, err := db.ExecContext(ctx, "COMMIT"); err != nil {
+			result.Anomalies = append(result.Anomalies, Anomaly{
+				Type:    "sql_commit_failed",
+				Message: fmt.Sprintf("sql commit after clean-dangling failed: %v", err),
+			})
+			return result, nil
+		}
+		commitMsg := fmt.Sprintf("reaper: clean %d dangling parent refs in %s", result.Deleted, dbName)
+		if _, err := db.ExecContext(ctx, fmt.Sprintf("CALL DOLT_COMMIT('--allow-empty', '-Am', '%s')", commitMsg)); err != nil {
+			if !isNothingToCommit(err) {
+				result.Anomalies = append(result.Anomalies, Anomaly{
+					Type:    "dolt_commit_failed",
+					Message: fmt.Sprintf("dolt commit after clean-dangling failed: %v", err),
+				})
+			}
+		}
+	}
+
+	return result, nil
+}
+
 // FormatJSON marshals any value to indented JSON.
 func FormatJSON(v interface{}) string {
 	data, err := json.MarshalIndent(v, "", "  ")
