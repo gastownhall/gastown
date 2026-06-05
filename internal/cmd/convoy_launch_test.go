@@ -171,6 +171,53 @@ func TestConvoyStageLaunchFlag(t *testing.T) {
 	}
 }
 
+// IT-21: stage --launch creates the staged convoy, opens it, and dispatches
+// Wave 1. This protects the gt convoy launch <task...> alias path, which
+// delegates to runConvoyStage with convoyStageLaunch=true.
+func TestConvoyStageLaunchFlagDispatchesWave1(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("skipping on windows — shell stubs")
+	}
+
+	td := newTestDAG(t).
+		Task("gt-t1", "Task One", withRig("gastown")).
+		Task("gt-t2", "Task Two", withRig("gastown")).BlockedBy("gt-t1")
+
+	_, logPath := td.Setup(t)
+
+	var dispatched []string
+	origDispatch := dispatchTaskDirect
+	dispatchTaskDirect = func(townRoot, beadID, rig string) error {
+		dispatched = append(dispatched, beadID)
+		return nil
+	}
+	t.Cleanup(func() {
+		dispatchTaskDirect = origDispatch
+		convoyStageLaunch = false
+		convoyLaunchForce = false
+		convoyStageTitle = ""
+	})
+
+	convoyStageLaunch = true
+	convoyStageTitle = "test staged launch"
+	if err := runConvoyStage(convoyStageCmd, []string{"gt-t1", "gt-t2"}); err != nil {
+		t.Fatalf("runConvoyStage --launch: %v", err)
+	}
+
+	if len(dispatched) != 1 || dispatched[0] != "gt-t1" {
+		t.Fatalf("expected only wave-1 task gt-t1 to dispatch, got %v", dispatched)
+	}
+
+	logBytes, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatalf("read bd.log: %v", err)
+	}
+	logContent := string(logBytes)
+	if !strings.Contains(logContent, "--status=open") {
+		t.Errorf("bd.log should contain convoy transition to open, got:\n%s", logContent)
+	}
+}
+
 // ---------------------------------------------------------------------------
 // Launch-as-alias tests (gt-csl.6.4)
 // ---------------------------------------------------------------------------
@@ -178,10 +225,8 @@ func TestConvoyStageLaunchFlag(t *testing.T) {
 // IT-19: gt convoy launch <epic-id> delegates to stage+launch (no "not yet
 // implemented" error). Verifies the delegation path is wired up.
 //
-// Note: rigFromBeadID() is a stub returning "", so the staging pipeline will
-// hit no-rig errors and stop before creating a convoy. The test verifies
-// delegation happened (bd show/dep list ran) and the old "not yet implemented"
-// error is gone.
+// The test stubs dispatch so the delegated stage+launch path cannot call the
+// real gt binary while verifying bd show/dep list activity.
 func TestLaunchAsAlias_EpicInput(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("skipping on windows — shell stubs")
@@ -195,10 +240,17 @@ func TestLaunchAsAlias_EpicInput(t *testing.T) {
 
 	_, logPath := td.Setup(t)
 
+	origDispatch := dispatchTaskDirect
+	dispatchTaskDirect = func(townRoot, beadID, rig string) error {
+		return nil
+	}
+
 	// Clean up shared state.
 	defer func() {
+		dispatchTaskDirect = origDispatch
 		convoyStageLaunch = false
 		convoyLaunchForce = false
+		convoyStageTitle = ""
 	}()
 
 	err := runConvoyLaunch(convoyLaunchCmd, []string{"gt-epic-1"})
@@ -236,8 +288,8 @@ func TestLaunchAsAlias_EpicInput(t *testing.T) {
 // IT-20: gt convoy launch <task-id1> <task-id2> delegates to stage+launch for
 // task list input.
 //
-// Note: rigFromBeadID() is a stub returning "", so the staging pipeline will
-// hit no-rig errors. The test verifies delegation happened.
+// The test stubs dispatch so the delegated stage+launch path cannot call the
+// real gt binary while verifying staging delegation happened.
 func TestLaunchAsAlias_TaskListInput(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("skipping on windows — shell stubs")
@@ -250,10 +302,17 @@ func TestLaunchAsAlias_TaskListInput(t *testing.T) {
 
 	_, logPath := td.Setup(t)
 
+	origDispatch := dispatchTaskDirect
+	dispatchTaskDirect = func(townRoot, beadID, rig string) error {
+		return nil
+	}
+
 	// Clean up shared state.
 	defer func() {
+		dispatchTaskDirect = origDispatch
 		convoyStageLaunch = false
 		convoyLaunchForce = false
+		convoyStageTitle = ""
 	}()
 
 	err := runConvoyLaunch(convoyLaunchCmd, []string{"gt-t1", "gt-t2"})

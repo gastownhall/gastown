@@ -228,6 +228,12 @@ func (d *testDAG) BdStubScript() string {
 		sb.WriteString("    exit 0\n")
 		sb.WriteString("    ;;\n")
 	}
+	sb.WriteString("  show\\ hq-cv-*\\ --json|show\\ --json\\ hq-cv-*)\n")
+	sb.WriteString("    id=\"\"\n")
+	sb.WriteString("    for arg in \"$@\"; do case \"$arg\" in hq-cv-*) id=\"$arg\";; esac; done\n")
+	sb.WriteString("    echo \"[{\\\"id\\\":\\\"$id\\\",\\\"title\\\":\\\"Generated Convoy\\\",\\\"issue_type\\\":\\\"convoy\\\",\\\"status\\\":\\\"staged_ready\\\",\\\"labels\\\":[\\\"gt:convoy\\\"]}]\"\n")
+	sb.WriteString("    exit 0\n")
+	sb.WriteString("    ;;\n")
 
 	// --- handle: sql "SELECT ..." --json (bdDepListRawIDs) ---
 	// bdDepListRawIDs calls: bd sql "SELECT depends_on_id FROM dependencies WHERE issue_id = '<id>' AND type = 'tracks'" --json
@@ -304,7 +310,7 @@ func (d *testDAG) BdStubScript() string {
 	sb.WriteString(fmt.Sprintf("    echo '%s'\n", convoyListJSON))
 	sb.WriteString("    exit 0\n")
 	sb.WriteString("    ;;\n")
-	sb.WriteString("  list\\ --json\\ --limit=0|list\\ --json\\ --limit=0\\ --all|list\\ --json\\ --limit=0\\ --status=*)\n")
+	sb.WriteString("  list\\ --json\\ --limit=0*|list\\ --json\\ --limit=0\\ --all*|list\\ --json\\ --limit=0\\ --status=*)\n")
 	sb.WriteString("    echo '[]'\n")
 	sb.WriteString("    exit 0\n")
 	sb.WriteString("    ;;\n")

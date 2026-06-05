@@ -392,7 +392,22 @@ func runConvoyStage(cmd *cobra.Command, args []string) error {
 		if err := transitionConvoyToOpen(convoyID, convoyLaunchForce); err != nil {
 			return err
 		}
-		fmt.Printf("Convoy launched: %s (status: open)\n", convoyID)
+
+		townRoot, err := workspace.FindFromCwdOrError()
+		if err != nil {
+			return fmt.Errorf("resolve town root for dispatch: %w", err)
+		}
+
+		if err := checkBlockedRigsForLaunch(dag, townRoot, convoyLaunchForce); err != nil {
+			return err
+		}
+
+		results, err := dispatchWave1(convoyID, dag, waves, townRoot)
+		if err != nil {
+			return fmt.Errorf("dispatch wave 1: %w", err)
+		}
+
+		fmt.Print(renderLaunchOutput(convoyID, waves, results, dag))
 	}
 
 	return nil
