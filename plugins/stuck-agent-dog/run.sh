@@ -154,12 +154,8 @@ else
     HEARTBEAT_AGE=$(( NOW - ${HEARTBEAT_TIME:-0} ))
 
     if [ "$HEARTBEAT_AGE" -gt 1200 ]; then
-      if [ "$DEACON_PROCESS_ALIVE" -eq 1 ] && ! has_in_progress_work; then
-        log "  SKIP: Deacon heartbeat stale (${HEARTBEAT_AGE}s old) but process is alive and no in_progress work exists"
-      else
-        log "  STUCK: Deacon heartbeat stale (${HEARTBEAT_AGE}s old, >20m threshold)"
-        DEACON_ISSUE="stuck_heartbeat_${HEARTBEAT_AGE}s"
-      fi
+      log "  STUCK: Deacon heartbeat stale (${HEARTBEAT_AGE}s old, >20m threshold)"
+      DEACON_ISSUE="stuck_heartbeat_${HEARTBEAT_AGE}s"
     else
       log "  OK: Deacon heartbeat ${HEARTBEAT_AGE}s old"
     fi
@@ -205,8 +201,10 @@ action: restart requested
 BODY
 done
 
-# Deacon issues: escalate
+# Deacon issues: kill session, then escalate for audit trail
 if [ -n "$DEACON_ISSUE" ]; then
+	log "Killing Deacon session ($DEACON_SESSION) for $DEACON_ISSUE"
+	tmux kill-session -t "$DEACON_SESSION" 2>/dev/null || true
 	log "Escalating deacon issue: $DEACON_ISSUE"
 	DEACON_SEVERITY="HIGH"
 	DEACON_FINGERPRINT="stuck-agent-dog:deacon:$DEACON_ISSUE"
