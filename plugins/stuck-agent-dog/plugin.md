@@ -235,18 +235,15 @@ For STUCK agents (session alive, agent dead):
 - Exception: if pane output shows the agent is in a long-running build/test
 
 For DEACON stuck (stale heartbeat):
-- Capture pane output: `tmux capture-pane -t hq-deacon -p -S -20`
-- If output shows active work (recent timestamps, command output), the heartbeat
-  file may just be stale — nudge instead of kill
-- If output shows no recent activity, restart is warranted
+- The Deacon CANNOT self-terminate. If heartbeat is stale >20m, it is stuck.
+- Do NOT use "AI judgment" — kill immediately and let the daemon respawn.
 - Use a stable escalation fingerprint (`stuck-agent-dog:deacon:stuck-heartbeat`)
   for stale-heartbeat events; do not include the age seconds in the fingerprint.
 
 **Decision framework:**
 1. If agent is clearly dead (no process, no output) → restart
-2. If agent shows recent activity in pane → nudge first, check again next cycle
-3. If agent has been stuck for >15 minutes with no pane activity → restart
-4. If mass death detected (>3 crashes in same cycle) → escalate, don't restart
+2. Deacon heartbeat stale >20m → kill session immediately, daemon respawns
+3. If mass death detected (>3 crashes in same cycle) → escalate, don't restart
 
 ## Step 5: Take action
 
@@ -295,12 +292,14 @@ BODY
 
 done
 
-# For deacon issues
+# For deacon issues: kill session, then escalate for audit trail
 if [ -n "$DEACON_ISSUE" ]; then
+  echo "Killing Deacon session ($DEACON_SESSION) for $DEACON_ISSUE"
+  tmux kill-session -t "$DEACON_SESSION" 2>/dev/null || true
   echo "Escalating deacon issue: $DEACON_ISSUE"
   gt escalate "Deacon $DEACON_ISSUE detected by stuck-agent-dog" \
     -s HIGH \
-    --reason "Deacon issue: $DEACON_ISSUE. Context inspection completed."
+    --reason "Deacon issue: $DEACON_ISSUE. Session killed, daemon will respawn."
 fi
 ```
 
