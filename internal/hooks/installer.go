@@ -13,6 +13,8 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
+	"strings"
 
 	"github.com/steveyegge/gastown/internal/atomicfile"
 	"github.com/steveyegge/gastown/internal/hookutil"
@@ -76,6 +78,24 @@ func needsUpgrade(content []byte) bool {
 		return bytes.Contains(content, []byte(`captureRun("gt prime")`)) ||
 			bytes.Contains(content, []byte("$`gt prime`")) ||
 			!bytes.Contains(content, []byte(`prime --hook`))
+	}
+	// Stale binary path: hooks reference a different gt binary than the
+	// currently running one. This happens when Homebrew gt is ahead of
+	// ~/.local/bin/gt in PATH, or when the user switches between installs.
+	// Detect by checking if the embedded gt path differs from os.Executable.
+	if currentGT := resolveGTBinary(); currentGT != "" && currentGT != "gt" {
+		// Build the old-path pattern that would be stale
+		// The template uses {{GT_BIN}} which resolves to the current binary.
+		// If any other absolute gt path is present, the file is stale.
+		re := regexp.MustCompile(`"command"\s*:\s*"(/[^"]*\bgt\b[^"]*)"`)
+		for _, match := range re.FindAllSubmatch(content, -1) {
+			if len(match) >= 2 {
+				embeddedPath := string(match[1])
+				if embeddedPath != currentGT && strings.Contains(embeddedPath, "/gt") {
+					return true
+				}
+			}
+		}
 	}
 	return false
 }
