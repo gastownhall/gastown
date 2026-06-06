@@ -47,6 +47,18 @@ const (
 	// 3 retries (total backoff ~3.5s) is sufficient to ride out transient
 	// Dolt hiccups without punishing interactive workflows.
 	doltStateRetries = 3
+
+	// doltVisibilityRetries is a larger retry budget reserved specifically for
+	// the Dolt read-after-write visibility race at spawn (nmi-8c0wj). The agent
+	// bead is created (and committed) on one server connection, then the very
+	// next SetAgentState issue-lookup runs on a different connection/snapshot
+	// that may not yet see the just-written row, surfacing as ErrNotFound
+	// ("issue not found"). 3 retries (~1.5s) is too short to ride out the lag,
+	// so the spawn intermittently stalls with the bead stuck HOOKED. Using 6
+	// attempts (~15s total backoff) reliably waits out the visibility lag.
+	// This budget is ONLY applied when the error is the not-yet-visible case;
+	// genuinely-missing beads and config errors do not get the extended wait.
+	doltVisibilityRetries = 6
 )
 
 // doltBackoff calculates exponential backoff with ±25% jitter for a given attempt (1-indexed).
@@ -103,6 +115,28 @@ func isDoltConfigError(err error) bool {
 		strings.Contains(msg, "configure custom types") ||
 		strings.Contains(msg, "identity mismatch") ||
 		strings.Contains(msg, "Unknown database")
+}
+
+// isDoltVisibilityLag reports whether err is the read-after-write visibility
+// race rather than a genuinely-missing bead (nmi-8c0wj). At spawn the agent
+// bead was just created+committed by createAgentBeadWithRetry; the immediately
+// following SetAgentState lookup can land on a connection/snapshot that does
+// not yet see the row, surfacing as beads.ErrNotFound ("issue not found").
+//
+// This is deliberately conservative: it matches ONLY the not-found family so a
+// genuinely-missing bead is NOT silently given the extended retry budget. It is
+// up to the caller to decide whether the not-found is plausibly a fresh write
+// (spawn handshake) — see SetAgentStateWithRetry.
+func isDoltVisibilityLag(err error) bool {
+	if err == nil {
+		return false
+	}
+	if errors.Is(err, beads.ErrNotFound) {
+		return true
+	}
+	// Defensive: some call paths wrap the not-found as a plain string before it
+	// reaches here, so also match the canonical message.
+	return strings.Contains(err.Error(), "issue not found")
 }
 
 // Common errors
@@ -354,9 +388,23 @@ func (m *Manager) createAgentBeadWithRetry(agentID string, fields *beads.AgentFi
 // running and failing hard would orphan it. Agent state is a monitoring
 // concern, not a correctness requirement.
 // Fails fast on configuration/initialization errors (gt-2ra).
+//
+// nmi-8c0wj: the agent bead is created+committed immediately before this call
+// on the spawn path, so an "issue not found" here is almost always a Dolt
+// read-after-write visibility lag (the lookup hit a connection/snapshot that
+// has not yet seen the fresh row) rather than a genuinely-missing bead. That
+// case gets a larger retry budget (doltVisibilityRetries) so the spawn reliably
+// waits out the lag instead of stalling with the bead stuck HOOKED. All other
+// transient errors keep the short doltStateRetries budget, and a not-found that
+// STILL persists after the extended wait is surfaced with a distinct message so
+// a real missing bead is debuggable instead of silently hanging.
 func (m *Manager) SetAgentStateWithRetry(name string, state string) error {
 	var lastErr error
-	for attempt := 1; attempt <= doltStateRetries; attempt++ {
+	// Start with the short budget; widen it the first time we observe a
+	// visibility-lag (not-found) error, which is the read-after-write race.
+	maxRetries := doltStateRetries
+	sawVisibilityLag := false
+	for attempt := 1; attempt <= maxRetries; attempt++ {
 		err := m.SetAgentState(name, state)
 		if err == nil {
 			return nil
@@ -366,13 +414,28 @@ func (m *Manager) SetAgentStateWithRetry(name string, state string) error {
 		if isDoltConfigError(err) {
 			return fmt.Errorf("setting agent state failed (DB not initialized — not retrying): %w", err)
 		}
-		if attempt < doltStateRetries {
+		// Read-after-write visibility lag: the just-created agent bead is not
+		// yet visible to this lookup. Give it the extended budget so the spawn
+		// does not stall (nmi-8c0wj).
+		if isDoltVisibilityLag(err) && !sawVisibilityLag {
+			sawVisibilityLag = true
+			maxRetries = doltVisibilityRetries
+		}
+		if attempt < maxRetries {
 			backoff := doltBackoff(attempt)
 			style.PrintWarning("SetAgentState attempt %d failed, retrying in %v: %v", attempt, backoff, err)
 			time.Sleep(backoff)
 		}
 	}
-	return fmt.Errorf("setting agent state after %d attempts: %w", doltStateRetries, lastErr)
+	// Distinguish a persistent not-yet-visible bead (likely genuinely missing
+	// once we have waited this long) from other transient failures so real
+	// errors surface instead of hanging forever (nmi-8c0wj).
+	if isDoltVisibilityLag(lastErr) {
+		return fmt.Errorf("agent bead %q still not visible after %d attempts "+
+			"(Dolt read-after-write lag exhausted, or bead genuinely missing): %w",
+			name, maxRetries, lastErr)
+	}
+	return fmt.Errorf("setting agent state after %d attempts: %w", maxRetries, lastErr)
 }
 
 // assigneeID returns the beads assignee identifier for a polecat.
@@ -1686,7 +1749,13 @@ func (m *Manager) ReuseIdlePolecat(name string, opts AddOptions) (*Polecat, erro
 	// The column stays stale (e.g., "idle" from previous gt done) until
 	// StartSession sets it to "working". Without this, the column and
 	// description diverge, causing dashboards to show incorrect state.
-	if err := m.beads.UpdateAgentState(agentID, "spawning"); err != nil {
+	//
+	// nmi-8c0wj: the agent bead was just created+committed above, so this
+	// lookup can hit the Dolt read-after-write visibility lag and fail with
+	// "issue not found". Use the retry wrapper (which gives that not-found case
+	// an extended budget) instead of a bare zero-retry call, mirroring the
+	// upstream pool-init fix (PR #3869, 2ca7d2b1). Warn-only on exhaustion.
+	if err := m.SetAgentStateWithRetry(name, "spawning"); err != nil {
 		style.PrintWarning("could not sync agent_state column to spawning: %v", err)
 	}
 
