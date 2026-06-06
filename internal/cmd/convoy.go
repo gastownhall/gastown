@@ -2414,7 +2414,7 @@ func bdShowTrackedDeps(dir, convoyID string) ([]string, error) {
 	seen := make(map[string]bool)
 	var ids []string
 	for _, dep := range results[0].Dependencies {
-		if dep.DependencyType != "tracks" {
+		if dep.TypeName() != "tracks" {
 			continue
 		}
 		id := beads.ExtractIssueID(dep.ID)
@@ -2430,6 +2430,14 @@ type issueDependency struct {
 	ID             string `json:"id"`
 	Status         string `json:"status"`
 	DependencyType string `json:"dependency_type"`
+	Type           string `json:"type"`
+}
+
+func (d issueDependency) TypeName() string {
+	if d.DependencyType != "" {
+		return d.DependencyType
+	}
+	return d.Type
 }
 
 type issueDetailsJSON struct {
@@ -2510,7 +2518,7 @@ func (d issueDetails) IsBlocked() bool {
 
 	// bd show can omit blocked_by_count; fall back to live dependency edges.
 	for _, dep := range d.Dependencies {
-		if dep.DependencyType == "blocks" && dep.Status != "closed" && dep.Status != "tombstone" {
+		if isBlockingDepType(dep.TypeName()) && dep.Status != "closed" && dep.Status != "tombstone" {
 			return true
 		}
 	}

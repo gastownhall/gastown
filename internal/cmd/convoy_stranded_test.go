@@ -104,6 +104,33 @@ func TestIssueDetailsIsBlocked(t *testing.T) {
 			want: true,
 		},
 		{
+			name: "open blocks dependency from type field marks blocked",
+			in: issueDetails{
+				Dependencies: []issueDependency{
+					{Type: "blocks", Status: "open"},
+				},
+			},
+			want: true,
+		},
+		{
+			name: "open waits-for dependency marks blocked",
+			in: issueDetails{
+				Dependencies: []issueDependency{
+					{DependencyType: "waits-for", Status: "open"},
+				},
+			},
+			want: true,
+		},
+		{
+			name: "closed waits-for dependency does not mark blocked",
+			in: issueDetails{
+				Dependencies: []issueDependency{
+					{DependencyType: "waits-for", Status: "closed"},
+				},
+			},
+			want: false,
+		},
+		{
 			name: "closed blocks dependency does not mark blocked",
 			in: issueDetails{
 				Dependencies: []issueDependency{
