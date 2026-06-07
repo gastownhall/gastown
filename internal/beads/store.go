@@ -218,13 +218,16 @@ func workFilterFromListOpts(opts ListOptions) beadsdk.WorkFilter {
 	return f
 }
 
-// storeList implements List using the in-process store.
-func (b *Beads) storeList(opts ListOptions) ([]*Issue, error) {
+// storeList implements List using the given in-process store. The store is
+// passed explicitly (rather than read from b.store) so read methods can route to
+// either an explicit store or a process-wide cached read-only store without ever
+// affecting write semantics.
+func (b *Beads) storeList(store beadsdk.Storage, opts ListOptions) ([]*Issue, error) {
 	ctx, cancel := storeCtx()
 	defer cancel()
 
 	filter := issueFilterFromListOpts(opts)
-	sdkIssues, err := b.store.SearchIssues(ctx, "", filter)
+	sdkIssues, err := store.SearchIssues(ctx, "", filter)
 	if err != nil {
 		return nil, fmt.Errorf("store list: %w", err)
 	}
@@ -232,12 +235,12 @@ func (b *Beads) storeList(opts ListOptions) ([]*Issue, error) {
 	return sdkIssuesToIssues(sdkIssues), nil
 }
 
-// storeShow implements Show using the in-process store.
-func (b *Beads) storeShow(id string) (*Issue, error) {
+// storeShow implements Show using the given in-process store.
+func (b *Beads) storeShow(store beadsdk.Storage, id string) (*Issue, error) {
 	ctx, cancel := storeCtx()
 	defer cancel()
 
-	si, err := b.store.GetIssue(ctx, id)
+	si, err := store.GetIssue(ctx, id)
 	if err != nil {
 		if strings.Contains(err.Error(), "not found") {
 			return nil, ErrNotFound
@@ -249,7 +252,7 @@ func (b *Beads) storeShow(id string) (*Issue, error) {
 
 	// Enrich with labels (SDK GetIssue may not include them)
 	if issue.Labels == nil {
-		labels, labelsErr := b.store.GetLabels(ctx, id)
+		labels, labelsErr := store.GetLabels(ctx, id)
 		if labelsErr == nil {
 			issue.Labels = labels
 		}
@@ -258,8 +261,8 @@ func (b *Beads) storeShow(id string) (*Issue, error) {
 	return issue, nil
 }
 
-// storeShowMultiple implements ShowMultiple using the in-process store.
-func (b *Beads) storeShowMultiple(ids []string) (map[string]*Issue, error) {
+// storeShowMultiple implements ShowMultiple using the given in-process store.
+func (b *Beads) storeShowMultiple(store beadsdk.Storage, ids []string) (map[string]*Issue, error) {
 	if len(ids) == 0 {
 		return make(map[string]*Issue), nil
 	}
@@ -267,7 +270,7 @@ func (b *Beads) storeShowMultiple(ids []string) (map[string]*Issue, error) {
 	ctx, cancel := storeCtx()
 	defer cancel()
 
-	sdkIssues, err := b.store.GetIssuesByIDs(ctx, ids)
+	sdkIssues, err := store.GetIssuesByIDs(ctx, ids)
 	if err != nil {
 		return nil, fmt.Errorf("store show multiple: %w", err)
 	}
@@ -405,12 +408,12 @@ func (b *Beads) storeClose(reason, session string, ids ...string) error {
 	return nil
 }
 
-// storeReady implements Ready using the in-process store.
-func (b *Beads) storeReady() ([]*Issue, error) {
+// storeReady implements Ready using the given in-process store.
+func (b *Beads) storeReady(store beadsdk.Storage) ([]*Issue, error) {
 	ctx, cancel := storeCtx()
 	defer cancel()
 
-	sdkIssues, err := b.store.GetReadyWork(ctx, beadsdk.WorkFilter{})
+	sdkIssues, err := store.GetReadyWork(ctx, beadsdk.WorkFilter{})
 	if err != nil {
 		return nil, fmt.Errorf("store ready: %w", err)
 	}
@@ -418,12 +421,12 @@ func (b *Beads) storeReady() ([]*Issue, error) {
 	return sdkIssuesToIssues(sdkIssues), nil
 }
 
-// storeReadyWithFilter implements Ready with a WorkFilter using the in-process store.
-func (b *Beads) storeReadyWithFilter(filter beadsdk.WorkFilter) ([]*Issue, error) {
+// storeReadyWithFilter implements Ready with a WorkFilter using the given store.
+func (b *Beads) storeReadyWithFilter(store beadsdk.Storage, filter beadsdk.WorkFilter) ([]*Issue, error) {
 	ctx, cancel := storeCtx()
 	defer cancel()
 
-	sdkIssues, err := b.store.GetReadyWork(ctx, filter)
+	sdkIssues, err := store.GetReadyWork(ctx, filter)
 	if err != nil {
 		return nil, fmt.Errorf("store ready: %w", err)
 	}
@@ -431,12 +434,12 @@ func (b *Beads) storeReadyWithFilter(filter beadsdk.WorkFilter) ([]*Issue, error
 	return sdkIssuesToIssues(sdkIssues), nil
 }
 
-// storeBlocked implements Blocked using the in-process store.
-func (b *Beads) storeBlocked() ([]*Issue, error) {
+// storeBlocked implements Blocked using the given in-process store.
+func (b *Beads) storeBlocked(store beadsdk.Storage) ([]*Issue, error) {
 	ctx, cancel := storeCtx()
 	defer cancel()
 
-	blocked, err := b.store.GetBlockedIssues(ctx, beadsdk.WorkFilter{})
+	blocked, err := store.GetBlockedIssues(ctx, beadsdk.WorkFilter{})
 	if err != nil {
 		return nil, fmt.Errorf("store blocked: %w", err)
 	}
@@ -449,8 +452,8 @@ func (b *Beads) storeBlocked() ([]*Issue, error) {
 	return issues, nil
 }
 
-// storeSearch implements Search using the in-process store.
-func (b *Beads) storeSearch(opts SearchOptions) ([]*Issue, error) {
+// storeSearch implements Search using the given in-process store.
+func (b *Beads) storeSearch(store beadsdk.Storage, opts SearchOptions) ([]*Issue, error) {
 	ctx, cancel := storeCtx()
 	defer cancel()
 
@@ -471,7 +474,7 @@ func (b *Beads) storeSearch(opts SearchOptions) ([]*Issue, error) {
 		filter.DescriptionContains = opts.DescContains
 	}
 
-	sdkIssues, err := b.store.SearchIssues(ctx, opts.Query, filter)
+	sdkIssues, err := store.SearchIssues(ctx, opts.Query, filter)
 	if err != nil {
 		return nil, fmt.Errorf("store search: %w", err)
 	}

@@ -905,10 +905,11 @@ func stripEnvPrefixes(environ []string, prefixes ...string) []string {
 // wisps table (where ephemeral issues live in beads v0.59+). Without this,
 // "bd list" only searches the issues table and misses wisps entirely.
 func (b *Beads) List(opts ListOptions) ([]*Issue, error) {
-	if b.store != nil && !opts.Ephemeral {
-		return b.storeList(opts)
-	}
-	if opts.Ephemeral {
+	if !opts.Ephemeral {
+		if rs := b.readStore(); rs != nil {
+			return b.storeList(rs, opts)
+		}
+	} else {
 		return b.listEphemeral(opts)
 	}
 
@@ -1177,8 +1178,8 @@ func (b *Beads) GetAssignedIssue(assignee string) (*Issue, error) {
 
 // Ready returns issues that are ready to work (not blocked).
 func (b *Beads) Ready() ([]*Issue, error) {
-	if b.store != nil {
-		return b.storeReady()
+	if rs := b.readStore(); rs != nil {
+		return b.storeReady(rs)
 	}
 
 	out, err := b.run("ready", "--json")
@@ -1199,8 +1200,8 @@ func (b *Beads) Ready() ([]*Issue, error) {
 // (blocked_issues_cache), handling all blocking types, transitive propagation,
 // and conditional-blocks resolution.
 func (b *Beads) ReadyForMol(moleculeID string) ([]*Issue, error) {
-	if b.store != nil {
-		return b.storeReadyWithFilter(beadsdk.WorkFilter{
+	if rs := b.readStore(); rs != nil {
+		return b.storeReadyWithFilter(rs, beadsdk.WorkFilter{
 			ParentID: &moleculeID,
 			Limit:    100,
 		})
@@ -1223,8 +1224,8 @@ func (b *Beads) ReadyForMol(moleculeID string) ([]*Issue, error) {
 // Uses bd ready --label flag for server-side filtering.
 // The issueType is converted to a gt:<type> label (e.g., "molecule" -> "gt:molecule").
 func (b *Beads) ReadyWithType(issueType string) ([]*Issue, error) {
-	if b.store != nil {
-		return b.storeReadyWithFilter(beadsdk.WorkFilter{
+	if rs := b.readStore(); rs != nil {
+		return b.storeReadyWithFilter(rs, beadsdk.WorkFilter{
 			Labels: []string{"gt:" + issueType},
 			Limit:  100,
 		})
@@ -1256,8 +1257,8 @@ func (b *Beads) Show(id string) (*Issue, error) {
 		}
 	}
 
-	if b.store != nil {
-		return b.storeShow(id)
+	if rs := b.readStore(); rs != nil {
+		return b.storeShow(rs, id)
 	}
 
 	out, err := b.run("show", id, "--json")
@@ -1315,8 +1316,8 @@ func (b *Beads) ShowMultiple(ids []string) (map[string]*Issue, error) {
 		return make(map[string]*Issue), nil
 	}
 
-	if b.store != nil {
-		return b.storeShowMultiple(ids)
+	if rs := b.readStore(); rs != nil {
+		return b.storeShowMultiple(rs, ids)
 	}
 
 	// bd show supports multiple IDs
@@ -1341,8 +1342,8 @@ func (b *Beads) ShowMultiple(ids []string) (map[string]*Issue, error) {
 
 // Blocked returns issues that are blocked by dependencies.
 func (b *Beads) Blocked() ([]*Issue, error) {
-	if b.store != nil {
-		return b.storeBlocked()
+	if rs := b.readStore(); rs != nil {
+		return b.storeBlocked(rs)
 	}
 
 	out, err := b.run("blocked", "--json")
@@ -1498,8 +1499,8 @@ type SearchOptions struct {
 
 // Search searches issues by text query across title, description, and ID.
 func (b *Beads) Search(opts SearchOptions) ([]*Issue, error) {
-	if b.store != nil {
-		return b.storeSearch(opts)
+	if rs := b.readStore(); rs != nil {
+		return b.storeSearch(rs, opts)
 	}
 
 	args := []string{"search", "--json"}
