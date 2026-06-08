@@ -322,7 +322,6 @@ Dog returns to available state in the pool.
 [vars]
 [vars.scope]
 description = "Scan scope: 'town' or specific rig name"
-required = true
 default = "town"
 
 [vars.action]
