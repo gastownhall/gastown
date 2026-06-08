@@ -114,8 +114,11 @@ func TestBuildPinnedBDEnvUsesSelectedConnectionMetadata(t *testing.T) {
 	if got["BEADS_DIR"] != beadsDir {
 		t.Fatalf("BEADS_DIR = %q, want %q in %v", got["BEADS_DIR"], beadsDir, env)
 	}
-	if value, ok := got["BEADS_DOLT_SERVER_DATABASE"]; ok {
-		t.Fatalf("BEADS_DOLT_SERVER_DATABASE should be stripped, got %q in %v", value, env)
+	if got["BEADS_DOLT_SERVER_DATABASE"] != "rigdb" {
+		t.Fatalf("BEADS_DOLT_SERVER_DATABASE = %q, want rigdb in %v", got["BEADS_DOLT_SERVER_DATABASE"], env)
+	}
+	if count := countEnvPrefix(env, "BEADS_DOLT_SERVER_DATABASE="); count != 1 {
+		t.Fatalf("BEADS_DOLT_SERVER_DATABASE count = %d, want 1 in %v", count, env)
 	}
 	if got["BEADS_DOLT_SERVER_HOST"] != "127.0.0.1" {
 		t.Fatalf("BEADS_DOLT_SERVER_HOST = %q, want 127.0.0.1 in %v", got["BEADS_DOLT_SERVER_HOST"], env)
@@ -178,8 +181,8 @@ func TestBuildPinnedBDEnvFallsBackToGTDoltPort(t *testing.T) {
 		"GT_DOLT_PORT=5507",
 	}, beadsDir)
 	got := envMap(env)
-	if value, ok := got["BEADS_DOLT_SERVER_DATABASE"]; ok {
-		t.Fatalf("BEADS_DOLT_SERVER_DATABASE should be stripped, got %q in %v", value, env)
+	if got["BEADS_DOLT_SERVER_DATABASE"] != "rigdb" {
+		t.Fatalf("BEADS_DOLT_SERVER_DATABASE = %q, want rigdb in %v", got["BEADS_DOLT_SERVER_DATABASE"], env)
 	}
 	if got["BEADS_DOLT_SERVER_HOST"] != "127.0.0.2" {
 		t.Fatalf("BEADS_DOLT_SERVER_HOST = %q, want GT_DOLT_HOST fallback in %v", got["BEADS_DOLT_SERVER_HOST"], env)
@@ -262,6 +265,9 @@ func TestBuildMutationBDEnvForcesWritableCommit(t *testing.T) {
 
 	if got["BEADS_DIR"] != beadsDir {
 		t.Fatalf("BEADS_DIR = %q, want %q in %v", got["BEADS_DIR"], beadsDir, env)
+	}
+	if got["BEADS_DOLT_SERVER_DATABASE"] != "hq" {
+		t.Fatalf("BEADS_DOLT_SERVER_DATABASE = %q, want hq in %v", got["BEADS_DOLT_SERVER_DATABASE"], env)
 	}
 	if got["BD_DOLT_AUTO_COMMIT"] != "on" {
 		t.Fatalf("BD_DOLT_AUTO_COMMIT = %q, want on in %v", got["BD_DOLT_AUTO_COMMIT"], env)
@@ -3999,6 +4005,7 @@ printf 'unknown\n'
 	}
 	for _, want := range []string{
 		"BEADS_DIR=" + beadsDir,
+		"BEADS_DOLT_SERVER_DATABASE=gastown",
 		"BEADS_DOLT_PORT=3307",
 		"BEADS_DOLT_SERVER_HOST=127.0.0.1",
 	} {

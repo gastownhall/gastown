@@ -393,7 +393,7 @@ func TestHandleExec_BDCreateRepoAliasPinsCanonicalBeadsDir(t *testing.T) {
 		assert.NotContains(t, resp.Stdout, "[--repo]")
 		assert.NotContains(t, resp.Stdout, "[gastown]")
 		assert.Contains(t, resp.Stdout, "BEADS_DIR="+canonicalBeads)
-		assert.Contains(t, resp.Stdout, "BEADS_DOLT_SERVER_DATABASE=\n")
+		assert.Contains(t, resp.Stdout, "BEADS_DOLT_SERVER_DATABASE=gastown\n")
 		assert.Contains(t, resp.Stdout, "BD_DOLT_AUTO_COMMIT=on")
 		assert.Contains(t, resp.Stdout, "BD_NO_GIT_OPS=true")
 		assert.NotContains(t, resp.Stdout, "BEADS_DIR="+decoyBeads)
@@ -412,7 +412,7 @@ func TestHandleExec_BDCreateRepoAliasPinsCanonicalBeadsDir(t *testing.T) {
 		assert.NotContains(t, resp.Stdout, "--repo=gastown")
 		assert.NotContains(t, resp.Stdout, "[gastown]")
 		assert.Contains(t, resp.Stdout, "BEADS_DIR="+canonicalBeads)
-		assert.Contains(t, resp.Stdout, "BEADS_DOLT_SERVER_DATABASE=\n")
+		assert.Contains(t, resp.Stdout, "BEADS_DOLT_SERVER_DATABASE=gastown\n")
 		assert.Contains(t, resp.Stdout, "BD_DOLT_AUTO_COMMIT=on")
 	})
 
@@ -422,7 +422,7 @@ func TestHandleExec_BDCreateRepoAliasPinsCanonicalBeadsDir(t *testing.T) {
 		assert.NotContains(t, resp.Stdout, "[--repo]")
 		assert.NotContains(t, resp.Stdout, "[hq]")
 		assert.Contains(t, resp.Stdout, "BEADS_DIR="+townBeads)
-		assert.Contains(t, resp.Stdout, "BEADS_DOLT_SERVER_DATABASE=\n")
+		assert.Contains(t, resp.Stdout, "BEADS_DOLT_SERVER_DATABASE=hq\n")
 	})
 
 	t.Run("town alias", func(t *testing.T) {
@@ -431,7 +431,7 @@ func TestHandleExec_BDCreateRepoAliasPinsCanonicalBeadsDir(t *testing.T) {
 		assert.NotContains(t, resp.Stdout, "[--repo]")
 		assert.NotContains(t, resp.Stdout, "[town]")
 		assert.Contains(t, resp.Stdout, "BEADS_DIR="+townBeads)
-		assert.Contains(t, resp.Stdout, "BEADS_DOLT_SERVER_DATABASE=\n")
+		assert.Contains(t, resp.Stdout, "BEADS_DOLT_SERVER_DATABASE=hq\n")
 	})
 
 	t.Run("path-like repo remains explicit", func(t *testing.T) {

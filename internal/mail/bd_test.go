@@ -260,8 +260,8 @@ func TestBdSubprocessEnv_FiltersStaleBdTargetEnv(t *testing.T) {
 	if !envContains(got, "BEADS_DIR="+beadsDir) {
 		t.Fatalf("expected current BEADS_DIR in env, got %v", got)
 	}
-	if _, ok := envLastValue(got, "BEADS_DOLT_SERVER_DATABASE"); ok {
-		t.Fatalf("database selector should be absent when BEADS_DIR is pinned, got %v", got)
+	if value, ok := envLastValue(got, "BEADS_DOLT_SERVER_DATABASE"); !ok || value != "rigdb" {
+		t.Fatalf("database selector = %q present=%v, want rigdb in %v", value, ok, got)
 	}
 	for _, want := range []string{"BD_READONLY=true", "BD_DOLT_AUTO_COMMIT=off", "BD_EXPORT_AUTO=false", "BD_BACKUP_ENABLED=false", "BD_DOLT_AUTO_PUSH=false", "BD_NO_PUSH=true", "BD_EXPORT_GIT_ADD=false", "BD_NO_GIT_OPS=true"} {
 		if !envContains(got, want) {

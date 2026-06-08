@@ -569,8 +569,8 @@ func TestBdCmd_WithBeadsDir_OverridesInheritedDoltTarget(t *testing.T) {
 	if envMap["BEADS_DIR"] != beadsDir {
 		t.Errorf("BEADS_DIR = %q, want %q", envMap["BEADS_DIR"], beadsDir)
 	}
-	if _, ok := envMap["BEADS_DOLT_SERVER_DATABASE"]; ok {
-		t.Errorf("BEADS_DOLT_SERVER_DATABASE should be absent when BEADS_DIR is pinned, got %q", envMap["BEADS_DOLT_SERVER_DATABASE"])
+	if envMap["BEADS_DOLT_SERVER_DATABASE"] != "rigdb" {
+		t.Errorf("BEADS_DOLT_SERVER_DATABASE = %q, want rigdb", envMap["BEADS_DOLT_SERVER_DATABASE"])
 	}
 	if envMap["BEADS_DOLT_SERVER_HOST"] != "127.0.0.1" {
 		t.Errorf("BEADS_DOLT_SERVER_HOST = %q, want 127.0.0.1", envMap["BEADS_DOLT_SERVER_HOST"])
