@@ -69,6 +69,21 @@ func TestParentExcludeJoin(t *testing.T) {
 	if !contains(joinClause, "parent-child") {
 		t.Error("parentExcludeJoin should filter on parent-child type")
 	}
+
+	// Regression (hq-y5myz): migration v49 moved parent-child links into
+	// depends_on_wisp_id / depends_on_issue_id and left the legacy depends_on_id
+	// column empty. Joining on the empty column flagged every parent-child link as
+	// dangling (~4200 false positives), driving an escalation flood and a failing-
+	// query storm that ballooned Dolt memory. Lock the post-v49 columns in.
+	if !contains(joinClause, "depends_on_wisp_id") {
+		t.Error("parentExcludeJoin should join wisp parents on depends_on_wisp_id (v49 schema)")
+	}
+	if !contains(joinClause, "depends_on_issue_id") {
+		t.Error("parentExcludeJoin should join issue parents on depends_on_issue_id (v49 schema)")
+	}
+	if contains(joinClause, "wd.depends_on_id") {
+		t.Error("parentExcludeJoin must not use the legacy empty depends_on_id column (v49 skew)")
+	}
 	if !contains(joinClause, "'open', 'hooked', 'in_progress'") {
 		t.Error("parentExcludeJoin should check for open parent statuses")
 	}
