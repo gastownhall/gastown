@@ -277,13 +277,17 @@ func runCompact(cmd *cobra.Command, args []string) error {
 }
 
 // cleanOrphanedWispDeps removes wisp_dependencies rows where either side no
-// longer exists in the wisps table. This happens when bd delete removes a wisp
-// but leaves behind its dependency records (bd delete has no cascade logic for
-// the wisp-level tables). Runs as a post-compact sweep.
+// longer exists. This happens when bd delete removes a wisp or issue but
+// leaves behind its dependency records. Runs as a post-compact sweep.
+//
+// wisp_dependencies uses three nullable target columns (depends_on_wisp_id,
+// depends_on_issue_id, depends_on_external) rather than the old single
+// depends_on_id column (removed in beads migration 0043).
 func cleanOrphanedWispDeps(bd *beads.Beads, result *compactResult) {
 	const q = `DELETE FROM wisp_dependencies WHERE ` +
 		`NOT EXISTS (SELECT 1 FROM wisps WHERE id = wisp_dependencies.issue_id) ` +
-		`OR NOT EXISTS (SELECT 1 FROM wisps WHERE id = wisp_dependencies.depends_on_id)`
+		`OR (depends_on_wisp_id IS NOT NULL AND NOT EXISTS (SELECT 1 FROM wisps WHERE id = wisp_dependencies.depends_on_wisp_id)) ` +
+		`OR (depends_on_issue_id IS NOT NULL AND NOT EXISTS (SELECT 1 FROM issues WHERE id = wisp_dependencies.depends_on_issue_id))`
 	out, err := bd.Run("sql", q)
 	if err != nil {
 		result.Errors = append(result.Errors, fmt.Sprintf("orphaned wisp_deps cleanup: %v", err))
