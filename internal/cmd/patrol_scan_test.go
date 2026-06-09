@@ -1,8 +1,11 @@
 package cmd
 
 import (
+	"bytes"
 	"encoding/json"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/steveyegge/gastown/internal/witness"
 )
@@ -100,6 +103,61 @@ func TestCountActiveWorkZombies_Empty(t *testing.T) {
 	got := countActiveWorkZombies(result)
 	if got != 0 {
 		t.Errorf("countActiveWorkZombies() = %d, want 0", got)
+	}
+}
+
+func TestRunPatrolScanPhaseEmitsProgressDiagnostics(t *testing.T) {
+	oldInterval := patrolScanProgressInterval
+	patrolScanProgressInterval = 10 * time.Millisecond
+	defer func() { patrolScanProgressInterval = oldInterval }()
+
+	var diagnostics bytes.Buffer
+	got := runPatrolScanPhase(&diagnostics, "slow phase", func() string {
+		time.Sleep(25 * time.Millisecond)
+		return "ok"
+	})
+
+	if got != "ok" {
+		t.Fatalf("runPatrolScanPhase result = %q, want ok", got)
+	}
+
+	output := diagnostics.String()
+	for _, want := range []string{
+		"gt patrol scan: starting slow phase",
+		"gt patrol scan: still running slow phase after",
+		"gt patrol scan: finished slow phase in",
+	} {
+		if !strings.Contains(output, want) {
+			t.Fatalf("diagnostics %q missing %q", output, want)
+		}
+	}
+}
+
+func TestRunPatrolScanPhaseZeroIntervalSkipsProgressTicks(t *testing.T) {
+	oldInterval := patrolScanProgressInterval
+	patrolScanProgressInterval = 0
+	defer func() { patrolScanProgressInterval = oldInterval }()
+
+	var diagnostics bytes.Buffer
+	got := runPatrolScanPhase(&diagnostics, "fast phase", func() int {
+		return 42
+	})
+
+	if got != 42 {
+		t.Fatalf("runPatrolScanPhase result = %d, want 42", got)
+	}
+
+	output := diagnostics.String()
+	if strings.Contains(output, "still running") {
+		t.Fatalf("diagnostics should not include progress tick when interval is disabled: %q", output)
+	}
+	for _, want := range []string{
+		"gt patrol scan: starting fast phase",
+		"gt patrol scan: finished fast phase in",
+	} {
+		if !strings.Contains(output, want) {
+			t.Fatalf("diagnostics %q missing %q", output, want)
+		}
 	}
 }
 

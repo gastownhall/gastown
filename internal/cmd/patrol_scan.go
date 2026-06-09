@@ -3,6 +3,7 @@ package cmd
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"strings"
 	"time"
@@ -41,6 +42,8 @@ Actions taken automatically:
   - Completion routing: MR cleanup wisps created, refinery nudged
 
 Use --notify to send mail when zombies with active work are detected.
+Long-running scan phases emit progress diagnostics to stderr so JSON stdout
+remains machine-readable while operators can see where a slow patrol is stuck.
 
 Examples:
   gt patrol scan                    # Scan current rig
@@ -58,6 +61,8 @@ func init() {
 
 	patrolCmd.AddCommand(patrolScanCmd)
 }
+
+var patrolScanProgressInterval = 10 * time.Second
 
 // PatrolScanOutput is the JSON output format for patrol scan results.
 type PatrolScanOutput struct {
@@ -106,9 +111,9 @@ type PatrolScanStallItem struct {
 
 // PatrolScanCompleteOutput holds completion discovery results.
 type PatrolScanCompleteOutput struct {
-	Checked   int                       `json:"checked"`
-	Found     int                       `json:"found"`
-	Completed []PatrolScanCompleteItem  `json:"completed,omitempty"`
+	Checked   int                      `json:"checked"`
+	Found     int                      `json:"found"`
+	Completed []PatrolScanCompleteItem `json:"completed,omitempty"`
 }
 
 // PatrolScanCompleteItem is a single completion discovery in scan output.
@@ -152,9 +157,16 @@ func runPatrolScan(cmd *cobra.Command, args []string) error {
 	// Note: DetectZombiePolecats takes a router param but does NOT send mail
 	// internally — it only uses the router for workspace context. Notifications
 	// are sent exclusively below via --notify, avoiding double-send.
-	zombieResult := witness.DetectZombiePolecats(bd, workDir, rigName, router)
-	stallResult := witness.DetectStalledPolecats(workDir, rigName)
-	completionResult := witness.DiscoverCompletions(bd, workDir, rigName, router)
+	diagnostics := cmd.ErrOrStderr()
+	zombieResult := runPatrolScanPhase(diagnostics, "zombie detection", func() *witness.DetectZombiePolecatsResult {
+		return witness.DetectZombiePolecats(bd, workDir, rigName, router)
+	})
+	stallResult := runPatrolScanPhase(diagnostics, "stall detection", func() *witness.DetectStalledPolecatsResult {
+		return witness.DetectStalledPolecats(workDir, rigName)
+	})
+	completionResult := runPatrolScanPhase(diagnostics, "completion discovery", func() *witness.DiscoverCompletionsResult {
+		return witness.DiscoverCompletions(bd, workDir, rigName, router)
+	})
 
 	// Build patrol receipts for zombies
 	receipts := witness.BuildPatrolReceipts(rigName, zombieResult)
@@ -175,6 +187,50 @@ func runPatrolScan(cmd *cobra.Command, args []string) error {
 	}
 
 	return outputPatrolScanHuman(rigName, zombieResult, stallResult, completionResult, receipts)
+}
+
+func runPatrolScanPhase[T any](diagnostics io.Writer, name string, fn func() T) T {
+	start := time.Now()
+	if diagnostics != nil {
+		fmt.Fprintf(diagnostics, "gt patrol scan: starting %s\n", name)
+	}
+
+	done := make(chan T, 1)
+	go func() {
+		done <- fn()
+	}()
+
+	if patrolScanProgressInterval <= 0 {
+		result := <-done
+		if diagnostics != nil {
+			fmt.Fprintf(diagnostics, "gt patrol scan: finished %s in %s\n", name, formatPatrolScanElapsed(time.Since(start)))
+		}
+		return result
+	}
+
+	ticker := time.NewTicker(patrolScanProgressInterval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case result := <-done:
+			if diagnostics != nil {
+				fmt.Fprintf(diagnostics, "gt patrol scan: finished %s in %s\n", name, formatPatrolScanElapsed(time.Since(start)))
+			}
+			return result
+		case <-ticker.C:
+			if diagnostics != nil {
+				fmt.Fprintf(diagnostics, "gt patrol scan: still running %s after %s\n", name, formatPatrolScanElapsed(time.Since(start)))
+			}
+		}
+	}
+}
+
+func formatPatrolScanElapsed(elapsed time.Duration) string {
+	if elapsed < time.Second {
+		return elapsed.Round(time.Millisecond).String()
+	}
+	return elapsed.Round(time.Second).String()
 }
 
 func countActiveWorkZombies(result *witness.DetectZombiePolecatsResult) int {
