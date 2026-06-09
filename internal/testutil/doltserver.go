@@ -113,9 +113,25 @@ func startSharedDoltContainer() {
 
 	doltCtr = ctr
 	doltCtrPort = p.Port()
+	clearInheritedBeadsWorkspaceEnv()
 	os.Setenv("GT_DOLT_PORT", doltCtrPort)    //nolint:tenv // intentional process-wide env
 	os.Setenv("BEADS_DOLT_PORT", doltCtrPort) //nolint:tenv // intentional process-wide env
-	os.Setenv("GT_TEST_EXTERNAL_DOLT", "1")   //nolint:tenv // integration tests reuse this container
+	os.Setenv("BEADS_DOLT_SERVER_HOST", "127.0.0.1")
+	os.Setenv("GT_TEST_EXTERNAL_DOLT", "1") //nolint:tenv // integration tests reuse this container
+}
+
+func clearInheritedBeadsWorkspaceEnv() {
+	for _, key := range []string{
+		"BEADS_DIR",
+		"BEADS_DB",
+		"BEADS_ACTOR",
+		"BEADS_DOLT_SERVER_DATABASE",
+		"BEADS_DOLT_SERVER_PORT",
+		"BEADS_DOLT_SERVER_USER",
+		"BEADS_DOLT_PASSWORD",
+	} {
+		os.Unsetenv(key)
+	}
 }
 
 // StartIsolatedDoltContainer starts a per-test Dolt container and returns the

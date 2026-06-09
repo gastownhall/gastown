@@ -37,15 +37,24 @@ func TestCleanGTEnv_PreservesDoltPort(t *testing.T) {
 
 func TestCleanGTEnv_PreservesBeadsDoltPort(t *testing.T) {
 	t.Setenv("BEADS_DOLT_PORT", "13307")
+	t.Setenv("BEADS_DOLT_SERVER_HOST", "127.0.0.1")
+	t.Setenv("BEADS_DIR", "/some/workspace/.beads")
+	t.Setenv("BEADS_DOLT_SERVER_PORT", "3307")
 	t.Setenv("BD_DEBUG", "1")
 
 	env := CleanGTEnv()
 
-	var hasBeadsPort, hasBDDebug bool
+	var hasBeadsPort, hasBeadsHost, hasBeadsDir, hasBeadsServerPort, hasBDDebug bool
 	for _, e := range env {
 		switch {
 		case strings.HasPrefix(e, "BEADS_DOLT_PORT="):
 			hasBeadsPort = true
+		case strings.HasPrefix(e, "BEADS_DOLT_SERVER_HOST="):
+			hasBeadsHost = true
+		case strings.HasPrefix(e, "BEADS_DIR="):
+			hasBeadsDir = true
+		case strings.HasPrefix(e, "BEADS_DOLT_SERVER_PORT="):
+			hasBeadsServerPort = true
 		case strings.HasPrefix(e, "BD_DEBUG="):
 			hasBDDebug = true
 		}
@@ -53,6 +62,15 @@ func TestCleanGTEnv_PreservesBeadsDoltPort(t *testing.T) {
 
 	if !hasBeadsPort {
 		t.Error("CleanGTEnv stripped BEADS_DOLT_PORT — must preserve it")
+	}
+	if !hasBeadsHost {
+		t.Error("CleanGTEnv stripped BEADS_DOLT_SERVER_HOST — must preserve it")
+	}
+	if hasBeadsDir {
+		t.Error("CleanGTEnv preserved BEADS_DIR — must strip it")
+	}
+	if hasBeadsServerPort {
+		t.Error("CleanGTEnv preserved BEADS_DOLT_SERVER_PORT — must strip it")
 	}
 	if hasBDDebug {
 		t.Error("CleanGTEnv preserved BD_DEBUG — must strip it")

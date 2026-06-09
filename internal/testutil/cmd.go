@@ -6,11 +6,10 @@ import (
 	"strings"
 )
 
-// CleanGTEnv returns os.Environ() with GT_* and BD_* variables removed, except
-// GT_DOLT_PORT, GT_DOLT_HOST, and GT_TEST_EXTERNAL_DOLT which are preserved so
-// subprocesses connect to and reuse the test Dolt server. BEADS_DOLT_PORT and
-// BEADS_DOLT_SERVER_HOST (prefix BEADS_, not BD_) pass through implicitly since
-// only BD_* is stripped.
+// CleanGTEnv returns os.Environ() with GT_*, BD_*, and workspace-scoped BEADS_*
+// variables removed, except GT_DOLT_PORT, GT_DOLT_HOST, GT_TEST_EXTERNAL_DOLT,
+// BEADS_DOLT_PORT, and BEADS_DOLT_SERVER_HOST which are preserved so
+// subprocesses connect to and reuse the test Dolt server.
 //
 // Use this when setting cmd.Env on bd/gt subprocess calls in tests.
 // If you do NOT set cmd.Env, the process env (including GT_DOLT_PORT) is
@@ -25,6 +24,11 @@ func CleanGTEnv(extraEnv ...string) []string {
 			continue
 		}
 		if strings.HasPrefix(e, "BD_") {
+			continue
+		}
+		if strings.HasPrefix(e, "BEADS_") &&
+			!strings.HasPrefix(e, "BEADS_DOLT_PORT=") &&
+			!strings.HasPrefix(e, "BEADS_DOLT_SERVER_HOST=") {
 			continue
 		}
 		clean = append(clean, e)
