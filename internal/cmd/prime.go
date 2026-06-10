@@ -253,7 +253,11 @@ func ensureRoleWorktreeIntegrity(cwd, townRoot string, role Role) error {
 
 func roleRequiresWorktreeIntegrity(role Role) bool {
 	switch role {
-	case RolePolecat, RoleCrew, RoleWitness, RoleRefinery, RoleDog, RoleBoot:
+	// Only roles backed by a real git worktree (a clone) require .git integrity.
+	// No-clone roles (witness, dog, boot) have no .git of their own — requiring one
+	// makes gt prime abort in those dirs ("worktree integrity violation"), since the
+	// search reaches a town root that may not be a git tree (gt-noclone-integrity).
+	case RolePolecat, RoleCrew, RoleRefinery:
 		return true
 	default:
 		return false
