@@ -5,8 +5,9 @@ import "time"
 
 // State represents the current lifecycle state of a polecat.
 //
-// Polecats are PERSISTENT: they survive work completion and can be reused.
-// The four operating states are:
+// Polecat sandboxes are normally retired after clean work completion. Idle is
+// reserved for legacy/preallocated clean sandboxes that can still be reused.
+// The operating states are:
 //
 //   - Working: Session active, doing assigned work (normal operation)
 //   - Idle: Work completed, session killed, sandbox preserved for reuse
@@ -14,13 +15,13 @@ import "time"
 //   - Stalled: Session stopped unexpectedly, was never nudged back to life
 //   - Zombie: Session called 'gt done' but cleanup failed - tried to die but couldn't
 //
-// The distinction matters: idle polecats completed their work successfully and
-// are ready for new assignments. Stalled polecats failed mid-work. Zombies
+// The distinction matters: idle polecats have no active work and are safe for
+// reassignment. Stalled polecats failed mid-work. Zombies
 // tried to exit but couldn't complete cleanup.
 //
-// Note: These are LIFECYCLE states. The polecat IDENTITY (CV chain, mailbox, work
-// history) and SANDBOX (worktree) persist across sessions. An idle polecat keeps
-// its worktree so it can be quickly reassigned without creating a new one.
+// Note: These are LIFECYCLE states. The polecat identity and sandbox are not a
+// completion contract; clean gt done retires the local sandbox instead of moving
+// it to idle.
 //
 // "Stalled", "zombie", and related conditions are detected at query time by
 // cross-checking tmux session liveness against beads state. The Witness also
@@ -32,10 +33,9 @@ const (
 	// This is the initial and primary state after sling.
 	StateWorking State = "working"
 
-	// StateIdle means the polecat completed its work and the session was killed,
-	// but the sandbox (worktree) is preserved for reuse. An idle polecat has no
-	// hook_bead and no active session. It can be reassigned via gt sling without
-	// creating a new worktree.
+	// StateIdle means the polecat has no hook_bead and no active session, and its
+	// sandbox is clean enough to reuse. Clean gt done should retire the sandbox
+	// instead of leaving a new idle polecat behind.
 	StateIdle State = "idle"
 
 	// StateDone means the polecat has completed its assigned work and called

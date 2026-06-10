@@ -11,7 +11,9 @@ import (
 	"github.com/gofrs/flock"
 	"github.com/steveyegge/gastown/internal/beads"
 	"github.com/steveyegge/gastown/internal/config"
+	"github.com/steveyegge/gastown/internal/git"
 	"github.com/steveyegge/gastown/internal/polecat"
+	"github.com/steveyegge/gastown/internal/rig"
 	"github.com/steveyegge/gastown/internal/scheduler/capacity"
 	"github.com/steveyegge/gastown/internal/session"
 	"github.com/steveyegge/gastown/internal/tmux"
@@ -33,7 +35,7 @@ type polecatCapacitySnapshot struct {
 }
 
 func (s polecatCapacitySnapshot) occupied() int {
-	return s.Working + s.RecoveryBlocked + s.Reservations
+	return s.Working + s.RecoveryBlocked + s.PendingMR + s.Reservations
 }
 
 type polecatAdmissionReservation struct {
@@ -183,12 +185,18 @@ func polecatCapacitySnapshotForTownNoCleanup(townRoot string) (polecatCapacitySn
 			continue
 		}
 
+		polecatMgr := polecat.NewManager(&rig.Rig{Name: rigName, Path: rigPath}, git.NewGit(rigPath), tmuxClient)
 		agents, err := beads.New(rigPath).ListAgentBeads()
 		if err != nil {
 			return snapshot, fmt.Errorf("listing agent beads for %s capacity: %w", rigName, err)
 		}
 		prefix := beads.GetPrefixForRig(townRoot, rigName)
 		for _, name := range polecatNames {
+			if p, err := polecatMgr.Get(name); err == nil {
+				disposition := polecatMgr.WorkstateDispositionForPolecat(name, p.State, p.Issue)
+				applyWorkstateDispositionToCapacitySnapshot(&snapshot, p.State, disposition)
+				continue
+			}
 			agentID := beads.PolecatBeadIDWithPrefix(prefix, rigName, name)
 			issue := agents[agentID]
 			fields := (*beads.AgentFields)(nil)
@@ -252,6 +260,10 @@ func applyAgentFieldsToCapacitySnapshot(snapshot *polecatCapacitySnapshot, rigNa
 		} else {
 			snapshot.RecoveryBlocked++
 		}
+		return
+	}
+	if state == "done" || state == "stuck" {
+		snapshot.RecoveryBlocked++
 		return
 	}
 	if fields.PushFailed || fields.MRFailed {

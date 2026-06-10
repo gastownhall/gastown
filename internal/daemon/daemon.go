@@ -948,9 +948,9 @@ func (d *Daemon) heartbeat(state *State) {
 	// This validates tmux sessions are still alive for polecats with work-on-hook
 	d.checkPolecatSessionHealth()
 
-	// 12b. Reap idle polecat sessions to prevent API slot burn.
-	// Polecats transition to IDLE after gt done but sessions stay alive.
-	// Kill sessions that have been idle longer than the configured threshold.
+	// 12b. Reap legacy idle polecat sessions to prevent API slot burn.
+	// Successful gt done now self-terminates, but this remains a safety net for
+	// older sessions and interrupted lifecycle paths.
 	d.reapIdlePolecats()
 
 	// 13. Clean up orphaned claude subagent processes (memory leak prevention)
@@ -2821,10 +2821,9 @@ Restart deferred to stuck-agent-dog plugin for context-aware recovery.`,
 	}
 }
 
-// reapIdlePolecats kills polecat tmux sessions that have been idle too long.
-// The persistent polecat model (gt-4ac) keeps sessions alive after gt done for reuse,
-// but idle sessions consume API slots (Claude Code process stays alive at 0% CPU).
-// This reaper checks heartbeat state and kills sessions idle longer than the threshold.
+// reapIdlePolecats kills legacy polecat tmux sessions that have been idle too long.
+// Successful gt done now self-terminates, but idle sessions from older or interrupted
+// flows can still consume API slots.
 func (d *Daemon) reapIdlePolecats() {
 	opCfg := d.loadOperationalConfig().GetDaemonConfig()
 	idleTimeout := opCfg.PolecatIdleSessionTimeoutD()

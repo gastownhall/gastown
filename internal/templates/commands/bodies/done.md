@@ -39,5 +39,6 @@ bd close <issue-id> --reason="no-changes: <brief explanation>"
 gt done
 ```
 
-This command pushes your branch, submits an MR to the merge queue, and transitions
-you to IDLE. The Refinery handles the actual merge. You are done after this.
+This command pushes your branch, submits an MR to the merge queue, and retires
+your local polecat sandbox. The Refinery handles the actual merge. You are done
+after this.

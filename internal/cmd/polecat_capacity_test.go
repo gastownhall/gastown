@@ -306,6 +306,11 @@ func TestApplyAgentFieldsToCapacitySnapshotSeparatesPendingMR(t *testing.T) {
 			fields: &beads.AgentFields{AgentState: string(beads.AgentStateIdle), CleanupStatus: "clean"},
 			want:   polecatCapacitySnapshot{ReusableIdle: 1},
 		},
+		{
+			name:   "leftover done state blocks capacity",
+			fields: &beads.AgentFields{AgentState: "done", CleanupStatus: "clean"},
+			want:   polecatCapacitySnapshot{RecoveryBlocked: 1},
+		},
 	}
 
 	for _, tt := range tests {
@@ -316,6 +321,25 @@ func TestApplyAgentFieldsToCapacitySnapshotSeparatesPendingMR(t *testing.T) {
 				t.Fatalf("snapshot = %+v, want %+v", snapshot, tt.want)
 			}
 		})
+	}
+}
+
+func TestPolecatCapacityOccupiedCountsPendingMRButNotReusableIdle(t *testing.T) {
+	snapshot := polecatCapacitySnapshot{
+		Max:             4,
+		Working:         1,
+		RecoveryBlocked: 1,
+		ReusableIdle:    7,
+		PendingMR:       1,
+		Reservations:    1,
+	}
+	if got := snapshot.occupied(); got != 4 {
+		t.Fatalf("occupied() = %d, want 4", got)
+	}
+
+	snapshot.Free = snapshot.Max - snapshot.occupied()
+	if snapshot.Free != 0 {
+		t.Fatalf("Free = %d, want 0", snapshot.Free)
 	}
 }
 

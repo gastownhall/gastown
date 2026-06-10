@@ -116,7 +116,7 @@ exit 0
 	}
 
 	// Call updateAgentStateOnDone directly
-	updateAgentStateOnDone(filepath.Join(townRoot, "gastown"), townRoot, ExitCompleted, "gt-base-123")
+	updateAgentStateOnDone(filepath.Join(townRoot, "gastown"), townRoot, ExitCompleted, "gt-base-123", false, false)
 
 	// Verify close calls
 	closesBytes, err := os.ReadFile(closesLog)
@@ -289,7 +289,7 @@ exit 0
 	}
 
 	// Should not error even though molecule has no children
-	updateAgentStateOnDone(filepath.Join(townRoot, "gastown"), townRoot, ExitCompleted, "gt-base-123")
+	updateAgentStateOnDone(filepath.Join(townRoot, "gastown"), townRoot, ExitCompleted, "gt-base-123", false, false)
 
 	// Verify close calls
 	closesBytes, err := os.ReadFile(closesLog)
@@ -422,7 +422,7 @@ exit 0
 		t.Fatalf("chdir: %v", err)
 	}
 
-	updateAgentStateOnDone(filepath.Join(townRoot, "gastown"), townRoot, ExitCompleted, "gt-base-123")
+	updateAgentStateOnDone(filepath.Join(townRoot, "gastown"), townRoot, ExitCompleted, "gt-base-123", false, false)
 
 	// Verify close calls
 	closesBytes, err := os.ReadFile(closesLog)
@@ -574,7 +574,7 @@ exit 0
 		t.Fatalf("chdir: %v", err)
 	}
 
-	updateAgentStateOnDone(filepath.Join(townRoot, "gastown"), townRoot, ExitCompleted, "gt-base-123")
+	updateAgentStateOnDone(filepath.Join(townRoot, "gastown"), townRoot, ExitCompleted, "gt-base-123", false, false)
 
 	// Verify close calls
 	closesBytes, err := os.ReadFile(closesLog)
@@ -742,7 +742,7 @@ exit 0
 	}
 
 	// Should not error even though there's no attached molecule
-	updateAgentStateOnDone(filepath.Join(townRoot, "gastown"), townRoot, ExitCompleted, "gt-base-123")
+	updateAgentStateOnDone(filepath.Join(townRoot, "gastown"), townRoot, ExitCompleted, "gt-base-123", false, false)
 
 	// Verify close calls - should only close the hooked base bead (no molecule)
 	closesBytes, err := os.ReadFile(closesLog)
@@ -866,7 +866,7 @@ exit 0
 	}
 
 	// Should not error even though list fails - continues with closing molecule and base bead
-	updateAgentStateOnDone(filepath.Join(townRoot, "gastown"), townRoot, ExitCompleted, "gt-base-123")
+	updateAgentStateOnDone(filepath.Join(townRoot, "gastown"), townRoot, ExitCompleted, "gt-base-123", false, false)
 
 	// Verify close calls - should still close wisp and base even though list failed
 	closesBytes, err := os.ReadFile(closesLog)
@@ -982,7 +982,7 @@ exit 0
 	}
 
 	// Should not error - handles molecule close failure gracefully
-	updateAgentStateOnDone(filepath.Join(townRoot, "gastown"), townRoot, ExitCompleted, "gt-base-123")
+	updateAgentStateOnDone(filepath.Join(townRoot, "gastown"), townRoot, ExitCompleted, "gt-base-123", false, false)
 
 	// Implementation behavior: when molecule close fails with a generic error
 	// (not beads.ErrNotFound), the function returns early WITHOUT closing the

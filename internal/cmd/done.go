@@ -37,8 +37,7 @@ This is a convenience command for polecats that:
 1. Submits the current branch to the merge queue
 2. Auto-detects issue ID from branch name
 3. Notifies the Witness with the exit outcome
-4. Syncs worktree to main and transitions polecat to IDLE
-   (sandbox preserved, session stays alive for reuse)
+4. Retires the assignment sandbox and exits the polecat session
 
 Exit statuses:
   COMPLETED      - Work done, MR submitted (default)
@@ -46,7 +45,7 @@ Exit statuses:
   DEFERRED       - Work paused, issue still open
 
 Examples:
-  gt done                              # Submit branch, notify COMPLETED, transition to IDLE
+  gt done                              # Submit branch, notify COMPLETED, retire sandbox
   gt done --pre-verified               # Submit with pre-verification fast-path
   gt done --target feat/my-branch      # Explicit MR target branch
   gt done --pre-verified --target feat/contract-review  # Pre-verified with explicit target
@@ -114,10 +113,6 @@ func runDone(cmd *cobra.Command, args []string) (retErr error) {
 	if exitType != ExitCompleted && exitType != ExitEscalated && exitType != ExitDeferred {
 		return fmt.Errorf("invalid exit status '%s': must be COMPLETED, ESCALATED, or DEFERRED", doneStatus)
 	}
-
-	// Persistent polecat model (gt-hdf8): sessions stay alive after gt done.
-	// No deferred session kill — the polecat transitions to IDLE with sandbox
-	// preserved. The Witness handles any cleanup if the polecat gets stuck.
 
 	// Find workspace with fallback for deleted worktrees (hq-3xaxy)
 	// If the polecat's worktree was deleted by Witness before gt done finishes,
@@ -230,7 +225,7 @@ func runDone(cmd *cobra.Command, args []string) (retErr error) {
 	if branch == "" {
 		if !cwdAvailable {
 			// We don't have GT_BRANCH and we're using mayor clone - can't determine branch.
-			// Session stays alive (persistent polecat model) — Witness handles recovery.
+			// Fail closed so Witness/deacon recovery can inspect the stranded polecat.
 			return fmt.Errorf("cannot determine branch: GT_BRANCH not set and working directory unavailable")
 		}
 		var err error
@@ -429,9 +424,6 @@ func runDone(cmd *cobra.Command, args []string) (retErr error) {
 			WorkDir:  cwd,
 		}
 		agentBeadID = getAgentBeadID(ctx)
-
-		// Persistent polecat model (gt-hdf8): no deferred session kill.
-		// Sessions stay alive after gt done — polecat transitions to IDLE.
 	}
 
 	// If issue ID not set by flag or branch name, query for hooked beads
@@ -1392,7 +1384,7 @@ notifyWitness:
 	}
 
 	// Update agent bead state (ZFC: self-report completion)
-	updateAgentStateOnDone(cwd, townRoot, exitType, issueID)
+	updateAgentStateOnDone(cwd, townRoot, exitType, issueID, pushFailed, mrFailed)
 
 	// Nudge witness only after hook/cleanup state is updated. Otherwise witness can
 	// evaluate slot availability against stale hook_bead or cleanup_status and emit
@@ -1400,61 +1392,13 @@ notifyWitness:
 	nudgeWitness(rigName, fmt.Sprintf("POLECAT_DONE %s exit=%s", polecatName, exitType))
 	fmt.Printf("%s Witness notified of %s (via nudge)\n", style.Bold.Render("✓"), exitType)
 
-	// Persistent polecat model (gt-hdf8): polecats transition to IDLE after completion.
-	// Session stays alive, sandbox preserved, worktree synced to main for reuse.
-	// "done means idle" - not "done means dead".
 	isPolecat := false
 	if roleInfo, err := GetRoleWithContext(cwd, townRoot); err == nil && roleInfo.Role == RolePolecat {
 		isPolecat = true
-
-		fmt.Printf("%s Sandbox preserved for reuse (persistent polecat)\n", style.Bold.Render("✓"))
-
-		if pushFailed || mrFailed {
-			fmt.Printf("%s Work needs recovery (push or MR failed) — session preserved\n", style.Bold.Render("⚠"))
+		if err := retirePolecatAfterDone(townRoot, rigName, polecatName, branch, exitType, pushFailed, mrFailed); err != nil {
+			style.PrintWarning("polecat retirement deferred: %v", err)
+			fmt.Printf("  Witness/deacon recovery will handle %s/%s.\n", rigName, polecatName)
 		}
-
-		// Sync worktree to main so the polecat is ready for new assignments.
-		// Phase 3 of persistent-polecat-pool: DONE→IDLE syncs to main and deletes old branch.
-		// Non-fatal: if sync fails, the polecat is still IDLE and the Witness
-		// or next gt sling can handle the branch state.
-		//
-		// GUARD (gt-pvx): Refuse to sync if uncommitted changes remain.
-		// If the auto-commit safety net above failed (git add/commit error),
-		// switching branches would discard the work. Better to leave the worktree
-		// dirty on the feature branch so work can be recovered.
-		syncSafe := true
-		if cwdAvailable {
-			if ws, wsErr := g.CheckUncommittedWork(); wsErr == nil && ws.HasUncommittedChanges && !ws.CleanExcludingRuntime() {
-				syncSafe = false
-				style.PrintWarning("uncommitted changes still present — skipping worktree sync to preserve work")
-				fmt.Printf("  Files: %s\n", ws.String())
-			}
-		}
-		if cwdAvailable && !pushFailed && !mrFailed && syncSafe {
-			// Remember the old branch so we can delete it after switching
-			oldBranch := branch
-
-			fmt.Printf("%s Syncing worktree to %s...\n", style.Bold.Render("→"), defaultBranch)
-			if err := g.Checkout(defaultBranch); err != nil {
-				style.PrintWarning("could not checkout %s: %v (worktree stays on feature branch)", defaultBranch, err)
-			} else if err := g.Pull("origin", defaultBranch); err != nil {
-				style.PrintWarning("could not pull %s: %v (worktree on %s but may be stale)", defaultBranch, defaultBranch, err)
-			} else {
-				fmt.Printf("%s Worktree synced to %s\n", style.Bold.Render("✓"), defaultBranch)
-			}
-
-			// Delete the old polecat branch (non-fatal: cleanup only).
-			// This prevents stale branch accumulation from persistent polecats.
-			if oldBranch != "" && oldBranch != defaultBranch && oldBranch != "master" {
-				if err := g.DeleteBranch(oldBranch, true); err != nil {
-					style.PrintWarning("could not delete old branch %s: %v", oldBranch, err)
-				} else {
-					fmt.Printf("%s Deleted old branch %s\n", style.Bold.Render("✓"), oldBranch)
-				}
-			}
-		}
-
-		fmt.Printf("%s Polecat transitioned to IDLE — ready for new work\n", style.Bold.Render("✓"))
 	}
 
 	fmt.Println()
@@ -1463,25 +1407,63 @@ notifyWitness:
 		fmt.Printf("  Witness will handle cleanup.\n")
 	}
 
-	// Self-terminate AFTER all cleanup is complete (opt-in via config).
-	// When enabled, polecats kill their session after gt done finishes
-	// instead of transitioning to IDLE. This gives fresh context windows
-	// per task, reduces token waste, and eliminates stale state bugs.
+	// Self-terminate AFTER all cleanup is complete.
 	// Must be the LAST thing gt done does — everything above must complete first.
 	if isPolecat {
-		daemonCfg := config.LoadOperationalConfig(townRoot).GetDaemonConfig()
-		if daemonCfg.PolecatSelfTerminate != nil && *daemonCfg.PolecatSelfTerminate {
-			fmt.Printf("%s Self-terminating session (polecat_self_terminate=true)\n", style.Bold.Render("✓"))
-			sessionName := session.PolecatSessionName(session.PrefixFor(rigName), polecatName)
-			go func() {
-				time.Sleep(3 * time.Second)
-				t := tmux.NewTmux()
-				_ = t.KillSessionWithProcesses(sessionName)
-			}()
-		}
+		terminatePolecatSessionAfterDone(rigName, polecatName)
 	}
 
 	return nil
+}
+
+func retirePolecatAfterDone(townRoot, rigName, polecatName, branch, exitType string, pushFailed, mrFailed bool) error {
+	if polecatName == "" {
+		return fmt.Errorf("missing polecat name")
+	}
+	if exitType != ExitCompleted {
+		fmt.Printf("%s Polecat not retired for %s exit; sandbox preserved for recovery/resume\n", style.Dim.Render("○"), exitType)
+		return nil
+	}
+	if pushFailed || mrFailed {
+		fmt.Printf("%s Polecat not retired because submission failed; sandbox preserved for recovery\n", style.Bold.Render("⚠"))
+		return nil
+	}
+
+	cleanupStatus := parseCleanupStatus(doneCleanupStatus)
+	if !cleanupStatus.IsSafe() {
+		return fmt.Errorf("cleanup_status=%s is not safe to retire", cleanupStatus)
+	}
+
+	rigPath := filepath.Join(townRoot, rigName)
+	r := &rig.Rig{Name: rigName, Path: rigPath}
+	mgr := polecat.NewManager(r, git.NewGit(rigPath), tmux.NewTmux())
+
+	fmt.Printf("%s Retiring polecat sandbox %s/%s...\n", style.Bold.Render("→"), rigName, polecatName)
+	if err := mgr.RemoveWithOptions(polecatName, true, true, true); err != nil {
+		return fmt.Errorf("removing worktree: %w", err)
+	}
+	fmt.Printf("%s Polecat sandbox retired; identity reset to nuked\n", style.Bold.Render("✓"))
+
+	defaultBranch := r.DefaultBranch()
+	if branch != "" && branch != defaultBranch && branch != "main" && branch != "master" {
+		deletePolecatBranch(branch, getRepoGitForRig(rigPath), true)
+	}
+	return nil
+}
+
+func terminatePolecatSessionAfterDone(rigName, polecatName string) {
+	if polecatName == "" {
+		return
+	}
+	sessionName := session.PolecatSessionName(session.PrefixFor(rigName), polecatName)
+	t := tmux.NewTmux()
+	running, err := t.HasSession(sessionName)
+	if err != nil || !running {
+		return
+	}
+	fmt.Printf("%s Self-terminating session\n", style.Bold.Render("✓"))
+	time.Sleep(3 * time.Second)
+	_ = t.KillSessionWithProcesses(sessionName)
 }
 
 // pushSubmoduleChanges detects submodules modified between origin/defaultBranch
@@ -1743,7 +1725,7 @@ func clearDoneCheckpoints(bd *beads.Beads, agentBeadID string) {
 // BUG FIX (hq-3xaxy): This function must be resilient to working directory deletion.
 // If the polecat's worktree is deleted before gt done finishes, we use env vars as fallback.
 // All errors are warnings, not failures - gt done must complete even if bead ops fail.
-func updateAgentStateOnDone(cwd, townRoot, exitType, issueID string) {
+func updateAgentStateOnDone(cwd, townRoot, exitType, issueID string, pushFailed, mrFailed bool) {
 	// Get role context - try multiple sources for resilience
 	roleInfo, err := GetRoleWithContext(cwd, townRoot)
 	if err != nil {
@@ -1897,14 +1879,11 @@ doneStateUpdate:
 	// Best-effort: failures are non-fatal since the work is already done.
 	purgeClosedEphemeralBeads(bd)
 
-	// Self-managed completion (gt-1qlg, polecat-self-managed-completion.md Phase 2):
-	// Polecat sets agent_state=idle directly, skipping the intermediate "done" state.
-	// The witness is no longer in the critical path for routine completions.
-	// Completion metadata (exit_type, MR ID, branch) remains on the agent bead
-	// for audit purposes and anomaly detection by witness patrol.
-	// Exception: ESCALATED exits use "stuck" — the polecat needs help.
-	doneState := "idle"
-	if exitType == ExitEscalated {
+	// Clean completions are transiently marked done until the retirement path resets
+	// the agent bead to nuked. Failed or paused completions stay non-idle so capacity
+	// accounting treats them as recovery-blocked rather than reusable.
+	doneState := "done"
+	if exitType == ExitEscalated || exitType == ExitDeferred || pushFailed || mrFailed {
 		doneState = "stuck"
 	}
 	// Use UpdateAgentState to sync both column and description (gt-ulom).
