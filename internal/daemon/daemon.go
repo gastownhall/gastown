@@ -973,6 +973,9 @@ func (d *Daemon) heartbeat(state *State) {
 		d.dispatchQueuedWork()
 	}
 
+	// 14b. Enforce PTN's production desired state.
+	d.enforcePTNDesiredState()
+
 	// 15. Rotate oversized Dolt logs (copytruncate for child process fds).
 	// daemon.log uses lumberjack for automatic rotation; this handles Dolt server logs.
 	d.rotateOversizedLogs()
@@ -3047,4 +3050,44 @@ func (d *Daemon) dispatchQueuedWork() {
 	} else if len(out) > 0 {
 		d.logger.Printf("Scheduler dispatch: %s", string(out))
 	}
+}
+
+// enforcePTNDesiredState runs the PTN controller once per heartbeat when the
+// production PTN rig is present in this town. The controller lives in cmd and is
+// invoked as a subprocess to avoid a daemon -> cmd package cycle.
+func (d *Daemon) enforcePTNDesiredState() {
+	const (
+		ptnRig    = "ptn_from_scratch"
+		ptnTarget = "9"
+	)
+	if _, err := os.Stat(filepath.Join(d.config.TownRoot, ptnRig)); err != nil {
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 7*time.Minute)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "gt", "deacon", "ptn-controller", "--rig", ptnRig, "--target", ptnTarget, "--json")
+	setSysProcAttr(cmd)
+	cmd.Dir = d.config.TownRoot
+	cmd.Env = daemonPTNControllerEnv(d.config.TownRoot)
+	out, err := cmd.CombinedOutput()
+	if ctx.Err() == context.DeadlineExceeded {
+		d.logger.Printf("PTN controller timed out after 7m")
+	} else if err != nil {
+		d.logger.Printf("PTN controller failed: %v (output: %s)", err, string(out))
+	} else if len(out) > 0 {
+		d.logger.Printf("PTN controller: %s", string(out))
+	}
+}
+
+func daemonPTNControllerEnv(townRoot string) []string {
+	env := bdMutationRoutingEnv(townRoot)
+	filtered := env[:0]
+	for _, entry := range env {
+		if strings.HasPrefix(entry, "BD_ACTOR=") || strings.HasPrefix(entry, "GT_DAEMON=") {
+			continue
+		}
+		filtered = append(filtered, entry)
+	}
+	return append(filtered, "BD_ACTOR=daemon", "GT_DAEMON=1")
 }
