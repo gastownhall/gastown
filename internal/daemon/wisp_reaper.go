@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/steveyegge/gastown/internal/constants"
+	"github.com/steveyegge/gastown/internal/dog"
 	"github.com/steveyegge/gastown/internal/reaper"
 	"github.com/steveyegge/gastown/internal/util"
 )
@@ -79,6 +80,18 @@ func wispDeleteAge(config *DaemonPatrolConfig) time.Duration {
 // Falls back to inline execution if Dog dispatch fails.
 func (d *Daemon) reapWisps() {
 	if !d.isPatrolActive("wisp_reaper") {
+		return
+	}
+
+	// Dedup guard (nmi-t3v1c sub-bug b): skip if a reaper dog is already in
+	// flight. The "deacon/dogs" pool sling is intentionally non-idempotent, so
+	// without this guard every ticker cycle — and every retry after a dog crash —
+	// dispatches another mol-dog-reaper, piling up duplicate wisps that multiple
+	// actors then burn futilely. A reaper-slung dog records Work == mol-dog-reaper
+	// (sling_formula.go); zombie/stuck reaper dogs are reclaimed by the daemon's
+	// dog cleanup within a heartbeat, so this never permanently blocks reaping.
+	if d.reaperInFlight() {
+		d.logger.Printf("wisp_reaper: a reaper dog is already in flight, skipping this cycle")
 		return
 	}
 
@@ -319,6 +332,33 @@ func (d *Daemon) reapWispsInline(config *WispReaperConfig, maxAge, deleteAge tim
 	d.logger.Printf("wisp_reaper: cycle complete — reaped=%d purged=%d mail_purged=%d plugin_closed=%d dispatch_closed=%d auto_closed=%d open=%d databases=%d dryRun=%v",
 		totalReaped, totalPurged, totalMailPurged, totalPluginClosed, totalDispatchClosed, totalAutoClosed, totalOpen, len(databases), dryRun)
 	mol.closeStep("report")
+}
+
+// reaperInFlight reports whether a dog is currently executing the
+// mol-dog-reaper formula. Best-effort: returns false on any lookup error so a
+// transient failure never blocks the reaper indefinitely.
+func (d *Daemon) reaperInFlight() bool {
+	rigsConfig, err := d.loadRigsConfig()
+	if err != nil {
+		return false
+	}
+	mgr := dog.NewManager(d.config.TownRoot, rigsConfig)
+	dogs, err := mgr.List()
+	if err != nil {
+		return false
+	}
+	return anyDogWorkingOn(dogs, constants.MolDogReaper)
+}
+
+// anyDogWorkingOn reports whether any dog is in state=working with the given
+// work assignment. Pure helper, extracted for testability.
+func anyDogWorkingOn(dogs []*dog.Dog, work string) bool {
+	for _, dg := range dogs {
+		if dg != nil && dg.State == dog.StateWorking && dg.Work == work {
+			return true
+		}
+	}
+	return false
 }
 
 // doltServerPort returns the configured Dolt server port.

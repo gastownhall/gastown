@@ -3,7 +3,66 @@ package daemon
 import (
 	"testing"
 	"time"
+
+	"github.com/steveyegge/gastown/internal/constants"
+	"github.com/steveyegge/gastown/internal/dog"
 )
+
+func TestAnyDogWorkingOnReaper(t *testing.T) {
+	tests := []struct {
+		name string
+		dogs []*dog.Dog
+		want bool
+	}{
+		{
+			name: "no dogs",
+			dogs: nil,
+			want: false,
+		},
+		{
+			name: "reaper dog in flight",
+			dogs: []*dog.Dog{
+				{Name: "bravo", State: dog.StateWorking, Work: constants.MolDogReaper},
+			},
+			want: true,
+		},
+		{
+			name: "dog working other formula",
+			dogs: []*dog.Dog{
+				{Name: "bravo", State: dog.StateWorking, Work: "plugin:stuck-agent-dog"},
+			},
+			want: false,
+		},
+		{
+			name: "idle dog that previously reaped does not count",
+			dogs: []*dog.Dog{
+				{Name: "bravo", State: dog.StateIdle, Work: constants.MolDogReaper},
+			},
+			want: false,
+		},
+		{
+			name: "mixed pool with one reaper in flight",
+			dogs: []*dog.Dog{
+				{Name: "bravo", State: dog.StateIdle},
+				{Name: "charlie", State: dog.StateWorking, Work: constants.MolDogReaper},
+			},
+			want: true,
+		},
+		{
+			name: "nil entry is skipped",
+			dogs: []*dog.Dog{nil, {Name: "bravo", State: dog.StateIdle}},
+			want: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := anyDogWorkingOn(tt.dogs, constants.MolDogReaper); got != tt.want {
+				t.Errorf("anyDogWorkingOn = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
 
 func TestWispReaperInterval(t *testing.T) {
 	// Default (now 1h after Dog-driven refactor)
