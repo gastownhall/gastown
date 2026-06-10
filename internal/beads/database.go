@@ -204,6 +204,14 @@ func doltTargetEnvFromBeadsDir(beadsDir string) []string {
 	}
 	meta := readDoltMetadata(beadsDir)
 	var env []string
+	// Only pin BEADS_DOLT_DATA_DIR for embedded mode. For server mode,
+	// bd uses the server connection + metadata.json to select the database,
+	// and adding BEADS_DOLT_DATA_DIR causes it to target the wrong database.
+	if meta.Mode != "server" {
+		if townRoot := FindTownRoot(filepath.Dir(beadsDir)); townRoot != "" {
+			env = append(env, "BEADS_DOLT_DATA_DIR="+filepath.Join(townRoot, ".dolt-data"))
+		}
+	}
 	if meta.Host != "" {
 		env = append(env, "BEADS_DOLT_SERVER_HOST="+meta.Host)
 	}
@@ -217,6 +225,7 @@ func doltTargetEnvFromBeadsDir(beadsDir string) []string {
 type doltMetadata struct {
 	Host string
 	Port string
+	Mode string
 }
 
 func readDoltMetadata(beadsDir string) doltMetadata {
@@ -231,11 +240,13 @@ func readDoltMetadata(beadsDir string) doltMetadata {
 	var raw struct {
 		DoltServerHost string `json:"dolt_server_host"`
 		DoltServerPort int    `json:"dolt_server_port"`
+		DoltMode       string `json:"dolt_mode"`
 	}
 	if json.Unmarshal(data, &raw) != nil {
 		return meta
 	}
 	meta.Host = strings.TrimSpace(raw.DoltServerHost)
+	meta.Mode = strings.TrimSpace(raw.DoltMode)
 	if meta.Port == "" && raw.DoltServerPort > 0 {
 		meta.Port = strconv.Itoa(raw.DoltServerPort)
 	}
