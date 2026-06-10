@@ -188,6 +188,18 @@ func (m *SessionManager) IsRunning(dogName string) (bool, error) {
 	return m.tmux.HasSession(sessionID)
 }
 
+// IsAgentAlive reports whether the dog's tmux session has a live agent process.
+//
+// A tmux session can outlive the agent (claude) that ran inside it: when the
+// agent exits or is killed, the pane can fall back to a bare shell, leaving a
+// "zombie" session that HasSession/IsRunning still report as present. Callers
+// that decide whether a dog needs (re)launching must use this rather than
+// IsRunning — otherwise dispatched work and nudges get typed into the dead
+// shell ("Formula: command not found") and the dog is mistaken for healthy.
+func (m *SessionManager) IsAgentAlive(dogName string) bool {
+	return m.tmux.IsAgentAlive(m.SessionName(dogName))
+}
+
 // Status returns detailed status for a dog session.
 func (m *SessionManager) Status(dogName string) (*SessionInfo, error) {
 	sessionID := m.SessionName(dogName)
@@ -244,6 +256,14 @@ func (m *SessionManager) EnsureRunning(dogName string, opts SessionStartOptions)
 	running, err := m.IsRunning(dogName)
 	if err != nil {
 		return "", err
+	}
+
+	// A lingering session whose agent has died (zombie) must be relaunched, not
+	// reused — otherwise the caller pours dispatched work into a dead shell.
+	// Treat it as not-running; Start() kills the zombie via
+	// KillExistingSession(checkAlive=true) before recreating the session.
+	if running && !m.IsAgentAlive(dogName) {
+		running = false
 	}
 
 	if !running {

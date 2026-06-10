@@ -78,8 +78,14 @@ func (d *Daemon) handleDogsCleanupOnly() {
 	// Skip dispatchPlugins — under pressure
 }
 
-// cleanupStuckDogs finds dogs in state=working whose tmux session is dead and
-// clears their work so they return to idle.
+// cleanupStuckDogs finds dogs in state=working whose tmux session is dead OR
+// whose agent process has died inside a lingering session (zombie), and clears
+// their work so they return to idle for immediate re-dispatch.
+//
+// Without the agent-liveness check, a zombie (session alive, agent dead, pane
+// fell back to a bare shell) is mistaken for a healthy working dog: it is
+// skipped here, never re-dispatched (state != idle), and only reclaimed after
+// the 2h stale-working timeout — stranding all dog plugin work in the meantime.
 func (d *Daemon) cleanupStuckDogs(mgr *dog.Manager, sm *dog.SessionManager) {
 	dogs, err := mgr.List()
 	if err != nil {
@@ -98,12 +104,22 @@ func (d *Daemon) cleanupStuckDogs(mgr *dog.Manager, sm *dog.SessionManager) {
 			continue
 		}
 
-		if running {
+		// Healthy working dog: session alive AND agent process alive.
+		if running && sm.IsAgentAlive(dg.Name) {
 			continue
 		}
 
-		// Dog is marked working but session is dead — clean it up.
-		d.logger.Printf("Handler: dog %s is working but session is dead, clearing work", dg.Name)
+		// Zombie session (alive but agent dead): kill the stale session so a
+		// fresh one can be started cleanly on the next dispatch.
+		if running {
+			d.logger.Printf("Handler: dog %s is working but agent is dead (zombie session), killing session", dg.Name)
+			if err := sm.Stop(dg.Name, true); err != nil {
+				d.logger.Printf("Handler: failed to stop zombie session for dog %s: %v", dg.Name, err)
+			}
+		} else {
+			d.logger.Printf("Handler: dog %s is working but session is dead, clearing work", dg.Name)
+		}
+
 		if err := mgr.ClearWork(dg.Name); err != nil {
 			d.logger.Printf("Handler: failed to clear work for dog %s: %v", dg.Name, err)
 		}
