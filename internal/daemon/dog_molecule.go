@@ -239,21 +239,34 @@ type childInfo struct {
 }
 
 // parseChildrenJSON parses the output of `bd show <id> --children --json`.
-// bd returns a map keyed by parent ID: {"hq-wisp-abc": [{...}, ...]}.
-// For forward compatibility, a bare array is also accepted.
+// bd returns a map keyed by parent ID whose value is the children array, e.g.
+//
+//	{"hq-wisp-abc": [{...}, ...], "schema_version": 1}
+//
+// The object also carries scalar metadata fields (e.g. "schema_version"), so we
+// decode values lazily and accept the first one that parses as a children array
+// rather than assuming every value is an array (which fails on the scalar
+// metadata). For forward compatibility, a bare array is also accepted.
 func parseChildrenJSON(raw string) ([]childInfo, error) {
 	data := []byte(raw)
 
+	// Fast path: a bare array of children.
 	var arr []childInfo
 	if err := json.Unmarshal(data, &arr); err == nil {
 		return arr, nil
 	}
 
-	var wrapped map[string][]childInfo
-	if err := json.Unmarshal(data, &wrapped); err == nil {
-		for _, children := range wrapped {
-			return children, nil
+	// Object shape: parent-ID -> children array, alongside scalar metadata.
+	var obj map[string]json.RawMessage
+	if err := json.Unmarshal(data, &obj); err == nil {
+		for _, rawVal := range obj {
+			var children []childInfo
+			if err := json.Unmarshal(rawVal, &children); err == nil {
+				return children, nil
+			}
 		}
+		// No array-valued entry (e.g. parent has no children and only scalar
+		// metadata is present) — treat as an empty child set, not an error.
 		return nil, nil
 	}
 

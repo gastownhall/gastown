@@ -91,6 +91,19 @@ func TestParseChildrenJSON(t *testing.T) {
 			wantCount: 0,
 		},
 		{
+			// Real bd output: object carries a scalar schema_version alongside
+			// the children array. Regression for nmi-t3v1c "unrecognized JSON
+			// shape" -> 0-step molecules.
+			name:      "map wrapper with schema_version",
+			input:     `{"hq-wisp-root":[{"id":"hq-wisp-a","title":"Scan","status":"open"}],"schema_version":1}`,
+			wantCount: 1,
+		},
+		{
+			name:      "empty children with schema_version",
+			input:     `{"hq-wisp-root":[],"schema_version":1}`,
+			wantCount: 0,
+		},
+		{
 			name:      "empty array",
 			input:     `[]`,
 			wantCount: 0,
