@@ -1152,6 +1152,9 @@ func (r *Router) sendToSingle(msg *Message) error {
 	// database prefix (e.g., hq-wisp-xxx). Passing --id causes prefix
 	// mismatch errors when the msg- prefix does not match the database.
 
+	// Add --silent so bd prints only the created issue ID (for scripting).
+	args = append(args, "--silent")
+
 	// Add --ephemeral flag for ephemeral messages (wisps, not synced to git)
 	if r.shouldBeWisp(msg) {
 		args = append(args, "--ephemeral")
@@ -1167,7 +1170,7 @@ func (r *Router) sendToSingle(msg *Message) error {
 	}
 	ctx, cancel := bdWriteCtx()
 	defer cancel()
-	_, err := runBdCommand(ctx, args, filepath.Dir(beadsDir), beadsDir)
+	stdout, err := runBdCommand(ctx, args, filepath.Dir(beadsDir), beadsDir)
 	telemetry.RecordMailMessage(context.Background(), "send", telemetry.MailMessageInfo{
 		ID:       msg.ID,
 		From:     msg.From,
@@ -1180,6 +1183,21 @@ func (r *Router) sendToSingle(msg *Message) error {
 	}, err)
 	if err != nil {
 		return fmt.Errorf("sending message: %w", err)
+	}
+
+	// Verify the message was durably persisted by querying the created bead.
+	// Under transient Dolt failures (circuit breaker, batch-mode commit issues),
+	// bd create may report success without the write being readable. Catching
+	// this here ensures the caller can retry before proceeding (gh#2748).
+	beadID := strings.TrimSpace(string(stdout))
+	if beadID != "" {
+		verifyArgs := []string{"show", beadID, "--json"}
+		verifyCtx, verifyCancel := bdReadCtx()
+		defer verifyCancel()
+		if _, verifyErr := runBdCommand(verifyCtx, verifyArgs, filepath.Dir(beadsDir), beadsDir); verifyErr != nil {
+			// Message was not durably persisted — return error so caller can retry.
+			return fmt.Errorf("message %s created but not persisted (verify failed): %w", beadID, verifyErr)
+		}
 	}
 
 	// Notify recipient if they have an active session (best-effort notification).

@@ -430,6 +430,12 @@ if [[ "${1:-}" == "create" ]]; then
   exit 0
 fi
 
+if [[ "${1:-}" == "show" ]]; then
+  id="${2:-}"
+  echo "[{\"id\":\"$id\",\"title\":\"Test\",\"status\":\"open\",\"labels\":[\"gt:message\"]}]"
+  exit 0
+fi
+
 echo "unsupported bd args: $*" >&2
 exit 1
 `

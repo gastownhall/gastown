@@ -285,6 +285,10 @@ func (d *Daemon) dispatchPlugins(mgr *dog.Manager, sm *dog.SessionManager, rigsC
 
 		// Send mail with plugin instructions BEFORE starting the session
 		// so the dog finds work in its inbox on first check.
+		//
+		// Retry on transient Dolt failures (circuit breaker, batch-mode commit
+		// issues). The verify-integrity check inside router.Send catches cases
+		// where bd create reports success but the write is not durably persisted.
 		msg := mail.NewMessage(
 			"daemon",
 			fmt.Sprintf("deacon/dogs/%s", idleDog.Name),
@@ -293,8 +297,16 @@ func (d *Daemon) dispatchPlugins(mgr *dog.Manager, sm *dog.SessionManager, rigsC
 		)
 		msg.Type = mail.TypeTask
 		msg.Timestamp = time.Now()
-		if err := router.Send(msg); err != nil {
-			d.logger.Printf("Handler: failed to send mail to dog %s: %v", idleDog.Name, err)
+		sendErr := router.Send(msg)
+		if sendErr != nil {
+			// Retry once after a short backoff — transient Dolt failures
+			// (contention, circuit breaker) often resolve on retry.
+			d.logger.Printf("Handler: mail send failed for dog %s (retrying): %v", idleDog.Name, sendErr)
+			time.Sleep(1 * time.Second)
+			sendErr = router.Send(msg)
+		}
+		if sendErr != nil {
+			d.logger.Printf("Handler: failed to send mail to dog %s after retry: %v", idleDog.Name, sendErr)
 			// Roll back assignment — no point starting a session without instructions.
 			if clearErr := mgr.ClearWork(idleDog.Name); clearErr != nil {
 				d.logger.Printf("Handler: failed to clear work after mail failure for dog %s: %v", idleDog.Name, clearErr)
