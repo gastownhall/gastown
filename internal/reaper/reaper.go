@@ -110,11 +110,14 @@ type ScanResult struct {
 
 // ReapResult holds the results of a reap operation.
 type ReapResult struct {
-	Database   string    `json:"database"`
-	Reaped     int       `json:"reaped"`
-	OpenRemain int       `json:"open_remain"`
-	DryRun     bool      `json:"dry_run,omitempty"`
-	Anomalies  []Anomaly `json:"anomalies,omitempty"`
+	Database string `json:"database"`
+	Reaped   int    `json:"reaped"`
+	// MoleculeStepsClosed counts open step-wisps closed because their parent
+	// molecule was already closed (hq-9qtwx), independent of the max_age reap.
+	MoleculeStepsClosed int       `json:"molecule_steps_closed,omitempty"`
+	OpenRemain          int       `json:"open_remain"`
+	DryRun              bool      `json:"dry_run,omitempty"`
+	Anomalies           []Anomaly `json:"anomalies,omitempty"`
 }
 
 // PurgeResult holds the results of a purge operation.
@@ -316,6 +319,80 @@ func Scan(db *sql.DB, dbName string, maxAge, purgeAge, mailDeleteAge, staleIssue
 	return result, nil
 }
 
+// closedMoleculeStepWhere is the shared WHERE/JOIN body that selects open
+// step-wisps whose parent molecule is already closed.
+//
+// Dog/patrol molecules (issue_type='molecule', e.g. mol-dog-reaper,
+// mol-dog-backup) spawn step-wisps linked via wisp_dependencies
+// (type='parent-child', depends_on_wisp_id = molecule id). When the molecule
+// completes (status='closed') its steps are definitively done, but they were
+// being left open — accumulating thousands of open wisps that the max_age reap
+// only cleared after 24h, so generation outpaced cleanup (hq-9qtwx). These are
+// closed immediately: a closed molecule's steps are moot. Scoped to
+// pm.issue_type='molecule' so it never touches non-molecule parent-child links
+// (e.g. an epic's subtasks). Agent beads are excluded as elsewhere.
+const closedMoleculeStepWhere = `wisps w
+	INNER JOIN wisp_dependencies wd ON wd.issue_id = w.id AND wd.type = 'parent-child'
+	INNER JOIN wisps pm ON pm.id = wd.depends_on_wisp_id
+	WHERE w.status IN ('open', 'hooked', 'in_progress')
+	  AND w.issue_type != 'agent'
+	  AND pm.issue_type = 'molecule'
+	  AND pm.status = 'closed'`
+
+// countClosedMoleculeSteps counts open step-wisps whose parent molecule is closed.
+func countClosedMoleculeSteps(ctx context.Context, db *sql.DB) (int, error) {
+	var n int
+	err := db.QueryRowContext(ctx, "SELECT COUNT(*) FROM "+closedMoleculeStepWhere).Scan(&n)
+	return n, err
+}
+
+// reapClosedMoleculeSteps closes, in batches, open step-wisps whose parent
+// molecule is already closed (see closedMoleculeStepWhere). It assumes the caller
+// has disabled autocommit and does NOT issue COMMIT/DOLT_COMMIT — the caller
+// flushes both as part of its reap commit so all closes land in one Dolt commit.
+func reapClosedMoleculeSteps(ctx context.Context, db *sql.DB) (int, error) {
+	idQuery := fmt.Sprintf("SELECT w.id FROM %s LIMIT %d", closedMoleculeStepWhere, DefaultBatchSize)
+
+	total := 0
+	for {
+		rows, err := db.QueryContext(ctx, idQuery)
+		if err != nil {
+			return total, fmt.Errorf("select molecule-step batch: %w", err)
+		}
+		var ids []string
+		for rows.Next() {
+			var id string
+			if err := rows.Scan(&id); err != nil {
+				rows.Close()
+				return total, fmt.Errorf("scan molecule-step id: %w", err)
+			}
+			ids = append(ids, id)
+		}
+		rows.Close()
+
+		if len(ids) == 0 {
+			break
+		}
+
+		placeholders := make([]string, len(ids))
+		args := make([]interface{}, len(ids))
+		for i, id := range ids {
+			placeholders[i] = "?"
+			args[i] = id
+		}
+		updateQuery := fmt.Sprintf(
+			"UPDATE wisps SET status='closed', closed_at=NOW(), close_reason='reaper: parent molecule closed' WHERE id IN (%s)",
+			strings.Join(placeholders, ","))
+		sqlResult, err := db.ExecContext(ctx, updateQuery, args...)
+		if err != nil {
+			return total, fmt.Errorf("close molecule-step batch: %w", err)
+		}
+		affected, _ := sqlResult.RowsAffected()
+		total += int(affected)
+	}
+	return total, nil
+}
+
 // Reap closes stale wisps in a database whose parent molecule is already closed.
 // UPDATEs are batched to avoid holding a write lock for extended periods on large tables.
 func Reap(db *sql.DB, dbName string, maxAge time.Duration, dryRun bool) (*ReapResult, error) {
@@ -337,6 +414,11 @@ func Reap(db *sql.DB, dbName string, maxAge time.Duration, dryRun bool) (*ReapRe
 		if err := db.QueryRowContext(ctx, countQuery, cutoff).Scan(&result.Reaped); err != nil {
 			return nil, fmt.Errorf("dry-run count: %w", err)
 		}
+		molSteps, err := countClosedMoleculeSteps(ctx, db)
+		if err != nil {
+			return nil, fmt.Errorf("dry-run molecule-step count: %w", err)
+		}
+		result.MoleculeStepsClosed = molSteps
 		openQuery := "SELECT COUNT(*) FROM wisps WHERE status IN ('open', 'hooked', 'in_progress')"
 		if err := db.QueryRowContext(ctx, openQuery).Scan(&result.OpenRemain); err != nil {
 			return nil, fmt.Errorf("count open: %w", err)
@@ -350,6 +432,14 @@ func Reap(db *sql.DB, dbName string, maxAge time.Duration, dryRun bool) (*ReapRe
 	defer func() {
 		_, _ = db.ExecContext(context.Background(), "SET @@autocommit = 1")
 	}()
+
+	// Close orphaned step-wisps of already-closed molecules first (hq-9qtwx).
+	// This is independent of max_age: a closed molecule's steps are done.
+	molStepsClosed, err := reapClosedMoleculeSteps(ctx, db)
+	if err != nil {
+		return nil, err
+	}
+	result.MoleculeStepsClosed = molStepsClosed
 
 	// Batch UPDATE: select IDs in chunks, update each chunk.
 	// This avoids holding a write lock on the entire table for minutes.
@@ -402,7 +492,7 @@ func Reap(db *sql.DB, dbName string, maxAge time.Duration, dryRun bool) (*ReapRe
 
 	result.Reaped = totalReaped
 
-	if totalReaped > 0 {
+	if totalReaped > 0 || molStepsClosed > 0 {
 		// Flush the SQL transaction to the Dolt working set before DOLT_COMMIT.
 		// With autocommit=0, UPDATE changes are in the SQL transaction buffer,
 		// not the Dolt working set. DOLT_COMMIT operates on the working set,
@@ -410,7 +500,7 @@ func Reap(db *sql.DB, dbName string, maxAge time.Duration, dryRun bool) (*ReapRe
 		if _, err := db.ExecContext(ctx, "COMMIT"); err != nil {
 			return result, fmt.Errorf("sql commit: %w", err)
 		}
-		commitMsg := fmt.Sprintf("reaper: close %d stale wisps in %s", totalReaped, dbName)
+		commitMsg := fmt.Sprintf("reaper: close %d stale + %d molecule-step wisps in %s", totalReaped, molStepsClosed, dbName)
 		if _, err := db.ExecContext(ctx, fmt.Sprintf("CALL DOLT_COMMIT('-Am', '%s')", commitMsg)); err != nil { //nolint:gosec // G201: commitMsg from safe values
 			// "nothing to commit" is expected when the reaper reverts dirty working
 			// set changes back to match HEAD. The wisps were set to "open" in the

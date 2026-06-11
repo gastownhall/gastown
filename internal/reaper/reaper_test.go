@@ -191,6 +191,46 @@ func TestIsNothingToCommit(t *testing.T) {
 	}
 }
 
+// TestClosedMoleculeStepQuery verifies the molecule-step auto-close query is
+// correctly scoped so it ONLY closes open step-wisps whose parent is a CLOSED
+// MOLECULE (hq-9qtwx) — never non-molecule parent-child links (e.g. an epic's
+// subtasks) and never agent beads. A regression here could mass-close legitimate
+// open wisps, so the scoping conditions are asserted explicitly.
+func TestClosedMoleculeStepQuery(t *testing.T) {
+	w := closedMoleculeStepWhere
+
+	// Must join steps to their parent via the v49 parent-child column.
+	if !strings.Contains(w, "type = 'parent-child'") {
+		t.Error("closedMoleculeStepWhere should filter parent-child dependencies")
+	}
+	if !strings.Contains(w, "wd.depends_on_wisp_id") {
+		t.Error("closedMoleculeStepWhere should join parent via depends_on_wisp_id (v49 schema)")
+	}
+	// Scope: parent must be a CLOSED molecule.
+	if !strings.Contains(w, "pm.issue_type = 'molecule'") {
+		t.Error("closedMoleculeStepWhere must scope to molecule parents only (safety)")
+	}
+	if !strings.Contains(w, "pm.status = 'closed'") {
+		t.Error("closedMoleculeStepWhere must require the parent molecule be closed")
+	}
+	// Only open steps; never agent beads.
+	if !strings.Contains(w, "w.status IN ('open', 'hooked', 'in_progress')") {
+		t.Error("closedMoleculeStepWhere should only select open step-wisps")
+	}
+	if !strings.Contains(w, "w.issue_type != 'agent'") {
+		t.Error("closedMoleculeStepWhere must exclude agent beads")
+	}
+
+	// The batch id-select query must be parameterless and LIMITed.
+	idQuery := fmt.Sprintf("SELECT w.id FROM %s LIMIT %d", closedMoleculeStepWhere, DefaultBatchSize)
+	if !strings.Contains(idQuery, fmt.Sprintf("LIMIT %d", DefaultBatchSize)) {
+		t.Errorf("molecule-step idQuery should be batched with LIMIT %d", DefaultBatchSize)
+	}
+	if strings.Contains(idQuery, "?") {
+		t.Error("molecule-step idQuery should have no bind params (IDs come from the JOIN)")
+	}
+}
+
 func contains(s, substr string) bool {
 	return len(s) >= len(substr) && (s == substr || len(s) > 0 && containsHelper(s, substr))
 }

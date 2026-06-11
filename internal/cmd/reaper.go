@@ -240,15 +240,20 @@ Returns the count of reaped wisps. Use --dry-run to preview.`,
 		if reaperJSON {
 			fmt.Println(reaper.FormatJSON(results))
 		} else {
-			var totalReaped, totalOpen int
+			var totalReaped, totalMolSteps, totalOpen int
 			for _, r := range results {
 				prefix := ""
 				if r.DryRun {
 					prefix = "[DRY RUN] would "
 				}
-				fmt.Printf("%s: %sreaped %d wisps, %d open remain\n",
-					r.Database, prefix, r.Reaped, r.OpenRemain)
+				molSuffix := ""
+				if r.MoleculeStepsClosed > 0 {
+					molSuffix = fmt.Sprintf(" (+%d closed-molecule steps)", r.MoleculeStepsClosed)
+				}
+				fmt.Printf("%s: %sreaped %d wisps%s, %d open remain\n",
+					r.Database, prefix, r.Reaped, molSuffix, r.OpenRemain)
 				totalReaped += r.Reaped
+				totalMolSteps += r.MoleculeStepsClosed
 				totalOpen += r.OpenRemain
 			}
 			if len(results) > 1 {
@@ -256,8 +261,12 @@ Returns the count of reaped wisps. Use --dry-run to preview.`,
 				if reaperDryRun {
 					prefix = "[DRY RUN] "
 				}
-				fmt.Printf("\n%sReap summary (%d databases): reaped %d wisps, %d open remain\n",
-					prefix, len(results), totalReaped, totalOpen)
+				molSuffix := ""
+				if totalMolSteps > 0 {
+					molSuffix = fmt.Sprintf(" (+%d closed-molecule steps)", totalMolSteps)
+				}
+				fmt.Printf("\n%sReap summary (%d databases): reaped %d wisps%s, %d open remain\n",
+					prefix, len(results), totalReaped, molSuffix, totalOpen)
 				if totalOpen > reaper.DefaultAlertThreshold {
 					fmt.Fprintf(os.Stderr, "WARNING: %d open wisps exceed alert threshold (%d)\n",
 						totalOpen, reaper.DefaultAlertThreshold)
@@ -463,7 +472,7 @@ Normally the daemon dispatches a Dog to execute the mol-dog-reaper formula.`,
 			return fmt.Errorf("invalid --stale-age: %w", err)
 		}
 
-		var totalReaped, totalPurged, totalMailPurged, totalClosed, totalOpen int
+		var totalReaped, totalMolSteps, totalPurged, totalMailPurged, totalClosed, totalOpen int
 
 		for i, dbName := range databases {
 			if err := waitBeforeReaperDatabase(i); err != nil {
@@ -507,6 +516,7 @@ Normally the daemon dispatches a Dog to execute the mol-dog-reaper formula.`,
 				fmt.Printf("%s: reap error: %v\n", dbName, err)
 			} else {
 				totalReaped += reapResult.Reaped
+				totalMolSteps += reapResult.MoleculeStepsClosed
 				totalOpen += reapResult.OpenRemain
 			}
 
@@ -541,7 +551,7 @@ Normally the daemon dispatches a Dog to execute the mol-dog-reaper formula.`,
 		}
 		fmt.Printf("\n%sReaper cycle complete:\n", prefix)
 		fmt.Printf("  Databases: %d\n", len(databases))
-		fmt.Printf("  Reaped:    %d\n", totalReaped)
+		fmt.Printf("  Reaped:    %d (+%d closed-molecule steps)\n", totalReaped, totalMolSteps)
 		fmt.Printf("  Purged:    %d wisps, %d mail\n", totalPurged, totalMailPurged)
 		fmt.Printf("  Closed:    %d stale issues\n", totalClosed)
 		fmt.Printf("  Open:      %d wisps remain\n", totalOpen)
