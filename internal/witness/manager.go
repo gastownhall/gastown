@@ -86,19 +86,25 @@ func (m *Manager) Status() (*tmux.SessionInfo, error) {
 }
 
 // witnessDir returns the working directory for the witness.
-// Prefers witness/rig/, falls back to witness/, then rig root.
+// Prefers witness/rig/ for existing legacy clones, otherwise uses witness/.
 func (m *Manager) witnessDir() string {
 	witnessRigDir := filepath.Join(m.rig.Path, "witness", "rig")
 	if _, err := os.Stat(witnessRigDir); err == nil {
 		return witnessRigDir
 	}
 
-	witnessDir := filepath.Join(m.rig.Path, "witness")
-	if _, err := os.Stat(witnessDir); err == nil {
-		return witnessDir
-	}
+	return filepath.Join(m.rig.Path, "witness")
+}
 
-	return m.rig.Path
+func (m *Manager) prepareWitnessDir(townRoot string) (string, error) {
+	witnessDir := m.witnessDir()
+	if err := os.MkdirAll(witnessDir, 0755); err != nil {
+		return "", fmt.Errorf("creating witness dir: %w", err)
+	}
+	if err := beads.SetupRedirect(townRoot, witnessDir); err != nil {
+		return "", fmt.Errorf("ensuring witness beads redirect: %w", err)
+	}
+	return witnessDir, nil
 }
 
 // Start starts the witness.
@@ -155,10 +161,10 @@ func (m *Manager) Start(foreground bool, agentOverride string, envOverrides []st
 	// package config) to prevent concurrent rig starts from corrupting the
 	// global agent registry.
 	// Working directory
-	witnessDir := m.witnessDir()
 	townRoot := m.townRoot()
-	if err := beads.SetupRedirect(townRoot, witnessDir); err != nil {
-		return fmt.Errorf("ensuring witness beads redirect: %w", err)
+	witnessDir, err := m.prepareWitnessDir(townRoot)
+	if err != nil {
+		return err
 	}
 
 	// Resolve CLAUDE_CONFIG_DIR from accounts.json so witness sessions

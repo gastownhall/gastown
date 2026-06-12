@@ -1,6 +1,8 @@
 package witness
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -16,6 +18,47 @@ func TestManagerStartForegroundDeprecated(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "foreground mode is deprecated") {
 		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestPrepareWitnessDirCreatesMissingAddedRigWitnessDir(t *testing.T) {
+	t.Parallel()
+
+	townRoot := t.TempDir()
+	rigPath := filepath.Join(townRoot, "gastown")
+	rigBeadsDir := filepath.Join(rigPath, ".beads")
+	mayorBeadsDir := filepath.Join(rigPath, "mayor", "rig", ".beads")
+
+	if err := os.MkdirAll(rigBeadsDir, 0755); err != nil {
+		t.Fatalf("mkdir rig beads: %v", err)
+	}
+	if err := os.MkdirAll(mayorBeadsDir, 0755); err != nil {
+		t.Fatalf("mkdir mayor beads: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(rigBeadsDir, "redirect"), []byte("mayor/rig/.beads\n"), 0644); err != nil {
+		t.Fatalf("write rig beads redirect: %v", err)
+	}
+
+	mgr := NewManager(&rig.Rig{Name: "gastown", Path: rigPath})
+	witnessDir, err := mgr.prepareWitnessDir(townRoot)
+	if err != nil {
+		t.Fatalf("prepareWitnessDir: %v", err)
+	}
+
+	wantWitnessDir := filepath.Join(rigPath, "witness")
+	if witnessDir != wantWitnessDir {
+		t.Fatalf("witnessDir = %q, want %q", witnessDir, wantWitnessDir)
+	}
+	if info, err := os.Stat(witnessDir); err != nil || !info.IsDir() {
+		t.Fatalf("witness dir was not created: info=%v err=%v", info, err)
+	}
+
+	redirectData, err := os.ReadFile(filepath.Join(witnessDir, ".beads", "redirect"))
+	if err != nil {
+		t.Fatalf("read witness redirect: %v", err)
+	}
+	if got, want := string(redirectData), "../mayor/rig/.beads\n"; got != want {
+		t.Fatalf("redirect = %q, want %q", got, want)
 	}
 }
 
