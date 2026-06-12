@@ -313,7 +313,7 @@ func completionPayloadHasPendingMR(bd *BdCli, workDir, rigName string, payload *
 // handlePolecatDonePendingMR handles a POLECAT_DONE when there's a pending MR.
 // Creates a cleanup wisp, sends MERGE_READY to the Refinery, and nudges it.
 func handlePolecatDonePendingMR(bd *BdCli, workDir, rigName string, payload *PolecatDonePayload, result *HandlerResult) *HandlerResult {
-	wispID, err := createCleanupWisp(bd, workDir, payload.PolecatName, payload.IssueID, payload.Branch)
+	wispID, err := createCleanupWisp(bd, workDir, rigName, payload.PolecatName, payload.IssueID, payload.Branch)
 	if err != nil {
 		result.Error = fmt.Errorf("creating cleanup wisp: %w", err)
 		return result
@@ -549,7 +549,7 @@ func HandleSwarmStart(bd *BdCli, workDir string, msg *mail.Message) *HandlerResu
 }
 
 // createCleanupWisp creates a wisp to track polecat cleanup.
-func createCleanupWisp(bd *BdCli, workDir, polecatName, issueID, branch string) (string, error) {
+func createCleanupWisp(bd *BdCli, workDir, rigName, polecatName, issueID, branch string) (string, error) {
 	title := fmt.Sprintf("cleanup:%s", polecatName)
 	description := fmt.Sprintf("Verify and cleanup polecat %s", polecatName)
 	if issueID != "" {
@@ -560,8 +560,9 @@ func createCleanupWisp(bd *BdCli, workDir, polecatName, issueID, branch string) 
 	}
 
 	labels := strings.Join(CleanupWispLabels(polecatName, "pending"), ",")
+	createWorkDir := rigScopedWorkDir(workDir, rigName)
 
-	output, err := bd.Exec(workDir, "create",
+	output, err := bd.Exec(createWorkDir, "create",
 		"--ephemeral",
 		"--json",
 		"--title", title,
@@ -583,6 +584,17 @@ func createCleanupWisp(bd *BdCli, workDir, polecatName, issueID, branch string) 
 		return "", fmt.Errorf("bd create --json returned empty ID")
 	}
 	return created.ID, nil
+}
+
+func rigScopedWorkDir(workDir, rigName string) string {
+	townRoot, err := workspace.Find(workDir)
+	if err != nil || townRoot == "" || rigName == "" {
+		return workDir
+	}
+	if rigDir := beads.GetRigDirForName(townRoot, rigName); rigDir != "" {
+		return rigDir
+	}
+	return workDir
 }
 
 // createSwarmWisp creates a wisp to track swarm (batch) work.
@@ -1996,7 +2008,7 @@ func handleZombieRestart(bd *BdCli, workDir, rigName, polecatName, hookBead, cle
 			zombie.Action = fmt.Sprintf("cleanup-deferred-acp (cleanup_status=%s, existing-wisp=%s)", cleanupStatus, existingWisp)
 			return
 		}
-		wispID, wispErr := createCleanupWisp(bd, workDir, polecatName, hookBead, "")
+		wispID, wispErr := createCleanupWisp(bd, workDir, rigName, polecatName, hookBead, "")
 		if wispErr != nil {
 			zombie.Error = wispErr
 		}
@@ -2023,7 +2035,7 @@ func handleZombieRestart(bd *BdCli, workDir, rigName, polecatName, hookBead, cle
 		// No existing wisp — create one as the atomic interlock (gt-7vs1).
 		// Previous code checked then created, allowing two concurrent patrols to
 		// both see "no wisp" and create duplicates. Now we create first, then dedup.
-		wispID, wispErr := createCleanupWisp(bd, workDir, polecatName, hookBead, "")
+		wispID, wispErr := createCleanupWisp(bd, workDir, rigName, polecatName, hookBead, "")
 		if wispErr != nil {
 			zombie.Error = fmt.Errorf("cleanup wisp: %w", wispErr)
 			zombie.Action = fmt.Sprintf("restarted-dirty (cleanup_status=%s, wisp-failed)", cleanupStatus)
@@ -2380,7 +2392,7 @@ func processDiscoveredCompletion(bd *BdCli, workDir, rigName string, payload *Po
 	}
 
 	if hasMR {
-		wispID, err := createCleanupWisp(bd, workDir, payload.PolecatName, payload.IssueID, payload.Branch)
+		wispID, err := createCleanupWisp(bd, workDir, rigName, payload.PolecatName, payload.IssueID, payload.Branch)
 		if err != nil {
 			discovery.Error = fmt.Errorf("creating cleanup wisp: %w", err)
 			return

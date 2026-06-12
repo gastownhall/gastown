@@ -512,6 +512,57 @@ func fakeBd() (*BdCli, *mockBdCalls) {
 	)
 }
 
+func TestCreateCleanupWispUsesActiveRigDirectory(t *testing.T) {
+	townRoot := t.TempDir()
+	for _, dir := range []string{
+		filepath.Join(townRoot, "mayor"),
+		filepath.Join(townRoot, ".beads"),
+		filepath.Join(townRoot, "accent_unified", "mayor", "rig"),
+		filepath.Join(townRoot, "accent_unified_au", "mayor", "rig"),
+	} {
+		if err := os.MkdirAll(dir, 0755); err != nil {
+			t.Fatalf("mkdir %s: %v", dir, err)
+		}
+	}
+	if err := os.WriteFile(filepath.Join(townRoot, "mayor", "town.json"), []byte(`{"name":"test"}`), 0644); err != nil {
+		t.Fatalf("write town.json: %v", err)
+	}
+	if err := beads.WriteRoutes(filepath.Join(townRoot, ".beads"), []beads.Route{
+		{Prefix: "hq-", Path: "."},
+		{Prefix: "accent_unified-", Path: "accent_unified/mayor/rig"},
+		{Prefix: "au-", Path: "accent_unified_au/mayor/rig"},
+	}); err != nil {
+		t.Fatalf("write routes: %v", err)
+	}
+
+	legacyWorkDir := filepath.Join(townRoot, "accent_unified", "refinery")
+	if err := os.MkdirAll(legacyWorkDir, 0755); err != nil {
+		t.Fatalf("mkdir legacy workdir: %v", err)
+	}
+
+	var createWorkDir string
+	bd := &BdCli{
+		Exec: func(workDir string, args ...string) (string, error) {
+			if len(args) > 0 && args[0] == "create" {
+				createWorkDir = workDir
+				return `{"id":"au-wisp-clean"}`, nil
+			}
+			return `{}`, nil
+		},
+		Run: func(workDir string, args ...string) error { return nil },
+	}
+
+	_, err := createCleanupWisp(bd, legacyWorkDir, "accent_unified_au", "furiosa", "au-xg5", "polecat/furiosa-au-xg5")
+	if err != nil {
+		t.Fatalf("createCleanupWisp: %v", err)
+	}
+
+	want := filepath.Join(townRoot, "accent_unified_au", "mayor", "rig")
+	if createWorkDir != want {
+		t.Fatalf("cleanup wisp create workDir = %q, want active rig dir %q", createWorkDir, want)
+	}
+}
+
 func setupActiveMRGitSafeWorkDir(t *testing.T, rigName, polecatName string) string {
 	t.Helper()
 	townRoot := t.TempDir()
