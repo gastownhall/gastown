@@ -1,6 +1,7 @@
 package provider
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"time"
@@ -25,6 +26,7 @@ const (
 	ContentTypeToolUse    ContentType = "tool_use"
 	ContentTypeToolResult ContentType = "tool_result"
 	ContentTypeImage      ContentType = "image"
+	ContentTypeThinking   ContentType = "thinking"
 )
 
 type ToolType string
@@ -58,6 +60,9 @@ type ContentBlock struct {
 
 	Text string `json:"text,omitempty"`
 
+	// ID is used by assistant tool_use blocks. Tool result blocks refer back to
+	// it via ToolUseID.
+	ID        string `json:"id,omitempty"`
 	ToolUseID string `json:"tool_use_id,omitempty"`
 
 	Name    string          `json:"name,omitempty"`
@@ -65,6 +70,57 @@ type ContentBlock struct {
 	Content any             `json:"content,omitempty"`
 	IsError bool            `json:"is_error,omitempty"`
 	Source  *ImageSource    `json:"source,omitempty"`
+
+	// Extended-thinking providers attach signed thinking blocks to assistant
+	// messages. Preserve these fields when conversation history is round-tripped;
+	// dropping them can make later tool-call requests fail validation.
+	Thinking         string `json:"thinking,omitempty"`
+	Signature        string `json:"signature,omitempty"`
+	ReasoningContent string `json:"reasoning_content,omitempty"`
+
+	extra map[string]json.RawMessage `json:"-"`
+}
+
+func (b *ContentBlock) UnmarshalJSON(data []byte) error {
+	type alias ContentBlock
+	var decoded alias
+	if err := json.Unmarshal(data, &decoded); err != nil {
+		return err
+	}
+	*b = ContentBlock(decoded)
+
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return err
+	}
+	for _, key := range []string{
+		"type", "text", "id", "tool_use_id", "name", "input", "content",
+		"is_error", "source", "thinking", "signature", "reasoning_content",
+	} {
+		delete(raw, key)
+	}
+	if len(raw) > 0 {
+		b.extra = raw
+	}
+	return nil
+}
+
+func (b ContentBlock) MarshalJSON() ([]byte, error) {
+	type alias ContentBlock
+	data, err := json.Marshal(alias(b))
+	if err != nil {
+		return nil, err
+	}
+	var merged map[string]json.RawMessage
+	if err := json.Unmarshal(data, &merged); err != nil {
+		return nil, err
+	}
+	for key, value := range b.extra {
+		if _, exists := merged[key]; !exists {
+			merged[key] = value
+		}
+	}
+	return json.Marshal(merged)
 }
 
 type ImageSource struct {
@@ -76,6 +132,64 @@ type ImageSource struct {
 type Message struct {
 	Role    Role           `json:"role"`
 	Content []ContentBlock `json:"content"`
+
+	extra      map[string]json.RawMessage `json:"-"`
+	contentRaw json.RawMessage            `json:"-"`
+}
+
+func (m *Message) UnmarshalJSON(data []byte) error {
+	*m = Message{}
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return err
+	}
+	if role, ok := raw["role"]; ok {
+		if err := json.Unmarshal(role, &m.Role); err != nil {
+			return err
+		}
+	}
+	if content, ok := raw["content"]; ok {
+		trimmed := bytes.TrimSpace(content)
+		if len(trimmed) > 0 && trimmed[0] == '[' {
+			if err := json.Unmarshal(content, &m.Content); err != nil {
+				return err
+			}
+		} else {
+			m.contentRaw = append(m.contentRaw[:0], content...)
+		}
+	}
+
+	delete(raw, "role")
+	delete(raw, "content")
+	if len(raw) > 0 {
+		m.extra = raw
+	}
+	return nil
+}
+
+func (m Message) MarshalJSON() ([]byte, error) {
+	merged := make(map[string]json.RawMessage, len(m.extra)+2)
+	for key, value := range m.extra {
+		merged[key] = value
+	}
+	role, err := json.Marshal(m.Role)
+	if err != nil {
+		return nil, err
+	}
+	merged["role"] = role
+
+	if m.Content != nil {
+		content, err := json.Marshal(m.Content)
+		if err != nil {
+			return nil, err
+		}
+		merged["content"] = content
+	} else if m.contentRaw != nil {
+		merged["content"] = m.contentRaw
+	} else {
+		merged["content"] = json.RawMessage("null")
+	}
+	return json.Marshal(merged)
 }
 
 type Tool struct {
@@ -249,6 +363,7 @@ func NewToolUseContent(id, name string, input any) (ContentBlock, error) {
 	}
 	return ContentBlock{
 		Type:  ContentTypeToolUse,
+		ID:    id,
 		Name:  name,
 		Input: inputBytes,
 	}, nil

@@ -381,6 +381,65 @@ func TestMessagesToFromJSON(t *testing.T) {
 	}
 }
 
+func TestMessagesRoundTripPreservesAssistantReasoningContentWithToolCalls(t *testing.T) {
+	input := []byte(`[{"role":"assistant","content":null,"reasoning_content":"kept reasoning","tool_calls":[{"id":"call_1","type":"function","function":{"name":"lookup","arguments":"{}"}}]}]`)
+	parsed, err := MessagesFromJSON(input)
+	if err != nil {
+		t.Fatalf("failed to unmarshal: %v", err)
+	}
+	data, err := MessagesToJSON(parsed)
+	if err != nil {
+		t.Fatalf("failed to marshal: %v", err)
+	}
+
+	var roundTripped []map[string]any
+	if err := json.Unmarshal(data, &roundTripped); err != nil {
+		t.Fatalf("failed to parse round trip: %v", err)
+	}
+	msg := roundTripped[0]
+	if msg["reasoning_content"] != "kept reasoning" {
+		t.Fatalf("reasoning_content = %v, want preserved value", msg["reasoning_content"])
+	}
+	if _, ok := msg["tool_calls"].([]any); !ok {
+		t.Fatalf("tool_calls not preserved: %v", msg["tool_calls"])
+	}
+	if msg["content"] != nil {
+		t.Fatalf("content = %v, want null preserved", msg["content"])
+	}
+}
+
+func TestMessagesRoundTripPreservesThinkingBlocks(t *testing.T) {
+	input := []byte(`[{"role":"assistant","content":[{"type":"thinking","thinking":"private chain","signature":"sig_123"},{"type":"tool_use","id":"tool_1","name":"read","input":{"path":"README.md"}}]}]`)
+	parsed, err := MessagesFromJSON(input)
+	if err != nil {
+		t.Fatalf("failed to unmarshal: %v", err)
+	}
+	if parsed[0].Content[0].Thinking != "private chain" {
+		t.Fatalf("thinking field not decoded")
+	}
+	if parsed[0].Content[1].ID != "tool_1" {
+		t.Fatalf("tool_use id not decoded")
+	}
+
+	data, err := MessagesToJSON(parsed)
+	if err != nil {
+		t.Fatalf("failed to marshal: %v", err)
+	}
+	var roundTripped []map[string]any
+	if err := json.Unmarshal(data, &roundTripped); err != nil {
+		t.Fatalf("failed to parse round trip: %v", err)
+	}
+	content := roundTripped[0]["content"].([]any)
+	thinking := content[0].(map[string]any)
+	if thinking["thinking"] != "private chain" || thinking["signature"] != "sig_123" {
+		t.Fatalf("thinking block not preserved: %v", thinking)
+	}
+	toolUse := content[1].(map[string]any)
+	if toolUse["id"] != "tool_1" {
+		t.Fatalf("tool_use id not preserved: %v", toolUse)
+	}
+}
+
 func TestInputSchema_MarshalJSON(t *testing.T) {
 	schema := &InputSchema{
 		Type: "object",
