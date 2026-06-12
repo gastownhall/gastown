@@ -3098,6 +3098,83 @@ func TestSetupRedirect(t *testing.T) {
 		}
 	})
 
+	t.Run("polecat worktree removes stale local database config", func(t *testing.T) {
+		townRoot := t.TempDir()
+		rigRoot := filepath.Join(townRoot, "accent_unified_au")
+		rigBeads := filepath.Join(rigRoot, ".beads")
+		mayorBeads := filepath.Join(rigRoot, "mayor", "rig", ".beads")
+		polecatPath := filepath.Join(rigRoot, "polecats", "dementus", "accent_unified_au")
+		polecatBeads := filepath.Join(polecatPath, ".beads")
+
+		if err := os.MkdirAll(rigBeads, 0755); err != nil {
+			t.Fatalf("mkdir rig beads: %v", err)
+		}
+		if err := os.MkdirAll(mayorBeads, 0755); err != nil {
+			t.Fatalf("mkdir mayor beads: %v", err)
+		}
+		if err := os.MkdirAll(polecatBeads, 0755); err != nil {
+			t.Fatalf("mkdir polecat beads: %v", err)
+		}
+		if err := os.WriteFile(filepath.Join(rigBeads, "redirect"), []byte("mayor/rig/.beads\n"), 0644); err != nil {
+			t.Fatalf("write rig redirect: %v", err)
+		}
+		staleConfig := []byte("dolt:\n  port: 3307\n  database: accent_unified\n")
+		if err := os.WriteFile(filepath.Join(polecatBeads, "config.yaml"), staleConfig, 0644); err != nil {
+			t.Fatalf("write stale config: %v", err)
+		}
+		staleMetadata := []byte(`{"dolt_database":"accent_unified","dolt_server_port":3307}`)
+		if err := os.WriteFile(filepath.Join(polecatBeads, "metadata.json"), staleMetadata, 0644); err != nil {
+			t.Fatalf("write stale metadata: %v", err)
+		}
+		if err := os.WriteFile(filepath.Join(polecatBeads, "README.md"), []byte("tracked docs\n"), 0644); err != nil {
+			t.Fatalf("write readme: %v", err)
+		}
+		runGit := func(args ...string) {
+			t.Helper()
+			cmd := exec.Command("git", append([]string{"-C", polecatPath}, args...)...)
+			if output, err := cmd.CombinedOutput(); err != nil {
+				t.Fatalf("git %v failed: %v\n%s", args, err, output)
+			}
+		}
+		runGit("init")
+		runGit("config", "user.email", "test@example.com")
+		runGit("config", "user.name", "Test User")
+		runGit("add", ".beads/config.yaml", ".beads/metadata.json", ".beads/README.md")
+		runGit("commit", "-m", "track beads files")
+
+		if err := SetupRedirect(townRoot, polecatPath); err != nil {
+			t.Fatalf("SetupRedirect failed: %v", err)
+		}
+
+		redirectPath := filepath.Join(polecatBeads, "redirect")
+		content, err := os.ReadFile(redirectPath)
+		if err != nil {
+			t.Fatalf("read redirect: %v", err)
+		}
+		want := "../../../mayor/rig/.beads\n"
+		if string(content) != want {
+			t.Errorf("redirect content = %q, want %q", string(content), want)
+		}
+
+		if _, err := os.Stat(filepath.Join(polecatBeads, "config.yaml")); !os.IsNotExist(err) {
+			t.Fatalf("stale config.yaml should be removed, stat err = %v", err)
+		}
+		if _, err := os.Stat(filepath.Join(polecatBeads, "metadata.json")); !os.IsNotExist(err) {
+			t.Fatalf("stale metadata.json should be removed, stat err = %v", err)
+		}
+		if _, err := os.Stat(filepath.Join(polecatBeads, "README.md")); err != nil {
+			t.Fatalf("README.md should be preserved: %v", err)
+		}
+		statusCmd := exec.Command("git", "-C", polecatPath, "status", "--short", "--", ".beads/config.yaml", ".beads/metadata.json")
+		status, err := statusCmd.Output()
+		if err != nil {
+			t.Fatalf("git status failed: %v", err)
+		}
+		if len(status) != 0 {
+			t.Fatalf("stale config removals should be hidden from git status, got:\n%s", status)
+		}
+	})
+
 	t.Run("refinery worktree", func(t *testing.T) {
 		townRoot := t.TempDir()
 		rigRoot := filepath.Join(townRoot, "testrig")
@@ -3127,7 +3204,7 @@ func TestSetupRedirect(t *testing.T) {
 		}
 	})
 
-	t.Run("cleans runtime files but preserves config files", func(t *testing.T) {
+	t.Run("cleans runtime files and local database config", func(t *testing.T) {
 		townRoot := t.TempDir()
 		rigRoot := filepath.Join(townRoot, "testrig")
 		rigBeads := filepath.Join(rigRoot, ".beads")
@@ -3137,19 +3214,17 @@ func TestSetupRedirect(t *testing.T) {
 		if err := os.MkdirAll(rigBeads, 0755); err != nil {
 			t.Fatalf("mkdir rig beads: %v", err)
 		}
-		// Simulate worktree with both runtime and tracked files
+		// Simulate worktree with both local state and portable tracked files.
 		if err := os.MkdirAll(crewBeads, 0755); err != nil {
 			t.Fatalf("mkdir crew beads: %v", err)
 		}
-		// Runtime files (should be removed)
 		if err := os.WriteFile(filepath.Join(crewBeads, "daemon.lock"), []byte("1234"), 0644); err != nil {
 			t.Fatalf("write daemon.lock: %v", err)
 		}
-		// Local beads metadata is per-machine configuration and must survive startup.
+		// Local beads database config must not shadow the redirect target.
 		if err := os.WriteFile(filepath.Join(crewBeads, "metadata.json"), []byte("{}"), 0644); err != nil {
 			t.Fatalf("write metadata.json: %v", err)
 		}
-		// Config files (should be preserved)
 		if err := os.WriteFile(filepath.Join(crewBeads, "config.yaml"), []byte("prefix: test"), 0644); err != nil {
 			t.Fatalf("write config: %v", err)
 		}
@@ -3161,17 +3236,14 @@ func TestSetupRedirect(t *testing.T) {
 			t.Fatalf("SetupRedirect failed: %v", err)
 		}
 
-		// Verify runtime files were cleaned up
 		if _, err := os.Stat(filepath.Join(crewBeads, "daemon.lock")); !os.IsNotExist(err) {
 			t.Error("daemon.lock should have been removed")
 		}
-		if _, err := os.Stat(filepath.Join(crewBeads, "metadata.json")); err != nil {
-			t.Errorf("metadata.json should have been preserved: %v", err)
+		if _, err := os.Stat(filepath.Join(crewBeads, "metadata.json")); !os.IsNotExist(err) {
+			t.Errorf("metadata.json should have been removed, stat err = %v", err)
 		}
-
-		// Verify config files were preserved
-		if _, err := os.Stat(filepath.Join(crewBeads, "config.yaml")); err != nil {
-			t.Errorf("config.yaml should have been preserved: %v", err)
+		if _, err := os.Stat(filepath.Join(crewBeads, "config.yaml")); !os.IsNotExist(err) {
+			t.Errorf("config.yaml should have been removed, stat err = %v", err)
 		}
 		if _, err := os.Stat(filepath.Join(crewBeads, "README.md")); err != nil {
 			t.Errorf("README.md should have been preserved: %v", err)
