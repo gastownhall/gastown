@@ -197,6 +197,8 @@ func TestFilterReadyIssuesByRoute(t *testing.T) {
 	routes := strings.Join([]string{
 		`{"prefix":"hq-","path":"."}`,
 		`{"prefix":"hq-cv-","path":"."}`,
+		`{"prefix":"accent-","path":"legacy/mayor/rig"}`,
+		`{"prefix":"accent-unified-","path":"accent_unified_au/mayor/rig"}`,
 		`{"prefix":"bds-","path":"bd_symphony/mayor/rig"}`,
 		`{"prefix":"gt-","path":"gastown/mayor/rig"}`,
 	}, "\n") + "\n"
@@ -219,10 +221,17 @@ func TestFilterReadyIssuesByRoute(t *testing.T) {
 		{ID: "bds-123", Title: "bd_symphony work"},
 		{ID: "hq-123", Title: "town work in rig result"},
 		{ID: "gt-123", Title: "other rig work"},
+		{ID: "accent-unified-bfof", Title: "active mirror work"},
+		{ID: "accent-legacy", Title: "legacy work"},
 		{ID: "unknown-123", Title: "unknown route"},
 	}
 	filtered = filterReadyIssuesByRoute(townRoot, "bd_symphony", issues)
 	if got, want := issueIDs(filtered), []string{"bds-123"}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("rig filtered IDs = %v, want %v", got, want)
+	}
+
+	filtered = filterReadyIssuesByRoute(townRoot, "accent_unified_au", issues)
+	if got, want := issueIDs(filtered), []string{"accent-unified-bfof"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("long-prefix rig filtered IDs = %v, want %v", got, want)
 	}
 }

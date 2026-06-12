@@ -485,12 +485,7 @@ func filterReadyIssuesByRoute(townRoot, source string, issues []*beads.Issue) []
 }
 
 func readyIssueRoutesToSource(townRoot, source, issueID string) bool {
-	prefix := beads.ExtractPrefix(issueID)
-	if prefix == "" {
-		return false
-	}
-
-	routePath := beads.GetRigPathForPrefix(townRoot, prefix)
+	routePath := beads.GetRigPathForBeadID(townRoot, issueID)
 	if routePath == "" {
 		return false
 	}
@@ -499,7 +494,7 @@ func readyIssueRoutesToSource(townRoot, source, issueID string) bool {
 		return routePath == townRoot
 	}
 
-	return beads.GetRigNameForPrefix(townRoot, prefix) == source
+	return beads.GetRigNameForBeadID(townRoot, issueID) == source
 }
 
 // filterWisps removes wisp issues from the list.

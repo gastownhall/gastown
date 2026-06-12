@@ -106,6 +106,26 @@ func TestResolveHookDirUsesShortPrefixRoute(t *testing.T) {
 	}
 }
 
+func TestResolveHookDirUsesLongestConfiguredRoutePrefix(t *testing.T) {
+	tmpDir := t.TempDir()
+	townBeadsDir := filepath.Join(tmpDir, ".beads")
+	if err := os.MkdirAll(townBeadsDir, 0755); err != nil {
+		t.Fatalf("mkdir town .beads: %v", err)
+	}
+	if err := WriteRoutes(townBeadsDir, []Route{
+		{Prefix: "accent-", Path: "legacy/mayor/rig"},
+		{Prefix: "accent-unified-", Path: "accent_unified_au/mayor/rig"},
+	}); err != nil {
+		t.Fatalf("write routes: %v", err)
+	}
+
+	want := filepath.Join(tmpDir, "accent_unified_au", "mayor", "rig")
+	got := ResolveHookDir(tmpDir, "accent-unified-bfof", tmpDir)
+	if got != want {
+		t.Fatalf("ResolveHookDir() = %q, want longest-prefix route %q", got, want)
+	}
+}
+
 func TestExtractPrefix(t *testing.T) {
 	tests := []struct {
 		beadID   string
@@ -308,6 +328,33 @@ func TestResolveBeadsDirForID(t *testing.T) {
 					beadsDir, tc.beadID, result, tc.expected)
 			}
 		})
+	}
+}
+
+func TestResolveBeadsDirForIDUsesLongestConfiguredRoutePrefix(t *testing.T) {
+	tmpDir := t.TempDir()
+	beadsDir := filepath.Join(tmpDir, ".beads")
+	legacyBeadsDir := filepath.Join(tmpDir, "legacy", "mayor", "rig", ".beads")
+	activeBeadsDir := filepath.Join(tmpDir, "accent_unified_au", "mayor", "rig", ".beads")
+	for _, dir := range []string{beadsDir, legacyBeadsDir, activeBeadsDir} {
+		if err := os.MkdirAll(dir, 0755); err != nil {
+			t.Fatalf("mkdir %s: %v", dir, err)
+		}
+	}
+	if err := WriteRoutes(beadsDir, []Route{
+		{Prefix: "accent-", Path: "legacy/mayor/rig"},
+		{Prefix: "accent-unified-", Path: "accent_unified_au/mayor/rig"},
+		{Prefix: "hq-", Path: "."},
+		{Prefix: "hq-cv-", Path: "."},
+	}); err != nil {
+		t.Fatalf("write routes: %v", err)
+	}
+
+	if got := ResolveBeadsDirForID(beadsDir, "accent-unified-bfof"); got != activeBeadsDir {
+		t.Fatalf("ResolveBeadsDirForID legacy ID = %q, want %q", got, activeBeadsDir)
+	}
+	if got := ResolveBeadsDirForID(beadsDir, "hq-cv-hhsxy"); got != beadsDir {
+		t.Fatalf("ResolveBeadsDirForID hq-cv ID = %q, want town beads %q", got, beadsDir)
 	}
 }
 
