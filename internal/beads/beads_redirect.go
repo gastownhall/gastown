@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 )
@@ -108,13 +109,16 @@ func resolveBeadsDirWithDepth(beadsDir string, maxDepth int) string {
 	return resolveBeadsDirWithDepth(resolved, maxDepth-1)
 }
 
-// cleanBeadsRuntimeFiles removes gitignored runtime files from a .beads directory
-// while preserving tracked files (formulas/, README.md, config.yaml, .gitignore).
+// cleanBeadsRuntimeFiles removes local state from a redirecting .beads directory
+// while preserving portable tracked files (formulas/, README.md, .gitignore).
 // This is safe to call even if the directory doesn't exist.
 func cleanBeadsRuntimeFiles(beadsDir string) error {
 	if _, err := os.Stat(beadsDir); os.IsNotExist(err) {
 		return nil // Nothing to clean
 	}
+
+	localConfigFiles := []string{"config.yaml", "metadata.json"}
+	markSkipWorktreeForTrackedBeadsFiles(filepath.Dir(beadsDir), localConfigFiles)
 
 	// Runtime files/patterns that are gitignored and safe to remove
 	runtimePatterns := []string{
@@ -124,6 +128,9 @@ func cleanBeadsRuntimeFiles(beadsDir string) error {
 		"last-touched",
 		// Version tracking
 		".local_version",
+		// Local database configuration. Redirecting worktrees must use the
+		// target .beads config instead of stale config copied by git worktree.
+		localConfigFiles[0], localConfigFiles[1],
 		// Redirect file (we're about to recreate it)
 		"redirect",
 		// Runtime directories
@@ -147,6 +154,19 @@ func cleanBeadsRuntimeFiles(beadsDir string) error {
 	}
 
 	return firstErr
+}
+
+func markSkipWorktreeForTrackedBeadsFiles(workDir string, names []string) {
+	for _, name := range names {
+		relPath := filepath.ToSlash(filepath.Join(".beads", name))
+		checkCmd := exec.Command("git", "-C", workDir, "ls-files", "--error-unmatch", relPath)
+		if err := checkCmd.Run(); err != nil {
+			continue
+		}
+
+		cmd := exec.Command("git", "-C", workDir, "update-index", "--skip-worktree", relPath)
+		_ = cmd.Run()
+	}
 }
 
 // ComputeRedirectTarget computes the expected redirect target for a worktree.
