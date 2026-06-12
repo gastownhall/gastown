@@ -552,6 +552,50 @@ exit 0
 	}
 }
 
+func TestCreateRoutesExplicitRigUsingEnvTownRootFromExternalCwd(t *testing.T) {
+	townRoot := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(townRoot, "mayor"), 0755); err != nil {
+		t.Fatalf("mkdir mayor: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(townRoot, "mayor", "town.json"), []byte(`{"name":"test"}`), 0644); err != nil {
+		t.Fatalf("write town.json: %v", err)
+	}
+
+	townBeadsDir := filepath.Join(townRoot, ".beads")
+	rigDir := filepath.Join(townRoot, "accent_unified_au", "mayor", "rig")
+	rigBeadsDir := filepath.Join(rigDir, ".beads")
+	for _, dir := range []string{townBeadsDir, rigBeadsDir} {
+		if err := os.MkdirAll(dir, 0755); err != nil {
+			t.Fatalf("mkdir %s: %v", dir, err)
+		}
+	}
+	if err := WriteRoutes(townBeadsDir, []Route{
+		{Prefix: "hq-", Path: "."},
+		{Prefix: "au-", Path: "accent_unified_au/mayor/rig"},
+	}); err != nil {
+		t.Fatalf("write routes: %v", err)
+	}
+
+	externalCwd := filepath.Join(t.TempDir(), "checkout")
+	if err := os.MkdirAll(externalCwd, 0755); err != nil {
+		t.Fatalf("mkdir external cwd: %v", err)
+	}
+	t.Setenv("GT_ROOT", townRoot)
+	t.Setenv("GT_TOWN_ROOT", "")
+
+	got, err := New(externalCwd).targetBeadsDirForCreate(CreateOptions{
+		Title:     "Merge: au-xg5",
+		Rig:       "accent_unified_au",
+		Ephemeral: true,
+	})
+	if err != nil {
+		t.Fatalf("targetBeadsDirForCreate: %v", err)
+	}
+	if got != rigBeadsDir {
+		t.Fatalf("targetBeadsDirForCreate() = %q, want %q", got, rigBeadsDir)
+	}
+}
+
 func TestCreateWithUnknownRigErrors(t *testing.T) {
 	townRoot := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(townRoot, "mayor"), 0755); err != nil {

@@ -82,6 +82,30 @@ func TestGetPrefixForRig_RigsConfigFallback(t *testing.T) {
 	}
 }
 
+func TestResolveHookDirUsesShortPrefixRoute(t *testing.T) {
+	tmpDir := t.TempDir()
+	townBeadsDir := filepath.Join(tmpDir, ".beads")
+	if err := os.MkdirAll(townBeadsDir, 0755); err != nil {
+		t.Fatalf("mkdir town .beads: %v", err)
+	}
+	if err := WriteRoutes(townBeadsDir, []Route{
+		{Prefix: "hq-", Path: "."},
+		{Prefix: "au-", Path: "accent_unified_au/mayor/rig"},
+	}); err != nil {
+		t.Fatalf("write routes: %v", err)
+	}
+
+	rigDir := filepath.Join(tmpDir, "accent_unified_au", "mayor", "rig")
+	if err := os.MkdirAll(rigDir, 0755); err != nil {
+		t.Fatalf("mkdir rig dir: %v", err)
+	}
+
+	got := ResolveHookDir(tmpDir, "au-xg5", tmpDir)
+	if got != rigDir {
+		t.Fatalf("ResolveHookDir() = %q, want %q", got, rigDir)
+	}
+}
+
 func TestExtractPrefix(t *testing.T) {
 	tests := []struct {
 		beadID   string

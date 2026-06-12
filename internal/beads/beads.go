@@ -437,6 +437,19 @@ func (b *Beads) getActor() string {
 func (b *Beads) getTownRoot() string {
 	b.townRootOnce.Do(func() {
 		b.townRoot = FindTownRoot(b.workDir)
+		if b.townRoot != "" {
+			return
+		}
+		for _, envName := range []string{"GT_TOWN_ROOT", "GT_ROOT"} {
+			townRoot := os.Getenv(envName)
+			if townRoot == "" {
+				continue
+			}
+			if _, err := os.Stat(filepath.Join(townRoot, "mayor", "town.json")); err == nil {
+				b.townRoot = townRoot
+				return
+			}
+		}
 	})
 	return b.townRoot
 }
