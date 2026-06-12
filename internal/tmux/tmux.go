@@ -3016,12 +3016,35 @@ func matchesPromptPrefix(line, readyPromptPrefix string) bool {
 	return strings.HasPrefix(trimmed, normalizedPrefix) || (prefix != "" && trimmed == prefix)
 }
 
+// busyIndicators is the single source of truth for the substrings an agent TUI
+// renders in its status bar while actively generating. Detection of "is the
+// agent working?" scrapes the pane for any of these (see hasBusyIndicator), and
+// that signal underpins IsIdle, WaitForIdle, and the nudge Escape-suppression in
+// shouldSendEscape. Claude Code, Codex, and Gemini all surface "esc to
+// interrupt"; if an agent uses different wording, add it here — that is the only
+// place that needs to change.
+//
+// FRAGILITY (gastownhall/gastown#4240): this couples to upstream TUI status
+// text. Scraping the status bar cannot detect a silent upstream rename on its
+// own — a truly structural readiness signal would, but none is available across
+// all agents today. Centralizing the markers here keeps any required update to a
+// single reviewable line, and TestBusyIndicators pins the known marker so a
+// change is intentional rather than accidental. The idle side is already
+// centralized via the agent presets' ReadyPromptPrefix; this is its busy-side
+// counterpart.
+var busyIndicators = []string{"esc to interrupt"}
+
 func hasBusyIndicator(line string) bool {
 	trimmed := strings.TrimSpace(line)
 	if trimmed == "" {
 		return false
 	}
-	return strings.Contains(trimmed, "esc to interrupt")
+	for _, marker := range busyIndicators {
+		if strings.Contains(trimmed, marker) {
+			return true
+		}
+	}
+	return false
 }
 
 // shouldSendEscapeForLines reports whether the vim-mode Escape keystroke

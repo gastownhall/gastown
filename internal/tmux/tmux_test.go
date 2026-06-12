@@ -2268,6 +2268,38 @@ func TestShouldSendEscape_CaptureErrorSuppressesEscape(t *testing.T) {
 	}
 }
 
+// TestBusyIndicators pins the centralized busy-indicator source of truth so a
+// change to the upstream-coupled status string is intentional and reviewed
+// rather than accidental (gastownhall/gastown#4240).
+func TestBusyIndicators(t *testing.T) {
+	t.Parallel()
+
+	if len(busyIndicators) == 0 {
+		t.Fatal("busyIndicators must not be empty — busy/idle detection would silently break")
+	}
+
+	// "esc to interrupt" is the marker Claude Code / Codex / Gemini render while
+	// generating. If this assertion fails, the change must be deliberate.
+	found := false
+	for _, m := range busyIndicators {
+		if m == "esc to interrupt" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("busyIndicators = %q, want it to contain the known \"esc to interrupt\" marker", busyIndicators)
+	}
+
+	// Every marker must be matched by hasBusyIndicator (guards against an empty
+	// or whitespace-only entry slipping in).
+	for _, m := range busyIndicators {
+		if !hasBusyIndicator("⏵⏵ status · " + m) {
+			t.Errorf("hasBusyIndicator did not match a registered busy indicator %q", m)
+		}
+	}
+}
+
 func TestDefaultReadyPromptPrefix(t *testing.T) {
 	t.Parallel()
 	// Verify the constant is set correctly
