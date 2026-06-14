@@ -405,11 +405,11 @@ func gtTableExists(ctx context.Context, db *sql.DB, dbName, tableName string) bo
 	return err == nil
 }
 
-func gtColumnExists(ctx context.Context, db *sql.DB, dbName, tableName, columnName string) bool {
+func gtWispDependencyColumnExists(ctx context.Context, db *sql.DB, dbName, columnName string) bool {
 	var dummy int
 	err := db.QueryRowContext(ctx,
 		"SELECT 1 FROM information_schema.columns WHERE table_schema = ? AND table_name = ? AND column_name = ?",
-		dbName, tableName, columnName).Scan(&dummy)
+		dbName, "wisp_dependencies", columnName).Scan(&dummy)
 	return err == nil
 }
 
@@ -417,14 +417,14 @@ func ensureWispDependencySchemaOnGT(ctx context.Context, db *sql.DB, dbName stri
 	if !gtTableExists(ctx, db, dbName, "wisp_dependencies") {
 		return nil
 	}
-	if gtColumnExists(ctx, db, dbName, "wisp_dependencies", "depends_on_issue_id") &&
-		gtColumnExists(ctx, db, dbName, "wisp_dependencies", "depends_on_wisp_id") &&
-		gtColumnExists(ctx, db, dbName, "wisp_dependencies", "depends_on_external") {
-		if !gtColumnExists(ctx, db, dbName, "wisp_dependencies", "depends_on_id") {
+	if gtWispDependencyColumnExists(ctx, db, dbName, "depends_on_issue_id") &&
+		gtWispDependencyColumnExists(ctx, db, dbName, "depends_on_wisp_id") &&
+		gtWispDependencyColumnExists(ctx, db, dbName, "depends_on_external") {
+		if !gtWispDependencyColumnExists(ctx, db, dbName, "depends_on_id") {
 			return nil
 		}
 	}
-	if !gtColumnExists(ctx, db, dbName, "wisp_dependencies", "depends_on_id") {
+	if !gtWispDependencyColumnExists(ctx, db, dbName, "depends_on_id") {
 		return fmt.Errorf("wisp_dependencies missing split dependency columns")
 	}
 	return rebuildWispDependencyTableOnGT(ctx, db)
