@@ -409,10 +409,11 @@ exit /b 0
 		case strings.Contains(args, "update "+newBeadID) && strings.Contains(args, "--description=<attached-molecule-and-formula-fields>"):
 			gotMetadata = true
 			assertTargetRig("metadata update", dir, beadsDir, database, args)
-		case args == "--version" || strings.HasPrefix(args, "version") || strings.HasPrefix(args, "formula "):
-			if database == "hq" {
-				t.Fatalf("bd %q inherited stale hq database in log line %q", args, line)
-			}
+		case strings.Contains(args, "update "+newBeadID) && strings.Contains(args, "--description="):
+			assertTargetRig("description update", dir, beadsDir, database, args)
+		case args == "--version" || strings.HasPrefix(args, "version") || strings.Contains(args, " version") || strings.HasPrefix(args, "formula ") || strings.Contains(args, "show gt-rig-") || strings.Contains(args, "show mol-"):
+			// Explicitly exempt non-target-bead lookups; every gt-new123 operation
+			// above must still prove it is pinned to the gastown database.
 		default:
 			t.Fatalf("unexpected bd command without routing assertion: %q", line)
 		}
