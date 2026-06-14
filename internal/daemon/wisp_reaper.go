@@ -159,7 +159,7 @@ func (d *Daemon) reapWispsInline(config *WispReaperConfig, maxAge, deleteAge tim
 
 	port := d.doltServerPort()
 	dryRun := config.DryRun
-	var totalReaped, totalOpen, totalPurged, totalMailPurged, totalAutoClosed int
+	var totalReaped, totalMoleculeSteps, totalOpen, totalPurged, totalMailPurged, totalAutoClosed int
 
 	// Step 2: Reap
 	reapErrors := 0
@@ -186,9 +186,14 @@ func (d *Daemon) reapWispsInline(config *WispReaperConfig, maxAge, deleteAge tim
 			continue
 		}
 		totalReaped += result.Reaped
+		totalMoleculeSteps += result.MoleculeStepsClosed
 		totalOpen += result.OpenRemain
-		if result.Reaped > 0 {
-			d.logger.Printf("wisp_reaper: %s: reaped %d stale wisps, %d open remain", dbName, result.Reaped, result.OpenRemain)
+		if result.Reaped > 0 || result.MoleculeStepsClosed > 0 {
+			reapSummary := fmt.Sprintf("wisp_reaper: %s: reaped %d stale wisps", dbName, result.Reaped)
+			if result.MoleculeStepsClosed > 0 {
+				reapSummary += fmt.Sprintf(", closed %d molecule steps", result.MoleculeStepsClosed)
+			}
+			d.logger.Printf("%s, %d open remain", reapSummary, result.OpenRemain)
 		}
 	}
 	if reapErrors > 0 {
@@ -322,8 +327,13 @@ func (d *Daemon) reapWispsInline(config *WispReaperConfig, maxAge, deleteAge tim
 		d.logger.Printf("wisp_reaper: WARNING: %d open wisps exceed threshold %d — investigate wisp lifecycle",
 			totalOpen, wispAlertThreshold)
 	}
-	d.logger.Printf("wisp_reaper: cycle complete — reaped=%d purged=%d mail_purged=%d plugin_closed=%d dispatch_closed=%d auto_closed=%d open=%d databases=%d dryRun=%v",
-		totalReaped, totalPurged, totalMailPurged, totalPluginClosed, totalDispatchClosed, totalAutoClosed, totalOpen, len(databases), dryRun)
+	summary := fmt.Sprintf("wisp_reaper: cycle complete — reaped=%d", totalReaped)
+	if totalMoleculeSteps > 0 {
+		summary += fmt.Sprintf(" molecule_steps_closed=%d", totalMoleculeSteps)
+	}
+	summary += fmt.Sprintf(" purged=%d mail_purged=%d plugin_closed=%d dispatch_closed=%d auto_closed=%d open=%d databases=%d dryRun=%v",
+		totalPurged, totalMailPurged, totalPluginClosed, totalDispatchClosed, totalAutoClosed, totalOpen, len(databases), dryRun)
+	d.logger.Printf("%s", summary)
 	mol.closeStep("report")
 }
 

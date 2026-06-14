@@ -9,7 +9,7 @@ these commands, inspects results, and uses judgment for anomalies.
 
 This is infrastructure cleanup work:
 1. Scan all production databases for candidates
-2. Reap (close) wisps past max_age whose parent is closed/missing
+2. Reap (close) wisps past max_age whose parent is closed/missing, plus step-wisps whose parent molecule is already closed
 3. Purge (delete) closed wisps past purge_age + old closed mail
 4. Auto-close stale issues (>stale_issue_age, not P0/P1, not epics/convoys, no active deps)
 5. Close completed convoys via `gt convoy check` (tracked-bead status, never staleness)
@@ -78,12 +78,13 @@ gt reaper scan --db=<name> --port={{dolt_port}} \\
 
 **3. Inspect results for anomalies:**
 - Check the `anomalies` array in the JSON output
+- Treat an absent `molecule_step_candidates` field as zero
 - Flag any `dangling_parent_ref` anomalies — these indicate wisps with
   parent dependency records pointing to purged/missing parents
 - If `open_wisps` exceeds {{alert_threshold}}, escalate
 
 **4. Decide whether to proceed:**
-- If no candidates found across all databases, skip remaining steps
+- If no candidates found across all databases, including `molecule_step_candidates`, skip remaining steps
 - If anomalies are severe, consider escalating before proceeding
 
 **Exit criteria:** Scan complete, candidates identified, anomalies flagged."""
@@ -93,16 +94,17 @@ id = "reap"
 title = "Reap stale wisps"
 needs = ["scan"]
 description = """
-Close wisps past max_age whose parent molecule is closed or missing.
+Close wisps past max_age whose parent molecule is closed or missing, and close
+step-wisps immediately when their parent molecule is already closed.
 
-**1. For each database with reap candidates:**
+**1. For each database with `reap_candidates` or `molecule_step_candidates`:**
 ```bash
 gt reaper reap --db=<name> --port={{dolt_port}} \\
   --max-age={{max_age}} --db-delay={{db_delay}} {{#if dry_run}}--dry-run{{/if}} --json
 ```
 
 **2. Inspect results:**
-- Compare reaped count to scan candidates. A mismatch (scan > reap) is NORMAL
+- Compare reaped and molecule-step counts to scan candidates. A mismatch (scan > reap) is NORMAL
   and expected — the witness may close wisps for dead polecat sessions between
   scan and reap. Do NOT escalate scan/reap count mismatches.
 - Only escalate if reap returns an actual error (not a zero count).
