@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -703,9 +702,15 @@ func TestBatchSling_EmptyConvoyCleanupOnAllFailures(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(townRoot, "mayor", "rig"), 0755); err != nil {
 		t.Fatalf("mkdir: %v", err)
 	}
+	if err := os.WriteFile(filepath.Join(townRoot, "mayor", "town.json"), []byte(`{"type":"town","name":"test"}`), 0644); err != nil {
+		t.Fatalf("write town.json: %v", err)
+	}
 	townBeads := filepath.Join(townRoot, ".beads")
 	if err := os.MkdirAll(townBeads, 0755); err != nil {
 		t.Fatalf("mkdir .beads: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(townBeads, "metadata.json"), []byte(`{"dolt_database":"hq","dolt_server_host":"127.0.0.1","dolt_server_port":3307}`), 0644); err != nil {
+		t.Fatalf("write metadata: %v", err)
 	}
 
 	closeLogPath := filepath.Join(townRoot, "bd-close.log")
@@ -720,7 +725,7 @@ fi
 shift || true
 case "$cmd" in
   close)
-    echo "$cmd $*" >> "` + closeLogPath + `"
+    printf '%s %s|%s|%s|%s|%s|%s\n' "$cmd" "$*" "$(pwd)" "${BEADS_DIR:-}" "${BEADS_DOLT_SERVER_DATABASE:-}" "${BD_DOLT_AUTO_COMMIT:-}" "${BD_READONLY:-}" >> "` + closeLogPath + `"
     exit 0
     ;;
 esac
@@ -732,6 +737,21 @@ exit 0
 	}
 
 	t.Setenv("PATH", binDir+":"+os.Getenv("PATH"))
+	t.Setenv("BEADS_DIR", filepath.Join(townRoot, "wrong", ".beads"))
+	t.Setenv("BEADS_DOLT_SERVER_DATABASE", "gastown")
+	t.Setenv("BEADS_DB", filepath.Join(townRoot, "wrong.db"))
+	t.Setenv("BD_DB", filepath.Join(townRoot, "wrong.bd"))
+	t.Setenv("BD_READONLY", "true")
+	t.Setenv("BD_DOLT_AUTO_COMMIT", "off")
+
+	cwd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("getwd: %v", err)
+	}
+	t.Cleanup(func() { _ = os.Chdir(cwd) })
+	if err := os.Chdir(filepath.Join(townRoot, "mayor", "rig")); err != nil {
+		t.Fatalf("chdir: %v", err)
+	}
 
 	// Simulate the cleanup logic from runBatchSling:
 	// If successCount == 0 and batchConvoyID is set, close the convoy.
@@ -739,12 +759,7 @@ exit 0
 	batchConvoyID := "hq-cv-cleanup-test"
 
 	if successCount == 0 && batchConvoyID != "" {
-		// Mirror the exact exec.Command call from sling_batch.go:303
-		cmd := exec.Command("bd", "close", batchConvoyID, "-r", "all beads failed to sling")
-		cmd.Dir = townBeads
-		if err := cmd.Run(); err != nil {
-			t.Fatalf("close convoy: %v", err)
-		}
+		closeConvoy(batchConvoyID, "all beads failed to sling")
 	}
 
 	// Verify close was called
@@ -758,6 +773,25 @@ exit 0
 	}
 	if !strings.Contains(closeContent, "all beads failed") {
 		t.Errorf("close log should contain failure reason:\n%s", closeContent)
+	}
+	fields := strings.Split(strings.TrimSpace(closeContent), "|")
+	if len(fields) != 6 {
+		t.Fatalf("close log fields = %v, want 6 fields in %q", fields, closeContent)
+	}
+	if fields[1] != townBeads {
+		t.Fatalf("close cwd = %q, want town beads dir %q", fields[1], townBeads)
+	}
+	if fields[2] != townBeads {
+		t.Fatalf("BEADS_DIR = %q, want %q", fields[2], townBeads)
+	}
+	if fields[3] != "hq" {
+		t.Fatalf("BEADS_DOLT_SERVER_DATABASE = %q, want hq", fields[3])
+	}
+	if fields[4] != "on" {
+		t.Fatalf("BD_DOLT_AUTO_COMMIT = %q, want on", fields[4])
+	}
+	if fields[5] != "" {
+		t.Fatalf("BD_READONLY should be stripped, got %q", fields[5])
 	}
 }
 
