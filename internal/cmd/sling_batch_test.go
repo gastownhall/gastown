@@ -689,9 +689,9 @@ func TestResolveRigFromBeadIDs_TownLevelPrefix_Errors(t *testing.T) {
 	}
 }
 
-// TestBatchSling_EmptyConvoyCleanupOnAllFailures verifies that when all beads
-// fail to sling, the empty convoy is closed with a cleanup reason.
-func TestBatchSling_EmptyConvoyCleanupOnAllFailures(t *testing.T) {
+// TestCloseConvoyPinsTownDatabaseUnderStaleEnv verifies convoy cleanup closes
+// hq-cv-* beads through the town database even when ambient bd env points away.
+func TestCloseConvoyPinsTownDatabaseUnderStaleEnv(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("skipping on windows")
 	}
@@ -753,14 +753,8 @@ exit 0
 		t.Fatalf("chdir: %v", err)
 	}
 
-	// Simulate the cleanup logic from runBatchSling:
-	// If successCount == 0 and batchConvoyID is set, close the convoy.
-	successCount := 0
 	batchConvoyID := "hq-cv-cleanup-test"
-
-	if successCount == 0 && batchConvoyID != "" {
-		closeConvoy(batchConvoyID, "all beads failed to sling")
-	}
+	closeConvoy(batchConvoyID, "all beads failed to sling")
 
 	// Verify close was called
 	closeBytes, err := os.ReadFile(closeLogPath)

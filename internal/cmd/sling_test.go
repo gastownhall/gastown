@@ -229,6 +229,10 @@ if "%cmd%"=="show" (
   echo [{"title":"Test issue","status":"open","assignee":"","description":""}]
   exit /b 0
 )
+if "%cmd%"=="create" (
+  echo {"id":"gt-new123","title":"New sling smoke","status":"open","assignee":""}
+  exit /b 0
+)
 if "%cmd%"=="formula" (
   echo {"name":"test-formula"}
   exit /b 0

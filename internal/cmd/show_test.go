@@ -17,7 +17,12 @@ func TestExtractBeadIDFromArgs(t *testing.T) {
 		{"simple", []string{"myproject-abc"}, "myproject-abc"},
 		{"with flags after", []string{"gt-abc123", "--json"}, "gt-abc123"},
 		{"with flags before", []string{"--json", "hq-xyz"}, "hq-xyz"},
+		{"with id flag equals", []string{"--json", "--id=gt-abc123"}, "gt-abc123"},
+		{"with id flag value", []string{"--id", "hq-xyz", "--json"}, "hq-xyz"},
+		{"with as-of before id", []string{"--as-of", "main", "gt-abc123"}, "gt-abc123"},
+		{"with directory before id", []string{"-C", "/tmp/work", "gt-abc123"}, "gt-abc123"},
 		{"flags only", []string{"--json", "-v"}, ""},
+		{"value flag only", []string{"--as-of", "main"}, ""},
 		{"empty", []string{}, ""},
 		{"mixed", []string{"-v", "bd-def456", "--json"}, "bd-def456"},
 	}

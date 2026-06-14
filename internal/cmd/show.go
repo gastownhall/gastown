@@ -49,12 +49,35 @@ func runShow(cmd *cobra.Command, args []string) error {
 // extractBeadIDFromArgs returns the first non-flag argument, which is the bead ID.
 // Returns empty string if no non-flag argument is found.
 func extractBeadIDFromArgs(args []string) string {
-	for _, arg := range args {
+	for i, arg := range args {
+		if strings.HasPrefix(arg, "--id=") {
+			return strings.TrimPrefix(arg, "--id=")
+		}
+		if arg == "--id" && i+1 < len(args) {
+			return args[i+1]
+		}
+	}
+
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
+		if showFlagConsumesNextArg(arg) {
+			i++
+			continue
+		}
 		if !strings.HasPrefix(arg, "-") {
 			return arg
 		}
 	}
 	return ""
+}
+
+func showFlagConsumesNextArg(arg string) bool {
+	switch arg {
+	case "--as-of", "--actor", "--db", "--directory", "--dolt-auto-commit", "-C":
+		return true
+	default:
+		return false
+	}
 }
 
 type bdShowInvocation struct {
