@@ -16,7 +16,32 @@ import (
 const (
 	// bdMolTimeout is the timeout for bd molecule operations.
 	bdMolTimeout = 15 * time.Second
+
+	// dogCloseMaxAttempts / dogCloseRetryDelay bound the retry on `bd close` for
+	// dog wisps. A transient Dolt slowdown (the connection-churn window) can make
+	// a single close fail, and without a retry the wisp stays OPEN forever — a
+	// root cause of the dog wisp flood (gt-ye21). Retrying turns a transient
+	// failure back into a clean close instead of a permanent orphan.
+	dogCloseMaxAttempts = 3
+	dogCloseRetryDelay  = 500 * time.Millisecond
 )
+
+// closeWisp runs `bd close <id>` (plus any extra args) with bounded retries so a
+// transient Dolt error does not leave the wisp open. Returns the final error if
+// every attempt fails.
+func (dm *dogMol) closeWisp(id string, extra ...string) error {
+	args := append([]string{"close", id}, extra...)
+	var err error
+	for attempt := 1; attempt <= dogCloseMaxAttempts; attempt++ {
+		if _, err = dm.runBd(args...); err == nil {
+			return nil
+		}
+		if attempt < dogCloseMaxAttempts {
+			time.Sleep(time.Duration(attempt) * dogCloseRetryDelay)
+		}
+	}
+	return err
+}
 
 // dogMol tracks a molecule (wisp) lifecycle for a daemon dog patrol.
 // Graceful degradation: if bd fails, the dog still does its work — molecule
@@ -115,9 +140,8 @@ func (dm *dogMol) close() {
 	// Close any step wisps that were never explicitly closed/failed.
 	dm.closeRemainingSteps()
 
-	_, err := dm.runBd("close", dm.rootID)
-	if err != nil {
-		dm.logger.Printf("dog_molecule: close root %s failed (non-fatal): %v", dm.rootID, err)
+	if err := dm.closeWisp(dm.rootID); err != nil {
+		dm.logger.Printf("dog_molecule: close root %s failed after %d attempts (non-fatal): %v", dm.rootID, dogCloseMaxAttempts, err)
 	}
 }
 
@@ -148,8 +172,8 @@ func (dm *dogMol) closeRemainingSteps() {
 		}
 		// Close any child that is still open/hooked/in_progress.
 		if child.Status == "open" || child.Status == "hooked" || child.Status == "in_progress" {
-			if _, err := dm.runBd("close", child.ID); err != nil {
-				dm.logger.Printf("dog_molecule: closeRemainingSteps: close %s failed: %v", child.ID, err)
+			if err := dm.closeWisp(child.ID); err != nil {
+				dm.logger.Printf("dog_molecule: closeRemainingSteps: close %s failed after %d attempts: %v", child.ID, dogCloseMaxAttempts, err)
 			} else {
 				closed++
 			}
