@@ -3,7 +3,6 @@ package cmd
 import (
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
@@ -373,9 +372,7 @@ func closeConvoy(convoyID, reason string) {
 	}
 	townBeads := filepath.Join(townRoot, ".beads")
 	closeArgs := []string{"close", convoyID, "-r", reason}
-	closeCmd := exec.Command("bd", closeArgs...)
-	closeCmd.Dir = townBeads
-	if err := closeCmd.Run(); err != nil {
+	if err := BdCmd(closeArgs...).Dir(townBeads).WithAutoCommit().Run(); err != nil {
 		fmt.Printf("  %s Could not close convoy %s: %v\n", style.Dim.Render("Warning:"), convoyID, err)
 	} else {
 		fmt.Printf("  %s Closed convoy %s\n", style.Dim.Render("○"), convoyID)

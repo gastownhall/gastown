@@ -104,11 +104,13 @@ func TestBuildPinnedBDEnvUsesSelectedConnectionMetadata(t *testing.T) {
 		"BEADS_DIR=/wrong",
 		"BEADS_DB=/wrong.db",
 		"BD_DB=/wrong.bd",
+		"BEADS_DOLT_DATABASE=legacy-hq",
 		"BEADS_DOLT_SERVER_DATABASE=hq",
 		"BEADS_DOLT_SERVER_HOST=wrong-host",
 		"BEADS_DOLT_SERVER_PORT=9999",
 		"BEADS_DOLT_PORT=9999",
 		"BEADS_DOLT_DATA_DIR=/wrong/data",
+		"BEADS_DOLT_FUTURE_SELECTOR=wrong",
 		"BEADS_DOLT_AUTO_START=0",
 	}, beadsDir)
 	got := envMap(env)
@@ -128,7 +130,7 @@ func TestBuildPinnedBDEnvUsesSelectedConnectionMetadata(t *testing.T) {
 	if got["BEADS_DOLT_SERVER_PORT"] != "4407" || got["BEADS_DOLT_PORT"] != "4407" {
 		t.Fatalf("ports = server:%q legacy:%q, want 4407 in %v", got["BEADS_DOLT_SERVER_PORT"], got["BEADS_DOLT_PORT"], env)
 	}
-	for _, key := range []string{"BEADS_DB", "BD_DB", "BEADS_DOLT_DATA_DIR"} {
+	for _, key := range []string{"BEADS_DB", "BD_DB", "BEADS_DOLT_DATABASE", "BEADS_DOLT_DATA_DIR", "BEADS_DOLT_FUTURE_SELECTOR"} {
 		if value, ok := got[key]; ok {
 			t.Fatalf("%s should be stripped, got %q in %v", key, value, env)
 		}

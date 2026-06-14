@@ -2,9 +2,11 @@ package cmd
 
 import (
 	"fmt"
+	"os"
 	"strings"
 
 	"github.com/spf13/cobra"
+	"github.com/steveyegge/gastown/internal/beads"
 )
 
 func init() {
@@ -55,14 +57,31 @@ func extractBeadIDFromArgs(args []string) string {
 	return ""
 }
 
-// stripEnvKey removes all entries matching the given key from an environment slice.
-func stripEnvKey(env []string, key string) []string { //nolint:unparam // key is always BEADS_DIR today but the function is intentionally generic
-	prefix := key + "="
-	result := make([]string, 0, len(env))
-	for _, e := range env {
-		if !strings.HasPrefix(e, prefix) {
-			result = append(result, e)
+type bdShowInvocation struct {
+	Dir         string
+	Env         []string
+	ExecArgs    []string
+	CommandArgs []string
+}
+
+func newBdShowInvocation(args []string, environ []string) bdShowInvocation {
+	dir := ""
+	beadsDir := ""
+	if beadID := extractBeadIDFromArgs(args); beadID != "" {
+		if resolved := resolveBeadDir(beadID); resolved != "" && resolved != "." {
+			dir = resolved
+			beadsDir = beads.ResolveBeadsDir(resolved)
 		}
 	}
-	return result
+
+	return bdShowInvocation{
+		Dir:         dir,
+		Env:         pinBeadsDirEnv(environ, beadsDir),
+		ExecArgs:    append([]string{"bd", "show"}, args...),
+		CommandArgs: append([]string{"show"}, args...),
+	}
+}
+
+func currentBdShowInvocation(args []string) bdShowInvocation {
+	return newBdShowInvocation(args, os.Environ())
 }
