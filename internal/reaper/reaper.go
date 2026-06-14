@@ -257,11 +257,46 @@ func HasReaperSchema(db *sql.DB) (bool, error) {
 
 	var count int
 	err := db.QueryRowContext(ctx,
-		"SELECT COUNT(*) FROM information_schema.tables WHERE table_name IN ('wisps', 'issues') AND table_schema = DATABASE()").Scan(&count)
+		"SELECT COUNT(*) FROM information_schema.tables WHERE table_name IN ('wisps', 'issues', 'wisp_dependencies') AND table_schema = DATABASE()").Scan(&count)
 	if err != nil {
 		return false, fmt.Errorf("check reaper schema: %w", err)
 	}
-	return count >= 2, nil
+	if count < 3 {
+		return false, nil
+	}
+
+	hasWispDependencyColumns, err := hasColumns(ctx, db, "wisp_dependencies", "depends_on_issue_id", "depends_on_wisp_id", "depends_on_external")
+	if err != nil || !hasWispDependencyColumns {
+		return hasWispDependencyColumns, err
+	}
+	dependenciesExists, err := tableExists(ctx, db, "dependencies")
+	if err != nil || !dependenciesExists {
+		return !dependenciesExists, err
+	}
+	return hasColumns(ctx, db, "dependencies", "depends_on_issue_id")
+}
+
+func tableExists(ctx context.Context, db *sql.DB, table string) (bool, error) {
+	var count int
+	err := db.QueryRowContext(ctx,
+		"SELECT COUNT(*) FROM information_schema.tables WHERE table_name = ? AND table_schema = DATABASE()", table).Scan(&count)
+	return count > 0, err
+}
+
+func hasColumns(ctx context.Context, db *sql.DB, table string, columns ...string) (bool, error) {
+	if len(columns) == 0 {
+		return true, nil
+	}
+	placeholders := strings.TrimRight(strings.Repeat("?,", len(columns)), ",")
+	args := make([]interface{}, 0, len(columns)+1)
+	args = append(args, table)
+	for _, column := range columns {
+		args = append(args, column)
+	}
+	var count int
+	query := fmt.Sprintf("SELECT COUNT(*) FROM information_schema.columns WHERE table_schema = DATABASE() AND table_name = ? AND column_name IN (%s)", placeholders)
+	err := db.QueryRowContext(ctx, query, args...).Scan(&count)
+	return count == len(columns), err
 }
 
 // Scan counts reaper candidates in a database without modifying anything.
@@ -332,8 +367,8 @@ func Scan(db *sql.DB, dbName string, maxAge, purgeAge, mailDeleteAge, staleIssue
 		AND i.id NOT IN (
 			SELECT DISTINCT d.depends_on_issue_id FROM dependencies d
 			INNER JOIN issues blocker ON d.issue_id = blocker.id
-			WHERE blocker.status IN ('open', 'in_progress')
-			AND d.depends_on_issue_id IS NOT NULL
+			WHERE d.depends_on_issue_id IS NOT NULL
+			AND blocker.status IN ('open', 'in_progress')
 		)`
 	if err := db.QueryRowContext(ctx, staleQuery, now.Add(-staleIssueAge)).Scan(&result.StaleCandidates); err != nil {
 		if !isTableNotFound(err) {
@@ -707,8 +742,8 @@ func AutoClose(db *sql.DB, dbName string, staleAge time.Duration, dryRun bool) (
 		AND i.id NOT IN (
 			SELECT DISTINCT d.depends_on_issue_id FROM `+"`%s`"+`.dependencies d
 			INNER JOIN `+"`%s`"+`.issues blocker ON d.issue_id = blocker.id
-			WHERE blocker.status IN ('open', 'in_progress')
-			AND d.depends_on_issue_id IS NOT NULL
+			WHERE d.depends_on_issue_id IS NOT NULL
+			AND blocker.status IN ('open', 'in_progress')
 		)`, dbName, dbName, dbName, dbName, dbName)
 
 	// Two-step SELECT-then-UPDATE to avoid self-referencing subquery in UPDATE,
