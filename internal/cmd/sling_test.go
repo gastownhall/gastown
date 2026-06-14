@@ -360,7 +360,7 @@ exit /b 0
 	for _, line := range logLines {
 		parts := strings.SplitN(line, "|", 4)
 		if len(parts) != 4 {
-			continue
+			t.Fatalf("malformed bd log line: %q", line)
 		}
 		dir := parts[0]
 		if resolved, err := filepath.EvalSymlinks(dir); err == nil {
@@ -409,6 +409,12 @@ exit /b 0
 		case strings.Contains(args, "update "+newBeadID) && strings.Contains(args, "--description=<attached-molecule-and-formula-fields>"):
 			gotMetadata = true
 			assertTargetRig("metadata update", dir, beadsDir, database, args)
+		case args == "--version" || strings.HasPrefix(args, "version") || strings.HasPrefix(args, "formula "):
+			if database == "hq" {
+				t.Fatalf("bd %q inherited stale hq database in log line %q", args, line)
+			}
+		default:
+			t.Fatalf("unexpected bd command without routing assertion: %q", line)
 		}
 	}
 
