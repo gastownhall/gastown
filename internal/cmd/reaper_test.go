@@ -34,3 +34,12 @@ func TestWaitBeforeReaperDatabase(t *testing.T) {
 		t.Fatal("invalid delay should return an error")
 	}
 }
+
+func TestReaperMoleculeStepSuffix(t *testing.T) {
+	if got := reaperMoleculeStepSuffix(0); got != "" {
+		t.Fatalf("zero suffix = %q, want empty", got)
+	}
+	if got := reaperMoleculeStepSuffix(3); got != " (+3 closed-molecule steps)" {
+		t.Fatalf("suffix = %q", got)
+	}
+}

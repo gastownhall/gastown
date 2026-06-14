@@ -83,6 +83,7 @@ gt reaper scan --db=<name> --port={{dolt_port}} \\
 - If `open_wisps` exceeds {{alert_threshold}}, escalate
 
 **4. Decide whether to proceed:**
+- Treat `reap_candidates` plus `molecule_step_candidates` as reap work
 - If no candidates found across all databases, skip remaining steps
 - If anomalies are severe, consider escalating before proceeding
 
@@ -93,9 +94,10 @@ id = "reap"
 title = "Reap stale wisps"
 needs = ["scan"]
 description = """
-Close wisps past max_age whose parent molecule is closed or missing.
+Close wisps past max_age whose parent molecule is closed or missing, plus
+step-wisps whose parent molecule has already completed.
 
-**1. For each database with reap candidates:**
+**1. For each database with reap candidates or molecule_step_candidates:**
 ```bash
 gt reaper reap --db=<name> --port={{dolt_port}} \\
   --max-age={{max_age}} --db-delay={{db_delay}} {{#if dry_run}}--dry-run{{/if}} --json
@@ -112,7 +114,8 @@ gt reaper reap --db=<name> --port={{dolt_port}} \\
 If total open wisps across all databases exceed {{alert_threshold}},
 log a warning and consider escalating.
 
-**Exit criteria:** All stale wisps closed (or dry-run counts reported)."""
+**Exit criteria:** All stale wisps and completed-molecule step wisps closed
+(or dry-run counts reported)."""
 
 [[steps]]
 id = "purge"
@@ -204,6 +207,7 @@ Generate summary and signal completion.
 
 **Databases scanned**: (count)
 **Wisps reaped**: (total closed stale open wisps)
+**Molecule steps closed**: (step-wisps whose parent molecule was already closed)
 **Wisps purged**: (total deleted old closed wisps)
 **Mail purged**: (total deleted old closed mail)
 **Issues auto-closed**: (stale > stale_issue_age, excl. epics/convoys/P0-P1/deps)

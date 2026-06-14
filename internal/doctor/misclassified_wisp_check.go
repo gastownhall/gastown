@@ -220,6 +220,11 @@ func (c *CheckMisclassifiedWisps) purgeRigBatch(ctx *CheckContext, workDir, rigN
 	if err := execBdSQLWrite(workDir, migrateQuery); err != nil {
 		return fmt.Errorf("migrate to wisps: %w", err)
 	}
+	if bdTableExistsDoctor(workDir, "wisp_dependencies") {
+		if _, err := doltserver.EnsureBdWispDependenciesSchema(workDir); err != nil {
+			return fmt.Errorf("migrate wisp_dependencies schema: %w", err)
+		}
+	}
 
 	// Step 2: Copy auxiliary data to wisp_* tables.
 	auxCopies := []struct {
@@ -240,7 +245,7 @@ func (c *CheckMisclassifiedWisps) purgeRigBatch(ctx *CheckContext, workDir, rigN
 		},
 		{
 			table: "wisp_dependencies",
-			query: fmt.Sprintf("INSERT IGNORE INTO wisp_dependencies (issue_id, depends_on_id, type, created_at, created_by, metadata, thread_id) SELECT d.issue_id, d.depends_on_id, d.type, d.created_at, d.created_by, d.metadata, d.thread_id FROM dependencies d WHERE d.issue_id IN (%s)", idList),
+			query: fmt.Sprintf("INSERT IGNORE INTO wisp_dependencies (issue_id, depends_on_issue_id, depends_on_wisp_id, depends_on_external, type, created_at, created_by, metadata, thread_id) SELECT d.issue_id, CASE WHEN target_wisp.id IS NULL THEN d.depends_on_issue_id ELSE NULL END, CASE WHEN d.depends_on_wisp_id IS NOT NULL THEN d.depends_on_wisp_id ELSE target_wisp.id END, d.depends_on_external, d.type, d.created_at, d.created_by, d.metadata, d.thread_id FROM dependencies d LEFT JOIN wisps target_wisp ON target_wisp.id = d.depends_on_issue_id WHERE d.issue_id IN (%s)", idList),
 		},
 	}
 	for _, aux := range auxCopies {

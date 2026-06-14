@@ -62,6 +62,26 @@ func TestNoHeuristicClassification(t *testing.T) {
 	}
 }
 
+func TestMisclassifiedWispDependencyCopyUsesTypedTargets(t *testing.T) {
+	data, err := os.ReadFile("misclassified_wisp_check.go")
+	if err != nil {
+		t.Fatalf("read misclassified_wisp_check.go: %v", err)
+	}
+	source := string(data)
+	for _, want := range []string{
+		"doltserver.EnsureBdWispDependenciesSchema",
+		"depends_on_issue_id, depends_on_wisp_id, depends_on_external",
+		"target_wisp.id = d.depends_on_issue_id",
+	} {
+		if !strings.Contains(source, want) {
+			t.Fatalf("misclassified wisp dependency copy missing %q", want)
+		}
+	}
+	if strings.Contains(source, "wisp_dependencies (issue_id, depends_on_id") {
+		t.Fatal("misclassified wisp dependency copy still inserts legacy depends_on_id")
+	}
+}
+
 func TestRunIgnoresJSONLWhenDoltUnavailable(t *testing.T) {
 	townRoot := t.TempDir()
 	beadsDir := filepath.Join(townRoot, "gastown", ".beads")

@@ -58,6 +58,7 @@ gt reaper scan --db=<name> --port=3307 \
 
 Inspect the JSON output:
 - `reap_candidates`: wisps eligible for closing
+- `molecule_step_candidates`: step-wisps whose parent molecule is already closed
 - `purge_candidates`: closed wisps eligible for deletion
 - `open_wisps`: total open wisp count
 - `anomalies`: array of detected problems
@@ -67,7 +68,7 @@ If no candidates found across all databases, report "nothing to reap" and stop.
 
 ### Step 4: Reap stale wisps
 
-For each database with reap candidates:
+For each database with reap candidates or molecule step candidates:
 
 ```bash
 gt reaper reap --db=<name> --port=3307 --max-age=24h [--dry-run] --json
@@ -107,6 +108,7 @@ Print a summary in this format:
 
 **Databases scanned**: N
 **Wisps reaped**: N (stale open wisps closed)
+**Molecule steps closed**: N (parent molecule already closed)
 **Wisps purged**: N (old closed wisps deleted)
 **Mail purged**: N (old closed mail deleted)
 **Issues auto-closed**: N (stale issues past 168h)
