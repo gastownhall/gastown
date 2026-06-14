@@ -12,15 +12,6 @@ var bdTargetEnvKeys = []string{
 	"BEADS_DIR",
 	"BEADS_DB",
 	"BD_DB",
-	"BEADS_DOLT_DATA_DIR",
-	"BEADS_DOLT_HOST",
-	"BEADS_DOLT_PORT",
-	"BEADS_DOLT_SERVER_DATABASE",
-	"BEADS_DOLT_SERVER_HOST",
-	"BEADS_DOLT_SERVER_PORT",
-	"BEADS_DOLT_SERVER_SOCKET",
-	"BEADS_DOLT_SERVER_MODE",
-	"BEADS_DOLT_SHARED_SERVER",
 	"BEADS_SHARED_SERVER_DIR",
 }
 
@@ -55,11 +46,23 @@ func DatabaseEnv(beadsDir string) string {
 // Gas Town. It intentionally preserves BEADS_DOLT_AUTO_START so callers can keep
 // the shared-server guardrail enabled.
 func StripBDTargetEnv(env []string) []string {
-	filtered := env
-	for _, key := range bdTargetEnvKeys {
-		filtered = stripEnvKey(filtered, key)
+	filtered := make([]string, 0, len(env))
+	for _, entry := range env {
+		if isBDTargetEnv(entry) {
+			continue
+		}
+		filtered = append(filtered, entry)
 	}
 	return filtered
+}
+
+func isBDTargetEnv(entry string) bool {
+	for _, key := range bdTargetEnvKeys {
+		if strings.HasPrefix(entry, key+"=") {
+			return true
+		}
+	}
+	return strings.HasPrefix(entry, "BEADS_DOLT_") && !strings.HasPrefix(entry, "BEADS_DOLT_AUTO_START=")
 }
 
 // BuildPinnedBDEnv returns env for a bd subprocess pinned to beadsDir. BEADS_DIR
