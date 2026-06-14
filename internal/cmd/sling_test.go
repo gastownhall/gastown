@@ -218,7 +218,7 @@ exit 0
 `
 	bdScriptWindows := `@echo off
 setlocal enableextensions
-echo %CD%^|%BEADS_DIR%^|%*>>"%BD_LOG%"
+echo %CD%^|%BEADS_DIR%^|%BEADS_DOLT_SERVER_DATABASE%^|%*>>"%BD_LOG%"
 set "cmd=%1"
 set "sub=%2"
 if "%cmd%"=="--allow-stale" (
