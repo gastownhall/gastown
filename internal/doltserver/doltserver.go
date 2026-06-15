@@ -1339,7 +1339,7 @@ func FindIdleMonitorProcesses(townRoot string) []int {
 func findIdleMonitorProcessesFromPS(output, townRoot, absRoot string, port int) []int {
 	portStr := strconv.Itoa(port)
 	var pids []int
-	for _, line := range strings.Split(string(output), "\n") {
+	for _, line := range strings.Split(output, "\n") {
 		line = strings.TrimSpace(line)
 		if !strings.Contains(line, "idle-monitor") {
 			continue
@@ -2725,7 +2725,7 @@ func EnsureRigIssuePrefix(townRoot, rigName string, serverMode bool) error {
 	if err != nil {
 		return fmt.Errorf("opening beads database: %w", err)
 	}
-	defer store.Close()
+	defer func() { _ = store.Close() }()
 
 	if err := store.SetConfig(ctx, "issue_prefix", prefix); err != nil {
 		return fmt.Errorf("setting issue_prefix: %w", err)

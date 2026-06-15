@@ -103,15 +103,15 @@ func runStatusLine(cmd *cobra.Command, args []string) error {
 
 	// Refinery status line
 	if role == "refinery" || strings.HasSuffix(statusLineSession, "-refinery") {
-		return runRefineryStatusLine(t, rigName)
+		return runRefineryStatusLine(rigName)
 	}
 
 	// Crew/Polecat status line
-	return runWorkerStatusLine(t, statusLineSession, rigName, polecat, crew, issue)
+	return runWorkerStatusLine(polecat, crew, issue)
 }
 
 // runWorkerStatusLine outputs status for crew or polecat sessions.
-func runWorkerStatusLine(t *tmux.Tmux, session, rigName, polecat, crew, issue string) error {
+func runWorkerStatusLine(polecat, crew, issue string) error {
 	// Determine agent type and identity
 	var icon string
 	if polecat != "" {
@@ -438,7 +438,7 @@ func runWitnessStatusLine(t *tmux.Tmux, rigName string) error {
 
 // runRefineryStatusLine outputs status for a refinery session.
 // Shows: MQ length, current item, hook or mail preview
-func runRefineryStatusLine(t *tmux.Tmux, rigName string) error {
+func runRefineryStatusLine(rigName string) error {
 	if rigName == "" {
 		// Try to extract from session name: <prefix>-refinery
 		if identity, err := session.ParseSessionName(statusLineSession); err == nil && identity.Role == session.RoleRefinery {

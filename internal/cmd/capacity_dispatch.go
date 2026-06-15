@@ -228,7 +228,7 @@ func dispatchScheduledWork(townRoot, actor string, batchOverride int, dryRun boo
 		if planErr != nil {
 			return 0, fmt.Errorf("planning dispatch: %w", planErr)
 		}
-		plan = validateDryRunDispatchPlan(townRoot, cycle, plan)
+		plan = validateDryRunDispatchPlan(townRoot, plan)
 		printDryRunPlan(plan, lastCapacitySnapshot, batchSize)
 		return 0, nil
 	}
@@ -591,7 +591,7 @@ func dispatchSingleBead(b capacity.PendingBead, townRoot, _ string) (*SlingResul
 	return result, nil
 }
 
-func validateDryRunDispatchPlan(townRoot string, cycle *capacity.DispatchCycle, plan capacity.DispatchPlan) capacity.DispatchPlan {
+func validateDryRunDispatchPlan(townRoot string, plan capacity.DispatchPlan) capacity.DispatchPlan {
 	if len(plan.ToDispatch) == 0 {
 		return plan
 	}
