@@ -228,14 +228,18 @@ func ensureWispDependencySchema(workDir string) error {
 }
 
 func rebuildWispDependencyTable(workDir string) error {
-	if err := bdSQL(workDir, "DROP TABLE IF EXISTS wisp_dependencies_legacy"); err != nil {
+	if bdTableExists(workDir, "wisp_dependencies_legacy") {
+		return fmt.Errorf("wisp_dependencies_legacy already exists; refusing to overwrite migration backup")
+	}
+	legacyCount, err := bdSQLCount(workDir, "SELECT COUNT(*) as cnt FROM wisp_dependencies")
+	if err != nil {
 		return err
 	}
 	if err := bdSQL(workDir, "RENAME TABLE wisp_dependencies TO wisp_dependencies_legacy"); err != nil {
 		return err
 	}
 	if err := bdSQL(workDir, wispDependenciesCreateDDL); err != nil {
-		return err
+		return restoreWispDependencyBackup(workDir, err)
 	}
 	if err := bdSQL(workDir, `INSERT IGNORE INTO wisp_dependencies (issue_id, type, created_at, created_by, metadata, thread_id, depends_on_issue_id, depends_on_wisp_id, depends_on_external)
 SELECT wd.issue_id, wd.type, wd.created_at, wd.created_by, wd.metadata, wd.thread_id,
@@ -245,9 +249,26 @@ SELECT wd.issue_id, wd.type, wd.created_at, wd.created_by, wd.metadata, wd.threa
 FROM wisp_dependencies_legacy wd
 LEFT JOIN wisps w ON w.id = wd.depends_on_id
 LEFT JOIN issues i ON i.id = wd.depends_on_id`); err != nil {
-		return err
+		return restoreWispDependencyBackup(workDir, err)
+	}
+	migratedCount, err := bdSQLCount(workDir, "SELECT COUNT(*) as cnt FROM wisp_dependencies")
+	if err != nil {
+		return restoreWispDependencyBackup(workDir, err)
+	}
+	if migratedCount != legacyCount {
+		return restoreWispDependencyBackup(workDir, fmt.Errorf("wisp_dependencies migration copied %d of %d rows", migratedCount, legacyCount))
 	}
 	return bdSQL(workDir, "DROP TABLE wisp_dependencies_legacy")
+}
+
+func restoreWispDependencyBackup(workDir string, cause error) error {
+	if err := bdSQL(workDir, "DROP TABLE IF EXISTS wisp_dependencies"); err != nil {
+		return fmt.Errorf("%w; restore failed dropping partial wisp_dependencies: %v", cause, err)
+	}
+	if err := bdSQL(workDir, "RENAME TABLE wisp_dependencies_legacy TO wisp_dependencies"); err != nil {
+		return fmt.Errorf("%w; restore failed renaming wisp_dependencies_legacy: %v", cause, err)
+	}
+	return cause
 }
 
 func hasCSVColumn(csvOutput, column string) bool {
@@ -427,18 +448,22 @@ func ensureWispDependencySchemaOnGT(ctx context.Context, db *sql.DB, dbName stri
 	if !gtWispDependencyColumnExists(ctx, db, dbName, "depends_on_id") {
 		return fmt.Errorf("wisp_dependencies missing split dependency columns")
 	}
-	return rebuildWispDependencyTableOnGT(ctx, db)
+	return rebuildWispDependencyTableOnGT(ctx, db, dbName)
 }
 
-func rebuildWispDependencyTableOnGT(ctx context.Context, db *sql.DB) error {
-	if _, err := db.ExecContext(ctx, "DROP TABLE IF EXISTS wisp_dependencies_legacy"); err != nil {
+func rebuildWispDependencyTableOnGT(ctx context.Context, db *sql.DB, dbName string) error {
+	if gtTableExists(ctx, db, dbName, "wisp_dependencies_legacy") {
+		return fmt.Errorf("wisp_dependencies_legacy already exists; refusing to overwrite migration backup")
+	}
+	var legacyCount int
+	if err := db.QueryRowContext(ctx, "SELECT COUNT(*) FROM wisp_dependencies").Scan(&legacyCount); err != nil {
 		return err
 	}
 	if _, err := db.ExecContext(ctx, "RENAME TABLE wisp_dependencies TO wisp_dependencies_legacy"); err != nil {
 		return err
 	}
 	if _, err := db.ExecContext(ctx, wispDependenciesCreateDDL); err != nil {
-		return err
+		return restoreWispDependencyBackupOnGT(ctx, db, err)
 	}
 	if _, err := db.ExecContext(ctx, `INSERT IGNORE INTO wisp_dependencies (issue_id, type, created_at, created_by, metadata, thread_id, depends_on_issue_id, depends_on_wisp_id, depends_on_external)
 SELECT wd.issue_id, wd.type, wd.created_at, wd.created_by, wd.metadata, wd.thread_id,
@@ -448,10 +473,27 @@ SELECT wd.issue_id, wd.type, wd.created_at, wd.created_by, wd.metadata, wd.threa
 FROM wisp_dependencies_legacy wd
 LEFT JOIN wisps w ON w.id = wd.depends_on_id
 LEFT JOIN issues i ON i.id = wd.depends_on_id`); err != nil {
-		return err
+		return restoreWispDependencyBackupOnGT(ctx, db, err)
+	}
+	var migratedCount int
+	if err := db.QueryRowContext(ctx, "SELECT COUNT(*) FROM wisp_dependencies").Scan(&migratedCount); err != nil {
+		return restoreWispDependencyBackupOnGT(ctx, db, err)
+	}
+	if migratedCount != legacyCount {
+		return restoreWispDependencyBackupOnGT(ctx, db, fmt.Errorf("wisp_dependencies migration copied %d of %d rows", migratedCount, legacyCount))
 	}
 	_, err := db.ExecContext(ctx, "DROP TABLE wisp_dependencies_legacy")
 	return err
+}
+
+func restoreWispDependencyBackupOnGT(ctx context.Context, db *sql.DB, cause error) error {
+	if _, err := db.ExecContext(ctx, "DROP TABLE IF EXISTS wisp_dependencies"); err != nil {
+		return fmt.Errorf("%w; restore failed dropping partial wisp_dependencies: %v", cause, err)
+	}
+	if _, err := db.ExecContext(ctx, "RENAME TABLE wisp_dependencies_legacy TO wisp_dependencies"); err != nil {
+		return fmt.Errorf("%w; restore failed renaming wisp_dependencies_legacy: %v", cause, err)
+	}
+	return cause
 }
 
 // wispsCreateDDL is the CREATE TABLE statement for the wisps table.
