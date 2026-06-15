@@ -19,11 +19,9 @@ func execBdShow(args []string) error {
 	}
 
 	invocation := currentBdShowInvocation(args)
-	if invocation.Dir != "" {
-		_ = os.Chdir(invocation.Dir)
-	}
 
 	cmd := exec.Command(bdPath, invocation.CommandArgs...)
+	cmd.Dir = invocation.Dir
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr

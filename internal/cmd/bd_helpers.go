@@ -115,14 +115,7 @@ func (b *bdCmd) Stderr(w io.Writer) *bdCmd {
 // This ensures appended values aren't shadowed by existing entries, since
 // glibc getenv() returns the first match in the environment array.
 func filterEnvKey(env []string, key string) []string {
-	prefix := key + "="
-	result := make([]string, 0, len(env))
-	for _, e := range env {
-		if !strings.HasPrefix(e, prefix) {
-			result = append(result, e)
-		}
-	}
-	return result
+	return beads.StripEnvKey(env, key)
 }
 
 func filterBdTargetEnv(env []string) []string {

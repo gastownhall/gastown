@@ -45,20 +45,24 @@ func runShow(cmd *cobra.Command, args []string) error {
 	return execBdShow(args)
 }
 
-// extractBeadIDFromArgs returns the first non-flag argument, which is the bead ID.
-// Returns empty string if no non-flag argument is found.
+// extractBeadIDFromArgs returns the first bead ID in the order bd will see it.
+// It understands bd show's --id form because DisableFlagParsing passes all args
+// through instead of letting Cobra normalize them.
 func extractBeadIDFromArgs(args []string) string {
-	for i, arg := range args {
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
+		if arg == "--" {
+			if i+1 < len(args) {
+				return args[i+1]
+			}
+			return ""
+		}
 		if strings.HasPrefix(arg, "--id=") {
 			return strings.TrimPrefix(arg, "--id=")
 		}
 		if arg == "--id" && i+1 < len(args) {
 			return args[i+1]
 		}
-	}
-
-	for i := 0; i < len(args); i++ {
-		arg := args[i]
 		if showFlagConsumesNextArg(arg) {
 			i++
 			continue
