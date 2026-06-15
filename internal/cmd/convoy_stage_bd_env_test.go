@@ -16,6 +16,8 @@ type bdEnvLogEntry struct {
 	Database string
 	Host     string
 	Port     string
+	Legacy   string
+	DataDir  string
 	BeadsDB  string
 	BDDB     string
 	Export   string
@@ -75,7 +77,7 @@ func setupRoutedBDEnvStub(t *testing.T) (townRoot, rigDir, logPath string) {
 	logPath = filepath.Join(t.TempDir(), "bd-env.log")
 
 	script := fmt.Sprintf(`#!/bin/sh
-printf '%%s|%%s|%%s|%%s|%%s|%%s|%%s|%%s|%%s\n' "$*" "$PWD" "${BEADS_DIR:-}" "${BEADS_DOLT_SERVER_DATABASE:-}" "${BEADS_DOLT_SERVER_HOST:-}" "${BEADS_DOLT_SERVER_PORT:-}" "${BEADS_DB:-}" "${BD_DB:-}" "${BD_EXPORT_AUTO:-}" >> "%s"
+	printf '%%s|%%s|%%s|%%s|%%s|%%s|%%s|%%s|%%s|%%s|%%s\n' "$*" "$(pwd)" "${BEADS_DIR:-}" "${BEADS_DOLT_SERVER_DATABASE:-}" "${BEADS_DOLT_SERVER_HOST:-}" "${BEADS_DOLT_SERVER_PORT:-}" "${BEADS_DOLT_PORT:-}" "${BEADS_DOLT_DATA_DIR:-}" "${BEADS_DB:-}" "${BD_DB:-}" "${BD_EXPORT_AUTO:-}" >> "%s"
 
 case "$1" in
   show)
@@ -144,7 +146,7 @@ func readBDEnvLog(t *testing.T, logPath string) []bdEnvLogEntry {
 			continue
 		}
 		fields := strings.Split(line, "|")
-		if len(fields) != 9 {
+		if len(fields) != 11 {
 			t.Fatalf("malformed bd env log line %q: fields=%v", line, fields)
 		}
 		entries = append(entries, bdEnvLogEntry{
@@ -154,9 +156,11 @@ func readBDEnvLog(t *testing.T, logPath string) []bdEnvLogEntry {
 			Database: fields[3],
 			Host:     fields[4],
 			Port:     fields[5],
-			BeadsDB:  fields[6],
-			BDDB:     fields[7],
-			Export:   fields[8],
+			Legacy:   fields[6],
+			DataDir:  fields[7],
+			BeadsDB:  fields[8],
+			BDDB:     fields[9],
+			Export:   fields[10],
 		})
 	}
 	return entries
@@ -194,6 +198,12 @@ func assertBDEnvLogWithBeadsDir(t *testing.T, entry bdEnvLogEntry, wantDir, want
 	}
 	if entry.Port != wantPort {
 		t.Fatalf("%q BEADS_DOLT_SERVER_PORT = %q, want %q", entry.Args, entry.Port, wantPort)
+	}
+	if entry.Legacy != wantPort {
+		t.Fatalf("%q BEADS_DOLT_PORT = %q, want %q", entry.Args, entry.Legacy, wantPort)
+	}
+	if entry.DataDir != "" {
+		t.Fatalf("%q BEADS_DOLT_DATA_DIR should be stripped, got %q", entry.Args, entry.DataDir)
 	}
 	if entry.BeadsDB != "" || entry.BDDB != "" {
 		t.Fatalf("%q stale DB env leaked: BEADS_DB=%q BD_DB=%q", entry.Args, entry.BeadsDB, entry.BDDB)
