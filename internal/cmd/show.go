@@ -86,7 +86,7 @@ func extractBeadIDFromArgs(args []string) string {
 
 func showFlagConsumesNextArg(arg string) bool {
 	switch arg {
-	case "--as-of", "--actor", "--db", "--directory", "--dolt-auto-commit", "-C":
+	case "--as-of", "--actor", "--db", "--directory", "--dolt-auto-commit", "--format", "-C":
 		return true
 	default:
 		return false
