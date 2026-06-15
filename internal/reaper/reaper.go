@@ -273,7 +273,7 @@ func HasReaperSchema(db *sql.DB) (bool, error) {
 	if err != nil || !dependenciesExists {
 		return !dependenciesExists, err
 	}
-	return hasColumns(ctx, db, "dependencies", "depends_on_issue_id")
+	return hasColumns(ctx, db, "dependencies", "depends_on_issue_id", "depends_on_wisp_id", "depends_on_external")
 }
 
 func tableExists(ctx context.Context, db *sql.DB, table string) (bool, error) {

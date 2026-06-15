@@ -240,15 +240,32 @@ func (c *CheckMisclassifiedWisps) purgeRigBatch(ctx *CheckContext, workDir, rigN
 		},
 		{
 			table: "wisp_dependencies",
-			query: fmt.Sprintf("INSERT IGNORE INTO wisp_dependencies (issue_id, depends_on_issue_id, depends_on_wisp_id, depends_on_external, type, created_at, created_by, metadata, thread_id) SELECT d.issue_id, d.depends_on_issue_id, d.depends_on_wisp_id, d.depends_on_external, d.type, d.created_at, d.created_by, d.metadata, d.thread_id FROM dependencies d WHERE d.issue_id IN (%s)", idList),
+			query: fmt.Sprintf("INSERT IGNORE INTO wisp_dependencies (issue_id, depends_on_issue_id, depends_on_wisp_id, depends_on_external, type, created_at, created_by, metadata, thread_id) SELECT d.issue_id, CASE WHEN target_wisp.id IS NULL THEN d.depends_on_issue_id ELSE NULL END, CASE WHEN target_wisp.id IS NOT NULL THEN d.depends_on_issue_id ELSE d.depends_on_wisp_id END, d.depends_on_external, d.type, d.created_at, d.created_by, d.metadata, d.thread_id FROM dependencies d LEFT JOIN wisps target_wisp ON target_wisp.id = d.depends_on_issue_id WHERE d.issue_id IN (%s)", idList),
 		},
 	}
-	copyFailed := map[string]bool{}
+	copyErrors := map[string]error{}
 	for _, aux := range auxCopies {
-		if bdTableExistsDoctor(workDir, aux.table) {
-			if err := execBdSQLWrite(workDir, aux.query); err != nil {
-				copyFailed[aux.table] = true
+		if !bdTableExistsDoctor(workDir, aux.table) {
+			if aux.table == "wisp_dependencies" && bdTableExistsDoctor(workDir, "dependencies") {
+				copyErrors[aux.table] = fmt.Errorf("target table missing")
 			}
+			continue
+		}
+		if err := execBdSQLWrite(workDir, aux.query); err != nil {
+			copyErrors[aux.table] = err
+		}
+	}
+	if err := copyErrors["wisp_dependencies"]; err != nil {
+		return fmt.Errorf("copying wisp_dependencies: %w", err)
+	}
+	if bdTableExistsDoctor(workDir, "wisp_dependencies") {
+		if err := execBdSQLWrite(workDir, fmt.Sprintf("UPDATE wisp_dependencies SET depends_on_wisp_id = depends_on_issue_id, depends_on_issue_id = NULL WHERE depends_on_issue_id IN (%s)", idList)); err != nil {
+			return fmt.Errorf("retargeting incoming wisp_dependencies: %w", err)
+		}
+	}
+	if bdTableExistsDoctor(workDir, "dependencies") {
+		if err := execBdSQLWrite(workDir, fmt.Sprintf("UPDATE dependencies SET depends_on_wisp_id = depends_on_issue_id, depends_on_issue_id = NULL WHERE depends_on_issue_id IN (%s)", idList)); err != nil {
+			return fmt.Errorf("retargeting incoming dependencies: %w", err)
 		}
 	}
 
@@ -257,9 +274,7 @@ func (c *CheckMisclassifiedWisps) purgeRigBatch(ctx *CheckContext, workDir, rigN
 		fmt.Sprintf("DELETE FROM labels WHERE issue_id IN (%s)", idList),
 		fmt.Sprintf("DELETE FROM comments WHERE issue_id IN (%s)", idList),
 		fmt.Sprintf("DELETE FROM events WHERE issue_id IN (%s)", idList),
-	}
-	if !copyFailed["wisp_dependencies"] {
-		auxDeletes = append(auxDeletes, fmt.Sprintf("DELETE FROM dependencies WHERE issue_id IN (%s)", idList))
+		fmt.Sprintf("DELETE FROM dependencies WHERE issue_id IN (%s)", idList),
 	}
 	for _, q := range auxDeletes {
 		_ = execBdSQLWrite(workDir, q) // Best-effort: table may not exist

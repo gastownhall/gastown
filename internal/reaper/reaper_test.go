@@ -114,6 +114,16 @@ func TestReaperQueriesUseTypedDependencyColumns(t *testing.T) {
 	scanBody := sourceBetween(t, source, "func Scan(", "func Reap(")
 	autoCloseBody := sourceBetween(t, source, "func AutoClose(", "// batchDeleteRows")
 	batchDeleteBody := sourceBetween(t, source, "func batchDeleteRows(", "// ClosePluginReceiptResult")
+	schemaBody := sourceBetween(t, source, "func HasReaperSchema(", "func tableExists(")
+
+	for _, want := range []string{
+		`hasColumns(ctx, db, "wisp_dependencies", "depends_on_issue_id", "depends_on_wisp_id", "depends_on_external")`,
+		`hasColumns(ctx, db, "dependencies", "depends_on_issue_id", "depends_on_wisp_id", "depends_on_external")`,
+	} {
+		if !strings.Contains(schemaBody, want) {
+			t.Fatalf("HasReaperSchema missing typed schema gate %q", want)
+		}
+	}
 
 	for _, body := range []struct {
 		name string

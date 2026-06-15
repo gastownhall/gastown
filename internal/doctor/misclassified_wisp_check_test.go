@@ -3,6 +3,7 @@ package doctor
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -217,4 +218,95 @@ func TestRigDirResolution_Logic(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestMisclassifiedWispDependencyMigrationIsTypedAndFailClosed(t *testing.T) {
+	data, err := os.ReadFile("misclassified_wisp_check.go")
+	if err != nil {
+		t.Fatalf("read misclassified_wisp_check.go: %v", err)
+	}
+	body := doctorSourceBetween(t, string(data), "func (c *CheckMisclassifiedWisps) purgeRigBatch(", "// bdTableExistsDoctor")
+	if strings.Contains(body, "depends_on_id") {
+		t.Fatalf("purgeRigBatch should not copy legacy depends_on_id:\n%s", body)
+	}
+	for _, want := range []string{
+		"depends_on_issue_id, depends_on_wisp_id, depends_on_external",
+		"CASE WHEN target_wisp.id IS NULL THEN d.depends_on_issue_id ELSE NULL END",
+		"CASE WHEN target_wisp.id IS NOT NULL THEN d.depends_on_issue_id ELSE d.depends_on_wisp_id END",
+		"LEFT JOIN wisps target_wisp ON target_wisp.id = d.depends_on_issue_id",
+		"UPDATE wisp_dependencies SET depends_on_wisp_id = depends_on_issue_id, depends_on_issue_id = NULL WHERE depends_on_issue_id IN",
+		"UPDATE dependencies SET depends_on_wisp_id = depends_on_issue_id, depends_on_issue_id = NULL WHERE depends_on_issue_id IN",
+		"return fmt.Errorf(\"copying wisp_dependencies: %w\", err)",
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("purgeRigBatch missing %q:\n%s", want, body)
+		}
+	}
+	copyFailure := strings.Index(body, "return fmt.Errorf(\"copying wisp_dependencies: %w\", err)")
+	retargetWisp := strings.Index(body, "UPDATE wisp_dependencies SET depends_on_wisp_id")
+	deleteIssue := strings.Index(body, "DELETE FROM issues WHERE id IN")
+	if copyFailure == -1 || deleteIssue == -1 || copyFailure > deleteIssue {
+		t.Fatalf("purgeRigBatch must abort before deleting source issues when dependency copy fails:\n%s", body)
+	}
+	if retargetWisp == -1 || deleteIssue == -1 || retargetWisp > deleteIssue {
+		t.Fatalf("purgeRigBatch must retarget incoming dependency rows before deleting source issues:\n%s", body)
+	}
+}
+
+func TestMisclassifiedWispDependencyCopyFailureSkipsDeletes(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("fake bd stub is shell-specific")
+	}
+	binDir := t.TempDir()
+	logPath := filepath.Join(t.TempDir(), "bd-sql.log")
+	script := `#!/usr/bin/env bash
+query="${@: -1}"
+printf '%s\n' "$query" >> "$BD_SQL_LOG"
+if [[ "$query" == *"SELECT 1 FROM"* ]]; then
+  exit 0
+fi
+if [[ "$query" == *"INSERT IGNORE INTO wisp_dependencies"* ]]; then
+  echo "copy failed"
+  exit 7
+fi
+exit 0
+`
+	if err := os.WriteFile(filepath.Join(binDir, "bd"), []byte(script), 0755); err != nil {
+		t.Fatalf("write fake bd: %v", err)
+	}
+	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	t.Setenv("BD_SQL_LOG", logPath)
+
+	err := NewCheckMisclassifiedWisps().purgeRigBatch(&CheckContext{TownRoot: t.TempDir()}, t.TempDir(), "gt", "'gt-wisp-a'")
+	if err == nil || !strings.Contains(err.Error(), "copying wisp_dependencies") {
+		t.Fatalf("purgeRigBatch error = %v, want copying wisp_dependencies", err)
+	}
+	data, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatalf("read query log: %v", err)
+	}
+	log := string(data)
+	for _, forbidden := range []string{
+		"DELETE FROM dependencies",
+		"DELETE FROM issues",
+		"UPDATE wisp_dependencies SET depends_on_wisp_id",
+		"UPDATE dependencies SET depends_on_wisp_id",
+	} {
+		if strings.Contains(log, forbidden) {
+			t.Fatalf("purgeRigBatch ran %q after dependency copy failure:\n%s", forbidden, log)
+		}
+	}
+}
+
+func doctorSourceBetween(t *testing.T, source, startMarker, endMarker string) string {
+	t.Helper()
+	start := strings.Index(source, startMarker)
+	if start == -1 {
+		t.Fatalf("could not find %q", startMarker)
+	}
+	end := strings.Index(source[start:], endMarker)
+	if end == -1 {
+		t.Fatalf("could not find %q after %q", endMarker, startMarker)
+	}
+	return source[start : start+end]
 }
