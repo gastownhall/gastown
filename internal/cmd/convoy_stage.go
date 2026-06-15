@@ -1431,11 +1431,7 @@ type bdDepResult struct {
 // ---------------------------------------------------------------------------
 
 func runBdJSONForBead(beadID string, args ...string) ([]byte, error) {
-	dir := resolveBeadDir(beadID)
-	if dir == "." {
-		dir = ""
-	}
-	return runBdJSON(dir, args...)
+	return runBdJSON(resolveBeadDir(beadID), args...)
 }
 
 // bdShow runs `bd show <id> --json` and returns the parsed bead info.
