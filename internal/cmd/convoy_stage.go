@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"os/exec"
 	"sort"
 	"strings"
 	"time"
@@ -1431,16 +1430,18 @@ type bdDepResult struct {
 // bd shell-out helpers
 // ---------------------------------------------------------------------------
 
+func runBdJSONForBead(beadID string, args ...string) ([]byte, error) {
+	dir := resolveBeadDir(beadID)
+	if dir == "." {
+		dir = ""
+	}
+	return runBdJSON(dir, args...)
+}
+
 // bdShow runs `bd show <id> --json` and returns the parsed bead info.
 // Returns error if bd exits non-zero or returns no results.
 func bdShow(beadID string) (*bdShowResult, error) {
-	cmd := exec.Command("bd", "show", beadID, "--json")
-	// Route to the correct rig database via prefix resolution.
-	if dir := resolveBeadDir(beadID); dir != "" && dir != "." {
-		cmd.Dir = dir
-		cmd.Env = filterEnvKey(os.Environ(), "BEADS_DIR")
-	}
-	out, err := cmd.Output()
+	out, err := runBdJSONForBead(beadID, "show", beadID, "--json")
 	if err != nil {
 		return nil, fmt.Errorf("bd show %s: %w", beadID, err)
 	}
@@ -1460,13 +1461,7 @@ func bdShow(beadID string) (*bdShowResult, error) {
 // bd dep list returns the beads that <id> depends on. Each result's
 // DependsOnID is the dependency target; IssueID is set to <id> by this func.
 func bdDepList(beadID string) ([]bdDepResult, error) {
-	cmd := exec.Command("bd", "dep", "list", beadID, "--json")
-	// Route to the correct rig database via prefix resolution.
-	if dir := resolveBeadDir(beadID); dir != "" && dir != "." {
-		cmd.Dir = dir
-		cmd.Env = filterEnvKey(os.Environ(), "BEADS_DIR")
-	}
-	out, err := cmd.Output()
+	out, err := runBdJSONForBead(beadID, "dep", "list", beadID, "--json")
 	if err != nil {
 		return nil, fmt.Errorf("bd dep list %s: %w", beadID, err)
 	}
@@ -1495,17 +1490,7 @@ func bdDepList(beadID string) ([]bdDepResult, error) {
 // `bd list --parent` doesn't see children that were added via `bd dep add ...
 // --type=parent-child`. The deps table is authoritative.
 func bdListChildren(parentID string) ([]bdShowResult, error) {
-	cmd := exec.Command("bd", "list", "--parent="+parentID, "--json")
-	// Route to the correct rig database via prefix resolution.
-	// resolveBeadDir returns the parent of .beads (the working directory bd
-	// expects), unlike beadsDirForID which returns the .beads directory itself.
-	// Also strip BEADS_DIR to prevent inherited overrides from interfering
-	// with bd's workspace detection (consistent with bdShow/bdDepList).
-	if dir := resolveBeadDir(parentID); dir != "" && dir != "." {
-		cmd.Dir = dir
-		cmd.Env = filterEnvKey(os.Environ(), "BEADS_DIR")
-	}
-	out, err := cmd.Output()
+	out, err := runBdJSONForBead(parentID, "list", "--parent="+parentID, "--json")
 	if err != nil {
 		return nil, fmt.Errorf("bd list --parent=%s: %w", parentID, err)
 	}

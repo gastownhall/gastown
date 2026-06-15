@@ -6,7 +6,6 @@ import (
 	"strings"
 
 	"github.com/spf13/cobra"
-	"github.com/steveyegge/gastown/internal/beads"
 )
 
 func init() {
@@ -89,19 +88,28 @@ type bdShowInvocation struct {
 
 func newBdShowInvocation(args []string, environ []string) bdShowInvocation {
 	dir := ""
-	beadsDir := ""
 	if beadID := extractBeadIDFromArgs(args); beadID != "" {
 		if resolved := resolveBeadDir(beadID); resolved != "" && resolved != "." {
 			dir = resolved
-			beadsDir = beads.ResolveBeadsDir(resolved)
 		}
 	}
 
+	bdc := &bdCmd{
+		args:   append([]string{"show"}, args...),
+		env:    environ,
+		stderr: os.Stderr,
+	}
+	if dir != "" {
+		bdc.Dir(dir)
+	}
+	cmd := bdc.Build()
+	commandArgs := append([]string(nil), cmd.Args[1:]...)
+
 	return bdShowInvocation{
-		Dir:         dir,
-		Env:         pinBeadsDirEnv(environ, beadsDir),
-		ExecArgs:    append([]string{"bd", "show"}, args...),
-		CommandArgs: append([]string{"show"}, args...),
+		Dir:         cmd.Dir,
+		Env:         cmd.Env,
+		ExecArgs:    cmd.Args,
+		CommandArgs: commandArgs,
 	}
 }
 
