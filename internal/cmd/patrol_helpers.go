@@ -251,23 +251,22 @@ func autoSpawnPatrol(cfg PatrolConfig) (string, error) {
 	for _, v := range cfg.ExtraVars {
 		spawnArgs = append(spawnArgs, "--var", v)
 	}
-	cmdSpawn := BdCmd(spawnArgs...).
+	var stderrSpawn bytes.Buffer
+	stdoutSpawn, err := BdCmd(spawnArgs...).
 		WithAutoCommit().
 		WithBeadsDir(resolvedBeadsDir).
 		Dir(cfg.BeadsDir).
-		Build()
-	var stdoutSpawn, stderrSpawn bytes.Buffer
-	cmdSpawn.Stdout = &stdoutSpawn
-	cmdSpawn.Stderr = &stderrSpawn
+		Stderr(&stderrSpawn).
+		Output()
 
-	if err := cmdSpawn.Run(); err != nil {
+	if err != nil {
 		return "", fmt.Errorf("failed to create patrol wisp: %s", stderrSpawn.String())
 	}
 
 	// Parse the created molecule ID from output
 	// Format: "Root issue: <rig>-wisp-<hash>" where rig prefix varies
 	var patrolID string
-	spawnOutput := stdoutSpawn.String()
+	spawnOutput := string(stdoutSpawn)
 	for _, line := range strings.Split(spawnOutput, "\n") {
 		line = strings.TrimSpace(line)
 		if strings.HasPrefix(line, "Root issue:") {

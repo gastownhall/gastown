@@ -47,8 +47,8 @@ func TestBeadsBinaryCheck_BdInstalled(t *testing.T) {
 			t.Errorf("expected version string in message, got %q", result.Message)
 		}
 	case StatusError:
-		if !strings.Contains(result.Message, "too old") {
-			t.Errorf("expected 'too old' in error message, got %q", result.Message)
+		if !strings.Contains(result.Message, "too old") && !strings.Contains(result.Message, "does not match required") {
+			t.Errorf("expected version error in message, got %q", result.Message)
 		}
 	default:
 		t.Errorf("unexpected status %v when bd is installed: %s", result.Status, result.Message)
@@ -91,10 +91,12 @@ func TestBeadsBinaryCheck_HermeticSuccess(t *testing.T) {
 			t.Errorf("expected version in message, got %q", result.Message)
 		}
 	case StatusWarning:
-		// Under heavy CI load the fake bd may time out; tolerate gracefully.
-		t.Logf("fake bd timed out under load (got StatusWarning); skipping assertion")
+		// Fake scripts have no Go build info, so module provenance is unverifiable.
+		if !strings.Contains(result.Message, "could not be verified") {
+			t.Errorf("expected provenance warning, got %q", result.Message)
+		}
 	default:
-		t.Errorf("expected StatusOK (or StatusWarning under load), got %v: %s", result.Status, result.Message)
+		t.Errorf("expected StatusOK or StatusWarning, got %v: %s", result.Status, result.Message)
 	}
 }
 

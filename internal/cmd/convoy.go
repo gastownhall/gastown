@@ -462,11 +462,9 @@ func runBdJSONWithOptions(dir string, allowStale bool, args ...string) ([]byte, 
 	if allowStale {
 		bdc.AllowStale()
 	}
-	cmd := bdc.Build()
-	cmd.Dir = dir
-	cmd.Stdout = &stdout
-
-	if err := cmd.Run(); err != nil {
+	out, err := bdc.Output()
+	stdout.Write(out)
+	if err != nil {
 		if errMsg := strings.TrimSpace(stderr.String()); errMsg != "" {
 			return nil, fmt.Errorf("bd %s: %s", args[0], errMsg)
 		}

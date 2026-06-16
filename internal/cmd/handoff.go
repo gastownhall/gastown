@@ -1310,17 +1310,14 @@ func sendHandoffMail(subject, message string) (string, error) {
 		"--", subject,
 	}
 
-	cmd := BdCmd(args...).
+	var stderr strings.Builder
+	stdout, err := BdCmd(args...).
 		WithAutoCommit().
 		Dir(townRoot).
-		Build()
-	cmd.Env = append(cmd.Env, "BEADS_DIR="+filepath.Join(townRoot, ".beads"))
-
-	var stdout, stderr strings.Builder
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
-
-	if err := cmd.Run(); err != nil {
+		WithBeadsDir(filepath.Join(townRoot, ".beads")).
+		Stderr(&stderr).
+		Output()
+	if err != nil {
 		errMsg := strings.TrimSpace(stderr.String())
 		if errMsg != "" {
 			return "", fmt.Errorf("creating handoff mail: %s", errMsg)
@@ -1328,20 +1325,18 @@ func sendHandoffMail(subject, message string) (string, error) {
 		return "", fmt.Errorf("creating handoff mail: %w", err)
 	}
 
-	beadID := strings.TrimSpace(stdout.String())
+	beadID := strings.TrimSpace(string(stdout))
 	if beadID == "" {
 		return "", fmt.Errorf("bd create did not return bead ID")
 	}
 
 	// Auto-hook the created mail bead
-	hookCmd := BdCmd("update", beadID, "--status=hooked", "--assignee="+agentID).
+	if err := BdCmd("update", beadID, "--status=hooked", "--assignee="+agentID).
 		WithAutoCommit().
 		Dir(townRoot).
-		Build()
-	hookCmd.Env = append(hookCmd.Env, "BEADS_DIR="+filepath.Join(townRoot, ".beads"))
-	hookCmd.Stderr = os.Stderr
-
-	if err := hookCmd.Run(); err != nil {
+		WithBeadsDir(filepath.Join(townRoot, ".beads")).
+		Stderr(os.Stderr).
+		Run(); err != nil {
 		// Non-fatal: mail was created, just couldn't hook
 		style.PrintWarning("created mail %s but failed to auto-hook: %v", beadID, err)
 		return beadID, nil
@@ -1425,8 +1420,7 @@ func looksLikeBeadID(s string) bool {
 // hookBeadForHandoff attaches a bead to the current agent's hook.
 func hookBeadForHandoff(beadID string) error {
 	// Verify the bead exists first
-	verifyCmd := exec.Command("bd", "show", beadID, "--json")
-	if err := verifyCmd.Run(); err != nil {
+	if _, err := BdCmd("show", beadID, "--json").Output(); err != nil {
 		return fmt.Errorf("bead '%s' not found", beadID)
 	}
 
@@ -1444,9 +1438,10 @@ func hookBeadForHandoff(beadID string) error {
 	}
 
 	// Pin the bead using bd update (discovery-based approach)
-	pinCmd := exec.Command("bd", "update", beadID, "--status=pinned", "--assignee="+agentID)
-	pinCmd.Stderr = os.Stderr
-	if err := pinCmd.Run(); err != nil {
+	if err := BdCmd("update", beadID, "--status=pinned", "--assignee="+agentID).
+		WithAutoCommit().
+		Stderr(os.Stderr).
+		Run(); err != nil {
 		return fmt.Errorf("pinning bead: %w", err)
 	}
 
@@ -1490,7 +1485,7 @@ func collectHandoffState() string {
 	}
 
 	// Get ready beads
-	readyOutput, err := exec.Command("bd", "ready").Output()
+	readyOutput, err := BdCmd("ready").Output()
 	if err == nil {
 		readyStr := strings.TrimSpace(string(readyOutput))
 		if readyStr != "" && !strings.Contains(readyStr, "No issues ready") {
@@ -1504,7 +1499,7 @@ func collectHandoffState() string {
 	}
 
 	// Get in-progress beads
-	inProgressOutput, err := exec.Command("bd", "list", "--status=in_progress").Output()
+	inProgressOutput, err := BdCmd("list", "--status=in_progress").Output()
 	if err == nil {
 		ipStr := strings.TrimSpace(string(inProgressOutput))
 		if ipStr != "" && !strings.Contains(ipStr, "No issues") {

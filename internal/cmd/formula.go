@@ -194,10 +194,11 @@ func runFormulaList(cmd *cobra.Command, args []string) error {
 		bdArgs = append(bdArgs, "--json")
 	}
 
-	bdCmd := exec.Command("bd", bdArgs...)
-	bdCmd.Stdout = os.Stdout
-	bdCmd.Stderr = os.Stderr
-	return bdCmd.Run()
+	out, err := BdCmd(bdArgs...).Stderr(os.Stderr).Output()
+	if len(out) > 0 {
+		_, _ = os.Stdout.Write(out)
+	}
+	return err
 }
 
 // runFormulaShow delegates to bd formula show
@@ -208,10 +209,11 @@ func runFormulaShow(cmd *cobra.Command, args []string) error {
 		bdArgs = append(bdArgs, "--json")
 	}
 
-	bdCmd := exec.Command("bd", bdArgs...)
-	bdCmd.Stdout = os.Stdout
-	bdCmd.Stderr = os.Stderr
-	return bdCmd.Run()
+	out, err := BdCmd(bdArgs...).Stderr(os.Stderr).Output()
+	if len(out) > 0 {
+		_, _ = os.Stdout.Write(out)
+	}
+	return err
 }
 
 // runFormulaRun executes a formula by spawning a convoy of polecats.
@@ -485,10 +487,7 @@ func executeConvoyFormula(f *formula.Formula, formulaName, targetRig string) err
 		createArgs = append(createArgs, "--force")
 	}
 
-	createCmd := exec.Command("bd", createArgs...)
-	createCmd.Dir = townBeads
-	createCmd.Stderr = os.Stderr
-	if err := createCmd.Run(); err != nil {
+	if err := BdCmd(createArgs...).WithAutoCommit().Dir(townBeads).Stderr(os.Stderr).Run(); err != nil {
 		return fmt.Errorf("creating convoy bead: %w", err)
 	}
 
@@ -682,9 +681,7 @@ func executeConvoyFormula(f *formula.Formula, formulaName, targetRig string) err
 				style.Dim.Render("Warning:"), leg.ID, err)
 			// Add comment to bead about failure
 			commentArgs := []string{"comments", "add", legBeadID, fmt.Sprintf("Failed to sling: %v", err)}
-			commentCmd := exec.Command("bd", commentArgs...)
-			commentCmd.Dir = townBeads
-			_ = commentCmd.Run()
+			_ = BdCmd(commentArgs...).WithAutoCommit().Dir(townBeads).Run()
 			continue
 		}
 
@@ -791,13 +788,13 @@ func executeWorkflowFormula(f *formula.Formula, formulaName, targetRig string) e
 			stepArgs = append(stepArgs, "--force")
 		}
 
-		createCmd := BdCmd(stepArgs...).
+		err := BdCmd(stepArgs...).
 			WithAutoCommit().
 			Dir(rigBeadsDir).
 			Stderr(os.Stderr).
-			Build()
-		createCmd.Stdin = strings.NewReader(stepDescription)
-		if err := createCmd.Run(); err != nil {
+			Stdin(strings.NewReader(stepDescription)).
+			Run()
+		if err != nil {
 			fmt.Printf("%s Failed to create step bead for %s: %v\n",
 				style.Dim.Render("Warning:"), step.ID, err)
 			continue

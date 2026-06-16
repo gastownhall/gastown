@@ -38,8 +38,8 @@ func (c *BeadsBinaryCheck) Run(ctx *CheckContext) *CheckResult {
 
 	case deps.BeadsNotFound:
 		return &CheckResult{
-			Name:   c.Name(),
-			Status: StatusError,
+			Name:    c.Name(),
+			Status:  StatusError,
 			Message: "beads (bd) not found in PATH",
 			Details: []string{
 				"The bd CLI is required for beads operations",
@@ -49,11 +49,22 @@ func (c *BeadsBinaryCheck) Run(ctx *CheckContext) *CheckResult {
 
 	case deps.BeadsTooOld:
 		return &CheckResult{
-			Name:   c.Name(),
-			Status: StatusError,
+			Name:    c.Name(),
+			Status:  StatusError,
 			Message: fmt.Sprintf("bd %s is too old (minimum: %s)", version, deps.MinBeadsVersion),
 			Details: []string{
 				fmt.Sprintf("Installed version %s does not meet the minimum requirement of %s", version, deps.MinBeadsVersion),
+			},
+			FixHint: fmt.Sprintf("Upgrade: go install %s", deps.BeadsInstallPath),
+		}
+
+	case deps.BeadsModuleMismatch:
+		return &CheckResult{
+			Name:    c.Name(),
+			Status:  StatusError,
+			Message: fmt.Sprintf("bd module %s does not match required %s", version, deps.RequiredBeadsModuleVersion),
+			Details: []string{
+				fmt.Sprintf("Installed bd was built from Beads module %s; Gas Town requires %s", version, deps.RequiredBeadsModuleVersion),
 			},
 			FixHint: fmt.Sprintf("Upgrade: go install %s", deps.BeadsInstallPath),
 		}
@@ -62,7 +73,7 @@ func (c *BeadsBinaryCheck) Run(ctx *CheckContext) *CheckResult {
 		return &CheckResult{
 			Name:    c.Name(),
 			Status:  StatusWarning,
-			Message: "bd found but version could not be determined",
+			Message: "bd found but version or module provenance could not be verified",
 			FixHint: fmt.Sprintf("Try reinstalling: go install %s", deps.BeadsInstallPath),
 		}
 	}

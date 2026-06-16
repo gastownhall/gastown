@@ -12,8 +12,11 @@ import (
 
 	"github.com/steveyegge/gastown/internal/beads"
 	"github.com/steveyegge/gastown/internal/constants"
+	"github.com/steveyegge/gastown/internal/deps"
 	"github.com/steveyegge/gastown/internal/util"
 )
+
+var resolveBdPath = deps.ResolveBeadsPath
 
 // bdCmd is a builder for constructing bd exec.Command calls.
 // It provides a fluent API for configuring environment variables,
@@ -22,6 +25,7 @@ type bdCmd struct {
 	args       []string
 	dir        string
 	env        []string
+	stdin      io.Reader
 	stderr     io.Writer
 	autoCommit bool
 	allowStale bool
@@ -111,6 +115,12 @@ func (b *bdCmd) Stderr(w io.Writer) *bdCmd {
 	return b
 }
 
+// Stdin sets stdin for the command.
+func (b *bdCmd) Stdin(r io.Reader) *bdCmd {
+	b.stdin = r
+	return b
+}
+
 // filterEnvKey removes all entries matching the given key from the env slice.
 // This ensures appended values aren't shadowed by existing entries, since
 // glibc getenv() returns the first match in the environment array.
@@ -184,6 +194,7 @@ func (b *bdCmd) Build() *exec.Cmd {
 	cmd := exec.Command("bd", args...)
 	cmd.Dir = b.dir
 	cmd.Env = b.buildEnv()
+	cmd.Stdin = b.stdin
 	cmd.Stderr = b.stderr
 	return cmd
 }
@@ -197,12 +208,13 @@ func resolveBdCmdTimeout() time.Duration {
 	return constants.BdCommandTimeout
 }
 
-func (b *bdCmd) buildContextCommand(ctx context.Context) *exec.Cmd {
+func (b *bdCmd) buildContextCommand(ctx context.Context, bdPath string) *exec.Cmd {
 	args := b.resolvedArgs()
-	cmd := exec.CommandContext(ctx, "bd", args...)
+	cmd := exec.CommandContext(ctx, bdPath, args...)
 	util.SetProcessGroup(cmd)
 	cmd.Dir = b.dir
 	cmd.Env = b.buildEnv()
+	cmd.Stdin = b.stdin
 	cmd.Stderr = b.stderr
 	return cmd
 }
@@ -271,7 +283,11 @@ func (b *bdCmd) Run() error {
 	deadline := resolveBdCmdTimeout()
 	ctx, cancel := context.WithTimeout(context.Background(), deadline)
 	defer cancel()
-	return b.wrapCommandError(ctx, b.buildContextCommand(ctx).Run(), deadline)
+	bdPath, err := resolveBdPath()
+	if err != nil {
+		return err
+	}
+	return b.wrapCommandError(ctx, b.buildContextCommand(ctx, bdPath).Run(), deadline)
 }
 
 // Output builds and runs the command, returning stdout and any error.
@@ -282,7 +298,11 @@ func (b *bdCmd) Output() ([]byte, error) {
 	deadline := resolveBdCmdTimeout()
 	ctx, cancel := context.WithTimeout(context.Background(), deadline)
 	defer cancel()
-	out, err := b.buildContextCommand(ctx).Output()
+	bdPath, err := resolveBdPath()
+	if err != nil {
+		return nil, err
+	}
+	out, err := b.buildContextCommand(ctx, bdPath).Output()
 	return out, b.wrapCommandError(ctx, err, deadline)
 }
 
@@ -294,10 +314,15 @@ func (b *bdCmd) CombinedOutput() ([]byte, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), deadline)
 	defer cancel()
 	args := b.resolvedArgs()
-	cmd := exec.CommandContext(ctx, "bd", args...)
+	bdPath, pathErr := resolveBdPath()
+	if pathErr != nil {
+		return nil, pathErr
+	}
+	cmd := exec.CommandContext(ctx, bdPath, args...)
 	util.SetProcessGroup(cmd)
 	cmd.Dir = b.dir
 	cmd.Env = b.buildEnv()
+	cmd.Stdin = b.stdin
 	out, err := cmd.CombinedOutput()
 	return out, b.wrapCommandError(ctx, err, deadline)
 }

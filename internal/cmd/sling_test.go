@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -17,6 +18,9 @@ import (
 
 func writeBDStub(t *testing.T, binDir string, unixScript string, windowsScript string) string {
 	t.Helper()
+	originalResolve := resolveBdPath
+	resolveBdPath = func() (string, error) { return exec.LookPath("bd") }
+	t.Cleanup(func() { resolveBdPath = originalResolve })
 
 	var path string
 	if runtime.GOOS == "windows" {
