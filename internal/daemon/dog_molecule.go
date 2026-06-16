@@ -54,6 +54,14 @@ type dogMol struct {
 	logger   interface{ Printf(string, ...interface{}) }
 }
 
+// pourResult is the JSON shape of `bd mol wisp --json`. id_mapping maps each
+// formula node — "<formula>" for the root, "<formula>.<step>" for each step — to
+// its freshly-created wisp ID.
+type pourResult struct {
+	IDMapping map[string]string `json:"id_mapping"`
+	NewEpicID string            `json:"new_epic_id"`
+}
+
 // pourDogMolecule creates an ephemeral wisp molecule from a formula.
 // Returns a dogMol handle for closing steps. If bd fails, returns a no-op
 // handle so the caller can proceed without error checking.
@@ -65,8 +73,14 @@ func (d *Daemon) pourDogMolecule(formulaName string, vars map[string]string) *do
 		logger:   d.logger,
 	}
 
-	// Build args: bd mol wisp <formula> --var k=v ...
-	args := []string{"mol", "wisp", formulaName}
+	// Build args: bd mol wisp <formula> --json --var k=v ...
+	// --json gives the full id_mapping so we capture every step wisp ID from the
+	// pour's own response. Earlier code re-read the children via
+	// `bd show <root> --children`, but under concurrent Dolt write load that
+	// cross-connection read misses the just-committed molecule (bd returns its
+	// no-issue envelope), so steps were never discovered or closed and leaked
+	// permanently (gt-k61r). The pour's own connection always observes its writes.
+	args := []string{"mol", "wisp", formulaName, "--json"}
 	for k, v := range vars {
 		args = append(args, "--var", fmt.Sprintf("%s=%s", k, v))
 	}
@@ -77,19 +91,39 @@ func (d *Daemon) pourDogMolecule(formulaName string, vars map[string]string) *do
 		return dm
 	}
 
-	// Parse root ID from output. bd mol wisp prints the root ID on the first line.
-	// Example output: "✓ Spawned wisp: gt-wisp-abc123 — Reap stale wisps..."
-	dm.rootID = parseWispID(out)
+	dm.parsePour(out, formulaName)
 	if dm.rootID == "" {
 		d.logger.Printf("dog_molecule: pour %s: could not parse root ID from output: %s", formulaName, out)
 		return dm
 	}
 
-	// Discover step IDs by listing children of the root wisp.
-	dm.discoverSteps()
-
 	d.logger.Printf("dog_molecule: poured %s → %s (%d steps)", formulaName, dm.rootID, len(dm.stepIDs))
 	return dm
+}
+
+// parsePour populates rootID and stepIDs from `bd mol wisp --json` output. If the
+// JSON cannot be parsed it falls back to scraping the root ID from text so the
+// molecule is still closeable.
+func (dm *dogMol) parsePour(raw, formulaName string) {
+	var pr pourResult
+	if err := json.Unmarshal([]byte(raw), &pr); err != nil {
+		dm.rootID = parseWispID(raw)
+		dm.logger.Printf("dog_molecule: pour JSON parse failed (fell back to text root=%q): %v", dm.rootID, err)
+		return
+	}
+
+	dm.rootID = pr.NewEpicID
+	prefix := formulaName + "."
+	for key, id := range pr.IDMapping {
+		switch {
+		case key == formulaName:
+			if dm.rootID == "" {
+				dm.rootID = id
+			}
+		case strings.HasPrefix(key, prefix):
+			dm.stepIDs[strings.TrimPrefix(key, prefix)] = id
+		}
+	}
 }
 
 // closeStep marks a molecule step as closed.
@@ -106,7 +140,6 @@ func (dm *dogMol) closeStep(stepSlug string) {
 
 	if err := dm.closeWisp(stepID); err != nil {
 		dm.logger.Printf("dog_molecule: close step %s (%s) failed after %d attempts (non-fatal): %v", stepSlug, stepID, dogCloseMaxAttempts, err)
-		return
 	}
 }
 
@@ -127,160 +160,30 @@ func (dm *dogMol) failStep(stepSlug, reason string) {
 	}
 }
 
-// close closes all remaining open child step wisps, then closes the root molecule wisp.
-// This prevents orphan step wisps from accumulating when callers forget to
-// explicitly close individual steps (the root cause of gt-3o59).
+// close closes every step wisp of the molecule, then the root. Step IDs are
+// captured at pour time (parsePour), so this needs no cross-connection read —
+// the source of the step-wisp leak (gt-k61r). bd close is idempotent, so
+// re-closing a step already closed via closeStep is a harmless no-op.
 func (dm *dogMol) close() {
 	if dm.rootID == "" {
 		return
 	}
 
-	// Close any step wisps that were never explicitly closed/failed.
-	dm.closeRemainingSteps()
+	// --force: molecule steps carry a needs-based DAG (e.g. probe→inspect→report),
+	// and bd refuses to close a wisp that is "blocked by" an open dependency. We
+	// close in map order (unordered), and this is a teardown — the dependency
+	// ordering models work sequencing, not a cleanup constraint — so force past
+	// the blocked-by check. Without --force, dependency-blocked steps never close
+	// and the step wisps leak even though discovery succeeded (gt-k61r follow-up).
+	for slug, id := range dm.stepIDs {
+		if err := dm.closeWisp(id, "--force"); err != nil {
+			dm.logger.Printf("dog_molecule: close step %s (%s) failed after %d attempts (non-fatal): %v", slug, id, dogCloseMaxAttempts, err)
+		}
+	}
 
-	if err := dm.closeWisp(dm.rootID); err != nil {
+	if err := dm.closeWisp(dm.rootID, "--force"); err != nil {
 		dm.logger.Printf("dog_molecule: close root %s failed after %d attempts (non-fatal): %v", dm.rootID, dogCloseMaxAttempts, err)
 	}
-}
-
-// closeRemainingSteps queries all children of the root wisp and closes any that
-// are still open. This is the backstop that prevents step wisp leaks regardless
-// of whether individual callers remembered to close each step.
-func (dm *dogMol) closeRemainingSteps() {
-	if dm.rootID == "" {
-		return
-	}
-
-	out, err := dm.runBd("show", dm.rootID, "--children", "--json")
-	if err != nil {
-		dm.logger.Printf("dog_molecule: closeRemainingSteps: list children of %s failed: %v", dm.rootID, err)
-		return
-	}
-
-	children, parseErr := parseChildrenJSON(out)
-	if parseErr != nil {
-		dm.logger.Printf("dog_molecule: closeRemainingSteps: parse children JSON for %s failed: %v", dm.rootID, parseErr)
-		return
-	}
-
-	closed := 0
-	for _, child := range children {
-		if child.ID == "" || child.Status == "" {
-			continue
-		}
-		// Close any child that is still open/hooked/in_progress.
-		if child.Status == "open" || child.Status == "hooked" || child.Status == "in_progress" {
-			if err := dm.closeWisp(child.ID); err != nil {
-				dm.logger.Printf("dog_molecule: closeRemainingSteps: close %s failed after %d attempts: %v", child.ID, dogCloseMaxAttempts, err)
-			} else {
-				closed++
-			}
-		}
-	}
-	if closed > 0 {
-		dm.logger.Printf("dog_molecule: closeRemainingSteps: closed %d orphan step wisp(s) under %s", closed, dm.rootID)
-	}
-}
-
-// discoverSteps lists children of the root wisp and maps step slugs to IDs.
-// Step titles in the formula are like "Scan databases for stale wisps" —
-// we match on the step ID embedded in the wisp title or metadata.
-func (dm *dogMol) discoverSteps() {
-	if dm.rootID == "" {
-		return
-	}
-
-	// Use bd show to get children. The mol wisp command creates child wisps
-	// whose titles include the step ID from the formula.
-	out, err := dm.runBd("show", dm.rootID, "--children", "--json")
-	if err != nil {
-		dm.logger.Printf("dog_molecule: discover steps for %s failed: %v", dm.rootID, err)
-		return
-	}
-
-	children, parseErr := parseChildrenJSON(out)
-	if parseErr != nil {
-		dm.logger.Printf("dog_molecule: discover steps: parse children JSON for %s failed: %v", dm.rootID, parseErr)
-		return
-	}
-
-	// Map known step slugs from each child's title. The wisp title typically starts
-	// with the step title from the formula.
-	for _, child := range children {
-		if child.ID == "" || child.Title == "" {
-			continue
-		}
-
-		titleLower := strings.ToLower(child.Title)
-		switch {
-		case strings.Contains(titleLower, "scan"):
-			dm.stepIDs["scan"] = child.ID
-		case strings.Contains(titleLower, "reap"):
-			dm.stepIDs["reap"] = child.ID
-		case strings.Contains(titleLower, "purge"):
-			dm.stepIDs["purge"] = child.ID
-		case strings.Contains(titleLower, "report"):
-			dm.stepIDs["report"] = child.ID
-		case strings.Contains(titleLower, "export"):
-			dm.stepIDs["export"] = child.ID
-		case strings.Contains(titleLower, "push"):
-			dm.stepIDs["push"] = child.ID
-		case strings.Contains(titleLower, "diagnos"):
-			dm.stepIDs["diagnose"] = child.ID
-		case strings.Contains(titleLower, "backup"):
-			dm.stepIDs["backup"] = child.ID
-		case strings.Contains(titleLower, "probe"):
-			dm.stepIDs["probe"] = child.ID
-		case strings.Contains(titleLower, "inspect"):
-			dm.stepIDs["inspect"] = child.ID
-		case strings.Contains(titleLower, "clean"):
-			dm.stepIDs["clean"] = child.ID
-		case strings.Contains(titleLower, "verif"):
-			dm.stepIDs["verify"] = child.ID
-		case strings.Contains(titleLower, "compact"):
-			dm.stepIDs["compact"] = child.ID
-		case strings.Contains(titleLower, "checkpoint"):
-			dm.stepIDs["checkpoint"] = child.ID
-		case strings.Contains(titleLower, "auto-close") || strings.Contains(titleLower, "auto close"):
-			dm.stepIDs["auto-close"] = child.ID
-		case strings.Contains(titleLower, "sync"):
-			dm.stepIDs["sync"] = child.ID
-		case strings.Contains(titleLower, "offsite"):
-			dm.stepIDs["offsite"] = child.ID
-		case strings.Contains(titleLower, "rotat"):
-			dm.stepIDs["rotate"] = child.ID
-		}
-	}
-}
-
-// childInfo holds fields from child wisp JSON used by discoverSteps and
-// closeRemainingSteps.
-type childInfo struct {
-	ID     string `json:"id"`
-	Title  string `json:"title"`
-	Status string `json:"status"`
-}
-
-// parseChildrenJSON parses the output of `bd show <id> --children --json`.
-// bd returns a map keyed by parent ID: {"hq-wisp-abc": [{...}, ...]}.
-// For forward compatibility, a bare array is also accepted.
-func parseChildrenJSON(raw string) ([]childInfo, error) {
-	data := []byte(raw)
-
-	var arr []childInfo
-	if err := json.Unmarshal(data, &arr); err == nil {
-		return arr, nil
-	}
-
-	var wrapped map[string][]childInfo
-	if err := json.Unmarshal(data, &wrapped); err == nil {
-		for _, children := range wrapped {
-			return children, nil
-		}
-		return nil, nil
-	}
-
-	return nil, fmt.Errorf("unrecognized JSON shape: %.200s", raw)
 }
 
 // knownSteps returns the list of known step slugs for debugging.
@@ -303,7 +206,11 @@ func (dm *dogMol) runBd(args ...string) (string, error) {
 	defer cancel()
 
 	cmd := exec.CommandContext(ctx, bdPath, args...)
-	beads.ConfigureCommand(cmd, dm.townRoot, filepath.Join(dm.townRoot, ".beads"), beads.SubprocessModeForArgs(args))
+	// Use mutation routing (BD_DOLT_AUTO_COMMIT=on) for all dog-molecule bd calls.
+	// These are internal town-db molecule ops that must observe their own writes;
+	// read-only routing's snapshot (BD_DOLT_AUTO_COMMIT=off) is stale under
+	// concurrent Dolt load.
+	beads.ConfigureCommand(cmd, dm.townRoot, filepath.Join(dm.townRoot, ".beads"), beads.MutationRouting)
 
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
