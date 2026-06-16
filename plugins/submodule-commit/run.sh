@@ -163,8 +163,8 @@ log "=== Summary ==="
 SUMMARY="submodule-commit: $TOTAL_COMMITTED submodule(s) committed, $TOTAL_PUSHED pushed, $TOTAL_PARENT_UPDATED parent pointer(s) updated"
 log "$SUMMARY"
 
-bd create "$SUMMARY" -t chore --ephemeral \
+__rid="$(bd create "$SUMMARY" -t chore --ephemeral \
   -l "type:plugin-run,plugin:submodule-commit,result:success" \
-  -d "$SUMMARY" --silent 2>/dev/null || true
+  -d "$SUMMARY" --silent 2>/dev/null)" && [ -n "$__rid" ] && bd close "$__rid" --force 2>/dev/null || true
 
 log "Done."
