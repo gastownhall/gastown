@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"syscall"
 )
 
@@ -20,9 +21,26 @@ func execBdShow(args []string) error {
 	}
 
 	invocation := currentBdShowInvocation(args)
-	if invocation.Dir != "" {
-		_ = os.Chdir(invocation.Dir)
+	bdPath, err = prepareBdShowExec(bdPath, invocation)
+	if err != nil {
+		return err
 	}
 
 	return syscall.Exec(bdPath, invocation.ExecArgs, invocation.Env)
+}
+
+func prepareBdShowExec(bdPath string, invocation bdShowInvocation) (string, error) {
+	if !filepath.IsAbs(bdPath) {
+		abs, err := filepath.Abs(bdPath)
+		if err != nil {
+			return "", fmt.Errorf("resolve bd path %q: %w", bdPath, err)
+		}
+		bdPath = abs
+	}
+	if invocation.Dir != "" {
+		if err := os.Chdir(invocation.Dir); err != nil {
+			return "", fmt.Errorf("chdir %s: %w", invocation.Dir, err)
+		}
+	}
+	return bdPath, nil
 }
