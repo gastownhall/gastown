@@ -355,16 +355,20 @@ func executeSling(params SlingParams) (*SlingResult, error) {
 	updateAgentHookBead(targetAgent, beadToHook, hookWorkDir, beadsDir)
 
 	// 10. Store fields in bead (dispatcher, args, attached_molecule, no_merge, mode)
+	// Inject `issue=<beadToHook>` into stored vars so polecat formula step
+	// descriptions render `{{issue}}` correctly. (gt-codex-issue-var)
+	storedVars := append([]string{fmt.Sprintf("issue=%s", beadToHook)}, params.Vars...)
+	formulaVarsWithIssue := append([]string{fmt.Sprintf("issue=%s", beadToHook)}, allVars...)
 	fieldUpdates := beadFieldUpdates{
 		Dispatcher:       actor,
 		Args:             params.Args,
-		Vars:             append([]string(nil), params.Vars...),
+		Vars:             storedVars,
 		AttachedMolecule: attachedMoleculeID,
 		AttachedFormula:  params.FormulaName,
 		NoMerge:          params.NoMerge,
 		ReviewOnly:       params.ReviewOnly,
 		Mode:             params.Mode,
-		FormulaVars:      strings.Join(allVars, "\n"),
+		FormulaVars:      strings.Join(formulaVarsWithIssue, "\n"),
 	}
 	// Use beadToHook for the update target (may differ from beadID when formula-on-bead)
 	if err := storeFieldsInBead(beadToHook, fieldUpdates); err != nil {
