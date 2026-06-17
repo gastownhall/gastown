@@ -944,26 +944,28 @@ func (f *LiveConvoyFetcher) FetchWorkers() ([]WorkerRow, error) {
 
 // assignedIssue holds issue info for the assigned issues map.
 type assignedIssue struct {
-	ID    string
-	Title string
+	ID     string
+	Title  string
+	Status beads.IssueStatus
 }
 
 // getAssignedIssuesMap returns a map of assignee -> assigned issue.
-// Queries beads for all in_progress issues with assignees.
+// Queries beads for all assigned issues with assignees.
 func (f *LiveConvoyFetcher) getAssignedIssuesMap() map[string]assignedIssue {
 	result := make(map[string]assignedIssue)
 
-	// Query all in_progress issues (these are the ones being worked on)
-	stdout, err := f.runBdCmd(f.townRoot, "list", "--status=in_progress", "--json")
+	assignedStatuses := strings.Join([]string{string(beads.StatusInProgress), string(beads.IssueStatusHooked)}, ",")
+	stdout, err := f.runBdCmd(f.townRoot, "list", "--status="+assignedStatuses, "--json", "--limit=0")
 	if err != nil {
-		log.Printf("warning: bd list in_progress failed: %v", err)
+		log.Printf("warning: bd list assigned issues failed: %v", err)
 		return result
 	}
 
 	var issues []struct {
-		ID       string `json:"id"`
-		Title    string `json:"title"`
-		Assignee string `json:"assignee"`
+		ID       string            `json:"id"`
+		Title    string            `json:"title"`
+		Assignee string            `json:"assignee"`
+		Status   beads.IssueStatus `json:"status"`
 	}
 	if err := json.Unmarshal(stdout.Bytes(), &issues); err != nil {
 		log.Printf("warning: parsing bd list output: %v", err)
@@ -971,15 +973,33 @@ func (f *LiveConvoyFetcher) getAssignedIssuesMap() map[string]assignedIssue {
 	}
 
 	for _, issue := range issues {
-		if issue.Assignee != "" {
-			result[issue.Assignee] = assignedIssue{
-				ID:    issue.ID,
-				Title: issue.Title,
-			}
+		if issue.Assignee == "" {
+			continue
+		}
+
+		candidate := assignedIssue{
+			ID:     issue.ID,
+			Title:  issue.Title,
+			Status: issue.Status,
+		}
+		current, exists := result[issue.Assignee]
+		if !exists || assignedIssueStatusPriority(candidate.Status) > assignedIssueStatusPriority(current.Status) {
+			result[issue.Assignee] = candidate
 		}
 	}
 
 	return result
+}
+
+func assignedIssueStatusPriority(status beads.IssueStatus) int {
+	switch status {
+	case beads.StatusInProgress:
+		return 2
+	case beads.IssueStatusHooked:
+		return 1
+	default:
+		return 0
+	}
 }
 
 // calculateWorkerWorkStatus determines the worker's work status based on activity and assignment.

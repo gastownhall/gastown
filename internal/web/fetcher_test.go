@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"runtime"
 	"strings"
 	"sync"
@@ -574,6 +575,65 @@ esac
 			t.Fatalf("expected timeout error, got: %v", err)
 		}
 	})
+}
+
+func TestGetAssignedIssuesMapIncludesAssignedStatuses(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("shell-based command test")
+	}
+
+	binDir := t.TempDir()
+	argsPath := filepath.Join(binDir, "bd.args")
+	bdPath := filepath.Join(binDir, "bd")
+	script := fmt.Sprintf(`#!/bin/sh
+printf '%%s\n' "$@" > %q
+cat <<'JSON'
+[
+  {"id":"gt-active","title":"Active work","assignee":"gastown/polecats/alpha","status":"in_progress"},
+  {"id":"gt-hooked","title":"Hooked work","assignee":"gastown/polecats/bravo","status":"hooked"},
+  {"id":"gt-empty","title":"No assignee","assignee":"","status":"hooked"},
+  {"id":"gt-dupe-hooked-first","title":"Hooked first","assignee":"gastown/polecats/dupe","status":"hooked"},
+  {"id":"gt-dupe-active-second","title":"Active second","assignee":"gastown/polecats/dupe","status":"in_progress"},
+  {"id":"gt-dupe-active-first","title":"Active first","assignee":"gastown/polecats/dupe2","status":"in_progress"},
+  {"id":"gt-dupe-hooked-second","title":"Hooked second","assignee":"gastown/polecats/dupe2","status":"hooked"}
+]
+JSON
+`, argsPath)
+	if err := os.WriteFile(bdPath, []byte(script), 0o755); err != nil {
+		t.Fatalf("write fake bd: %v", err)
+	}
+
+	f := &LiveConvoyFetcher{townRoot: t.TempDir(), cmdTimeout: 5 * time.Second, bdBin: bdPath}
+	issues := f.getAssignedIssuesMap()
+
+	if got := len(issues); got != 4 {
+		t.Fatalf("assigned issues count = %d, want 4: %#v", got, issues)
+	}
+	if got := issues["gastown/polecats/alpha"].ID; got != "gt-active" {
+		t.Fatalf("alpha issue = %q, want gt-active", got)
+	}
+	if got := issues["gastown/polecats/bravo"].ID; got != "gt-hooked" {
+		t.Fatalf("bravo issue = %q, want gt-hooked", got)
+	}
+	if got := issues["gastown/polecats/dupe"].ID; got != "gt-dupe-active-second" {
+		t.Fatalf("dupe issue = %q, want gt-dupe-active-second", got)
+	}
+	if got := issues["gastown/polecats/dupe2"].ID; got != "gt-dupe-active-first" {
+		t.Fatalf("dupe2 issue = %q, want gt-dupe-active-first", got)
+	}
+	if _, ok := issues[""]; ok {
+		t.Fatalf("empty assignee should not be keyed: %#v", issues)
+	}
+
+	argsBytes, err := os.ReadFile(argsPath)
+	if err != nil {
+		t.Fatalf("read fake bd args: %v", err)
+	}
+	gotArgs := strings.Split(strings.TrimSpace(string(argsBytes)), "\n")
+	wantArgs := []string{"list", "--status=in_progress,hooked", "--json", "--limit=0", "--flat"}
+	if !reflect.DeepEqual(gotArgs, wantArgs) {
+		t.Fatalf("bd args = %#v, want %#v", gotArgs, wantArgs)
+	}
 }
 
 func TestFetchConvoysBreakerBacksOffAfterBdFailures(t *testing.T) {
