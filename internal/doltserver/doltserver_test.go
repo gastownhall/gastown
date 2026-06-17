@@ -5091,3 +5091,68 @@ func TestHealthMetrics_CommitFreshnessFields(t *testing.T) {
 		t.Errorf("LastCommitAge = %v, want >= 0", metrics.LastCommitAge)
 	}
 }
+
+func TestDoltServerMemLimit(t *testing.T) {
+	tests := []struct {
+		name     string
+		override string // GT_DOLT_GOMEMLIMIT value; "<unset>" means leave unset
+		want     string
+	}{
+		{name: "default", override: "<unset>", want: DefaultDoltServerMemLimit},
+		{name: "custom", override: "12GiB", want: "12GiB"},
+		{name: "off", override: "off", want: ""},
+		{name: "off mixed case", override: "OFF", want: ""},
+		{name: "empty disables", override: "", want: ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if tt.override == "<unset>" {
+				os.Unsetenv("GT_DOLT_GOMEMLIMIT")
+			} else {
+				t.Setenv("GT_DOLT_GOMEMLIMIT", tt.override)
+			}
+			if got := DoltServerMemLimit(); got != tt.want {
+				t.Errorf("DoltServerMemLimit() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestDoltServerEnv(t *testing.T) {
+	// Default: a single canonical GOMEMLIMIT is appended.
+	os.Unsetenv("GT_DOLT_GOMEMLIMIT")
+	base := []string{"PATH=/bin", "GOMEMLIMIT=999GiB", "HOME=/home/x"}
+	env := DoltServerEnv(base)
+
+	var memLimits []string
+	hasPath, hasHome := false, false
+	for _, e := range env {
+		if strings.HasPrefix(e, "GOMEMLIMIT=") {
+			memLimits = append(memLimits, e)
+		}
+		if e == "PATH=/bin" {
+			hasPath = true
+		}
+		if e == "HOME=/home/x" {
+			hasHome = true
+		}
+	}
+	if len(memLimits) != 1 {
+		t.Fatalf("expected exactly one GOMEMLIMIT entry, got %v", memLimits)
+	}
+	if memLimits[0] != "GOMEMLIMIT="+DefaultDoltServerMemLimit {
+		t.Errorf("GOMEMLIMIT = %q, want %q (inherited value must be replaced)", memLimits[0], "GOMEMLIMIT="+DefaultDoltServerMemLimit)
+	}
+	if !hasPath || !hasHome {
+		t.Errorf("unrelated env vars must be preserved: PATH=%v HOME=%v", hasPath, hasHome)
+	}
+
+	// Disabled: no GOMEMLIMIT entry at all, even if inherited.
+	t.Setenv("GT_DOLT_GOMEMLIMIT", "off")
+	env = DoltServerEnv(base)
+	for _, e := range env {
+		if strings.HasPrefix(e, "GOMEMLIMIT=") {
+			t.Errorf("expected no GOMEMLIMIT entry when disabled, got %q", e)
+		}
+	}
+}

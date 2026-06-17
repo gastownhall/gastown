@@ -938,6 +938,11 @@ func (m *DoltServerManager) startLocked() error {
 	cmd.Dir = m.config.DataDir
 	cmd.Stdout = logFile
 	cmd.Stderr = logFile
+	// Cap the server's heap with a GOMEMLIMIT soft ceiling so Dolt's unbounded
+	// in-memory working-set growth gets GC'd under pressure instead of climbing
+	// until OOM. The supervisor restarts dolt on crash, so the limit must be set
+	// here too (not only on the `gt dolt start` path).
+	cmd.Env = doltserver.DoltServerEnv(os.Environ())
 
 	// Detach from this process group so it survives daemon restart
 	setSysProcAttr(cmd)

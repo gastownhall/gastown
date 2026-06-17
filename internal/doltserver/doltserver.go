@@ -1687,6 +1687,47 @@ behavior:
 	return os.WriteFile(configPath, []byte(content), 0600)
 }
 
+// DefaultDoltServerMemLimit is the default soft heap ceiling (GOMEMLIMIT)
+// applied to the managed dolt sql-server. Dolt accumulates an in-memory working
+// set across all databases with no ceiling of its own; without a soft limit the
+// Go runtime lets RSS climb unbounded until the host OOM-kills the server. 8GiB
+// leaves ample headroom over the few-GB on-disk dataset on a 64GB host while
+// capping growth — as the heap approaches the limit the GC runs more
+// aggressively and reclaims instead of growing.
+const DefaultDoltServerMemLimit = "8GiB"
+
+// DoltServerMemLimit returns the GOMEMLIMIT value to apply to the spawned dolt
+// sql-server. It honors the GT_DOLT_GOMEMLIMIT override (e.g. "12GiB") so the
+// limit can be tuned for the host; set the override to "off" or empty to
+// disable the soft limit entirely.
+func DoltServerMemLimit() string {
+	if v, ok := os.LookupEnv("GT_DOLT_GOMEMLIMIT"); ok {
+		if v == "" || strings.EqualFold(v, "off") {
+			return ""
+		}
+		return v
+	}
+	return DefaultDoltServerMemLimit
+}
+
+// DoltServerEnv returns base with a single canonical GOMEMLIMIT entry appended.
+// Any inherited GOMEMLIMIT is stripped first so the Go runtime reads ours (it
+// uses the first match on duplicate keys). When the soft limit is disabled the
+// inherited GOMEMLIMIT is removed and none is added. base is typically
+// os.Environ().
+func DoltServerEnv(base []string) []string {
+	out := make([]string, 0, len(base)+1)
+	for _, e := range base {
+		if !strings.HasPrefix(e, "GOMEMLIMIT=") {
+			out = append(out, e)
+		}
+	}
+	if limit := DoltServerMemLimit(); limit != "" {
+		out = append(out, "GOMEMLIMIT="+limit)
+	}
+	return out
+}
+
 // Start starts the Dolt SQL server.
 func Start(townRoot string) error {
 	config := DefaultConfig(townRoot)
@@ -1902,6 +1943,10 @@ func Start(townRoot string) error {
 	cmd.Dir = config.DataDir
 	cmd.Stdout = logFile
 	cmd.Stderr = logFile
+	// Cap the server's heap with a GOMEMLIMIT soft ceiling so Dolt's unbounded
+	// in-memory working-set growth gets GC'd under pressure instead of climbing
+	// until OOM. See DoltServerEnv / DefaultDoltServerMemLimit.
+	cmd.Env = DoltServerEnv(os.Environ())
 
 	// Detach from terminal and put dolt in its own process group so that
 	// signals sent to the parent process group (e.g. SIGHUP when the caller
