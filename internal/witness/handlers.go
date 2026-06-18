@@ -3416,7 +3416,8 @@ func hasPendingMR(bd *BdCli, workDir, rigName, polecatName, agentBeadID string) 
 	activeMR, sourceHint := getAgentMRContext(bd, workDir, agentBeadID)
 	assessment := polecat.AssessActiveMR(beadCLIShower{bd: bd, workDir: workDir}, polecat.ActiveMRInput{ActiveMR: activeMR, SourceIssueHint: sourceHint, RequireGitSafe: true, GitSafe: activeMRGitSafe(workDir, rigName, polecatName)})
 	if assessment.SourceMalformed {
-		return false
+		// Not a normal MERGE_READY MR, but still destructive-cleanup unsafe.
+		return true
 	}
 
 	// Check 1: Cleanup wisp with merge-requested state (created by HandlePolecatDone)
@@ -3452,7 +3453,8 @@ func hasPendingMRFromSnapshot(bd *BdCli, workDir, rigName, polecatName string, s
 	}
 	assessment := polecat.AssessActiveMR(beadCLIShower{bd: bd, workDir: workDir}, polecat.ActiveMRInput{ActiveMR: activeMR, SourceIssueHint: sourceHint, RequireGitSafe: true, GitSafe: activeMRGitSafe(workDir, rigName, polecatName)})
 	if assessment.SourceMalformed {
-		return false
+		// Not a normal MERGE_READY MR, but still destructive-cleanup unsafe.
+		return true
 	}
 
 	// Check 1: Cleanup wisp with merge-requested state (created by HandlePolecatDone)

@@ -1974,14 +1974,29 @@ func (e *Engineer) ListQueueAnomalies(now time.Time) ([]*MRAnomaly, error) {
 		if sourceErr != nil || assessment.Concrete {
 			continue
 		}
+		evidence := malformedMRBranchEvidence(e.git, fields.Branch, fields.Target)
+		if markErr := e.markMalformedSourceMR(issue, assessment, evidence); markErr != nil {
+			_, _ = fmt.Fprintf(e.output, "[Engineer] Warning: failed to mark malformed MR %s: %v\n", issue.ID, markErr)
+		}
 		anomalies = append(anomalies, &MRAnomaly{
 			ID:     issue.ID,
 			Branch: fields.Branch,
 			Type:   "malformed-source",
-			Detail: malformedSourceDetail(fields, assessment, e.git),
+			Detail: malformedSourceDetail(fields, assessment, evidence),
 		})
 	}
 	return anomalies, nil
+}
+
+func (e *Engineer) markMalformedSourceMR(issue *beads.Issue, assessment workitem.Assessment, evidence string) error {
+	if e == nil || e.beads == nil {
+		return nil
+	}
+	description, changed := malformedSourceMarkedDescription(issue, assessment, evidence)
+	if !changed {
+		return nil
+	}
+	return e.beads.Update(issue.ID, beads.UpdateOptions{Description: &description})
 }
 
 type mrRefChecker interface {
@@ -1990,12 +2005,45 @@ type mrRefChecker interface {
 	Cherry(upstream, head string) (string, error)
 }
 
-func malformedSourceDetail(fields *beads.MRFields, assessment workitem.Assessment, checker mrRefChecker) string {
+func malformedSourceDetail(fields *beads.MRFields, assessment workitem.Assessment, evidence string) string {
 	detail := fmt.Sprintf("MR source_issue %q is not concrete work (%s); reconcile before processing", fields.SourceIssue, assessment.Reason)
-	if evidence := malformedMRBranchEvidence(checker, fields.Branch, fields.Target); evidence != "" {
+	if evidence != "" {
 		detail += "; " + evidence
 	}
 	return detail
+}
+
+func malformedSourceMarkedDescription(issue *beads.Issue, assessment workitem.Assessment, evidence string) (string, bool) {
+	if issue == nil {
+		return "", false
+	}
+	description := issue.Description
+	description = setKeyValueLine(description, "malformed_source", "true")
+	description = setKeyValueLine(description, "malformed_source_reason", assessment.Reason)
+	if evidence != "" {
+		description = setKeyValueLine(description, "malformed_branch_evidence", evidence)
+	}
+	return description, description != issue.Description
+}
+
+func setKeyValueLine(description, key, value string) string {
+	line := key + ": " + strings.TrimSpace(value)
+	if strings.TrimSpace(description) == "" {
+		return line
+	}
+	lowerKey := strings.ToLower(key) + ":"
+	lines := strings.Split(description, "\n")
+	found := false
+	for i, existing := range lines {
+		if strings.HasPrefix(strings.ToLower(strings.TrimSpace(existing)), lowerKey) {
+			lines[i] = line
+			found = true
+		}
+	}
+	if !found {
+		lines = append(lines, line)
+	}
+	return strings.Join(lines, "\n")
 }
 
 func malformedMRBranchEvidence(checker mrRefChecker, branch, target string) string {

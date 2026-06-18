@@ -833,10 +833,11 @@ func TestHasPendingMRFromSnapshotAssessesMRStatus(t *testing.T) {
 			want: true,
 		},
 		{
-			name: "open MR with missing source is malformed not pending",
+			name: "open MR with missing source still blocks cleanup",
 			show: func(id string) (string, error) {
 				return issueJSON(id, "open", ""), nil
 			},
+			want: true,
 		},
 		{
 			name: "closed MR with terminal source is not pending",
@@ -991,7 +992,7 @@ func TestHasPendingMRCleanupWispFailsClosed(t *testing.T) {
 	}
 }
 
-func TestHasPendingMRCleanupWispDoesNotHideMalformedActiveMR(t *testing.T) {
+func TestHasPendingMRCleanupWispBlocksMalformedActiveMR(t *testing.T) {
 	workDir := setupActiveMRGitSafeWorkDir(t, "gastown", "nux")
 	bd, _ := mockBd(
 		func(args []string) (string, error) {
@@ -1014,8 +1015,8 @@ func TestHasPendingMRCleanupWispDoesNotHideMalformedActiveMR(t *testing.T) {
 		func(args []string) error { return nil },
 	)
 
-	if got := hasPendingMR(bd, workDir, "gastown", "nux", "gt-agent"); got {
-		t.Fatalf("hasPendingMR() = true, want false for malformed active_mr despite cleanup wisp")
+	if got := hasPendingMR(bd, workDir, "gastown", "nux", "gt-agent"); !got {
+		t.Fatalf("hasPendingMR() = false, want true for malformed active_mr cleanup safety")
 	}
 }
 

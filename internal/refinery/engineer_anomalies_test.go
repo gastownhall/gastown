@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/steveyegge/gastown/internal/beads"
+	"github.com/steveyegge/gastown/internal/workitem"
 )
 
 type fakeMRRefChecker struct {
@@ -178,5 +179,29 @@ func TestMalformedMRBranchEvidence(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestMalformedSourceMarkedDescription(t *testing.T) {
+	issue := &beads.Issue{Description: "branch: polecat/fix\ntarget: main\nsource_issue: gt-wisp-abc"}
+	desc, changed := malformedSourceMarkedDescription(issue, workitem.Assessment{Reason: "wisp-id"}, "branch_containment=contained branch_ref=origin/polecat/fix target_ref=origin/main")
+	if !changed {
+		t.Fatalf("malformedSourceMarkedDescription changed = false, want true")
+	}
+	for _, want := range []string{
+		"malformed_source: true",
+		"malformed_source_reason: wisp-id",
+		"malformed_branch_evidence: branch_containment=contained branch_ref=origin/polecat/fix target_ref=origin/main",
+		"source_issue: gt-wisp-abc",
+	} {
+		if !strings.Contains(desc, want) {
+			t.Fatalf("description missing %q:\n%s", want, desc)
+		}
+	}
+
+	issue.Description = desc
+	desc, changed = malformedSourceMarkedDescription(issue, workitem.Assessment{Reason: "wisp-id"}, "branch_containment=contained branch_ref=origin/polecat/fix target_ref=origin/main")
+	if changed {
+		t.Fatalf("malformedSourceMarkedDescription changed = true for already marked description:\n%s", desc)
 	}
 }
