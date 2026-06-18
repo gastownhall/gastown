@@ -705,7 +705,7 @@ func TestFindAnyCleanupWisp_NoBdAvailable(t *testing.T) {
 	t.Parallel()
 	// When bd is not available (test environment), findAnyCleanupWisp
 	// should return empty string without panicking
-	result := findAnyCleanupWisp(DefaultBdCli(), "/nonexistent", "testpolecat")
+	result := findAnyCleanupWisp(DefaultBdCli(), "/nonexistent", "", "testpolecat")
 	if result != "" {
 		t.Errorf("findAnyCleanupWisp = %q, want empty when bd unavailable", result)
 	}
@@ -714,7 +714,8 @@ func TestFindAnyCleanupWisp_NoBdAvailable(t *testing.T) {
 // mockBdCalls captures bd invocations and returns canned responses.
 // Returns a slice that accumulates "arg0 arg1 ..." strings for each call.
 type mockBdCalls struct {
-	calls []string
+	calls    []string
+	workDirs []string
 }
 
 // mockBd creates a test-local *BdCli with mock exec/run functions.
@@ -724,10 +725,12 @@ func mockBd(execFn func(args []string) (string, error), runFn func(args []string
 	mock := &mockBdCalls{}
 	bd := &BdCli{
 		Exec: func(workDir string, args ...string) (string, error) {
+			mock.workDirs = append(mock.workDirs, workDir)
 			mock.calls = append(mock.calls, strings.Join(args, " "))
 			return execFn(stripMockBdFlags(args))
 		},
 		Run: func(workDir string, args ...string) error {
+			mock.workDirs = append(mock.workDirs, workDir)
 			mock.calls = append(mock.calls, strings.Join(args, " "))
 			return runFn(stripMockBdFlags(args))
 		},
@@ -776,6 +779,85 @@ func fakeBd() (*BdCli, *mockBdCalls) {
 		},
 		func(args []string) error { return nil },
 	)
+}
+
+func setupCleanupWispRoutingTown(t *testing.T, rigName string) (string, string) {
+	t.Helper()
+	townRoot := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(townRoot, "mayor"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(townRoot, "mayor", "town.json"), []byte(`{"name":"test"}`), 0644); err != nil {
+		t.Fatal(err)
+	}
+	townBeadsDir := filepath.Join(townRoot, ".beads")
+	if err := os.MkdirAll(townBeadsDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	rigWorkDir := filepath.Join(townRoot, rigName, "mayor", "rig")
+	if err := os.MkdirAll(filepath.Join(rigWorkDir, ".beads"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	routePath := filepath.ToSlash(filepath.Join(rigName, "mayor", "rig"))
+	routes := fmt.Sprintf("{\"prefix\":\"hq-\",\"path\":\".\"}\n{\"prefix\":\"gt-\",\"path\":\"%s\"}\n", routePath)
+	if err := os.WriteFile(filepath.Join(townBeadsDir, "routes.jsonl"), []byte(routes), 0644); err != nil {
+		t.Fatal(err)
+	}
+	return townRoot, rigWorkDir
+}
+
+func assertMockWorkDirs(t *testing.T, mock *mockBdCalls, want string) {
+	t.Helper()
+	if len(mock.workDirs) == 0 {
+		t.Fatal("no bd calls captured")
+	}
+	want = filepath.Clean(want)
+	for _, got := range mock.workDirs {
+		if filepath.Clean(got) != want {
+			t.Fatalf("bd workDir = %q, want %q; calls=%v", got, want, mock.calls)
+		}
+	}
+}
+
+func TestCleanupWispWorkDirFallsBackForUnknownRig(t *testing.T) {
+	t.Parallel()
+	townRoot, _ := setupCleanupWispRoutingTown(t, "gastown")
+	if got := cleanupWispWorkDir(townRoot, "missing"); got != townRoot {
+		t.Fatalf("cleanupWispWorkDir unknown rig = %q, want %q", got, townRoot)
+	}
+}
+
+func TestCleanupWispHelpersUseActiveRigWorkDir(t *testing.T) {
+	t.Parallel()
+	townRoot, rigWorkDir := setupCleanupWispRoutingTown(t, "gastown")
+	bd, mock := mockBd(
+		func(args []string) (string, error) {
+			switch args[0] {
+			case "create":
+				return `{"id":"gt-wisp-new"}`, nil
+			case "list":
+				return `[{"id":"gt-wisp-aaa"},{"id":"gt-wisp-bbb"}]`, nil
+			case "show":
+				return `[{"labels":["cleanup","polecat:nux","state:pending"]}]`, nil
+			}
+			return "{}", nil
+		},
+		func(args []string) error { return nil },
+	)
+
+	if _, err := createCleanupWisp(bd, townRoot, "gastown", "nux", "gt-src", "branch"); err != nil {
+		t.Fatalf("createCleanupWisp: %v", err)
+	}
+	if _, err := findCleanupWisp(bd, townRoot, "gastown", "nux"); err != nil {
+		t.Fatalf("findCleanupWisp: %v", err)
+	}
+	_ = findAnyCleanupWisp(bd, townRoot, "gastown", "nux")
+	_ = findAllCleanupWisps(bd, townRoot, "gastown", "nux")
+	if err := UpdateCleanupWispState(bd, townRoot, "gastown", "gt-wisp-aaa", "merged"); err != nil {
+		t.Fatalf("UpdateCleanupWispState: %v", err)
+	}
+
+	assertMockWorkDirs(t, mock, rigWorkDir)
 }
 
 func setupActiveMRGitSafeWorkDir(t *testing.T, rigName, polecatName string) string {
@@ -1046,7 +1128,7 @@ func TestFindCleanupWisp_UsesCorrectBdListFlags(t *testing.T) {
 	bd, mock := fakeBd()
 	workDir := t.TempDir()
 
-	_, _ = findCleanupWisp(bd, workDir, "nux")
+	_, _ = findCleanupWisp(bd, workDir, "", "nux")
 
 	got := strings.Join(mock.calls, "\n")
 
@@ -1074,7 +1156,7 @@ func TestFindAnyCleanupWisp_UsesCorrectBdListFlags(t *testing.T) {
 	bd, mock := fakeBd()
 	workDir := t.TempDir()
 
-	_ = findAnyCleanupWisp(bd, workDir, "bravo")
+	_ = findAnyCleanupWisp(bd, workDir, "", "bravo")
 
 	got := strings.Join(mock.calls, "\n")
 
@@ -1100,7 +1182,7 @@ func TestFindAnyCleanupWisp_UsesCorrectBdListFlags(t *testing.T) {
 func TestFindAllCleanupWisps_NoBdAvailable(t *testing.T) {
 	t.Parallel()
 	// When bd is not available, findAllCleanupWisps should return nil
-	result := findAllCleanupWisps(DefaultBdCli(), "/nonexistent", "testpolecat")
+	result := findAllCleanupWisps(DefaultBdCli(), "/nonexistent", "", "testpolecat")
 	if result != nil {
 		t.Errorf("findAllCleanupWisps = %v, want nil when bd unavailable", result)
 	}
@@ -1119,7 +1201,7 @@ func TestFindAllCleanupWisps_ReturnsAllIDs(t *testing.T) {
 	)
 	workDir := t.TempDir()
 
-	result := findAllCleanupWisps(bd, workDir, "nux")
+	result := findAllCleanupWisps(bd, workDir, "", "nux")
 
 	if len(result) != 2 {
 		t.Fatalf("findAllCleanupWisps: got %d items, want 2", len(result))
@@ -1147,7 +1229,7 @@ func TestFindAllCleanupWisps_EmptyList(t *testing.T) {
 	)
 	workDir := t.TempDir()
 
-	result := findAllCleanupWisps(bd, workDir, "nux")
+	result := findAllCleanupWisps(bd, workDir, "", "nux")
 	if result != nil {
 		t.Errorf("findAllCleanupWisps: got %v, want nil for empty list", result)
 	}
@@ -1161,7 +1243,7 @@ func TestUpdateCleanupWispState_UsesCorrectBdUpdateFlags(t *testing.T) {
 	// UpdateCleanupWispState first calls "bd show <id> --json", then "bd update".
 	// Our mock returns valid JSON for show with polecat:testpol label,
 	// so polecatName will be "testpol". Then it calls bd update with new labels.
-	_ = UpdateCleanupWispState(bd, workDir, "gt-wisp-abc", "merged")
+	_ = UpdateCleanupWispState(bd, workDir, "", "gt-wisp-abc", "merged")
 
 	got := strings.Join(mock.calls, "\n")
 
