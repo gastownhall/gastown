@@ -2058,7 +2058,7 @@ func detectZombieDeadSession(bd *BdCli, workDir, townRoot, rigName, polecatName,
 		// If the hook is verified terminal and no other active/protected work
 		// remains, the polecat completed successfully. The dead session is
 		// expected (gt done kills it). Leave it alone. (gt-sy8)
-		if snapHook != "" && activeWork.HookTerminal && !activeWork.BlocksCleanup {
+		if snapHook != "" && activeWork.HookTerminal && activeWork.AssignedIssue == "" {
 			// gt-dsgp: Polecat completed its work. Don't nuke, don't restart.
 			// The sandbox is preserved for reuse by future slings.
 			return ZombieResult{}, false
@@ -2094,6 +2094,9 @@ func detectZombieDeadSession(bd *BdCli, workDir, townRoot, rigName, polecatName,
 	}
 
 	// Standard zombie detection: active work/state or unsafe hook evidence with a dead session.
+	if activeWork.HookTerminal && activeWork.AssignedIssue == "" {
+		return ZombieResult{}, false
+	}
 	if !activeWork.RequiresRestart && (activeWork.HookBead == "" || activeWork.HookTerminal) {
 		return ZombieResult{}, false
 	}

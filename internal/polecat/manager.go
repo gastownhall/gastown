@@ -2578,7 +2578,7 @@ func activeWorkBeadsForCleanup(issues []*beads.Issue) []*beads.Issue {
 
 func (m *Manager) activeWorkEvidence(name string) ActiveWorkEvidence {
 	agentID := m.agentBeadID(name)
-	agentIssue, fields, _ := m.agentBeads().GetAgentBead(agentID)
+	agentIssue, fields, err := m.agentBeads().GetAgentBead(agentID)
 	var agentState beads.AgentState
 	hookBead := ""
 	if agentIssue != nil {
@@ -2590,7 +2590,9 @@ func (m *Manager) activeWorkEvidence(name string) ActiveWorkEvidence {
 			hookBead = fields.HookBead
 		}
 	}
-	return AssessActiveWork(m.beads, m.assigneeID(name), agentState, hookBead)
+	evidence := AssessActiveWork(m.beads, m.assigneeID(name), agentState, hookBead)
+	evidence.Merge(AssessAgentRecord(agentID, agentIssue, fields, err))
+	return evidence
 }
 
 // loadFromBeads gets polecat info from hooked work beads + beads assignee field + tmux session state.

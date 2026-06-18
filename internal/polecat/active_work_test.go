@@ -154,3 +154,32 @@ func TestActiveWorkEvidenceMergePreservesPriorityAndHook(t *testing.T) {
 		t.Fatalf("merged evidence = %+v", evidence)
 	}
 }
+
+func TestAssessAgentRecordFailsClosedOnLookupUncertainty(t *testing.T) {
+	tests := []struct {
+		name        string
+		agentIssue  *beads.Issue
+		fields      *beads.AgentFields
+		err         error
+		wantBlocker string
+	}{
+		{name: "present agent bead is safe", agentIssue: &beads.Issue{ID: "gt-agent"}, fields: &beads.AgentFields{}},
+		{name: "missing agent bead blocks", wantBlocker: "agent_bead=gt-agent status=missing"},
+		{name: "lookup error blocks", err: errors.New("bd failed"), wantBlocker: "agent_bead=gt-agent status=lookup_error"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := AssessAgentRecord("gt-agent", tt.agentIssue, tt.fields, tt.err)
+			if tt.wantBlocker == "" {
+				if got.BlocksCleanup || got.Blocker != "" {
+					t.Fatalf("AssessAgentRecord() = %+v, want no blocker", got)
+				}
+				return
+			}
+			if !got.BlocksCleanup || !got.Protected || !strings.Contains(got.Blocker, tt.wantBlocker) {
+				t.Fatalf("AssessAgentRecord() = %+v, want blocker %q", got, tt.wantBlocker)
+			}
+		})
+	}
+}
