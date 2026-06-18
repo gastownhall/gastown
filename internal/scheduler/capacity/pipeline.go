@@ -1,15 +1,21 @@
 package capacity
 
-import "strings"
+import (
+	"strings"
+
+	"github.com/steveyegge/gastown/internal/workitem"
+)
 
 // PendingBead represents a bead that is scheduled and ready for dispatch evaluation.
 type PendingBead struct {
 	ID              string // Context bead ID (sling context)
 	WorkBeadID      string // The actual work bead ID
 	Title           string
+	IssueType       string
 	TargetRig       string
 	Description     string
 	Labels          []string
+	Ephemeral       bool
 	Context         *SlingContextFields // Parsed sling params from context bead
 	ContextWorkDir  string              // Work dir for the DB where the context was discovered.
 	ContextBeadsDir string              // Resolved .beads dir where the context was discovered.
@@ -81,6 +87,40 @@ func FilterMessagingBeads(beads []PendingBead) ([]PendingBead, int) {
 	return result, removed
 }
 
+func pendingWorkSnapshot(b PendingBead) workitem.Snapshot {
+	id := b.WorkBeadID
+	if id == "" {
+		id = b.ID
+	}
+	return workitem.Snapshot{
+		ID:        id,
+		Title:     b.Title,
+		Type:      b.IssueType,
+		Labels:    b.Labels,
+		Ephemeral: b.Ephemeral,
+	}
+}
+
+// ConcreteWorkAssessment reports whether b is durable polecat work rather than
+// an internal runtime artifact such as a sling context, MR, agent bead, or wisp.
+func ConcreteWorkAssessment(b PendingBead) workitem.Assessment {
+	return workitem.AssessConcrete(pendingWorkSnapshot(b))
+}
+
+// FilterNonConcreteWork removes internal/runtime artifacts from dispatch input.
+func FilterNonConcreteWork(beads []PendingBead) ([]PendingBead, int) {
+	var result []PendingBead
+	removed := 0
+	for _, b := range beads {
+		if !ConcreteWorkAssessment(b).Concrete {
+			removed++
+			continue
+		}
+		result = append(result, b)
+	}
+	return result, removed
+}
+
 // DispatchPlan is the output of PlanDispatch — what to dispatch and why.
 type DispatchPlan struct {
 	ToDispatch []PendingBead
@@ -128,23 +168,21 @@ func BlockerAware(readyIDs map[string]bool) ReadinessFilter {
 // batchSize: max beads per cycle.
 // ready: beads that passed readiness filtering.
 //
-// Messaging-labeled beads (gt:message / gt:handoff / gt:merge-request) are
-// filtered out defensively before any capacity math runs. They are inter-agent
-// communication artifacts and never dispatchable work; if any survived earlier
-// filtering they must not reach a polecat (gt-el4).
+// Internal/runtime artifacts are filtered out defensively before any capacity
+// math runs. If any survived earlier filtering they must not reach a polecat.
 func PlanDispatch(availableCapacity, batchSize int, ready []PendingBead) DispatchPlan {
-	ready, msgSkipped := FilterMessagingBeads(ready)
+	ready, nonWorkSkipped := FilterNonConcreteWork(ready)
 
 	if len(ready) == 0 {
-		if msgSkipped > 0 {
-			return DispatchPlan{Skipped: msgSkipped, Reason: "messaging-filtered"}
+		if nonWorkSkipped > 0 {
+			return DispatchPlan{Skipped: nonWorkSkipped, Reason: "non-work-filtered"}
 		}
 		return DispatchPlan{Reason: "none"}
 	}
 
 	if availableCapacity <= 0 {
 		return DispatchPlan{
-			Skipped: len(ready) + msgSkipped,
+			Skipped: len(ready) + nonWorkSkipped,
 			Reason:  "capacity",
 		}
 	}
@@ -166,9 +204,9 @@ func PlanDispatch(availableCapacity, batchSize int, ready []PendingBead) Dispatc
 		reason = "ready"
 	}
 
-	skipped := len(ready) - toDispatch + msgSkipped
-	if msgSkipped > 0 {
-		reason = reason + "+messaging-filtered"
+	skipped := len(ready) - toDispatch + nonWorkSkipped
+	if nonWorkSkipped > 0 {
+		reason = reason + "+non-work-filtered"
 	}
 
 	return DispatchPlan{

@@ -24,6 +24,7 @@ type SlotReuseInput struct {
 	GitCheckFailedReason string
 	ActiveMR             string
 	ActiveMRBlocker      string
+	ActiveMRMalformed    bool
 	MQCheckRequired      bool
 	HasSubmittableWork   bool
 	MQNotRequired        bool
@@ -57,6 +58,7 @@ func DecideSlotReuse(in SlotReuseInput) SlotReuseDecision {
 		GitCheckFailedReason: in.GitCheckFailedReason,
 		ActiveMR:             in.ActiveMR,
 		ActiveMRBlocker:      in.ActiveMRBlocker,
+		ActiveMRMalformed:    in.ActiveMRMalformed,
 		MQCheckRequired:      in.MQCheckRequired,
 		HasSubmittableWork:   in.HasSubmittableWork,
 		MQNotRequired:        in.MQNotRequired,

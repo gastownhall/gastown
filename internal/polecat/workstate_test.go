@@ -43,6 +43,16 @@ func TestDecideWorkstateCanonicalFields(t *testing.T) {
 			in:   WorkstateInput{State: StateWorking, CleanupStatus: CleanupClean},
 			want: WorkstateDisposition{Verdict: WorkstateVerdictWorking, Reason: "not-idle", NeedsRecovery: false, CountsTowardCapacity: true},
 		},
+		{
+			name: "idle malformed active mr needs recovery",
+			in:   WorkstateInput{State: StateIdle, CleanupStatus: CleanupClean, ActiveMR: "gt-mr", ActiveMRBlocker: "active_mr=gt-mr source_issue=<missing> reconcile_needed=malformed_source", ActiveMRMalformed: true},
+			want: WorkstateDisposition{Verdict: WorkstateVerdictNeedsRecovery, Reason: "active-mr-malformed", NeedsRecovery: true, CountsTowardCapacity: true, ReuseStatus: "idle-recovery-needed"},
+		},
+		{
+			name: "working malformed active mr needs recovery",
+			in:   WorkstateInput{State: StateWorking, CleanupStatus: CleanupClean, ActiveMR: "gt-mr", ActiveMRBlocker: "active_mr=gt-mr source_issue=<missing> reconcile_needed=malformed_source", ActiveMRMalformed: true},
+			want: WorkstateDisposition{Verdict: WorkstateVerdictNeedsRecovery, Reason: "active-mr-malformed", NeedsRecovery: true, CountsTowardCapacity: true, ReuseStatus: "idle-recovery-needed"},
+		},
 	}
 
 	for _, tt := range tests {

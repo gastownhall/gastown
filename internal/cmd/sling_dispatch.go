@@ -131,6 +131,10 @@ func executeSling(params SlingParams) (*SlingResult, error) {
 		result.ErrMsg = err.Error()
 		return result, fmt.Errorf("could not get bead info: %w", err)
 	}
+	if err := validateConcreteWorkBeadInfo(params.BeadID, info); err != nil {
+		result.ErrMsg = err.Error()
+		return result, err
+	}
 
 	// Guard against dispatching closed/tombstone beads (defense-in-depth).
 	// Not bypassed by --force — if you need to re-dispatch, reopen the bead first.

@@ -24,6 +24,7 @@ import (
 	"github.com/steveyegge/gastown/internal/mail"
 	"github.com/steveyegge/gastown/internal/rig"
 	"github.com/steveyegge/gastown/internal/util"
+	"github.com/steveyegge/gastown/internal/workitem"
 )
 
 // shortSHA returns at most 8 characters of a SHA for display.
@@ -235,7 +236,7 @@ type MRInfo struct {
 type MRAnomaly struct {
 	ID       string        `json:"id"`
 	Branch   string        `json:"branch"`
-	Type     string        `json:"type"` // stale-claim | orphaned-branch
+	Type     string        `json:"type"` // stale-claim | orphaned-branch | malformed-source
 	Assignee string        `json:"assignee,omitempty"`
 	Age      time.Duration `json:"age,omitempty"`
 	Detail   string        `json:"detail"`
@@ -1734,6 +1735,29 @@ func (e *Engineer) firstOpenBlocker(issue *beads.Issue) string {
 	return ""
 }
 
+func (e *Engineer) assessMRSourceIssue(sourceIssue string) (workitem.Assessment, error) {
+	if strings.TrimSpace(sourceIssue) == "" {
+		return workitem.AssessConcrete(workitem.Snapshot{}), nil
+	}
+	issue, err := e.beads.Show(sourceIssue)
+	if err != nil {
+		if errors.Is(err, beads.ErrNotFound) {
+			return workitem.Assessment{Reason: "source-missing"}, nil
+		}
+		return workitem.Assessment{}, err
+	}
+	if issue == nil {
+		return workitem.Assessment{Reason: "source-missing"}, nil
+	}
+	return workitem.AssessConcrete(workitem.Snapshot{
+		ID:        issue.ID,
+		Title:     issue.Title,
+		Type:      issue.Type,
+		Labels:    issue.Labels,
+		Ephemeral: issue.Ephemeral,
+	}), nil
+}
+
 // ListReadyMRs returns MRs that are ready for processing:
 // - Not claimed by another worker (checked via assignee field)
 // - Not blocked by an open task (checked via firstOpenBlocker)
@@ -1783,6 +1807,12 @@ func (e *Engineer) ListReadyMRs() ([]*MRInfo, error) {
 
 		// Filter by rig — wisps are shared across all rigs (GH#2718).
 		if fields.Rig != "" && !strings.EqualFold(fields.Rig, e.rig.Name) {
+			continue
+		}
+		if sourceAssessment, sourceErr := e.assessMRSourceIssue(fields.SourceIssue); sourceErr != nil {
+			return nil, fmt.Errorf("validating MR %s source_issue %s: %w", issue.ID, fields.SourceIssue, sourceErr)
+		} else if !sourceAssessment.Concrete {
+			_, _ = fmt.Fprintf(e.output, "[Engineer] Skipping MR %s: invalid source_issue %q (%s)\n", issue.ID, fields.SourceIssue, sourceAssessment.Reason)
 			continue
 		}
 
@@ -1921,7 +1951,7 @@ func (e *Engineer) ListQueueAnomalies(now time.Time) ([]*MRAnomaly, error) {
 		filtered = append(filtered, issue)
 	}
 
-	return detectQueueAnomalies(filtered, now, e.config.StaleClaimWarningAfter, func(branch string) (bool, bool, error) {
+	anomalies := detectQueueAnomalies(filtered, now, e.config.StaleClaimWarningAfter, func(branch string) (bool, bool, error) {
 		localExists, err := e.git.BranchExists(branch)
 		if err != nil {
 			return false, false, err
@@ -1931,7 +1961,24 @@ func (e *Engineer) ListQueueAnomalies(now time.Time) ([]*MRAnomaly, error) {
 			return false, false, err
 		}
 		return localExists, remoteTrackingExists, nil
-	}), nil
+	})
+	for _, issue := range filtered {
+		fields := beads.ParseMRFields(issue)
+		if fields == nil {
+			continue
+		}
+		assessment, sourceErr := e.assessMRSourceIssue(fields.SourceIssue)
+		if sourceErr != nil || assessment.Concrete {
+			continue
+		}
+		anomalies = append(anomalies, &MRAnomaly{
+			ID:     issue.ID,
+			Branch: fields.Branch,
+			Type:   "malformed-source",
+			Detail: fmt.Sprintf("MR source_issue %q is not concrete work (%s); reconcile before processing", fields.SourceIssue, assessment.Reason),
+		})
+	}
+	return anomalies, nil
 }
 
 func detectQueueAnomalies(

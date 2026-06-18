@@ -276,6 +276,30 @@ func TestFilterMessagingBeads(t *testing.T) {
 	}
 }
 
+func TestFilterNonConcreteWork(t *testing.T) {
+	candidates := []PendingBead{
+		{ID: "ctx-1", WorkBeadID: "gt-1", IssueType: "task", Labels: []string{"area/dog"}},
+		{ID: "ctx-2", WorkBeadID: "gt-ctx", IssueType: "task", Labels: []string{"gt:sling-context"}},
+		{ID: "ctx-3", WorkBeadID: "gt-wisp-abc", IssueType: "task"},
+		{ID: "ctx-4", WorkBeadID: "gt-agent", IssueType: "agent"},
+		{ID: "ctx-5", WorkBeadID: "gt-eph", IssueType: "task", Ephemeral: true},
+		{ID: "ctx-6", WorkBeadID: "gt-2", IssueType: "bug"},
+	}
+
+	kept, removed := FilterNonConcreteWork(candidates)
+	if removed != 4 {
+		t.Fatalf("removed = %d, want 4", removed)
+	}
+	if len(kept) != 2 {
+		t.Fatalf("kept = %d, want 2", len(kept))
+	}
+	for _, b := range kept {
+		if !ConcreteWorkAssessment(b).Concrete {
+			t.Fatalf("kept non-concrete bead %+v", b)
+		}
+	}
+}
+
 func TestPlanDispatch_FiltersMessagingBeads(t *testing.T) {
 	// Mix 3 messaging-labeled beads and 2 plain work beads. PlanDispatch must
 	// keep only the 2 plain beads; Skipped must reflect the 3 messaging skips.
@@ -293,8 +317,8 @@ func TestPlanDispatch_FiltersMessagingBeads(t *testing.T) {
 	if plan.Skipped < 3 {
 		t.Errorf("Skipped = %d, want >= 3 (messaging skips)", plan.Skipped)
 	}
-	if !strings.Contains(plan.Reason, "messaging-filtered") {
-		t.Errorf("Reason = %q, want to contain %q", plan.Reason, "messaging-filtered")
+	if !strings.Contains(plan.Reason, "non-work-filtered") {
+		t.Errorf("Reason = %q, want to contain %q", plan.Reason, "non-work-filtered")
 	}
 	for _, b := range plan.ToDispatch {
 		if IsMessagingBead(b.Labels) {
@@ -315,8 +339,8 @@ func TestPlanDispatch_OnlyMessagingBeads(t *testing.T) {
 	if plan.Skipped != 2 {
 		t.Errorf("Skipped = %d, want 2", plan.Skipped)
 	}
-	if plan.Reason != "messaging-filtered" {
-		t.Errorf("Reason = %q, want %q", plan.Reason, "messaging-filtered")
+	if plan.Reason != "non-work-filtered" {
+		t.Errorf("Reason = %q, want %q", plan.Reason, "non-work-filtered")
 	}
 }
 

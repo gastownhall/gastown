@@ -1,8 +1,11 @@
 package cmd
 
 import (
+	"errors"
 	"testing"
 	"time"
+
+	"github.com/steveyegge/gastown/internal/scheduler/capacity"
 )
 
 func TestShouldFireCrossRigEscalation_Debounces(t *testing.T) {
@@ -43,5 +46,25 @@ func TestShouldFireCrossRigEscalation_KeyedByRigAndPrefix(t *testing.T) {
 	// Same (rig, prefix) repeats — debounced.
 	if shouldFireCrossRigEscalation("walletui", "hq", now.Add(time.Minute)) {
 		t.Fatalf("walletui/hq repeat must not fire")
+	}
+}
+
+func TestValidatePendingBeadForDispatchRejectsNonConcreteWork(t *testing.T) {
+	bad := capacity.PendingBead{
+		ID:         "ctx-1",
+		WorkBeadID: "gt-wisp-abc",
+		IssueType:  "task",
+		Ephemeral:  true,
+	}
+	err := validatePendingBeadForDispatch("", bad, false)
+	if !errors.Is(err, errNonConcreteWorkBead) {
+		t.Fatalf("validatePendingBeadForDispatch error = %v, want errNonConcreteWorkBead", err)
+	}
+}
+
+func TestConcreteWorkAssessmentForScheduledBeadInfo(t *testing.T) {
+	info := beadStatusInfo{Status: "open", IssueType: "task", Labels: []string{"gt:sling-context"}, Ephemeral: true}
+	if got := concreteWorkAssessment("gt-wisp-ctx", info); got.Concrete {
+		t.Fatalf("concreteWorkAssessment = concrete, want non-concrete")
 	}
 }

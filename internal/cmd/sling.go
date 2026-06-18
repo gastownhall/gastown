@@ -613,6 +613,11 @@ func runSling(cmd *cobra.Command, args []string) (retErr error) {
 	if err != nil {
 		return fmt.Errorf("checking bead status: %w", err)
 	}
+	if len(args) > 1 && isPolecatWorkTarget(args[1]) {
+		if err := validateConcreteWorkBeadInfo(beadID, info); err != nil {
+			return err
+		}
+	}
 
 	// Guard against slinging beads with flag-like titles (gt-e0kx5).
 	// These are garbage beads created by flag-parsing bugs. Slinging them

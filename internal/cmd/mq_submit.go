@@ -213,13 +213,15 @@ func runMqSubmit(cmd *cobra.Command, args []string) error {
 	// Always try to fetch source issue (needed for both priority and dep check)
 	sourceIssue, err = bd.Show(issueID)
 	if err != nil {
-		if mqSubmitPriority < 0 {
-			priority = 2
-		}
+		return fmt.Errorf("source issue validation failed: source_issue %s could not be resolved: %w", issueID, err)
+	}
+	if err := validateConcreteSourceIssue(issueID, sourceIssue); err != nil {
+		return fmt.Errorf("source issue validation failed: %w", err)
+	}
+	if mqSubmitPriority < 0 {
+		priority = sourceIssue.Priority
 	} else {
-		if mqSubmitPriority < 0 {
-			priority = sourceIssue.Priority
-		}
+		priority = mqSubmitPriority
 	}
 
 	// Enforce molecule step dependencies before allowing submit.
@@ -271,6 +273,9 @@ func runMqSubmit(cmd *cobra.Command, args []string) error {
 	}
 
 	if existingMR != nil {
+		if err := validateMergeRequestSource(bd, existingMR, issueID); err != nil {
+			return fmt.Errorf("existing merge request validation failed: %w", err)
+		}
 		mrIssue = existingMR
 		fmt.Printf("%s MR already exists (idempotent)\n", style.Bold.Render("✓"))
 	} else {

@@ -25,11 +25,14 @@ func (f fakeActiveMRReader) Show(issueID string) (*beads.Issue, error) {
 
 func TestAssessActiveMR(t *testing.T) {
 	reader := fakeActiveMRReader{issues: map[string]*beads.Issue{
-		"mr-open":        &beads.Issue{ID: "mr-open", Status: "open"},
-		"mr-closed":      &beads.Issue{ID: "mr-closed", Status: "closed"},
-		"mr-with-source": &beads.Issue{ID: "mr-with-source", Status: "closed", Description: "source_issue: gt-closed\n"},
-		"gt-closed":      &beads.Issue{ID: "gt-closed", Status: "closed"},
-		"gt-open":        &beads.Issue{ID: "gt-open", Status: "open"},
+		"mr-open":             &beads.Issue{ID: "mr-open", Status: "open", Description: "source_issue: gt-open\n"},
+		"mr-open-missing-src": &beads.Issue{ID: "mr-open-missing-src", Status: "open", Description: "source_issue: gt-missing\n"},
+		"mr-open-context-src": &beads.Issue{ID: "mr-open-context-src", Status: "open", Description: "source_issue: gt-context\n"},
+		"mr-closed":           &beads.Issue{ID: "mr-closed", Status: "closed"},
+		"mr-with-source":      &beads.Issue{ID: "mr-with-source", Status: "closed", Description: "source_issue: gt-closed\n"},
+		"gt-closed":           &beads.Issue{ID: "gt-closed", Status: "closed"},
+		"gt-open":             &beads.Issue{ID: "gt-open", Status: "open"},
+		"gt-context":          &beads.Issue{ID: "gt-context", Status: "open", Type: "task", Labels: []string{"gt:sling-context"}},
 	}}
 
 	tests := []struct {
@@ -38,14 +41,17 @@ func TestAssessActiveMR(t *testing.T) {
 		input      ActiveMRInput
 		wantPend   bool
 		wantSource string
+		wantBad    bool
 	}{
 		{name: "empty active MR is not pending", reader: reader, input: ActiveMRInput{}, wantPend: false},
 		{name: "open MR is pending", reader: reader, input: ActiveMRInput{ActiveMR: "mr-open", SourceIssueHint: "gt-closed"}, wantPend: true},
+		{name: "open MR with missing source is malformed", reader: reader, input: ActiveMRInput{ActiveMR: "mr-open-missing-src"}, wantPend: true, wantSource: "gt-missing", wantBad: true},
+		{name: "open MR with non-concrete source is malformed", reader: reader, input: ActiveMRInput{ActiveMR: "mr-open-context-src"}, wantPend: true, wantSource: "gt-context", wantBad: true},
 		{name: "closed MR with terminal source is stale", reader: reader, input: ActiveMRInput{ActiveMR: "mr-closed", SourceIssueHint: "gt-closed"}, wantPend: false, wantSource: "gt-closed"},
-		{name: "closed MR with unknown source is pending", reader: reader, input: ActiveMRInput{ActiveMR: "mr-closed"}, wantPend: true},
+		{name: "closed MR with unknown source is malformed", reader: reader, input: ActiveMRInput{ActiveMR: "mr-closed"}, wantPend: true, wantBad: true},
 		{name: "closed MR with open source is pending", reader: reader, input: ActiveMRInput{ActiveMR: "mr-closed", SourceIssueHint: "gt-open"}, wantPend: true, wantSource: "gt-open"},
 		{name: "missing MR with terminal source is stale", reader: reader, input: ActiveMRInput{ActiveMR: "mr-missing", SourceIssueHint: "gt-closed"}, wantPend: false, wantSource: "gt-closed"},
-		{name: "missing MR with missing source is pending", reader: reader, input: ActiveMRInput{ActiveMR: "mr-missing", SourceIssueHint: "gt-missing"}, wantPend: true, wantSource: "gt-missing"},
+		{name: "missing MR with missing source is malformed", reader: reader, input: ActiveMRInput{ActiveMR: "mr-missing", SourceIssueHint: "gt-missing"}, wantPend: true, wantSource: "gt-missing", wantBad: true},
 		{name: "terminal MR source wins from description", reader: reader, input: ActiveMRInput{ActiveMR: "mr-with-source"}, wantPend: false, wantSource: "gt-closed"},
 		{name: "nil reader fails closed", reader: nil, input: ActiveMRInput{ActiveMR: "mr-closed", SourceIssueHint: "gt-closed"}, wantPend: true},
 		{name: "git unsafe fails closed when required", reader: reader, input: ActiveMRInput{ActiveMR: "mr-closed", SourceIssueHint: "gt-closed", RequireGitSafe: true}, wantPend: true, wantSource: "gt-closed"},
@@ -60,6 +66,9 @@ func TestAssessActiveMR(t *testing.T) {
 			}
 			if tt.wantSource != "" && got.SourceIssue != tt.wantSource {
 				t.Fatalf("SourceIssue = %q, want %q", got.SourceIssue, tt.wantSource)
+			}
+			if got.SourceMalformed != tt.wantBad {
+				t.Fatalf("SourceMalformed = %v, want %v (reason %q)", got.SourceMalformed, tt.wantBad, got.Reason)
 			}
 		})
 	}
@@ -77,5 +86,7 @@ func TestAssessActiveMRLookupErrorsFailClosed(t *testing.T) {
 	reader.issues["mr-closed"] = &beads.Issue{ID: "mr-closed", Status: "closed"}
 	if got := AssessActiveMR(reader, ActiveMRInput{ActiveMR: "mr-closed", SourceIssueHint: "gt-error"}); !got.Pending {
 		t.Fatalf("source lookup error Pending = false, want true")
+	} else if got.SourceMalformed {
+		t.Fatalf("source lookup error SourceMalformed = true, want false")
 	}
 }

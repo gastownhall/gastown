@@ -26,6 +26,7 @@ import (
 	"github.com/steveyegge/gastown/internal/style"
 	"github.com/steveyegge/gastown/internal/telemetry"
 	"github.com/steveyegge/gastown/internal/tmux"
+	"github.com/steveyegge/gastown/internal/workitem"
 	"github.com/steveyegge/gastown/internal/workspace"
 )
 
@@ -99,6 +100,106 @@ type beadInfo struct {
 	Labels       []string         `json:"labels,omitempty"`
 	Dependencies []beads.IssueDep `json:"dependencies,omitempty"`
 	IssueType    string           `json:"issue_type,omitempty"`
+	Ephemeral    bool             `json:"ephemeral,omitempty"`
+}
+
+func workSnapshotFromBeadInfo(beadID string, info *beadInfo) workitem.Snapshot {
+	if info == nil {
+		return workitem.Snapshot{ID: beadID}
+	}
+	return workitem.Snapshot{
+		ID:        beadID,
+		Title:     info.Title,
+		Type:      info.IssueType,
+		Labels:    info.Labels,
+		Ephemeral: info.Ephemeral,
+	}
+}
+
+func workSnapshotFromIssue(issue *beads.Issue) workitem.Snapshot {
+	if issue == nil {
+		return workitem.Snapshot{}
+	}
+	return workitem.Snapshot{
+		ID:        issue.ID,
+		Title:     issue.Title,
+		Type:      issue.Type,
+		Labels:    issue.Labels,
+		Ephemeral: issue.Ephemeral,
+	}
+}
+
+func validateConcreteWorkBeadInfo(beadID string, info *beadInfo) error {
+	assessment := workitem.AssessConcrete(workSnapshotFromBeadInfo(beadID, info))
+	if assessment.Concrete {
+		return nil
+	}
+	return fmt.Errorf("refusing to dispatch internal artifact %s (%s): expected a concrete work bead", beadID, assessment.Reason)
+}
+
+func validateConcreteSourceIssue(issueID string, issue *beads.Issue) error {
+	assessment := workitem.AssessConcrete(workSnapshotFromIssue(issue))
+	if assessment.Concrete {
+		return nil
+	}
+	if issueID == "" {
+		issueID = "<missing>"
+	}
+	return fmt.Errorf("refusing to create merge request for non-concrete source_issue %s (%s)", issueID, assessment.Reason)
+}
+
+type mrIssueShower interface {
+	Show(issueID string) (*beads.Issue, error)
+}
+
+func validateMergeRequestSource(shower mrIssueShower, mr *beads.Issue, expectedIssueID string) error {
+	if mr == nil {
+		return fmt.Errorf("merge request is missing")
+	}
+	fields := beads.ParseMRFields(mr)
+	if fields == nil || strings.TrimSpace(fields.SourceIssue) == "" {
+		return fmt.Errorf("merge request %s has missing source_issue", mr.ID)
+	}
+	if expectedIssueID != "" && fields.SourceIssue != expectedIssueID {
+		return fmt.Errorf("merge request %s source_issue=%s does not match expected %s", mr.ID, fields.SourceIssue, expectedIssueID)
+	}
+	if shower == nil {
+		return nil
+	}
+	issue, err := shower.Show(fields.SourceIssue)
+	if err != nil {
+		return fmt.Errorf("merge request %s source_issue %s could not be resolved: %w", mr.ID, fields.SourceIssue, err)
+	}
+	return validateConcreteSourceIssue(fields.SourceIssue, issue)
+}
+
+func isPolecatWorkTarget(target string) bool {
+	target = strings.TrimSpace(target)
+	if target == "" {
+		return false
+	}
+	if _, isRig := IsRigName(target); isRig {
+		return true
+	}
+	if isPolecatTarget(target) {
+		return true
+	}
+	parts := strings.Split(target, "/")
+	if len(parts) == 2 {
+		if _, isRig := IsRigName(parts[0]); isRig {
+			switch parts[1] {
+			case "crew", "witness", "refinery", "mayor", "deacon":
+				return false
+			default:
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func isStandalonePolecatWorkFormula(formulaName string) bool {
+	return strings.EqualFold(strings.TrimSpace(formulaName), "mol-polecat-work")
 }
 
 // isDeferredBead checks whether a bead should be rejected from slinging because

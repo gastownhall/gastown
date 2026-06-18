@@ -18,6 +18,7 @@ import (
 	"github.com/steveyegge/gastown/internal/events"
 	"github.com/steveyegge/gastown/internal/scheduler/capacity"
 	"github.com/steveyegge/gastown/internal/style"
+	"github.com/steveyegge/gastown/internal/workitem"
 )
 
 // crossRigEscalationDebounce is the minimum interval between cross-rig prefix
@@ -72,6 +73,8 @@ var fireCrossRigEscalation = func(rig, prefix, beadID string) {
 // maxDispatchFailures is the maximum number of consecutive dispatch failures
 // before a sling context is closed as circuit-broken.
 const maxDispatchFailures = 3
+
+var errNonConcreteWorkBead = errors.New("non-concrete-work-bead")
 
 // dispatchScheduledWork is the main dispatch loop for the capacity scheduler.
 // Called by both `gt scheduler run` and the daemon heartbeat.
@@ -190,7 +193,15 @@ func dispatchScheduledWork(townRoot, actor string, batchOverride int, dryRun boo
 		OnFailure: func(b capacity.PendingBead, err error) {
 			var onSuccessErr *capacity.ErrOnSuccessFailed
 			var admissionErr *polecatCapacityAdmissionError
-			if errors.As(err, &onSuccessErr) {
+			if errors.Is(err, errNonConcreteWorkBead) {
+				fmt.Fprintf(os.Stderr, "%s Dispatch refused for %s: %v\n",
+					style.Warning.Render("⚠"), b.WorkBeadID, err)
+				if closeErr := beadsForPendingContext(townRoot, b).CloseSlingContext(b.ID, "invalid-work-bead"); closeErr != nil {
+					fmt.Fprintf(os.Stderr, "%s Failed to close invalid context %s: %v\n",
+						style.Warning.Render("⚠"), b.ID, closeErr)
+				}
+				return
+			} else if errors.As(err, &onSuccessErr) {
 				// Polecat launched but context close failed — not a true dispatch failure.
 				// Log a distinct warning so operators can distinguish from "polecat never launched".
 				fmt.Fprintf(os.Stderr, "%s Dispatch of %s succeeded but context close failed: %v\n",
@@ -348,6 +359,10 @@ func cleanupStaleContexts(townRoot string) {
 			_ = beadsForContextRecord(ctx).CloseSlingContext(ctx.issue.ID, "invalid-context")
 			continue
 		}
+		if fields.WorkBeadID == "" || fields.TargetRig == "" {
+			_ = beadsForContextRecord(ctx).CloseSlingContext(ctx.issue.ID, "invalid-context")
+			continue
+		}
 		if fields.DispatchFailures >= maxDispatchFailures {
 			_ = beadsForContextRecord(ctx).CloseSlingContext(ctx.issue.ID, "circuit-broken")
 			continue
@@ -379,15 +394,21 @@ func cleanupStaleContexts(townRoot string) {
 		info, found := workBeadInfo[fields.WorkBeadID]
 		if found && (info.Status == "hooked" || info.Status == "closed" || info.Status == "tombstone") {
 			_ = beadsForContextRecord(ctx).CloseSlingContext(ctx.issue.ID, "stale-work-bead")
+			continue
+		}
+		if found && !concreteWorkAssessment(fields.WorkBeadID, info).Concrete {
+			_ = beadsForContextRecord(ctx).CloseSlingContext(ctx.issue.ID, "invalid-work-bead")
 		}
 	}
 }
 
-// beadStatusInfo holds batch-fetched bead status, title, and labels.
+// beadStatusInfo holds batch-fetched bead status, title, labels, and identity.
 type beadStatusInfo struct {
-	Status string
-	Title  string
-	Labels []string
+	Status    string
+	Title     string
+	IssueType string
+	Labels    []string
+	Ephemeral bool
 }
 
 // batchFetchBeadInfoByIDs returns a map of bead ID → status+title+labels for specific beads.
@@ -413,17 +434,21 @@ func batchFetchBeadInfoByIDs(townRoot string, ids []string) map[string]beadStatu
 			continue
 		}
 		var items []struct {
-			ID     string   `json:"id"`
-			Status string   `json:"status"`
-			Title  string   `json:"title"`
-			Labels []string `json:"labels"`
+			ID        string   `json:"id"`
+			Status    string   `json:"status"`
+			Title     string   `json:"title"`
+			IssueType string   `json:"issue_type"`
+			Labels    []string `json:"labels"`
+			Ephemeral bool     `json:"ephemeral"`
 		}
 		if err := json.Unmarshal(out, &items); err == nil {
 			for _, item := range items {
 				result[item.ID] = beadStatusInfo{
-					Status: item.Status,
-					Title:  item.Title,
-					Labels: item.Labels,
+					Status:    item.Status,
+					Title:     item.Title,
+					IssueType: item.IssueType,
+					Labels:    item.Labels,
+					Ephemeral: item.Ephemeral,
 				}
 			}
 		}
@@ -504,6 +529,9 @@ func getReadySlingContexts(townRoot string) ([]capacity.PendingBead, error) {
 		if fields == nil {
 			continue // Skip invalid — cleanupStaleContexts handles these
 		}
+		if fields.WorkBeadID == "" || fields.TargetRig == "" {
+			continue
+		}
 
 		// Circuit breaker filter
 		if fields.DispatchFailures >= maxDispatchFailures {
@@ -524,23 +552,22 @@ func getReadySlingContexts(townRoot string) ([]capacity.PendingBead, error) {
 		}
 		seenWork[fields.WorkBeadID] = true
 
-		// Defensive filter: messaging beads (gt:message / gt:handoff /
-		// gt:merge-request) must never reach a rig polecat. Log the skip so
-		// the gap is observable and operators can chase the upstream cause.
-		workLabels := info.Labels
-		if capacity.IsMessagingBead(workLabels) {
-			fmt.Fprintf(os.Stderr, "%s dispatch_skip reason=messaging_label bead=%s labels=%v\n",
-				style.Dim.Render("○"), fields.WorkBeadID, workLabels)
+		assessment := concreteWorkAssessment(fields.WorkBeadID, info)
+		if !assessment.Concrete {
+			fmt.Fprintf(os.Stderr, "%s dispatch_skip reason=non_concrete_work bead=%s detail=%s labels=%v\n",
+				style.Dim.Render("○"), fields.WorkBeadID, assessment.Reason, info.Labels)
 			continue
 		}
 
 		result = append(result, capacity.PendingBead{
 			ID:              ctx.issue.ID,
 			WorkBeadID:      fields.WorkBeadID,
-			Title:           ctx.issue.Title,
+			Title:           info.Title,
+			IssueType:       info.IssueType,
 			TargetRig:       fields.TargetRig,
 			Description:     ctx.issue.Description,
-			Labels:          workLabels,
+			Labels:          info.Labels,
+			Ephemeral:       info.Ephemeral,
 			Context:         fields,
 			ContextWorkDir:  ctx.workDir,
 			ContextBeadsDir: ctx.beadsDir,
@@ -627,6 +654,13 @@ func validateDryRunDispatchPlan(townRoot string, plan capacity.DispatchPlan) cap
 }
 
 func validatePendingBeadForDispatch(townRoot string, b capacity.PendingBead, escalate bool) error {
+	if assessment := capacity.ConcreteWorkAssessment(b); !assessment.Concrete {
+		fmt.Fprintf(os.Stderr,
+			"%s dispatch_refused reason=non_concrete_work bead=%s detail=%s\n",
+			style.Warning.Render("⚠"), b.WorkBeadID, assessment.Reason)
+		return fmt.Errorf("%w: %s", errNonConcreteWorkBead, assessment.Reason)
+	}
+
 	// Cross-rig prefix guard (gt-el4). A bead whose ID prefix does not match the
 	// target rig's registered prefix must not be dispatched — the polecat would
 	// land in a rig DB that cannot resolve the bead and hang in prime.
@@ -766,4 +800,14 @@ func isScheduledWorkBeadReady(workBeadID string, info beadStatusInfo, found bool
 		return false
 	}
 	return info.Status == "open"
+}
+
+func concreteWorkAssessment(workBeadID string, info beadStatusInfo) workitem.Assessment {
+	return workitem.AssessConcrete(workitem.Snapshot{
+		ID:        workBeadID,
+		Title:     info.Title,
+		Type:      info.IssueType,
+		Labels:    info.Labels,
+		Ephemeral: info.Ephemeral,
+	})
 }

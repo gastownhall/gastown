@@ -29,6 +29,7 @@ type WorkstateInput struct {
 	GitCheckFailedReason           string
 	ActiveMR                       string
 	ActiveMRBlocker                string
+	ActiveMRMalformed              bool
 	MQCheckRequired                bool
 	HasSubmittableWork             bool
 	MQNotRequired                  bool
@@ -55,6 +56,21 @@ type WorkstateDisposition struct {
 
 // DecideWorkstate returns the canonical disposition for a polecat.
 func DecideWorkstate(in WorkstateInput) WorkstateDisposition {
+	if in.ActiveMRMalformed {
+		blocker := in.ActiveMRBlocker
+		if blocker == "" {
+			blocker = "active_mr=" + in.ActiveMR + " reconcile_needed=malformed_source"
+		}
+		return WorkstateDisposition{
+			Verdict:              WorkstateVerdictNeedsRecovery,
+			Reason:               "active-mr-malformed",
+			NeedsRecovery:        true,
+			CountsTowardCapacity: true,
+			ReuseStatus:          "idle-recovery-needed",
+			Blockers:             []string{blocker},
+		}
+	}
+
 	if in.State != StateIdle {
 		verdict := WorkstateVerdictNeedsRecovery
 		needsRecovery := true

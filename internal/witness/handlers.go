@@ -1060,6 +1060,7 @@ func slotOpenDecision(workDir, townRoot, rigName, polecatName, exitType string) 
 		if assessment.Pending {
 			input.ActiveMRBlocker = assessment.Reason
 		}
+		input.ActiveMRMalformed = assessment.SourceMalformed
 		activeMRSafe = !assessment.Pending
 		if assessment.SourceTerminal {
 			sourceTerminal = true

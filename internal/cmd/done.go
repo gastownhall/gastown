@@ -948,6 +948,20 @@ func runDone(cmd *cobra.Command, args []string) (retErr error) {
 
 		// Check for no_merge flag - if set, skip merge queue and notify for review
 		sourceIssueForNoMerge, err := bd.Show(issueID)
+		if err != nil {
+			mrFailed = true
+			errMsg := fmt.Sprintf("source issue validation failed: source_issue %s could not be resolved: %v", issueID, err)
+			doneErrors = append(doneErrors, errMsg)
+			style.PrintWarning("%s\nBranch is pushed but MR bead not created. Witness will be notified.", errMsg)
+			goto notifyWitness
+		}
+		if err := validateConcreteSourceIssue(issueID, sourceIssueForNoMerge); err != nil {
+			mrFailed = true
+			errMsg := fmt.Sprintf("source issue validation failed: %v", err)
+			doneErrors = append(doneErrors, errMsg)
+			style.PrintWarning("%s\nBranch is pushed but MR bead not created. Witness will be notified.", errMsg)
+			goto notifyWitness
+		}
 		if err == nil {
 			attachmentFields := beads.ParseAttachmentFields(sourceIssueForNoMerge)
 			if attachmentFields != nil && attachmentFields.NoMerge {
@@ -1185,12 +1199,7 @@ func runDone(cmd *cobra.Command, args []string) (retErr error) {
 		if donePriority >= 0 {
 			priority = donePriority
 		} else {
-			sourceIssue, err := bd.Show(issueID)
-			if err != nil {
-				priority = 2 // Default
-			} else {
-				priority = sourceIssue.Priority
-			}
+			priority = sourceIssueForNoMerge.Priority
 		}
 
 		// Pre-declare for checkpoint goto (gt-aufru)
@@ -1213,6 +1222,13 @@ func runDone(cmd *cobra.Command, args []string) (retErr error) {
 			if cpMR, cpErr := bd.Show(cpMRID); cpErr == nil && cpMR != nil {
 				branchPrefix := "branch: " + branch + "\n"
 				if strings.HasPrefix(cpMR.Description, branchPrefix) {
+					if err := validateMergeRequestSource(bd, cpMR, issueID); err != nil {
+						mrFailed = true
+						errMsg := fmt.Sprintf("MR checkpoint validation failed: %v", err)
+						doneErrors = append(doneErrors, errMsg)
+						style.PrintWarning("%s\nBranch is pushed but MR checkpoint is malformed. Witness will be notified.", errMsg)
+						goto notifyWitness
+					}
 					mrID = cpMRID
 					fmt.Printf("%s MR already created (resumed from checkpoint: %s)\n", style.Bold.Render("✓"), mrID)
 					goto afterMR
@@ -1235,6 +1251,13 @@ func runDone(cmd *cobra.Command, args []string) (retErr error) {
 		}
 
 		if existingMR != nil {
+			if err := validateMergeRequestSource(bd, existingMR, issueID); err != nil {
+				mrFailed = true
+				errMsg := fmt.Sprintf("existing MR validation failed: %v", err)
+				doneErrors = append(doneErrors, errMsg)
+				style.PrintWarning("%s\nBranch is pushed but existing MR is malformed. Witness will be notified.", errMsg)
+				goto notifyWitness
+			}
 			// MR already exists with same branch AND commit — true idempotent retry
 			mrID = existingMR.ID
 			fmt.Printf("%s MR already exists (idempotent)\n", style.Bold.Render("✓"))

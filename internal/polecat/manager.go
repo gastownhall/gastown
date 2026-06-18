@@ -2249,6 +2249,7 @@ func (m *Manager) workstateInputForPolecat(name string, state State, issue strin
 		if assessment.Pending {
 			input.ActiveMRBlocker = assessment.Reason
 		}
+		input.ActiveMRMalformed = assessment.SourceMalformed
 		activeMRSafe = !assessment.Pending
 		if assessment.SourceTerminal {
 			sourceTerminal = true

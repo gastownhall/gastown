@@ -286,6 +286,9 @@ func runSlingFormula(ctx context.Context, args []string) (err error) {
 	if len(args) > 1 {
 		target = args[1]
 	}
+	if isStandalonePolecatWorkFormula(formulaName) && isPolecatWorkTarget(target) {
+		return fmt.Errorf("refusing standalone %s sling to polecat target %q: use --on <concrete-issue> so the formula attaches to durable work", formulaName, target)
+	}
 	var admission *polecatAdmissionHandle
 	if !slingDryRun && target != "" {
 		admissionRig := ""

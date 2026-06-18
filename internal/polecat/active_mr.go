@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/steveyegge/gastown/internal/beads"
+	"github.com/steveyegge/gastown/internal/workitem"
 )
 
 // IssueReader is the subset of beads lookup needed to classify active_mr.
@@ -25,13 +26,14 @@ type ActiveMRInput struct {
 // reuse, and witness paths. Pending is fail-closed: lookup/source uncertainty
 // remains blocking unless the stale MR and terminal source are both proven.
 type ActiveMRAssessment struct {
-	ActiveMR       string
-	Pending        bool
-	Reason         string
-	MRStatus       string
-	SourceIssue    string
-	SourceTerminal bool
-	Stale          bool
+	ActiveMR        string
+	Pending         bool
+	Reason          string
+	MRStatus        string
+	SourceIssue     string
+	SourceTerminal  bool
+	SourceMalformed bool
+	Stale           bool
 }
 
 // AssessActiveMR returns whether active_mr still represents work pending in the
@@ -62,6 +64,17 @@ func AssessActiveMR(reader IssueReader, in ActiveMRInput) ActiveMRAssessment {
 
 	result.MRStatus = mr.Status
 	if !beads.IssueStatus(mr.Status).IsTerminal() {
+		// Open MRs must carry their own source_issue. Do not let agent hints mask
+		// malformed queue state.
+		result.SourceIssue = sourceIssueFromMR(mr)
+		if sourceStatus := assessActiveMRSource(reader, result.SourceIssue); sourceStatus.malformed {
+			result.SourceMalformed = true
+			result.Reason = fmt.Sprintf("active_mr=%s status=%s %s reconcile_needed=malformed_source", mrID, mr.Status, sourceStatus.reason)
+			return result
+		} else if sourceStatus.lookupBlocked {
+			result.Reason = fmt.Sprintf("active_mr=%s status=%s %s", mrID, mr.Status, sourceStatus.reason)
+			return result
+		}
 		result.Reason = fmt.Sprintf("active_mr=%s status=%s", mrID, mr.Status)
 		return result
 	}
@@ -73,7 +86,13 @@ func assessStaleActiveMR(reader IssueReader, in ActiveMRInput, result ActiveMRAs
 	result.Stale = true
 	sourceIssue := sourceIssueForActiveMR(in.SourceIssueHint, mr)
 	result.SourceIssue = sourceIssue
-	terminal, reason := terminalSourceIssue(reader, sourceIssue)
+	sourceStatus := assessActiveMRSource(reader, sourceIssue)
+	if sourceStatus.malformed {
+		result.SourceMalformed = true
+		result.Reason = fmt.Sprintf("active_mr=%s status=%s %s reconcile_needed=malformed_source", result.ActiveMR, mrStatus, sourceStatus.reason)
+		return result
+	}
+	terminal, reason := sourceStatus.terminal, sourceStatus.reason
 	result.SourceTerminal = terminal
 	if !terminal {
 		result.Reason = fmt.Sprintf("active_mr=%s status=%s %s", result.ActiveMR, mrStatus, reason)
@@ -90,13 +109,21 @@ func assessStaleActiveMR(reader IssueReader, in ActiveMRInput, result ActiveMRAs
 
 func sourceIssueForActiveMR(hint string, mr *beads.Issue) string {
 	if mr != nil {
-		if fields := beads.ParseMRFields(mr); fields != nil {
-			if source := normalizeSourceIssue(fields.SourceIssue); source != "" {
-				return source
-			}
+		if source := sourceIssueFromMR(mr); source != "" {
+			return source
 		}
 	}
 	return normalizeSourceIssue(hint)
+}
+
+func sourceIssueFromMR(mr *beads.Issue) string {
+	if mr == nil {
+		return ""
+	}
+	if fields := beads.ParseMRFields(mr); fields != nil {
+		return normalizeSourceIssue(fields.SourceIssue)
+	}
+	return ""
 }
 
 func normalizeSourceIssue(source string) string {
@@ -107,25 +134,42 @@ func normalizeSourceIssue(source string) string {
 	return source
 }
 
-func terminalSourceIssue(reader IssueReader, sourceIssue string) (bool, string) {
+type activeMRSourceStatus struct {
+	terminal      bool
+	reason        string
+	malformed     bool
+	lookupBlocked bool
+}
+
+func assessActiveMRSource(reader IssueReader, sourceIssue string) activeMRSourceStatus {
 	if sourceIssue == "" {
-		return false, "source_issue=<missing>"
+		return activeMRSourceStatus{reason: "source_issue=<missing>", malformed: true}
 	}
 	if reader == nil {
-		return false, fmt.Sprintf("source_issue=%s source_status=unverified", sourceIssue)
+		return activeMRSourceStatus{reason: fmt.Sprintf("source_issue=%s source_status=unverified", sourceIssue), lookupBlocked: true}
 	}
 	issue, err := reader.Show(sourceIssue)
 	if err != nil {
 		if errors.Is(err, beads.ErrNotFound) {
-			return false, fmt.Sprintf("source_issue=%s source_status=missing", sourceIssue)
+			return activeMRSourceStatus{reason: fmt.Sprintf("source_issue=%s source_status=missing", sourceIssue), malformed: true}
 		}
-		return false, fmt.Sprintf("source_issue=%s source_status=lookup_error: %v", sourceIssue, err)
+		return activeMRSourceStatus{reason: fmt.Sprintf("source_issue=%s source_status=lookup_error: %v", sourceIssue, err), lookupBlocked: true}
 	}
 	if issue == nil {
-		return false, fmt.Sprintf("source_issue=%s source_status=missing", sourceIssue)
+		return activeMRSourceStatus{reason: fmt.Sprintf("source_issue=%s source_status=missing", sourceIssue), malformed: true}
+	}
+	assessment := workitem.AssessConcrete(workitem.Snapshot{
+		ID:        issue.ID,
+		Title:     issue.Title,
+		Type:      issue.Type,
+		Labels:    issue.Labels,
+		Ephemeral: issue.Ephemeral,
+	})
+	if !assessment.Concrete {
+		return activeMRSourceStatus{reason: fmt.Sprintf("source_issue=%s source_status=non_concrete:%s", sourceIssue, assessment.Reason), malformed: true}
 	}
 	if beads.IssueStatus(issue.Status).IsTerminal() {
-		return true, ""
+		return activeMRSourceStatus{terminal: true}
 	}
-	return false, fmt.Sprintf("source_issue=%s source_status=%s", sourceIssue, issue.Status)
+	return activeMRSourceStatus{reason: fmt.Sprintf("source_issue=%s source_status=%s", sourceIssue, issue.Status)}
 }

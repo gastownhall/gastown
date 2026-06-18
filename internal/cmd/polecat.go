@@ -1127,6 +1127,7 @@ func runPolecatCheckRecovery(cmd *cobra.Command, args []string) error {
 			if activeMRAssessment.Pending {
 				input.ActiveMRBlocker = activeMRAssessment.Reason
 			}
+			input.ActiveMRMalformed = activeMRAssessment.SourceMalformed
 		}
 		input.PartialSpawnWithoutDurableHook = partialSpawn
 		if blocker := cleanupStatusBlockerForRecovery(input.CleanupStatus, partialSpawn); blocker == "" && !input.CleanupStatus.IsSafe() {

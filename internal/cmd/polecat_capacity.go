@@ -249,6 +249,11 @@ func applyAgentFieldsToCapacitySnapshot(snapshot *polecatCapacitySnapshot, rigPa
 
 	state := strings.TrimSpace(fields.AgentState)
 	if state == "working" || state == "spawning" {
+		if fields.HookBead == "" && fields.ActiveMR != "" {
+			if applyCanonicalCapacitySnapshot(snapshot, rigPath, rigName, polecatName, fields, tmuxClient) {
+				return
+			}
+		}
 		if running {
 			snapshot.Working++
 		} else {
