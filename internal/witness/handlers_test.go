@@ -860,6 +860,51 @@ func TestCleanupWispHelpersUseActiveRigWorkDir(t *testing.T) {
 	assertMockWorkDirs(t, mock, rigWorkDir)
 }
 
+func TestHandleZombieRestartDuplicateCloseUsesActiveRigWorkDir(t *testing.T) {
+	oldVerify := verifyBranchAlreadyMerged
+	verifyBranchAlreadyMerged = func(workDir, rigName, polecatName string) (bool, error) {
+		return false, nil
+	}
+	t.Cleanup(func() { verifyBranchAlreadyMerged = oldVerify })
+
+	townRoot, rigWorkDir := setupCleanupWispRoutingTown(t, "gastown")
+	listCalls := 0
+	bd, mock := mockBd(
+		func(args []string) (string, error) {
+			switch args[0] {
+			case "list":
+				listCalls++
+				if listCalls == 1 {
+					return "[]", nil
+				}
+				return `[{"id":"gt-wisp-aaa"},{"id":"gt-wisp-bbb"}]`, nil
+			case "create":
+				return `{"id":"gt-wisp-bbb"}`, nil
+			case "close":
+				return "{}", nil
+			}
+			return "[]", nil
+		},
+		func(args []string) error { return nil },
+	)
+
+	z := &ZombieResult{PolecatName: "nux", HookBead: "gt-src"}
+	handleZombieRestart(bd, townRoot, "gastown", "nux", "gt-src", "has_unpushed", z)
+
+	closed := false
+	for i, call := range mock.calls {
+		if strings.HasPrefix(call, "close ") {
+			closed = true
+			if filepath.Clean(mock.workDirs[i]) != filepath.Clean(rigWorkDir) {
+				t.Fatalf("close workDir = %q, want %q", mock.workDirs[i], rigWorkDir)
+			}
+		}
+	}
+	if !closed {
+		t.Fatalf("expected duplicate close call, calls=%v action=%q", mock.calls, z.Action)
+	}
+}
+
 func setupActiveMRGitSafeWorkDir(t *testing.T, rigName, polecatName string) string {
 	t.Helper()
 	townRoot := t.TempDir()
