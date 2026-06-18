@@ -228,7 +228,9 @@ func runPrime(cmd *cobra.Command, args []string) (retErr error) {
 	}
 	explain(hasSlungWork, "Autonomous mode: hooked/in-progress work detected")
 
-	outputMoleculeContext(ctx)
+	if !hasSlungWork {
+		outputMoleculeContext(ctx)
+	}
 	outputCheckpointContext(ctx)
 	runPrimeExternalTools(ctx, cwd)
 
@@ -688,10 +690,11 @@ func checkSlungWork(ctx RoleContext, hookedBead *beads.Issue) (bool, error) {
 		return false, nil
 	}
 
-	attachment := beads.ParseAttachmentFields(hookedBead)
+	attachment := workflowAttachmentForHookedBead(hookedBead)
 	hasWorkflow := hasWorkflowAttachment(attachment)
+	isPatrol := hasWorkflow && isPatrolFormula(attachment.AttachedFormula)
 
-	outputAutonomousDirective(ctx, hookedBead, hasWorkflow)
+	outputAutonomousDirective(ctx, hookedBead, hasWorkflow, isPatrol)
 	outputHookedBeadDetails(hookedBead)
 
 	if hasWorkflow {
@@ -903,7 +906,7 @@ func rigBeadsRoot(ctx RoleContext) string {
 }
 
 // outputAutonomousDirective displays the AUTONOMOUS WORK MODE header and instructions.
-func outputAutonomousDirective(ctx RoleContext, hookedBead *beads.Issue, hasMolecule bool) {
+func outputAutonomousDirective(ctx RoleContext, hookedBead *beads.Issue, hasMolecule, isPatrol bool) {
 	roleAnnounce := buildRoleAnnouncement(ctx)
 
 	fmt.Println()
@@ -921,9 +924,15 @@ func outputAutonomousDirective(ctx RoleContext, hookedBead *beads.Issue, hasMole
 	fmt.Println("1. Announce: \"" + roleAnnounce + "\" (ONE line, no elaboration)")
 
 	if hasMolecule {
-		fmt.Println("2. This bead has an ATTACHED MOLECULE (formula workflow)")
-		fmt.Println("3. Work through molecule steps in order - see CURRENT STEP below")
-		fmt.Println("4. Close each step with `bd close <step-id>`, then check `bd mol current` for next step")
+		if isPatrol {
+			fmt.Println("2. This hook is a patrol workflow")
+			fmt.Println("3. Continue the patrol steps shown below")
+			fmt.Println("4. At cycle end, report or hand off exactly as the patrol formula instructs")
+		} else {
+			fmt.Println("2. This bead has an ATTACHED MOLECULE (formula workflow)")
+			fmt.Println("3. Work through molecule steps in order - see CURRENT STEP below")
+			fmt.Println("4. Close each step with `bd close <step-id>`, then check `bd mol current` for next step")
+		}
 	} else {
 		fmt.Printf("2. Then IMMEDIATELY run: `bd show %s`\n", hookedBead.ID)
 		fmt.Println("3. Begin execution - no waiting for user input")
@@ -944,7 +953,11 @@ func outputAutonomousDirective(ctx RoleContext, hookedBead *beads.Issue, hasMole
 	fmt.Println("- Describe what you're going to do")
 	fmt.Println("- Check mail first (hook takes priority)")
 	if hasMolecule {
-		fmt.Println("- Skip molecule steps or work on the base bead directly")
+		if isPatrol {
+			fmt.Println("- Skip patrol steps or restart the patrol without evidence")
+		} else {
+			fmt.Println("- Skip molecule steps or work on the base bead directly")
+		}
 	}
 	if ctx.Role == RolePolecat {
 		fmt.Printf("- Sit idle after committing (run `%s done`)\n", cli.Name())
@@ -1002,10 +1015,7 @@ func outputMoleculeWorkflow(ctx RoleContext, attachment *beads.AttachmentFields)
 	// Show inline formula steps from the embedded binary (root-only: no child wisps to query).
 	if attachment.AttachedFormula != "" {
 		showFormulaStepsFull(attachment.AttachedFormula, ctx.TownRoot, ctx.Rig, attachmentFormulaVars(attachment))
-		fmt.Println()
-		fmt.Printf("%s\n", style.Bold.Render("Work through ALL steps above, including submit and cleanup."))
-		fmt.Println("The base bead is your assignment. The formula steps define your workflow.")
-		fmt.Printf("\n%s\n", style.Bold.Render("REQUIRED: When all steps complete, run `"+cli.Name()+" done` to submit to the merge queue. Do NOT stop after implementation — the formula has submit steps you must follow."))
+		outputWorkflowCompletionDirective(attachment.AttachedFormula)
 		return nil
 	}
 
@@ -1015,6 +1025,18 @@ func outputMoleculeWorkflow(ctx RoleContext, attachment *beads.AttachmentFields)
 	fmt.Printf("%s\n", style.Bold.Render("Follow the molecule steps above, NOT the base bead."))
 	fmt.Println("The base bead is just a container. The molecule steps define your workflow.")
 	return nil
+}
+
+func outputWorkflowCompletionDirective(formulaName string) {
+	fmt.Println()
+	if isPatrolFormula(formulaName) {
+		fmt.Printf("%s\n", style.Bold.Render("Continue the patrol workflow above."))
+		fmt.Println("At cycle end, report or hand off exactly as the patrol formula instructs.")
+		return
+	}
+	fmt.Printf("%s\n", style.Bold.Render("Work through ALL steps above, including submit and cleanup."))
+	fmt.Println("The base bead is your assignment. The formula steps define your workflow.")
+	fmt.Printf("\n%s\n", style.Bold.Render("REQUIRED: When all steps complete, run `"+cli.Name()+" done` to submit to the merge queue. Do NOT stop after implementation — the formula has submit steps you must follow."))
 }
 
 const ralphLoopPluginID = "ralph-loop@claude-plugins-official"

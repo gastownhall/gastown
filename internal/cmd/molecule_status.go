@@ -496,8 +496,8 @@ func runMoleculeStatus(cmd *cobra.Command, args []string) error {
 		status.HasWork = true
 		status.PinnedBead = hookBead
 
-		// Check for attached molecule
-		attachment := beads.ParseAttachmentFields(hookBead)
+		// Check for attached molecule or a legacy root-only patrol wisp.
+		attachment := workflowAttachmentForHookedBead(hookBead)
 		if attachment != nil {
 			status.AttachedMolecule = attachment.AttachedMolecule
 			status.AttachedFormula = attachment.AttachedFormula

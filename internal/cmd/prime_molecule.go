@@ -247,6 +247,47 @@ func attachmentFormulaVars(attachment *beads.AttachmentFields) []string {
 	return vars
 }
 
+func workflowAttachmentForHookedBead(issue *beads.Issue) *beads.AttachmentFields {
+	attachment := beads.ParseAttachmentFields(issue)
+	if hasWorkflowAttachment(attachment) {
+		return attachment
+	}
+	formula := patrolFormulaFromMoleculeTitle(issue)
+	if formula == "" {
+		return attachment
+	}
+	if attachment == nil {
+		attachment = &beads.AttachmentFields{}
+	} else {
+		copied := *attachment
+		attachment = &copied
+	}
+	attachment.AttachedFormula = formula
+	return attachment
+}
+
+func patrolFormulaFromMoleculeTitle(issue *beads.Issue) string {
+	if issue == nil || issue.Type != "molecule" {
+		return ""
+	}
+	title := strings.TrimSpace(issue.Title)
+	for _, formula := range constants.PatrolFormulas() {
+		if title == formula || title == formula+" (wisp)" {
+			return formula
+		}
+	}
+	return ""
+}
+
+func isPatrolFormula(formula string) bool {
+	for _, patrolFormula := range constants.PatrolFormulas() {
+		if formula == patrolFormula {
+			return true
+		}
+	}
+	return false
+}
+
 // applyFormulaVars replaces {{key}} placeholders in text with values from varMap.
 func applyFormulaVars(text string, varMap map[string]string) string {
 	for k, v := range varMap {

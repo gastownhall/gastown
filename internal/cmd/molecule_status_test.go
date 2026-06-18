@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/steveyegge/gastown/internal/beads"
+	"github.com/steveyegge/gastown/internal/constants"
 )
 
 func TestOutputMoleculeStatus_StandaloneFormulaShowsVars(t *testing.T) {
@@ -86,5 +87,43 @@ func TestOutputMoleculeStatus_FormulaWispShowsWorkflowContext(t *testing.T) {
 	}
 	if !strings.Contains(output, "Show the workflow steps: gt prime or bd mol current tool-wisp-demo") {
 		t.Fatalf("expected workflow next action, got:\n%s", output)
+	}
+}
+
+func TestOutputMoleculeStatus_PatrolWispUsesInferredWorkflowContext(t *testing.T) {
+	bead := &beads.Issue{
+		ID:    "hq-wisp-refinery",
+		Title: constants.MolRefineryPatrol + " (wisp)",
+		Type:  "molecule",
+	}
+	attachment := workflowAttachmentForHookedBead(bead)
+	if attachment == nil || attachment.AttachedFormula != constants.MolRefineryPatrol {
+		t.Fatalf("workflowAttachmentForHookedBead() = %#v, want %q", attachment, constants.MolRefineryPatrol)
+	}
+
+	status := MoleculeStatusInfo{
+		HasWork:         true,
+		PinnedBead:      bead,
+		AttachedFormula: attachment.AttachedFormula,
+		NextAction:      "Show the workflow steps: gt prime or bd mol current hq-wisp-refinery",
+	}
+
+	oldStdout := os.Stdout
+	r, w, _ := os.Pipe()
+	os.Stdout = w
+
+	outputMoleculeStatus(status)
+
+	w.Close()
+	var buf bytes.Buffer
+	_, _ = io.Copy(&buf, r)
+	os.Stdout = oldStdout
+	output := buf.String()
+
+	if !strings.Contains(output, "📐 Formula: "+constants.MolRefineryPatrol) {
+		t.Fatalf("expected inferred patrol formula in output, got:\n%s", output)
+	}
+	if strings.Contains(output, "No molecule attached") || strings.Contains(output, "Attach a molecule to start work") {
+		t.Fatalf("patrol wisp should not render as naked hooked work, got:\n%s", output)
 	}
 }

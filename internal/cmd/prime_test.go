@@ -919,6 +919,103 @@ func TestCheckSlungWork_StandaloneFormulaUsesWorkflowOutput(t *testing.T) {
 	}
 }
 
+func TestWorkflowAttachmentForHookedBeadInfersKnownPatrolWisp(t *testing.T) {
+	for _, title := range []string{constants.MolRefineryPatrol, constants.MolRefineryPatrol + " (wisp)"} {
+		t.Run(title, func(t *testing.T) {
+			attachment := workflowAttachmentForHookedBead(&beads.Issue{
+				ID:    "gt-wisp-refinery",
+				Title: title,
+				Type:  "molecule",
+			})
+			if attachment == nil || attachment.AttachedFormula != constants.MolRefineryPatrol {
+				t.Fatalf("workflowAttachmentForHookedBead() = %#v, want attached formula %q", attachment, constants.MolRefineryPatrol)
+			}
+		})
+	}
+}
+
+func TestWorkflowAttachmentForHookedBeadRejectsUnsafePatrolTitles(t *testing.T) {
+	cases := []struct {
+		name      string
+		issueType string
+		title     string
+	}{
+		{name: "non molecule", issueType: "task", title: constants.MolRefineryPatrol},
+		{name: "fake patrol", issueType: "molecule", title: "mol-fake-patrol"},
+		{name: "path traversal", issueType: "molecule", title: constants.MolRefineryPatrol + "/../../x"},
+		{name: "extended prefix", issueType: "molecule", title: constants.MolRefineryPatrol + "-extra (wisp)"},
+		{name: "trailing suffix", issueType: "molecule", title: constants.MolRefineryPatrol + " (wisp) trailing"},
+		{name: "digest prefix", issueType: "molecule", title: "Digest: " + constants.MolRefineryPatrol},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			attachment := workflowAttachmentForHookedBead(&beads.Issue{
+				ID:    "gt-wisp-refinery",
+				Title: tc.title,
+				Type:  tc.issueType,
+			})
+			if hasWorkflowAttachment(attachment) {
+				t.Fatalf("workflowAttachmentForHookedBead() inferred %#v for unsafe title %q", attachment, tc.title)
+			}
+		})
+	}
+}
+
+func TestWorkflowAttachmentForHookedBeadPreservesExplicitAttachment(t *testing.T) {
+	attachment := workflowAttachmentForHookedBead(&beads.Issue{
+		ID:    "gt-wisp-explicit",
+		Title: constants.MolRefineryPatrol,
+		Type:  "molecule",
+		Description: strings.Join([]string{
+			"attached_formula: mol-release",
+			`attached_vars: ["version=1.2.3"]`,
+		}, "\n"),
+	})
+	if attachment == nil || attachment.AttachedFormula != "mol-release" {
+		t.Fatalf("workflowAttachmentForHookedBead() = %#v, want explicit mol-release attachment", attachment)
+	}
+}
+
+func TestCheckSlungWork_RefineryPatrolWispUsesPatrolWorkflowOutput(t *testing.T) {
+	ctx := RoleContext{Role: RoleRefinery, Rig: "gastown"}
+	hookedBead := &beads.Issue{
+		ID:    "hq-wisp-refinery",
+		Title: constants.MolRefineryPatrol + " (wisp)",
+		Type:  "molecule",
+	}
+
+	var found bool
+	var gotErr error
+	output := captureStdout(t, func() {
+		found, gotErr = checkSlungWork(ctx, hookedBead)
+	})
+	if gotErr != nil {
+		t.Fatalf("checkSlungWork() error = %v", gotErr)
+	}
+	if !found {
+		t.Fatalf("checkSlungWork() = false, want true")
+	}
+	if strings.Count(output, "ATTACHED FORMULA") != 1 {
+		t.Fatalf("expected one workflow section, got output:\n%s", output)
+	}
+	for _, want := range []string{"This hook is a patrol workflow", constants.MolRefineryPatrol, "Continue the patrol workflow above."} {
+		if !strings.Contains(output, want) {
+			t.Fatalf("expected %q in output, got:\n%s", want, output)
+		}
+	}
+	for _, forbidden := range []string{
+		"Then IMMEDIATELY run: `bd show",
+		"gt done",
+		"base bead is your assignment",
+		"Close each step with `bd close",
+	} {
+		if strings.Contains(output, forbidden) {
+			t.Fatalf("did not expect %q in refinery patrol output, got:\n%s", forbidden, output)
+		}
+	}
+}
+
 func TestCheckSlungWork_RalphModeUsesLoopDirective(t *testing.T) {
 	configDir := t.TempDir()
 	pluginsDir := filepath.Join(configDir, "plugins")
