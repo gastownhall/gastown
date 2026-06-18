@@ -19,6 +19,7 @@ import (
 	"github.com/steveyegge/gastown/internal/runtime"
 	"github.com/steveyegge/gastown/internal/telemetry"
 	"github.com/steveyegge/gastown/internal/util"
+	"github.com/steveyegge/gastown/internal/workspace"
 )
 
 // Common errors
@@ -431,12 +432,19 @@ func (b *Beads) getActor() string {
 }
 
 // getTownRoot returns the Gas Town root directory, using lazy caching.
-// The town root is found by walking up from workDir looking for mayor/town.json.
+// The town root is found by walking up from workDir looking for mayor/town.json,
+// then by validated env fallback for unpinned command contexts that started outside town.
 // Returns empty string if not in a Gas Town project.
 // Thread-safe: uses sync.Once to prevent races on concurrent access.
 func (b *Beads) getTownRoot() string {
 	b.townRootOnce.Do(func() {
 		b.townRoot = FindTownRoot(b.workDir)
+		if b.townRoot != "" || b.isolated || b.beadsDir != "" {
+			return
+		}
+		if townRoot, ok := workspace.FindEnvRoot(); ok {
+			b.townRoot = townRoot
+		}
 	})
 	return b.townRoot
 }
@@ -745,7 +753,7 @@ func (b *Beads) buildRunEnv() []string {
 
 // buildRoutingEnv builds the environment for runWithRouting() calls.
 // Always strips BEADS_DIR so bd uses native routing.
-// In isolated mode: also strips BD_ACTOR, BEADS_*, GT_ROOT, HOME.
+// In isolated mode: also strips BD_ACTOR, BEADS_*, GT_ROOT, GT_TOWN_ROOT, HOME.
 func (b *Beads) buildRoutingEnv() []string {
 	if b.isolated {
 		env := filterBeadsEnv(os.Environ())
@@ -763,7 +771,7 @@ func (b *Beads) buildRoutingEnv() []string {
 
 // filterBeadsEnv removes beads-related environment variables from the given
 // environment slice. This ensures test isolation by preventing inherited
-// BD_ACTOR, BEADS_DB, GT_ROOT, HOME etc. from routing commands to production databases.
+// BD_ACTOR, BEADS_DB, GT_ROOT, GT_TOWN_ROOT, HOME etc. from routing commands to production databases.
 //
 // Preserves GT_DOLT_PORT, BEADS_DOLT_PORT, and BEADS_DOLT_SERVER_HOST so that
 // isolated-mode tests can reach a test Dolt server on a non-default port/host.
@@ -780,11 +788,12 @@ func filterBeadsEnv(environ []string) []string {
 		}
 		// Skip beads-related env vars that could interfere with test isolation
 		// BD_ACTOR, BEADS_* - direct beads config
-		// GT_ROOT - causes bd to find global routes file
+		// GT_ROOT, GT_TOWN_ROOT - cause bd to find global routes files
 		// HOME - causes bd to find ~/.beads-planning routing
 		if strings.HasPrefix(env, "BD_ACTOR=") ||
 			strings.HasPrefix(env, "BEADS_") ||
 			strings.HasPrefix(env, "GT_ROOT=") ||
+			strings.HasPrefix(env, "GT_TOWN_ROOT=") ||
 			strings.HasPrefix(env, "HOME=") {
 			continue
 		}

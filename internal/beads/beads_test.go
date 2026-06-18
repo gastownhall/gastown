@@ -644,6 +644,88 @@ exit 0
 	}
 }
 
+func TestCreateRoutesExplicitRigUsingEnvTownRootFromExternalCwd(t *testing.T) {
+	for _, tc := range []struct {
+		name        string
+		envName     string
+		otherEnvVal string
+	}{
+		{name: "GT_TOWN_ROOT", envName: "GT_TOWN_ROOT", otherEnvVal: filepath.Join(t.TempDir(), "invalid")},
+		{name: "GT_ROOT", envName: "GT_ROOT"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			townRoot := t.TempDir()
+			if err := os.MkdirAll(filepath.Join(townRoot, "mayor"), 0755); err != nil {
+				t.Fatalf("mkdir mayor: %v", err)
+			}
+			if err := os.WriteFile(filepath.Join(townRoot, "mayor", "town.json"), []byte(`{"name":"test"}`), 0644); err != nil {
+				t.Fatalf("write town.json: %v", err)
+			}
+
+			townBeadsDir := filepath.Join(townRoot, ".beads")
+			rigDir := filepath.Join(townRoot, "accent_unified_au", "mayor", "rig")
+			rigBeadsDir := filepath.Join(rigDir, ".beads")
+			for _, dir := range []string{townBeadsDir, rigBeadsDir} {
+				if err := os.MkdirAll(dir, 0755); err != nil {
+					t.Fatalf("mkdir %s: %v", dir, err)
+				}
+			}
+			if err := WriteRoutes(townBeadsDir, []Route{
+				{Prefix: "hq-", Path: "."},
+				{Prefix: "au-", Path: "accent_unified_au/mayor/rig"},
+			}); err != nil {
+				t.Fatalf("write routes: %v", err)
+			}
+
+			externalCwd := filepath.Join(t.TempDir(), "checkout")
+			if err := os.MkdirAll(externalCwd, 0755); err != nil {
+				t.Fatalf("mkdir external cwd: %v", err)
+			}
+
+			if tc.envName == "GT_TOWN_ROOT" {
+				t.Setenv("GT_TOWN_ROOT", townRoot)
+				t.Setenv("GT_ROOT", tc.otherEnvVal)
+			} else {
+				t.Setenv("GT_TOWN_ROOT", "")
+				t.Setenv("GT_ROOT", townRoot)
+			}
+
+			got, err := New(externalCwd).targetBeadsDirForCreate(CreateOptions{
+				Title:     "Merge: au-xg5",
+				Rig:       "accent_unified_au",
+				Ephemeral: true,
+			})
+			if err != nil {
+				t.Fatalf("targetBeadsDirForCreate: %v", err)
+			}
+			if got != rigBeadsDir {
+				t.Fatalf("targetBeadsDirForCreate() = %q, want %q", got, rigBeadsDir)
+			}
+		})
+	}
+}
+
+func TestIsolatedGetTownRootIgnoresEnvTownRootFromExternalCwd(t *testing.T) {
+	townRoot := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(townRoot, "mayor"), 0755); err != nil {
+		t.Fatalf("mkdir mayor: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(townRoot, "mayor", "town.json"), []byte(`{"name":"test"}`), 0644); err != nil {
+		t.Fatalf("write town.json: %v", err)
+	}
+	externalCwd := filepath.Join(t.TempDir(), "checkout")
+	if err := os.MkdirAll(externalCwd, 0755); err != nil {
+		t.Fatalf("mkdir external cwd: %v", err)
+	}
+
+	t.Setenv("GT_TOWN_ROOT", townRoot)
+	t.Setenv("GT_ROOT", townRoot)
+
+	if got := NewIsolated(externalCwd).getTownRoot(); got != "" {
+		t.Fatalf("NewIsolated external getTownRoot() = %q, want empty", got)
+	}
+}
+
 func TestCreateWithRigRepairsTargetConfigPrefix(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("test uses Unix shell script mock for bd")
@@ -3932,6 +4014,7 @@ func TestFilterBeadsEnv_PreservesDoltPortVars(t *testing.T) {
 		"BEADS_DOLT_PORT=13306",
 		"GT_DOLT_PORT=13307",
 		"GT_ROOT=/tmp/gt",
+		"GT_TOWN_ROOT=/tmp/town",
 		"HOME=/home/test",
 		"PATH=/usr/bin",
 	}
@@ -4220,12 +4303,13 @@ func TestFilterBeadsEnv_Integration(t *testing.T) {
 	t.Setenv("BD_ACTOR", "gastown/polecats/TestPolecat")
 	t.Setenv("BEADS_DIR", "/tmp/test-beads")
 	t.Setenv("GT_ROOT", "/tmp/test-gt-root")
+	t.Setenv("GT_TOWN_ROOT", "/tmp/test-town-root")
 
 	env := filterBeadsEnv(os.Environ())
 
 	// BEADS_DOLT_PORT and GT_DOLT_PORT are explicitly preserved (test server access).
 	// Check that other BEADS_* vars are still stripped.
-	forbidden := []string{"BD_ACTOR=", "BEADS_DIR=", "BEADS_DB=", "GT_ROOT=", "HOME="}
+	forbidden := []string{"BD_ACTOR=", "BEADS_DIR=", "BEADS_DB=", "GT_ROOT=", "GT_TOWN_ROOT=", "HOME="}
 	for _, e := range env {
 		for _, prefix := range forbidden {
 			if strings.HasPrefix(e, prefix) {
@@ -4245,11 +4329,12 @@ func TestBdBranch_SystemScenario_FilterBeadsEnvIsolation(t *testing.T) {
 	t.Setenv("BD_ACTOR", "gastown/polecats/FilterTest")
 	t.Setenv("BEADS_DIR", "/tmp/filter-test-beads")
 	t.Setenv("GT_ROOT", "/tmp/filter-test-gt")
+	t.Setenv("GT_TOWN_ROOT", "/tmp/filter-test-town")
 
 	filtered := filterBeadsEnv(os.Environ())
 
 	// Verify beads-specific vars are stripped from the filtered env.
-	forbidden := []string{"BD_ACTOR=", "BEADS_DIR=", "GT_ROOT="}
+	forbidden := []string{"BD_ACTOR=", "BEADS_DIR=", "GT_ROOT=", "GT_TOWN_ROOT="}
 	for _, entry := range filtered {
 		for _, prefix := range forbidden {
 			if strings.HasPrefix(entry, prefix) {
@@ -4281,8 +4366,8 @@ func TestBuildRunEnv(t *testing.T) {
 		{
 			name:           "isolated strips all beads vars",
 			isolated:       true,
-			envVars:        map[string]string{"BD_ACTOR": "test-actor", "BEADS_DIR": "/tmp/beads"},
-			mustNotContain: []string{"BD_ACTOR=", "BEADS_DIR="},
+			envVars:        map[string]string{"BD_ACTOR": "test-actor", "BEADS_DIR": "/tmp/beads", "GT_TOWN_ROOT": "/tmp/town"},
+			mustNotContain: []string{"BD_ACTOR=", "BEADS_DIR=", "GT_TOWN_ROOT="},
 		},
 	}
 
@@ -4336,8 +4421,8 @@ func TestBuildRoutingEnv(t *testing.T) {
 		{
 			name:           "isolated strips all beads vars",
 			isolated:       true,
-			envVars:        map[string]string{"BD_ACTOR": "test-actor", "BEADS_DIR": "/tmp/beads"},
-			mustNotContain: []string{"BD_ACTOR=", "BEADS_DIR="},
+			envVars:        map[string]string{"BD_ACTOR": "test-actor", "BEADS_DIR": "/tmp/beads", "GT_TOWN_ROOT": "/tmp/town"},
+			mustNotContain: []string{"BD_ACTOR=", "BEADS_DIR=", "GT_TOWN_ROOT="},
 		},
 	}
 

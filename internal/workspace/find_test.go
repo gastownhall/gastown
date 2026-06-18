@@ -15,6 +15,19 @@ func realPath(t *testing.T, path string) string {
 	return real
 }
 
+func makeWorkspaceRoot(t *testing.T) string {
+	t.Helper()
+	root := realPath(t, t.TempDir())
+	mayorDir := filepath.Join(root, "mayor")
+	if err := os.MkdirAll(mayorDir, 0755); err != nil {
+		t.Fatalf("mkdir mayor: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(mayorDir, "town.json"), []byte(`{"name":"test"}`), 0644); err != nil {
+		t.Fatalf("write town.json: %v", err)
+	}
+	return root
+}
+
 func TestFindWithPrimaryMarker(t *testing.T) {
 	// Create temp workspace structure
 	root := realPath(t, t.TempDir())
@@ -140,6 +153,63 @@ func TestIsWorkspace(t *testing.T) {
 	}
 	if !is {
 		t.Error("expected to be a workspace")
+	}
+}
+
+func TestFindEnvRootUsesValidatedEnvInOrder(t *testing.T) {
+	townRoot := makeWorkspaceRoot(t)
+	fallbackRoot := makeWorkspaceRoot(t)
+
+	t.Setenv("GT_TOWN_ROOT", townRoot)
+	t.Setenv("GT_ROOT", fallbackRoot)
+
+	got, ok := FindEnvRoot()
+	if !ok {
+		t.Fatal("FindEnvRoot did not find env root")
+	}
+	if got != townRoot {
+		t.Fatalf("FindEnvRoot = %q, want GT_TOWN_ROOT %q", got, townRoot)
+	}
+}
+
+func TestFindEnvRootSkipsInvalidEnv(t *testing.T) {
+	invalidRoot := t.TempDir()
+	fallbackRoot := makeWorkspaceRoot(t)
+
+	t.Setenv("GT_TOWN_ROOT", invalidRoot)
+	t.Setenv("GT_ROOT", fallbackRoot)
+
+	got, ok := FindEnvRoot()
+	if !ok {
+		t.Fatal("FindEnvRoot did not find fallback env root")
+	}
+	if got != fallbackRoot {
+		t.Fatalf("FindEnvRoot = %q, want GT_ROOT %q", got, fallbackRoot)
+	}
+}
+
+func TestFindFromCwdOrErrorUsesEnvRootFromExternalCwd(t *testing.T) {
+	townRoot := makeWorkspaceRoot(t)
+	externalDir := realPath(t, t.TempDir())
+
+	cwd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("getwd: %v", err)
+	}
+	t.Cleanup(func() { _ = os.Chdir(cwd) })
+	if err := os.Chdir(externalDir); err != nil {
+		t.Fatalf("chdir external: %v", err)
+	}
+
+	t.Setenv("GT_TOWN_ROOT", townRoot)
+	t.Setenv("GT_ROOT", "")
+
+	got, err := FindFromCwdOrError()
+	if err != nil {
+		t.Fatalf("FindFromCwdOrError: %v", err)
+	}
+	if got != townRoot {
+		t.Fatalf("FindFromCwdOrError = %q, want %q", got, townRoot)
 	}
 }
 
