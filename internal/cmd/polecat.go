@@ -1047,7 +1047,9 @@ func runPolecatCheckRecovery(cmd *cobra.Command, args []string) error {
 		Issue:   p.Issue,
 	}
 	beadTerminal := isAssignedBeadTerminal(bd, status.Issue)
-	workTerminal := beadTerminal
+	assignee := fmt.Sprintf("%s/polecats/%s", rigName, polecatName)
+	activeWork := polecat.AssessActiveWork(bd, assignee, "", "")
+	workTerminal := beadTerminal || activeWork.HookTerminal
 	targetRefs := recoveryTargetRefs(bd, status.Issue, status.ActiveMR, status.Branch)
 	input := polecat.WorkstateInput{State: p.State, CleanupStatus: polecat.CleanupUnknown, Branch: p.Branch}
 	var gitState *GitState
@@ -1062,6 +1064,7 @@ func runPolecatCheckRecovery(cmd *cobra.Command, args []string) error {
 	}
 
 	if err != nil || fields == nil {
+		applyActiveWorkToWorkstateInput(&input, activeWork)
 		// No agent bead or no cleanup_status - fall back to git check.
 		loadGitState()
 		if gitErr != nil {
@@ -1088,26 +1091,19 @@ func runPolecatCheckRecovery(cmd *cobra.Command, args []string) error {
 		targetRefs = recoveryTargetRefs(bd, status.Issue, status.ActiveMR, status.Branch)
 		input.ActiveMR = fields.ActiveMR
 		hookBead := agentHookBead(agentIssue, fields)
-		hookSafe, hookTerminal, hookBlocker := hookBeadSafeForCleanup(bd, hookBead)
-		workTerminal = beadTerminal || hookTerminal
+		activeWork = polecat.AssessActiveWork(bd, assignee, beads.AgentState(fields.AgentState), hookBead)
+		applyActiveWorkToWorkstateInput(&input, activeWork)
+		workTerminal = beadTerminal || activeWork.HookTerminal
 		sourceHint := agentSourceIssueHint(status.Issue, fields)
 		if status.Issue == "" && sourceHint != "" {
 			status.Issue = sourceHint
 		}
 		if !beadTerminal && sourceHint != "" {
 			beadTerminal = isAssignedBeadTerminal(bd, sourceHint)
-			workTerminal = beadTerminal || hookTerminal
-		}
-		if hookBlocker != "" {
-			input.HookBead = hookBead
+			workTerminal = beadTerminal || activeWork.HookTerminal
 		}
 		input.PushFailed = fields.PushFailed
 		input.MRFailed = fields.MRFailed
-		assignee := fmt.Sprintf("%s/polecats/%s", rigName, polecatName)
-		partialSpawn, diagnostic := partialSpawnWithoutDurableHook(bd, fields, assignee, status.Issue)
-		if diagnostic != "" {
-			status.Diagnostics = append(status.Diagnostics, diagnostic)
-		}
 		activeMRAssessment := polecat.ActiveMRAssessment{}
 		if fields.ActiveMR != "" {
 			gitSafe := activeMRGitSafeForWorktree(p.ClonePath)
@@ -1129,15 +1125,12 @@ func runPolecatCheckRecovery(cmd *cobra.Command, args []string) error {
 			}
 			input.ActiveMRMalformed = activeMRAssessment.SourceMalformed
 		}
-		input.PartialSpawnWithoutDurableHook = partialSpawn
-		if blocker := cleanupStatusBlockerForRecovery(input.CleanupStatus, partialSpawn); blocker == "" && !input.CleanupStatus.IsSafe() {
-			input.IgnoreCleanupStatus = true
-		} else if blocker != "" {
+		if blocker := cleanupStatusBlocker(input.CleanupStatus); blocker != "" {
 			if input.CleanupStatus == polecat.CleanupUnpushed {
 				loadGitState()
 			}
 			gitSafe := activeMRGitSafeForWorktree(p.ClonePath)
-			if polecat.CanIgnoreStaleCleanupStatus(input.CleanupStatus, workTerminal, hookSafe, !activeMRAssessment.Pending, gitSafe) {
+			if polecat.CanIgnoreStaleCleanupStatus(input.CleanupStatus, workTerminal, activeWork.HookSafe, !activeMRAssessment.Pending, gitSafe) {
 				input.IgnoreCleanupStatus = true
 				status.Diagnostics = append(status.Diagnostics, fmt.Sprintf("ignored_stale_cleanup_status=%s direct_git_state=safe work_ref=terminal", input.CleanupStatus))
 			}
@@ -1242,6 +1235,14 @@ func applyGitStateToWorkstateInput(input *polecat.WorkstateInput, worktreePath s
 	}
 }
 
+func applyActiveWorkToWorkstateInput(input *polecat.WorkstateInput, evidence polecat.ActiveWorkEvidence) {
+	if !evidence.BlocksCleanup {
+		return
+	}
+	input.ActiveWorkBlocker = evidence.Blocker
+	input.HookBead = evidence.HookBead
+}
+
 func applyMQFactsToWorkstateInput(input *polecat.WorkstateInput, status *RecoveryStatus, bd *beads.Beads, beadTerminal bool, worktreePath string, targetRefs []string, gitState *GitState, gitErr error) {
 	if status.Branch == "" {
 		return
@@ -1292,13 +1293,6 @@ func cleanupStatusBlocker(status polecat.CleanupStatus) string {
 	}
 }
 
-func cleanupStatusBlockerForRecovery(status polecat.CleanupStatus, partialSpawnWithoutHook bool) string {
-	if partialSpawnWithoutHook && (status == "" || status == polecat.CleanupUnknown) {
-		return ""
-	}
-	return cleanupStatusBlocker(status)
-}
-
 func agentHookBead(agentIssue *beads.Issue, fields *beads.AgentFields) string {
 	if agentIssue != nil && agentIssue.HookBead != "" {
 		return agentIssue.HookBead
@@ -1324,26 +1318,6 @@ func activeMRGitSafeForWorktree(worktreePath string) bool {
 		return false
 	}
 	return pushed && unpushed == 0
-}
-
-func hookBeadSafeForCleanup(bd issueShower, hookBead string) (safe bool, terminal bool, blocker string) {
-	if hookBead == "" {
-		return true, false, ""
-	}
-	if bd == nil {
-		return false, false, fmt.Sprintf("hook_bead=%s status=unverified", hookBead)
-	}
-	issue, err := bd.Show(hookBead)
-	if err != nil {
-		return false, false, fmt.Sprintf("hook_bead=%s status=lookup_error: %v", hookBead, err)
-	}
-	if issue == nil {
-		return false, false, fmt.Sprintf("hook_bead=%s status=missing", hookBead)
-	}
-	if !beads.IssueStatus(issue.Status).IsTerminal() {
-		return false, false, fmt.Sprintf("hook_bead=%s status=%s", hookBead, issue.Status)
-	}
-	return true, true, ""
 }
 
 type cleanupStatusUpdater interface {
@@ -1403,20 +1377,6 @@ func agentSourceIssueHint(currentIssue string, fields *beads.AgentFields) string
 		return fields.LastSourceIssue
 	}
 	return fields.HookBead
-}
-
-func partialSpawnWithoutDurableHook(bd issueShower, fields *beads.AgentFields, assignee, currentIssue string) (bool, string) {
-	if bd == nil || fields == nil || fields.AgentState != "spawning" || fields.HookBead == "" || currentIssue != "" {
-		return false, ""
-	}
-	issue, err := bd.Show(fields.HookBead)
-	if err != nil || issue == nil {
-		return false, ""
-	}
-	if (issue.Status == beads.StatusHooked && issue.Assignee == assignee) || issue.Assignee == assignee {
-		return false, ""
-	}
-	return true, fmt.Sprintf("partial_spawn_without_durable_hook agent_state=%s hook_bead=%s hook_status=%s hook_assignee=%q", fields.AgentState, fields.HookBead, issue.Status, issue.Assignee)
 }
 
 func recoveryGitStateBlocker(worktreePath string, gitState *GitState, gitErr error) string {
@@ -1837,6 +1797,10 @@ type nukePolecatOptions struct {
 }
 
 func nukePolecatFullWithOptions(polecatName, rigName string, mgr *polecat.Manager, r *rig.Rig, opts nukePolecatOptions) error {
+	if safety := checkPolecatSafety(polecatTarget{rigName: rigName, polecatName: polecatName, mgr: mgr, r: r}); safety.Blocked {
+		return fmt.Errorf("refusing to nuke %s/%s: %s", rigName, polecatName, strings.Join(safety.Reasons, "; "))
+	}
+
 	t := tmux.NewTmux()
 
 	// Step 1: Kill tmux session unconditionally to prevent ghost sessions

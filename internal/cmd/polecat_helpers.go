@@ -110,8 +110,10 @@ func checkPolecatSafety(target polecatTarget) *SafetyCheckResult {
 	bd := beads.New(target.r.Path)
 	agentBeadID := polecatBeadIDForRig(target.r, target.rigName, target.polecatName)
 	agentIssue, fields, err := bd.GetAgentBead(agentBeadID)
+	assignee := fmt.Sprintf("%s/polecats/%s", target.rigName, target.polecatName)
 
 	if err != nil || fields == nil {
+		applyActiveWorkToSafetyResult(result, polecat.AssessActiveWork(bd, assignee, "", ""))
 		// No agent bead - fall back to git check
 		if infoErr == nil && polecatInfo != nil {
 			gitState, gitErr := getGitState(polecatInfo.ClonePath)
@@ -135,6 +137,8 @@ func checkPolecatSafety(target polecatTarget) *SafetyCheckResult {
 		}
 		sourceHint := agentSourceIssueHint(currentIssue, fields)
 		hookBead := agentHookBead(agentIssue, fields)
+		activeWork := polecat.AssessActiveWork(bd, assignee, beads.AgentState(fields.AgentState), hookBead)
+		applyActiveWorkToSafetyResult(result, activeWork)
 		var gitState *GitState
 		gitStateLoaded := false
 		loadGitState := func() {
@@ -172,7 +176,7 @@ func checkPolecatSafety(target polecatTarget) *SafetyCheckResult {
 			if polecatInfo != nil {
 				gitSafe = activeMRGitSafeForWorktree(polecatInfo.ClonePath)
 			}
-			hookSafe, hookTerminal, _ := hookBeadSafeForCleanup(bd, hookBead)
+			hookSafe, hookTerminal := activeWork.HookSafe, activeWork.HookTerminal
 			activeMRSafe := !activeMRAssessment.Pending
 			if polecat.CanIgnoreStaleCleanupStatus(result.CleanupStatus, beadTerminal || hookTerminal, hookSafe, activeMRSafe, gitSafe) {
 				// OK: stale self-report after terminal source and direct clean git.
@@ -180,23 +184,6 @@ func checkPolecatSafety(target polecatTarget) *SafetyCheckResult {
 				result.Reasons = append(result.Reasons, cleanupStatusBlocker(result.CleanupStatus))
 			}
 		}
-
-		// Check 3: Work on hook
-		if hookBead != "" {
-			result.HookBead = hookBead
-			// Check if hooked bead is still active (not closed)
-			hookedIssue, err := bd.Show(hookBead)
-			if err == nil && hookedIssue != nil {
-				if hookedIssue.Status != "closed" {
-					result.Reasons = append(result.Reasons, fmt.Sprintf("has work on hook (%s)", hookBead))
-				} else {
-					result.HookStale = true
-				}
-			} else {
-				result.Reasons = append(result.Reasons, fmt.Sprintf("has work on hook (%s, unverified)", hookBead))
-			}
-		}
-
 		if fields.ActiveMR != "" {
 			result.ActiveMR = fields.ActiveMR
 			if blocker := activeMRAssessment.Reason; activeMRAssessment.Pending && blocker != "" {
@@ -218,6 +205,16 @@ func checkPolecatSafety(target polecatTarget) *SafetyCheckResult {
 
 	result.Blocked = len(result.Reasons) > 0
 	return result
+}
+
+func applyActiveWorkToSafetyResult(result *SafetyCheckResult, evidence polecat.ActiveWorkEvidence) {
+	if evidence.HookBead != "" {
+		result.HookBead = evidence.HookBead
+		result.HookStale = evidence.HookTerminal
+	}
+	if evidence.BlocksCleanup && evidence.Blocker != "" {
+		result.Reasons = append(result.Reasons, evidence.Blocker)
+	}
 }
 
 func rigPrefix(r *rig.Rig) string {
@@ -268,6 +265,7 @@ func displayDryRunSafetyCheck(target polecatTarget) bool {
 	result := checkPolecatSafety(target)
 	polecatInfo, infoErr := target.mgr.Get(target.polecatName)
 	bd := beads.New(target.r.Path)
+	assignee := fmt.Sprintf("%s/polecats/%s", target.rigName, target.polecatName)
 	agentBeadID := polecatBeadIDForRig(target.r, target.rigName, target.polecatName)
 	agentIssue, fields, err := bd.GetAgentBead(agentBeadID)
 
@@ -300,19 +298,21 @@ func displayDryRunSafetyCheck(target polecatTarget) bool {
 			fmt.Printf("    - Cleanup status: %s\n", style.Warning.Render(statusText))
 		}
 
-		hookBead := agentIssue.HookBead
-		if hookBead == "" {
-			hookBead = fields.HookBead
-		}
-		if hookBead != "" {
-			hookedIssue, err := bd.Show(hookBead)
-			if err == nil && hookedIssue != nil && hookedIssue.Status == "closed" {
-				fmt.Printf("    - Hook: %s (%s, closed - stale)\n", style.Warning.Render("stale"), hookBead)
+		hookBead := agentHookBead(agentIssue, fields)
+		activeWork := polecat.AssessActiveWork(bd, assignee, beads.AgentState(fields.AgentState), hookBead)
+		if activeWork.HookBead != "" {
+			if activeWork.HookTerminal {
+				fmt.Printf("    - Hook: %s (%s, terminal - stale)\n", style.Warning.Render("stale"), activeWork.HookBead)
 			} else {
-				fmt.Printf("    - Hook: %s (%s)\n", style.Error.Render("has work"), hookBead)
+				fmt.Printf("    - Hook: %s (%s)\n", style.Error.Render("has work"), activeWork.HookBead)
 			}
 		} else {
 			fmt.Printf("    - Hook: %s\n", style.Success.Render("empty"))
+		}
+		if activeWork.AssignedIssue != "" && activeWork.AssignedIssue != activeWork.HookBead {
+			fmt.Printf("    - Assigned work: %s (%s)\n", style.Error.Render("active"), activeWork.AssignedIssue)
+		} else if activeWork.BlocksCleanup && activeWork.HookBead == "" {
+			fmt.Printf("    - Active work: %s (%s)\n", style.Error.Render("blocked"), activeWork.Blocker)
 		}
 
 		if fields.ActiveMR != "" {

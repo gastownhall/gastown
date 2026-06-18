@@ -1028,19 +1028,24 @@ func slotOpenDecision(workDir, townRoot, rigName, polecatName, exitType string) 
 	_, fields, err := rigBeads.ForAgentBead().GetAgentBead(agentID)
 	input := polecat.SlotReuseInput{State: polecat.StateIdle, CleanupStatus: polecat.CleanupUnknown, GitCheckFailed: err != nil || fields == nil}
 	issueID := ""
-	hookSafe := true
-	hookTerminal := false
+	activeWork := polecat.AssessActiveWork(rigBeads, fmt.Sprintf("%s/polecats/%s", rigName, polecatName), "", "")
+	hookSafe := activeWork.HookSafe
+	hookTerminal := activeWork.HookTerminal
+	if activeWork.BlocksCleanup {
+		input.ActiveWorkBlocker = activeWork.Blocker
+		input.HookBead = activeWork.HookBead
+	}
 	if fields != nil {
 		issueID = fields.LastSourceIssue
 		if issueID == "" {
 			issueID = fields.HookBead
 		}
-		if fields.HookBead != "" {
-			hookTerminal = witnessIssueTerminal(rigBeads, fields.HookBead)
-			hookSafe = hookTerminal
-			if !hookSafe {
-				input.HookBead = fields.HookBead
-			}
+		activeWork = polecat.AssessActiveWork(rigBeads, fmt.Sprintf("%s/polecats/%s", rigName, polecatName), beads.AgentState(fields.AgentState), fields.HookBead)
+		hookSafe = activeWork.HookSafe
+		hookTerminal = activeWork.HookTerminal
+		if activeWork.BlocksCleanup {
+			input.ActiveWorkBlocker = activeWork.Blocker
+			input.HookBead = activeWork.HookBead
 		}
 		input.PushFailed = fields.PushFailed
 		input.MRFailed = fields.MRFailed
@@ -1371,6 +1376,16 @@ func NukePolecat(bd *BdCli, workDir, rigName, polecatName string) error {
 	agentBeadID := beads.PolecatBeadIDWithPrefix(prefix, rigName, polecatName)
 	if hasPendingMR(bd, workDir, rigName, polecatName, agentBeadID) {
 		return fmt.Errorf("refusing to nuke %s/%s: MR pending in refinery (gt-6a9d)", rigName, polecatName)
+	}
+	snap := fetchAgentBeadSnapshot(bd, workDir, agentBeadID)
+	var agentState beads.AgentState
+	hookBead := ""
+	if snap != nil {
+		agentState = beads.AgentState(snap.AgentState)
+		hookBead = snap.HookBead
+	}
+	if activeWork := witnessActiveWorkEvidence(bd, workDir, rigName, polecatName, agentState, hookBead); activeWork.BlocksCleanup {
+		return fmt.Errorf("refusing to nuke %s/%s: %s", rigName, polecatName, activeWork.Blocker)
 	}
 
 	// CRITICAL: Kill the tmux session FIRST and unconditionally.
@@ -2080,7 +2095,8 @@ func detectZombieDeadSession(bd *BdCli, workDir, townRoot, rigName, polecatName,
 
 	// Standard zombie detection: active state or hooked bead with dead session.
 	typedState := beads.AgentState(snapState)
-	if !isZombieState(typedState, snapHook) {
+	activeWork := witnessActiveWorkEvidence(bd, workDir, rigName, polecatName, typedState, snapHook)
+	if !isZombieState(typedState, snapHook) && !activeWork.RequiresRestart {
 		return ZombieResult{}, false
 	}
 
@@ -2089,7 +2105,7 @@ func detectZombieDeadSession(bd *BdCli, workDir, townRoot, rigName, polecatName,
 	// bead may not be "closed" yet (refinery queue, manual cleanup), but the
 	// polecat is not a zombie. Without this check, isZombieState returns true
 	// on every patrol cycle (hookBead != ""), flooding the mayor inbox.
-	if typedState == beads.AgentStateDone || typedState == beads.AgentStateNuked {
+	if (typedState == beads.AgentStateDone || typedState == beads.AgentStateNuked) && !activeWork.RequiresRestart {
 		return ZombieResult{}, false
 	}
 
@@ -2114,7 +2130,7 @@ func detectZombieDeadSession(bd *BdCli, workDir, townRoot, rigName, polecatName,
 	// for reaped wisps. A missing bead is not evidence of a crash.
 	// But a FAILED lookup ("", false) — e.g., cross-rig routing error — must
 	// NOT be treated as closed. Default to restart (safe). (hq-wisp-n530)
-	if snapHook != "" {
+	if snapHook != "" && !activeWork.Active {
 		hookStatus, hookFound := getBeadStatus(bd, workDir, snapHook)
 		if hookFound && (hookStatus == "closed" || hookStatus == "") {
 			return ZombieResult{}, false
@@ -2131,13 +2147,13 @@ func detectZombieDeadSession(bd *BdCli, workDir, townRoot, rigName, polecatName,
 		AgentState:     snapState,
 		Classification: ZombieSessionDeadActive,
 		HookBead:       snapHook,
-		WasActive:      snapHook != "" || typedState.IsActive(),
+		WasActive:      activeWork.Active || snapHook != "" || typedState.IsActive(),
 	}
 
 	// gt-dsgp: Restart instead of nuking. For dirty state, escalate AND restart.
 	// gt-2gra: Use snapshot's cleanup status instead of calling getCleanupStatus.
 	cleanupStatus := snap.cleanupStatus()
-	handleZombieRestart(bd, workDir, rigName, polecatName, snapHook, cleanupStatus, &zombie)
+	handleZombieRestart(bd, workDir, rigName, polecatName, typedState, snapHook, cleanupStatus, &zombie)
 	return zombie, true
 }
 
@@ -2163,22 +2179,25 @@ func isZombieState(agentState beads.AgentState, hookBead string) bool {
 // wisp ID) ensures exactly one patrol proceeds with the restart.
 //
 // gt-qnp: If Mayor ACP session is active, vetoes automatic cleanup to allow Mayor review.
-func handleZombieRestart(bd *BdCli, workDir, rigName, polecatName, hookBead, cleanupStatus string, zombie *ZombieResult) {
+func handleZombieRestart(bd *BdCli, workDir, rigName, polecatName string, agentState beads.AgentState, hookBead, cleanupStatus string, zombie *ZombieResult) {
 	zombie.CleanupStatus = cleanupStatus
 	skipRestart := false
+	activeWork := witnessActiveWorkEvidence(bd, workDir, rigName, polecatName, agentState, hookBead)
 
 	// aa-apw: If this polecat's branch work is already merged into the default
 	// branch (including via squash merge, which rewrites SHAs and fools a plain
 	// ancestor check), do NOT restart. Restarting would let the polecat push its
 	// pre-squash HEAD and create a duplicate MR for work already in main.
 	// Instead archive the polecat — its work is done.
-	if merged, err := verifyBranchAlreadyMerged(workDir, rigName, polecatName); err == nil && merged {
-		zombie.Action = "archived-work-already-merged (aa-apw)"
-		if nukeErr := NukePolecat(bd, workDir, rigName, polecatName); nukeErr != nil {
-			zombie.Error = fmt.Errorf("archive: %w", nukeErr)
-			zombie.Action = fmt.Sprintf("archive-failed-work-already-merged: %v", nukeErr)
+	if !activeWork.BlocksCleanup {
+		if merged, err := verifyBranchAlreadyMerged(workDir, rigName, polecatName); err == nil && merged {
+			zombie.Action = "archived-work-already-merged (aa-apw)"
+			if nukeErr := NukePolecat(bd, workDir, rigName, polecatName); nukeErr != nil {
+				zombie.Error = fmt.Errorf("archive: %w", nukeErr)
+				zombie.Action = fmt.Sprintf("archive-failed-work-already-merged: %v", nukeErr)
+			}
+			return
 		}
-		return
 	}
 
 	// Persistence interlock (gt-qnp): check if Mayor ACP session is active before cleanup.
@@ -2638,13 +2657,19 @@ func fetchAgentBeadSnapshot(bd *BdCli, workDir, agentBeadID string) *agentBeadSn
 		return nil
 	}
 
+	fields := beads.ParseAgentFields(issues[0].Description)
+	hookBead := issues[0].HookBead
+	if hookBead == "" && fields != nil {
+		hookBead = fields.HookBead
+	}
+
 	return &agentBeadSnapshot{
 		AgentState: beads.ResolveAgentState(issues[0].Description, issues[0].AgentState),
-		HookBead:   issues[0].HookBead,
+		HookBead:   hookBead,
 		Labels:     issues[0].Labels,
 		UpdatedAt:  issues[0].UpdatedAt,
 		ActiveMR:   issues[0].ActiveMR,
-		Fields:     beads.ParseAgentFields(issues[0].Description),
+		Fields:     fields,
 	}
 }
 
@@ -2795,6 +2820,28 @@ func getBeadStatus(bd *BdCli, workDir, beadID string) (string, bool) {
 		return "", true
 	}
 	return issues[0].Status, true
+}
+
+func witnessActiveWorkEvidence(bd *BdCli, workDir, rigName, polecatName string, agentState beads.AgentState, hookBead string) polecat.ActiveWorkEvidence {
+	reader := beadCLIShower{bd: bd, workDir: workDir}
+	assignee := fmt.Sprintf("%s/polecats/%s", rigName, polecatName)
+	evidence := polecat.AssessActiveWork(reader, assignee, agentState, "")
+	if hookBead == "" {
+		return evidence
+	}
+	hookStatus, hookFound := getBeadStatus(bd, workDir, hookBead)
+	hookEvidence := polecat.AssessHookStatus(hookBead, hookStatus, hookFound)
+	evidence.HookBead = hookEvidence.HookBead
+	evidence.HookSafe = hookEvidence.HookSafe
+	evidence.HookTerminal = hookEvidence.HookTerminal
+	evidence.Active = evidence.Active || hookEvidence.Active
+	evidence.Protected = evidence.Protected || hookEvidence.Protected
+	evidence.BlocksCleanup = evidence.BlocksCleanup || hookEvidence.BlocksCleanup
+	evidence.RequiresRestart = evidence.RequiresRestart || hookEvidence.RequiresRestart
+	if evidence.Blocker == "" {
+		evidence.Blocker = hookEvidence.Blocker
+	}
+	return evidence
 }
 
 // resetAbandonedBead resets a dead polecat's hooked bead so it can be re-dispatched.
@@ -3634,6 +3681,25 @@ func (s beadCLIShower) Show(issueID string) (*beads.Issue, error) {
 		return nil, beads.ErrNotFound
 	}
 	return &issues[0], nil
+}
+
+func (s beadCLIShower) ListByAssignee(assignee string) ([]*beads.Issue, error) {
+	if s.bd == nil || s.bd.Exec == nil {
+		return nil, fmt.Errorf("bd unavailable")
+	}
+	output, err := s.bd.Exec(s.workDir, "list", "--assignee", assignee, "--all", "--json", "--limit=0")
+	if err != nil {
+		return nil, err
+	}
+	output = strings.TrimSpace(output)
+	if output == "" || output == "[]" || output == "null" {
+		return nil, nil
+	}
+	var issues []*beads.Issue
+	if err := json.Unmarshal([]byte(output), &issues); err != nil {
+		return nil, err
+	}
+	return issues, nil
 }
 
 func isBdNotFoundError(err error) bool {

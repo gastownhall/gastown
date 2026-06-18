@@ -227,29 +227,6 @@ func TestCleanupStatusBlocker(t *testing.T) {
 	}
 }
 
-func TestCleanupStatusBlockerForRecovery_PartialSpawnWithoutHook(t *testing.T) {
-	tests := []struct {
-		name         string
-		status       polecat.CleanupStatus
-		partialSpawn bool
-		want         string
-	}{
-		{name: "missing cleanup is safe for partial spawn", partialSpawn: true, want: ""},
-		{name: "unknown cleanup is safe for partial spawn", status: polecat.CleanupUnknown, partialSpawn: true, want: ""},
-		{name: "dirty cleanup still blocks partial spawn", status: polecat.CleanupUnpushed, partialSpawn: true, want: "cleanup_status=has_unpushed"},
-		{name: "missing cleanup still blocks ordinary polecat", partialSpawn: false, want: "cleanup_status=<missing>"},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got := cleanupStatusBlockerForRecovery(tt.status, tt.partialSpawn)
-			if got != tt.want {
-				t.Errorf("cleanupStatusBlockerForRecovery() = %q, want %q", got, tt.want)
-			}
-		})
-	}
-}
-
 func TestStaleCleanupStatusCanBeIgnoredForRecovery(t *testing.T) {
 	tests := []struct {
 		name         string
@@ -426,7 +403,7 @@ func TestCleanupStatusReconcileCandidateRequiresStrictPredicates(t *testing.T) {
 	}
 }
 
-func TestHookBeadSafeForCleanup(t *testing.T) {
+func TestAssessHookWorkForCleanup(t *testing.T) {
 	tests := []struct {
 		name         string
 		hookBead     string
@@ -437,64 +414,21 @@ func TestHookBeadSafeForCleanup(t *testing.T) {
 	}{
 		{name: "empty hook", wantSafe: true},
 		{name: "terminal hook", hookBead: "gt-work", bd: fakeIssueShower{issue: &beads.Issue{Status: "closed"}}, wantSafe: true, wantTerminal: true},
+		{name: "tombstone hook", hookBead: "gt-work", bd: fakeIssueShower{issue: &beads.Issue{Status: "tombstone"}}, wantSafe: true, wantTerminal: true},
 		{name: "open hook blocks", hookBead: "gt-work", bd: fakeIssueShower{issue: &beads.Issue{Status: "open"}}, wantBlocker: "hook_bead=gt-work status=open"},
+		{name: "hooked hook blocks", hookBead: "gt-work", bd: fakeIssueShower{issue: &beads.Issue{Status: beads.StatusHooked}}, wantBlocker: "hook_bead=gt-work status=hooked"},
+		{name: "in progress hook blocks", hookBead: "gt-work", bd: fakeIssueShower{issue: &beads.Issue{Status: "in_progress"}}, wantBlocker: "hook_bead=gt-work status=in_progress"},
 		{name: "lookup error blocks", hookBead: "gt-work", bd: fakeIssueShower{err: errors.New("bd exploded")}, wantBlocker: "lookup_error"},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			gotSafe, gotTerminal, blocker := hookBeadSafeForCleanup(tt.bd, tt.hookBead)
-			if gotSafe != tt.wantSafe || gotTerminal != tt.wantTerminal {
-				t.Fatalf("hookBeadSafeForCleanup() = (%v, %v), want (%v, %v)", gotSafe, gotTerminal, tt.wantSafe, tt.wantTerminal)
+			got := polecat.AssessHookWork(tt.bd, tt.hookBead)
+			if got.HookSafe != tt.wantSafe || got.HookTerminal != tt.wantTerminal {
+				t.Fatalf("AssessHookWork() = (safe=%v terminal=%v), want (%v, %v)", got.HookSafe, got.HookTerminal, tt.wantSafe, tt.wantTerminal)
 			}
-			if tt.wantBlocker != "" && !strings.Contains(blocker, tt.wantBlocker) {
-				t.Fatalf("blocker = %q, want contains %q", blocker, tt.wantBlocker)
-			}
-		})
-	}
-}
-
-func TestPartialSpawnWithoutDurableHook(t *testing.T) {
-	assignee := "gastown/polecats/nitro"
-	tests := []struct {
-		name         string
-		fields       *beads.AgentFields
-		currentIssue string
-		issue        *beads.Issue
-		wantPartial  bool
-	}{
-		{
-			name:        "spawning legacy hook points to open unassigned bead",
-			fields:      &beads.AgentFields{AgentState: "spawning", HookBead: "gt-work"},
-			issue:       &beads.Issue{ID: "gt-work", Status: "open"},
-			wantPartial: true,
-		},
-		{
-			name:   "durably hooked bead is not partial",
-			fields: &beads.AgentFields{AgentState: "spawning", HookBead: "gt-work"},
-			issue:  &beads.Issue{ID: "gt-work", Status: beads.StatusHooked, Assignee: assignee},
-		},
-		{
-			name:         "current issue already found is not partial",
-			fields:       &beads.AgentFields{AgentState: "spawning", HookBead: "gt-work"},
-			currentIssue: "gt-work",
-			issue:        &beads.Issue{ID: "gt-work", Status: "open"},
-		},
-		{
-			name:   "working state is not partial spawn",
-			fields: &beads.AgentFields{AgentState: "working", HookBead: "gt-work"},
-			issue:  &beads.Issue{ID: "gt-work", Status: "open"},
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got, diagnostic := partialSpawnWithoutDurableHook(fakeIssueShower{issue: tt.issue}, tt.fields, assignee, tt.currentIssue)
-			if got != tt.wantPartial {
-				t.Fatalf("partialSpawnWithoutDurableHook() = %v, want %v", got, tt.wantPartial)
-			}
-			if got && !strings.Contains(diagnostic, "partial_spawn_without_durable_hook") {
-				t.Fatalf("diagnostic missing partial spawn marker: %q", diagnostic)
+			if tt.wantBlocker != "" && !strings.Contains(got.Blocker, tt.wantBlocker) {
+				t.Fatalf("blocker = %q, want contains %q", got.Blocker, tt.wantBlocker)
 			}
 		})
 	}

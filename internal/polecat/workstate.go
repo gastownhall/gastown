@@ -13,29 +13,29 @@ const (
 // WorkstateInput contains the lifecycle, git, and merge-queue facts needed to
 // classify a polecat consistently across list, recovery, witness, and capacity.
 type WorkstateInput struct {
-	State                          State
-	HookBead                       string
-	CleanupStatus                  CleanupStatus
-	IgnoreCleanupStatus            bool
-	PartialSpawnWithoutDurableHook bool
-	PushFailed                     bool
-	MRFailed                       bool
-	Branch                         string
-	GitDirty                       bool
-	GitDirtyReason                 string
-	StashCount                     int
-	UnpushedCommits                int
-	GitCheckFailed                 bool
-	GitCheckFailedReason           string
-	ActiveMR                       string
-	ActiveMRBlocker                string
-	ActiveMRMalformed              bool
-	MQCheckRequired                bool
-	HasSubmittableWork             bool
-	MQNotRequired                  bool
-	AssignedBeadTerminal           bool
-	MRSubmitted                    bool
-	MQLookupFailed                 bool
+	State                State
+	HookBead             string
+	ActiveWorkBlocker    string
+	CleanupStatus        CleanupStatus
+	IgnoreCleanupStatus  bool
+	PushFailed           bool
+	MRFailed             bool
+	Branch               string
+	GitDirty             bool
+	GitDirtyReason       string
+	StashCount           int
+	UnpushedCommits      int
+	GitCheckFailed       bool
+	GitCheckFailedReason string
+	ActiveMR             string
+	ActiveMRBlocker      string
+	ActiveMRMalformed    bool
+	MQCheckRequired      bool
+	HasSubmittableWork   bool
+	MQNotRequired        bool
+	AssignedBeadTerminal bool
+	MRSubmitted          bool
+	MQLookupFailed       bool
 }
 
 // WorkstateDisposition is the canonical polecat lifecycle decision. It is pure
@@ -52,6 +52,16 @@ type WorkstateDisposition struct {
 	CountsTowardCapacity bool     `json:"counts_toward_capacity"`
 	ReuseStatus          string   `json:"reuse_status,omitempty"`
 	Blockers             []string `json:"blockers,omitempty"`
+}
+
+// ApplyActiveWork projects shared active/protected work evidence into the
+// workstate input fields that block reuse and cleanup.
+func (in *WorkstateInput) ApplyActiveWork(evidence ActiveWorkEvidence) {
+	if !evidence.BlocksCleanup {
+		return
+	}
+	in.ActiveWorkBlocker = evidence.Blocker
+	in.HookBead = evidence.HookBead
 }
 
 // DecideWorkstate returns the canonical disposition for a polecat.
@@ -96,7 +106,13 @@ func DecideWorkstate(in WorkstateInput) WorkstateDisposition {
 		}
 	}
 
-	if in.HookBead != "" && !in.PartialSpawnWithoutDurableHook {
+	if in.ActiveWorkBlocker != "" {
+		reason := "active-work"
+		if in.HookBead != "" {
+			reason = "hook-still-set"
+		}
+		block(reason, in.ActiveWorkBlocker)
+	} else if in.HookBead != "" {
 		block("hook-still-set", "has work on hook ("+in.HookBead+")")
 	}
 	if in.PushFailed {

@@ -1144,6 +1144,10 @@ func (m *Manager) RemoveWithOptions(name string, force, nuclear, selfNuke bool) 
 	// Polecat dir is the parent directory (polecats/<name>/)
 	polecatDir := m.polecatDir(name)
 
+	if activeWork := m.activeWorkEvidence(name); activeWork.BlocksCleanup {
+		return fmt.Errorf("cannot remove polecat %s: %s", name, activeWork.Blocker)
+	}
+
 	// Check for uncommitted work unless bypassed
 	if !nuclear {
 		// ZFC #10: First try to read cleanup_status from agent bead
@@ -2186,16 +2190,17 @@ func (m *Manager) workstateInputForPolecat(name string, state State, issue strin
 	activeMR := ""
 	sourceHint := ""
 	_, fields, err := m.agentBeads().GetAgentBead(agentID)
-	hookSafe := true
-	hookTerminal := false
+	activeWork := m.activeWorkEvidence(name)
+	hookSafe := activeWork.HookSafe
+	hookTerminal := activeWork.HookTerminal
+	if activeWork.BlocksCleanup {
+		input.ActiveWorkBlocker = activeWork.Blocker
+		input.HookBead = activeWork.HookBead
+	}
 	if err != nil {
 		input.GitCheckFailed = true
 	}
 	if err == nil && fields != nil {
-		hookSafe, hookTerminal = m.hookBeadSafeForWorkstate(fields.HookBead)
-		if !hookSafe {
-			input.HookBead = fields.HookBead
-		}
 		input.PushFailed = fields.PushFailed
 		input.MRFailed = fields.MRFailed
 		input.ActiveMR = fields.ActiveMR
@@ -2272,20 +2277,6 @@ func (m *Manager) workstateInputForPolecat(name string, state State, issue strin
 		}
 	}
 	return input
-}
-
-func (m *Manager) hookBeadSafeForWorkstate(hookBead string) (safe bool, terminal bool) {
-	if hookBead == "" {
-		return true, false
-	}
-	issue, err := m.beads.Show(hookBead)
-	if err != nil || issue == nil {
-		return false, false
-	}
-	if beads.IssueStatus(issue.Status).IsTerminal() {
-		return true, true
-	}
-	return false, false
 }
 
 func (m *Manager) assignedBeadTerminal(issueID string) bool {
@@ -2578,28 +2569,26 @@ func (m *Manager) unassignWorkBeads(name string) {
 }
 
 func activeWorkBeadsForCleanup(issues []*beads.Issue) []*beads.Issue {
-	activeStatuses := map[string]bool{
-		"open":             true,
-		"in_progress":      true,
-		beads.StatusHooked: true,
-	}
 	var work []*beads.Issue
 	for _, issue := range issues {
-		if issue == nil || !activeStatuses[issue.Status] {
-			continue
-		}
-		// Skip agent beads — handled by ResetAgentBeadForReuse.
-		if beads.IsAgentBead(issue) {
-			continue
-		}
-		// Skip protected beads (standing orders, role defs, etc.) — they should
-		// retain status and assignee across polecat lifecycles.
-		if beads.IsProtectedBead(issue) {
+		if !assignedIssueBlocksCleanup(issue) {
 			continue
 		}
 		work = append(work, issue)
 	}
 	return work
+}
+
+func (m *Manager) activeWorkEvidence(name string) ActiveWorkEvidence {
+	agentID := m.agentBeadID(name)
+	_, fields, _ := m.agentBeads().GetAgentBead(agentID)
+	var agentState beads.AgentState
+	hookBead := ""
+	if fields != nil {
+		agentState = beads.AgentState(fields.AgentState)
+		hookBead = fields.HookBead
+	}
+	return AssessActiveWork(m.beads, m.assigneeID(name), agentState, hookBead)
 }
 
 // loadFromBeads gets polecat info from hooked work beads + beads assignee field + tmux session state.
@@ -2933,6 +2922,8 @@ type StalenessInfo struct {
 	HasActiveSession   bool   // Whether tmux session is running
 	HasUncommittedWork bool   // Whether there's uncommitted or unpushed work
 	AgentState         string // From agent bead (empty if no bead)
+	ActiveWorkBlocker  string // Shared active/protected work cleanup blocker
+	RequiresRestart    bool   // Active work should restart/resume instead of cleanup
 	IsStale            bool   // Overall assessment: safe to clean up
 	Reason             string // Why it's considered stale (or not)
 }
@@ -2987,6 +2978,9 @@ func (m *Manager) DetectStalePolecats(threshold int) ([]*StalenessInfo, error) {
 		if err == nil && fields != nil {
 			info.AgentState = fields.AgentState
 		}
+		activeWork := m.activeWorkEvidence(p.Name)
+		info.ActiveWorkBlocker = activeWork.Blocker
+		info.RequiresRestart = activeWork.RequiresRestart
 
 		// Determine staleness
 		info.IsStale, info.Reason = assessStaleness(info, threshold)
@@ -3027,6 +3021,10 @@ func assessStaleness(info *StalenessInfo, threshold int) (bool, string) {
 	// If session is active, not stale (tmux is source of truth for liveness)
 	if info.HasActiveSession {
 		return false, "session active"
+	}
+
+	if info.ActiveWorkBlocker != "" {
+		return false, info.ActiveWorkBlocker
 	}
 
 	// No active session - this polecat is a cleanup candidate

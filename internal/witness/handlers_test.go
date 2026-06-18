@@ -2871,7 +2871,7 @@ func TestHandleZombieRestart_SkipsWhenBranchAlreadyMerged(t *testing.T) {
 	)
 
 	z := &ZombieResult{PolecatName: "scavenger", HookBead: "ma-poc.4"}
-	handleZombieRestart(bd, t.TempDir(), "testrig", "scavenger", "ma-poc.4", "has_unpushed", z)
+	handleZombieRestart(bd, t.TempDir(), "testrig", "scavenger", "", "ma-poc.4", "has_unpushed", z)
 
 	// Action must reflect the archive decision; must NOT be a "restarted*" action.
 	if !strings.Contains(z.Action, "work-already-merged") {
@@ -2900,10 +2900,36 @@ func TestHandleZombieRestart_RestartsWhenBranchNotMerged(t *testing.T) {
 	)
 
 	z := &ZombieResult{PolecatName: "scavenger", HookBead: "ma-poc.4"}
-	handleZombieRestart(bd, t.TempDir(), "testrig", "scavenger", "ma-poc.4", "clean", z)
+	handleZombieRestart(bd, t.TempDir(), "testrig", "scavenger", "", "ma-poc.4", "clean", z)
 
 	// Should NOT take the archive path.
 	if strings.Contains(z.Action, "work-already-merged") {
 		t.Errorf("action = %q, should not archive when work is not merged", z.Action)
+	}
+}
+
+// Not parallel: overrides the package-level verifyBranchAlreadyMerged var.
+func TestHandleZombieRestart_ActiveHookBeatsBranchAlreadyMergedArchive(t *testing.T) {
+	oldVerify := verifyBranchAlreadyMerged
+	verifyBranchAlreadyMerged = func(workDir, rigName, polecatName string) (bool, error) {
+		return true, nil
+	}
+	t.Cleanup(func() { verifyBranchAlreadyMerged = oldVerify })
+
+	bd, _ := mockBd(
+		func(args []string) (string, error) {
+			if len(args) > 0 && args[0] == "list" {
+				return "[]", nil
+			}
+			return `[{"status":"hooked"}]`, nil
+		},
+		func(args []string) error { return nil },
+	)
+
+	z := &ZombieResult{PolecatName: "scavenger", HookBead: "ma-poc.4"}
+	handleZombieRestart(bd, t.TempDir(), "testrig", "scavenger", beads.AgentStateSpawning, "ma-poc.4", "clean", z)
+
+	if strings.Contains(z.Action, "work-already-merged") {
+		t.Fatalf("action = %q, active hook must restart/resume before archive", z.Action)
 	}
 }

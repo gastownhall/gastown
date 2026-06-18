@@ -288,11 +288,12 @@ func TestActiveWorkBeadsForCleanupFiltersAssignedIssues(t *testing.T) {
 		{ID: "agent", Status: "open", Type: "agent"},
 		{ID: "protected", Status: "open", Type: "task", Labels: []string{"gt:keep"}},
 		{ID: "deferred", Status: "deferred", Type: "task"},
+		{ID: "pinned", Status: "pinned", Type: "task"},
 		nil,
 	}
 
 	got := activeWorkBeadsForCleanup(issues)
-	want := []string{"open-work", "progress-work", "hooked-work"}
+	want := []string{"open-work", "progress-work", "hooked-work", "deferred", "pinned"}
 	if len(got) != len(want) {
 		t.Fatalf("got %d issue(s), want %d: %#v", len(got), len(want), got)
 	}
@@ -300,6 +301,38 @@ func TestActiveWorkBeadsForCleanupFiltersAssignedIssues(t *testing.T) {
 		if got[i].ID != want[i] {
 			t.Fatalf("got IDs %v, want %v", issueIDs(got), want)
 		}
+	}
+}
+
+func TestAssessStalenessBlocksActiveWork(t *testing.T) {
+	tests := []struct {
+		name string
+		info *StalenessInfo
+	}{
+		{
+			name: "active assigned work",
+			info: &StalenessInfo{CommitsBehind: 100, ActiveWorkBlocker: "assigned_work=gt-work status=hooked", RequiresRestart: true},
+		},
+		{
+			name: "working agent state",
+			info: &StalenessInfo{CommitsBehind: 100, ActiveWorkBlocker: "agent_state=working", RequiresRestart: true},
+		},
+		{
+			name: "spawning agent state",
+			info: &StalenessInfo{CommitsBehind: 100, ActiveWorkBlocker: "agent_state=spawning", RequiresRestart: true},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			stale, reason := assessStaleness(tt.info, 20)
+			if stale {
+				t.Fatalf("assessStaleness() stale=true, want false")
+			}
+			if reason != tt.info.ActiveWorkBlocker {
+				t.Fatalf("reason = %q, want %q", reason, tt.info.ActiveWorkBlocker)
+			}
+		})
 	}
 }
 
