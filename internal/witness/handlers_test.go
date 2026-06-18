@@ -3028,3 +3028,25 @@ func TestNukePolecatRefusesActiveHookBeforeSessionKill(t *testing.T) {
 		t.Fatalf("NukePolecat error = %v, want active hook refusal", err)
 	}
 }
+
+func TestNukePolecatRefusesMissingAgentSnapshotBeforeSessionKill(t *testing.T) {
+	bd, _ := mockBd(
+		func(args []string) (string, error) {
+			if len(args) == 0 {
+				return "[]", nil
+			}
+			switch args[0] {
+			case "show", "list":
+				return "[]", nil
+			default:
+				return "[]", nil
+			}
+		},
+		func(args []string) error { return nil },
+	)
+
+	err := NukePolecat(bd, t.TempDir(), "testrig", "scavenger")
+	if err == nil || !strings.Contains(err.Error(), "agent bead") || !strings.Contains(err.Error(), "unavailable") {
+		t.Fatalf("NukePolecat error = %v, want fail-closed missing agent bead refusal", err)
+	}
+}

@@ -1385,12 +1385,13 @@ func NukePolecat(bd *BdCli, workDir, rigName, polecatName string) error {
 		return fmt.Errorf("refusing to nuke %s/%s: MR pending in refinery (gt-6a9d)", rigName, polecatName)
 	}
 	snap := fetchAgentBeadSnapshot(bd, workDir, agentBeadID)
+	if snap == nil {
+		return fmt.Errorf("refusing to nuke %s/%s: agent bead %s unavailable", rigName, polecatName, agentBeadID)
+	}
 	var agentState beads.AgentState
 	hookBead := ""
-	if snap != nil {
-		agentState = beads.AgentState(snap.AgentState)
-		hookBead = snap.HookBead
-	}
+	agentState = beads.AgentState(snap.AgentState)
+	hookBead = snap.HookBead
 	if activeWork := witnessActiveWorkEvidence(bd, workDir, rigName, polecatName, agentState, hookBead); activeWork.BlocksCleanup {
 		return fmt.Errorf("refusing to nuke %s/%s: %s", rigName, polecatName, activeWork.Blocker)
 	}
