@@ -570,7 +570,7 @@ func TestDisplaySafetyCheckBlockedToIncludesPredicates(t *testing.T) {
 		"gastown/fury",
 		"cleanup_status=unknown",
 		"active_mr=hq-wisp-1 status=open",
-		"Force nuke (LOSES WORK)",
+		"Force nuke after clearing active work",
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("displaySafetyCheckBlockedTo() missing %q in %q", want, out)
@@ -586,7 +586,7 @@ func TestDryRunNukeSummary(t *testing.T) {
 		want    string
 	}{
 		{name: "safe", total: 2, want: "Would nuke 2 polecat(s)."},
-		{name: "blocked", total: 2, blocked: 1, want: "Would refuse to nuke 1 of 2 polecat(s) without --force."},
+		{name: "blocked", total: 2, blocked: 1, want: "Would refuse to nuke 1 of 2 polecat(s) until safety blockers are cleared."},
 	}
 
 	for _, tt := range tests {

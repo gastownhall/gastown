@@ -1121,7 +1121,7 @@ func (m *Manager) Remove(name string, force bool) error {
 
 // RemoveWithOptions deletes a polecat worktree with explicit control over safety checks.
 // force=true: bypass uncommitted changes and unpushed commits check
-// nuclear=true: bypass ALL safety checks including stashes
+// nuclear=true: bypass cleanup/git safety checks, but never active assigned or hooked work
 // selfNuke=true: bypass cwd-in-worktree check (for polecat deleting its own worktree)
 //
 // ZFC #10: Uses cleanup_status from agent bead if available (polecat self-report),

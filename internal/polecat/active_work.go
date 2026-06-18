@@ -35,29 +35,37 @@ type ActiveWorkEvidence struct {
 // are compatibility and lifecycle evidence.
 func AssessActiveWork(reader ActiveWorkReader, assignee string, agentState beads.AgentState, hookBead string) ActiveWorkEvidence {
 	result := ActiveWorkEvidence{HookSafe: true}
-	hook := AssessHookWork(reader, hookBead)
-	result.HookBead = hook.HookBead
-	result.HookSafe = hook.HookSafe
-	result.HookTerminal = hook.HookTerminal
 
 	for _, evidence := range []ActiveWorkEvidence{
 		assessAssignedWork(reader, assignee),
-		hook,
+		AssessHookWork(reader, hookBead),
 		AssessAgentStateWork(agentState),
 	} {
-		result.Active = result.Active || evidence.Active
-		result.Protected = result.Protected || evidence.Protected
-		result.BlocksCleanup = result.BlocksCleanup || evidence.BlocksCleanup
-		result.RequiresRestart = result.RequiresRestart || evidence.RequiresRestart
-		if result.Blocker == "" && evidence.Blocker != "" {
-			result.Blocker = evidence.Blocker
-		}
-		if result.AssignedIssue == "" && evidence.AssignedIssue != "" {
-			result.AssignedIssue = evidence.AssignedIssue
-		}
+		result.Merge(evidence)
 	}
 
 	return result
+}
+
+// Merge folds additional evidence into e while preserving the first blocker in
+// caller-supplied priority order. Hook metadata only changes when the incoming
+// evidence is actually about a hook, so lifecycle evidence cannot clobber it.
+func (e *ActiveWorkEvidence) Merge(next ActiveWorkEvidence) {
+	e.Active = e.Active || next.Active
+	e.Protected = e.Protected || next.Protected
+	e.BlocksCleanup = e.BlocksCleanup || next.BlocksCleanup
+	e.RequiresRestart = e.RequiresRestart || next.RequiresRestart
+	if e.Blocker == "" && next.Blocker != "" {
+		e.Blocker = next.Blocker
+	}
+	if next.HookBead != "" {
+		e.HookBead = next.HookBead
+		e.HookSafe = next.HookSafe
+		e.HookTerminal = next.HookTerminal
+	}
+	if e.AssignedIssue == "" && next.AssignedIssue != "" {
+		e.AssignedIssue = next.AssignedIssue
+	}
 }
 
 // AssessHookWork classifies legacy hook_bead evidence. Lookup uncertainty fails

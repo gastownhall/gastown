@@ -112,3 +112,33 @@ func TestAssessActiveWork(t *testing.T) {
 		})
 	}
 }
+
+func TestActiveWorkEvidenceMergePreservesPriorityAndHook(t *testing.T) {
+	evidence := ActiveWorkEvidence{HookSafe: true}
+	evidence.Merge(ActiveWorkEvidence{
+		Active:          true,
+		BlocksCleanup:   true,
+		RequiresRestart: true,
+		Blocker:         "assigned_work=gt-work status=hooked",
+		AssignedIssue:   "gt-work",
+	})
+	evidence.Merge(ActiveWorkEvidence{
+		Active:          true,
+		BlocksCleanup:   true,
+		RequiresRestart: true,
+		Blocker:         "hook_bead=gt-hook status=hooked",
+		HookBead:        "gt-hook",
+		HookSafe:        false,
+	})
+	evidence.Merge(AssessAgentStateWork(beads.AgentStateSpawning))
+
+	if evidence.Blocker != "assigned_work=gt-work status=hooked" {
+		t.Fatalf("blocker = %q, want first blocker", evidence.Blocker)
+	}
+	if evidence.HookBead != "gt-hook" || evidence.HookSafe || evidence.HookTerminal {
+		t.Fatalf("hook evidence = (bead=%q safe=%v terminal=%v), want active unsafe hook", evidence.HookBead, evidence.HookSafe, evidence.HookTerminal)
+	}
+	if !evidence.Active || !evidence.BlocksCleanup || !evidence.RequiresRestart || evidence.AssignedIssue != "gt-work" {
+		t.Fatalf("merged evidence = %+v", evidence)
+	}
+}

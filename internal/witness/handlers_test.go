@@ -2934,6 +2934,50 @@ func TestHandleZombieRestart_ActiveHookBeatsBranchAlreadyMergedArchive(t *testin
 	}
 }
 
+func TestWitnessActiveWorkEvidencePrefersHookOverSpawningState(t *testing.T) {
+	bd, _ := mockBd(
+		func(args []string) (string, error) {
+			if len(args) == 0 {
+				return "[]", nil
+			}
+			switch args[0] {
+			case "list":
+				return "[]", nil
+			case "show":
+				return `[{"status":"hooked"}]`, nil
+			default:
+				return "[]", nil
+			}
+		},
+		func(args []string) error { return nil },
+	)
+
+	got := witnessActiveWorkEvidence(bd, t.TempDir(), "testrig", "scavenger", beads.AgentStateSpawning, "ma-poc.4")
+	if got.Blocker != "hook_bead=ma-poc.4 status=hooked" {
+		t.Fatalf("blocker = %q, want hook blocker before lifecycle state", got.Blocker)
+	}
+	if !got.BlocksCleanup || !got.RequiresRestart || got.HookSafe || got.HookTerminal {
+		t.Fatalf("active work evidence = %+v, want active unsafe hook requiring restart", got)
+	}
+}
+
+func TestWitnessActiveWorkEvidenceTreatsReapedHookAsTerminal(t *testing.T) {
+	bd, _ := mockBd(
+		func(args []string) (string, error) {
+			if len(args) > 0 && args[0] == "list" {
+				return "[]", nil
+			}
+			return "[]", nil
+		},
+		func(args []string) error { return nil },
+	)
+
+	got := witnessActiveWorkEvidence(bd, t.TempDir(), "testrig", "scavenger", beads.AgentStateIdle, "ma-poc.4")
+	if got.BlocksCleanup || !got.HookSafe || !got.HookTerminal {
+		t.Fatalf("active work evidence = %+v, want verified reaped hook terminal", got)
+	}
+}
+
 func TestNukePolecatRefusesActiveHookBeforeSessionKill(t *testing.T) {
 	bd, _ := mockBd(
 		func(args []string) (string, error) {

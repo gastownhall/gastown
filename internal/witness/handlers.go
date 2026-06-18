@@ -2832,22 +2832,13 @@ func getBeadStatus(bd *BdCli, workDir, beadID string) (string, bool) {
 func witnessActiveWorkEvidence(bd *BdCli, workDir, rigName, polecatName string, agentState beads.AgentState, hookBead string) polecat.ActiveWorkEvidence {
 	reader := beadCLIShower{bd: bd, workDir: workDir}
 	assignee := fmt.Sprintf("%s/polecats/%s", rigName, polecatName)
-	evidence := polecat.AssessActiveWork(reader, assignee, agentState, "")
-	if hookBead == "" {
-		return evidence
+	evidence := polecat.ActiveWorkEvidence{HookSafe: true}
+	evidence.Merge(polecat.AssessActiveWork(reader, assignee, "", ""))
+	if hookBead != "" {
+		hookStatus, hookFound := getBeadStatus(bd, workDir, hookBead)
+		evidence.Merge(polecat.AssessHookStatus(hookBead, hookStatus, hookFound))
 	}
-	hookStatus, hookFound := getBeadStatus(bd, workDir, hookBead)
-	hookEvidence := polecat.AssessHookStatus(hookBead, hookStatus, hookFound)
-	evidence.HookBead = hookEvidence.HookBead
-	evidence.HookSafe = hookEvidence.HookSafe
-	evidence.HookTerminal = hookEvidence.HookTerminal
-	evidence.Active = evidence.Active || hookEvidence.Active
-	evidence.Protected = evidence.Protected || hookEvidence.Protected
-	evidence.BlocksCleanup = evidence.BlocksCleanup || hookEvidence.BlocksCleanup
-	evidence.RequiresRestart = evidence.RequiresRestart || hookEvidence.RequiresRestart
-	if evidence.Blocker == "" {
-		evidence.Blocker = hookEvidence.Blocker
-	}
+	evidence.Merge(polecat.AssessAgentStateWork(agentState))
 	return evidence
 }
 
