@@ -111,9 +111,12 @@ func checkPolecatSafety(target polecatTarget) *SafetyCheckResult {
 	agentBeadID := polecatBeadIDForRig(target.r, target.rigName, target.polecatName)
 	agentIssue, fields, err := bd.GetAgentBead(agentBeadID)
 	assignee := fmt.Sprintf("%s/polecats/%s", target.rigName, target.polecatName)
+	agentRecordEvidence := polecat.AssessAgentRecord(agentBeadID, agentIssue, fields, err)
 
 	if err != nil || fields == nil {
-		applyActiveWorkToSafetyResult(result, polecat.AssessActiveWork(bd, assignee, "", ""))
+		activeWork := polecat.AssessActiveWork(bd, assignee, "", "")
+		activeWork.Merge(agentRecordEvidence)
+		applyActiveWorkToSafetyResult(result, activeWork)
 		// No agent bead - fall back to git check
 		if infoErr == nil && polecatInfo != nil {
 			gitState, gitErr := getGitState(polecatInfo.ClonePath)
@@ -138,6 +141,7 @@ func checkPolecatSafety(target polecatTarget) *SafetyCheckResult {
 		sourceHint := agentSourceIssueHint(currentIssue, fields)
 		hookBead := agentHookBead(agentIssue, fields)
 		activeWork := polecat.AssessActiveWork(bd, assignee, beads.AgentState(fields.AgentState), hookBead)
+		activeWork.Merge(agentRecordEvidence)
 		applyActiveWorkToSafetyResult(result, activeWork)
 		var gitState *GitState
 		gitStateLoaded := false
@@ -211,14 +215,16 @@ func checkPolecatActiveWorkSafety(target polecatTarget) *SafetyCheckResult {
 	result := &SafetyCheckResult{Polecat: fmt.Sprintf("%s/%s", target.rigName, target.polecatName)}
 	bd := beads.New(target.r.Path)
 	agentBeadID := polecatBeadIDForRig(target.r, target.rigName, target.polecatName)
-	agentIssue, fields, _ := bd.GetAgentBead(agentBeadID)
+	agentIssue, fields, err := bd.GetAgentBead(agentBeadID)
 	hookBead := agentHookBead(agentIssue, fields)
 	var agentState beads.AgentState
 	if fields != nil {
 		agentState = beads.AgentState(fields.AgentState)
 	}
 	assignee := fmt.Sprintf("%s/polecats/%s", target.rigName, target.polecatName)
-	applyActiveWorkToSafetyResult(result, polecat.AssessActiveWork(bd, assignee, agentState, hookBead))
+	activeWork := polecat.AssessActiveWork(bd, assignee, agentState, hookBead)
+	activeWork.Merge(polecat.AssessAgentRecord(agentBeadID, agentIssue, fields, err))
+	applyActiveWorkToSafetyResult(result, activeWork)
 	result.Blocked = len(result.Reasons) > 0
 	return result
 }

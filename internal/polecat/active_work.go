@@ -47,6 +47,23 @@ func AssessActiveWork(reader ActiveWorkReader, assignee string, agentState beads
 	return result
 }
 
+// AssessAgentRecord classifies agent bead lookup uncertainty. Missing or
+// unreadable agent records are not proof of active work, but destructive cleanup
+// must fail closed because hook_bead and agent_state evidence could not be read.
+func AssessAgentRecord(agentBeadID string, agentIssue *beads.Issue, fields *beads.AgentFields, err error) ActiveWorkEvidence {
+	agentBeadID = strings.TrimSpace(agentBeadID)
+	if agentBeadID == "" {
+		return ActiveWorkEvidence{HookSafe: true}
+	}
+	if err != nil {
+		return ActiveWorkEvidence{Protected: true, BlocksCleanup: true, Blocker: fmt.Sprintf("agent_bead=%s status=lookup_error: %v", agentBeadID, err), HookSafe: true}
+	}
+	if agentIssue == nil && fields == nil {
+		return ActiveWorkEvidence{Protected: true, BlocksCleanup: true, Blocker: fmt.Sprintf("agent_bead=%s status=missing", agentBeadID), HookSafe: true}
+	}
+	return ActiveWorkEvidence{HookSafe: true}
+}
+
 // Merge folds additional evidence into e while preserving the first blocker in
 // caller-supplied priority order. Hook metadata only changes when the incoming
 // evidence is actually about a hook, so lifecycle evidence cannot clobber it.

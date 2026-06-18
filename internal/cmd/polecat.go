@@ -1050,6 +1050,7 @@ func runPolecatCheckRecovery(cmd *cobra.Command, args []string) error {
 	beadTerminal := isAssignedBeadTerminal(bd, status.Issue)
 	assignee := fmt.Sprintf("%s/polecats/%s", rigName, polecatName)
 	activeWork := polecat.AssessActiveWork(bd, assignee, "", "")
+	activeWork.Merge(polecat.AssessAgentRecord(agentBeadID, agentIssue, fields, err))
 	workTerminal := beadTerminal || activeWork.HookTerminal
 	targetRefs := recoveryTargetRefs(bd, status.Issue, status.ActiveMR, status.Branch)
 	input := polecat.WorkstateInput{State: p.State, CleanupStatus: polecat.CleanupUnknown, Branch: p.Branch}
@@ -1093,6 +1094,7 @@ func runPolecatCheckRecovery(cmd *cobra.Command, args []string) error {
 		input.ActiveMR = fields.ActiveMR
 		hookBead := agentHookBead(agentIssue, fields)
 		activeWork = polecat.AssessActiveWork(bd, assignee, beads.AgentState(fields.AgentState), hookBead)
+		activeWork.Merge(polecat.AssessAgentRecord(agentBeadID, agentIssue, fields, err))
 		input.ApplyActiveWork(activeWork)
 		workTerminal = beadTerminal || activeWork.HookTerminal
 		sourceHint := agentSourceIssueHint(status.Issue, fields)
