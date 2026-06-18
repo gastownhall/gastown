@@ -1897,7 +1897,7 @@ func detectZombieLiveSession(bd *BdCli, workDir, townRoot, rigName, polecatName,
 	// Agent alive but hooked bead closed — occupying slot without work (gt-h1l6i).
 	// gt-dsgp: Restart instead of nuke — the fresh session will pick up its hook
 	// and run gt done properly, or go idle waiting for new work.
-	if hookSt, hookOk := getBeadStatus(bd, workDir, snapHook); snapHook != "" && hookOk && hookSt == "closed" {
+	if hookSt, hookOk := getBeadStatus(bd, workDir, snapHook); polecat.AssessHookStatus(snapHook, hookSt, hookOk).HookTerminal {
 		zombie := ZombieResult{
 			PolecatName:    polecatName,
 			AgentState:     snapState,
@@ -1957,7 +1957,7 @@ func detectSubmittedStillRunning(bd *BdCli, workDir, polecatName, sessionName st
 	hookStatus := "none"
 	if snapHook != "" {
 		hookSt, hookOk := getBeadStatus(bd, workDir, snapHook)
-		if !hookOk || !isOpenHookStatus(hookSt) {
+		if !polecat.AssessHookStatus(snapHook, hookSt, hookOk).RequiresRestart {
 			return ZombieResult{}, false
 		}
 		hookStatus = hookSt
@@ -2005,15 +2005,6 @@ func hookStatusForNudge(hookBead string) string {
 	return hookBead
 }
 
-func isOpenHookStatus(status string) bool {
-	switch status {
-	case "open", "hooked", "in_progress":
-		return true
-	default:
-		return false
-	}
-}
-
 func hasSuccessfulSubmissionEvidence(snap *agentBeadSnapshot) bool {
 	if snap == nil {
 		return false
@@ -2041,6 +2032,8 @@ func detectZombieDeadSession(bd *BdCli, workDir, townRoot, rigName, polecatName,
 	if snap != nil {
 		snapState, snapHook = snap.AgentState, snap.HookBead
 	}
+	typedState := beads.AgentState(snapState)
+	activeWork := witnessActiveWorkEvidence(bd, workDir, rigName, polecatName, typedState, snapHook)
 
 	// Heartbeat v2 check (gt-3vr5): for dead sessions, a fresh heartbeat means
 	// the session isn't actually dead (race condition). A stale heartbeat confirms death.
@@ -2061,11 +2054,10 @@ func detectZombieDeadSession(bd *BdCli, workDir, townRoot, rigName, polecatName,
 			return ZombieResult{}, false // Recent — still working through gt done
 		}
 
-		// If bead is already closed, the polecat completed successfully.
-		// The dead session is expected (gt done kills it). Leave it alone. (gt-sy8)
-		hookSt, hookFound := getBeadStatus(bd, workDir, snapHook)
-		beadAlreadyClosed := snapHook != "" && hookFound && (hookSt == "closed" || hookSt == "")
-		if beadAlreadyClosed {
+		// If the hook is verified terminal and no other active/protected work
+		// remains, the polecat completed successfully. The dead session is
+		// expected (gt done kills it). Leave it alone. (gt-sy8)
+		if snapHook != "" && activeWork.HookTerminal && !activeWork.BlocksCleanup {
 			// gt-dsgp: Polecat completed its work. Don't nuke, don't restart.
 			// The sandbox is preserved for reuse by future slings.
 			return ZombieResult{}, false
@@ -2100,18 +2092,16 @@ func detectZombieDeadSession(bd *BdCli, workDir, townRoot, rigName, polecatName,
 		return zombie, true
 	}
 
-	// Standard zombie detection: active state or hooked bead with dead session.
-	typedState := beads.AgentState(snapState)
-	activeWork := witnessActiveWorkEvidence(bd, workDir, rigName, polecatName, typedState, snapHook)
-	if !isZombieState(typedState, snapHook) && !activeWork.RequiresRestart {
+	// Standard zombie detection: active work/state or unsafe hook evidence with a dead session.
+	if !activeWork.RequiresRestart && (activeWork.HookBead == "" || activeWork.HookTerminal) {
 		return ZombieResult{}, false
 	}
 
 	// GH#2795: A "done" or "nuked" polecat with a dead session has completed
 	// or been intentionally stopped. The dead session is expected — the hook
 	// bead may not be "closed" yet (refinery queue, manual cleanup), but the
-	// polecat is not a zombie. Without this check, isZombieState returns true
-	// on every patrol cycle (hookBead != ""), flooding the mayor inbox.
+	// polecat is not a zombie. Without this check, stale hook evidence can keep
+	// surfacing on every patrol cycle, flooding the mayor inbox.
 	if (typedState == beads.AgentStateDone || typedState == beads.AgentStateNuked) && !activeWork.RequiresRestart {
 		return ZombieResult{}, false
 	}
@@ -2126,22 +2116,6 @@ func detectZombieDeadSession(bd *BdCli, workDir, townRoot, rigName, polecatName,
 			return ZombieResult{}, false
 		}
 		// Spawning for too long — fall through to zombie handling
-	}
-
-	// A polecat whose hook bead is already CLOSED (or reaped) completed its
-	// work successfully. The dead session is expected (gt done kills it).
-	// Don't flag as zombie or trigger re-dispatch. (gt-sy8)
-	// gt-dsgp: Don't nuke — sandbox preserved for reuse.
-	// gt-qbh: Treat missing beads (empty status from successful lookup) as closed.
-	// Wisp beads get reaped after completion, so getBeadStatus returns ("", true)
-	// for reaped wisps. A missing bead is not evidence of a crash.
-	// But a FAILED lookup ("", false) — e.g., cross-rig routing error — must
-	// NOT be treated as closed. Default to restart (safe). (hq-wisp-n530)
-	if snapHook != "" && !activeWork.Active {
-		hookStatus, hookFound := getBeadStatus(bd, workDir, snapHook)
-		if hookFound && (hookStatus == "closed" || hookStatus == "") {
-			return ZombieResult{}, false
-		}
 	}
 
 	// TOCTOU guard: verify session wasn't recreated since detection.
@@ -2162,16 +2136,6 @@ func detectZombieDeadSession(bd *BdCli, workDir, townRoot, rigName, polecatName,
 	cleanupStatus := snap.cleanupStatus()
 	handleZombieRestart(bd, workDir, rigName, polecatName, typedState, snapHook, cleanupStatus, &zombie)
 	return zombie, true
-}
-
-// isZombieState returns true if the agent state or hook bead indicates a zombie.
-// Uses typed AgentState to leverage IsActive() metadata rather than hardcoded
-// string comparisons. See gt-tsut.
-func isZombieState(agentState beads.AgentState, hookBead string) bool {
-	if hookBead != "" {
-		return true
-	}
-	return agentState.IsActive()
 }
 
 // handleZombieRestart determines the restart action for a confirmed zombie (gt-dsgp).

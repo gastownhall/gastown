@@ -1065,7 +1065,7 @@ func runPolecatCheckRecovery(cmd *cobra.Command, args []string) error {
 	}
 
 	if err != nil || fields == nil {
-		applyActiveWorkToWorkstateInput(&input, activeWork)
+		input.ApplyActiveWork(activeWork)
 		// No agent bead or no cleanup_status - fall back to git check.
 		loadGitState()
 		if gitErr != nil {
@@ -1093,7 +1093,7 @@ func runPolecatCheckRecovery(cmd *cobra.Command, args []string) error {
 		input.ActiveMR = fields.ActiveMR
 		hookBead := agentHookBead(agentIssue, fields)
 		activeWork = polecat.AssessActiveWork(bd, assignee, beads.AgentState(fields.AgentState), hookBead)
-		applyActiveWorkToWorkstateInput(&input, activeWork)
+		input.ApplyActiveWork(activeWork)
 		workTerminal = beadTerminal || activeWork.HookTerminal
 		sourceHint := agentSourceIssueHint(status.Issue, fields)
 		if status.Issue == "" && sourceHint != "" {
@@ -1246,14 +1246,6 @@ func applyGitStateToWorkstateInput(input *polecat.WorkstateInput, worktreePath s
 		input.GitDirty = true
 		input.GitDirtyReason = fmt.Sprintf("git_state=has_uncommitted uncommitted_files=%d", len(gitState.UncommittedFiles))
 	}
-}
-
-func applyActiveWorkToWorkstateInput(input *polecat.WorkstateInput, evidence polecat.ActiveWorkEvidence) {
-	if !evidence.BlocksCleanup {
-		return
-	}
-	input.ActiveWorkBlocker = evidence.Blocker
-	input.HookBead = evidence.HookBead
 }
 
 func applyMQFactsToWorkstateInput(input *polecat.WorkstateInput, status *RecoveryStatus, bd *beads.Beads, beadTerminal bool, worktreePath string, targetRefs []string, gitState *GitState, gitErr error) {

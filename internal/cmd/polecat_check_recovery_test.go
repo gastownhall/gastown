@@ -3,6 +3,7 @@ package cmd
 import (
 	"bytes"
 	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -435,21 +436,25 @@ func TestAssessHookWorkForCleanup(t *testing.T) {
 }
 
 func TestRecoveryDispositionActiveWorkBlocksSafeToNuke(t *testing.T) {
-	input := polecat.WorkstateInput{State: polecat.StateIdle, CleanupStatus: polecat.CleanupClean}
-	applyActiveWorkToWorkstateInput(&input, polecat.ActiveWorkEvidence{
-		BlocksCleanup: true,
-		Blocker:       "hook_bead=gt-work status=hooked",
-		HookBead:      "gt-work",
-	})
+	for _, cleanupStatus := range []polecat.CleanupStatus{polecat.CleanupClean, ""} {
+		t.Run(fmt.Sprintf("cleanup_status=%q", cleanupStatus), func(t *testing.T) {
+			input := polecat.WorkstateInput{State: polecat.StateIdle, CleanupStatus: cleanupStatus}
+			input.ApplyActiveWork(polecat.ActiveWorkEvidence{
+				BlocksCleanup: true,
+				Blocker:       "hook_bead=gt-work status=hooked",
+				HookBead:      "gt-work",
+			})
 
-	status := RecoveryStatus{CleanupStatus: input.CleanupStatus}
-	applyWorkstateDispositionToRecoveryStatus(&status, polecat.DecideWorkstate(input))
+			status := RecoveryStatus{CleanupStatus: input.CleanupStatus}
+			applyWorkstateDispositionToRecoveryStatus(&status, polecat.DecideWorkstate(input))
 
-	if status.Verdict == "SAFE_TO_NUKE" || status.SafeToNuke || !status.NeedsRecovery {
-		t.Fatalf("recovery status = %+v, want NEEDS_RECOVERY and safe_to_nuke=false", status)
-	}
-	if len(status.Blockers) == 0 || !strings.Contains(status.Blockers[0], "hook_bead=gt-work status=hooked") {
-		t.Fatalf("blockers = %v, want active hook blocker", status.Blockers)
+			if status.Verdict == "SAFE_TO_NUKE" || status.SafeToNuke || !status.NeedsRecovery {
+				t.Fatalf("recovery status = %+v, want NEEDS_RECOVERY and safe_to_nuke=false", status)
+			}
+			if len(status.Blockers) == 0 || !strings.Contains(status.Blockers[0], "hook_bead=gt-work status=hooked") {
+				t.Fatalf("blockers = %v, want active hook blocker", status.Blockers)
+			}
+		})
 	}
 }
 

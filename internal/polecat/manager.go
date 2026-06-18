@@ -2193,10 +2193,7 @@ func (m *Manager) workstateInputForPolecat(name string, state State, issue strin
 	activeWork := m.activeWorkEvidence(name)
 	hookSafe := activeWork.HookSafe
 	hookTerminal := activeWork.HookTerminal
-	if activeWork.BlocksCleanup {
-		input.ActiveWorkBlocker = activeWork.Blocker
-		input.HookBead = activeWork.HookBead
-	}
+	input.ApplyActiveWork(activeWork)
 	if err != nil {
 		input.GitCheckFailed = true
 	}

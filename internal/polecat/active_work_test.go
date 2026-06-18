@@ -34,19 +34,23 @@ func (f fakeActiveWorkReader) ListByAssignee(string) ([]*beads.Issue, error) {
 
 func TestAssessHookWork(t *testing.T) {
 	tests := []struct {
-		name         string
-		hookStatus   string
-		err          error
-		wantBlocker  string
-		wantSafe     bool
-		wantTerminal bool
+		name          string
+		hookStatus    string
+		err           error
+		wantBlocker   string
+		wantRestart   bool
+		wantProtected bool
+		wantSafe      bool
+		wantTerminal  bool
 	}{
 		{name: "closed hook is terminal", hookStatus: "closed", wantSafe: true, wantTerminal: true},
 		{name: "tombstone hook is terminal", hookStatus: "tombstone", wantSafe: true, wantTerminal: true},
-		{name: "hooked hook blocks", hookStatus: beads.StatusHooked, wantBlocker: "hook_bead=gt-work status=hooked"},
-		{name: "in progress hook blocks", hookStatus: "in_progress", wantBlocker: "hook_bead=gt-work status=in_progress"},
-		{name: "open hook blocks", hookStatus: "open", wantBlocker: "hook_bead=gt-work status=open"},
-		{name: "lookup error blocks", err: errors.New("bd exploded"), wantBlocker: "lookup_error"},
+		{name: "hooked hook blocks", hookStatus: beads.StatusHooked, wantBlocker: "hook_bead=gt-work status=hooked", wantRestart: true},
+		{name: "in progress hook blocks", hookStatus: "in_progress", wantBlocker: "hook_bead=gt-work status=in_progress", wantRestart: true},
+		{name: "open hook blocks", hookStatus: "open", wantBlocker: "hook_bead=gt-work status=open", wantRestart: true},
+		{name: "blocked hook protects without restart", hookStatus: "blocked", wantBlocker: "hook_bead=gt-work status=blocked", wantProtected: true},
+		{name: "deferred hook protects without restart", hookStatus: "deferred", wantBlocker: "hook_bead=gt-work status=deferred", wantProtected: true},
+		{name: "lookup error blocks", err: errors.New("bd exploded"), wantBlocker: "lookup_error", wantProtected: true},
 	}
 
 	for _, tt := range tests {
@@ -58,6 +62,9 @@ func TestAssessHookWork(t *testing.T) {
 			}
 			if tt.wantBlocker != "" && !strings.Contains(got.Blocker, tt.wantBlocker) {
 				t.Fatalf("blocker = %q, want contains %q", got.Blocker, tt.wantBlocker)
+			}
+			if got.RequiresRestart != tt.wantRestart || got.Protected != tt.wantProtected {
+				t.Fatalf("AssessHookWork() = %+v, want restart=%v protected=%v", got, tt.wantRestart, tt.wantProtected)
 			}
 		})
 	}

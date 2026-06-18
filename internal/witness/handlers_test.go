@@ -1446,18 +1446,16 @@ func TestDetectZombie_DoneOrNukedNotZombie(t *testing.T) {
 	t.Parallel()
 	// GH#2795: Polecats with agent_state=done or agent_state=nuked and a dead
 	// session should NOT be treated as zombies, even if hook_bead is still set.
-	// Without this, isZombieState returns true (hookBead != ""), and the witness
-	// floods the mayor inbox with RECOVERY_NEEDED alerts every patrol cycle.
+	// Without terminal-state handling, stale hook evidence can flood the mayor
+	// inbox with RECOVERY_NEEDED alerts every patrol cycle.
 	for _, state := range []beads.AgentState{beads.AgentStateDone, beads.AgentStateNuked} {
-		hookBead := "gt-some-issue"
-		// isZombieState returns true because hookBead != ""
-		if !isZombieState(state, hookBead) {
-			t.Errorf("isZombieState(%q, %q) = false, want true (pre-condition)", state, hookBead)
-		}
-		// But the done/nuked check in detectZombieDeadSession should skip these.
-		// Verify the states are terminal (not active).
+		// The done/nuked check in detectZombieDeadSession should skip these.
+		// Verify the states are terminal (not active) and do not require restart.
 		if state.IsActive() {
 			t.Errorf("state %q should not be active", state)
+		}
+		if evidence := polecat.AssessAgentStateWork(state); evidence.RequiresRestart || evidence.BlocksCleanup {
+			t.Errorf("AssessAgentStateWork(%q) = %+v, want terminal-safe state", state, evidence)
 		}
 	}
 }
@@ -2931,6 +2929,32 @@ func TestHandleZombieRestart_ActiveHookBeatsBranchAlreadyMergedArchive(t *testin
 
 	if strings.Contains(z.Action, "work-already-merged") {
 		t.Fatalf("action = %q, active hook must restart/resume before archive", z.Action)
+	}
+	if !strings.HasPrefix(z.Action, "restarted") && !strings.HasPrefix(z.Action, "restart-") {
+		t.Fatalf("action = %q, active hook must route to restart/resume", z.Action)
+	}
+}
+
+func TestDetectSubmittedStillRunningIgnoresProtectedHookStatus(t *testing.T) {
+	bd, _ := mockBd(
+		func(args []string) (string, error) {
+			if len(args) > 0 && args[0] == "show" {
+				return `[{"status":"blocked"}]`, nil
+			}
+			return "[]", nil
+		},
+		func(args []string) error { return nil },
+	)
+	snap := &agentBeadSnapshot{
+		AgentState: string(beads.AgentStateWorking),
+		HookBead:   "ma-poc.4",
+		ActiveMR:   "mr-123",
+		Fields:     &beads.AgentFields{ActiveMR: "mr-123", CleanupStatus: "clean"},
+		UpdatedAt:  time.Now().Add(-10 * time.Minute).Format(time.RFC3339),
+	}
+
+	if _, found := detectSubmittedStillRunning(bd, t.TempDir(), "scavenger", "gt-test", nil, nil, snap, time.Minute); found {
+		t.Fatalf("blocked hook status must not be treated as submitted-still-running active hook")
 	}
 }
 

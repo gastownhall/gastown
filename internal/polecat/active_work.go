@@ -107,12 +107,13 @@ func AssessHookStatus(hookBead, status string, verified bool) ActiveWorkEvidence
 	if status == "" || beads.IssueStatus(status).IsTerminal() {
 		return hookEvidence(hookBead, true, true, false, "")
 	}
-	return hookEvidence(hookBead, false, false, true, fmt.Sprintf("hook_bead=%s status=%s", hookBead, status))
+	return hookEvidence(hookBead, false, false, issueStatusRequiresRestart(beads.IssueStatus(status)), fmt.Sprintf("hook_bead=%s status=%s", hookBead, status))
 }
 
 func hookEvidence(hookBead string, safe, terminal, active bool, blocker string) ActiveWorkEvidence {
 	return ActiveWorkEvidence{
 		Active:          active,
+		Protected:       blocker != "" && !active,
 		BlocksCleanup:   blocker != "",
 		RequiresRestart: active,
 		Blocker:         blocker,
@@ -178,7 +179,11 @@ func assignedIssueRequiresRestart(issue *beads.Issue) bool {
 	if issue == nil {
 		return false
 	}
-	switch beads.IssueStatus(issue.Status) {
+	return issueStatusRequiresRestart(beads.IssueStatus(issue.Status))
+}
+
+func issueStatusRequiresRestart(status beads.IssueStatus) bool {
+	switch status {
 	case beads.StatusOpen, beads.StatusInProgress, beads.IssueStatusHooked:
 		return true
 	default:
