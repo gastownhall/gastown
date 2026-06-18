@@ -19,6 +19,7 @@ func TestAssessConcrete(t *testing.T) {
 		{"merge request label", Snapshot{ID: "gt-mr", Type: "task", Labels: []string{"gt:merge-request"}}, false},
 		{"agent label", Snapshot{ID: "gt-agent", Type: "task", Labels: []string{"gt:agent"}}, false},
 		{"convoy label", Snapshot{ID: "gt-convoy", Type: "task", Labels: []string{"gt:convoy"}}, false},
+		{"epic label", Snapshot{ID: "gt-epic", Type: "task", Labels: []string{"gt:epic"}}, false},
 		{"agent type", Snapshot{ID: "gt-agent", Type: "agent"}, false},
 		{"epic type", Snapshot{ID: "gt-epic", Type: "epic"}, false},
 		{"wisp type", Snapshot{ID: "gt-wisp", Type: "wisp"}, false},

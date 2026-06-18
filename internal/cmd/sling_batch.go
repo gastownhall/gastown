@@ -20,13 +20,21 @@ import (
 // runBatchSling handles slinging multiple beads to a rig.
 // Each bead gets its own freshly spawned polecat.
 func runBatchSling(beadIDs []string, rigName string, townBeadsDir string) error {
+	townRoot := filepath.Dir(townBeadsDir)
+
 	// Validate all beads exist before spawning any polecats
 	for _, beadID := range beadIDs {
 		if err := verifyBeadExists(beadID); err != nil {
 			return fmt.Errorf("bead '%s' not found", beadID)
 		}
+		info, err := getBeadInfoFromTownRoot(townRoot, beadID)
+		if err != nil {
+			return fmt.Errorf("checking bead status: %w", err)
+		}
+		if err := validateConcreteWorkBeadInfo(beadID, info); err != nil {
+			return err
+		}
 	}
-	townRoot := filepath.Dir(townBeadsDir)
 	for _, beadID := range beadIDs {
 		if err := verifyBeadExistsInTargetRigDatabase(beadID, rigName, townRoot); err != nil {
 			return err

@@ -189,6 +189,49 @@ func TestPolecatWorkTargetDetection(t *testing.T) {
 	}
 }
 
+func TestValidateStandaloneFormulaTargetRejectsPolecatWorkFormula(t *testing.T) {
+	setupSlingTestRegistry(t)
+	tests := []struct {
+		name    string
+		formula string
+		target  string
+		envRole string
+		wantErr bool
+	}{
+		{"rig target", "mol-polecat-work", "gastown", "", true},
+		{"alias rig target", "polecat-work", "gastown", "", true},
+		{"named polecat", "mol-polecat-work", "gastown/polecats/toast", "", true},
+		{"self polecat", "mol-polecat-work", ".", "gastown/polecats/toast", true},
+		{"mayor formula target allowed", "mol-polecat-work", "mayor", "", false},
+		{"other formula to rig allowed", "mol-review", "gastown", "", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if tt.envRole != "" {
+				t.Setenv("GT_ROLE", tt.envRole)
+			} else {
+				t.Setenv("GT_ROLE", "")
+			}
+			err := validateStandaloneFormulaTarget(tt.formula, tt.target)
+			if (err != nil) != tt.wantErr {
+				t.Fatalf("validateStandaloneFormulaTarget() error = %v, wantErr %v", err, tt.wantErr)
+			}
+		})
+	}
+}
+
+type fakeMRSourceShower struct {
+	issues map[string]*beads.Issue
+}
+
+func (f fakeMRSourceShower) Show(issueID string) (*beads.Issue, error) {
+	issue, ok := f.issues[issueID]
+	if !ok {
+		return nil, beads.ErrNotFound
+	}
+	return issue, nil
+}
+
 func TestValidateConcreteSourceIssueRejectsBadMRSource(t *testing.T) {
 	bad := &beads.Issue{ID: "gt-wisp-abc", Type: "task", Ephemeral: true}
 	if err := validateConcreteSourceIssue(bad.ID, bad); err == nil {
@@ -197,6 +240,26 @@ func TestValidateConcreteSourceIssueRejectsBadMRSource(t *testing.T) {
 	good := &beads.Issue{ID: "gt-good", Type: "task"}
 	if err := validateConcreteSourceIssue(good.ID, good); err != nil {
 		t.Fatalf("concrete source issue rejected: %v", err)
+	}
+}
+
+func TestValidateMergeRequestSourceRejectsMissingAndNonConcreteSource(t *testing.T) {
+	shower := fakeMRSourceShower{issues: map[string]*beads.Issue{
+		"gt-good":    {ID: "gt-good", Type: "task"},
+		"gt-context": {ID: "gt-context", Type: "task", Labels: []string{"gt:sling-context"}},
+	}}
+
+	missing := &beads.Issue{ID: "gt-mr", Description: "branch: test\ntarget: main\n"}
+	if err := validateMergeRequestSource(shower, missing, "gt-good"); err == nil {
+		t.Fatalf("MR without source_issue accepted")
+	}
+	nonConcrete := &beads.Issue{ID: "gt-mr", Description: "branch: test\ntarget: main\nsource_issue: gt-context\n"}
+	if err := validateMergeRequestSource(shower, nonConcrete, "gt-context"); err == nil {
+		t.Fatalf("MR with non-concrete source_issue accepted")
+	}
+	good := &beads.Issue{ID: "gt-mr", Description: "branch: test\ntarget: main\nsource_issue: gt-good\n"}
+	if err := validateMergeRequestSource(shower, good, "gt-good"); err != nil {
+		t.Fatalf("valid MR source rejected: %v", err)
 	}
 }
 

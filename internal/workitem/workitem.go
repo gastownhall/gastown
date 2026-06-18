@@ -27,6 +27,7 @@ var internalLabels = map[string]bool{
 	"gt:agent":         true,
 	"gt:queue":         true,
 	"gt:convoy":        true,
+	"gt:epic":          true,
 	"gt:role":          true,
 	"gt:rig":           true,
 }

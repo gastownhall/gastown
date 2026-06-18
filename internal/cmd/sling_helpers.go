@@ -199,7 +199,30 @@ func isPolecatWorkTarget(target string) bool {
 }
 
 func isStandalonePolecatWorkFormula(formulaName string) bool {
-	return strings.EqualFold(strings.TrimSpace(formulaName), "mol-polecat-work")
+	formulaName = strings.TrimSpace(formulaName)
+	return strings.EqualFold(formulaName, "mol-polecat-work") || strings.EqualFold(formulaName, "polecat-work")
+}
+
+func isSelfPolecatFormulaTarget(target string) bool {
+	target = strings.TrimSpace(target)
+	if target != "" && target != "." {
+		return false
+	}
+	if role := os.Getenv("GT_ROLE"); role != "" {
+		parsedRole, _, _ := parseRoleString(role)
+		return parsedRole == RolePolecat
+	}
+	return os.Getenv("GT_POLECAT") != ""
+}
+
+func validateStandaloneFormulaTarget(formulaName, target string) error {
+	if isStandalonePolecatWorkFormula(formulaName) && (isPolecatWorkTarget(target) || isSelfPolecatFormulaTarget(target)) {
+		if strings.TrimSpace(target) == "" {
+			target = "."
+		}
+		return fmt.Errorf("refusing standalone %s sling to polecat target %q: use --on <concrete-issue> so the formula attaches to durable work", formulaName, target)
+	}
+	return nil
 }
 
 // isDeferredBead checks whether a bead should be rejected from slinging because

@@ -321,6 +321,10 @@ func applyWorkstateDispositionToCapacitySnapshot(snapshot *polecatCapacitySnapsh
 	if !disposition.CountsTowardCapacity {
 		return
 	}
+	if disposition.NeedsRecovery {
+		snapshot.RecoveryBlocked++
+		return
+	}
 	if state == polecat.StateWorking || disposition.Verdict == polecat.WorkstateVerdictWorking {
 		snapshot.Working++
 		return

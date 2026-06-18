@@ -273,6 +273,13 @@ func verifyFormulaExists(formulaName string) error {
 // Flow: cook → wisp → attach to hook → nudge
 func runSlingFormula(ctx context.Context, args []string) (err error) {
 	formulaName := args[0]
+	var target string
+	if len(args) > 1 {
+		target = args[1]
+	}
+	if err := validateStandaloneFormulaTarget(formulaName, target); err != nil {
+		return err
+	}
 
 	// Get town root early - needed for BEADS_DIR when running bd commands
 	townRoot, err := workspace.FindFromCwd()
@@ -282,13 +289,6 @@ func runSlingFormula(ctx context.Context, args []string) (err error) {
 	townBeadsDir := filepath.Join(townRoot, ".beads")
 
 	// Resolve target using shared dispatch logic
-	var target string
-	if len(args) > 1 {
-		target = args[1]
-	}
-	if isStandalonePolecatWorkFormula(formulaName) && isPolecatWorkTarget(target) {
-		return fmt.Errorf("refusing standalone %s sling to polecat target %q: use --on <concrete-issue> so the formula attaches to durable work", formulaName, target)
-	}
 	var admission *polecatAdmissionHandle
 	if !slingDryRun && target != "" {
 		admissionRig := ""

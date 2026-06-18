@@ -1963,6 +1963,9 @@ func (e *Engineer) ListQueueAnomalies(now time.Time) ([]*MRAnomaly, error) {
 		return localExists, remoteTrackingExists, nil
 	})
 	for _, issue := range filtered {
+		if issue == nil || issue.Status != "open" {
+			continue
+		}
 		fields := beads.ParseMRFields(issue)
 		if fields == nil {
 			continue
