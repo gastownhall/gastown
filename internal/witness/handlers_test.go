@@ -2933,3 +2933,30 @@ func TestHandleZombieRestart_ActiveHookBeatsBranchAlreadyMergedArchive(t *testin
 		t.Fatalf("action = %q, active hook must restart/resume before archive", z.Action)
 	}
 }
+
+func TestNukePolecatRefusesActiveHookBeforeSessionKill(t *testing.T) {
+	bd, _ := mockBd(
+		func(args []string) (string, error) {
+			if len(args) == 0 {
+				return "[]", nil
+			}
+			switch args[0] {
+			case "list":
+				return "[]", nil
+			case "show":
+				if len(args) > 1 && args[1] == "ma-poc.4" {
+					return `[{"status":"hooked"}]`, nil
+				}
+				return `[{"agent_state":"spawning","hook_bead":"ma-poc.4","active_mr":"","description":""}]`, nil
+			default:
+				return "[]", nil
+			}
+		},
+		func(args []string) error { return nil },
+	)
+
+	err := NukePolecat(bd, t.TempDir(), "testrig", "scavenger")
+	if err == nil || !strings.Contains(err.Error(), "hook_bead=ma-poc.4 status=hooked") {
+		t.Fatalf("NukePolecat error = %v, want active hook refusal", err)
+	}
+}

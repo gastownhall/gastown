@@ -1797,7 +1797,7 @@ type nukePolecatOptions struct {
 }
 
 func nukePolecatFullWithOptions(polecatName, rigName string, mgr *polecat.Manager, r *rig.Rig, opts nukePolecatOptions) error {
-	if safety := checkPolecatSafety(polecatTarget{rigName: rigName, polecatName: polecatName, mgr: mgr, r: r}); safety.Blocked {
+	if safety := checkPolecatActiveWorkSafety(polecatTarget{rigName: rigName, polecatName: polecatName, mgr: mgr, r: r}); safety.Blocked {
 		return fmt.Errorf("refusing to nuke %s/%s: %s", rigName, polecatName, strings.Join(safety.Reasons, "; "))
 	}
 

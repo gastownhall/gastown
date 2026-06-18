@@ -1025,7 +1025,7 @@ func slotOpenDecision(workDir, townRoot, rigName, polecatName, exitType string) 
 	prefix := beads.GetPrefixForRig(townRoot, rigName)
 	agentID := beads.PolecatBeadIDWithPrefix(prefix, rigName, polecatName)
 	rigBeads := beads.New(workDir)
-	_, fields, err := rigBeads.ForAgentBead().GetAgentBead(agentID)
+	agentIssue, fields, err := rigBeads.ForAgentBead().GetAgentBead(agentID)
 	input := polecat.SlotReuseInput{State: polecat.StateIdle, CleanupStatus: polecat.CleanupUnknown, GitCheckFailed: err != nil || fields == nil}
 	issueID := ""
 	activeWork := polecat.AssessActiveWork(rigBeads, fmt.Sprintf("%s/polecats/%s", rigName, polecatName), "", "")
@@ -1040,7 +1040,14 @@ func slotOpenDecision(workDir, townRoot, rigName, polecatName, exitType string) 
 		if issueID == "" {
 			issueID = fields.HookBead
 		}
-		activeWork = polecat.AssessActiveWork(rigBeads, fmt.Sprintf("%s/polecats/%s", rigName, polecatName), beads.AgentState(fields.AgentState), fields.HookBead)
+		hookBead := ""
+		if agentIssue != nil {
+			hookBead = agentIssue.HookBead
+		}
+		if hookBead == "" {
+			hookBead = fields.HookBead
+		}
+		activeWork = polecat.AssessActiveWork(rigBeads, fmt.Sprintf("%s/polecats/%s", rigName, polecatName), beads.AgentState(fields.AgentState), hookBead)
 		hookSafe = activeWork.HookSafe
 		hookTerminal = activeWork.HookTerminal
 		if activeWork.BlocksCleanup {

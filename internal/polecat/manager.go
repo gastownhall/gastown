@@ -2581,12 +2581,17 @@ func activeWorkBeadsForCleanup(issues []*beads.Issue) []*beads.Issue {
 
 func (m *Manager) activeWorkEvidence(name string) ActiveWorkEvidence {
 	agentID := m.agentBeadID(name)
-	_, fields, _ := m.agentBeads().GetAgentBead(agentID)
+	agentIssue, fields, _ := m.agentBeads().GetAgentBead(agentID)
 	var agentState beads.AgentState
 	hookBead := ""
+	if agentIssue != nil {
+		hookBead = agentIssue.HookBead
+	}
 	if fields != nil {
 		agentState = beads.AgentState(fields.AgentState)
-		hookBead = fields.HookBead
+		if hookBead == "" {
+			hookBead = fields.HookBead
+		}
 	}
 	return AssessActiveWork(m.beads, m.assigneeID(name), agentState, hookBead)
 }

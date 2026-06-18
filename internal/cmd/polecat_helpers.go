@@ -207,6 +207,22 @@ func checkPolecatSafety(target polecatTarget) *SafetyCheckResult {
 	return result
 }
 
+func checkPolecatActiveWorkSafety(target polecatTarget) *SafetyCheckResult {
+	result := &SafetyCheckResult{Polecat: fmt.Sprintf("%s/%s", target.rigName, target.polecatName)}
+	bd := beads.New(target.r.Path)
+	agentBeadID := polecatBeadIDForRig(target.r, target.rigName, target.polecatName)
+	agentIssue, fields, _ := bd.GetAgentBead(agentBeadID)
+	hookBead := agentHookBead(agentIssue, fields)
+	var agentState beads.AgentState
+	if fields != nil {
+		agentState = beads.AgentState(fields.AgentState)
+	}
+	assignee := fmt.Sprintf("%s/polecats/%s", target.rigName, target.polecatName)
+	applyActiveWorkToSafetyResult(result, polecat.AssessActiveWork(bd, assignee, agentState, hookBead))
+	result.Blocked = len(result.Reasons) > 0
+	return result
+}
+
 func applyActiveWorkToSafetyResult(result *SafetyCheckResult, evidence polecat.ActiveWorkEvidence) {
 	if evidence.HookBead != "" {
 		result.HookBead = evidence.HookBead
