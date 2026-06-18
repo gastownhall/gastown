@@ -112,6 +112,11 @@ func runMQList(cmd *cobra.Command, args []string) error {
 		if fields != nil && fields.Rig != "" && !strings.EqualFold(fields.Rig, rigName) {
 			continue
 		}
+		if mqListReady {
+			if err := validateMergeRequestSource(b, issue, ""); err != nil {
+				continue
+			}
+		}
 
 		// Filter by worker
 		if mqListWorker != "" {

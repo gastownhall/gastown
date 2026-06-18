@@ -331,6 +331,12 @@ func runSlingFormula(ctx context.Context, args []string) (err error) {
 	formulaWorkDir := resolved.WorkDir
 	delayedDogInfo := resolved.DelayedDogInfo
 	isSelfSling := resolved.IsSelfSling
+	if strings.Contains(targetAgent, "/polecats/") {
+		if resolved.NewPolecatInfo != nil {
+			rollbackSlingArtifactsFn(resolved.NewPolecatInfo, "", formulaWorkDir, "")
+		}
+		return fmt.Errorf("refusing standalone formula %s sling to polecat target %q: use --on <concrete-issue> so the formula attaches to durable work", formulaName, targetAgent)
+	}
 
 	fmt.Printf("%s Slinging formula %s to %s...\n", style.Bold.Render("🎯"), formulaName, targetAgent)
 

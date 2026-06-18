@@ -203,7 +203,8 @@ func TestValidateStandaloneFormulaTargetRejectsPolecatWorkFormula(t *testing.T) 
 		{"named polecat", "mol-polecat-work", "gastown/polecats/toast", "", true},
 		{"self polecat", "mol-polecat-work", ".", "gastown/polecats/toast", true},
 		{"mayor formula target allowed", "mol-polecat-work", "mayor", "", false},
-		{"other formula to rig allowed", "mol-review", "gastown", "", false},
+		{"other formula to rig rejected", "mol-review", "gastown", "", true},
+		{"other formula to mayor allowed", "mol-review", "mayor", "", false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

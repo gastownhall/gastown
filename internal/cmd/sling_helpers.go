@@ -198,11 +198,6 @@ func isPolecatWorkTarget(target string) bool {
 	return false
 }
 
-func isStandalonePolecatWorkFormula(formulaName string) bool {
-	formulaName = strings.TrimSpace(formulaName)
-	return strings.EqualFold(formulaName, "mol-polecat-work") || strings.EqualFold(formulaName, "polecat-work")
-}
-
 func isSelfPolecatFormulaTarget(target string) bool {
 	target = strings.TrimSpace(target)
 	if target != "" && target != "." {
@@ -216,11 +211,11 @@ func isSelfPolecatFormulaTarget(target string) bool {
 }
 
 func validateStandaloneFormulaTarget(formulaName, target string) error {
-	if isStandalonePolecatWorkFormula(formulaName) && (isPolecatWorkTarget(target) || isSelfPolecatFormulaTarget(target)) {
+	if isPolecatWorkTarget(target) || isSelfPolecatFormulaTarget(target) {
 		if strings.TrimSpace(target) == "" {
 			target = "."
 		}
-		return fmt.Errorf("refusing standalone %s sling to polecat target %q: use --on <concrete-issue> so the formula attaches to durable work", formulaName, target)
+		return fmt.Errorf("refusing standalone formula %s sling to polecat target %q: use --on <concrete-issue> so the formula attaches to durable work", formulaName, target)
 	}
 	return nil
 }
