@@ -382,79 +382,53 @@ func TestResolveTargetRigPassesHeldAdmissionToSpawn(t *testing.T) {
 	}
 }
 
-func TestStandaloneFormulaRigTargetAcquiresSingleAdmission(t *testing.T) {
-	townRoot := setupPolecatCapacityRig(t, 1)
+func TestStandaloneFormulaRigTargetRejectedBeforeAdmission(t *testing.T) {
+	setupPolecatCapacityRig(t, 1)
 	oldAcquire := acquirePolecatAdmissionFn
 	oldSpawn := spawnPolecatForSling
-	oldFind := findHookedFormulaSingletonFn
 	oldDryRun, oldNoBoot := slingDryRun, slingNoBoot
 	t.Cleanup(func() {
 		acquirePolecatAdmissionFn = oldAcquire
 		spawnPolecatForSling = oldSpawn
-		findHookedFormulaSingletonFn = oldFind
 		slingDryRun, slingNoBoot = oldDryRun, oldNoBoot
 	})
 	slingDryRun = false
 	slingNoBoot = true
-	admissions := 0
 	acquirePolecatAdmissionFn = func(townRootArg, rigName, beadID, operation string) (*polecatAdmissionHandle, polecatCapacitySnapshot, error) {
-		admissions++
-		if townRootArg != townRoot || rigName != "gastown" || beadID != "test-formula" || operation != "formula" {
-			t.Fatalf("admission args = (%q,%q,%q,%q)", townRootArg, rigName, beadID, operation)
-		}
-		return &polecatAdmissionHandle{disabled: true}, polecatCapacitySnapshot{Max: 1, Free: 0}, nil
+		t.Fatalf("standalone formula rejection should happen before capacity admission, got (%q,%q,%q,%q)", townRootArg, rigName, beadID, operation)
+		return nil, polecatCapacitySnapshot{}, nil
 	}
 	spawnPolecatForSling = func(rigName string, opts SlingSpawnOptions) (*SpawnedPolecatInfo, error) {
-		if !opts.SkipAdmission {
-			t.Fatal("formula rig spawn should use caller-held admission")
-		}
-		return &SpawnedPolecatInfo{
-			RigName:     "gastown",
-			PolecatName: "toast",
-			ClonePath:   filepath.Join(townRoot, "gastown", "polecats", "toast", "gastown"),
-			SessionName: "gt-gastown-polecat-toast",
-		}, nil
-	}
-	findHookedFormulaSingletonFn = func(workDir, targetAgent, formulaName string) (*beads.Issue, error) {
-		return &beads.Issue{ID: "gt-wisp-existing"}, nil
+		t.Fatalf("standalone formula rejection should happen before spawning %s", rigName)
+		return nil, nil
 	}
 
-	if err := runSlingFormula(context.Background(), []string{"test-formula", "gastown"}); err != nil {
-		t.Fatalf("runSlingFormula: %v", err)
-	}
-	if admissions != 1 {
-		t.Fatalf("admissions = %d, want 1", admissions)
+	if err := runSlingFormula(context.Background(), []string{"test-formula", "gastown"}); err == nil {
+		t.Fatalf("runSlingFormula succeeded, want standalone formula rejection")
 	}
 }
 
-func TestStandaloneFormulaExistingPolecatNoopDoesNotRequireCapacity(t *testing.T) {
-	townRoot := setupPolecatCapacityRig(t, 1)
+func TestStandaloneFormulaExistingPolecatRejectedBeforeCapacity(t *testing.T) {
+	setupPolecatCapacityRig(t, 1)
 	oldAcquire := acquirePolecatAdmissionFn
 	oldResolve := resolveTargetAgentFn
-	oldFind := findHookedFormulaSingletonFn
 	oldDryRun := slingDryRun
 	t.Cleanup(func() {
 		acquirePolecatAdmissionFn = oldAcquire
 		resolveTargetAgentFn = oldResolve
-		findHookedFormulaSingletonFn = oldFind
 		slingDryRun = oldDryRun
 	})
 	slingDryRun = false
 	acquirePolecatAdmissionFn = func(townRootArg, rigName, beadID, operation string) (*polecatAdmissionHandle, polecatCapacitySnapshot, error) {
-		t.Fatalf("no-op existing formula should not acquire capacity, got (%q,%q,%q,%q)", townRootArg, rigName, beadID, operation)
+		t.Fatalf("standalone formula rejection should not acquire capacity, got (%q,%q,%q,%q)", townRootArg, rigName, beadID, operation)
 		return nil, polecatCapacitySnapshot{}, nil
 	}
 	resolveTargetAgentFn = func(target string) (string, string, string, error) {
-		if target != "gastown/polecats/toast" {
-			t.Fatalf("target = %q, want gastown/polecats/toast", target)
-		}
-		return "gastown/polecats/toast", "%1", filepath.Join(townRoot, "gastown", "polecats", "toast", "gastown"), nil
-	}
-	findHookedFormulaSingletonFn = func(workDir, targetAgent, formulaName string) (*beads.Issue, error) {
-		return &beads.Issue{ID: "gt-wisp-existing"}, nil
+		t.Fatalf("standalone formula rejection should happen before resolving %q", target)
+		return "", "", "", nil
 	}
 
-	if err := runSlingFormula(context.Background(), []string{"test-formula", "gastown/polecats/toast"}); err != nil {
-		t.Fatalf("runSlingFormula: %v", err)
+	if err := runSlingFormula(context.Background(), []string{"test-formula", "gastown/polecats/toast"}); err == nil {
+		t.Fatalf("runSlingFormula succeeded, want standalone formula rejection")
 	}
 }

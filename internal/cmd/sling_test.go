@@ -1360,7 +1360,7 @@ exit /b 0
 	}
 }
 
-func TestSlingFormulaRollsBackSpawnedPolecatOnWispFailure(t *testing.T) {
+func TestSlingFormulaRejectsRigTargetBeforeSpawn(t *testing.T) {
 	townRoot := t.TempDir()
 
 	// Minimal workspace marker so workspace.FindFromCwd() succeeds.
@@ -1471,11 +1471,8 @@ exit /b 0
 		t.Fatalf("mkdir fakeWorkDir: %v", err)
 	}
 	spawnPolecatForSling = func(rigName string, opts SlingSpawnOptions) (*SpawnedPolecatInfo, error) {
-		return &SpawnedPolecatInfo{
-			RigName:     rigName,
-			PolecatName: "Toast",
-			ClonePath:   fakeWorkDir,
-		}, nil
+		t.Fatalf("standalone formula rejection should happen before spawning %s", rigName)
+		return nil, nil
 	}
 
 	rollbackCalled := false
@@ -1496,8 +1493,8 @@ exit /b 0
 	if err == nil {
 		t.Fatalf("expected error from runSlingFormula")
 	}
-	if !rollbackCalled {
-		t.Fatalf("expected rollbackSlingArtifactsFn to be called")
+	if rollbackCalled {
+		t.Fatalf("rollbackSlingArtifactsFn should not be called when rejection happens before spawn")
 	}
 }
 
