@@ -100,6 +100,23 @@ func cleanupStatusAfterSuccessfulPush(status string) string {
 	return status
 }
 
+func shouldRejectZeroCommitPolecat(isPolecat bool, cleanupStatus string, mqNotRequiredSource, branchPushedWithWork bool) bool {
+	return isPolecat && cleanupStatus != "clean" && !mqNotRequiredSource && !branchPushedWithWork
+}
+
+func shouldVerifyNoMRClose(skipVerify, mqNotRequiredSource, isPolecat bool, cleanupStatus string) (bool, string) {
+	switch {
+	case skipVerify:
+		return false, "--skip-verify on no-MR close"
+	case mqNotRequiredSource:
+		return false, "mq-not-required source on no-MR close"
+	case isPolecat && cleanupStatus == "clean":
+		return false, "polecat clean no-MR completion"
+	default:
+		return true, ""
+	}
+}
+
 func init() {
 	doneCmd.Flags().StringVar(&doneIssue, "issue", "", "Source issue ID (default: parse from branch name)")
 	doneCmd.Flags().IntVarP(&donePriority, "priority", "p", -1, "Override priority (0-4, default: inherit from issue)")
@@ -579,18 +596,13 @@ func runDone(cmd *cobra.Command, args []string) (retErr error) {
 			}
 		}
 
-		// Check no_merge or review_only flags on the hooked bead. When set,
+		// Check no_merge, review_only, or local merge strategy on the hooked bead. When set,
 		// this is a non-code task (email, research, analysis, PRD review)
 		// where zero commits is expected.
 		// Must be checked before the zero-commit guard below (GH#2496, gt-kvf).
-		isNoMergeTask := false
+		mqNotRequiredSource := false
 		if issueID != "" {
-			noMergeBd := beads.New(cwd)
-			if noMergeIssue, showErr := noMergeBd.Show(issueID); showErr == nil {
-				if af := beads.ParseAttachmentFields(noMergeIssue); af != nil && (af.NoMerge || af.ReviewOnly) {
-					isNoMergeTask = true
-				}
-			}
+			mqNotRequiredSource = isMQNotRequiredSource(beads.New(cwd), issueID)
 		}
 
 		// If no commits ahead, work was likely pushed directly to main (or already merged)
@@ -602,24 +614,25 @@ func runDone(cmd *cobra.Command, args []string) (retErr error) {
 		// IMPORTANT: The error message must NOT mention --cleanup-status=clean.
 		// LLM agents read error messages and self-bypass (the original bug).
 		if aheadCount == 0 {
-			if os.Getenv("GT_POLECAT") != "" && doneCleanupStatus != "clean" && !isNoMergeTask {
+			isPolecat := os.Getenv("GT_POLECAT") != ""
+			branchPushedWithWork := false
+			if isPolecat && doneCleanupStatus != "clean" && !mqNotRequiredSource {
 				// Before failing, check whether commits exist on the remote feature branch.
 				// After a polecat pushes to origin/<feature-branch> and submits an MR,
 				// if master advances (e.g., other MRs land), the feature branch is no
 				// longer ahead of origin/master — but the work WAS committed and pushed.
 				// In that case, treat as "MR already submitted" and fall through. (GH#wd7)
-				branchPushedWithWork := false
 				if branch != defaultBranch {
 					pushed, unpushed, pushErr := g.BranchPushedToRemote(branch, "origin")
 					branchPushedWithWork = pushErr == nil && pushed && unpushed == 0
 				}
-				if !branchPushedWithWork {
-					return fmt.Errorf("cannot complete: no commits on branch ahead of %s\n"+
-						"Polecats must have at least 1 commit to submit.\n"+
-						"If the bug was already fixed upstream: gt done --status DEFERRED\n"+
-						"If you're blocked: gt done --status ESCALATED",
-						originDefault)
-				}
+			}
+			if shouldRejectZeroCommitPolecat(isPolecat, doneCleanupStatus, mqNotRequiredSource, branchPushedWithWork) {
+				return fmt.Errorf("cannot complete: no commits on branch ahead of %s\n"+
+					"Polecats must have at least 1 commit to submit.\n"+
+					"If the bug was already fixed upstream: gt done --status DEFERRED\n"+
+					"If you're blocked: gt done --status ESCALATED",
+					originDefault)
 			}
 
 			// Non-polecat (crew/mayor), polecat with --cleanup-status=clean
@@ -655,12 +668,17 @@ func runDone(cmd *cobra.Command, args []string) (retErr error) {
 				if !skipClose {
 					closeReason := "Completed with no code changes (already fixed or pushed directly to main)"
 					noMRCommitSHA, _ := g.Rev("HEAD")
-					if doneSkipVerify {
-						noteVerifiedPushSkipped(cwd, issueID, defaultBranch, noMRCommitSHA, "--skip-verify on no-MR close")
+					verifyNoMRClose, skipVerifyReason := shouldVerifyNoMRClose(doneSkipVerify, mqNotRequiredSource, isPolecat, doneCleanupStatus)
+					if !verifyNoMRClose {
+						noteVerifiedPushSkipped(cwd, issueID, defaultBranch, noMRCommitSHA, skipVerifyReason)
 						if noMRCommitSHA != "" {
-							closeReason = fmt.Sprintf("%s\nskip_verify: true\ntarget_branch: %s\ncommit_sha: %s", closeReason, defaultBranch, noMRCommitSHA)
+							if doneSkipVerify {
+								closeReason = fmt.Sprintf("%s\nskip_verify: true\ntarget_branch: %s\ncommit_sha: %s", closeReason, defaultBranch, noMRCommitSHA)
+							} else {
+								closeReason = fmt.Sprintf("%s\ntarget_branch: %s\ncommit_sha: %s", closeReason, defaultBranch, noMRCommitSHA)
+							}
 						}
-					} else if !isNoMergeTask {
+					} else {
 						if verifyErr := g.VerifyPushedCommit("origin", defaultBranch, noMRCommitSHA); verifyErr != nil {
 							noteVerifiedPushFailure(cwd, issueID, defaultBranch, noMRCommitSHA, verifyErr)
 							return fmt.Errorf("cannot close no-MR code bead: %w", verifyErr)

@@ -639,6 +639,107 @@ func TestCleanupStatusAfterSuccessfulPush(t *testing.T) {
 	}
 }
 
+func TestShouldRejectZeroCommitPolecat(t *testing.T) {
+	tests := []struct {
+		name                 string
+		isPolecat            bool
+		cleanupStatus        string
+		mqNotRequiredSource  bool
+		branchPushedWithWork bool
+		want                 bool
+	}{
+		{
+			name:          "dirty polecat rejects",
+			isPolecat:     true,
+			cleanupStatus: "unpushed",
+			want:          true,
+		},
+		{
+			name:          "clean polecat can complete no-code",
+			isPolecat:     true,
+			cleanupStatus: "clean",
+			want:          false,
+		},
+		{
+			name:                "mq-not-required polecat can complete no-code",
+			isPolecat:           true,
+			cleanupStatus:       "unpushed",
+			mqNotRequiredSource: true,
+			want:                false,
+		},
+		{
+			name:                 "pushed branch preserves submitted work",
+			isPolecat:            true,
+			cleanupStatus:        "unpushed",
+			branchPushedWithWork: true,
+			want:                 false,
+		},
+		{
+			name:          "non-polecat does not use polecat guard",
+			cleanupStatus: "unpushed",
+			want:          false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := shouldRejectZeroCommitPolecat(tt.isPolecat, tt.cleanupStatus, tt.mqNotRequiredSource, tt.branchPushedWithWork)
+			if got != tt.want {
+				t.Errorf("shouldRejectZeroCommitPolecat() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestShouldVerifyNoMRClose(t *testing.T) {
+	tests := []struct {
+		name                string
+		skipVerify          bool
+		mqNotRequiredSource bool
+		isPolecat           bool
+		cleanupStatus       string
+		wantVerify          bool
+		wantReason          string
+	}{
+		{
+			name:       "explicit skip verify wins",
+			skipVerify: true,
+			wantReason: "--skip-verify on no-MR close",
+		},
+		{
+			name:                "mq-not-required source skips verify",
+			mqNotRequiredSource: true,
+			wantReason:          "mq-not-required source on no-MR close",
+		},
+		{
+			name:          "clean polecat no-code skips verify",
+			isPolecat:     true,
+			cleanupStatus: "clean",
+			wantReason:    "polecat clean no-MR completion",
+		},
+		{
+			name:          "dirty polecat would still require verify",
+			isPolecat:     true,
+			cleanupStatus: "unpushed",
+			wantVerify:    true,
+		},
+		{
+			name:          "non-polecat no-MR code close verifies",
+			cleanupStatus: "clean",
+			wantVerify:    true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			gotVerify, gotReason := shouldVerifyNoMRClose(tt.skipVerify, tt.mqNotRequiredSource, tt.isPolecat, tt.cleanupStatus)
+			if gotVerify != tt.wantVerify || gotReason != tt.wantReason {
+				t.Errorf("shouldVerifyNoMRClose() = (%v, %q), want (%v, %q)", gotVerify, gotReason, tt.wantVerify, tt.wantReason)
+			}
+		})
+	}
+}
+
 // TestClearDoneIntentLabel verifies that clearDoneIntentLabel removes
 // only done-intent labels while preserving other labels.
 func TestClearDoneIntentLabel(t *testing.T) {
