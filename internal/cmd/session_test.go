@@ -127,6 +127,8 @@ func TestResolveSessionHealthTarget(t *testing.T) {
 		{input: "gastown/refinery", want: "gt-refinery"},
 		{input: "gastown/polecats/chrome", want: "gt-chrome"},
 		{input: "gastown/crew/max", want: "gt-crew-max"},
+		{input: "gatsown/witness", want: "gatsown/witness"},
+		{input: "raw/session", want: "raw/session"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.input, func(t *testing.T) {

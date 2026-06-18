@@ -674,6 +674,11 @@ func runSessionHealth(cmd *cobra.Command, args []string) error {
 
 func resolveSessionHealthTarget(target string) string {
 	if identity, err := session.ParseAddress(target); err == nil {
+		if identity.Rig != "" {
+			if _, ok := session.DefaultRegistry().AllRigs()[identity.Rig]; !ok {
+				return target
+			}
+		}
 		if sessionName := identity.SessionName(); sessionName != "" {
 			return sessionName
 		}

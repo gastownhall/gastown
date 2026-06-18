@@ -18,6 +18,7 @@ import (
 	"github.com/steveyegge/gastown/internal/config"
 	"github.com/steveyegge/gastown/internal/scheduler/capacity"
 	"github.com/steveyegge/gastown/internal/testutil"
+	"github.com/steveyegge/gastown/internal/tmux"
 )
 
 func setupPolecatCapacityTestTown(t *testing.T, maxPolecats int) string {
@@ -56,7 +57,7 @@ func setupPolecatCapacityRig(t *testing.T, maxPolecats int) string {
 	return townRoot
 }
 
-func setupPolecatCapacityDoltRig(t *testing.T, agentState string, withHookedWork bool) string {
+func setupPolecatCapacityDoltRig(t *testing.T, agentState string, withHookedWork bool) (string, string) {
 	t.Helper()
 	requireBd(t)
 	testutil.RequireDoltContainer(t)
@@ -75,7 +76,7 @@ func setupPolecatCapacityDoltRig(t *testing.T, agentState string, withHookedWork
 
 	townRoot := t.TempDir()
 	rigName := "gastown"
-	polecatName := "synth"
+	polecatName := fmt.Sprintf("synth%x", time.Now().UnixNano())
 	prefix := fmt.Sprintf("pc%x", time.Now().UnixNano())
 	rigPath := filepath.Join(townRoot, rigName)
 	clonePath := filepath.Join(rigPath, "polecats", polecatName, rigName)
@@ -117,7 +118,7 @@ func setupPolecatCapacityDoltRig(t *testing.T, agentState string, withHookedWork
 	if _, err := b.CreateAgentBead(agentID, agentID, fields); err != nil {
 		t.Fatalf("create agent bead: %v", err)
 	}
-	return townRoot
+	return townRoot, polecatName
 }
 
 func initCleanGitWorktree(t *testing.T, worktree string) {
@@ -407,7 +408,7 @@ func TestApplyAgentFieldsToCapacitySnapshotSeparatesPendingMR(t *testing.T) {
 func TestCapacitySnapshotReusesStaleActiveAgentWithoutSession(t *testing.T) {
 	for _, state := range []string{string(beads.AgentStateWorking), string(beads.AgentStateSpawning)} {
 		t.Run(state, func(t *testing.T) {
-			townRoot := setupPolecatCapacityDoltRig(t, state, false)
+			townRoot, _ := setupPolecatCapacityDoltRig(t, state, false)
 			snapshot, err := polecatCapacitySnapshotForTownNoCleanup(townRoot)
 			if err != nil {
 				t.Fatalf("snapshot: %v", err)
@@ -420,13 +421,34 @@ func TestCapacitySnapshotReusesStaleActiveAgentWithoutSession(t *testing.T) {
 }
 
 func TestCapacitySnapshotDeadCurrentHookRemainsRecoveryBlocked(t *testing.T) {
-	townRoot := setupPolecatCapacityDoltRig(t, string(beads.AgentStateWorking), true)
+	townRoot, _ := setupPolecatCapacityDoltRig(t, string(beads.AgentStateWorking), true)
 	snapshot, err := polecatCapacitySnapshotForTownNoCleanup(townRoot)
 	if err != nil {
 		t.Fatalf("snapshot: %v", err)
 	}
 	if snapshot.RecoveryBlocked != 1 || snapshot.ReusableIdle != 0 || snapshot.Working != 0 {
 		t.Fatalf("snapshot = %+v, want recovery_blocked=1 reusable_idle=0 working=0", snapshot)
+	}
+}
+
+func TestCapacitySnapshotReusesStaleActiveAgentWithIdleSession(t *testing.T) {
+	if _, err := exec.LookPath("tmux"); err != nil {
+		t.Skip("tmux CLI not installed, skipping tmux-present capacity test")
+	}
+	townRoot, polecatName := setupPolecatCapacityDoltRig(t, string(beads.AgentStateWorking), false)
+	tm := tmux.NewTmux()
+	sessionName := "gt-" + polecatName
+	if err := tm.NewSession(sessionName, townRoot); err != nil {
+		t.Fatalf("creating tmux session %s: %v", sessionName, err)
+	}
+	t.Cleanup(func() { _ = tm.KillSession(sessionName) })
+
+	snapshot, err := polecatCapacitySnapshotForTownNoCleanup(townRoot)
+	if err != nil {
+		t.Fatalf("snapshot: %v", err)
+	}
+	if snapshot.ReusableIdle != 1 || snapshot.RecoveryBlocked != 0 || snapshot.Working != 0 {
+		t.Fatalf("snapshot = %+v, want reusable_idle=1 recovery_blocked=0 working=0", snapshot)
 	}
 }
 

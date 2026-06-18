@@ -249,25 +249,20 @@ func applyAgentFieldsToCapacitySnapshot(snapshot *polecatCapacitySnapshot, rigPa
 
 	state := strings.TrimSpace(fields.AgentState)
 	if state == "working" || state == "spawning" {
-		if fields.HookBead == "" && fields.ActiveMR != "" {
-			if applyCanonicalCapacitySnapshot(snapshot, rigPath, rigName, polecatName, fields, tmuxClient) {
-				return
-			}
-		}
-		if running {
-			snapshot.Working++
-		} else if applyCanonicalCapacitySnapshot(snapshot, rigPath, rigName, polecatName, fields, tmuxClient) {
+		if applyCanonicalCapacitySnapshot(snapshot, rigPath, rigName, polecatName, fields, tmuxClient) {
 			return
+		} else if running {
+			snapshot.Working++
 		} else {
 			snapshot.RecoveryBlocked++
 		}
 		return
 	}
 	if fields.HookBead != "" {
-		if running {
-			snapshot.Working++
-		} else if applyCanonicalCapacitySnapshot(snapshot, rigPath, rigName, polecatName, fields, tmuxClient) {
+		if applyCanonicalCapacitySnapshot(snapshot, rigPath, rigName, polecatName, fields, tmuxClient) {
 			return
+		} else if running {
+			snapshot.Working++
 		} else {
 			snapshot.RecoveryBlocked++
 		}
