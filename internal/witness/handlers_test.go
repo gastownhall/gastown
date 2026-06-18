@@ -873,6 +873,9 @@ func TestHandleZombieRestartDuplicateCloseUsesActiveRigWorkDir(t *testing.T) {
 		func(args []string) (string, error) {
 			switch args[0] {
 			case "list":
+				if strings.Contains(strings.Join(args, " "), "--assignee") {
+					return "[]", nil
+				}
 				listCalls++
 				if listCalls == 1 {
 					return "[]", nil
@@ -889,7 +892,7 @@ func TestHandleZombieRestartDuplicateCloseUsesActiveRigWorkDir(t *testing.T) {
 	)
 
 	z := &ZombieResult{PolecatName: "nux", HookBead: "gt-src"}
-	handleZombieRestart(bd, townRoot, "gastown", "nux", "gt-src", "has_unpushed", z)
+	handleZombieRestart(bd, townRoot, "gastown", "nux", "", "gt-src", "has_unpushed", z)
 
 	closed := false
 	for i, call := range mock.calls {
