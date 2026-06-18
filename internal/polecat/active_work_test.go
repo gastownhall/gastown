@@ -79,6 +79,11 @@ func TestAssessActiveWork(t *testing.T) {
 			wantBlocker: "assigned_work=gt-work status=open", wantRestart: true, wantAssignedID: "gt-work",
 		},
 		{
+			name:        "deferred assigned work blocks cleanup without restart",
+			reader:      fakeActiveWorkReader{assigned: []*beads.Issue{{ID: "gt-deferred", Status: "deferred"}}},
+			wantBlocker: "assigned_work=gt-deferred status=deferred", wantProtected: true, wantAssignedID: "gt-deferred",
+		},
+		{
 			name:   "closed assigned work is ignored",
 			reader: fakeActiveWorkReader{assigned: []*beads.Issue{{ID: "gt-work", Status: "closed"}}},
 		},

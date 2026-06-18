@@ -153,10 +153,12 @@ func assessAssignedWork(reader ActiveWorkReader, assignee string) ActiveWorkEvid
 		if !assignedIssueBlocksCleanup(issue) {
 			continue
 		}
+		active := assignedIssueRequiresRestart(issue)
 		return ActiveWorkEvidence{
-			Active:          true,
+			Active:          active,
+			Protected:       !active,
 			BlocksCleanup:   true,
-			RequiresRestart: true,
+			RequiresRestart: active,
 			Blocker:         fmt.Sprintf("assigned_work=%s status=%s", issue.ID, issue.Status),
 			AssignedIssue:   issue.ID,
 			HookSafe:        true,
@@ -170,4 +172,16 @@ func assignedIssueBlocksCleanup(issue *beads.Issue) bool {
 		return false
 	}
 	return !beads.IssueStatus(issue.Status).IsTerminal()
+}
+
+func assignedIssueRequiresRestart(issue *beads.Issue) bool {
+	if issue == nil {
+		return false
+	}
+	switch beads.IssueStatus(issue.Status) {
+	case beads.StatusOpen, beads.StatusInProgress, beads.IssueStatusHooked:
+		return true
+	default:
+		return false
+	}
 }
