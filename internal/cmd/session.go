@@ -171,20 +171,23 @@ Examples:
 }
 
 var sessionHealthCmd = &cobra.Command{
-	Use:   "health <tmux-session>",
-	Short: "Check a tmux agent session with central runtime liveness",
-	Long: `Check a tmux agent session using the central runtime-aware liveness path.
+	Use:   "health <session-or-address>",
+	Short: "Check an agent session with central runtime liveness",
+	Long: `Check an agent session using the central runtime-aware liveness path.
 
 This wraps tmux.CheckSessionHealth, which reads GT_PROCESS_NAMES/GT_AGENT from
 the session environment before falling back to built-in agent process names.
+Arguments may be raw tmux session names (gt-vault) or Gas Town addresses
+(gastown/witness, gastown/polecats/vault, gastown/crew/max).
 
 The command exits successfully for all valid health states; inspect the status
 field when using --json. Operational failures, argument errors, or invalid flags
 return non-zero.
 
 Examples:
-  gt session health gt-vault --json
-  gt session health gt-vault --json --max-inactivity 30m`,
+   gt session health gt-vault --json
+	gt session health gastown/witness --json
+   gt session health gt-vault --json --max-inactivity 30m`,
 	Args: cobra.ExactArgs(1),
 	RunE: runSessionHealth,
 }
@@ -651,7 +654,7 @@ func runSessionStatus(cmd *cobra.Command, args []string) error {
 }
 
 func runSessionHealth(cmd *cobra.Command, args []string) error {
-	sessionName := args[0]
+	sessionName := resolveSessionHealthTarget(args[0])
 	status := tmux.NewTmux().CheckSessionHealth(sessionName, sessionHealthMaxInactivity)
 	report := newSessionHealthReport(sessionName, status, sessionHealthMaxInactivity)
 
@@ -667,6 +670,15 @@ func runSessionHealth(cmd *cobra.Command, args []string) error {
 		fmt.Printf("%s: %s\n", sessionName, style.Dim.Render(report.Status))
 	}
 	return nil
+}
+
+func resolveSessionHealthTarget(target string) string {
+	if identity, err := session.ParseAddress(target); err == nil {
+		if sessionName := identity.SessionName(); sessionName != "" {
+			return sessionName
+		}
+	}
+	return target
 }
 
 // formatDuration formats a duration for human display.

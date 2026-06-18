@@ -4,8 +4,11 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -14,6 +17,7 @@ import (
 	"github.com/steveyegge/gastown/internal/beads"
 	"github.com/steveyegge/gastown/internal/config"
 	"github.com/steveyegge/gastown/internal/scheduler/capacity"
+	"github.com/steveyegge/gastown/internal/testutil"
 )
 
 func setupPolecatCapacityTestTown(t *testing.T, maxPolecats int) string {
@@ -50,6 +54,87 @@ func setupPolecatCapacityRig(t *testing.T, maxPolecats int) string {
 	}
 	t.Cleanup(func() { _ = os.Chdir(oldWD) })
 	return townRoot
+}
+
+func setupPolecatCapacityDoltRig(t *testing.T, agentState string, withHookedWork bool) string {
+	t.Helper()
+	requireBd(t)
+	testutil.RequireDoltContainer(t)
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git CLI not installed, skipping capacity recovery test")
+	}
+
+	port := testutil.DoltContainerPort()
+	portInt, err := strconv.Atoi(port)
+	if err != nil {
+		t.Fatalf("DoltContainerPort: %v", err)
+	}
+	t.Setenv("GT_DOLT_PORT", port)
+	t.Setenv("BEADS_DOLT_PORT", port)
+	t.Setenv("BEADS_DOLT_AUTO_START", "0")
+
+	townRoot := t.TempDir()
+	rigName := "gastown"
+	polecatName := "synth"
+	prefix := fmt.Sprintf("pc%x", time.Now().UnixNano())
+	rigPath := filepath.Join(townRoot, rigName)
+	clonePath := filepath.Join(rigPath, "polecats", polecatName, rigName)
+	if err := os.MkdirAll(clonePath, 0755); err != nil {
+		t.Fatalf("mkdir clone: %v", err)
+	}
+	initCleanGitWorktree(t, clonePath)
+	configureScheduler(t, townRoot, 4, 1)
+	if err := config.SaveRigsConfig(filepath.Join(townRoot, "mayor", "rigs.json"), &config.RigsConfig{
+		Version: config.CurrentRigsVersion,
+		Rigs: map[string]config.RigEntry{
+			rigName: {
+				GitURL:      "https://example.invalid/gastown.git",
+				BeadsConfig: &config.BeadsConfig{Prefix: prefix + "-"},
+			},
+		},
+	}); err != nil {
+		t.Fatalf("SaveRigsConfig: %v", err)
+	}
+
+	b := beads.NewIsolatedWithPort(rigPath, portInt)
+	if err := b.Init(prefix); err != nil {
+		t.Fatalf("bd init: %v", err)
+	}
+	agentID := beads.PolecatBeadIDWithPrefix(prefix, rigName, polecatName)
+	fields := &beads.AgentFields{RoleType: "polecat", Rig: rigName, AgentState: agentState, CleanupStatus: "clean"}
+	if withHookedWork {
+		work, err := b.Create(beads.CreateOptions{Title: "active work", Priority: 2})
+		if err != nil {
+			t.Fatalf("create work bead: %v", err)
+		}
+		status := beads.StatusHooked
+		assignee := rigName + "/polecats/" + polecatName
+		if err := b.Update(work.ID, beads.UpdateOptions{Status: &status, Assignee: &assignee}); err != nil {
+			t.Fatalf("hook work bead: %v", err)
+		}
+		fields.HookBead = work.ID
+	}
+	if _, err := b.CreateAgentBead(agentID, agentID, fields); err != nil {
+		t.Fatalf("create agent bead: %v", err)
+	}
+	return townRoot
+}
+
+func initCleanGitWorktree(t *testing.T, worktree string) {
+	t.Helper()
+	remote := filepath.Join(t.TempDir(), "origin.git")
+	runGit(t, "", "init", "--bare", remote)
+	runGit(t, worktree, "init")
+	runGit(t, worktree, "checkout", "-B", "main")
+	runGit(t, worktree, "config", "user.email", "test@example.invalid")
+	runGit(t, worktree, "config", "user.name", "Test User")
+	if err := os.WriteFile(filepath.Join(worktree, "README.md"), []byte("test\n"), 0644); err != nil {
+		t.Fatalf("write README: %v", err)
+	}
+	runGit(t, worktree, "add", "README.md")
+	runGit(t, worktree, "commit", "-m", "initial")
+	runGit(t, worktree, "remote", "add", "origin", remote)
+	runGit(t, worktree, "push", "-u", "origin", "main")
 }
 
 func TestCapacitySnapshotCleansStaleReservations(t *testing.T) {
@@ -316,6 +401,32 @@ func TestApplyAgentFieldsToCapacitySnapshotSeparatesPendingMR(t *testing.T) {
 				t.Fatalf("snapshot = %+v, want %+v", snapshot, tt.want)
 			}
 		})
+	}
+}
+
+func TestCapacitySnapshotReusesStaleActiveAgentWithoutSession(t *testing.T) {
+	for _, state := range []string{string(beads.AgentStateWorking), string(beads.AgentStateSpawning)} {
+		t.Run(state, func(t *testing.T) {
+			townRoot := setupPolecatCapacityDoltRig(t, state, false)
+			snapshot, err := polecatCapacitySnapshotForTownNoCleanup(townRoot)
+			if err != nil {
+				t.Fatalf("snapshot: %v", err)
+			}
+			if snapshot.ReusableIdle != 1 || snapshot.RecoveryBlocked != 0 || snapshot.Working != 0 {
+				t.Fatalf("snapshot = %+v, want reusable_idle=1 recovery_blocked=0 working=0", snapshot)
+			}
+		})
+	}
+}
+
+func TestCapacitySnapshotDeadCurrentHookRemainsRecoveryBlocked(t *testing.T) {
+	townRoot := setupPolecatCapacityDoltRig(t, string(beads.AgentStateWorking), true)
+	snapshot, err := polecatCapacitySnapshotForTownNoCleanup(townRoot)
+	if err != nil {
+		t.Fatalf("snapshot: %v", err)
+	}
+	if snapshot.RecoveryBlocked != 1 || snapshot.ReusableIdle != 0 || snapshot.Working != 0 {
+		t.Fatalf("snapshot = %+v, want recovery_blocked=1 reusable_idle=0 working=0", snapshot)
 	}
 }
 

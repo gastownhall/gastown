@@ -256,6 +256,8 @@ func applyAgentFieldsToCapacitySnapshot(snapshot *polecatCapacitySnapshot, rigPa
 		}
 		if running {
 			snapshot.Working++
+		} else if applyCanonicalCapacitySnapshot(snapshot, rigPath, rigName, polecatName, fields, tmuxClient) {
+			return
 		} else {
 			snapshot.RecoveryBlocked++
 		}
@@ -295,6 +297,7 @@ func applyCanonicalCapacitySnapshot(snapshot *polecatCapacitySnapshot, rigPath, 
 	if snapshot == nil || fields == nil || rigPath == "" {
 		return false
 	}
+	mgr := polecat.NewManager(&rig.Rig{Name: rigName, Path: rigPath}, git.NewGit(rigPath), tmuxClient)
 	state := polecat.State(strings.TrimSpace(fields.AgentState))
 	if state == "" {
 		state = polecat.StateIdle
@@ -303,7 +306,15 @@ func applyCanonicalCapacitySnapshot(snapshot *polecatCapacitySnapshot, rigPath, 
 	if issueID == "" {
 		issueID = fields.HookBead
 	}
-	mgr := polecat.NewManager(&rig.Rig{Name: rigName, Path: rigPath}, git.NewGit(rigPath), tmuxClient)
+	if p, err := mgr.Get(polecatName); err == nil && p != nil {
+		state = p.State
+		if p.Issue != "" {
+			issueID = p.Issue
+		}
+	} else {
+		snapshot.RecoveryBlocked++
+		return true
+	}
 	disposition := mgr.WorkstateDispositionForPolecat(polecatName, state, issueID)
 	applyWorkstateDispositionToCapacitySnapshot(snapshot, state, disposition)
 	return true

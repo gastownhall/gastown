@@ -118,11 +118,10 @@ gt mail read <id>                        # Read a specific message
 gt mail send mayor/ -s "Subject" -m "Message"  # Send to Mayor
 ```
 
-### Git Verification (for cleanup)
+### Recovery Verification
 ```bash
-cd {{ .TownRoot }}/{{ .RigName }}/polecats/<name>
-git status --porcelain                   # Must be empty for clean
-git log origin/main..HEAD                # Check for unpushed commits
+gt polecat check-recovery {{ .RigName }}/<name> --json --reconcile-cleanup
+gt polecat git-state {{ .RigName }}/<name> --json
 ```
 
 ### Beads CLI Reference

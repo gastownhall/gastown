@@ -15,6 +15,7 @@ import (
 var (
 	patrolReportSummary string
 	patrolReportSteps   string
+	autoSpawnPatrolForReport = autoSpawnPatrol
 )
 
 var patrolReportCmd = &cobra.Command{
@@ -80,14 +81,28 @@ func runPatrolReport(cmd *cobra.Command, args []string) error {
 	default:
 		return fmt.Errorf("unsupported role for patrol report: %q", roleName)
 	}
+	return runPatrolReportWithConfig(cfg)
+}
 
+
+func runPatrolReportWithConfig(cfg PatrolConfig) error {
 	// Find the active patrol
 	patrolID, _, hasPatrol, findErr := findActivePatrol(cfg)
 	if findErr != nil {
 		return fmt.Errorf("finding active patrol: %w", findErr)
 	}
 	if !hasPatrol {
-		return fmt.Errorf("no active patrol found for %s", cfg.RoleName)
+		newPatrolID, err := autoSpawnPatrolForReport(cfg)
+		if err != nil {
+			if newPatrolID != "" {
+				fmt.Fprintf(os.Stderr, "warning: %s\n", err.Error())
+				fmt.Printf("New patrol: %s\n", newPatrolID)
+				return nil
+			}
+			return fmt.Errorf("starting replacement patrol cycle: %w", err)
+		}
+		fmt.Printf("%s Started new patrol: %s\n", style.Success.Render("✓"), newPatrolID)
+		return nil
 	}
 
 	// Close the current patrol root with the summary
@@ -123,7 +138,7 @@ func runPatrolReport(cmd *cobra.Command, args []string) error {
 	fmt.Printf("%s Closed patrol %s\n", style.Success.Render("✓"), patrolID)
 
 	// Start next cycle
-	newPatrolID, err := autoSpawnPatrol(cfg)
+	newPatrolID, err := autoSpawnPatrolForReport(cfg)
 	if err != nil {
 		if newPatrolID != "" {
 			fmt.Fprintf(os.Stderr, "warning: %s\n", err.Error())
