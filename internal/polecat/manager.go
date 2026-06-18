@@ -2245,7 +2245,7 @@ func (m *Manager) workstateInputForPolecat(name string, state State, issue strin
 	activeMRSafe := true
 	sourceTerminal := sourceHint != "" && m.assignedBeadTerminal(sourceHint)
 	if activeMR != "" {
-		assessment := AssessActiveMR(m.agentBeads(), ActiveMRInput{ActiveMR: activeMR, SourceIssueHint: sourceHint, RequireGitSafe: true, GitSafe: gitSafe})
+		assessment := AssessActiveMR(m.beads, ActiveMRInput{ActiveMR: activeMR, SourceIssueHint: sourceHint, RequireGitSafe: true, GitSafe: gitSafe})
 		if assessment.Pending {
 			input.ActiveMRBlocker = assessment.Reason
 		}
@@ -2645,6 +2645,20 @@ func (m *Manager) loadFromBeads(name string) (*Polecat, error) {
 		Priority: -1,
 	})
 	if hookedErr == nil && len(hookedBeads) > 0 {
+		var hookedIssue *beads.Issue
+		for _, candidate := range hookedBeads {
+			if assessConcreteIssue(candidate).Concrete {
+				hookedIssue = candidate
+				break
+			}
+		}
+		if hookedIssue == nil {
+			issueID := ""
+			if hookedBeads[0] != nil {
+				issueID = hookedBeads[0].ID
+			}
+			return m.polecatWithState(name, clonePath, branchName, StateReviewNeeded, issueID), nil
+		}
 		state := StateWorking
 		if sessionDead {
 			state = StateStalled
@@ -2655,7 +2669,7 @@ func (m *Manager) loadFromBeads(name string) (*Polecat, error) {
 			State:     state,
 			ClonePath: clonePath,
 			Branch:    branchName,
-			Issue:     hookedBeads[0].ID,
+			Issue:     hookedIssue.ID,
 		}, nil
 	}
 
@@ -2709,6 +2723,9 @@ func (m *Manager) loadFromBeads(name string) (*Polecat, error) {
 	issueID := ""
 	if issue != nil {
 		issueID = issue.ID
+		if !assessConcreteIssue(issue).Concrete {
+			return m.polecatWithState(name, clonePath, branchName, StateReviewNeeded, issueID), nil
+		}
 	}
 
 	state := StateIdle
@@ -2731,6 +2748,17 @@ func (m *Manager) loadFromBeads(name string) (*Polecat, error) {
 	}, nil
 }
 
+func (m *Manager) polecatWithState(name, clonePath, branchName string, state State, issueID string) *Polecat {
+	return &Polecat{
+		Name:      name,
+		Rig:       m.rig.Name,
+		State:     state,
+		ClonePath: clonePath,
+		Branch:    branchName,
+		Issue:     issueID,
+	}
+}
+
 func (m *Manager) polecatSessionState(name string) (running bool, stale bool) {
 	if m.tmux == nil {
 		return false, false
@@ -2748,7 +2776,8 @@ func (m *Manager) polecatSessionState(name string) (running bool, stale bool) {
 func isCurrentHookedIssueForAssignee(issue *beads.Issue, assignee string) bool {
 	return issue != nil &&
 		issue.Status == beads.StatusHooked &&
-		issue.Assignee == assignee
+		issue.Assignee == assignee &&
+		assessConcreteIssue(issue).Concrete
 }
 
 // setupSharedBeads creates a redirect file so the polecat uses the rig's shared .beads database.

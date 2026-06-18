@@ -408,29 +408,37 @@ func listScheduledBeads(townRoot string) []scheduledBeadInfo {
 		}
 		seenWork[fields.WorkBeadID] = true
 
-		// Get work bead info for title/status from batch-fetched map
-		title := ctx.Title
-		status := "open"
 		info, found := workBeadInfo[fields.WorkBeadID]
-		if found {
-			title = info.Title
-			status = info.Status
-			// Skip if work bead is hooked/closed
-			if status == "hooked" || status == "closed" || status == "tombstone" {
-				continue
-			}
+		bead, ok := scheduledBeadInfoFromWork(ctx.Title, fields, info, found, blockedWorkIDs)
+		if !ok {
+			continue
 		}
-
-		result = append(result, scheduledBeadInfo{
-			ID:        fields.WorkBeadID,
-			Title:     title,
-			Status:    status,
-			TargetRig: fields.TargetRig,
-			Blocked:   !isScheduledWorkBeadReady(fields.WorkBeadID, info, found, blockedWorkIDs),
-		})
+		result = append(result, bead)
 	}
 
 	return result
+}
+
+func scheduledBeadInfoFromWork(ctxTitle string, fields *capacity.SlingContextFields, info beadStatusInfo, found bool, blockedWorkIDs map[string]bool) (scheduledBeadInfo, bool) {
+	if fields == nil || !concreteWorkAssessment(fields.WorkBeadID, info).Concrete {
+		return scheduledBeadInfo{}, false
+	}
+	title := ctxTitle
+	status := "open"
+	if found {
+		title = info.Title
+		status = info.Status
+		if status == "hooked" || status == "closed" || status == "tombstone" {
+			return scheduledBeadInfo{}, false
+		}
+	}
+	return scheduledBeadInfo{
+		ID:        fields.WorkBeadID,
+		Title:     title,
+		Status:    status,
+		TargetRig: fields.TargetRig,
+		Blocked:   !isScheduledWorkBeadReady(fields.WorkBeadID, info, found, blockedWorkIDs),
+	}, true
 }
 
 // listAllScheduledBeadIDs returns the work bead IDs of all scheduled beads.

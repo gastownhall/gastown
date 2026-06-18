@@ -158,13 +158,7 @@ func assessActiveMRSource(reader IssueReader, sourceIssue string) activeMRSource
 	if issue == nil {
 		return activeMRSourceStatus{reason: fmt.Sprintf("source_issue=%s source_status=missing", sourceIssue), malformed: true}
 	}
-	assessment := workitem.AssessConcrete(workitem.Snapshot{
-		ID:        issue.ID,
-		Title:     issue.Title,
-		Type:      issue.Type,
-		Labels:    issue.Labels,
-		Ephemeral: issue.Ephemeral,
-	})
+	assessment := assessConcreteIssue(issue)
 	if !assessment.Concrete {
 		return activeMRSourceStatus{reason: fmt.Sprintf("source_issue=%s source_status=non_concrete:%s", sourceIssue, assessment.Reason), malformed: true}
 	}
@@ -172,4 +166,17 @@ func assessActiveMRSource(reader IssueReader, sourceIssue string) activeMRSource
 		return activeMRSourceStatus{terminal: true}
 	}
 	return activeMRSourceStatus{reason: fmt.Sprintf("source_issue=%s source_status=%s", sourceIssue, issue.Status)}
+}
+
+func assessConcreteIssue(issue *beads.Issue) workitem.Assessment {
+	if issue == nil {
+		return workitem.AssessConcrete(workitem.Snapshot{})
+	}
+	return workitem.AssessConcrete(workitem.Snapshot{
+		ID:        issue.ID,
+		Title:     issue.Title,
+		Type:      issue.Type,
+		Labels:    issue.Labels,
+		Ephemeral: issue.Ephemeral,
+	})
 }

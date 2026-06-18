@@ -1,11 +1,41 @@
 package refinery
 
 import (
+	"errors"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/steveyegge/gastown/internal/beads"
 )
+
+type fakeMRRefChecker struct {
+	exists    map[string]bool
+	contained bool
+	cherry    string
+	err       error
+}
+
+func (f fakeMRRefChecker) RefExists(ref string) (bool, error) {
+	if f.err != nil {
+		return false, f.err
+	}
+	return f.exists[ref], nil
+}
+
+func (f fakeMRRefChecker) IsAncestor(_, _ string) (bool, error) {
+	if f.err != nil {
+		return false, f.err
+	}
+	return f.contained, nil
+}
+
+func (f fakeMRRefChecker) Cherry(_, _ string) (string, error) {
+	if f.err != nil {
+		return "", f.err
+	}
+	return f.cherry, nil
+}
 
 func TestDetectQueueAnomalies_StaleClaim(t *testing.T) {
 	now := time.Date(2026, 2, 10, 12, 0, 0, 0, time.UTC)
@@ -92,5 +122,61 @@ worker: nux`,
 	// ZFC: no severity field — agent classifies from type + context.
 	if anomalies[0].ID != "gt-orphan" {
 		t.Fatalf("anomaly ID = %q, want gt-orphan", anomalies[0].ID)
+	}
+}
+
+func TestMalformedMRBranchEvidence(t *testing.T) {
+	tests := []struct {
+		name      string
+		checker   fakeMRRefChecker
+		branch    string
+		target    string
+		wantParts []string
+	}{
+		{
+			name:   "contained",
+			branch: "polecat/fix",
+			target: "main",
+			checker: fakeMRRefChecker{exists: map[string]bool{
+				"origin/polecat/fix": true,
+				"origin/main":        true,
+			}, contained: true},
+			wantParts: []string{"branch_containment=contained", "branch_ref=origin/polecat/fix", "target_ref=origin/main"},
+		},
+		{
+			name:   "uncontained with patch count",
+			branch: "polecat/fix",
+			target: "main",
+			checker: fakeMRRefChecker{exists: map[string]bool{
+				"origin/polecat/fix": true,
+				"origin/main":        true,
+			}, cherry: "+ abc\n- def\n+ fed\n"},
+			wantParts: []string{"branch_containment=uncontained", "unpreserved_patches=2"},
+		},
+		{
+			name:      "missing branch",
+			branch:    "polecat/missing",
+			target:    "main",
+			checker:   fakeMRRefChecker{exists: map[string]bool{"origin/main": true}},
+			wantParts: []string{"branch_containment=unknown", "reason=missing"},
+		},
+		{
+			name:      "lookup error",
+			branch:    "polecat/fix",
+			target:    "main",
+			checker:   fakeMRRefChecker{err: errors.New("git exploded")},
+			wantParts: []string{"branch_containment=unknown", "lookup_error:git exploded"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := malformedMRBranchEvidence(tt.checker, tt.branch, tt.target)
+			for _, want := range tt.wantParts {
+				if !strings.Contains(got, want) {
+					t.Fatalf("malformedMRBranchEvidence() = %q, want to contain %q", got, want)
+				}
+			}
+		})
 	}
 }

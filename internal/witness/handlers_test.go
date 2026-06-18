@@ -825,9 +825,18 @@ func TestHasPendingMRFromSnapshotAssessesMRStatus(t *testing.T) {
 		{
 			name: "open MR is pending",
 			show: func(id string) (string, error) {
+				if id == "gt-mr" {
+					return issueJSON(id, "open", "source_issue: gt-src\n"), nil
+				}
 				return issueJSON(id, "open", ""), nil
 			},
 			want: true,
+		},
+		{
+			name: "open MR with missing source is malformed not pending",
+			show: func(id string) (string, error) {
+				return issueJSON(id, "open", ""), nil
+			},
 		},
 		{
 			name: "closed MR with terminal source is not pending",
@@ -979,6 +988,34 @@ func TestHasPendingMRCleanupWispFailsClosed(t *testing.T) {
 				t.Fatalf("hasPendingMR() = false, want true")
 			}
 		})
+	}
+}
+
+func TestHasPendingMRCleanupWispDoesNotHideMalformedActiveMR(t *testing.T) {
+	workDir := setupActiveMRGitSafeWorkDir(t, "gastown", "nux")
+	bd, _ := mockBd(
+		func(args []string) (string, error) {
+			if len(args) == 0 {
+				return "", nil
+			}
+			switch args[0] {
+			case "list":
+				return `[{"id":"gt-cleanup"}]`, nil
+			case "show":
+				switch args[1] {
+				case "gt-agent":
+					return `[{"active_mr":"gt-mr","description":"active_mr: gt-mr\n"}]`, nil
+				case "gt-mr":
+					return `[{"id":"gt-mr","status":"open","description":"branch: polecat/nux\ntarget: main\n"}]`, nil
+				}
+			}
+			return "", errors.New("not found")
+		},
+		func(args []string) error { return nil },
+	)
+
+	if got := hasPendingMR(bd, workDir, "gastown", "nux", "gt-agent"); got {
+		t.Fatalf("hasPendingMR() = true, want false for malformed active_mr despite cleanup wisp")
 	}
 }
 

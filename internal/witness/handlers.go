@@ -308,7 +308,11 @@ func completionPayloadHasPendingMR(bd *BdCli, workDir, rigName string, payload *
 		RequireGitSafe:  true,
 		GitSafe:         activeMRGitSafe(workDir, rigName, payload.PolecatName),
 	})
-	return assessment.Pending
+	return isNormalPendingMR(assessment)
+}
+
+func isNormalPendingMR(assessment polecat.ActiveMRAssessment) bool {
+	return assessment.Pending && !assessment.SourceMalformed
 }
 
 // handlePolecatDonePendingMR handles a POLECAT_DONE when there's a pending MR.
@@ -3409,6 +3413,12 @@ func findAllCleanupWisps(bd *BdCli, workDir, polecatName string) []string {
 // processed by the refinery. Nuking would delete the remote branch and orphan the MR.
 // See: gt-6a9d
 func hasPendingMR(bd *BdCli, workDir, rigName, polecatName, agentBeadID string) bool {
+	activeMR, sourceHint := getAgentMRContext(bd, workDir, agentBeadID)
+	assessment := polecat.AssessActiveMR(beadCLIShower{bd: bd, workDir: workDir}, polecat.ActiveMRInput{ActiveMR: activeMR, SourceIssueHint: sourceHint, RequireGitSafe: true, GitSafe: activeMRGitSafe(workDir, rigName, polecatName)})
+	if assessment.SourceMalformed {
+		return false
+	}
+
 	// Check 1: Cleanup wisp with merge-requested state (created by HandlePolecatDone)
 	wispID, wispErr := findCleanupWisp(bd, workDir, polecatName)
 	if wispErr != nil || wispID != "" {
@@ -3416,21 +3426,12 @@ func hasPendingMR(bd *BdCli, workDir, rigName, polecatName, agentBeadID string) 
 	}
 
 	// Check 2: active_mr on agent bead (set by gt done when MR is created)
-	activeMR, sourceHint := getAgentMRContext(bd, workDir, agentBeadID)
-	assessment := polecat.AssessActiveMR(beadCLIShower{bd: bd, workDir: workDir}, polecat.ActiveMRInput{ActiveMR: activeMR, SourceIssueHint: sourceHint, RequireGitSafe: true, GitSafe: activeMRGitSafe(workDir, rigName, polecatName)})
-	return assessment.Pending
+	return isNormalPendingMR(assessment)
 }
 
 // hasPendingMRFromSnapshot checks for a pending MR using a pre-fetched ActiveMR
 // value from the agent bead snapshot, avoiding a redundant bd show call. (gt-2gra)
 func hasPendingMRFromSnapshot(bd *BdCli, workDir, rigName, polecatName string, snap *agentBeadSnapshot) bool {
-	// Check 1: Cleanup wisp with merge-requested state (created by HandlePolecatDone)
-	wispID, wispErr := findCleanupWisp(bd, workDir, polecatName)
-	if wispErr != nil || wispID != "" {
-		return true
-	}
-
-	// Check 2: active_mr from pre-fetched snapshot
 	activeMR := ""
 	sourceHint := ""
 	if snap != nil {
@@ -3450,7 +3451,18 @@ func hasPendingMRFromSnapshot(bd *BdCli, workDir, rigName, polecatName string, s
 		}
 	}
 	assessment := polecat.AssessActiveMR(beadCLIShower{bd: bd, workDir: workDir}, polecat.ActiveMRInput{ActiveMR: activeMR, SourceIssueHint: sourceHint, RequireGitSafe: true, GitSafe: activeMRGitSafe(workDir, rigName, polecatName)})
-	return assessment.Pending
+	if assessment.SourceMalformed {
+		return false
+	}
+
+	// Check 1: Cleanup wisp with merge-requested state (created by HandlePolecatDone)
+	wispID, wispErr := findCleanupWisp(bd, workDir, polecatName)
+	if wispErr != nil || wispID != "" {
+		return true
+	}
+
+	// Check 2: active_mr from pre-fetched snapshot
+	return isNormalPendingMR(assessment)
 }
 
 func activeMRBlockerFromCLI(bd *BdCli, workDir, activeMR string) string {

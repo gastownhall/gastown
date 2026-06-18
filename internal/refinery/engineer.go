@@ -1978,10 +1978,85 @@ func (e *Engineer) ListQueueAnomalies(now time.Time) ([]*MRAnomaly, error) {
 			ID:     issue.ID,
 			Branch: fields.Branch,
 			Type:   "malformed-source",
-			Detail: fmt.Sprintf("MR source_issue %q is not concrete work (%s); reconcile before processing", fields.SourceIssue, assessment.Reason),
+			Detail: malformedSourceDetail(fields, assessment, e.git),
 		})
 	}
 	return anomalies, nil
+}
+
+type mrRefChecker interface {
+	RefExists(ref string) (bool, error)
+	IsAncestor(ancestor, descendant string) (bool, error)
+	Cherry(upstream, head string) (string, error)
+}
+
+func malformedSourceDetail(fields *beads.MRFields, assessment workitem.Assessment, checker mrRefChecker) string {
+	detail := fmt.Sprintf("MR source_issue %q is not concrete work (%s); reconcile before processing", fields.SourceIssue, assessment.Reason)
+	if evidence := malformedMRBranchEvidence(checker, fields.Branch, fields.Target); evidence != "" {
+		detail += "; " + evidence
+	}
+	return detail
+}
+
+func malformedMRBranchEvidence(checker mrRefChecker, branch, target string) string {
+	if checker == nil {
+		return "branch_containment=unknown reason=no_git_checker"
+	}
+	branch = strings.TrimSpace(branch)
+	target = strings.TrimSpace(target)
+	if branch == "" {
+		return "branch_containment=unknown branch_ref=<missing>"
+	}
+	if target == "" {
+		return fmt.Sprintf("branch_containment=unknown branch_ref=%s target_ref=<missing>", branch)
+	}
+
+	branchRef, branchReason := resolveMRComparisonRef(checker, branch)
+	if branchRef == "" {
+		return fmt.Sprintf("branch_containment=unknown branch_ref=%s reason=%s", branch, branchReason)
+	}
+	targetRef, targetReason := resolveMRComparisonRef(checker, target)
+	if targetRef == "" {
+		return fmt.Sprintf("branch_containment=unknown branch_ref=%s target_ref=%s reason=%s", branchRef, target, targetReason)
+	}
+
+	contained, err := checker.IsAncestor(branchRef, targetRef)
+	if err != nil {
+		return fmt.Sprintf("branch_containment=unknown branch_ref=%s target_ref=%s reason=%v", branchRef, targetRef, err)
+	}
+	if contained {
+		return fmt.Sprintf("branch_containment=contained branch_ref=%s target_ref=%s", branchRef, targetRef)
+	}
+	cherryOut, err := checker.Cherry(targetRef, branchRef)
+	if err != nil {
+		return fmt.Sprintf("branch_containment=uncontained branch_ref=%s target_ref=%s unpreserved_patches=unknown reason=%v", branchRef, targetRef, err)
+	}
+	return fmt.Sprintf("branch_containment=uncontained branch_ref=%s target_ref=%s unpreserved_patches=%d", branchRef, targetRef, git.CountCherryUnmergedCommits(cherryOut))
+}
+
+func resolveMRComparisonRef(checker mrRefChecker, ref string) (string, string) {
+	for _, candidate := range mrComparisonRefCandidates(ref) {
+		exists, err := checker.RefExists(candidate)
+		if err != nil {
+			return "", fmt.Sprintf("lookup_error:%v", err)
+		}
+		if exists {
+			return candidate, ""
+		}
+	}
+	return "", "missing"
+}
+
+func mrComparisonRefCandidates(ref string) []string {
+	ref = strings.TrimSpace(ref)
+	if ref == "" {
+		return nil
+	}
+	if strings.HasPrefix(ref, "refs/") {
+		return []string{ref}
+	}
+	branch := strings.TrimPrefix(ref, "origin/")
+	return []string{ref, "origin/" + branch, "refs/heads/" + branch, "refs/remotes/origin/" + branch}
 }
 
 func detectQueueAnomalies(

@@ -951,14 +951,26 @@ func TestIsCurrentHookedIssueForAssignee(t *testing.T) {
 		{
 			name: "hooked and matching assignee",
 			issue: &beads.Issue{
+				ID:       "gt-work",
 				Status:   beads.StatusHooked,
 				Assignee: assignee,
 			},
 			want: true,
 		},
 		{
+			name: "hooked matching assignee but non-concrete",
+			issue: &beads.Issue{
+				ID:        "gt-wisp-abc",
+				Status:    beads.StatusHooked,
+				Assignee:  assignee,
+				Ephemeral: true,
+			},
+			want: false,
+		},
+		{
 			name: "hooked but different assignee",
 			issue: &beads.Issue{
+				ID:       "gt-work",
 				Status:   beads.StatusHooked,
 				Assignee: "testrig/polecats/nux",
 			},
