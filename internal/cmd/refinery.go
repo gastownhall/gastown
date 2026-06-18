@@ -3,6 +3,7 @@ package cmd
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"strings"
 	"time"
@@ -727,36 +728,38 @@ func runRefineryReady(cmd *cobra.Command, args []string) error {
 	}
 
 	// Human-readable output
-	fmt.Printf("%s Ready MRs for '%s':\n\n", style.Bold.Render("🚀"), rigName)
+	writeRefineryReadyHuman(os.Stdout, rigName, ready, anomalies)
+	return nil
+}
+
+func writeRefineryReadyHuman(w io.Writer, rigName string, ready []*refinery.MRInfo, anomalies []*refinery.MRAnomaly) {
+	fmt.Fprintf(w, "%s Ready MRs for '%s':\n\n", style.Bold.Render("🚀"), rigName)
 
 	if len(ready) == 0 {
-		fmt.Printf("  %s\n", style.Dim.Render("(none ready)"))
-		return nil
-	}
-
-	for i, mr := range ready {
-		priority := fmt.Sprintf("P%d", mr.Priority)
-		fmt.Printf("  %d. [%s] %s → %s\n", i+1, priority, mr.Branch, mr.Target)
-		fmt.Printf("     ID: %s  Worker: %s\n", mr.ID, mr.Worker)
-	}
-
-	if len(anomalies) > 0 {
-		fmt.Printf("\n%s Queue anomalies:\n\n", style.Bold.Render("⚠"))
-		for i, anomaly := range anomalies {
-			line := fmt.Sprintf("  %d. [%s] %s", i+1, anomaly.Type, anomaly.ID)
-			fmt.Println(line)
-			fmt.Printf("     Branch: %s\n", anomaly.Branch)
-			if anomaly.Assignee != "" {
-				fmt.Printf("     Assignee: %s\n", anomaly.Assignee)
-			}
-			if anomaly.Age > 0 {
-				fmt.Printf("     Age: %s\n", anomaly.Age.Truncate(time.Second))
-			}
-			fmt.Printf("     Detail: %s\n", anomaly.Detail)
+		fmt.Fprintf(w, "  %s\n", style.Dim.Render("(none ready)"))
+	} else {
+		for i, mr := range ready {
+			priority := fmt.Sprintf("P%d", mr.Priority)
+			fmt.Fprintf(w, "  %d. [%s] %s → %s\n", i+1, priority, mr.Branch, mr.Target)
+			fmt.Fprintf(w, "     ID: %s  Worker: %s\n", mr.ID, mr.Worker)
 		}
 	}
 
-	return nil
+	if len(anomalies) > 0 {
+		fmt.Fprintf(w, "\n%s Queue anomalies:\n\n", style.Bold.Render("⚠"))
+		for i, anomaly := range anomalies {
+			line := fmt.Sprintf("  %d. [%s] %s", i+1, anomaly.Type, anomaly.ID)
+			fmt.Fprintln(w, line)
+			fmt.Fprintf(w, "     Branch: %s\n", anomaly.Branch)
+			if anomaly.Assignee != "" {
+				fmt.Fprintf(w, "     Assignee: %s\n", anomaly.Assignee)
+			}
+			if anomaly.Age > 0 {
+				fmt.Fprintf(w, "     Age: %s\n", anomaly.Age.Truncate(time.Second))
+			}
+			fmt.Fprintf(w, "     Detail: %s\n", anomaly.Detail)
+		}
+	}
 }
 
 func runRefineryReadyAll(eng *refinery.Engineer, rigName string) error {

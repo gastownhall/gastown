@@ -364,6 +364,125 @@ func TestBuildMutationBDEnvForcesWritableCommit(t *testing.T) {
 	}
 }
 
+func TestForceCloseWithReasonRoutesIDsByResolvedBeadsDir(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("test uses Unix shell script mock for bd")
+	}
+	ResetBdAllowStaleCacheForTest()
+	t.Cleanup(ResetBdAllowStaleCacheForTest)
+	t.Setenv("GT_SESSION_ID_ENV", "")
+	t.Setenv("GT_AGENT", "")
+	t.Setenv("CLAUDE_SESSION_ID", "")
+
+	workDir, townBeadsDir, rigBeadsDir := setupForceCloseRoutingTown(t)
+	logPath := installMockBDCloseRecorder(t)
+
+	b := NewWithBeadsDir(workDir, townBeadsDir)
+	if err := b.ForceCloseWithReason("merged", "gt-src", "hq-src", "gt-other"); err != nil {
+		t.Fatalf("ForceCloseWithReason: %v", err)
+	}
+
+	lines := closeRecorderLines(readMockBDLog(t, logPath))
+	want := []string{
+		fmt.Sprintf("beads_dir=%s args=close gt-src gt-other --reason=merged --force", rigBeadsDir),
+		fmt.Sprintf("beads_dir=%s args=close hq-src --reason=merged --force", townBeadsDir),
+	}
+	if !reflect.DeepEqual(lines, want) {
+		t.Fatalf("force-close routing log mismatch\ngot:  %#v\nwant: %#v", lines, want)
+	}
+}
+
+func TestForceCloseWithReasonNoRouteStaysOnCurrentBeadsDir(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("test uses Unix shell script mock for bd")
+	}
+	ResetBdAllowStaleCacheForTest()
+	t.Cleanup(ResetBdAllowStaleCacheForTest)
+	t.Setenv("GT_SESSION_ID_ENV", "")
+	t.Setenv("GT_AGENT", "")
+	t.Setenv("CLAUDE_SESSION_ID", "")
+
+	workDir, townBeadsDir, rigBeadsDir := setupForceCloseRoutingTown(t)
+	logPath := installMockBDCloseRecorder(t)
+
+	b := NewWithBeadsDir(workDir, townBeadsDir).ForAgentBead()
+	if err := b.ForceCloseWithReason("done", "gt-agent"); err != nil {
+		t.Fatalf("ForceCloseWithReason: %v", err)
+	}
+
+	lines := closeRecorderLines(readMockBDLog(t, logPath))
+	want := []string{fmt.Sprintf("beads_dir=%s args=close gt-agent --reason=done --force", townBeadsDir)}
+	if !reflect.DeepEqual(lines, want) {
+		t.Fatalf("force-close noRoute log mismatch\ngot:  %#v\nwant: %#v", lines, want)
+	}
+	if strings.Contains(strings.Join(lines, "\n"), "beads_dir="+rigBeadsDir) {
+		t.Fatalf("noRoute force-close unexpectedly used routed rig beads dir: %#v", lines)
+	}
+}
+
+func setupForceCloseRoutingTown(t *testing.T) (workDir, townBeadsDir, rigBeadsDir string) {
+	t.Helper()
+
+	townRoot := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(townRoot, "mayor"), 0755); err != nil {
+		t.Fatalf("mkdir mayor: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(townRoot, "mayor", "town.json"), []byte(`{"name":"test"}`), 0644); err != nil {
+		t.Fatalf("write town.json: %v", err)
+	}
+
+	townBeadsDir = filepath.Join(townRoot, ".beads")
+	rigBeadsDir = filepath.Join(townRoot, "gastown", "mayor", "rig", ".beads")
+	workDir = filepath.Join(townRoot, "gastown", "polecats", "chrome", "gastown")
+	for _, dir := range []string{townBeadsDir, rigBeadsDir, workDir} {
+		if err := os.MkdirAll(dir, 0755); err != nil {
+			t.Fatalf("mkdir %s: %v", dir, err)
+		}
+	}
+
+	if err := WriteRoutes(townBeadsDir, []Route{
+		{Prefix: "hq-", Path: "."},
+		{Prefix: "gt-", Path: "gastown/mayor/rig"},
+	}); err != nil {
+		t.Fatalf("write routes: %v", err)
+	}
+	return workDir, townBeadsDir, rigBeadsDir
+}
+
+func installMockBDCloseRecorder(t *testing.T) string {
+	t.Helper()
+
+	binDir := t.TempDir()
+	logPath := filepath.Join(binDir, "bd.log")
+	script := `#!/bin/sh
+if [ "${1:-}" = "--allow-stale" ]; then
+  if [ "${2:-}" = "version" ]; then
+    echo "Error: unknown flag: --allow-stale" >&2
+    exit 1
+  fi
+  shift
+fi
+printf 'beads_dir=%s args=%s\n' "${BEADS_DIR:-}" "$*" >> "$MOCK_BD_LOG"
+exit 0
+`
+	if err := os.WriteFile(filepath.Join(binDir, "bd"), []byte(script), 0755); err != nil {
+		t.Fatalf("write mock bd: %v", err)
+	}
+	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	t.Setenv("MOCK_BD_LOG", logPath)
+	return logPath
+}
+
+func closeRecorderLines(log string) []string {
+	var lines []string
+	for _, line := range strings.Split(strings.TrimSpace(log), "\n") {
+		if strings.Contains(line, "args=close") {
+			lines = append(lines, line)
+		}
+	}
+	return lines
+}
+
 func TestArgsAreReadOnlyClassifiesKnownReadCommands(t *testing.T) {
 	cases := [][]string{
 		{"show", "gt-123", "--json"},
