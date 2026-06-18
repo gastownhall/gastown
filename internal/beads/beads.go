@@ -344,12 +344,10 @@ type Beads struct {
 	townRoot     string
 	townRootOnce sync.Once
 
-	// noRoute disables prefix-based routing for this Beads instance.
-	// Used for agent-bead operations: agent beads (gt:agent label) live in
-	// the town database regardless of their ID prefix, so prefix routing
-	// (which assumes "za-*" → zack DB) misroutes them. When set, Show()
-	// and forIssueID() skip ResolveRoutingTarget and operate against
-	// beadsDir directly.
+	// noRoute disables route resolution for this Beads instance.
+	// Used for agent-bead operations and already-resolved cross-rig targets:
+	// once a wrapper is bound to the authoritative beadsDir, Show(), Update(),
+	// and forIssueID() must operate there directly instead of re-routing by ID.
 	noRoute bool
 }
 
@@ -392,8 +390,8 @@ func NewWithBeadsDir(workDir, beadsDir string) *Beads {
 // ForAgentBead bypasses that:
 //   - Re-roots the wrapper at the town's .beads directory (so bd CLI itself
 //     opens the town/hq Dolt database where agent beads live).
-//   - Sets noRoute=true so the Go-side routing helpers (Show,
-//     ResolveRoutingTarget, forIssueID) do not redirect lookups by prefix.
+//   - Sets noRoute=true so the Go-side routing helpers (Show, forIssueID) do
+//     not redirect lookups by prefix.
 //
 // If the town root cannot be determined, returns the original wrapper to
 // preserve current behavior.
@@ -408,7 +406,6 @@ func (b *Beads) ForAgentBead() *Beads {
 		beadsDir:   townBeadsDir,
 		isolated:   b.isolated,
 		serverPort: b.serverPort,
-		store:      b.store,
 		townRoot:   townRoot,
 		noRoute:    true,
 	}
@@ -489,25 +486,44 @@ func (b *Beads) targetBeadsDirForCreate(opts CreateOptions) (string, error) {
 // the given issue ID. This is needed for cross-rig write operations that use an
 // ID to determine the owning database.
 //
-// When noRoute is set (see ForAgentBead), routing is skipped: the wrapper is
-// returned unchanged. Used for agent-bead operations whose IDs share the rig
-// prefix but whose data lives in the town DB.
-func (b *Beads) forIssueID(id string) *Beads {
+// When noRoute is set, routing is skipped and the wrapper is returned unchanged.
+// Agent-bead wrappers and prefix-routed targets both use this once they are
+// already bound to the authoritative database for the current operation.
+func (b *Beads) forIssueID(id string) (*Beads, error) {
 	if b.noRoute {
-		return b
+		return b, nil
 	}
-	resolved := ResolveBeadsDirForID(b.getResolvedBeadsDir(), id)
-	if resolved == "" || resolved == b.getResolvedBeadsDir() {
-		return b
+	current := b.getResolvedBeadsDir()
+	townRoot := b.getTownRoot()
+	if isRoutableAgentBeadID(townRoot, id) {
+		// Agent-shaped work bead IDs still belong to their prefix route; only
+		// override to town when the town record exists and is an agent bead.
+		// On lookup errors other than not-found, fail closed so a transient town
+		// DB error cannot mutate an agent-shaped rig work bead.
+		target := b.ForAgentBead()
+		if target != b {
+			issue, err := target.Show(id)
+			if err != nil {
+				if !errors.Is(err, ErrNotFound) {
+					return nil, err
+				}
+			} else if IsAgentBead(issue) {
+				return target, nil
+			}
+		}
+	}
+	resolved := ResolveBeadsDirForID(current, id)
+	if resolved == "" || resolved == current {
+		return b, nil
 	}
 	return &Beads{
-		workDir:    b.workDir,
+		workDir:    filepath.Dir(resolved),
 		beadsDir:   resolved,
 		isolated:   b.isolated,
 		serverPort: b.serverPort,
-		store:      b.store,
-		townRoot:   b.townRoot,
-	}
+		townRoot:   townRoot,
+		noRoute:    true,
+	}, nil
 }
 
 // Init initializes a new beads database in the working directory.
@@ -698,10 +714,8 @@ func (b *Beads) wrapError(err error, stderr string, args []string) error {
 		return ErrNotInstalled
 	}
 
-	// ErrNotFound is widely used for issue lookups - acceptable exception
-	// Match various "not found" error patterns from bd
-	if strings.Contains(stderr, "not found") || strings.Contains(stderr, "Issue not found") ||
-		strings.Contains(stderr, "no issue found") {
+	// ErrNotFound is widely used for issue lookups - acceptable exception.
+	if isIssueNotFoundError(stderr) {
 		return ErrNotFound
 	}
 
@@ -709,6 +723,39 @@ func (b *Beads) wrapError(err error, stderr string, args []string) error {
 		return fmt.Errorf("bd %s: %s", strings.Join(args, " "), stderr)
 	}
 	return fmt.Errorf("bd %s: %w", strings.Join(args, " "), err)
+}
+
+func isIssueNotFoundError(stderr string) bool {
+	s := strings.ToLower(strings.TrimSpace(stderr))
+	if s == "" {
+		return false
+	}
+	blocked := []string{"database", "table", "config", "resource", "repository", "repo", "route"}
+	for _, word := range blocked {
+		if strings.Contains(s, word+" not found") {
+			return false
+		}
+	}
+	if strings.Contains(s, "issue not found") || strings.Contains(s, "no issue found") {
+		return true
+	}
+	fields := strings.Fields(s)
+	for i := 0; i+2 < len(fields); i++ {
+		id := strings.Trim(fields[i], " .,;:'\"")
+		if !strings.Contains(id, "-") || fields[i+1] != "not" || strings.Trim(fields[i+2], " .,;:'\"") != "found" {
+			continue
+		}
+		if i > 0 {
+			prev := strings.Trim(fields[i-1], " .,;:'\"")
+			for _, word := range blocked {
+				if prev == word {
+					return false
+				}
+			}
+		}
+		return true
+	}
+	return false
 }
 
 // isSubprocessCrash returns true if the error indicates the subprocess crashed
@@ -1257,15 +1304,12 @@ func (b *Beads) ReadyWithType(issueType string) ([]*Issue, error) {
 
 // Show returns detailed information about an issue.
 func (b *Beads) Show(id string) (*Issue, error) {
-	// Route cross-rig queries via routes.jsonl so that rig-level bead IDs
-	// (e.g., "gt-abc123") resolve to the correct rig database.
-	// noRoute (see ForAgentBead) bypasses this for agent-bead lookups.
-	if !b.noRoute {
-		targetDir := ResolveRoutingTarget(b.getTownRoot(), id, b.getResolvedBeadsDir())
-		if targetDir != b.getResolvedBeadsDir() {
-			target := NewWithBeadsDir(filepath.Dir(targetDir), targetDir)
-			return target.Show(id)
-		}
+	target, err := b.forIssueID(id)
+	if err != nil {
+		return nil, err
+	}
+	if target != b {
+		return target.Show(id)
 	}
 
 	if b.store != nil {
@@ -1671,6 +1715,13 @@ func normalizeBugTitle(title string) string {
 
 // Update updates an existing issue.
 func (b *Beads) Update(id string, opts UpdateOptions) error {
+	target, err := b.forIssueID(id)
+	if err != nil {
+		return err
+	}
+	if target != b {
+		return target.Update(id, opts)
+	}
 	if b.store != nil {
 		return b.storeUpdate(id, opts)
 	}
@@ -1706,7 +1757,7 @@ func (b *Beads) Update(id string, opts UpdateOptions) error {
 		}
 	}
 
-	_, err := b.run(args...)
+	_, err = b.run(args...)
 	return err
 }
 

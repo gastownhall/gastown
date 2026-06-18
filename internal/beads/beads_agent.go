@@ -719,6 +719,57 @@ func isAgentBeadByID(id string) bool {
 	return false
 }
 
+// isRoutableAgentBeadID returns true when an ID is an agent bead whose owning
+// database should be the town DB. Full-form and collapsed rig agent IDs must
+// match the rig configured for their prefix; this prevents work beads such as
+// gt-health-polecat-fix from being misrouted to town just because they contain
+// a role word.
+func isRoutableAgentBeadID(townRoot, id string) bool {
+	if townRoot == "" {
+		return false
+	}
+	prefix := ExtractPrefix(id)
+	if prefix == "" {
+		return false
+	}
+	rigPath := GetRigPathForPrefix(townRoot, prefix)
+	if rigPath == "" {
+		return false
+	}
+
+	rest := strings.TrimPrefix(id, prefix)
+	parts := strings.Split(rest, "-")
+	if isTownAgentSuffix(parts) {
+		return true
+	}
+
+	rig := GetRigNameForPrefix(townRoot, prefix)
+	if rig == "" {
+		return false
+	}
+	if strings.HasPrefix(rest, rig+"-") {
+		return isRigAgentSuffix(strings.Split(strings.TrimPrefix(rest, rig+"-"), "-"))
+	}
+	if rig == strings.TrimSuffix(prefix, "-") {
+		return isRigAgentSuffix(parts)
+	}
+	return false
+}
+
+func isTownAgentSuffix(parts []string) bool {
+	if len(parts) == 1 {
+		return isTownLevelRole(parts[0])
+	}
+	return len(parts) > 1 && isTownLevelNamedRole(parts[0]) && parts[1] != ""
+}
+
+func isRigAgentSuffix(parts []string) bool {
+	if len(parts) == 1 {
+		return isRigLevelRole(parts[0])
+	}
+	return len(parts) > 1 && isNamedRole(parts[0]) && parts[1] != ""
+}
+
 // ListWispIDs returns a set of all wisp IDs in the wisps table.
 // This is useful for existence checks where wisp metadata (type, labels)
 // may not be available in the list output.

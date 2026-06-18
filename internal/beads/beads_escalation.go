@@ -218,7 +218,10 @@ func (b *Beads) CreateEscalationBead(title string, fields *EscalationFields) (*I
 // AckEscalation acknowledges an escalation bead.
 // Sets acked_by and acked_at fields, adds "acked" label.
 func (b *Beads) AckEscalation(id, ackedBy string) error {
-	target := b.forIssueID(id)
+	target, err := b.forIssueID(id)
+	if err != nil {
+		return err
+	}
 	// First get current issue to preserve other fields
 	issue, err := target.Show(id)
 	if err != nil {
@@ -247,7 +250,10 @@ func (b *Beads) AckEscalation(id, ackedBy string) error {
 // CloseEscalation closes an escalation bead with a resolution reason.
 // Sets closed_by and closed_reason fields, closes the issue.
 func (b *Beads) CloseEscalation(id, closedBy, reason string) error {
-	target := b.forIssueID(id)
+	target, err := b.forIssueID(id)
+	if err != nil {
+		return err
+	}
 	// First get current issue to preserve other fields
 	issue, err := target.Show(id)
 	if err != nil {
@@ -283,7 +289,11 @@ func (b *Beads) CloseEscalation(id, closedBy, reason string) error {
 // GetEscalationBead retrieves an escalation bead by ID.
 // Returns nil if not found.
 func (b *Beads) GetEscalationBead(id string) (*Issue, *EscalationFields, error) {
-	issue, err := b.forIssueID(id).Show(id)
+	target, err := b.forIssueID(id)
+	if err != nil {
+		return nil, nil, err
+	}
+	issue, err := target.Show(id)
 	if err != nil {
 		if errors.Is(err, ErrNotFound) {
 			return nil, nil, nil
@@ -465,7 +475,11 @@ func (b *Beads) ReescalateEscalation(id, reescalatedBy string, maxReescalations 
 	description := FormatEscalationDescription(issue.Title, fields)
 
 	// Update the bead with new description and severity label
-	if err := b.forIssueID(id).Update(id, UpdateOptions{
+	target, err := b.forIssueID(id)
+	if err != nil {
+		return nil, err
+	}
+	if err := target.Update(id, UpdateOptions{
 		Description:  &description,
 		AddLabels:    []string{"reescalated", "severity:" + newSeverity},
 		RemoveLabels: []string{"severity:" + result.OldSeverity},

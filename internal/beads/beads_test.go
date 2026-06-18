@@ -3,6 +3,7 @@ package beads
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -1501,6 +1502,14 @@ func TestWrapError(t *testing.T) {
 	}{
 		{"Issue not found: gt-xyz", ErrNotFound, false},
 		{"gt-xyz not found", ErrNotFound, false},
+		{"database not found", nil, false},
+		{"table not found", nil, false},
+		{"config not found", nil, false},
+		{"resource not found", nil, false},
+		{"database \"foo-bar\" not found", nil, false},
+		{"table 'agent-beads' not found", nil, false},
+		{"config gt-routes not found", nil, false},
+		{"resource gt-cache not found", nil, false},
 	}
 
 	for _, tt := range tests {
@@ -1510,6 +1519,12 @@ func TestWrapError(t *testing.T) {
 				t.Errorf("wrapError(%q) = %v, want nil", tt.stderr, err)
 			}
 		} else {
+			if tt.wantErr == nil {
+				if err == nil || errors.Is(err, ErrNotFound) {
+					t.Errorf("wrapError(%q) = %v, want non-ErrNotFound error", tt.stderr, err)
+				}
+				continue
+			}
 			if err != tt.wantErr {
 				t.Errorf("wrapError(%q) = %v, want %v", tt.stderr, err, tt.wantErr)
 			}
