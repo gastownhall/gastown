@@ -730,6 +730,11 @@ func runSling(cmd *cobra.Command, args []string) (retErr error) {
 	targetPane := resolved.Pane
 	hookWorkDir := resolved.WorkDir
 	hookSetAtomically := resolved.HookSetAtomically
+	if strings.Contains(targetAgent, "/polecats/") {
+		if err := validateConcreteWorkBeadInfo(beadID, info); err != nil {
+			return err
+		}
+	}
 	var admission *polecatAdmissionHandle
 	if !slingDryRun && !hookSetAtomically && strings.Contains(targetAgent, "/polecats/") {
 		parts := strings.Split(targetAgent, "/")
