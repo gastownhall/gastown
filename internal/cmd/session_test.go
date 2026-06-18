@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/steveyegge/gastown/internal/polecat"
+	"github.com/steveyegge/gastown/internal/session"
 	"github.com/steveyegge/gastown/internal/tmux"
 )
 
@@ -106,6 +107,33 @@ func TestSessionHealthReportJSONContract(t *testing.T) {
 	}
 	if parsed["max_inactivity_seconds"] != float64(1800) {
 		t.Errorf("max_inactivity_seconds = %v, want 1800", parsed["max_inactivity_seconds"])
+	}
+}
+
+func TestResolveSessionHealthTarget(t *testing.T) {
+	old := session.DefaultRegistry()
+	registry := session.NewPrefixRegistry()
+	registry.Register("gt", "gastown")
+	registry.Register("do", "dotfiles")
+	session.SetDefaultRegistry(registry)
+	t.Cleanup(func() { session.SetDefaultRegistry(old) })
+
+	tests := []struct {
+		input string
+		want  string
+	}{
+		{input: "gt-witness", want: "gt-witness"},
+		{input: "dotfiles/witness", want: "do-witness"},
+		{input: "gastown/refinery", want: "gt-refinery"},
+		{input: "gastown/polecats/chrome", want: "gt-chrome"},
+		{input: "gastown/crew/max", want: "gt-crew-max"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.input, func(t *testing.T) {
+			if got := resolveSessionHealthTarget(tt.input); got != tt.want {
+				t.Fatalf("resolveSessionHealthTarget(%q) = %q, want %q", tt.input, got, tt.want)
+			}
+		})
 	}
 }
 

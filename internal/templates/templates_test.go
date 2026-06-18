@@ -127,6 +127,47 @@ func TestRenderRole_Deacon(t *testing.T) {
 	}
 }
 
+func TestRenderRoleWitnessUsesCanonicalRecoveryCommands(t *testing.T) {
+	tmpl, err := New()
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+
+	data := RoleData{
+		Role:          "witness",
+		RigName:       "myrig",
+		TownRoot:      "/test/town",
+		TownName:      "town",
+		WorkDir:       "/test/town/myrig/witness/rig",
+		DefaultBranch: "main",
+		MayorSession:  "gt-town-mayor",
+		DeaconSession: "gt-town-deacon",
+	}
+
+	output, err := tmpl.RenderRole("witness", data)
+	if err != nil {
+		t.Fatalf("RenderRole() error = %v", err)
+	}
+
+	for _, want := range []string{
+		"gt polecat check-recovery myrig/<name> --json --reconcile-cleanup",
+		"gt polecat git-state myrig/<name> --json",
+	} {
+		if !strings.Contains(output, want) {
+			t.Fatalf("witness template missing %q", want)
+		}
+	}
+	for _, forbidden := range []string{
+		"cd /test/town/myrig/polecats/<name>",
+		"git status --porcelain",
+		"git log origin/main..HEAD",
+	} {
+		if strings.Contains(output, forbidden) {
+			t.Fatalf("witness template still contains %q", forbidden)
+		}
+	}
+}
+
 func TestRenderRole_Refinery_DefaultBranch(t *testing.T) {
 	tmpl, err := New()
 	if err != nil {

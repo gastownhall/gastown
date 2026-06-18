@@ -13,8 +13,8 @@ import (
 )
 
 var (
-	patrolReportSummary string
-	patrolReportSteps   string
+	patrolReportSummary      string
+	patrolReportSteps        string
 	autoSpawnPatrolForReport = autoSpawnPatrol
 )
 
@@ -83,7 +83,6 @@ func runPatrolReport(cmd *cobra.Command, args []string) error {
 	}
 	return runPatrolReportWithConfig(cfg)
 }
-
 
 func runPatrolReportWithConfig(cfg PatrolConfig) error {
 	// Find the active patrol

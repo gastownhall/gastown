@@ -186,7 +186,7 @@ return non-zero.
 
 Examples:
    gt session health gt-vault --json
-	gt session health gastown/witness --json
+   gt session health gastown/witness --json
    gt session health gt-vault --json --max-inactivity 30m`,
 	Args: cobra.ExactArgs(1),
 	RunE: runSessionHealth,
