@@ -91,6 +91,18 @@ func TestParseChildrenJSON(t *testing.T) {
 			wantCount: 0,
 		},
 		{
+			// bd 1.0.3+ adds a schema_version envelope field alongside the
+			// parent-keyed array. Regression: hq-r64.
+			name:      "map wrapper with schema_version envelope, empty children",
+			input:     `{"hq-wisp-root":[],"schema_version":1}`,
+			wantCount: 0,
+		},
+		{
+			name:      "map wrapper with schema_version envelope and children",
+			input:     `{"hq-wisp-root":[{"id":"hq-wisp-a","title":"Probe","status":"open"},{"id":"hq-wisp-b","title":"Report","status":"open"}],"schema_version":1}`,
+			wantCount: 2,
+		},
+		{
 			name:      "empty array",
 			input:     `[]`,
 			wantCount: 0,
