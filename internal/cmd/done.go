@@ -86,6 +86,59 @@ func doneContaminationBaseRef(defaultBranch, explicitTarget string) string {
 	return "origin/" + targetBranch
 }
 
+// resolveDoneTargetBranch returns the actual target branch to use for
+// ahead-count + verify-push checks in `gt done`.
+//
+// Priority (highest first):
+//  1. Explicit --target flag (polecat knows its base branch)
+//  2. formula_vars base_branch on the bead (set by `gt sling --base-branch ...`)
+//  3. Integration branch auto-detect from epic hierarchy
+//  4. Rig default branch (fallback)
+//
+// Mirrors the resolution already used in the MR-creation path (~line 1140) so
+// the no-MR close path (zero-commit, --pre-verified, etc.) also honours
+// integration branches. Without this, a polecat forked off integration/<epic>
+// is incorrectly compared against origin/<default> and either reports
+// spurious ahead-counts or fails VerifyPushedCommit against the wrong tip.
+//
+// Returns defaultBranch on any lookup failure (logged as warning).
+func resolveDoneTargetBranch(bd *beads.Beads, g *git.Git, townRoot, rigName, issueID, doneTarget, defaultBranch string) string {
+	// 1. Explicit --target flag wins
+	if doneTarget != "" {
+		return strings.TrimPrefix(doneTarget, "origin/")
+	}
+
+	if issueID == "" {
+		return defaultBranch
+	}
+
+	// 2. formula_vars base_branch (stored on bead at sling time)
+	if issue, err := bd.Show(issueID); err == nil && issue != nil {
+		if af := beads.ParseAttachmentFields(issue); af != nil {
+			if bb := extractFormulaVar(af.FormulaVars, "base_branch"); bb != "" && bb != defaultBranch {
+				return strings.TrimPrefix(bb, "origin/")
+			}
+		}
+	}
+
+	// 3. Integration branch auto-detect (gated on per-rig refinery integration config)
+	refineryEnabled := true
+	if rigName != "" && townRoot != "" {
+		settingsPath := filepath.Join(townRoot, rigName, "settings", "config.json")
+		if settings, err := config.LoadRigSettings(settingsPath); err == nil && settings.MergeQueue != nil {
+			refineryEnabled = settings.MergeQueue.IsRefineryIntegrationEnabled()
+		}
+	}
+	if refineryEnabled {
+		if autoTarget, err := beads.DetectIntegrationBranch(bd, g, issueID); err == nil && autoTarget != "" {
+			return strings.TrimPrefix(autoTarget, "origin/")
+		}
+	}
+
+	// 4. Fallback
+	return defaultBranch
+}
+
 func shouldSyncIdlePolecatWorktree(exitType, mergeStrategy string, pushFailed, mrFailed, syncSafe bool) bool {
 	if exitType != ExitCompleted || pushFailed || mrFailed || !syncSafe {
 		return false
@@ -529,6 +582,19 @@ func runDone(cmd *cobra.Command, args []string) (retErr error) {
 		defaultBranch = rigCfg.DefaultBranch
 	}
 
+	// Resolve the actual target branch for ahead-count + verify-push checks.
+	// Priority: --target flag > formula_vars base_branch > integration auto-detect > rig default.
+	//
+	// Previously the no-MR close path (lines below) used defaultBranch directly,
+	// silently comparing polecat work against origin/main even when the polecat
+	// was forked off integration/<epic>. For a polecat on an integration branch:
+	//   - aheadCount vs origin/main reads many commits when 0 new work was done
+	//   - VerifyPushedCommit("origin", defaultBranch, ...) checks the wrong remote tip
+	//   - close-reason "target_branch: main" misleads later auditing
+	// The same resolution already ran in the MR-creation path at line ~1130; this
+	// promotes it to also cover the no-MR (zero-commit, --pre-verified, etc) path.
+	targetBranch := resolveDoneTargetBranch(beads.New(cwd), g, townRoot, rigName, issueID, doneTarget, defaultBranch)
+
 	// For COMPLETED, we need an issue ID and branch must not be the default branch
 	var mrID string
 	var pushFailed bool
@@ -565,16 +631,18 @@ func runDone(cmd *cobra.Command, args []string) (retErr error) {
 			return fmt.Errorf("cannot complete: uncommitted changes would be lost\nCommit your changes first, or use --status DEFERRED to exit without completing\nUncommitted: %s", workStatus.String())
 		}
 
-		// Check if branch has commits ahead of origin/default
-		// If not, work may have been pushed directly to main - that's fine, just skip MR
-		originDefault := "origin/" + defaultBranch
+		// Check if branch has commits ahead of origin/target
+		// If not, work may have been pushed directly to target - that's fine, just skip MR.
+		// Uses resolved targetBranch (formula_vars / integration auto-detect) instead of
+		// hard-coded defaultBranch so integration-branch polecats compare correctly.
+		originDefault := "origin/" + targetBranch
 		aheadCount, err := g.CommitsAhead(originDefault, "HEAD")
 		if err != nil {
 			// Fallback to local branch comparison if origin not available
-			aheadCount, err = g.CommitsAhead(defaultBranch, branch)
+			aheadCount, err = g.CommitsAhead(targetBranch, branch)
 			if err != nil {
 				// Can't determine - assume work exists and continue
-				style.PrintWarning("could not check commits ahead of %s: %v", defaultBranch, err)
+				style.PrintWarning("could not check commits ahead of %s: %v", targetBranch, err)
 				aheadCount = 1
 			}
 		}
@@ -614,10 +682,21 @@ func runDone(cmd *cobra.Command, args []string) (retErr error) {
 					branchPushedWithWork = pushErr == nil && pushed && unpushed == 0
 				}
 				if !branchPushedWithWork {
+					// Do NOT suggest --status DEFERRED or ESCALATED here. LLM polecats
+					// read error messages and self-bypass (the comment above on the
+					// uncommitted-changes branch warns about the same pattern).
+					// DEFERRED preserves the bead as open (line ~1865) — using it as
+					// the escape valve for "no commits" silently abandons the work
+					// without an MR or a failure signal to witness.
+					//
+					// The correct response if the polecat genuinely cannot produce
+					// commits is to either: (a) escalate via the witness mail
+					// channel, or (b) fix the underlying tooling. Crashing here
+					// surfaces the problem to the operator instead of training the
+					// LLM to bypass the guard.
 					return fmt.Errorf("cannot complete: no commits on branch ahead of %s\n"+
 						"Polecats must have at least 1 commit to submit.\n"+
-						"If the bug was already fixed upstream: gt done --status DEFERRED\n"+
-						"If you're blocked: gt done --status ESCALATED",
+						"This indicates the polecat could not produce work — investigate the polecat's session for tooling failures or missing scopes before re-dispatching.",
 						originDefault)
 				}
 			}
@@ -653,20 +732,20 @@ func runDone(cmd *cobra.Command, args []string) (retErr error) {
 				}
 
 				if !skipClose {
-					closeReason := "Completed with no code changes (already fixed or pushed directly to main)"
+					closeReason := fmt.Sprintf("Completed with no code changes (already fixed or pushed directly to %s)", targetBranch)
 					noMRCommitSHA, _ := g.Rev("HEAD")
 					if doneSkipVerify {
-						noteVerifiedPushSkipped(cwd, issueID, defaultBranch, noMRCommitSHA, "--skip-verify on no-MR close")
+						noteVerifiedPushSkipped(cwd, issueID, targetBranch, noMRCommitSHA, "--skip-verify on no-MR close")
 						if noMRCommitSHA != "" {
-							closeReason = fmt.Sprintf("%s\nskip_verify: true\ntarget_branch: %s\ncommit_sha: %s", closeReason, defaultBranch, noMRCommitSHA)
+							closeReason = fmt.Sprintf("%s\nskip_verify: true\ntarget_branch: %s\ncommit_sha: %s", closeReason, targetBranch, noMRCommitSHA)
 						}
 					} else if !isNoMergeTask {
-						if verifyErr := g.VerifyPushedCommit("origin", defaultBranch, noMRCommitSHA); verifyErr != nil {
-							noteVerifiedPushFailure(cwd, issueID, defaultBranch, noMRCommitSHA, verifyErr)
+						if verifyErr := g.VerifyPushedCommit("origin", targetBranch, noMRCommitSHA); verifyErr != nil {
+							noteVerifiedPushFailure(cwd, issueID, targetBranch, noMRCommitSHA, verifyErr)
 							return fmt.Errorf("cannot close no-MR code bead: %w", verifyErr)
 						}
 						if noMRCommitSHA != "" {
-							closeReason = fmt.Sprintf("%s\ntarget_branch: %s\ncommit_sha: %s", closeReason, defaultBranch, noMRCommitSHA)
+							closeReason = fmt.Sprintf("%s\ntarget_branch: %s\ncommit_sha: %s", closeReason, targetBranch, noMRCommitSHA)
 						}
 					}
 					// G15 fix: Force-close bypasses molecule dependency checks.
