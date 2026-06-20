@@ -362,6 +362,68 @@ func (m *Manager) resetAgentBeadForReuse(agentID, reason string) error {
 	return m.agentBeads().ResetAgentBeadForReuse(agentID, reason)
 }
 
+// clearStaleHookedWorkBeads clears any work-bead rows still claiming this
+// polecat as assignee (in either status=hooked or status=in_progress).
+// Called from BOTH the reuse path (ReuseIdlePolecat) and the fresh-spawn
+// path (addWithOptionsLocked) before a new agent bead is created.
+//
+// Why: a polecat whose prior session crashed, was force-nuked, or had its
+// hook bypassed externally can leave its previous work bead claiming this
+// polecat as assignee. Because polecat names are reused from a fixed pool,
+// the same name returning (via reuse OR fresh-allocate-of-released-name)
+// inherits the stale row.
+//
+// Two flavours need clearing:
+//   - status=hooked rows: revert to open (matches the unsling #2384 pattern).
+//     Without this, the next sling's hookBeadWithRetry produces a SECOND
+//     hooked row, and `gt hook show`'s unordered query
+//     (internal/cmd/hook.go:513) returns whichever sorts first.
+//   - status=in_progress rows: clear assignee only (preserves the bead's
+//     progress state — the work itself may have shipped via another path
+//     or be genuinely orphaned). Without this, `gt hook show`'s in-progress
+//     fallback (internal/cmd/hook.go:520-529) returns the stale row when no
+//     hooked row exists, masking the polecat's actual current assignment.
+//
+// Failures are non-fatal (warning only) — the agent-bead reset/create step
+// is the load-bearing operation.
+func (m *Manager) clearStaleHookedWorkBeads(name string) {
+	assignee := m.assigneeID(name)
+	openStatus := "open"
+	emptyAssignee := ""
+
+	// Hooked rows → revert to open, clear assignee (unsling pattern).
+	if staleHooked, err := m.beads.List(beads.ListOptions{
+		Status:   beads.StatusHooked,
+		Assignee: assignee,
+		Priority: -1,
+	}); err == nil && len(staleHooked) > 0 {
+		for _, stale := range staleHooked {
+			if err := m.beads.Update(stale.ID, beads.UpdateOptions{
+				Status:   &openStatus,
+				Assignee: &emptyAssignee,
+			}); err != nil {
+				style.PrintWarning("could not clear stale hooked bead %s for polecat %s: %v", stale.ID, name, err)
+			}
+		}
+	}
+
+	// In-progress rows → clear assignee only (keep status — work may have
+	// shipped via another path; preserve progress info).
+	if staleInProgress, err := m.beads.List(beads.ListOptions{
+		Status:   "in_progress",
+		Assignee: assignee,
+		Priority: -1,
+	}); err == nil && len(staleInProgress) > 0 {
+		for _, stale := range staleInProgress {
+			if err := m.beads.Update(stale.ID, beads.UpdateOptions{
+				Assignee: &emptyAssignee,
+			}); err != nil {
+				style.PrintWarning("could not clear stale in-progress assignee on %s for polecat %s: %v", stale.ID, name, err)
+			}
+		}
+	}
+}
+
 // SetAgentStateWithRetry wraps SetAgentState with retry logic.
 // Returns an error after exhausting retries, but callers may choose to warn
 // rather than fail — e.g., in StartSession where the tmux session is already
@@ -849,6 +911,14 @@ func (m *Manager) addWithOptionsLocked(name string, opts AddOptions, polecatDir 
 		cleanupOnError()
 		return nil, err
 	}
+
+	// Clear stale status=hooked work-bead rows on this polecat name before
+	// binding the new agent bead. Polecat names come from a fixed pool and
+	// can be reused after release — without this, a row from a prior epic
+	// (e.g. status=hooked, assignee=m365/polecats/chrome) survives across
+	// nuke + fresh-allocate-of-released-name and pollutes the next sling's
+	// hook resolution. See clearStaleHookedWorkBeads for full rationale.
+	m.clearStaleHookedWorkBeads(name)
 
 	agentID := m.agentBeadID(name)
 	if err = m.createAgentBeadWithRetry(agentID, &beads.AgentFields{
@@ -1810,6 +1880,10 @@ func (m *Manager) ReuseIdlePolecat(name string, opts AddOptions) (*Polecat, erro
 		_ = polecatGit.CleanForce()
 		return nil, err
 	}
+
+	// Clear stale status=hooked work-bead rows on this polecat before reuse.
+	// See clearStaleHookedWorkBeads doc comment for full rationale.
+	m.clearStaleHookedWorkBeads(name)
 
 	// Reset agent bead for reuse
 	agentID := m.agentBeadID(name)
