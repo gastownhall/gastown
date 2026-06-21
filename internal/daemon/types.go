@@ -131,6 +131,7 @@ type PatrolsConfig struct {
 	MainBranchTest         *MainBranchTestConfig          `json:"main_branch_test,omitempty"`
 	QuotaDog               *QuotaDogConfig                `json:"quota_dog,omitempty"`
 	RestartTracker         *RestartTrackerConfig          `json:"restart_tracker,omitempty"`
+	PolecatPatrol          *PolecatPatrolConfig           `json:"polecat_patrol,omitempty"`
 }
 
 // DoltRemotesConfig holds configuration for the dolt_remotes patrol.
@@ -307,6 +308,16 @@ func IsPatrolEnabled(config *DaemonPatrolConfig, patrol string) bool {
 			return false
 		}
 		return config.Patrols.QuotaDog.Enabled
+	}
+	if patrol == "polecat_patrol" {
+		// Default ENABLED if unconfigured — this is the Layer 1 deterministic
+		// patrol that closes the 8h zombie-detection latency gap. Operators
+		// who want to disable it (e.g., headless CI rigs) must set
+		// patrols.polecat_patrol.enabled = false explicitly.
+		if config == nil || config.Patrols == nil || config.Patrols.PolecatPatrol == nil {
+			return true
+		}
+		return config.Patrols.PolecatPatrol.Enabled
 	}
 
 	if config == nil || config.Patrols == nil {

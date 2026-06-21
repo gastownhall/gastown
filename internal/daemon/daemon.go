@@ -653,6 +653,23 @@ func (d *Daemon) Run() (err error) {
 		d.logger.Printf("Checkpoint dog ticker started (interval %v)", interval)
 	}
 
+	// Start polecat patrol ticker (Layer 1 fix for glaicier gt-e4b3).
+	// Runs `gt patrol scan --rig <X> --notify` for each known rig on a
+	// deterministic timer (default 5m). Without this, polecat zombie/
+	// dead-session detection waits for the witness LLM agent to decide
+	// when to scan — observed gap was 8+ hours. Closes the loop so worst-
+	// case detection latency is bounded by the patrol interval + scan
+	// duration (~6.5 min default).
+	var polecatPatrolTicker *time.Ticker
+	var polecatPatrolChan <-chan time.Time
+	if d.isPatrolActive("polecat_patrol") {
+		interval := polecatPatrolInterval(d.patrolConfig)
+		polecatPatrolTicker = time.NewTicker(interval)
+		polecatPatrolChan = polecatPatrolTicker.C
+		defer polecatPatrolTicker.Stop()
+		d.logger.Printf("Polecat patrol ticker started (interval %v)", interval)
+	}
+
 	// Start scheduled maintenance ticker if configured.
 	// Checks periodically whether we're in the maintenance window and
 	// runs `gt maintain --force` when commit counts exceed threshold.
@@ -777,6 +794,16 @@ func (d *Daemon) Run() (err error) {
 			// worktrees to prevent data loss from session crashes.
 			if !d.isShutdownInProgress() {
 				d.runCheckpointDog()
+			}
+
+		case <-polecatPatrolChan:
+			// Polecat patrol — deterministic cadence for `gt patrol scan`
+			// per rig (Layer 1 fix for glaicier gt-e4b3). Catches dead
+			// polecat sessions with active hooks + auto-restarts them.
+			// The witness LLM agent continues its own slower judgment-
+			// driven patrol; this loop is the deterministic safety net.
+			if !d.isShutdownInProgress() {
+				d.runPolecatPatrol()
 			}
 
 		case <-scheduledMaintenanceChan:
