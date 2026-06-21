@@ -12,12 +12,19 @@ import (
 // await-signal logic was accidentally removed by subsequent commits,
 // causing a tight loop when the rig was idle.
 //
+// Note: The Deacon patrol no longer includes backoff logic in the formula
+// (removed as part of nmi-mbd8 refactoring). Backoff is now handled by
+// the daemon's event loop instead (deacon-wait mechanism). This decouples
+// heartbeat from wait loops and prevents modal interrupts from stalling.
+//
 // See: PR #1052 (original fix), gt-tjm9q (regression report)
 // See: gt-0hzeo (refinery stall bug — missing await-signal)
+// See: nmi-mbd8 (deacon heartbeat decoupling)
 func TestPatrolFormulasHaveBackoffLogic(t *testing.T) {
 	// Patrol formulas that must have backoff logic.
 	// The loopStepID is the step that contains the await-signal logic;
-	// witness/deacon use "loop-or-exit", refinery uses "burn-or-loop".
+	// witness uses "loop-or-exit", refinery uses "burn-or-loop".
+	// Deacon no longer uses await-signal in the formula (handled by daemon).
 	type patrolFormula struct {
 		name       string
 		loopStepID string
@@ -26,7 +33,6 @@ func TestPatrolFormulasHaveBackoffLogic(t *testing.T) {
 
 	patrolFormulas := []patrolFormula{
 		{"mol-witness-patrol.formula.toml", "loop-or-exit", "await-signal"},
-		{"mol-deacon-patrol.formula.toml", "loop-or-exit", "await-signal"},
 		{"mol-refinery-patrol.formula.toml", "burn-or-loop", "await-event"},
 	}
 
@@ -70,13 +76,18 @@ func TestPatrolFormulasHaveBackoffLogic(t *testing.T) {
 	}
 }
 
-// TestPatrolFormulasHaveReportCycle verifies that all three patrol formulas
+// TestPatrolFormulasHaveReportCycle verifies that witness and refinery patrol formulas
 // include `gt patrol report` in their loop step.
 //
 // The patrol report command atomically closes the current patrol wisp and
 // starts a new one, replacing the old squash+new pattern.
 //
+// Note: The Deacon patrol now includes patrol report in its context-check step
+// (the final step) rather than in a dedicated loop-or-exit step. The architecture
+// has changed so the daemon's event loop handles waiting, not the patrol formula.
+//
 // Regression test: replaces TestPatrolFormulasHaveSquashCycle (steveyegge/gastown#1371).
+// See: nmi-mbd8 (deacon heartbeat decoupling)
 func TestPatrolFormulasHaveReportCycle(t *testing.T) {
 	type patrolFormula struct {
 		name       string
@@ -85,7 +96,6 @@ func TestPatrolFormulasHaveReportCycle(t *testing.T) {
 
 	patrolFormulas := []patrolFormula{
 		{"mol-witness-patrol.formula.toml", "loop-or-exit"},
-		{"mol-deacon-patrol.formula.toml", "loop-or-exit"},
 		{"mol-refinery-patrol.formula.toml", "burn-or-loop"},
 	}
 

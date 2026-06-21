@@ -105,3 +105,29 @@ func ValidateTarget(target string) error {
 
 	return nil
 }
+
+// ValidateFormulaFamily checks that the formula family is appropriate for the target agent.
+// Specifically, it prevents polecat formulas (mol-polecat-*) from being dispatched to dogs,
+// which is the invalid combination that caused "DELETED molecule + INVALID formula" issues.
+// Returns a clear error if the formula is inappropriate for the target.
+func ValidateFormulaFamily(formulaName string, targetAgent string) error {
+	// No formula to validate
+	if formulaName == "" {
+		return nil
+	}
+
+	// Check if this is a polecat-specific formula
+	isPolecatFormula := strings.HasPrefix(formulaName, "mol-polecat-")
+	if !isPolecatFormula {
+		return nil
+	}
+
+	// Check if target is a dog
+	isDogTarget := strings.Contains(targetAgent, "/dogs/")
+	if isDogTarget {
+		return fmt.Errorf("formula %q is designed for polecats but target %q is a dog\n"+
+			"Polecat formulas cannot be dispatched to dogs", formulaName, targetAgent)
+	}
+
+	return nil
+}

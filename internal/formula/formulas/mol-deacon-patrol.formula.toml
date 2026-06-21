@@ -1,7 +1,19 @@
 description = """
 Mayor's daemon patrol loop.
 
-The Deacon is the Mayor's background process that runs continuously, handling callbacks, monitoring rig health, and performing cleanup. Each patrol cycle runs these steps in sequence, then loops or exits.
+The Deacon is the Mayor's background process that runs continuously, handling callbacks, monitoring rig health, and performing cleanup. Each patrol cycle runs these steps in sequence, then completes.
+
+## Self-Sustaining Heartbeat Design
+
+**Key principle**: Heartbeat is decoupled from the patrol wait loop.
+
+- Patrol formula ends after the last step (no await-signal inside patrol)
+- Daemon's event loop (already event-driven) handles waiting between patrols
+- Separate `deacon-wait` step in daemon logic manages backoff and activity detection
+- Result: Heartbeat refreshes every patrol cycle, independent of wait duration
+- Benefit: Modal interrupts cannot stall heartbeat (heartbeat runs fresh each cycle)
+
+The patrol runs to completion, returns to idle, and the daemon manages when the next patrol starts.
 
 ## Idle Town Principle
 
@@ -35,44 +47,26 @@ No WITNESS_PING mail is sent. Witnesses observe the Deacon's last_activity
 timestamp instead, and only send an alert to the Mayor if the Deacon appears
 unresponsive (>5 minutes stale). This avoids heartbeat mail spam.
 
-## Abbreviated Patrol Mode (Idle Effort Tuning)
+## Effort Tracking (Legacy Documentation)
 
-When `await-signal` outputs `EFFORT: reduced`, run an ABBREVIATED patrol.
-This happens when idle_cycles >= {{idle_effort_threshold}} (no activity detected).
+**Note**: This section documents legacy abbreviated patrol mode. With the new architecture
+where patrol completes and returns to idle (no await-signal inside patrol), effort is
+managed by the daemon's backoff and respawn logic rather than within the patrol formula.
 
-Abbreviated patrol rules:
-- **heartbeat**: ALWAYS run (required by daemon).
-- **inbox-check**: Run `gt mail drain` only. Skip individual message processing unless drain reports unprocessed HELP or RECOVERED_BEAD messages.
-- **orphan-process-cleanup**: SKIP.
-- **test-pollution-cleanup**: SKIP.
-- **gate-evaluation**: SKIP.
-- **dispatch-gated-molecules**: SKIP.
-- **check-convoy-completion**: SKIP.
-- **resolve-external-deps**: SKIP.
-- **fire-notifications**: SKIP.
-- **heartbeat-mid**: SKIP (short cycle doesn't need mid-cycle refresh).
-- **health-scan**: Quick `gt witness status` / `gt refinery status` only. Skip nudges.
-- **dolt-health**: SKIP.
-- **zombie-scan**: SKIP.
-- **plugin-run**: SKIP.
-- **dog-pool-maintenance**: SKIP.
-- **dog-health-check**: SKIP.
-- **orphan-check**: SKIP.
-- **session-gc**: SKIP.
-- **wisp-compact**: SKIP.
-- **compact-report**: SKIP.
-- **costs-digest**: SKIP (already disabled).
-- **patrol-digest**: SKIP.
-- **log-maintenance**: SKIP.
-- **patrol-cleanup**: Quick inbox check only.
-- **context-check**: Quick self-assessment (one sentence).
-- **loop-or-exit**: Normal (await-signal as usual).
+The daemon controls patrol frequency:
+- Active work: respawn immediately on feed activity
+- Idle: daemon respawns on ~3-minute heartbeat interval with exponential backoff
+- Result: natural effort tuning without special abbreviated modes
 
-When `await-signal` outputs `EFFORT: full`, run all steps thoroughly (normal mode).
+For reference, historical abbreviated patrol rules would have been:
+- **heartbeat**: ALWAYS run
+- Expensive steps (health-scan, dolt-health, etc.): Skipped during idle
+- Quick steps (heartbeat, inbox-check): Always run for responsiveness
 
-The goal: idle cycles should burn ~10% of the tokens a full patrol uses."""
+This is now handled implicitly: idle patrols happen less frequently (daemon-controlled),
+so expensive steps run less often naturally."""
 formula = "mol-deacon-patrol"
-version = 14
+version = 15
 
 [vars]
 [vars.wisp_type]
@@ -1150,10 +1144,10 @@ Deacon mail should flow through quickly - no accumulation."""
 
 [[steps]]
 id = "context-check"
-title = "Check own context limit"
+title = "Check own context limit and close patrol cycle"
 needs = ["patrol-cleanup"]
 description = """
-Check own context limit.
+End of patrol cycle: check context and close the wisp.
 
 The Deacon runs in a Claude session with finite context. Check if approaching the limit:
 
@@ -1161,97 +1155,22 @@ The Deacon runs in a Claude session with finite context. Check if approaching th
 gt context --usage
 ```
 
-If context is high (>80%), prepare for handoff:
+**Generate a brief patrol summary and close the cycle:**
+
+```bash
+gt patrol report --summary "Patrol cycle complete" \
+  --steps "heartbeat:OK,inbox-check:OK,orphan-process-cleanup:OK,..."
+```
+
+The --steps flag is REQUIRED. List all 25 steps with their actual status (OK or SKIP).
+This closes the current patrol wisp and automatically creates a new one.
+
+**If context is high (>80%), prepare for handoff:**
 - Summarize current state
 - Note any pending work
 - Write handoff to molecule state
 
-This enables the Deacon to burn and respawn cleanly."""
+This enables the Deacon to burn and respawn cleanly.
 
-[[steps]]
-id = "loop-or-exit"
-title = "Loop or exit for respawn"
-needs = ["context-check"]
-description = """
-End of patrol cycle decision.
-
-**If context LOW** (can continue patrolling):
-
-Refresh the heartbeat again immediately before the long idle wait:
-
-```bash
-gt deacon heartbeat "pre-await checkpoint"
-```
-
-Use await-signal with exponential backoff to wait for activity:
-
-```bash
-gt mol step await-signal --agent-bead hq-deacon \
-  --backoff-base 60s --backoff-mult 2 --backoff-max 15m
-```
-
-This command:
-1. Subscribes to `bd activity --follow` (beads activity feed)
-2. Returns IMMEDIATELY when any beads activity occurs
-3. If no activity, times out with exponential backoff:
-   - First timeout: 60s
-   - Second timeout: 120s
-   - Third timeout: 240s
-   - ...capped at 15 minutes max
-4. Tracks `idle:N` label on hq-deacon bead for backoff state
-5. Outputs `EFFORT: reduced` or `EFFORT: full` directive for next cycle
-
-**On signal received** (activity detected):
-Reset the idle counter and start next patrol cycle:
-```bash
-gt agent state hq-deacon --set idle=0
-```
-
-**On timeout** (no activity):
-The idle counter was auto-incremented. Continue to next patrol cycle
-(the longer backoff will apply next time).
-
-## Effort-Based Patrol Routing
-
-After await-signal returns, check the EFFORT directive in the output:
-
-**If `EFFORT: full`** — Run all steps thoroughly (normal patrol).
-
-**If `EFFORT: reduced`** — Run ABBREVIATED patrol:
-- heartbeat: ALWAYS run
-- inbox-check: Quick drain only, skip individual messages unless HELP/RECOVERED_BEAD
-- orphan-process-cleanup through fire-notifications: SKIP all
-- heartbeat-mid: SKIP
-- health-scan: Quick status checks only, skip nudges
-- dolt-health through session-gc: SKIP all
-- wisp-compact through log-maintenance: SKIP all
-- patrol-cleanup: Quick inbox check only
-- context-check: One-sentence self-assessment
-
-Abbreviated patrol should complete in ~10% of the tokens of a full patrol.
-Mark skipped steps as SKIP in the patrol report.
-
-After await-signal returns (either by signal or timeout):
-1. Generate a brief summary of this patrol cycle's observations
-2. Build a step audit: for each step in this formula, record whether you
-   executed it (OK) or skipped it (SKIP). This makes shortcutting visible
-   in the ledger. Format: comma-separated step_id:STATUS pairs.
-3. Close current patrol and start next cycle:
-```bash
-gt patrol report --summary "<brief summary>" \
-  --steps "heartbeat:OK,inbox-check:OK,orphan-process-cleanup:SKIP,..."
-```
-The --steps flag is REQUIRED. List ALL 26 steps with their actual status.
-Steps you executed get OK, steps you skipped get SKIP.
-This closes the current patrol wisp and automatically creates a new one.
-4. Continue executing from the first step of the new patrol cycle
-
-**If context HIGH** (approaching limit):
-1. Write handoff mail with notable observations:
-```bash
-gt handoff -s "Deacon patrol handoff" -m "<observations>"
-```
-2. Exit cleanly - the daemon will respawn a fresh Deacon session
-
-**IMPORTANT**: You must either report and loop (context LOW) or exit (context HIGH).
-Never leave the session idle without work on your hook."""
+**IMPORTANT**: Do NOT use await-signal here. The daemon's event loop handles waiting
+between patrol cycles. This step just closes the patrol and returns to idle."""

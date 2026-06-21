@@ -40,6 +40,7 @@ const (
 	DefaultDogIdleSessionTimeout           = 1 * time.Hour
 	DefaultPolecatIdleSessionTimeout       = 15 * time.Minute
 	DefaultDogIdleRemoveTimeout            = 4 * time.Hour
+	DefaultDogWaitEscalationThreshold      = 5 * time.Minute
 	DefaultStaleWorkingTimeout             = 2 * time.Hour
 	DefaultMaxDogPoolSize                  = 4
 	DefaultMaxLifecycleMessageAge          = 6 * time.Hour
@@ -390,6 +391,14 @@ func (d *DaemonThresholds) DeaconGracePeriodD() time.Duration {
 		return ParseDurationOrDefault(d.DeaconGracePeriod, DefaultDeaconGracePeriod)
 	}
 	return DefaultDeaconGracePeriod
+}
+
+// DogWaitEscalationThresholdD returns the configured or default dog wait escalation threshold.
+func (d *DaemonThresholds) DogWaitEscalationThresholdD() time.Duration {
+	if d != nil {
+		return ParseDurationOrDefault(d.DogWaitEscalationThreshold, DefaultDogWaitEscalationThreshold)
+	}
+	return DefaultDogWaitEscalationThreshold
 }
 
 // PressureCPUThresholdV returns the configured or default CPU pressure threshold (load per core).

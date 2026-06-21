@@ -1190,6 +1190,8 @@ func runDogDispatch(cmd *cobra.Command, args []string) error {
 		if !dogDispatchJSON {
 			style.PrintWarning("%s", warn)
 		}
+		// Only escalate if session spawn failures are repeated (>3 errors).
+		// Single/occasional failures are normal during idle-waiting. (nmi-w2fl)
 		if escErr := dogEscalateBestEffort(warn); escErr != nil {
 			if !dogDispatchJSON {
 				style.PrintWarning("escalation also failed (%v) — escalate manually: gt escalate --severity medium %q", escErr, warn)
@@ -1255,10 +1257,132 @@ type dogDispatchResult struct {
 	Warnings       []string `json:"warnings,omitempty"`
 }
 
-// dogEscalateBestEffort fires a MEDIUM escalation via gt escalate.
+// DogEscalationState tracks escalation attempts to prevent floods.
+type DogEscalationState struct {
+	LastEscalationTime time.Time `json:"last_escalation_time,omitempty"`
+	RepeatedCount      int       `json:"repeated_count"`
+	LastEscalatedMsg   string    `json:"last_escalated_msg,omitempty"`
+	SpawnErrorCount    int       `json:"spawn_error_count"`           // Track spawn errors for idle-wait distinction
+	LastSpawnErrorTime time.Time `json:"last_spawn_error_time,omitempty"`
+}
+
+// LoadDogEscalationState loads escalation state from the deacon directory.
+func LoadDogEscalationState(townRoot string) (*DogEscalationState, error) {
+	stateFile := filepath.Join(townRoot, "deacon", "dog-escalation-state.json")
+
+	data, err := os.ReadFile(stateFile) //nolint:gosec // G304: path is constructed from trusted townRoot
+	if err != nil {
+		if os.IsNotExist(err) {
+			return &DogEscalationState{}, nil
+		}
+		return nil, fmt.Errorf("reading dog escalation state: %w", err)
+	}
+
+	var state DogEscalationState
+	if err := json.Unmarshal(data, &state); err != nil {
+		return nil, fmt.Errorf("parsing dog escalation state: %w", err)
+	}
+
+	return &state, nil
+}
+
+// SaveDogEscalationState saves escalation state to disk.
+func SaveDogEscalationState(townRoot string, state *DogEscalationState) error {
+	stateFile := filepath.Join(townRoot, "deacon", "dog-escalation-state.json")
+
+	// Ensure directory exists
+	if err := os.MkdirAll(filepath.Dir(stateFile), 0755); err != nil {
+		return fmt.Errorf("creating deacon directory: %w", err)
+	}
+
+	data, err := json.MarshalIndent(state, "", "  ")
+	if err != nil {
+		return fmt.Errorf("marshaling escalation state: %w", err)
+	}
+
+	return os.WriteFile(stateFile, data, 0600)
+}
+
+// dogEscalateBestEffort fires a MEDIUM escalation via gt escalate, with backoff and dedup logic.
+// For spawn errors (session start failures), distinguishes idle-waiting (normal) from stuck state:
+// only escalates if repeated_spawn_errors > 3. (nmi-w2fl)
 func dogEscalateBestEffort(msg string) error {
+	townRoot, err := workspace.FindFromCwd()
+	if err != nil {
+		// Can't find town root, just send escalation without backoff logic
+		cmd := exec.Command("gt", "escalate", "--severity", "medium", msg)
+		return cmd.Run()
+	}
+
+	const escalationBackoff = 2 * time.Minute
+	const spawnErrorThreshold = 3
+
+	state, err := LoadDogEscalationState(townRoot)
+	if err != nil {
+		// On state load error, escalate without backoff
+		cmd := exec.Command("gt", "escalate", "--severity", "medium", msg)
+		return cmd.Run()
+	}
+
+	now := time.Now()
+	isSpawnError := strings.Contains(msg, "session start failed")
+
+	// For spawn errors, track separately to distinguish idle-waiting from stuck
+	if isSpawnError {
+		// Reset spawn error counter if last error was > 2 minutes ago
+		if !state.LastSpawnErrorTime.IsZero() && now.Sub(state.LastSpawnErrorTime) > escalationBackoff {
+			state.SpawnErrorCount = 0
+		}
+
+		state.SpawnErrorCount++
+		state.LastSpawnErrorTime = now
+
+		// Only escalate spawn errors if repeated > threshold (nmi-w2fl)
+		if state.SpawnErrorCount <= spawnErrorThreshold {
+			// Idle-waiting is normal dispatch, not escalation trigger
+			_ = SaveDogEscalationState(townRoot, state)
+			return nil
+		}
+		// Fall through to escalate on 4th+ error
+	}
+
+	// Check if we're in backoff window for non-spawn errors
+	if !isSpawnError && !state.LastEscalationTime.IsZero() && now.Sub(state.LastEscalationTime) < escalationBackoff {
+		// In backoff period - check if this is the same message
+		if state.LastEscalatedMsg == msg {
+			state.RepeatedCount++
+		} else {
+			// Different message, reset counter
+			state.RepeatedCount = 1
+			state.LastEscalatedMsg = msg
+		}
+
+		// If repeated too many times, escalate to Mayor about chronic failure
+		if state.RepeatedCount > 3 {
+			chronicMsg := fmt.Sprintf("CHRONIC_DOG_FAILURE: Dog escalation threshold exceeded (4+ attempts in 2 min).\nOriginal condition: %s", msg)
+			cmd := exec.Command("gt", "escalate", "--severity", "high", chronicMsg)
+			_ = SaveDogEscalationState(townRoot, state) // Save state even if escalate fails
+			return cmd.Run()
+		}
+
+		// Otherwise suppress the escalation and update state
+		_ = SaveDogEscalationState(townRoot, state)
+		return nil // Escalation suppressed during backoff
+	}
+
+	// Outside backoff window - send escalation and reset counter
 	cmd := exec.Command("gt", "escalate", "--severity", "medium", msg)
-	return cmd.Run()
+	if err := cmd.Run(); err != nil {
+		return err
+	}
+
+	// Record successful escalation
+	state.LastEscalationTime = now
+	state.RepeatedCount = 1
+	state.LastEscalatedMsg = msg
+
+	_ = SaveDogEscalationState(townRoot, state)
+	return nil
 }
 
 // ifStr returns ifTrue if cond is true, otherwise ifFalse.

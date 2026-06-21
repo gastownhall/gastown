@@ -534,12 +534,15 @@ func runMoleculeStatus(cmd *cobra.Command, args []string) error {
 }
 
 // extractRoleFromIdentity extracts the role name from an agent identity string
-// for handoff bead lookup. Handles trailing slashes (e.g. "mayor/" → "mayor")
-// and compound paths (e.g. "gastown/crew/jack" → "jack").
+// for handoff bead lookup. Handles trailing slashes and returns the full
+// identity for multi-part roles (crew, dogs, polecats).
+// Examples:
+//   - "mayor/" → "mayor"
+//   - "gastown/witness" → "gastown/witness"
+//   - "gastown/crew/jack" → "gastown/crew/jack"
+//   - "deacon/dogs/charlie" → "deacon/dogs/charlie"
 func extractRoleFromIdentity(target string) string {
-	target = strings.TrimRight(target, "/")
-	parts := strings.Split(target, "/")
-	return parts[len(parts)-1]
+	return strings.TrimRight(target, "/")
 }
 
 // buildAgentIdentity constructs the agent identity string from role context.

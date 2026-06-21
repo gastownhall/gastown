@@ -72,6 +72,14 @@ func (m *Manager) deaconDir() string {
 // Start starts the deacon session.
 // agentOverride allows specifying an alternate agent alias (e.g., for testing).
 // Restarts are handled by daemon via ensureDeaconRunning on each heartbeat.
+//
+// Architecture: Self-Sustaining Heartbeat Design
+// - Patrol formula ends without looping (no await-signal inside patrol)
+// - Each patrol cycle refreshes heartbeat independently
+// - Daemon's event loop manages waiting between patrols
+// - Benefit: Modal interrupts cannot stall heartbeat (fresh refresh each cycle)
+// - Mechanism: When patrol completes, Deacon returns to idle. Daemon's heartbeat loop
+//   (every 3 min) or feed subscription (instant on activity) triggers next patrol.
 func (m *Manager) Start(agentOverride string) error {
 	t := m.tmux
 	sessionID := m.SessionName()

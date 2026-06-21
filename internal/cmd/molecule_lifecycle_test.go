@@ -13,20 +13,22 @@ import (
 	"github.com/spf13/cobra"
 )
 
-// TestExtractRoleFromIdentity verifies that role names are correctly extracted
-// from agent identity strings, including trailing slashes and compound paths.
+// TestExtractRoleFromIdentity verifies that agent identities are correctly
+// extracted from identity strings, including trailing slashes. Returns the
+// full identity for multi-part roles (crew, dogs, polecats).
 func TestExtractRoleFromIdentity(t *testing.T) {
 	tests := []struct {
 		target string
 		want   string
 	}{
-		{"gastown/refinery", "refinery"},
-		{"gastown/witness", "witness"},
-		{"gastown/crew/jack", "jack"},
-		{"gastown/polecats/nux", "nux"},
+		{"gastown/refinery", "gastown/refinery"},
+		{"gastown/witness", "gastown/witness"},
+		{"gastown/crew/jack", "gastown/crew/jack"},
+		{"gastown/polecats/nux", "gastown/polecats/nux"},
+		{"deacon/dogs/charlie", "deacon/dogs/charlie"},
 		{"mayor/", "mayor"},
 		{"deacon/", "deacon"},
-		{"deacon/boot", "boot"},
+		{"deacon/boot", "deacon/boot"},
 		{"refinery", "refinery"},
 	}
 	for _, tc := range tests {

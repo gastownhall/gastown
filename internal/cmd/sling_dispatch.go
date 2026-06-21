@@ -244,6 +244,16 @@ func executeSling(params SlingParams) (*SlingResult, error) {
 	targetAgent := spawnInfo.AgentID()
 	hookWorkDir := spawnInfo.ClonePath
 
+	// 3.5. Validate formula family matches target agent type (prevent polecat formulas on dogs)
+	if params.FormulaName != "" {
+		if err := ValidateFormulaFamily(params.FormulaName, targetAgent); err != nil {
+			// Clean up orphaned polecat to avoid leaving spawned-but-invalid-formula polecats
+			cleanupSpawnedPolecat(spawnInfo, params.RigName, "")
+			result.ErrMsg = fmt.Sprintf("formula validation failed: %v", err)
+			return result, err
+		}
+	}
+
 	// 4. Auto-convoy (if !NoConvoy)
 	convoyID := ""
 	if !params.NoConvoy {

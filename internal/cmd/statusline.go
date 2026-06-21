@@ -49,6 +49,29 @@ type storeMemo struct {
 	opened map[string]beadsdk.Storage // resolvedDir -> store (nil = open failed)
 }
 
+// newStoreMemo returns an empty store memo. Callers MUST call close() when done
+// to release any opened in-process stores (defer m.close()). Used by short-lived
+// gt commands that issue several beads ops to the same DB(s) within one
+// invocation and want to amortize the Dolt connection over those ops instead of
+// spawning a fresh `bd` (= fresh connection set) per op (hq-q7ls9).
+func newStoreMemo() *storeMemo {
+	return &storeMemo{opened: make(map[string]beadsdk.Storage)}
+}
+
+// close releases every store opened by the memo. Safe to call on a nil memo and
+// safe to call more than once.
+func (m *storeMemo) close() {
+	if m == nil {
+		return
+	}
+	for dir, s := range m.opened {
+		if s != nil {
+			_ = s.Close()
+		}
+		delete(m.opened, dir)
+	}
+}
+
 // beadsFor returns a *beads.Beads for the given workDir. When an in-process
 // store can be opened (and memoized) for the dir's resolved .beads location it
 // returns a store-backed Beads (no bd subprocess); otherwise it falls back to
@@ -82,7 +105,11 @@ func (m *storeMemo) beadsFor(workDir string) *beads.Beads {
 func openStatusLineStore(beadsDir string) beadsdk.Storage {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	store, err := beadsdk.OpenFromConfig(ctx, beadsDir)
+	// Read-only open (CreateIfMissing=false): takes the beads fast-path connect
+	// (2 Dolt connections, no SHOW DATABASES catalog probe) instead of the
+	// create-capable slow path (3 connections). These gt store-opens never need
+	// to create a DB. (hq-q7ls9 / hq-9i9s7.2)
+	store, err := beadsdk.OpenFromConfigReadOnly(ctx, beadsDir)
 	if err != nil {
 		return nil
 	}
@@ -760,7 +787,13 @@ func isSessionWorking(t *tmux.Tmux, session string) bool {
 // getMailPreviewWithRoot returns unread count and a truncated subject of the first unread message,
 // using an explicit town root.
 func getMailPreviewWithRoot(identity string, maxLen int, townRoot string) (int, string) {
-	// Use NewMailboxFromAddress to normalize identity (e.g., gastown/crew/gus -> gastown/gus)
+	// NOTE (hq-q7ls9): intentionally NOT store-backed. The in-process
+	// mail store path (mailbox.storeListFromDir) only queries the issues table
+	// and misses ephemeral "wisp" mail messages that the bd path picks up via a
+	// separate wisps-table SQL query (mailbox.listWispMessages). Using the store
+	// here would undercount unread mail. Left on the bd path until the SDK mail
+	// list covers wisps. NewMailboxFromAddress normalizes the identity (e.g.,
+	// gastown/crew/gus -> gastown/gus).
 	mailbox := mail.NewMailboxFromAddress(identity, townRoot)
 
 	// Get unread messages

@@ -13,9 +13,16 @@ set -euo pipefail
 DOLT_HOST="${DOLT_HOST:-127.0.0.1}"
 DOLT_PORT="${DOLT_PORT:-3307}"
 DOLT_USER="${DOLT_USER:-root}"
-DOLT_DATA_DIR="${DOLT_DATA_DIR:-$HOME/gt/.dolt-data}"
-JSONL_EXPORT_DIR="$HOME/gt/.dolt-archive/jsonl"
-BACKUP_REPO="$HOME/gt/.dolt-archive/git"
+# Town root: prefer the live env (GT_TOWN_ROOT / GT_ROOT set by `gt prime`/daemon),
+# fall back to $HOME/gt for legacy installs. Hardcoding $HOME/gt broke backups
+# silently after the town moved to a workspace path (nmi-wisp-3bws): exports went
+# to a stale /home/<user>/gt/.dolt-archive while the live town + monitors were
+# elsewhere. Resolving the root from the environment keeps the export co-located
+# with the running Dolt server's data dir.
+GT_TOWN_ROOT="${GT_TOWN_ROOT:-${GT_ROOT:-$HOME/gt}}"
+DOLT_DATA_DIR="${DOLT_DATA_DIR:-$GT_TOWN_ROOT/.dolt-data}"
+JSONL_EXPORT_DIR="$GT_TOWN_ROOT/.dolt-archive/jsonl"
+BACKUP_REPO="$GT_TOWN_ROOT/.dolt-archive/git"
 DEFAULT_DBS="auto"
 SKIP_GIT=false
 SKIP_DOLT_PUSH=false

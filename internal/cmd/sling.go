@@ -691,6 +691,11 @@ func runSling(cmd *cobra.Command, args []string) (retErr error) {
 		slingVars = append(slingVars, fmt.Sprintf("base_branch=%s", newPolecatInfo.BaseBranch))
 	}
 
+	// Validate formula family is appropriate for target agent (dogs cannot receive polecat formulas)
+	if err := ValidateFormulaFamily(formulaName, targetAgent); err != nil {
+		return err
+	}
+
 	// Cross-rig guard: prevent slinging beads to polecats in the wrong rig (gt-myecw).
 	// Polecats work in their rig's worktree and cannot fix code owned by another rig.
 	// Skip for self-sling (user knows what they're doing) and --force overrides.

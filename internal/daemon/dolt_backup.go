@@ -34,11 +34,6 @@ func doltBackupInterval(config *DaemonPatrolConfig) time.Duration {
 // syncDoltBackups syncs each production database to its configured backup location.
 // Non-fatal: errors are logged but don't stop the daemon.
 func (d *Daemon) syncDoltBackups() {
-	// Dolt backup uses iCloud Drive for offsite sync — only available on macOS.
-	// On Linux this generates HIGH priority escalation spam every ~15 minutes.
-	if runtime.GOOS != "darwin" {
-		return
-	}
 	if !d.isPatrolActive("dolt_backup") {
 		return
 	}
@@ -77,7 +72,7 @@ func (d *Daemon) syncDoltBackups() {
 	synced := 0
 	var failures []string
 	for _, db := range databases {
-		backupName := db + "-backup"
+		backupName := "backup_export"
 		if err := d.syncBackup(dataDir, db, backupName); err != nil {
 			d.logger.Printf("dolt_backup: %s: sync failed: %v", db, err)
 			failures = append(failures, db)
@@ -175,9 +170,7 @@ func (d *Daemon) discoverDatabasesWithBackups(dataDir string) []string {
 		if strings.HasPrefix(name, ".") {
 			continue
 		}
-		// Check if this directory has a <name>-backup configured
-		backupName := name + "-backup"
-		if d.hasBackupRemote(dataDir, name, backupName) {
+		if d.hasBackupRemote(dataDir, name, "backup_export") {
 			databases = append(databases, name)
 		}
 	}

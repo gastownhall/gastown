@@ -68,3 +68,52 @@ func TestValidateTarget(t *testing.T) {
 		})
 	}
 }
+
+func TestValidateFormulaFamily(t *testing.T) {
+	tests := []struct {
+		name        string
+		formulaName string
+		targetAgent string
+		wantErr     bool
+		errMsg      string // substring that must appear in error
+	}{
+		// No formula to validate
+		{name: "empty formula", formulaName: "", targetAgent: "gastown/polecats/Toast", wantErr: false},
+		{name: "empty formula with dog target", formulaName: "", targetAgent: "deacon/dogs/alpha", wantErr: false},
+
+		// Non-polecat-specific formulas are always valid
+		{name: "mol-dog-backup to dog", formulaName: "mol-dog-backup", targetAgent: "deacon/dogs/alpha", wantErr: false},
+		{name: "mol-dog-backup to polecat", formulaName: "mol-dog-backup", targetAgent: "gastown/polecats/Toast", wantErr: false},
+		{name: "mol-dog-doctor to mayor", formulaName: "mol-dog-doctor", targetAgent: "mayor", wantErr: false},
+		{name: "custom formula to polecat", formulaName: "my-custom-formula", targetAgent: "gastown/polecats/Toast", wantErr: false},
+		{name: "custom formula to dog", formulaName: "my-custom-formula", targetAgent: "deacon/dogs/alpha", wantErr: false},
+		{name: "custom formula to crew", formulaName: "my-custom-formula", targetAgent: "gastown/crew/burke", wantErr: false},
+
+		// Valid mol-polecat-* formulas (only not allowed on dogs)
+		{name: "mol-polecat-work to polecat", formulaName: "mol-polecat-work", targetAgent: "gastown/polecats/Toast", wantErr: false},
+		{name: "mol-polecat-work to crew", formulaName: "mol-polecat-work", targetAgent: "gastown/crew/burke", wantErr: false},
+		{name: "mol-polecat-work to mayor", formulaName: "mol-polecat-work", targetAgent: "mayor", wantErr: false},
+		{name: "mol-polecat-review to polecat greenplace", formulaName: "mol-polecat-review", targetAgent: "greenplace/polecats/Nux", wantErr: false},
+
+		// Invalid: mol-polecat-* to dog (the specific constraint)
+		{name: "mol-polecat-work to dog", formulaName: "mol-polecat-work", targetAgent: "deacon/dogs/alpha", wantErr: true, errMsg: "designed for polecats"},
+		{name: "mol-polecat-review to dog", formulaName: "mol-polecat-review", targetAgent: "deacon/dogs/beta", wantErr: true, errMsg: "designed for polecats"},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			err := ValidateFormulaFamily(tc.formulaName, tc.targetAgent)
+			if tc.wantErr && err == nil {
+				t.Fatalf("ValidateFormulaFamily(%q, %q) = nil, want error containing %q", tc.formulaName, tc.targetAgent, tc.errMsg)
+			}
+			if !tc.wantErr && err != nil {
+				t.Fatalf("ValidateFormulaFamily(%q, %q) = %v, want nil", tc.formulaName, tc.targetAgent, err)
+			}
+			if tc.wantErr && err != nil && tc.errMsg != "" {
+				if !strings.Contains(err.Error(), tc.errMsg) {
+					t.Fatalf("ValidateFormulaFamily(%q, %q) error = %q, want it to contain %q", tc.formulaName, tc.targetAgent, err.Error(), tc.errMsg)
+				}
+			}
+		})
+	}
+}

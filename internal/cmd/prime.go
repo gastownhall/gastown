@@ -683,6 +683,18 @@ func findAgentWork(ctx RoleContext) (*beads.Issue, error) {
 		maxAttempts = 5
 	}
 
+	// hq-q7ls9: open at most one in-process beads store per distinct beads dir
+	// and reuse it across every attempt + every per-dir query below, instead of
+	// spawning a fresh `bd` subprocess (= a fresh Dolt connection set) per query.
+	// gt prime --hook runs at every session start; for polecat/crew/dog it can
+	// loop up to 5 attempts × several queries = a notable connection-churn
+	// source. Reuse is read-after-write safe: each store query is its own Dolt
+	// transaction snapshot, so a retry still observes writes committed by other
+	// sessions in between. Fail-open: beadsFor falls back to the bd path per dir
+	// when a store can't be opened, so prime never fails to find work.
+	stores := newStoreMemo()
+	defer stores.close()
+
 	var lastErr error
 	backoff := 500 * time.Millisecond
 	for attempt := 1; attempt <= maxAttempts; attempt++ {
@@ -691,7 +703,7 @@ func findAgentWork(ctx RoleContext) (*beads.Issue, error) {
 			backoff *= 2
 		}
 
-		result, err := findAgentWorkOnce(ctx, agentID)
+		result, err := findAgentWorkOnce(ctx, agentID, stores)
 		if result != nil {
 			return result, nil
 		}
@@ -710,12 +722,12 @@ func findAgentWork(ctx RoleContext) (*beads.Issue, error) {
 // Returns (nil, nil) when no work is found.
 // Returns (nil, err) when the database query itself failed — the caller must
 // not treat this as "no work assigned". (GH#2638)
-func findAgentWorkOnce(ctx RoleContext, agentID string) (*beads.Issue, error) {
+func findAgentWorkOnce(ctx RoleContext, agentID string, stores *storeMemo) (*beads.Issue, error) {
 	// Use rig root for beads queries instead of ctx.WorkDir. Polecat worktrees
 	// rely on .beads/redirect which can fail to resolve in edge cases, causing
 	// polecats to miss hooked work and exit immediately. The rig root directory
 	// always has the authoritative .beads/ database. (GH#2503)
-	b := beads.New(rigBeadsRoot(ctx))
+	b := stores.beadsFor(rigBeadsRoot(ctx))
 
 	// Agent bead's hook_bead field. NOTE: updateAgentHookBead was made a no-op
 	// (see sling_helpers.go), so HookBead is typically empty. Kept for backward
@@ -723,10 +735,10 @@ func findAgentWorkOnce(ctx RoleContext, agentID string) (*beads.Issue, error) {
 	agentBeadID := buildAgentBeadID(agentID, ctx.Role, ctx.TownRoot)
 	if agentBeadID != "" {
 		agentBeadDir := beads.ResolveHookDir(ctx.TownRoot, agentBeadID, ctx.WorkDir)
-		ab := beads.New(agentBeadDir)
+		ab := stores.beadsFor(agentBeadDir)
 		if agentBead, err := ab.Show(agentBeadID); err == nil && agentBead != nil && agentBead.HookBead != "" {
 			hookBeadDir := beads.ResolveHookDir(ctx.TownRoot, agentBead.HookBead, ctx.WorkDir)
-			hb := beads.New(hookBeadDir)
+			hb := stores.beadsFor(hookBeadDir)
 			if hookBead, err := hb.Show(agentBead.HookBead); err == nil && hookBead != nil &&
 				(hookBead.Status == beads.StatusHooked || hookBead.Status == "in_progress") {
 				return hookBead, nil
@@ -763,7 +775,7 @@ func findAgentWorkOnce(ctx RoleContext, agentID string) (*beads.Issue, error) {
 	// HQ beads (hq-* prefix) stored in townRoot/.beads, not the rig's database.
 	// Matches the fallback in molecule_status.go and unsling.go. (gt-dtq7)
 	if len(hookedBeads) == 0 && !isTownLevelRole(agentID) && ctx.TownRoot != "" {
-		townB := beads.New(filepath.Join(ctx.TownRoot, ".beads"))
+		townB := stores.beadsFor(filepath.Join(ctx.TownRoot, ".beads"))
 		if townHooked, err := townB.List(beads.ListOptions{
 			Status:   beads.StatusHooked,
 			Assignee: agentID,
