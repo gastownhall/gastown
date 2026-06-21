@@ -1,12 +1,14 @@
 package cmd
 
 import (
+	"encoding/json"
 	"fmt"
 	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/spf13/cobra"
 	"github.com/steveyegge/gastown/internal/config"
@@ -189,6 +191,35 @@ Examples:
 	RunE: runMQPostMerge,
 }
 
+var mqSweepDryRun bool
+
+var mqSweepCmd = &cobra.Command{
+	Use:   "sweep <rig>",
+	Short: "Detect + clean stale MR wisps for externally-merged PRs (glaicier gt-mugh 4th-layer)",
+	Long: `Scan open MR wisps for orphaned-branch anomalies — branches that no
+longer exist on origin (typically because a PR was merged via 'gh pr merge
+--delete-branch' bypassing the refinery flow). This is the 4th-layer
+gt-mugh gap: external PR merges leave MR wisps stuck open + polecats
+holding slots indefinitely.
+
+For each orphaned MR:
+  1. Query GitHub for the merged PR matching the branch (via gh pr list)
+  2. If a merged PR exists with merge_commit, populate merge_commit on
+     the MR bead (so the gt-mugh post-merge verify gate passes)
+  3. Invoke 'gt mq post-merge' which closes the bead + closes the source
+     issue + deletes the local branch + auto-recycles the polecat slot
+
+If no merged PR can be found for an orphaned branch, that MR is skipped
++ reported for manual investigation (the branch may have been deleted
+without merging).
+
+Examples:
+  gt mq sweep m365             # actually run cleanup
+  gt mq sweep m365 --dry-run   # preview without changes`,
+	Args: cobra.ExactArgs(1),
+	RunE: runMQSweep,
+}
+
 var mqStatusCmd = &cobra.Command{
 	Use:   "status <id>",
 	Short: "Show detailed merge request status",
@@ -336,6 +367,9 @@ func init() {
 	// Post-merge flags
 	mqPostMergeCmd.Flags().BoolVar(&mqPostMergeSkipBranchDelete, "skip-branch-delete", false, "Skip remote branch deletion")
 
+	// Sweep flags
+	mqSweepCmd.Flags().BoolVar(&mqSweepDryRun, "dry-run", false, "Preview what would be cleaned without making changes")
+
 	// Add subcommands
 	mqCmd.AddCommand(mqSubmitCmd)
 	mqCmd.AddCommand(mqRetryCmd)
@@ -343,6 +377,7 @@ func init() {
 	mqCmd.AddCommand(mqRejectCmd)
 	mqCmd.AddCommand(mqStatusCmd)
 	mqCmd.AddCommand(mqPostMergeCmd)
+	mqCmd.AddCommand(mqSweepCmd)
 
 	// Integration branch subcommands
 	mqIntegrationCreateCmd.Flags().StringVar(&mqIntegrationCreateBranch, "branch", "", "Override branch name template (supports {title}, {epic}, {prefix}, {user})")
@@ -649,5 +684,182 @@ func runMQPostMerge(_ *cobra.Command, args []string) error {
 		}
 	}
 
+	return nil
+}
+
+// runMQSweep implements the 4th-layer gt-mugh cleanup: detect MR wisps whose
+// polecat branch was deleted from origin (typical signature of external
+// 'gh pr merge --delete-branch'), populate merge_commit from GitHub state,
+// then invoke 'gt mq post-merge' for full cleanup (which then triggers
+// my auto-recycle nuke on the polecat slot).
+//
+// Without this command, manual `gh pr merge` of polecat PRs leaves MR wisps
+// stuck status=open with empty merge_commit, polecat active_mr stale, slots
+// held indefinitely. Observed on m365 2026-06-21 with 13 stuck polecats
+// before manual recovery.
+func runMQSweep(_ *cobra.Command, args []string) error {
+	rigName := args[0]
+	_, r, _, err := getRefineryManager(rigName)
+	if err != nil {
+		return err
+	}
+
+	eng := refinery.NewEngineer(r)
+	anomalies, err := eng.ListQueueAnomalies(time.Now())
+	if err != nil {
+		return fmt.Errorf("listing queue anomalies: %w", err)
+	}
+
+	// Filter to orphaned-branch anomalies — the external-merge signature.
+	orphans := make([]*refinery.MRAnomaly, 0, len(anomalies))
+	for _, a := range anomalies {
+		if a.Type == "orphaned-branch" {
+			orphans = append(orphans, a)
+		}
+	}
+
+	if len(orphans) == 0 {
+		fmt.Printf("%s No orphaned-branch MRs found in %s (sweep clean)\n", style.Bold.Render("✓"), rigName)
+		return nil
+	}
+
+	mode := "SWEEP"
+	if mqSweepDryRun {
+		mode = "DRY-RUN"
+	}
+	fmt.Printf("%s %s: %d orphaned-branch MR(s) found in %s\n\n", style.Bold.Render("→"), mode, len(orphans), rigName)
+
+	rigGit, gitErr := getRigGit(r.Path)
+	if gitErr != nil {
+		return fmt.Errorf("creating rig git client: %w", gitErr)
+	}
+
+	cleaned := 0
+	skipped := 0
+	for _, anomaly := range orphans {
+		fmt.Printf("  %s\n", style.Bold.Render(anomaly.ID))
+		fmt.Printf("    branch: %s (deleted from origin)\n", anomaly.Branch)
+
+		// Look up the MR bead to see what we already know.
+		mgr, _, _, mgrErr := getRefineryManager(rigName)
+		if mgrErr != nil {
+			fmt.Printf("    %s manager lookup failed: %v\n", style.Dim.Render("○"), mgrErr)
+			skipped++
+			continue
+		}
+		mr, mrErr := mgr.FindMR(anomaly.ID)
+		if mrErr != nil {
+			fmt.Printf("    %s MR lookup failed: %v\n", style.Dim.Render("○"), mrErr)
+			skipped++
+			continue
+		}
+
+		// If merge_commit is already populated, we just need post-merge.
+		if mr.MergeCommit != "" {
+			fmt.Printf("    %s merge_commit already set: %s\n", style.Dim.Render("●"), mr.MergeCommit[:9])
+		} else {
+			// Query GitHub for the merged PR matching this branch.
+			// gh pr list still finds PRs by old head ref even after branch delete.
+			mergeSHA, prNum, ghErr := findMergedPRMergeCommit(rigGit, anomaly.Branch)
+			if ghErr != nil {
+				fmt.Printf("    %s could not find merged PR for branch: %v\n", style.Dim.Render("○"), ghErr)
+				fmt.Printf("    %s manual investigation needed (branch may have been deleted without merge)\n", style.Dim.Render("○"))
+				skipped++
+				continue
+			}
+			fmt.Printf("    %s found merged PR #%d, merge_commit=%s\n", style.Success.Render("✓"), prNum, mergeSHA[:9])
+
+			if mqSweepDryRun {
+				fmt.Printf("    %s would populate merge_commit + run post-merge (skipped: --dry-run)\n", style.Dim.Render("→"))
+				cleaned++
+				continue
+			}
+
+			// Append merge_commit to MR bead description so my post-merge verify gate passes.
+			if updateErr := appendMergeCommitToMRBead(rigName, anomaly.ID, mergeSHA); updateErr != nil {
+				fmt.Printf("    %s could not update MR bead with merge_commit: %v\n", style.Dim.Render("○"), updateErr)
+				skipped++
+				continue
+			}
+			fmt.Printf("    %s merge_commit populated on MR bead\n", style.Success.Render("✓"))
+		}
+
+		if mqSweepDryRun {
+			fmt.Printf("    %s would run 'gt mq post-merge %s %s' (skipped: --dry-run)\n", style.Dim.Render("→"), rigName, anomaly.ID)
+			cleaned++
+			continue
+		}
+
+		// Invoke gt mq post-merge — uses my gt-mugh verify gate + auto-recycle.
+		pmCmd := exec.Command("gt", "mq", "post-merge", rigName, anomaly.ID)
+		pmCmd.Stdout = os.Stdout
+		pmCmd.Stderr = os.Stderr
+		if pmErr := pmCmd.Run(); pmErr != nil {
+			fmt.Printf("    %s post-merge failed: %v\n", style.Dim.Render("○"), pmErr)
+			skipped++
+			continue
+		}
+		cleaned++
+	}
+
+	fmt.Println()
+	if mqSweepDryRun {
+		fmt.Printf("%s DRY-RUN complete: %d would be cleaned, %d would be skipped\n", style.Bold.Render("→"), cleaned, skipped)
+	} else {
+		fmt.Printf("%s Sweep complete: %d cleaned, %d skipped (manual investigation)\n", style.Bold.Render("✓"), cleaned, skipped)
+	}
+	return nil
+}
+
+// findMergedPRMergeCommit queries GitHub via gh CLI for a PR matching the
+// given branch (state=merged), returning the merge_commit SHA + PR number.
+// gh pr list works against deleted branches because the PR record persists
+// with its old headRef.
+func findMergedPRMergeCommit(rigGit *git.Git, branch string) (string, int, error) {
+	cmd := exec.Command("gh", "pr", "list",
+		"--head", branch,
+		"--state", "merged",
+		"--json", "number,mergeCommit",
+		"--limit", "1",
+	)
+	out, err := cmd.Output()
+	if err != nil {
+		return "", 0, fmt.Errorf("gh pr list: %w", err)
+	}
+	out = []byte(strings.TrimSpace(string(out)))
+	if len(out) <= 2 {
+		return "", 0, fmt.Errorf("no merged PR found for branch %s", branch)
+	}
+	type prInfo struct {
+		Number      int    `json:"number"`
+		MergeCommit struct {
+			OID string `json:"oid"`
+		} `json:"mergeCommit"`
+	}
+	var prs []prInfo
+	if err := json.Unmarshal(out, &prs); err != nil {
+		return "", 0, fmt.Errorf("parse gh pr list output: %w", err)
+	}
+	if len(prs) == 0 {
+		return "", 0, fmt.Errorf("empty PR list for branch %s", branch)
+	}
+	if prs[0].MergeCommit.OID == "" {
+		return "", prs[0].Number, fmt.Errorf("PR #%d has no merge_commit (closed without merge?)", prs[0].Number)
+	}
+	return prs[0].MergeCommit.OID, prs[0].Number, nil
+}
+
+// appendMergeCommitToMRBead updates the MR bead's description to append
+// 'merge_commit: <SHA>' so the gt-mugh post-merge verify gate passes.
+// Uses 'bd update --append-notes' which is safer than a full description
+// rewrite (preserves all existing fields).
+func appendMergeCommitToMRBead(rigName, mrID, mergeSHA string) error {
+	cmd := exec.Command("bd", "update", mrID,
+		"--append-notes", fmt.Sprintf("merge_commit: %s\nrecovered_by: gt mq sweep", mergeSHA),
+	)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("bd update %s: %w (output: %s)", mrID, err, string(out))
+	}
 	return nil
 }
