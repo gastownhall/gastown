@@ -37,6 +37,11 @@ var (
 	maxDogPoolSize = config.DefaultMaxDogPoolSize
 )
 
+// cleanupStuckDogsMaxInactivity is intentionally far beyond any real dog run.
+// cleanupStuckDogs should reclaim only dead agents; live-but-idle agents are
+// handled by detectStaleWorkingDogs after the configured stale-work timeout.
+const cleanupStuckDogsMaxInactivity = 100 * 365 * 24 * time.Hour
+
 // handleDogs manages Dog lifecycle: cleanup stuck dogs, reap idle dogs, then dispatch plugins.
 // This is the main entry point called from heartbeat.
 func (d *Daemon) handleDogs() {
@@ -79,8 +84,8 @@ func (d *Daemon) handleDogsCleanupOnly() {
 	// Skip dispatchPlugins — under pressure
 }
 
-// cleanupStuckDogs finds dogs in state=working whose tmux session is dead and
-// clears their work so they return to idle.
+// cleanupStuckDogs finds dogs in state=working whose tmux session or agent
+// process is dead and clears their work so they return to idle.
 func (d *Daemon) cleanupStuckDogs(mgr *dog.Manager, sm *dog.SessionManager) {
 	dogs, err := mgr.List()
 	if err != nil {
@@ -88,26 +93,25 @@ func (d *Daemon) cleanupStuckDogs(mgr *dog.Manager, sm *dog.SessionManager) {
 		return
 	}
 
+	health := dog.NewHealthChecker(mgr, tmux.NewTmux())
 	for _, dg := range dogs {
 		if dg.State != dog.StateWorking {
 			continue
 		}
 
-		running, err := sm.IsRunning(dg.Name)
-		if err != nil {
-			d.logger.Printf("Handler: error checking session for dog %s: %v", dg.Name, err)
+		result := health.Check(dg, cleanupStuckDogsMaxInactivity, true)
+		if !result.NeedsAttention {
 			continue
 		}
 
-		if running {
+		sessionID := sm.SessionName(dg.Name)
+		if result.AutoCleared {
+			d.logger.Printf("Handler: dog %s (%s) was auto-cleared: %s", dg.Name, sessionID, result.Recommendation)
 			continue
 		}
 
-		// Dog is marked working but session is dead — clean it up.
-		d.logger.Printf("Handler: dog %s is working but session is dead, clearing work", dg.Name)
-		if err := mgr.ClearWork(dg.Name); err != nil {
-			d.logger.Printf("Handler: failed to clear work for dog %s: %v", dg.Name, err)
-		}
+		d.logger.Printf("Handler: dog %s (%s) needs attention but was not auto-cleared: %s",
+			dg.Name, sessionID, result.Recommendation)
 	}
 }
 
