@@ -859,8 +859,8 @@ log_level: info
 
 listener:
   port: %d%s
-  read_timeout_millis: 30000
-  write_timeout_millis: 30000
+  read_timeout_millis: 300000
+  write_timeout_millis: 300000
   max_connections: 1000
 
 data_dir: %q
