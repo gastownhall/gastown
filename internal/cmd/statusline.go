@@ -1,13 +1,16 @@
 package cmd
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/spf13/cobra"
+	beadsdk "github.com/steveyegge/beads"
 	"github.com/steveyegge/gastown/internal/beads"
 	"github.com/steveyegge/gastown/internal/config"
 	"github.com/steveyegge/gastown/internal/estop"
@@ -20,6 +23,88 @@ import (
 var (
 	statusLineSession string
 )
+
+// statusLineStores is a process-scoped memo of in-process beadsdk stores keyed
+// by resolved .beads directory, used only by the status-line command.
+//
+// hq-9i9s7.1: status-line was the dominant Dolt connection-churn source (~77%)
+// because every segment called beads.New(dir).List(...), and a store-less
+// beads.New shells a fresh `bd` subprocess (= a fresh Dolt connection set) per
+// call. A single status-line render fanned out to ~15 bd spawns. This cache
+// opens ONE in-process store per distinct beads dir and reuses it across every
+// segment within the one invocation, collapsing the fan-out to 1-2 store opens.
+//
+// gt status-line is a short-lived, single-goroutine process (one render, then
+// exit), so a package-global memo is process-scoped and needs no locking. It is
+// reset+closed by withStatusLineStores around each runStatusLine invocation.
+//
+// Fail-open: if a store cannot be opened for a dir, the entry is recorded as a
+// nil store so callers transparently fall back to the bd-subprocess path. A
+// broken status line must never break an agent's terminal.
+var statusLineStores *storeMemo
+
+// storeMemo caches opened beadsdk stores by resolved beads dir for one
+// status-line invocation.
+type storeMemo struct {
+	opened map[string]beadsdk.Storage // resolvedDir -> store (nil = open failed)
+}
+
+// beadsFor returns a *beads.Beads for the given workDir. When an in-process
+// store can be opened (and memoized) for the dir's resolved .beads location it
+// returns a store-backed Beads (no bd subprocess); otherwise it falls back to
+// the standard beads.New spawn path so the segment still renders.
+func (m *storeMemo) beadsFor(workDir string) *beads.Beads {
+	if m == nil || workDir == "" {
+		return beads.New(workDir)
+	}
+
+	resolved := beads.ResolveBeadsDir(workDir)
+	if resolved == "" {
+		// Can't resolve a beads dir; let the subprocess path try (it has its
+		// own resolution + error handling).
+		return beads.New(workDir)
+	}
+
+	store, seen := m.opened[resolved]
+	if !seen {
+		store = openStatusLineStore(resolved)
+		m.opened[resolved] = store // memoize success OR failure (nil)
+	}
+
+	if store == nil {
+		return beads.New(workDir) // fail-open to subprocess
+	}
+	return beads.NewWithStore(workDir, store)
+}
+
+// openStatusLineStore opens an in-process read store for an already-resolved
+// .beads directory. Returns nil on any failure (caller falls back to bd).
+func openStatusLineStore(beadsDir string) beadsdk.Storage {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	store, err := beadsdk.OpenFromConfig(ctx, beadsDir)
+	if err != nil {
+		return nil
+	}
+	return store
+}
+
+// withStatusLineStores installs a fresh store memo for the duration of fn and
+// closes every opened store afterward. Safe to nest/repeat: it always restores
+// the prior value.
+func withStatusLineStores(fn func() error) error {
+	prev := statusLineStores
+	statusLineStores = &storeMemo{opened: make(map[string]beadsdk.Storage)}
+	defer func() {
+		for _, s := range statusLineStores.opened {
+			if s != nil {
+				_ = s.Close()
+			}
+		}
+		statusLineStores = prev
+	}()
+	return fn()
+}
 
 var statusLineCmd = &cobra.Command{
 	Use:   "status-line",
@@ -39,6 +124,16 @@ func init() {
 }
 
 func runStatusLine(cmd *cobra.Command, args []string) error {
+	// hq-9i9s7.1: open at most one in-process beads store per distinct beads dir
+	// for this render, reused across all segments, then close them on exit. This
+	// replaces the per-segment `bd` subprocess fan-out (the dominant Dolt churn
+	// source). Fail-open is handled inside the memo (see storeMemo.beadsFor).
+	return withStatusLineStores(func() error {
+		return runStatusLineInner(cmd, args)
+	})
+}
+
+func runStatusLineInner(cmd *cobra.Command, args []string) error {
 	// Check E-stop first — prepend red indicator if active
 	if townRoot, twErr := workspace.FindFromCwd(); twErr == nil {
 		showEstop := false
@@ -697,7 +792,9 @@ func getHookedWork(identity string, maxLen int, beadsDir string) string {
 		}
 	}
 
-	b := beads.New(beadsDir)
+	// Reuse a process-scoped in-process store when available (avoids spawning
+	// a fresh bd subprocess per render); falls back to bd transparently.
+	b := statusLineStores.beadsFor(beadsDir)
 
 	// Query for hooked beads assigned to this agent
 	hookedBeads, err := b.List(beads.ListOptions{
@@ -733,8 +830,9 @@ func getCurrentWork(t *tmux.Tmux, session string, identity string, maxLen int) s
 		return ""
 	}
 
-	// Query beads for in_progress issues assigned to this agent
-	b := beads.New(workDir)
+	// Query beads for in_progress issues assigned to this agent. Reuse a
+	// process-scoped in-process store when available; falls back to bd.
+	b := statusLineStores.beadsFor(workDir)
 	issues, err := b.List(beads.ListOptions{
 		Status:   "in_progress",
 		Assignee: identity,
