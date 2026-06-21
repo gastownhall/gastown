@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 
@@ -619,6 +620,33 @@ func runMQPostMerge(_ *cobra.Command, args []string) error {
 		_ = err
 	} else {
 		fmt.Printf("  %s Deleted local branch: %s\n", style.Success.Render("✓"), mr.Branch)
+	}
+
+	// Auto-recycle polecat worker after successful merge (glaicier gt-mugh follow-up).
+	//
+	// Without this, polecat directories persist with stale active_mr references
+	// pointing at the just-closed MR bead. `gt polecat list` shows them as
+	// idle-recovery-needed and the 30/rig directory cap fills up over time,
+	// requiring kai's --force named-reuse workaround. Observed 2026-06-21 with
+	// ~13 idle-recovery-needed polecats on m365.
+	//
+	// `gt polecat nuke` has its own safety checks (refuses if cleanup dirty /
+	// unpushed work / open MR on hook). PostMerge just verified merge_commit
+	// on origin AND closed the MR bead, so the safety checks should pass. If
+	// they don't (e.g., uncommitted work was left behind), nuke refuses + the
+	// polecat stays alive for manual recovery — non-fatal here.
+	if mr.Worker != "" && strings.HasPrefix(mr.Worker, "polecats/") {
+		polecatName := strings.TrimPrefix(mr.Worker, "polecats/")
+		target := fmt.Sprintf("%s/%s", rigName, polecatName)
+		nukeCmd := exec.Command("gt", "polecat", "nuke", target)
+		nukeCmd.Stdout = io.Discard
+		nukeCmd.Stderr = io.Discard
+		if err := nukeCmd.Run(); err != nil {
+			fmt.Printf("  %s Polecat auto-recycle skipped for %s (safety check blocked) — %s\n",
+				style.Dim.Render("○"), target, "manual review may be needed")
+		} else {
+			fmt.Printf("  %s Polecat auto-recycled: %s (slot freed)\n", style.Success.Render("✓"), target)
+		}
 	}
 
 	return nil

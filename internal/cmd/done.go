@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -1522,14 +1523,47 @@ notifyWitness:
 		style.PrintWarning("could not log feed event: %v", err)
 	}
 
-	// Update agent bead state (ZFC: self-report completion)
-	updateAgentStateOnDone(cwd, townRoot, exitType, issueID)
+	// Update agent bead state (ZFC: self-report completion).
+	//
+	// Pass push/mr failure flags so updateAgentStateOnDone can refuse to close
+	// the hook bead when the MR was never submitted (glaicier gt-mugh 2nd path).
+	// Without this guard the bead closes with reason "Closed" while the
+	// polecat's branch sits orphaned on origin and no PR exists — bit fury on
+	// gt-qyhr 2026-06-21 and required manual recovery via gh pr create.
+	updateAgentStateOnDone(cwd, townRoot, exitType, issueID, pushFailed, mrFailed)
 
 	// Nudge witness only after hook/cleanup state is updated. Otherwise witness can
 	// evaluate slot availability against stale hook_bead or cleanup_status and emit
 	// false SLOT_BLOCKED/SLOT_OPEN signals.
 	nudgeWitness(rigName, fmt.Sprintf("POLECAT_DONE %s exit=%s", polecatName, exitType))
 	fmt.Printf("%s Witness notified of %s (via nudge)\n", style.Bold.Render("✓"), exitType)
+
+	// Best-effort auto-fire @claude review on the polecat branch's PR.
+	//
+	// Polecat refinery integration PRs don't auto-trigger @claude review under
+	// the current refinery flow — mayor has been manually adding `@claude review`
+	// comments per-PR for #2417/#2422/#2423/etc. This eliminates that toil and
+	// reduces verdict latency.
+	//
+	// If no PR exists yet (refinery hasn't created the integration PR), this
+	// is a no-op. If a PR exists (polecat pushed direct OR refinery already
+	// opened the integration PR), the @claude review comment fires immediately.
+	//
+	// Skips on push/MR failure paths since there's no useful PR to review.
+	if !pushFailed && !mrFailed && branch != "" {
+		if prNum, prErr := g.FindPRNumber(branch); prErr == nil && prNum > 0 {
+			reviewCmd := exec.Command("gh", "pr", "comment", fmt.Sprintf("%d", prNum), "--body", "@claude review")
+			reviewCmd.Dir = cwd
+			reviewCmd.Stdout = io.Discard
+			reviewCmd.Stderr = io.Discard
+			if reviewErr := reviewCmd.Run(); reviewErr != nil {
+				// Non-fatal: @claude review can be fired manually later.
+				_ = reviewErr
+			} else {
+				fmt.Printf("%s @claude review auto-fired on PR #%d\n", style.Bold.Render("✓"), prNum)
+			}
+		}
+	}
 
 	// Persistent polecat model (gt-hdf8): polecats transition to IDLE after completion.
 	// Session stays alive, sandbox preserved, worktree synced to main for reuse.
@@ -1893,7 +1927,7 @@ func clearDoneCheckpoints(bd *beads.Beads, agentBeadID string) {
 // BUG FIX (hq-3xaxy): This function must be resilient to working directory deletion.
 // If the polecat's worktree is deleted before gt done finishes, we use env vars as fallback.
 // All errors are warnings, not failures - gt done must complete even if bead ops fail.
-func updateAgentStateOnDone(cwd, townRoot, exitType, issueID string) {
+func updateAgentStateOnDone(cwd, townRoot, exitType, issueID string, pushFailed, mrFailed bool) {
 	// Get role context - try multiple sources for resilience
 	roleInfo, err := GetRoleWithContext(cwd, townRoot)
 	if err != nil {
@@ -2023,8 +2057,33 @@ func updateAgentStateOnDone(cwd, townRoot, exitType, issueID string) {
 			if unchecked := beads.HasUncheckedCriteria(hookedBead); unchecked > 0 {
 				style.PrintWarning("hooked bead %s has %d unchecked acceptance criteria — skipping close", hookedBeadID, unchecked)
 				fmt.Fprintf(os.Stderr, "  The bead will remain open for witness/mayor review.\n")
-			} else if err := bd.Close(hookedBeadID); err != nil {
-				// Non-fatal: warn but continue
+			} else if pushFailed || mrFailed {
+				// MR/push failure gate (glaicier gt-mugh 2nd path).
+				//
+				// Closing the hook bead here without an MR record makes the work
+				// look "done" to mayor/witness while the polecat's branch sits
+				// orphaned on origin with no PR. Refuse to close, leave the bead
+				// open + in_progress so witness flags the polecat for recovery
+				// and the operator can either re-submit via `gh pr create` or
+				// re-sling the bead to another polecat.
+				reasonParts := []string{}
+				if pushFailed {
+					reasonParts = append(reasonParts, "push failed")
+				}
+				if mrFailed {
+					reasonParts = append(reasonParts, "MR submission failed")
+				}
+				style.PrintWarning("hooked bead %s left open (%s) — recovery needed", hookedBeadID, strings.Join(reasonParts, ", "))
+				fmt.Fprintf(os.Stderr, "  The polecat's branch may exist on origin but no MR was submitted.\n")
+				fmt.Fprintf(os.Stderr, "  Recover via 'gh pr create --head <branch> --base <target>' or re-sling.\n")
+				fmt.Fprintf(os.Stderr, "  See glaicier gt-mugh for the recovery pattern.\n")
+			} else if err := bd.ForceCloseWithReason("completed via gt done", hookedBeadID); err != nil {
+				// Non-fatal: warn but continue.
+				// Use ForceCloseWithReason so the close has an audit trail
+				// — bd.Close passes empty reason which defaults to literal "Closed"
+				// indistinguishable from manual close. Glaicier gt-mugh evidence:
+				// gt-qyhr closed with reason="Closed" when MR submission silently
+				// failed — no signal to operator that recovery was needed.
 				fmt.Fprintf(os.Stderr, "Warning: couldn't close hooked bead %s: %v\n", hookedBeadID, err)
 			}
 		}
