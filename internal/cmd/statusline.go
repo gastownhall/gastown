@@ -82,9 +82,19 @@ func (m *storeMemo) beadsFor(workDir string) *beads.Beads {
 	}
 
 	resolved := beads.ResolveBeadsDir(workDir)
+	// ResolveBeadsDir does NOT walk up the tree — it just appends ".beads" to
+	// workDir (after following any redirect). When the caller passes a workDir
+	// that has no local .beads (e.g. a town-level role whose rigBeadsRoot is a
+	// clone without .beads), the resolved dir won't exist, but the bd CLI's own
+	// discovery WOULD walk up and find the right database. Opening an in-process
+	// store against a non-existent dir can connect to the wrong/empty database
+	// and silently return no results. So: only take the store path when the
+	// resolved .beads dir actually exists; otherwise fall open to bd, which
+	// resolves correctly. (hq-q7ls9)
 	if resolved == "" {
-		// Can't resolve a beads dir; let the subprocess path try (it has its
-		// own resolution + error handling).
+		return beads.New(workDir)
+	}
+	if st, err := os.Stat(resolved); err != nil || !st.IsDir() {
 		return beads.New(workDir)
 	}
 
@@ -98,6 +108,30 @@ func (m *storeMemo) beadsFor(workDir string) *beads.Beads {
 		return beads.New(workDir) // fail-open to subprocess
 	}
 	return beads.NewWithStore(workDir, store)
+}
+
+// storeFor returns the memoized in-process store for workDir's resolved .beads
+// dir, opening (and memoizing) it on first use. Returns nil when no store can be
+// opened — callers must fall open to the bd subprocess path. Same resolution and
+// fail-open rules as beadsFor; used by callers that need the raw beadsdk.Storage
+// (e.g. to inject into a refinery Manager) rather than a *beads.Beads (hq-q7ls9).
+func (m *storeMemo) storeFor(workDir string) beadsdk.Storage {
+	if m == nil || workDir == "" {
+		return nil
+	}
+	resolved := beads.ResolveBeadsDir(workDir)
+	if resolved == "" {
+		return nil
+	}
+	if st, err := os.Stat(resolved); err != nil || !st.IsDir() {
+		return nil
+	}
+	store, seen := m.opened[resolved]
+	if !seen {
+		store = openStatusLineStore(resolved)
+		m.opened[resolved] = store
+	}
+	return store
 }
 
 // openStatusLineStore opens an in-process read store for an already-resolved
@@ -697,11 +731,22 @@ func runRefineryStatusLine(t *tmux.Tmux, rigName string) error {
 	}
 
 	// Get refinery manager using shared helper
-	mgr, _, _, err := getRefineryManager(rigName)
+	mgr, r, _, err := getRefineryManager(rigName)
 	if err != nil {
 		// Fallback to simple status if we can't access refinery
 		fmt.Printf("%s MQ: ? |", AgentTypeIcons[AgentRefinery])
 		return nil
+	}
+
+	// hq-q7ls9: reuse the render's in-process store for the MR-queue read so
+	// mgr.Queue()'s issue-table query goes in-process instead of spawning a fresh
+	// `bd` (= fresh Dolt connection). storeFor fail-opens to nil, which leaves the
+	// Manager on its bd subprocess path — a missing store never breaks the
+	// segment. The wisp portion of the queue still uses bd (see ListMergeRequests).
+	if r != nil {
+		if st := statusLineStores.storeFor(r.BeadsPath()); st != nil {
+			mgr.SetBeadsStore(st)
+		}
 	}
 
 	// Get queue

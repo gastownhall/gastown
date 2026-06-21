@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	beadsdk "github.com/steveyegge/beads"
 	"github.com/steveyegge/gastown/internal/beads"
 	"github.com/steveyegge/gastown/internal/config"
 	"github.com/steveyegge/gastown/internal/constants"
@@ -39,6 +40,34 @@ type Manager struct {
 	rig     *rig.Rig
 	workDir string
 	output  io.Writer // Output destination for user-facing messages
+
+	// beadsStore, when set, is an in-process beadsdk.Storage reused for the
+	// Manager's read-only beads queries (Queue) instead of shelling a fresh `bd`
+	// subprocess (= a fresh Dolt connection set) per query. Used by short-lived
+	// high-fan-out callers (e.g. gt status-line's refinery segment) that already
+	// hold an open store and want to amortize the connection. The Manager does
+	// NOT own the store and must not close it. nil = use the bd subprocess path
+	// (hq-q7ls9).
+	beadsStore beadsdk.Storage
+}
+
+// SetBeadsStore installs an in-process beadsdk.Storage that the Manager reuses
+// for its read-only beads queries. The caller retains ownership of the store
+// (the Manager never closes it). Passing nil reverts to the bd subprocess path.
+// Used to collapse per-query bd fan-out in short-lived callers (hq-q7ls9).
+func (m *Manager) SetBeadsStore(store beadsdk.Storage) {
+	m.beadsStore = store
+}
+
+// beadsClient returns a *beads.Beads for the rig's beads dir, store-backed when
+// an in-process store was installed via SetBeadsStore, otherwise the standard
+// subprocess-spawning client. Store-backing skips the per-call `bd` spawn for
+// the issue-table portion of queries (hq-q7ls9).
+func (m *Manager) beadsClient() *beads.Beads {
+	if m.beadsStore != nil {
+		return beads.NewWithStore(m.rig.BeadsPath(), m.beadsStore)
+	}
+	return beads.New(m.rig.BeadsPath())
 }
 
 type scoredIssue struct {
@@ -339,8 +368,10 @@ func (m *Manager) Stop() error {
 // ZFC-compliant: beads is the source of truth, no state file.
 func (m *Manager) Queue() ([]QueueItem, error) {
 	// Query beads for open merge-request issues
-	// BeadsPath() returns the git-synced beads location
-	b := beads.New(m.rig.BeadsPath())
+	// BeadsPath() returns the git-synced beads location.
+	// beadsClient() is store-backed when SetBeadsStore was called (collapses the
+	// issue-table bd spawn; the wisp SQL still uses bd — see ListMergeRequests).
+	b := m.beadsClient()
 	issues, err := b.ListMergeRequests(beads.ListOptions{
 		Label:    "gt:merge-request",
 		Status:   "open",
