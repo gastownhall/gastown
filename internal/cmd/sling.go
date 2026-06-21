@@ -1227,20 +1227,38 @@ func tryAcquireSlingBeadLock(townRoot, beadID string) (func(), error) {
 }
 
 // tryAcquireSlingAssigneeLock acquires a per-assignee file lock to serialize concurrent
-// hook writes to the same polecat. The per-bead lock (tryAcquireSlingBeadLock) prevents
-// double-sling of the same bead, but does not prevent concurrent slings from racing on
-// the same assignee's hook_bead field in Dolt. This lock is held only during
-// hookBeadWithRetry. Uses non-blocking try-acquire with retry and timeout to avoid
-// indefinite blocking if a sling gets stuck.
-// See: https://github.com/steveyegge/gastown/issues/3114
+// hook writes to the same polecat AND across different polecats in the same rig.
+// The per-bead lock (tryAcquireSlingBeadLock) prevents double-sling of the same bead;
+// the original #3114 fix added a per-assignee lock to prevent same-polecat hook races.
+// But at parallel-scale (e.g. 6 polecats in one rig slung at 15s spacing — m365 gt-pad1
+// repro 2026-06-21), DIFFERENT polecats in the SAME rig still race on the shared Dolt
+// branch via bd's auto-commit path: bd update --status=hooked runs with auto-commit on
+// against the shared branch HEAD, and concurrent commits can roll each other back
+// silently. The verify read in hookBeadWithRetry sees the row in its own session
+// snapshot and returns success, but the branch-level COMMIT got conflict-rolled-back.
+// Net: sling reports "✓ Work attached to hook" but the row is gone moments later.
+//
+// Fix: serialize the hook write per-RIG (all polecats in a rig share one Dolt branch),
+// not just per-assignee. This adds ~50-200ms per concurrent sling but eliminates the
+// branch-level race window. Same scope as #3114's fix but extended to cross-polecat.
+//
+// See: https://github.com/steveyegge/gastown/issues/3114 (per-assignee fix)
+// See: glaicier/gastown gt-phve (parallel-scale extension)
 func tryAcquireSlingAssigneeLock(townRoot, targetAgent string) (func(), error) {
 	lockDir := filepath.Join(townRoot, ".runtime", "locks", "sling")
 	if err := os.MkdirAll(lockDir, 0755); err != nil {
 		return nil, fmt.Errorf("creating sling lock dir: %w", err)
 	}
 
-	safeAgent := strings.NewReplacer("/", "_", ":", "_").Replace(targetAgent)
-	lockPath := filepath.Join(lockDir, "assignee_"+safeAgent+".flock")
+	// Lock per-rig (first segment of targetAgent, e.g. "m365" from "m365/polecats/chrome").
+	// Different polecats in the same rig race on the shared Dolt branch — serialize all
+	// hook writes for the rig to eliminate the branch-level commit-conflict window.
+	rig := strings.SplitN(targetAgent, "/", 2)[0]
+	if rig == "" {
+		rig = "town"
+	}
+	safeRig := strings.NewReplacer("/", "_", ":", "_").Replace(rig)
+	lockPath := filepath.Join(lockDir, "rig_"+safeRig+".flock")
 
 	// Try non-blocking acquire with retry. hookBeadWithRetry itself has 10 retries
 	// with up to 30s backoff, so we allow generous total wait time for the lock.
@@ -1249,7 +1267,7 @@ func tryAcquireSlingAssigneeLock(townRoot, targetAgent string) (func(), error) {
 	for attempt := 1; attempt <= maxAttempts; attempt++ {
 		release, locked, err := lock.FlockTryAcquire(lockPath)
 		if err != nil {
-			return nil, fmt.Errorf("acquiring assignee sling lock for %s: %w", targetAgent, err)
+			return nil, fmt.Errorf("acquiring rig sling lock for %s (rig=%s): %w", targetAgent, rig, err)
 		}
 		if locked {
 			return release, nil
@@ -1259,7 +1277,7 @@ func tryAcquireSlingAssigneeLock(townRoot, targetAgent string) (func(), error) {
 		}
 	}
 
-	return nil, fmt.Errorf("timed out acquiring assignee sling lock for %s after %ds (another sling may be stuck)", targetAgent, maxAttempts*retryInterval/1000)
+	return nil, fmt.Errorf("timed out acquiring rig sling lock for %s (rig=%s) after %ds (another sling may be stuck)", targetAgent, rig, maxAttempts*retryInterval/1000)
 }
 
 // resolvePRBranch resolves a GitHub PR number to its head branch name via `gh pr view`.

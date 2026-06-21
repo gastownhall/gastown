@@ -510,6 +510,47 @@ func runMQPostMerge(_ *cobra.Command, args []string) error {
 		return err
 	}
 
+	// Verify the actual merge happened BEFORE closing the bead (glaicier gt-mugh).
+	//
+	// Background: prior to this guard, `gt mq post-merge` blindly closed both the
+	// MR bead and the source issue with "Merged in <mr.ID>" — without ever checking
+	// that the merge_commit on the MR bead corresponds to a real commit on
+	// origin/<target>. The refinery-patrol formula's "STOP HERE - DO NOT PROCEED
+	// UNTIL THE PR IS ACTUALLY MERGED ON GITHUB" gate is natural-language; an LLM
+	// patrol that skips that step (CI not passing, PR queued behind branch
+	// protection, gh pr merge --auto deferred-to-later) still calls `gt mq
+	// post-merge` and the bead closes with a false-positive "Merged in" reason.
+	//
+	// Observed on m365 2026-06-21: gt-pad1.4/.5/.7 closed with "Merged in
+	// gt-wisp-o3x/bfj/vma" but the underlying PRs never produced commits on
+	// origin/main. Ash had to re-ship the same domains via crew worktree.
+	//
+	// Fix: require mr.MergeCommit be present AND verify it on origin/<target>
+	// via existing VerifyPushedCommit helper (same gate polecat-side gt done uses
+	// at internal/cmd/done.go:743-746). Refuse to close if not verified.
+	preMR, err := mgr.FindMR(mrID)
+	if err != nil {
+		return fmt.Errorf("looking up MR: %w", err)
+	}
+	if preMR.MergeCommit == "" {
+		return fmt.Errorf("refusing post-merge close for %s: no merge_commit recorded on MR bead\n"+
+			"  This indicates the merge handshake never completed — the PR may not have actually landed.\n"+
+			"  Fix the underlying merge before re-running post-merge, or record the merge SHA on the MR bead.\n"+
+			"  See glaicier gt-mugh.", mrID)
+	}
+	if rigGit, gitErr := getRigGit(r.Path); gitErr == nil {
+		target := preMR.TargetBranch
+		if target == "" {
+			target = "main"
+		}
+		if verifyErr := rigGit.VerifyPushedCommit("origin", target, preMR.MergeCommit); verifyErr != nil {
+			return fmt.Errorf("refusing post-merge close for %s: merge_commit %s not on origin/%s: %w\n"+
+				"  The MR bead claims a merge that didn't actually land on the remote target.\n"+
+				"  Investigate the merge flow (gh pr view <pr> --json mergeCommit,state) before re-running.\n"+
+				"  See glaicier gt-mugh.", mrID, preMR.MergeCommit, target, verifyErr)
+		}
+	}
+
 	// Run beads-level cleanup (close MR bead + source issue)
 	result, err := mgr.PostMerge(mrID)
 	if err != nil {
