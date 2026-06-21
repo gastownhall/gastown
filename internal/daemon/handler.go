@@ -37,6 +37,13 @@ var (
 	maxDogPoolSize = config.DefaultMaxDogPoolSize
 )
 
+// neverHungInactivity is a deliberately enormous inactivity window passed to
+// CheckSessionHealth from cleanupStuckDogs. It ensures a live-but-slow agent is
+// never classified as AgentHung there — cleanupStuckDogs reclaims only genuinely
+// dead agents (SessionDead/AgentDead), while hung-but-alive dogs remain the job
+// of detectStaleWorkingDogs, which honors the configured grace period.
+const neverHungInactivity = 100 * 365 * 24 * time.Hour
+
 // handleDogs manages Dog lifecycle: cleanup stuck dogs, reap idle dogs, then dispatch plugins.
 // This is the main entry point called from heartbeat.
 func (d *Daemon) handleDogs() {
@@ -79,8 +86,21 @@ func (d *Daemon) handleDogsCleanupOnly() {
 	// Skip dispatchPlugins — under pressure
 }
 
-// cleanupStuckDogs finds dogs in state=working whose tmux session is dead and
-// clears their work so they return to idle.
+// cleanupStuckDogs finds dogs in state=working whose agent is dead and clears
+// their work so they return to idle.
+//
+// A working dog can lose its agent two ways:
+//
+//	SessionDead — the tmux session is gone entirely.
+//	AgentDead   — the tmux session lingers but the agent process inside died.
+//
+// Both leave the dog stuck in state=working with nothing driving it — e.g.
+// mol-dog-reaper finishes (or crashes) without calling `gt dog done`, which is
+// the teardown gap tracked in hq-54br. The previous HasSession-only check
+// caught just SessionDead; an AgentDead husk (live tmux, dead agent) sat
+// zombied until detectStaleWorkingDogs' multi-hour stale timeout, holding a dog
+// out of the pool. Classifying session health here returns those dogs to idle
+// on the next heartbeat regardless of how the agent exited.
 func (d *Daemon) cleanupStuckDogs(mgr *dog.Manager, sm *dog.SessionManager) {
 	dogs, err := mgr.List()
 	if err != nil {
@@ -88,25 +108,34 @@ func (d *Daemon) cleanupStuckDogs(mgr *dog.Manager, sm *dog.SessionManager) {
 		return
 	}
 
+	t := tmux.NewTmux()
 	for _, dg := range dogs {
 		if dg.State != dog.StateWorking {
 			continue
 		}
 
-		running, err := sm.IsRunning(dg.Name)
-		if err != nil {
-			d.logger.Printf("Handler: error checking session for dog %s: %v", dg.Name, err)
-			continue
-		}
+		sessionID := sm.SessionName(dg.Name)
+		switch t.CheckSessionHealth(sessionID, neverHungInactivity) {
+		case tmux.SessionDead:
+			// Dog is marked working but the session is gone — clean it up.
+			d.logger.Printf("Handler: dog %s is working but session is dead, clearing work", dg.Name)
+			if err := mgr.ClearWork(dg.Name); err != nil {
+				d.logger.Printf("Handler: failed to clear work for dog %s: %v", dg.Name, err)
+			}
 
-		if running {
-			continue
-		}
+		case tmux.AgentDead:
+			// Dog is marked working but the agent process died inside a
+			// lingering tmux session — kill the husk, then return it to idle.
+			d.logger.Printf("Handler: dog %s is working but agent is dead, killing session and clearing work", dg.Name)
+			if err := t.KillSession(sessionID); err != nil {
+				d.logger.Printf("Handler: failed to kill dead-agent session for dog %s: %v", dg.Name, err)
+			}
+			if err := mgr.ClearWork(dg.Name); err != nil {
+				d.logger.Printf("Handler: failed to clear work for dog %s: %v", dg.Name, err)
+			}
 
-		// Dog is marked working but session is dead — clean it up.
-		d.logger.Printf("Handler: dog %s is working but session is dead, clearing work", dg.Name)
-		if err := mgr.ClearWork(dg.Name); err != nil {
-			d.logger.Printf("Handler: failed to clear work for dog %s: %v", dg.Name, err)
+			// SessionHealthy / AgentHung: leave alone. A healthy dog is working;
+			// a hung-but-live dog is detectStaleWorkingDogs' responsibility.
 		}
 	}
 }

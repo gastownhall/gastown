@@ -447,3 +447,55 @@ func TestFindDispatchableDog_PicksFirstIdleWhenNoSessionsLive(t *testing.T) {
 		t.Errorf("findDispatchableDog = %q, want alpha or bravo", got.Name)
 	}
 }
+
+// TestCleanupStuckDogs_ClearsDeadSessionWorker is the hq-54br regression: a dog
+// marked state=working with no live session (the mol-dog-reaper failure mode —
+// agent exits without `gt dog done`) must be returned to idle. Test dogs have no
+// real tmux session, so CheckSessionHealth classifies them SessionDead.
+func TestCleanupStuckDogs_ClearsDeadSessionWorker(t *testing.T) {
+	townRoot := t.TempDir()
+	d := testHandlerDaemon(t, townRoot)
+
+	rigsConfig := &config.RigsConfig{Version: 1, Rigs: map[string]config.RigEntry{}}
+	mgr := dog.NewManager(townRoot, rigsConfig)
+	sm := dog.NewSessionManager(tmux.NewTmux(), townRoot, mgr)
+
+	// Dog stuck in state=working on the reaper formula, no live session.
+	testSetupWorkingDogState(t, townRoot, "alpha", constants.MolDogReaper, time.Now())
+
+	d.cleanupStuckDogs(mgr, sm)
+
+	dg, err := mgr.Get("alpha")
+	if err != nil {
+		t.Fatalf("Get() error: %v", err)
+	}
+	if dg.State != dog.StateIdle {
+		t.Errorf("stuck dog state = %q, want idle", dg.State)
+	}
+	if dg.Work != "" {
+		t.Errorf("stuck dog work = %q, want empty", dg.Work)
+	}
+}
+
+// TestCleanupStuckDogs_SkipsIdleDogs ensures the cleanup never disturbs a dog
+// that is already idle.
+func TestCleanupStuckDogs_SkipsIdleDogs(t *testing.T) {
+	townRoot := t.TempDir()
+	d := testHandlerDaemon(t, townRoot)
+
+	rigsConfig := &config.RigsConfig{Version: 1, Rigs: map[string]config.RigEntry{}}
+	mgr := dog.NewManager(townRoot, rigsConfig)
+	sm := dog.NewSessionManager(tmux.NewTmux(), townRoot, mgr)
+
+	testSetupDogState(t, townRoot, "alpha", dog.StateIdle, time.Now())
+
+	d.cleanupStuckDogs(mgr, sm)
+
+	dg, err := mgr.Get("alpha")
+	if err != nil {
+		t.Fatalf("Get() error: %v", err)
+	}
+	if dg.State != dog.StateIdle {
+		t.Errorf("idle dog state = %q, want idle (unchanged)", dg.State)
+	}
+}
