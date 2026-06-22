@@ -122,6 +122,71 @@ func TestForceCloseIssueWithRetryReturnsFinalError(t *testing.T) {
 	}
 }
 
+func TestNoMergePRRepoFromOriginPushURL(t *testing.T) {
+	repo, err := noMergePRRepoFromOriginPushURL("https://github.com/Bella-Giraffety/gastown.git", nil)
+	if err != nil {
+		t.Fatalf("noMergePRRepoFromOriginPushURL() error = %v", err)
+	}
+	if repo != "Bella-Giraffety/gastown" {
+		t.Fatalf("repo = %q, want Bella-Giraffety/gastown", repo)
+	}
+}
+
+func TestNoMergePRRepoFromOriginPushURLFailsClosed(t *testing.T) {
+	tests := []struct {
+		name    string
+		pushURL string
+		pushErr error
+	}{
+		{name: "lookup failure", pushErr: errors.New("remote missing")},
+		{name: "non github", pushURL: "https://example.com/github.com/octo/repo"},
+		{name: "malformed", pushURL: "https://github.com/octo/repo/pull/1"},
+		{name: "disabled", pushURL: "DISABLED"},
+		{name: "empty", pushURL: ""},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			repo, err := noMergePRRepoFromOriginPushURL(tt.pushURL, tt.pushErr)
+			if err == nil {
+				t.Fatalf("noMergePRRepoFromOriginPushURL() repo = %q, want error", repo)
+			}
+			if repo != "" {
+				t.Fatalf("repo = %q, want empty", repo)
+			}
+		})
+	}
+}
+
+func TestNoMergePRCreateArgsIncludeRepo(t *testing.T) {
+	args := noMergePRCreateArgs("Bella-Giraffety/gastown", "main", "polecat/scavenger/gt-abc@123", "Review this", "body")
+	want := []string{
+		"pr", "create",
+		"--repo", "Bella-Giraffety/gastown",
+		"--base", "main",
+		"--head", "polecat/scavenger/gt-abc@123",
+		"--title", "Review this",
+		"--body", "body",
+	}
+	if strings.Join(args, "\x00") != strings.Join(want, "\x00") {
+		t.Fatalf("args = %#v, want %#v", args, want)
+	}
+
+	repoFlags := 0
+	for i, arg := range args {
+		if arg != "--repo" {
+			continue
+		}
+		repoFlags++
+		if i+1 >= len(args) || args[i+1] != "Bella-Giraffety/gastown" {
+			t.Fatalf("--repo not followed by owner/repo in %#v", args)
+		}
+	}
+	if repoFlags != 1 {
+		t.Fatalf("--repo flags = %d, want 1 in %#v", repoFlags, args)
+	}
+}
+
 // TestDoneBeadsInitWithoutRedirect verifies that beads initialization works
 // normally when no redirect file exists.
 func TestDoneBeadsInitWithoutRedirect(t *testing.T) {

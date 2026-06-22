@@ -16,6 +16,7 @@ import (
 	"github.com/steveyegge/gastown/internal/config"
 	"github.com/steveyegge/gastown/internal/events"
 	"github.com/steveyegge/gastown/internal/git"
+	githubrepo "github.com/steveyegge/gastown/internal/github"
 	"github.com/steveyegge/gastown/internal/mail"
 	"github.com/steveyegge/gastown/internal/polecat"
 	"github.com/steveyegge/gastown/internal/rig"
@@ -84,6 +85,28 @@ func doneContaminationBaseRef(defaultBranch, explicitTarget string) string {
 	}
 
 	return "origin/" + targetBranch
+}
+
+func noMergePRRepoFromOriginPushURL(pushURL string, pushErr error) (string, error) {
+	if pushErr != nil {
+		return "", fmt.Errorf("get origin push URL: %w", pushErr)
+	}
+	repo, err := githubrepo.RepoFromRemoteURL(pushURL)
+	if err != nil {
+		return "", fmt.Errorf("parse origin push URL: %w", err)
+	}
+	return repo, nil
+}
+
+func noMergePRCreateArgs(repo, base, head, title, body string) []string {
+	return []string{
+		"pr", "create",
+		"--repo", repo,
+		"--base", base,
+		"--head", head,
+		"--title", title,
+		"--body", body,
+	}
 }
 
 func shouldSyncIdlePolecatWorktree(exitType, mergeStrategy string, pushFailed, mrFailed, syncSafe bool) bool {
@@ -1028,16 +1051,28 @@ func runDone(cmd *cobra.Command, args []string) (retErr error) {
 					prBodyBuilder.WriteString("---\n")
 					prBodyBuilder.WriteString(fmt.Sprintf("*Polecat: %s | Issue: %s*\n", worker, issueID))
 					prBody := prBodyBuilder.String()
-					ghCmd := exec.CommandContext(context.Background(), "gh", "pr", "create",
-						"--base", defaultBranch,
-						"--head", branch,
-						"--title", prTitle,
-						"--body", prBody,
-					)
+					originPushURL, originPushErr := g.GetPushURL("origin")
+					prRepo, prRepoErr := noMergePRRepoFromOriginPushURL(originPushURL, originPushErr)
+					if prRepoErr != nil {
+						mrFailed = true
+						errMsg := fmt.Sprintf("could not determine GitHub repo for PR creation: %v", prRepoErr)
+						doneErrors = append(doneErrors, errMsg)
+						style.PrintWarning("%s\nBranch is pushed but source issue left open for review.", errMsg)
+						goto notifyWitness
+					}
+
+					ghCmd := exec.CommandContext(context.Background(), "gh", noMergePRCreateArgs(prRepo, defaultBranch, branch, prTitle, prBody)...)
 					ghCmd.Dir = cwd
-					prOutput, prErr := ghCmd.Output()
+					prOutput, prErr := ghCmd.CombinedOutput()
 					if prErr != nil {
-						style.PrintWarning("could not create GitHub PR: %v", prErr)
+						mrFailed = true
+						errMsg := fmt.Sprintf("could not create GitHub PR: %v", prErr)
+						if output := strings.TrimSpace(string(prOutput)); output != "" {
+							errMsg = fmt.Sprintf("%s: %s", errMsg, output)
+						}
+						doneErrors = append(doneErrors, errMsg)
+						style.PrintWarning("%s\nBranch is pushed but source issue left open for review.", errMsg)
+						goto notifyWitness
 					} else {
 						prURL = strings.TrimSpace(string(prOutput))
 						fmt.Printf("%s GitHub PR created: %s\n", style.Bold.Render("✓"), prURL)

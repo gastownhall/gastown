@@ -18,6 +18,7 @@ import (
 	"github.com/steveyegge/gastown/internal/beads"
 	"github.com/steveyegge/gastown/internal/config"
 	"github.com/steveyegge/gastown/internal/constants"
+	githubrepo "github.com/steveyegge/gastown/internal/github"
 	"github.com/steveyegge/gastown/internal/session"
 	"github.com/steveyegge/gastown/internal/tmux"
 	"github.com/steveyegge/gastown/internal/workspace"
@@ -665,8 +666,8 @@ func (f *LiveConvoyFetcher) FetchMergeQueue() ([]MergeQueueRow, error) {
 
 	for rigName, entry := range rigsConfig.Rigs {
 		// Convert git URL to owner/repo format for gh CLI
-		repoPath := gitURLToRepoPath(entry.GitURL)
-		if repoPath == "" {
+		repoPath, repoPathErr := githubrepo.RepoFromRemoteURL(entry.GitURL)
+		if repoPathErr != nil {
 			continue
 		}
 
@@ -679,28 +680,6 @@ func (f *LiveConvoyFetcher) FetchMergeQueue() ([]MergeQueueRow, error) {
 	}
 
 	return result, nil
-}
-
-// gitURLToRepoPath converts a git URL to owner/repo format.
-// Supports HTTPS (https://github.com/owner/repo.git) and
-// SSH (git@github.com:owner/repo.git) formats.
-func gitURLToRepoPath(gitURL string) string {
-	// Handle HTTPS format: https://github.com/owner/repo.git
-	if strings.HasPrefix(gitURL, "https://github.com/") {
-		path := strings.TrimPrefix(gitURL, "https://github.com/")
-		path = strings.TrimSuffix(path, ".git")
-		return path
-	}
-
-	// Handle SSH format: git@github.com:owner/repo.git
-	if strings.HasPrefix(gitURL, "git@github.com:") {
-		path := strings.TrimPrefix(gitURL, "git@github.com:")
-		path = strings.TrimSuffix(path, ".git")
-		return path
-	}
-
-	// Unsupported format
-	return ""
 }
 
 // prResponse represents the JSON response from gh pr list.
