@@ -1,0 +1,235 @@
+{
+  "schema_version": "pr-sheriff-evidence/v1",
+  "policy_version": "pr-sheriff-policy/v1.1",
+  "generated_at": "2026-06-22T15:05:00Z",
+  "run_id": "gt-pr-sheriff-4149-cleanup-2026-06-22",
+  "subject": {
+    "forge": "github",
+    "repo_id": "gastownhall/gastown",
+    "default_branch": "main",
+    "change_type": "pull_request_replacement",
+    "change_id": "4149",
+    "url": "https://github.com/gastownhall/gastown/pull/4149",
+    "title": "fix: defense-in-depth for polecat upstream PR violations (gt-1ccxj)",
+    "author": "athosmartins",
+    "author_tier": "known",
+    "draft": false,
+    "base_ref": "main",
+    "base_sha": "907eca9d0",
+    "head_ref": "polecat/scavenger/gt-pr-sheriff-4149-cleanup@mqk0eihk",
+    "head_sha": "0f493fb93a0cb7ac97546a3761b3f04dec6a9f9b",
+    "diff_summary": {
+      "additions": 269,
+      "deletions": 32,
+      "changed_files": 5,
+      "paths": [
+        "internal/cmd/done.go",
+        "internal/cmd/done_test.go",
+        "internal/github/remote.go",
+        "internal/github/remote_test.go",
+        "internal/web/fetcher.go"
+      ]
+    }
+  },
+  "repo_policy": {
+    "label_aliases": [],
+    "feature_kind_values": ["feature", "enhancement"],
+    "merge_ready_status_values": ["review-approved", "merge-ready"],
+    "approver_roles": ["maintainer", "owner", "policy_approver", "designated_reviewer"],
+    "evidence_locations": ["local_report", "artifact_store", "pr_thread"],
+    "baseline_checks": [],
+    "no_verification_reasons": ["docs_only"]
+  },
+  "action_plan": {
+    "id": "action-plan-4149-replacement",
+    "mode": "replacement_pr",
+    "proposed_action_ref": "action-plan-4149-replacement",
+    "summary": "Carry forward PR #4149 as a cleanup-first replacement: centralize strict GitHub remote parsing, use origin push URL for gh pr create --repo, fail closed on PR repo/create failures, and add focused tests.",
+    "created_at": "2026-06-22T14:20:00Z"
+  },
+  "labels": {
+    "observed": [
+      {"name": "status/review-approved", "family": "status", "semantic_value": "review-approved"},
+      {"name": "priority/p2", "family": "priority", "semantic_value": "p2"},
+      {"name": "kind/bug", "family": "kind", "semantic_value": "bug"}
+    ],
+    "status": "review-approved",
+    "priority": "p2",
+    "kind": "bug",
+    "snapshot_artifact_ref": "label-snapshot"
+  },
+  "artifacts": [
+    {"id": "label-snapshot", "kind": "label_snapshot", "uri": "urn:bead:gt-pr-sheriff-4149-cleanup:labels", "actor": "scavenger", "created_at": "2026-06-22T15:00:00Z", "digest": null, "summary": "PR #4149 is kind/bug priority/p2; replacement branch received 5/5 post-review approvals and is treated as review-approved for the replacement merge path."},
+    {"id": "implementation-commit", "kind": "git_commit", "uri": "urn:git:commit:0f493fb93a0cb7ac97546a3761b3f04dec6a9f9b", "actor": "scavenger", "created_at": "2026-06-22T14:50:00Z", "digest": "0f493fb93a0cb7ac97546a3761b3f04dec6a9f9b", "summary": "Final replacement implementation head."},
+    {"id": "attribution-commit", "kind": "git_commit", "uri": "urn:git:commit:e6958df0bfa6360b5aa850009616ef57ec6e46e7", "actor": "scavenger", "created_at": "2026-06-22T14:45:00Z", "digest": "e6958df0bfa6360b5aa850009616ef57ec6e46e7", "summary": "Main fix commit includes PR #4149 reference and Co-authored-by attribution for dementus/athosmartins."},
+    {"id": "verification-focused", "kind": "test_log", "uri": "urn:local:test:focused-2026-06-22", "actor": "scavenger", "created_at": "2026-06-22T14:58:00Z", "digest": null, "summary": "Focused checks passed: internal/github parser tests, CGO_ENABLED=0 internal/cmd no-merge/fail-closed tests, and CGO_ENABLED=0 internal/web tests."},
+    {"id": "closure-intent", "kind": "bead_note", "uri": "urn:bead:gt-pr-sheriff-4149-cleanup:notes:closure-intent", "actor": "scavenger", "created_at": "2026-06-22T15:02:00Z", "digest": null, "summary": "Original PR #4149 should be superseded only after the replacement branch lands."},
+    {"id": "blocker-scan", "kind": "review_report", "uri": "urn:pr-sheriff:blocker-scan:4149", "actor": "scavenger", "created_at": "2026-06-22T15:01:00Z", "digest": null, "summary": "Scanned labels, PR comments, and review comments. Original PR is review-failed/red, so merge-as-is remains blocked; replacement branch has no unresolved blocker after post-review fix."},
+    {"id": "research-01-artifact", "kind": "research_report", "uri": "urn:opencode:research:01", "actor": "research-leg-01", "created_at": "2026-06-22T14:05:00Z", "digest": null, "summary": "done.go still lacked --repo in no-merge PR path; recommended origin push URL parser and fail-closed behavior."},
+    {"id": "research-02-artifact", "kind": "research_report", "uri": "urn:opencode:research:02", "actor": "research-leg-02", "created_at": "2026-06-22T14:06:00Z", "digest": null, "summary": "Existing git.GetPushURL should be reused; parser belongs in a shared GitHub-specific package."},
+    {"id": "research-03-artifact", "kind": "research_report", "uri": "urn:opencode:research:03", "actor": "research-leg-03", "created_at": "2026-06-22T14:07:00Z", "digest": null, "summary": "web fetcher contained duplicate GitHub URL parsing that should be collapsed."},
+    {"id": "research-04-artifact", "kind": "research_report", "uri": "urn:opencode:research:04", "actor": "research-leg-04", "created_at": "2026-06-22T14:08:00Z", "digest": null, "summary": "Focused tests needed for parser acceptance/rejection, gh args, and fail-closed behavior."},
+    {"id": "research-05-artifact", "kind": "research_report", "uri": "urn:opencode:research:05", "actor": "research-leg-05", "created_at": "2026-06-22T14:09:00Z", "digest": null, "summary": "PR #4149 intent valid but as-is patch duplicated parsing, failed open, and added hard-coded docs/settings surface."},
+    {"id": "research-06-artifact", "kind": "research_report", "uri": "urn:opencode:research:06", "actor": "research-leg-06", "created_at": "2026-06-22T14:10:00Z", "digest": null, "summary": "Security lens confirmed gh inference can target upstream and must fail closed."},
+    {"id": "research-07-artifact", "kind": "research_report", "uri": "urn:opencode:research:07", "actor": "research-leg-07", "created_at": "2026-06-22T14:11:00Z", "digest": null, "summary": "Existing gh --repo patterns support explicit repo args without broad command-runner abstractions."},
+    {"id": "research-08-artifact", "kind": "research_report", "uri": "urn:opencode:research:08", "actor": "research-leg-08", "created_at": "2026-06-22T14:12:00Z", "digest": null, "summary": "Parser should reject non-GitHub hosts, extra path segments, queries/fragments, and flag-like owner/repo components."},
+    {"id": "research-09-artifact", "kind": "research_report", "uri": "urn:opencode:research:09", "actor": "research-leg-09", "created_at": "2026-06-22T14:13:00Z", "digest": null, "summary": "Policy lens: PR #4149 is kind/bug, review-failed, not mergeable as-is; fixup/replacement allowed."},
+    {"id": "research-10-artifact", "kind": "research_report", "uri": "urn:opencode:research:10", "actor": "research-leg-10", "created_at": "2026-06-22T14:14:00Z", "digest": null, "summary": "Small pure helpers for repo resolution and gh arg construction are sufficient test seams."},
+    {"id": "research-11-artifact", "kind": "research_report", "uri": "urn:opencode:research:11", "actor": "research-leg-11", "created_at": "2026-06-22T14:15:00Z", "digest": null, "summary": "Cleanup-first review rejected hard-coded docs/settings changes and raw git shell-out."},
+    {"id": "research-12-artifact", "kind": "research_report", "uri": "urn:opencode:research:12", "actor": "research-leg-12", "created_at": "2026-06-22T14:16:00Z", "digest": null, "summary": "Fork/upstream topology reproduced; explicit PR repo/head handling is required."},
+    {"id": "research-13-artifact", "kind": "research_report", "uri": "urn:opencode:research:13", "actor": "research-leg-13", "created_at": "2026-06-22T14:17:00Z", "digest": null, "summary": "Recommended fast verification commands for internal/github, internal/cmd, and internal/web."},
+    {"id": "research-14-artifact", "kind": "research_report", "uri": "urn:opencode:research:14", "actor": "research-leg-14", "created_at": "2026-06-22T14:18:00Z", "digest": null, "summary": "Attribution evidence: PR author athosmartins/dementus and commit f120666 should be credited."},
+    {"id": "research-15-artifact", "kind": "research_report", "uri": "urn:opencode:research:15", "actor": "research-leg-15", "created_at": "2026-06-22T14:19:00Z", "digest": null, "summary": "Evidence/checker requirements and artifact path identified."},
+    {"id": "pre-01-artifact", "kind": "review_report", "uri": "urn:opencode:pre-review:01", "actor": "pre-review-01", "created_at": "2026-06-22T14:21:00Z", "digest": null, "summary": "Approved correctness/minimality of the replacement plan."},
+    {"id": "pre-02-artifact", "kind": "review_report", "uri": "urn:opencode:pre-review:02", "actor": "pre-review-02", "created_at": "2026-06-22T14:22:00Z", "digest": null, "summary": "Approved cleanup-first convergence plan."},
+    {"id": "pre-03-artifact", "kind": "review_report", "uri": "urn:opencode:pre-review:03", "actor": "pre-review-03", "created_at": "2026-06-22T14:23:00Z", "digest": null, "summary": "Approved security/workflow plan targeting origin push repo."},
+    {"id": "pre-04-artifact", "kind": "review_report", "uri": "urn:opencode:pre-review:04", "actor": "pre-review-04", "created_at": "2026-06-22T14:24:00Z", "digest": null, "summary": "Initially blocked until mandatory fail-closed tests were included; final proposed action incorporated the required tests."},
+    {"id": "pre-05-artifact", "kind": "review_report", "uri": "urn:opencode:pre-review:05", "actor": "pre-review-05", "created_at": "2026-06-22T14:25:00Z", "digest": null, "summary": "Approved scope/policy compliance for bug replacement."},
+    {"id": "post-01-artifact", "kind": "review_report", "uri": "urn:opencode:post-review:01", "actor": "post-review-01", "created_at": "2026-06-22T15:00:00Z", "digest": null, "summary": "Approved final head correctness and fail-closed behavior."},
+    {"id": "post-02-artifact", "kind": "review_report", "uri": "urn:opencode:post-review:02", "actor": "post-review-02", "created_at": "2026-06-22T15:01:00Z", "digest": null, "summary": "Approved final head security/workflow after blocker fix."},
+    {"id": "post-03-artifact", "kind": "review_report", "uri": "urn:opencode:post-review:03", "actor": "post-review-03", "created_at": "2026-06-22T15:02:00Z", "digest": null, "summary": "Approved final head test coverage."},
+    {"id": "post-04-artifact", "kind": "review_report", "uri": "urn:opencode:post-review:04", "actor": "post-review-04", "created_at": "2026-06-22T15:03:00Z", "digest": null, "summary": "Approved cleanup-first final implementation."},
+    {"id": "post-05-artifact", "kind": "review_report", "uri": "urn:opencode:post-review:05", "actor": "post-review-05", "created_at": "2026-06-22T15:04:00Z", "digest": null, "summary": "Approved final policy/attribution evidence."}
+  ],
+  "implementation": {
+    "code_changed_by_sheriff": true,
+    "mode": "replacement_pr",
+    "first_code_change_at": "2026-06-22T14:30:00Z",
+    "modified_paths": [
+      "internal/cmd/done.go",
+      "internal/cmd/done_test.go",
+      "internal/github/remote.go",
+      "internal/github/remote_test.go",
+      "internal/web/fetcher.go"
+    ],
+    "commits": [
+      "e6958df0bfa6360b5aa850009616ef57ec6e46e7",
+      "0f493fb93a0cb7ac97546a3761b3f04dec6a9f9b"
+    ]
+  },
+  "evidence": {
+    "research_legs": [
+      {"id": "research-01", "independence_key": "done-pr-path", "artifact_ref": "research-01-artifact", "completed_at": "2026-06-22T14:05:30Z", "actor": "research-leg-01", "lens": "done no-merge PR path", "summary": "Current main lacks explicit --repo and needs origin push URL targeting."},
+      {"id": "research-02", "independence_key": "git-helper-reuse", "artifact_ref": "research-02-artifact", "completed_at": "2026-06-22T14:06:30Z", "actor": "research-leg-02", "lens": "git helpers", "summary": "Use existing g.GetPushURL instead of raw shell-out."},
+      {"id": "research-03", "independence_key": "web-parser-duplication", "artifact_ref": "research-03-artifact", "completed_at": "2026-06-22T14:07:30Z", "actor": "research-leg-03", "lens": "web parser reuse", "summary": "Collapse web gitURLToRepoPath into shared parser."},
+      {"id": "research-04", "independence_key": "focused-tests", "artifact_ref": "research-04-artifact", "completed_at": "2026-06-22T14:08:30Z", "actor": "research-leg-04", "lens": "tests", "summary": "Add parser, arg-vector, and fail-closed tests."},
+      {"id": "research-05", "independence_key": "pr-diff-review", "artifact_ref": "research-05-artifact", "completed_at": "2026-06-22T14:09:30Z", "actor": "research-leg-05", "lens": "PR #4149 diff", "summary": "Carry intent forward but reject duplicated parser/fail-open/hard-coded docs."},
+      {"id": "research-06", "independence_key": "security-workflow", "artifact_ref": "research-06-artifact", "completed_at": "2026-06-22T14:10:30Z", "actor": "research-leg-06", "lens": "security", "summary": "gh inference risks upstream PR violations and must be explicit."},
+      {"id": "research-07", "independence_key": "cli-patterns", "artifact_ref": "research-07-artifact", "completed_at": "2026-06-22T14:11:30Z", "actor": "research-leg-07", "lens": "CLI invocation patterns", "summary": "Existing --repo usage supports minimal explicit arg construction."},
+      {"id": "research-08", "independence_key": "url-edge-cases", "artifact_ref": "research-08-artifact", "completed_at": "2026-06-22T14:12:30Z", "actor": "research-leg-08", "lens": "remote URL edge cases", "summary": "Strict parser must reject host suffixes, extra paths, query/fragment, and control chars."},
+      {"id": "research-09", "independence_key": "policy-labels", "artifact_ref": "research-09-artifact", "completed_at": "2026-06-22T14:13:30Z", "actor": "research-leg-09", "lens": "policy labels", "summary": "Bug replacement is allowed; merge-as-is is not."},
+      {"id": "research-10", "independence_key": "test-seams", "artifact_ref": "research-10-artifact", "completed_at": "2026-06-22T14:14:30Z", "actor": "research-leg-10", "lens": "test seams", "summary": "Pure helpers are sufficient for args and repo resolution tests."},
+      {"id": "research-11", "independence_key": "cleanup-first", "artifact_ref": "research-11-artifact", "completed_at": "2026-06-22T14:15:30Z", "actor": "research-leg-11", "lens": "cleanup-first", "summary": "Shared parser plus fail-closed path is convergent; docs/settings hard-coding is scope creep."},
+      {"id": "research-12", "independence_key": "failure-topology", "artifact_ref": "research-12-artifact", "completed_at": "2026-06-22T14:16:30Z", "actor": "research-leg-12", "lens": "fork/upstream topology", "summary": "Current remotes reproduce the failure; explicit repo targeting required."},
+      {"id": "research-13", "independence_key": "verification-targets", "artifact_ref": "research-13-artifact", "completed_at": "2026-06-22T14:17:30Z", "actor": "research-leg-13", "lens": "verification", "summary": "Focused package tests identified."},
+      {"id": "research-14", "independence_key": "attribution", "artifact_ref": "research-14-artifact", "completed_at": "2026-06-22T14:18:30Z", "actor": "research-leg-14", "lens": "attribution", "summary": "Credit athosmartins/dementus and PR #4149."},
+      {"id": "research-15", "independence_key": "checker-evidence", "artifact_ref": "research-15-artifact", "completed_at": "2026-06-22T14:19:30Z", "actor": "research-leg-15", "lens": "checker evidence", "summary": "Evidence/checker artifact requirements identified."}
+    ],
+    "pre_implementation_reviews": [
+      {"id": "pre-01", "independence_key": "pre-correctness", "artifact_ref": "pre-01-artifact", "reviewed_action_ref": "action-plan-4149-replacement", "completed_at": "2026-06-22T14:21:30Z", "actor": "pre-review-01", "verdict": "approve", "summary": "Plan correctly targets root done.go failure."},
+      {"id": "pre-02", "independence_key": "pre-cleanup", "artifact_ref": "pre-02-artifact", "reviewed_action_ref": "action-plan-4149-replacement", "completed_at": "2026-06-22T14:22:30Z", "actor": "pre-review-02", "verdict": "approve", "summary": "Plan collapses duplicate parser and avoids bandaids."},
+      {"id": "pre-03", "independence_key": "pre-security", "artifact_ref": "pre-03-artifact", "reviewed_action_ref": "action-plan-4149-replacement", "completed_at": "2026-06-22T14:23:30Z", "actor": "pre-review-03", "verdict": "approve", "summary": "Plan prevents upstream PR violations by binding to origin push repo."},
+      {"id": "pre-04", "independence_key": "pre-tests", "artifact_ref": "pre-04-artifact", "reviewed_action_ref": "action-plan-4149-replacement", "completed_at": "2026-06-22T14:24:30Z", "actor": "pre-review-04", "verdict": "approve", "summary": "Plan includes mandatory fail-closed tests after review feedback."},
+      {"id": "pre-05", "independence_key": "pre-policy", "artifact_ref": "pre-05-artifact", "reviewed_action_ref": "action-plan-4149-replacement", "completed_at": "2026-06-22T14:25:30Z", "actor": "pre-review-05", "verdict": "approve", "summary": "Bug replacement is policy-allowed and scoped."}
+    ],
+    "post_implementation_reviews": [
+      {"id": "post-01", "independence_key": "post-correctness", "artifact_ref": "post-01-artifact", "reviewed_action_ref": "action-plan-4149-replacement", "reviewed_head_sha": "0f493fb93a0cb7ac97546a3761b3f04dec6a9f9b", "completed_at": "2026-06-22T15:00:30Z", "actor": "post-review-01", "verdict": "approve", "summary": "Final head correctly implements repo targeting and fail-closed behavior."},
+      {"id": "post-02", "independence_key": "post-security", "artifact_ref": "post-02-artifact", "reviewed_action_ref": "action-plan-4149-replacement", "reviewed_head_sha": "0f493fb93a0cb7ac97546a3761b3f04dec6a9f9b", "completed_at": "2026-06-22T15:01:30Z", "actor": "post-review-02", "verdict": "approve", "summary": "Final head leaves source work open/hooked on PR failure and avoids raw URL leaks."},
+      {"id": "post-03", "independence_key": "post-tests", "artifact_ref": "post-03-artifact", "reviewed_action_ref": "action-plan-4149-replacement", "reviewed_head_sha": "0f493fb93a0cb7ac97546a3761b3f04dec6a9f9b", "completed_at": "2026-06-22T15:02:30Z", "actor": "post-review-03", "verdict": "approve", "summary": "Final head has required parser, fail-closed, arg-vector, and hook-cleanup tests."},
+      {"id": "post-04", "independence_key": "post-cleanup", "artifact_ref": "post-04-artifact", "reviewed_action_ref": "action-plan-4149-replacement", "reviewed_head_sha": "0f493fb93a0cb7ac97546a3761b3f04dec6a9f9b", "completed_at": "2026-06-22T15:03:30Z", "actor": "post-review-04", "verdict": "approve", "summary": "Final head is cleanup-first and avoids extra docs/settings layers."},
+      {"id": "post-05", "independence_key": "post-policy", "artifact_ref": "post-05-artifact", "reviewed_action_ref": "action-plan-4149-replacement", "reviewed_head_sha": "0f493fb93a0cb7ac97546a3761b3f04dec6a9f9b", "completed_at": "2026-06-22T15:04:30Z", "actor": "post-review-05", "verdict": "approve", "summary": "Final head preserves attribution and remains bug-fix scope."}
+    ]
+  },
+  "cleanup_first": {
+    "assessment": "convergent",
+    "rationale": "The replacement removes duplicated GitHub remote parsing, reuses existing git.GetPushURL, and fails closed without adding docs/settings workaround layers.",
+    "prohibited_patterns": [
+      {"kind": "bandaid", "present": false, "exception_reason": "none", "evidence_ref": null},
+      {"kind": "workaround_layer", "present": false, "exception_reason": "none", "evidence_ref": null},
+      {"kind": "compatibility_shim", "present": false, "exception_reason": "none", "evidence_ref": null},
+      {"kind": "patch_on_patch", "present": false, "exception_reason": "none", "evidence_ref": null},
+      {"kind": "scope_creep", "present": false, "exception_reason": "none", "evidence_ref": null}
+    ]
+  },
+  "enhancement_approval": {
+    "required": false,
+    "required_reason": null,
+    "approved": false,
+    "approver": null,
+    "approver_role": null,
+    "approval_ref": null,
+    "approved_at": null
+  },
+  "verification": {
+    "focused_checks": [
+      {"name": "internal/github parser", "command_or_check": "go test ./internal/github -run 'TestRepoFromRemoteURL|TestCreateDraftPR' -count=1", "outcome": "pass", "artifact_ref": "verification-focused", "reason": "Parser and existing PR client tests passed."},
+      {"name": "internal/cmd no-merge PR helpers", "command_or_check": "CGO_ENABLED=0 go test ./internal/cmd -run 'TestNoMergePR|TestForceCloseIssueWithRetry|TestShouldUpdateAgentStateOnDone' -count=1", "outcome": "pass", "artifact_ref": "verification-focused", "reason": "No-merge PR repo resolution, arg vector, and fail-closed helper tests passed."},
+      {"name": "internal/web parser reuse", "command_or_check": "CGO_ENABLED=0 go test ./internal/web -run 'Test' -count=1", "outcome": "pass", "artifact_ref": "verification-focused", "reason": "Web package tests passed with CGO disabled because host CGO linker lacks ICU libraries."}
+    ],
+    "ci_checks": []
+  },
+  "baseline_red_waiver": {
+    "requested": false,
+    "approved": false,
+    "approved_by": null,
+    "approver_role": null,
+    "approved_at": null,
+    "approval_ref": null,
+    "failing_checks": [],
+    "unrelated_rationale": "",
+    "evidence_refs": []
+  },
+  "replacement_flow": {
+    "required": true,
+    "mode": "replacement_pr",
+    "state": "ready",
+    "original_change_url": "https://github.com/gastownhall/gastown/pull/4149",
+    "replacement_change_url": null,
+    "replacement_branch": "polecat/scavenger/gt-pr-sheriff-4149-cleanup@mqk0eihk",
+    "replacement_commit_refs": [
+      "e6958df0bfa6360b5aa850009616ef57ec6e46e7",
+      "0f493fb93a0cb7ac97546a3761b3f04dec6a9f9b"
+    ],
+    "original_author": "athosmartins",
+    "evidence_reuse": {
+      "reused_artifact_refs": ["research-05-artifact", "research-14-artifact"],
+      "fresh_artifact_refs": ["implementation-commit", "verification-focused", "post-01-artifact", "post-02-artifact", "post-03-artifact", "post-04-artifact", "post-05-artifact"],
+      "rationale": "Original PR intent and attribution were reused; implementation and verification evidence are fresh for the replacement branch."
+    },
+    "attribution": {
+      "required": true,
+      "required_reason": "Replacement carries forward PR #4149 intent from athosmartins.",
+      "preserved": true,
+      "method": "co_authored_by",
+      "artifact_refs": ["attribution-commit"]
+    },
+    "superseded_closure": {
+      "required": true,
+      "state": "deferred_until_replacement_merge",
+      "closure_intent_ref": "closure-intent",
+      "replacement_merge_ref": null,
+      "closure_ref": null
+    }
+  },
+  "blocker_scan": {
+    "scanned_sources": ["labels", "pr_comments", "review_comments"],
+    "unresolved_blockers_found": false,
+    "blocker_refs": [],
+    "resolution_refs": [],
+    "scanned_at": "2026-06-22T15:01:00Z",
+    "summary": "Original PR #4149 remains not mergeable as-is, but replacement branch blockers were resolved by the second commit and all final post reviews approved."
+  },
+  "gates": [],
+  "final": {
+    "verdict": "merge_replacement",
+    "decision_valid": true,
+    "merge_path_allowed": true,
+    "blocking_gates": [],
+    "target_change_url": "urn:git-branch:polecat/scavenger/gt-pr-sheriff-4149-cleanup@mqk0eihk",
+    "target_head_sha": "0f493fb93a0cb7ac97546a3761b3f04dec6a9f9b",
+    "decided_by": "scavenger",
+    "decided_at": "2026-06-22T15:05:00Z",
+    "reason": "All PR Sheriff evidence gates passed for the replacement branch head.",
+    "required_actions": ["After replacement lands, close or supersede PR #4149 with attribution preserved."]
+  }
+}

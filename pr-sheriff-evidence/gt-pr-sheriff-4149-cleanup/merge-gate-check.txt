@@ -1,0 +1,7 @@
+Command: gt-pr-sheriff-check --evidence pr-sheriff-evidence/gt-pr-sheriff-4149-cleanup/evidence.json --merge-gate
+Exit code: 0
+
+PR Sheriff: PASS
+merge_path_allowed: true
+verdict: merge_replacement
+gates: 12 pass, 2 not_applicable, 0 waived, 0 fail
