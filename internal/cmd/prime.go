@@ -1294,12 +1294,25 @@ func ensureBeadsRedirect(ctx RoleContext) {
 		if _, statErr := os.Stat(redirectPath); statErr == nil {
 			return
 		}
-	} else if data, readErr := os.ReadFile(redirectPath); readErr == nil && strings.TrimSpace(string(data)) == expected {
+	} else if data, readErr := os.ReadFile(redirectPath); readErr == nil && strings.TrimSpace(string(data)) == expected && !worktreeBeadsNeedsCleanup(ctx.WorkDir) {
 		return
 	}
 
 	// Use shared helper - silently ignore errors during prime
 	_ = beads.SetupRedirect(ctx.TownRoot, ctx.WorkDir)
+}
+
+func worktreeBeadsNeedsCleanup(workDir string) bool {
+	beadsDir := filepath.Join(workDir, ".beads")
+	if info, err := os.Lstat(beadsDir); err == nil && info.Mode()&os.ModeSymlink != 0 {
+		return true
+	}
+	for _, name := range []string{"metadata.json", "config.yaml"} {
+		if _, err := os.Lstat(filepath.Join(beadsDir, name)); err == nil {
+			return true
+		}
+	}
+	return false
 }
 
 // injectWorkContext extracts the current work context (rig, bead, molecule) from the

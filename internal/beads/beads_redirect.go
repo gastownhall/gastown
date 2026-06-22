@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 )
@@ -108,16 +109,22 @@ func resolveBeadsDirWithDepth(beadsDir string, maxDepth int) string {
 	return resolveBeadsDirWithDepth(resolved, maxDepth-1)
 }
 
-// cleanBeadsRuntimeFiles removes gitignored runtime files from a .beads directory
-// while preserving tracked files (formulas/, README.md, config.yaml, .gitignore).
+// cleanBeadsRuntimeFiles removes redirect-local runtime and identity files from
+// a worktree .beads directory while preserving non-identity docs/config such as
+// formulas/, README.md, and .gitignore. Tracked identity files are hidden from
+// the worktree index before removal so managed worktrees stay clean.
 // This is safe to call even if the directory doesn't exist.
-func cleanBeadsRuntimeFiles(beadsDir string) error {
+func cleanBeadsRuntimeFiles(worktreePath, beadsDir string) error {
 	if _, err := os.Stat(beadsDir); os.IsNotExist(err) {
 		return nil // Nothing to clean
 	}
 
-	// Runtime files/patterns that are gitignored and safe to remove
+	// Runtime files/patterns and redirect-local identity files that are unsafe to
+	// keep next to a redirect. metadata.json/config.yaml can cause bd to bind to
+	// the worktree .beads before following the redirect.
 	runtimePatterns := []string{
+		// Redirect-local identity/config
+		"metadata.json", "config.yaml",
 		// Daemon runtime
 		"daemon.lock", "daemon.log", "daemon.pid", "bd.sock",
 		// Sync state
@@ -140,6 +147,12 @@ func cleanBeadsRuntimeFiles(beadsDir string) error {
 			continue
 		}
 		for _, match := range matches {
+			if filepath.Base(match) == "metadata.json" || filepath.Base(match) == "config.yaml" {
+				if err := hideTrackedWorktreePath(worktreePath, match); err != nil && firstErr == nil {
+					firstErr = err
+					continue
+				}
+			}
 			if err := os.RemoveAll(match); err != nil && firstErr == nil {
 				firstErr = err
 			}
@@ -147,6 +160,22 @@ func cleanBeadsRuntimeFiles(beadsDir string) error {
 	}
 
 	return firstErr
+}
+
+func hideTrackedWorktreePath(worktreePath, path string) error {
+	rel, err := filepath.Rel(worktreePath, path)
+	if err != nil || rel == "." || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return nil
+	}
+	rel = filepath.ToSlash(rel)
+	if err := exec.Command("git", "-C", worktreePath, "ls-files", "--error-unmatch", "--", rel).Run(); err != nil {
+		return nil
+	}
+	output, err := exec.Command("git", "-C", worktreePath, "update-index", "--skip-worktree", "--", rel).CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("marking %s skip-worktree: %s: %w", rel, strings.TrimSpace(string(output)), err)
+	}
+	return nil
 }
 
 // ComputeRedirectTarget computes the expected redirect target for a worktree.
@@ -349,19 +378,25 @@ func SetupRedirect(townRoot, worktreePath string) error {
 		}
 	}
 
-	// Clean up runtime files in .beads/ but preserve tracked files (formulas/, README.md, etc.)
+	// Clean up runtime/identity files in .beads/ but preserve non-identity tracked
+	// files (formulas/, README.md, etc.).
 	worktreeBeadsDir := filepath.Join(worktreePath, ".beads")
 
-	// Handle edge case: if .beads exists as a file (not directory), remove it.
+	// Handle edge cases: if .beads exists as a file or symlink, remove the path
+	// itself before cleanup. Using Lstat prevents cleanup from traversing a
+	// symlinked .beads and mutating its target.
 	// This can happen with stale state from previous failed operations or
 	// unusual clone state. MkdirAll would fail with "file exists" in this case.
-	if info, err := os.Stat(worktreeBeadsDir); err == nil && !info.IsDir() {
+	if info, err := os.Lstat(worktreeBeadsDir); err == nil && (info.Mode()&os.ModeSymlink != 0 || !info.IsDir()) {
+		if err := hideTrackedWorktreePath(worktreePath, worktreeBeadsDir); err != nil {
+			return fmt.Errorf("hiding stale .beads path: %w", err)
+		}
 		if err := os.Remove(worktreeBeadsDir); err != nil {
-			return fmt.Errorf("removing stale .beads file: %w", err)
+			return fmt.Errorf("removing stale .beads path: %w", err)
 		}
 	}
 
-	if err := cleanBeadsRuntimeFiles(worktreeBeadsDir); err != nil {
+	if err := cleanBeadsRuntimeFiles(worktreePath, worktreeBeadsDir); err != nil {
 		return fmt.Errorf("cleaning runtime files: %w", err)
 	}
 

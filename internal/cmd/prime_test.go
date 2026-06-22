@@ -1073,6 +1073,52 @@ func TestEnsureBeadsRedirect_RepairsExistingRedirectChain(t *testing.T) {
 	}
 }
 
+func TestEnsureBeadsRedirect_CleansIdentityFilesWhenRedirectAlreadyCorrect(t *testing.T) {
+	townRoot := t.TempDir()
+	rigRoot := filepath.Join(townRoot, "testrig")
+	rigBeadsDir := filepath.Join(rigRoot, ".beads")
+	workDir := filepath.Join(rigRoot, "crew", "worker1")
+	workBeadsDir := filepath.Join(workDir, ".beads")
+	redirectPath := filepath.Join(workBeadsDir, "redirect")
+
+	if err := os.MkdirAll(rigBeadsDir, 0755); err != nil {
+		t.Fatalf("mkdir rig beads dir: %v", err)
+	}
+	if err := os.MkdirAll(workBeadsDir, 0755); err != nil {
+		t.Fatalf("mkdir work beads dir: %v", err)
+	}
+	if err := os.WriteFile(redirectPath, []byte("../../.beads\n"), 0644); err != nil {
+		t.Fatalf("write redirect: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(workBeadsDir, "metadata.json"), []byte(`{"dolt_database":"stale"}`), 0644); err != nil {
+		t.Fatalf("write metadata: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(workBeadsDir, "config.yaml"), []byte("prefix: stale\n"), 0644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+
+	ctx := RoleContext{
+		Role:     RoleCrew,
+		WorkDir:  workDir,
+		TownRoot: townRoot,
+	}
+
+	ensureBeadsRedirect(ctx)
+
+	content, err := os.ReadFile(redirectPath)
+	if err != nil {
+		t.Fatalf("read redirect: %v", err)
+	}
+	if got, want := string(content), "../../.beads\n"; got != want {
+		t.Fatalf("redirect content = %q, want %q", got, want)
+	}
+	for _, name := range []string{"metadata.json", "config.yaml"} {
+		if _, err := os.Stat(filepath.Join(workBeadsDir, name)); !os.IsNotExist(err) {
+			t.Fatalf("%s should have been cleaned despite matching redirect, stat err=%v", name, err)
+		}
+	}
+}
+
 func TestOutputRalphLoopDirective_PluginInstalled(t *testing.T) {
 	attachment := &beads.AttachmentFields{
 		Mode:            "ralph",
