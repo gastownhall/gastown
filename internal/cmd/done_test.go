@@ -187,6 +187,29 @@ func TestNoMergePRCreateArgsIncludeRepo(t *testing.T) {
 	}
 }
 
+func TestShouldUpdateAgentStateOnDone(t *testing.T) {
+	tests := []struct {
+		name       string
+		pushFailed bool
+		mrFailed   bool
+		want       bool
+	}{
+		{name: "success", want: true},
+		{name: "push failed", pushFailed: true},
+		{name: "mr failed", mrFailed: true},
+		{name: "both failed", pushFailed: true, mrFailed: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := shouldUpdateAgentStateOnDone(tt.pushFailed, tt.mrFailed)
+			if got != tt.want {
+				t.Fatalf("shouldUpdateAgentStateOnDone(%v, %v) = %v, want %v", tt.pushFailed, tt.mrFailed, got, tt.want)
+			}
+		})
+	}
+}
+
 // TestDoneBeadsInitWithoutRedirect verifies that beads initialization works
 // normally when no redirect file exists.
 func TestDoneBeadsInitWithoutRedirect(t *testing.T) {

@@ -116,6 +116,10 @@ func shouldSyncIdlePolecatWorktree(exitType, mergeStrategy string, pushFailed, m
 	return mergeStrategy != "local"
 }
 
+func shouldUpdateAgentStateOnDone(pushFailed, mrFailed bool) bool {
+	return !pushFailed && !mrFailed
+}
+
 func cleanupStatusAfterSuccessfulPush(status string) string {
 	if status == "unpushed" || status == "has_unpushed" {
 		return "clean"
@@ -1519,8 +1523,13 @@ notifyWitness:
 		style.PrintWarning("could not log feed event: %v", err)
 	}
 
-	// Update agent bead state (ZFC: self-report completion)
-	updateAgentStateOnDone(cwd, townRoot, exitType, issueID)
+	// Update agent bead state (ZFC: self-report completion). If push/MR failed,
+	// keep the hook intact so Witness can recover the still-open work.
+	if shouldUpdateAgentStateOnDone(pushFailed, mrFailed) {
+		updateAgentStateOnDone(cwd, townRoot, exitType, issueID)
+	} else {
+		style.PrintWarning("skipping agent idle cleanup because push or MR submission failed")
+	}
 
 	// Nudge witness only after hook/cleanup state is updated. Otherwise witness can
 	// evaluate slot availability against stale hook_bead or cleanup_status and emit
