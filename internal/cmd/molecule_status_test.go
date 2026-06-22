@@ -54,13 +54,6 @@ func TestOutputMoleculeStatus_FormulaWispShowsWorkflowContext(t *testing.T) {
 		HasWork:         true,
 		PinnedBead:      &beads.Issue{ID: "tool-wisp-demo", Title: "demo-hello"},
 		AttachedFormula: "demo-hello",
-		Progress: &MoleculeProgressInfo{
-			RootID:     "tool-wisp-demo",
-			RootTitle:  "demo-hello",
-			TotalSteps: 3,
-			DoneSteps:  0,
-			ReadySteps: []string{"tool-wisp-step-1"},
-		},
 	}
 	status.NextAction = fallbackNextAction(status)
 
@@ -90,6 +83,9 @@ func TestOutputMoleculeStatus_FormulaWispShowsWorkflowContext(t *testing.T) {
 	}
 	if strings.Contains(output, "bd mol current") {
 		t.Fatalf("formula-only wisp should not suggest bd mol current, got:\n%s", output)
+	}
+	if strings.Contains(output, "Progress:") {
+		t.Fatalf("root-only formula wisp should not show child-step progress, got:\n%s", output)
 	}
 }
 

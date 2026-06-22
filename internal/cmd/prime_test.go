@@ -925,6 +925,33 @@ func TestCheckSlungWork_StandaloneFormulaUsesWorkflowOutput(t *testing.T) {
 	}
 }
 
+func TestCheckSlungWork_PlainHookedBeadUsesPreview(t *testing.T) {
+	ctx := RoleContext{Role: RoleCrew}
+	hookedBead := &beads.Issue{
+		ID:    "gt-plain123",
+		Title: "Plain hooked task",
+		Type:  "task",
+	}
+
+	var found bool
+	var gotErr error
+	output := captureStdout(t, func() {
+		found, gotErr = checkSlungWork(ctx, hookedBead)
+	})
+	if gotErr != nil {
+		t.Fatalf("checkSlungWork() error = %v", gotErr)
+	}
+	if !found {
+		t.Fatalf("checkSlungWork() = false, want true")
+	}
+	if !strings.Contains(output, "Then IMMEDIATELY run: `bd show gt-plain123`") {
+		t.Fatalf("expected plain hooked bead guidance, got:\n%s", output)
+	}
+	if strings.Contains(output, "ATTACHED FORMULA") || strings.Contains(output, "ATTACHED MOLECULE") {
+		t.Fatalf("plain hooked bead should not render workflow context, got:\n%s", output)
+	}
+}
+
 func TestWorkflowAttachmentForHookedBeadInfersKnownPatrolWisp(t *testing.T) {
 	for _, title := range []string{constants.MolRefineryPatrol, constants.MolRefineryPatrol + " (wisp)"} {
 		t.Run(title, func(t *testing.T) {

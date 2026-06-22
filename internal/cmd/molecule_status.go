@@ -512,10 +512,6 @@ func runMoleculeStatus(cmd *cobra.Command, args []string) error {
 				progress, _ := getMoleculeProgressInfo(b, attachment.AttachedMolecule)
 				status.Progress = progress
 				status.NextAction = determineNextAction(status)
-			} else if attachment.AttachedFormula != "" {
-				progress, _ := getMoleculeProgressInfo(b, hookBead.ID)
-				status.Progress = progress
-				status.NextAction = determineNextAction(status)
 			}
 		}
 	}

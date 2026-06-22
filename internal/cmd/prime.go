@@ -693,8 +693,9 @@ func checkSlungWork(ctx RoleContext, hookedBead *beads.Issue) (bool, error) {
 	attachment := workflowAttachmentForHookedBead(hookedBead)
 	hasWorkflow := hasWorkflowAttachment(attachment)
 	isPatrol := hasWorkflow && isPatrolFormula(attachment.AttachedFormula)
+	hasAttachedMolecule := hasWorkflow && attachment.AttachedMolecule != ""
 
-	outputAutonomousDirective(ctx, hookedBead, hasWorkflow, attachment.AttachedMolecule != "", isPatrol)
+	outputAutonomousDirective(ctx, hookedBead, hasWorkflow, hasAttachedMolecule, isPatrol)
 	outputHookedBeadDetails(hookedBead)
 
 	if hasWorkflow {
