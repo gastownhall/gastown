@@ -66,12 +66,13 @@ var patrolScanProgressInterval = 10 * time.Second
 
 // PatrolScanOutput is the JSON output format for patrol scan results.
 type PatrolScanOutput struct {
-	Rig         string                    `json:"rig"`
-	Timestamp   string                    `json:"timestamp"`
-	Zombies     *PatrolScanZombieOutput   `json:"zombies"`
-	Stalls      *PatrolScanStallOutput    `json:"stalls,omitempty"`
-	Completions *PatrolScanCompleteOutput `json:"completions,omitempty"`
-	Receipts    []witness.PatrolReceipt   `json:"receipts,omitempty"`
+	Rig         string                              `json:"rig"`
+	Timestamp   string                              `json:"timestamp"`
+	Zombies     *PatrolScanZombieOutput             `json:"zombies"`
+	Stalls      *PatrolScanStallOutput              `json:"stalls,omitempty"`
+	Completions *PatrolScanCompleteOutput           `json:"completions,omitempty"`
+	Receipts    []witness.PatrolReceipt             `json:"receipts,omitempty"`
+	CrewStall   *witness.DetectStalledCrewResult    `json:"crew_stall,omitempty"`
 }
 
 // PatrolScanZombieOutput holds zombie detection results.
@@ -168,6 +169,15 @@ func runPatrolScan(cmd *cobra.Command, args []string) error {
 		return witness.DiscoverCompletions(bd, workDir, rigName, router)
 	})
 
+	// Layer 2 (glaicier gt-e4b3 / gt-wwoh): detect crew sessions stuck at
+	// /clear prompts or rate-limit-loops. Hash-state persisted at
+	// <townRoot>/.gt/crew-hashes/<crew>.json across cycles. Detection-only
+	// for now — auto-action is a follow-up bead once we tune false-positive
+	// thresholds against accumulated signal data.
+	crewStallResult := runPatrolScanPhase(diagnostics, "crew stall detection", func() *witness.DetectStalledCrewResult {
+		return witness.DetectStalledCrew(workDir, rigName)
+	})
+
 	// Build patrol receipts for zombies
 	receipts := witness.BuildPatrolReceipts(rigName, zombieResult)
 
@@ -183,10 +193,10 @@ func runPatrolScan(cmd *cobra.Command, args []string) error {
 	}
 
 	if patrolScanJSON {
-		return outputPatrolScanJSON(rigName, timestamp, zombieResult, stallResult, completionResult, receipts)
+		return outputPatrolScanJSON(rigName, timestamp, zombieResult, stallResult, completionResult, receipts, crewStallResult)
 	}
 
-	return outputPatrolScanHuman(rigName, zombieResult, stallResult, completionResult, receipts)
+	return outputPatrolScanHuman(rigName, zombieResult, stallResult, completionResult, receipts, crewStallResult)
 }
 
 func runPatrolScanPhase[T any](diagnostics io.Writer, name string, fn func() T) T {
@@ -285,11 +295,12 @@ func sendZombieNotification(router *mail.Router, rigName string, result *witness
 	_ = router.Send(mayorMsg)
 }
 
-func outputPatrolScanJSON(rigName, timestamp string, zombieResult *witness.DetectZombiePolecatsResult, stallResult *witness.DetectStalledPolecatsResult, completionResult *witness.DiscoverCompletionsResult, receipts []witness.PatrolReceipt) error {
+func outputPatrolScanJSON(rigName, timestamp string, zombieResult *witness.DetectZombiePolecatsResult, stallResult *witness.DetectStalledPolecatsResult, completionResult *witness.DiscoverCompletionsResult, receipts []witness.PatrolReceipt, crewStallResult *witness.DetectStalledCrewResult) error {
 	output := PatrolScanOutput{
 		Rig:       rigName,
 		Timestamp: timestamp,
 		Receipts:  receipts,
+		CrewStall: crewStallResult,
 	}
 
 	// Zombies
@@ -366,7 +377,7 @@ func outputPatrolScanJSON(rigName, timestamp string, zombieResult *witness.Detec
 	return enc.Encode(output)
 }
 
-func outputPatrolScanHuman(rigName string, zombieResult *witness.DetectZombiePolecatsResult, stallResult *witness.DetectStalledPolecatsResult, completionResult *witness.DiscoverCompletionsResult, _ []witness.PatrolReceipt) error {
+func outputPatrolScanHuman(rigName string, zombieResult *witness.DetectZombiePolecatsResult, stallResult *witness.DetectStalledPolecatsResult, completionResult *witness.DiscoverCompletionsResult, _ []witness.PatrolReceipt, crewStallResult *witness.DetectStalledCrewResult) error {
 	fmt.Printf("%s Patrol scan: %s\n\n", style.Bold.Render("🔍"), rigName)
 
 	// Zombies
@@ -468,11 +479,23 @@ func outputPatrolScanHuman(rigName string, zombieResult *witness.DetectZombiePol
 		completionCount = len(completionResult.Discovered)
 	}
 
-	if zombieCount == 0 && stallCount == 0 && completionCount == 0 {
+	crewStuckCount := 0
+	if crewStallResult != nil {
+		crewStuckCount = len(crewStallResult.Stalled)
+	}
+
+	if zombieCount == 0 && stallCount == 0 && completionCount == 0 && crewStuckCount == 0 {
 		fmt.Printf("%s All clear — no issues detected\n", style.Success.Render("✓"))
 	} else {
-		fmt.Printf("Summary: %d zombie(s) (%d active-work), %d stall(s), %d completion(s)\n",
-			zombieCount, activeCount, stallCount, completionCount)
+		fmt.Printf("Summary: %d zombie(s) (%d active-work), %d stall(s), %d completion(s), %d crew-stuck\n",
+			zombieCount, activeCount, stallCount, completionCount, crewStuckCount)
+	}
+
+	if crewStuckCount > 0 {
+		fmt.Printf("\n%s Crew sessions stuck at prompt (%d):\n", style.Bold.Render("⚠"), crewStuckCount)
+		for _, c := range crewStallResult.Stalled {
+			fmt.Printf("  %s — %d unchanged cycles since %s\n", c.CrewName, c.StuckCycles, c.LastChanged)
+		}
 	}
 
 	return nil
