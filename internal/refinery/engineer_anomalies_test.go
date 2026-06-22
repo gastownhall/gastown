@@ -126,6 +126,40 @@ worker: nux`,
 	}
 }
 
+func TestDetectQueueAnomalies_MalformedMRFields(t *testing.T) {
+	now := time.Date(2026, 2, 10, 12, 0, 0, 0, time.UTC)
+	issues := []*beads.Issue{
+		{
+			ID:          "gt-missing-fields",
+			Status:      "open",
+			Description: "created by older tooling before MR fields existed",
+		},
+		{
+			ID:     "gt-missing-branch",
+			Status: "open",
+			Description: `target: main
+source_issue: gt-src`,
+		},
+	}
+
+	anomalies := detectQueueAnomalies(issues, now, 2*time.Hour, func(branch string) (bool, bool, error) {
+		t.Fatalf("branch existence should not be checked for malformed MR fields, got %q", branch)
+		return false, false, nil
+	})
+
+	if len(anomalies) != 2 {
+		t.Fatalf("expected 2 anomalies, got %d (%+v)", len(anomalies), anomalies)
+	}
+	for _, anomaly := range anomalies {
+		if anomaly.Type != "malformed-mr" {
+			t.Fatalf("anomaly type = %q, want malformed-mr", anomaly.Type)
+		}
+		if !strings.Contains(anomaly.Detail, "MR bead") {
+			t.Fatalf("anomaly detail missing MR context: %+v", anomaly)
+		}
+	}
+}
+
 func TestMalformedMRBranchEvidence(t *testing.T) {
 	tests := []struct {
 		name      string
