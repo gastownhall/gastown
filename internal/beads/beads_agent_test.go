@@ -685,6 +685,25 @@ func TestForIssueID_RoutedPrefixDropsStore(t *testing.T) {
 	}
 }
 
+func TestForAgentBeadDropsStore(t *testing.T) {
+	_, townBeadsDir, rigDir, rigBeadsDir := setupAgentRoutingTestTown(t)
+	bd := NewWithBeadsDirAndStore(rigDir, rigBeadsDir, newMockStorage())
+
+	target := bd.ForAgentBead()
+	if target == bd {
+		t.Fatal("ForAgentBead returned original wrapper, want town target")
+	}
+	if target.store != nil {
+		t.Fatal("ForAgentBead target retained in-process store")
+	}
+	if !target.noRoute {
+		t.Fatal("ForAgentBead target is not terminal noRoute wrapper")
+	}
+	if target.beadsDir != townBeadsDir {
+		t.Fatalf("target.beadsDir = %q, want %q", target.beadsDir, townBeadsDir)
+	}
+}
+
 func TestCreateOrReopenAgentBeadExistingUsesTownBeadsDir(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("test uses Unix shell script mock for bd")
