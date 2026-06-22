@@ -29,8 +29,8 @@ func TestDefaultLifecycleConfig(t *testing.T) {
 	if p.WispReaper.IntervalStr != "30m" {
 		t.Errorf("expected wisp_reaper interval 30m, got %s", p.WispReaper.IntervalStr)
 	}
-	if p.WispReaper.DeleteAgeStr != "168h" {
-		t.Errorf("expected wisp_reaper delete_age 168h, got %s", p.WispReaper.DeleteAgeStr)
+	if p.WispReaper.DeleteAgeStr != "24h" {
+		t.Errorf("expected wisp_reaper delete_age 24h, got %s", p.WispReaper.DeleteAgeStr)
 	}
 
 	if p.CompactorDog == nil || !p.CompactorDog.Enabled {

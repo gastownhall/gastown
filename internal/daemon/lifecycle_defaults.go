@@ -23,7 +23,7 @@ func DefaultLifecycleConfig() *DaemonPatrolConfig {
 				Enabled:      true,
 				IntervalStr:  "30m",
 				MaxAgeStr:    "24h",
-				DeleteAgeStr: "168h", // 7 days
+				DeleteAgeStr: "24h", // closed wisps deleted after 24h; live wisps table is scanned by mail/search, so keep it small (gt-ye21). Dolt AS OF retains history.
 			},
 			CompactorDog: &CompactorDogConfig{
 				Enabled:     true,

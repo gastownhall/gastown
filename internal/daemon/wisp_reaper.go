@@ -18,7 +18,13 @@ const (
 	// Wisps older than this are reaped (closed). Configurable via formula var max_age.
 	defaultWispMaxAge = 24 * time.Hour
 	// Closed wisps older than this are permanently deleted. Formula var: purge_age.
-	defaultWispDeleteAge = 7 * 24 * time.Hour
+	// Kept short (24h, was 7d): mail/search queries (SearchIssues with no
+	// ephemeral filter) scan the live wisps table, so a large backlog of closed
+	// wisps slows every read and, under churn, thundering-herds Dolt (gt-ye21).
+	// Deleted-wisp history is preserved via Dolt AS OF, so a short live-table
+	// retention is safe. Towns with very high wisp churn can lower further via
+	// `gt config set lifecycle.reaper.delete_age`.
+	defaultWispDeleteAge = 24 * time.Hour
 	// Alert threshold: if open wisp count exceeds this, the Dog should escalate.
 	// Shared with `gt reaper run` warning. See reaper.DefaultAlertThreshold.
 	wispAlertThreshold = reaper.DefaultAlertThreshold

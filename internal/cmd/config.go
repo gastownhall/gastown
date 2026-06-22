@@ -638,7 +638,7 @@ Supported keys:
   Lifecycle (Dolt data maintenance):
   lifecycle.reaper.enabled     Enable/disable wisp reaper (true/false)
   lifecycle.reaper.interval    Reaper check interval (default: 30m)
-  lifecycle.reaper.delete_age  Delete closed wisps after this duration (default: 168h / 7d)
+  lifecycle.reaper.delete_age  Delete closed wisps after this duration (default: 24h)
   lifecycle.compactor.enabled  Enable/disable compactor dog (true/false)
   lifecycle.compactor.interval Compactor check interval (default: 24h)
   lifecycle.compactor.threshold Commit count before compaction (default: 500)
@@ -1173,7 +1173,7 @@ func getLifecycleConfig(townRoot, key string) error {
 		if patrolConfig != nil && patrolConfig.Patrols != nil && patrolConfig.Patrols.WispReaper != nil && patrolConfig.Patrols.WispReaper.DeleteAgeStr != "" {
 			value = patrolConfig.Patrols.WispReaper.DeleteAgeStr
 		} else {
-			value = "168h (default, 7 days)"
+			value = "24h (default)"
 		}
 
 	// Compactor
