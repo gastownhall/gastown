@@ -44,7 +44,7 @@ func TestExtractBeadIDFromArgs(t *testing.T) {
 	}
 }
 
-func TestBdShowInvocationPinsRoutedMetadataDatabase(t *testing.T) {
+func TestBdShowInvocationPinsRoutedBeadsDirWithoutDatabaseOverride(t *testing.T) {
 	townRoot := setupShowInvocationTown(t)
 	rigDir := filepath.Join(townRoot, "gastown", "mayor", "rig")
 
@@ -74,23 +74,20 @@ func TestBdShowInvocationPinsRoutedMetadataDatabase(t *testing.T) {
 		name     string
 		args     []string
 		wantDir  string
-		wantDB   string
 		wantHost string
 		wantPort string
 	}{
 		{
-			name:     "gt bead pins gastown despite stale ambient db",
+			name:     "gt bead pins gastown dir despite stale ambient db",
 			args:     []string{"gt-abc", "--json"},
 			wantDir:  rigDir,
-			wantDB:   "gastown",
 			wantHost: "127.0.0.2",
 			wantPort: "4407",
 		},
 		{
-			name:     "hq bead remains town hq despite stale ambient db",
+			name:     "hq bead remains town dir despite stale ambient db",
 			args:     []string{"--json", "hq-abc"},
 			wantDir:  townRoot,
-			wantDB:   "hq",
 			wantHost: "127.0.0.1",
 			wantPort: "3307",
 		},
@@ -114,8 +111,8 @@ func TestBdShowInvocationPinsRoutedMetadataDatabase(t *testing.T) {
 			if envMap["BEADS_DIR"] != wantBeadsDir {
 				t.Fatalf("BEADS_DIR = %q, want %q in %v", envMap["BEADS_DIR"], wantBeadsDir, invocation.Env)
 			}
-			if envMap["BEADS_DOLT_SERVER_DATABASE"] != tc.wantDB {
-				t.Fatalf("BEADS_DOLT_SERVER_DATABASE = %q, want %q in %v", envMap["BEADS_DOLT_SERVER_DATABASE"], tc.wantDB, invocation.Env)
+			if value, ok := envMap["BEADS_DOLT_SERVER_DATABASE"]; ok {
+				t.Fatalf("BEADS_DOLT_SERVER_DATABASE should be stripped, got %q in %v", value, invocation.Env)
 			}
 			if envMap["BEADS_DOLT_SERVER_HOST"] != tc.wantHost {
 				t.Fatalf("BEADS_DOLT_SERVER_HOST = %q, want %q in %v", envMap["BEADS_DOLT_SERVER_HOST"], tc.wantHost, invocation.Env)
@@ -123,8 +120,8 @@ func TestBdShowInvocationPinsRoutedMetadataDatabase(t *testing.T) {
 			if envMap["BEADS_DOLT_SERVER_PORT"] != tc.wantPort || envMap["BEADS_DOLT_PORT"] != tc.wantPort {
 				t.Fatalf("ports = server:%q legacy:%q, want %s in %v", envMap["BEADS_DOLT_SERVER_PORT"], envMap["BEADS_DOLT_PORT"], tc.wantPort, invocation.Env)
 			}
-			if countEnvKey(invocation.Env, "BEADS_DIR") != 1 || countEnvKey(invocation.Env, "BEADS_DOLT_SERVER_DATABASE") != 1 {
-				t.Fatalf("expected single BEADS_DIR and DB env, got %v", invocation.Env)
+			if countEnvKey(invocation.Env, "BEADS_DIR") != 1 || countEnvKey(invocation.Env, "BEADS_DOLT_SERVER_DATABASE") != 0 {
+				t.Fatalf("expected single BEADS_DIR and no DB env, got %v", invocation.Env)
 			}
 			for _, key := range []string{"BEADS_DB", "BD_DB", "BEADS_DOLT_DATA_DIR"} {
 				if value, ok := envMap[key]; ok {

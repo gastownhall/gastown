@@ -356,8 +356,8 @@ exit /b 0
 		if beadsDir != wantBeadsDir {
 			t.Fatalf("bd %s used BEADS_DIR %q, want %q (args: %q)", kind, beadsDir, wantBeadsDir, args)
 		}
-		if database != "gastown" {
-			t.Fatalf("bd %s used BEADS_DOLT_SERVER_DATABASE %q, want gastown (args: %q)", kind, database, args)
+		if database != "" {
+			t.Fatalf("bd %s leaked BEADS_DOLT_SERVER_DATABASE %q, want empty so bd resolves from BEADS_DIR (args: %q)", kind, database, args)
 		}
 		if beadsDB != "" || bdDB != "" || dataDir != "" {
 			t.Fatalf("bd %s leaked stale DB env BEADS_DB=%q BD_DB=%q BEADS_DOLT_DATA_DIR=%q (args: %q)", kind, beadsDB, bdDB, dataDir, args)

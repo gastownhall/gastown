@@ -73,9 +73,8 @@ func isBDTargetEnv(entry string) bool {
 }
 
 // BuildPinnedBDEnv returns env for a bd subprocess pinned to beadsDir. BEADS_DIR
-// and the metadata-backed Dolt database are the authoritative target selectors;
-// inherited selectors are stripped first so stale shell state cannot make bd
-// write to a different database than the selected .beads directory.
+// is the authoritative target selector; inherited database selectors are
+// stripped so bd can apply its own .beads/config/redirect database resolution.
 func BuildPinnedBDEnv(base []string, beadsDir string) []string {
 	env := SuppressBDSideEffects(StripBDTargetEnv(base))
 	if beadsDir == "" {
@@ -83,9 +82,6 @@ func BuildPinnedBDEnv(base []string, beadsDir string) []string {
 	}
 	env = append(env, "BEADS_DIR="+beadsDir)
 	env = append(env, doltTargetEnvFromBeadsDir(beadsDir)...)
-	if dbEnv := DatabaseEnv(beadsDir); dbEnv != "" {
-		env = append(env, dbEnv)
-	}
 	return addGTDerivedDoltTargetEnv(env)
 }
 

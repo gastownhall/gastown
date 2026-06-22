@@ -45,10 +45,10 @@ func TestConvoyStageBDHelpersPinRouteMetadataUnderStaleEnv(t *testing.T) {
 	}
 
 	logs := readBDEnvLog(t, logPath)
-	assertBDEnvLog(t, findBDEnvLog(t, logs, "show gt-abc"), rigDir, "gastown", "127.0.0.2", "4407")
-	assertBDEnvLog(t, findBDEnvLog(t, logs, "dep list gt-abc"), rigDir, "gastown", "127.0.0.2", "4407")
-	assertBDEnvLog(t, findBDEnvLog(t, logs, "list --parent=gt-abc"), rigDir, "gastown", "127.0.0.2", "4407")
-	assertBDEnvLog(t, findBDEnvLog(t, logs, "show hq-cv-found"), townRoot, "hq", "127.0.0.1", "3307")
+	assertBDEnvLog(t, findBDEnvLog(t, logs, "show gt-abc"), rigDir, "", "127.0.0.2", "4407")
+	assertBDEnvLog(t, findBDEnvLog(t, logs, "dep list gt-abc"), rigDir, "", "127.0.0.2", "4407")
+	assertBDEnvLog(t, findBDEnvLog(t, logs, "list --parent=gt-abc"), rigDir, "", "127.0.0.2", "4407")
+	assertBDEnvLog(t, findBDEnvLog(t, logs, "show hq-cv-found"), townRoot, "", "127.0.0.1", "3307")
 }
 
 func TestSlingAutoConvoyCheckPinsTrackerShowToHQUnderStaleEnv(t *testing.T) {
@@ -64,8 +64,8 @@ func TestSlingAutoConvoyCheckPinsTrackerShowToHQUnderStaleEnv(t *testing.T) {
 	}
 
 	logs := readBDEnvLog(t, logPath)
-	assertBDEnvLogWithBeadsDir(t, findBDEnvLog(t, logs, "sql SELECT issue_id"), filepath.Join(townRoot, ".beads"), filepath.Join(townRoot, ".beads"), "hq", "127.0.0.1", "3307")
-	assertBDEnvLog(t, findBDEnvLog(t, logs, "show hq-cv-found"), townRoot, "hq", "127.0.0.1", "3307")
+	assertBDEnvLogWithBeadsDir(t, findBDEnvLog(t, logs, "sql SELECT issue_id"), filepath.Join(townRoot, ".beads"), filepath.Join(townRoot, ".beads"), "", "127.0.0.1", "3307")
+	assertBDEnvLog(t, findBDEnvLog(t, logs, "show hq-cv-found"), townRoot, "", "127.0.0.1", "3307")
 }
 
 func setupRoutedBDEnvStub(t *testing.T) (townRoot, rigDir, logPath string) {

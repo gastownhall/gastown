@@ -106,7 +106,7 @@ func executeSling(params SlingParams) (*SlingResult, error) {
 
 	beadsDir := params.BeadsDir
 	if beadsDir == "" {
-		beadsDir = filepath.Join(townRoot, ".beads")
+		beadsDir = beads.ResolveBeadsDirForID(filepath.Join(townRoot, ".beads"), params.BeadID)
 	}
 
 	result := &SlingResult{
@@ -171,6 +171,24 @@ func executeSling(params SlingParams) (*SlingResult, error) {
 
 	if params.RigName != "" {
 		if err := verifyBeadExistsInTargetRigDatabase(params.BeadID, params.RigName, townRoot); err != nil {
+			result.ErrMsg = err.Error()
+			return result, err
+		}
+	}
+
+	if params.FormulaName != "" {
+		preflightVars := append([]string(nil), loadRigCommandVars(townRoot, params.RigName)...)
+		preflightVars = append(preflightVars, params.Vars...)
+		if params.BaseBranch != "" && params.BaseBranch != "main" {
+			preflightVars = append(preflightVars, fmt.Sprintf("base_branch=%s", params.BaseBranch))
+		}
+		if params.ResumeBranch != "" {
+			preflightVars = append(preflightVars, fmt.Sprintf("resume_branch=%s", params.ResumeBranch))
+		}
+		if priorVars := lookupPriorAttempt(beadsDir, params.BeadID); len(priorVars) > 0 {
+			preflightVars = append(preflightVars, priorVars...)
+		}
+		if err := preflightFormulaBond(params.FormulaName, params.BeadID, info.Title, "", townRoot, preflightVars); err != nil {
 			result.ErrMsg = err.Error()
 			return result, err
 		}

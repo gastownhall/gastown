@@ -1030,6 +1030,44 @@ type FormulaOnBeadResult struct {
 	FormulaVars []string // Vars used to instantiate/render the formula
 }
 
+func formulaVarsForBead(formulaName, beadID, title string, extraVars []string) []string {
+	vars := []string{
+		fmt.Sprintf("feature=%s", title),
+		fmt.Sprintf("issue=%s", beadID),
+	}
+	vars = append(vars, extraVars...)
+	return ensureFormulaRequiredVars(formulaName, vars)
+}
+
+func preflightFormulaBond(formulaName, beadID, title, hookWorkDir, townRoot string, extraVars []string) error {
+	formulaWorkDir := beads.ResolveHookDir(townRoot, beadID, hookWorkDir)
+	vars := formulaVarsForBead(formulaName, beadID, title, extraVars)
+	if err := preflightFormulaBondWithFormula(formulaName, beadID, formulaWorkDir, townRoot, vars); err == nil {
+		return nil
+	} else {
+		resolvedFormula, cleanup := resolveFormulaToTempFile(formulaName)
+		if cleanup != nil {
+			defer cleanup()
+		}
+		if resolvedFormula != formulaName {
+			if retryErr := preflightFormulaBondWithFormula(resolvedFormula, beadID, formulaWorkDir, townRoot, vars); retryErr == nil {
+				return nil
+			} else {
+				return fmt.Errorf("formula bond preflight for %s on %s failed: %w (embedded retry: %v)", formulaName, beadID, err, retryErr)
+			}
+		}
+		return fmt.Errorf("formula bond preflight for %s on %s failed: %w", formulaName, beadID, err)
+	}
+}
+
+func preflightFormulaBondWithFormula(formulaName, beadID, formulaWorkDir, townRoot string, vars []string) error {
+	args := []string{"mol", "bond", formulaName, beadID, "--dry-run", "--ephemeral"}
+	for _, variable := range vars {
+		args = append(args, "--var", variable)
+	}
+	return BdCmd(args...).Dir(formulaWorkDir).WithGTRoot(townRoot).Run()
+}
+
 // InstantiateFormulaOnBead creates a wisp from a formula, bonds it to a bead.
 // This is the formula-on-bead pattern used by issue #288 for auto-applying mol-polecat-work.
 //
@@ -1084,11 +1122,9 @@ func InstantiateFormulaOnBead(ctx context.Context, formulaName, beadID, title, h
 
 	// Build variable list once so both legacy and fallback paths use
 	// identical formula inputs.
+	formulaVars := formulaVarsForBead(formulaName, beadID, title, extraVars)
 	featureVar := fmt.Sprintf("feature=%s", title)
 	issueVar := fmt.Sprintf("issue=%s", beadID)
-	formulaVars := []string{featureVar, issueVar}
-	formulaVars = append(formulaVars, extraVars...)
-	formulaVars = ensureFormulaRequiredVars(formulaName, formulaVars)
 
 	// Step 2: Create wisp with feature and issue variables from bead.
 	// Use resolvedFormula which may be a temp file path if the embedded fallback was used.

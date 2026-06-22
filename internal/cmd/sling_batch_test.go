@@ -779,8 +779,8 @@ exit 0
 	if fields[2] != townBeads {
 		t.Fatalf("BEADS_DIR = %q, want %q", fields[2], townBeads)
 	}
-	if fields[3] != "hq" {
-		t.Fatalf("BEADS_DOLT_SERVER_DATABASE = %q, want hq", fields[3])
+	if fields[3] != "" {
+		t.Fatalf("BEADS_DOLT_SERVER_DATABASE should be stripped, got %q", fields[3])
 	}
 	if fields[4] != "" || fields[5] != "" || fields[6] != "" {
 		t.Fatalf("stale DB env should be stripped, got BEADS_DB=%q BD_DB=%q BEADS_DOLT_DATA_DIR=%q", fields[4], fields[5], fields[6])

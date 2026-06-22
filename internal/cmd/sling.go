@@ -703,13 +703,40 @@ func runSling(cmd *cobra.Command, args []string) (retErr error) {
 	// that executeSling does not cover. The rig-target case could be factored out
 	// to use executeSling, limiting this to non-rig targets only.
 	//
-	// Resolve target agent using shared dispatch logic.
-	// Note: args[1] == args[len(args)-1] here because batch mode (len(args) > 2
-	// with rig last arg) exits at line 234. The only remaining case is len(args) <= 2.
 	var target string
 	if len(args) > 1 {
 		target = args[1]
 	}
+
+	if formulaName == "" && !slingHookRawBead && isPolecatWorkTarget(target) {
+		targetRig := ""
+		if rigName, isRig := IsRigName(target); isRig {
+			targetRig = rigName
+		} else if parts := strings.SplitN(target, "/", 2); len(parts) >= 1 {
+			targetRig = parts[0]
+		}
+		formulaName = resolveFormula(slingFormula, false, townRoot, targetRig)
+		preflightVars := append([]string(nil), loadRigCommandVars(townRoot, targetRig)...)
+		preflightVars = append(preflightVars, slingVars...)
+		if slingBaseBranch != "" && slingBaseBranch != "main" {
+			preflightVars = append(preflightVars, fmt.Sprintf("base_branch=%s", slingBaseBranch))
+		}
+		if slingResumeBranch != "" {
+			preflightVars = append(preflightVars, fmt.Sprintf("resume_branch=%s", slingResumeBranch))
+		}
+		if err := preflightFormulaBond(formulaName, beadID, info.Title, "", townRoot, preflightVars); err != nil {
+			return err
+		}
+	} else if formulaName != "" && isPolecatWorkTarget(target) {
+		preflightVars := append([]string(nil), slingVars...)
+		if err := preflightFormulaBond(formulaName, beadID, info.Title, "", townRoot, preflightVars); err != nil {
+			return err
+		}
+	}
+
+	// Resolve target agent using shared dispatch logic.
+	// Note: args[1] == args[len(args)-1] here because batch mode (len(args) > 2
+	// with rig last arg) exits at line 234. The only remaining case is len(args) <= 2.
 	resolved, err := resolveTarget(target, ResolveTargetOptions{
 		DryRun:       slingDryRun,
 		Force:        force,
