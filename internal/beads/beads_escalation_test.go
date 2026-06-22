@@ -337,6 +337,27 @@ func TestFilterEscalationRecordsSkipsMailMessages(t *testing.T) {
 	}
 }
 
+func TestAckEscalation_AgentShapedLookupErrorFailsClosed(t *testing.T) {
+	townRoot, townBeadsDir, rigDir, rigBeadsDir := setupAgentRoutingTestTown(t)
+	logPath := filepath.Join(townRoot, "bd.log")
+	installMockBDCreateRecorder(t, logPath)
+	t.Setenv("MOCK_BD_SHOW_ERROR", "database not found")
+
+	bd := NewWithBeadsDir(rigDir, rigBeadsDir)
+	if err := bd.AckEscalation("gt-gastown-polecat-cleanup", "tester"); err == nil {
+		t.Fatal("AckEscalation succeeded despite town lookup error")
+	}
+
+	logOutput := readMockBDLog(t, logPath)
+	if !strings.Contains(logOutput, "call="+townBeadsDir+" args=show gt-gastown-polecat-cleanup --json") {
+		t.Fatalf("mock bd log missing town lookup:\n%s", logOutput)
+	}
+	if strings.Contains(logOutput, "call="+rigBeadsDir+" args=show gt-gastown-polecat-cleanup --json") ||
+		strings.Contains(logOutput, "call="+rigBeadsDir+" args=update gt-gastown-polecat-cleanup") {
+		t.Fatalf("lookup error fell through to rig escalation operation:\n%s", logOutput)
+	}
+}
+
 func TestBumpSeverity(t *testing.T) {
 	tests := []struct {
 		input string
