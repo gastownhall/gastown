@@ -17,7 +17,7 @@
     "base_ref": "main",
     "base_sha": "907eca9d0",
     "head_ref": "polecat/scavenger/gt-pr-sheriff-4149-cleanup@mqk0eihk",
-    "head_sha": "0f493fb93a0cb7ac97546a3761b3f04dec6a9f9b",
+    "head_sha": "2004fd9c1afa2a7fbd114d7ccd0507beab68ae2c",
     "diff_summary": {
       "additions": 269,
       "deletions": 32,
@@ -60,8 +60,8 @@
   },
   "artifacts": [
     {"id": "label-snapshot", "kind": "label_snapshot", "uri": "urn:bead:gt-pr-sheriff-4149-cleanup:labels", "actor": "scavenger", "created_at": "2026-06-22T15:00:00Z", "digest": null, "summary": "PR #4149 is kind/bug priority/p2; replacement branch received 5/5 post-review approvals and is treated as review-approved for the replacement merge path."},
-    {"id": "implementation-commit", "kind": "git_commit", "uri": "urn:git:commit:0f493fb93a0cb7ac97546a3761b3f04dec6a9f9b", "actor": "scavenger", "created_at": "2026-06-22T14:50:00Z", "digest": "0f493fb93a0cb7ac97546a3761b3f04dec6a9f9b", "summary": "Final replacement implementation head."},
-    {"id": "attribution-commit", "kind": "git_commit", "uri": "urn:git:commit:e6958df0bfa6360b5aa850009616ef57ec6e46e7", "actor": "scavenger", "created_at": "2026-06-22T14:45:00Z", "digest": "e6958df0bfa6360b5aa850009616ef57ec6e46e7", "summary": "Main fix commit includes PR #4149 reference and Co-authored-by attribution for dementus/athosmartins."},
+    {"id": "implementation-commit", "kind": "git_commit", "uri": "urn:git:commit:2004fd9c1afa2a7fbd114d7ccd0507beab68ae2c", "actor": "scavenger", "created_at": "2026-06-22T14:50:00Z", "digest": "2004fd9c1afa2a7fbd114d7ccd0507beab68ae2c", "summary": "Final rebased replacement implementation head."},
+    {"id": "attribution-commit", "kind": "git_commit", "uri": "urn:git:commit:1cd8f61d137215c1afe7c850b66bde54812ff7e6", "actor": "scavenger", "created_at": "2026-06-22T14:45:00Z", "digest": "1cd8f61d137215c1afe7c850b66bde54812ff7e6", "summary": "Main rebased fix commit includes PR #4149 reference and Co-authored-by attribution for dementus/athosmartins."},
     {"id": "verification-focused", "kind": "test_log", "uri": "urn:local:test:focused-2026-06-22", "actor": "scavenger", "created_at": "2026-06-22T14:58:00Z", "digest": null, "summary": "Focused checks passed: internal/github parser tests, CGO_ENABLED=0 internal/cmd no-merge/fail-closed tests, and CGO_ENABLED=0 internal/web tests."},
     {"id": "closure-intent", "kind": "bead_note", "uri": "urn:bead:gt-pr-sheriff-4149-cleanup:notes:closure-intent", "actor": "scavenger", "created_at": "2026-06-22T15:02:00Z", "digest": null, "summary": "Original PR #4149 should be superseded only after the replacement branch lands."},
     {"id": "blocker-scan", "kind": "review_report", "uri": "urn:pr-sheriff:blocker-scan:4149", "actor": "scavenger", "created_at": "2026-06-22T15:01:00Z", "digest": null, "summary": "Scanned labels, PR comments, and review comments. Original PR is review-failed/red, so merge-as-is remains blocked; replacement branch has no unresolved blocker after post-review fix."},
@@ -103,8 +103,8 @@
       "internal/web/fetcher.go"
     ],
     "commits": [
-      "e6958df0bfa6360b5aa850009616ef57ec6e46e7",
-      "0f493fb93a0cb7ac97546a3761b3f04dec6a9f9b"
+      "1cd8f61d137215c1afe7c850b66bde54812ff7e6",
+      "2004fd9c1afa2a7fbd114d7ccd0507beab68ae2c"
     ]
   },
   "evidence": {
@@ -133,11 +133,11 @@
       {"id": "pre-05", "independence_key": "pre-policy", "artifact_ref": "pre-05-artifact", "reviewed_action_ref": "action-plan-4149-replacement", "completed_at": "2026-06-22T14:25:30Z", "actor": "pre-review-05", "verdict": "approve", "summary": "Bug replacement is policy-allowed and scoped."}
     ],
     "post_implementation_reviews": [
-      {"id": "post-01", "independence_key": "post-correctness", "artifact_ref": "post-01-artifact", "reviewed_action_ref": "action-plan-4149-replacement", "reviewed_head_sha": "0f493fb93a0cb7ac97546a3761b3f04dec6a9f9b", "completed_at": "2026-06-22T15:00:30Z", "actor": "post-review-01", "verdict": "approve", "summary": "Final head correctly implements repo targeting and fail-closed behavior."},
-      {"id": "post-02", "independence_key": "post-security", "artifact_ref": "post-02-artifact", "reviewed_action_ref": "action-plan-4149-replacement", "reviewed_head_sha": "0f493fb93a0cb7ac97546a3761b3f04dec6a9f9b", "completed_at": "2026-06-22T15:01:30Z", "actor": "post-review-02", "verdict": "approve", "summary": "Final head leaves source work open/hooked on PR failure and avoids raw URL leaks."},
-      {"id": "post-03", "independence_key": "post-tests", "artifact_ref": "post-03-artifact", "reviewed_action_ref": "action-plan-4149-replacement", "reviewed_head_sha": "0f493fb93a0cb7ac97546a3761b3f04dec6a9f9b", "completed_at": "2026-06-22T15:02:30Z", "actor": "post-review-03", "verdict": "approve", "summary": "Final head has required parser, fail-closed, arg-vector, and hook-cleanup tests."},
-      {"id": "post-04", "independence_key": "post-cleanup", "artifact_ref": "post-04-artifact", "reviewed_action_ref": "action-plan-4149-replacement", "reviewed_head_sha": "0f493fb93a0cb7ac97546a3761b3f04dec6a9f9b", "completed_at": "2026-06-22T15:03:30Z", "actor": "post-review-04", "verdict": "approve", "summary": "Final head is cleanup-first and avoids extra docs/settings layers."},
-      {"id": "post-05", "independence_key": "post-policy", "artifact_ref": "post-05-artifact", "reviewed_action_ref": "action-plan-4149-replacement", "reviewed_head_sha": "0f493fb93a0cb7ac97546a3761b3f04dec6a9f9b", "completed_at": "2026-06-22T15:04:30Z", "actor": "post-review-05", "verdict": "approve", "summary": "Final head preserves attribution and remains bug-fix scope."}
+      {"id": "post-01", "independence_key": "post-correctness", "artifact_ref": "post-01-artifact", "reviewed_action_ref": "action-plan-4149-replacement", "reviewed_head_sha": "2004fd9c1afa2a7fbd114d7ccd0507beab68ae2c", "completed_at": "2026-06-22T15:00:30Z", "actor": "post-review-01", "verdict": "approve", "summary": "Final rebased code head correctly implements repo targeting and fail-closed behavior."},
+      {"id": "post-02", "independence_key": "post-security", "artifact_ref": "post-02-artifact", "reviewed_action_ref": "action-plan-4149-replacement", "reviewed_head_sha": "2004fd9c1afa2a7fbd114d7ccd0507beab68ae2c", "completed_at": "2026-06-22T15:01:30Z", "actor": "post-review-02", "verdict": "approve", "summary": "Final rebased code head leaves source work open/hooked on PR failure and avoids raw URL leaks."},
+      {"id": "post-03", "independence_key": "post-tests", "artifact_ref": "post-03-artifact", "reviewed_action_ref": "action-plan-4149-replacement", "reviewed_head_sha": "2004fd9c1afa2a7fbd114d7ccd0507beab68ae2c", "completed_at": "2026-06-22T15:02:30Z", "actor": "post-review-03", "verdict": "approve", "summary": "Final rebased code head has required parser, fail-closed, arg-vector, and hook-cleanup tests."},
+      {"id": "post-04", "independence_key": "post-cleanup", "artifact_ref": "post-04-artifact", "reviewed_action_ref": "action-plan-4149-replacement", "reviewed_head_sha": "2004fd9c1afa2a7fbd114d7ccd0507beab68ae2c", "completed_at": "2026-06-22T15:03:30Z", "actor": "post-review-04", "verdict": "approve", "summary": "Final rebased code head is cleanup-first and avoids extra docs/settings layers."},
+      {"id": "post-05", "independence_key": "post-policy", "artifact_ref": "post-05-artifact", "reviewed_action_ref": "action-plan-4149-replacement", "reviewed_head_sha": "2004fd9c1afa2a7fbd114d7ccd0507beab68ae2c", "completed_at": "2026-06-22T15:04:30Z", "actor": "post-review-05", "verdict": "approve", "summary": "Final rebased code head preserves attribution and remains bug-fix scope."}
     ]
   },
   "cleanup_first": {
@@ -187,8 +187,8 @@
     "replacement_change_url": null,
     "replacement_branch": "polecat/scavenger/gt-pr-sheriff-4149-cleanup@mqk0eihk",
     "replacement_commit_refs": [
-      "e6958df0bfa6360b5aa850009616ef57ec6e46e7",
-      "0f493fb93a0cb7ac97546a3761b3f04dec6a9f9b"
+      "1cd8f61d137215c1afe7c850b66bde54812ff7e6",
+      "2004fd9c1afa2a7fbd114d7ccd0507beab68ae2c"
     ],
     "original_author": "athosmartins",
     "evidence_reuse": {
@@ -226,7 +226,7 @@
     "merge_path_allowed": true,
     "blocking_gates": [],
     "target_change_url": "urn:git-branch:polecat/scavenger/gt-pr-sheriff-4149-cleanup@mqk0eihk",
-    "target_head_sha": "0f493fb93a0cb7ac97546a3761b3f04dec6a9f9b",
+    "target_head_sha": "2004fd9c1afa2a7fbd114d7ccd0507beab68ae2c",
     "decided_by": "scavenger",
     "decided_at": "2026-06-22T15:05:00Z",
     "reason": "All PR Sheriff evidence gates passed for the replacement branch head.",
