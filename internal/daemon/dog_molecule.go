@@ -10,7 +10,9 @@ import (
 	"strings"
 	"time"
 
+	beadsdk "github.com/steveyegge/beads"
 	"github.com/steveyegge/gastown/internal/beads"
+	"github.com/steveyegge/gastown/internal/runtime"
 )
 
 const (
@@ -24,12 +26,55 @@ const (
 	// failure back into a clean close instead of a permanent orphan.
 	dogCloseMaxAttempts = 3
 	dogCloseRetryDelay  = 500 * time.Millisecond
+
+	// dogCloseActor labels close events for dog-molecule teardown closes routed
+	// through the in-process store.
+	dogCloseActor = "daemon-dog"
 )
 
-// closeWisp runs `bd close <id>` (plus any extra args) with bounded retries so a
-// transient Dolt error does not leave the wisp open. Returns the final error if
-// every attempt fails.
+// closeWisp closes a wisp (plus any extra args) with bounded retries so a
+// transient Dolt error does not leave it open. Returns the final error if every
+// attempt fails.
+//
+// When the daemon's in-process store is available, the close goes through the
+// store (store.CloseIssue) instead of spawning a `bd close` subprocess. Each bd
+// subprocess opens its own short-lived Dolt connection pool, so under patrol
+// load the per-cycle close+retry fan-out is a primary source of the connection
+// amplification that wedges the sql-server listener (gt-ye21/#4292). The store
+// reuses the daemon's single long-lived connection. The store UPDATE is
+// unconditional (matching the old `--force`) and idempotent on an already-closed
+// wisp, so re-closing a step already closed via closeStep stays a no-op.
 func (dm *dogMol) closeWisp(id string, extra ...string) error {
+	if dm.store != nil {
+		return dm.closeWispViaStore(id, extra...)
+	}
+	return dm.closeWispViaBd(id, extra...)
+}
+
+// closeWispViaStore closes a wisp through the in-process store with the same
+// bounded retry as the subprocess path. A "not found" error is treated as a
+// successful teardown — the wisp was already reaped/closed elsewhere.
+func (dm *dogMol) closeWispViaStore(id string, extra ...string) error {
+	reason := closeReasonFromArgs(extra)
+	session := runtime.SessionIDFromEnv()
+	var err error
+	for attempt := 1; attempt <= dogCloseMaxAttempts; attempt++ {
+		ctx, cancel := context.WithTimeout(context.Background(), bdMolTimeout)
+		err = dm.store.CloseIssue(ctx, id, reason, dogCloseActor, session)
+		cancel()
+		if err == nil || isBenignCloseErr(err) {
+			return nil
+		}
+		if attempt < dogCloseMaxAttempts {
+			time.Sleep(time.Duration(attempt) * dogCloseRetryDelay)
+		}
+	}
+	return err
+}
+
+// closeWispViaBd is the subprocess fallback used when no in-process store is
+// available (e.g. during daemon shutdown after stores are released).
+func (dm *dogMol) closeWispViaBd(id string, extra ...string) error {
 	args := append([]string{"close", id}, extra...)
 	var err error
 	for attempt := 1; attempt <= dogCloseMaxAttempts; attempt++ {
@@ -43,12 +88,31 @@ func (dm *dogMol) closeWisp(id string, extra ...string) error {
 	return err
 }
 
+// closeReasonFromArgs extracts the value following "--reason" in dog close extra
+// args. The other dog close flag, "--force", needs no translation: the store
+// close UPDATE is already unconditional (force semantics).
+func closeReasonFromArgs(extra []string) string {
+	for i := 0; i+1 < len(extra); i++ {
+		if extra[i] == "--reason" {
+			return extra[i+1]
+		}
+	}
+	return ""
+}
+
+// isBenignCloseErr reports whether a store close error is safe to treat as a
+// completed teardown: the wisp no longer exists to close.
+func isBenignCloseErr(err error) bool {
+	return err != nil && strings.Contains(err.Error(), "not found")
+}
+
 // dogMol tracks a molecule (wisp) lifecycle for a daemon dog patrol.
 // Graceful degradation: if bd fails, the dog still does its work — molecule
 // tracking is observability, not control flow.
 type dogMol struct {
 	rootID   string            // Root wisp ID (e.g., "gt-wisp-abc123"), empty if pour failed.
 	stepIDs  map[string]string // step slug -> wisp issue ID
+	store    beadsdk.Storage   // in-process town store; when non-nil, closes route through it instead of a bd subprocess (gt-ye21/#4292). nil falls back to bd.
 	bdPath   string
 	townRoot string
 	logger   interface{ Printf(string, ...interface{}) }
@@ -68,6 +132,7 @@ type pourResult struct {
 func (d *Daemon) pourDogMolecule(formulaName string, vars map[string]string) *dogMol {
 	dm := &dogMol{
 		stepIDs:  make(map[string]string),
+		store:    d.beadsStores["hq"], // town-level store; nil-safe (closeWisp falls back to bd)
 		bdPath:   d.bdPath,
 		townRoot: d.config.TownRoot,
 		logger:   d.logger,

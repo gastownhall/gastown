@@ -5,9 +5,25 @@ import (
 	"os"
 	"os/exec"
 	"strings"
+	"sync/atomic"
 
 	"github.com/steveyegge/gastown/internal/util"
 )
+
+// bdSpawnCount counts bd subprocesses configured via ConfigureCommand (every
+// bd call that flows through the shared Gas Town bd policy). It exists to
+// measure connection-amplification reduction for gt-ye21/#4292: each bd
+// subprocess opens its own short-lived Dolt connection pool, so spawn count is
+// a direct proxy for connection churn under patrol load.
+var bdSpawnCount atomic.Int64
+
+// BDSpawnCount returns the cumulative number of bd subprocesses configured via
+// ConfigureCommand since process start (or since the last ResetBDSpawnCount).
+func BDSpawnCount() int64 { return bdSpawnCount.Load() }
+
+// ResetBDSpawnCount zeroes the spawn counter. Used by tests and per-window
+// measurement to count spawns within a bounded interval.
+func ResetBDSpawnCount() { bdSpawnCount.Store(0) }
 
 // SubprocessEnvMode describes how a bd subprocess should target Dolt and
 // whether it may mutate state. New raw bd call sites should use this helper so
@@ -39,6 +55,7 @@ func CommandContext(ctx context.Context, dir, fallbackBeadsDir string, mode Subp
 // ConfigureCommand applies the shared bd subprocess policy to an existing
 // command. This is for callers that need a custom bd path.
 func ConfigureCommand(cmd *exec.Cmd, dir, fallbackBeadsDir string, mode SubprocessEnvMode) {
+	bdSpawnCount.Add(1)
 	cmd.Dir = dir
 	cmd.Env = EnvForSubprocessMode(os.Environ(), fallbackBeadsDir, mode)
 	util.SetDetachedProcessGroup(cmd)
