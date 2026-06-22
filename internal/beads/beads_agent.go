@@ -621,21 +621,9 @@ func (b *Beads) GetAgentBead(id string) (*Issue, *AgentFields, error) {
 // wisps table (fallback existence source). Issues take precedence for duplicate
 // IDs so labels/type are preserved for doctor validation.
 func (b *Beads) ListAgentBeads() (map[string]*Issue, error) {
-	// Query issues table first. Issues include labels and type metadata used by
-	// doctor checks (for example, validating gt:agent labels).
-	// Agent beads are type=agent (infrastructure), hidden by bd list default filter.
-	// Use --include-infra so they appear in results.
-	out, err := b.run("list", "--label=gt:agent", "--include-infra", "--json", "--flat", "--no-pager")
+	issuesByID, err := b.ListAgentIssueBeads("")
 	if err != nil {
 		return nil, err
-	}
-	issuesByID := make(map[string]*Issue)
-	var issues []*Issue
-	if jsonErr := json.Unmarshal(out, &issues); jsonErr != nil {
-		return nil, fmt.Errorf("parsing bd list --json output: %w (raw output %d bytes)", jsonErr, len(out))
-	}
-	for _, issue := range issues {
-		issuesByID[issue.ID] = issue
 	}
 
 	// Query wisps table as a fallback source.
@@ -644,6 +632,42 @@ func (b *Beads) ListAgentBeads() (map[string]*Issue, error) {
 	wispBeads, _ := b.ListAgentBeadsFromWisps()
 
 	return mergeAgentBeadSources(issuesByID, wispBeads), nil
+}
+
+// ListAgentIssueBeads returns issue-backed agent beads only. It deliberately
+// avoids bd list because bd's list path merges issues and wisps before GT can
+// apply agent-specific precedence, so duplicate issue/wisp IDs can abort the
+// query (for example hq-deacon).
+func (b *Beads) ListAgentIssueBeads(status string) (map[string]*Issue, error) {
+	clauses := []string{"ephemeral=false", "label=" + quoteBDQueryValue("gt:agent")}
+	if status != "" && status != "all" {
+		clauses = append(clauses, "status="+quoteBDQueryValue(status))
+	}
+
+	args := []string{"query", "--json", strings.Join(clauses, " AND ")}
+	if status == "all" {
+		args = append(args, "--all")
+	}
+	args = append(args, "--limit=0")
+
+	out, err := b.run(args...)
+	if err != nil {
+		return nil, err
+	}
+	if len(out) == 0 || !isJSONBytes(out) {
+		return nil, nil
+	}
+
+	var issues []*Issue
+	if err := json.Unmarshal(out, &issues); err != nil {
+		return nil, fmt.Errorf("parsing bd query output: %w", err)
+	}
+
+	issuesByID := make(map[string]*Issue, len(issues))
+	for _, issue := range issues {
+		issuesByID[issue.ID] = issue
+	}
+	return issuesByID, nil
 }
 
 // mergeAgentBeadSources merges issue-backed and wisp-backed agent bead maps.

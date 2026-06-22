@@ -348,6 +348,126 @@ func TestMergeAgentBeadSources(t *testing.T) {
 	})
 }
 
+func TestListAgentBeadsUsesIssueOnlyQueryAndIssueWinsDuplicateWisp(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("test uses Unix shell script mocks for bd")
+	}
+	ResetBdAllowStaleCacheForTest()
+	t.Cleanup(ResetBdAllowStaleCacheForTest)
+
+	tmpDir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(tmpDir, ".beads"), 0755); err != nil {
+		t.Fatalf("mkdir .beads: %v", err)
+	}
+
+	binDir := t.TempDir()
+	logPath := filepath.Join(binDir, "bd.log")
+	script := `#!/bin/sh
+if [ "$1" = "--allow-stale" ]; then
+  echo "Error: unknown flag: --allow-stale" >&2
+  exit 0
+fi
+printf '%s\n' "$*" >> "` + logPath + `"
+cmd="$1"
+shift || true
+case "$cmd" in
+  query)
+    case "$*" in
+      *ephemeral=false*gt:agent*)
+        echo '[{"id":"hq-deacon","title":"Durable Deacon","status":"open","issue_type":"task","labels":["gt:agent"],"description":"role_type: deacon"}]'
+        exit 0
+        ;;
+    esac
+    echo "unexpected query: $*" >&2
+    exit 2
+    ;;
+  mol)
+    if [ "$1" = "wisp" ] && [ "$2" = "list" ]; then
+      echo '{"wisps":[{"id":"hq-deacon","title":"Stale Deacon Wisp","status":"open","issue_type":"agent","labels":["gt:agent"]},{"id":"hq-wisp-only","title":"Wisp-only Agent","status":"open","issue_type":"agent","labels":["gt:agent"]}]}'
+      exit 0
+    fi
+    ;;
+  list)
+    echo "bd list must not be used for agent issue lookup" >&2
+    exit 7
+    ;;
+esac
+exit 0
+`
+	if err := os.WriteFile(filepath.Join(binDir, "bd"), []byte(script), 0755); err != nil {
+		t.Fatalf("write bd stub: %v", err)
+	}
+	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	agents, err := NewIsolated(tmpDir).ListAgentBeads()
+	if err != nil {
+		t.Fatalf("ListAgentBeads: %v", err)
+	}
+	if got := agents["hq-deacon"]; got == nil || got.Title != "Durable Deacon" {
+		t.Fatalf("hq-deacon = %+v, want durable issue to win", got)
+	}
+	if got := agents["hq-wisp-only"]; got == nil || got.Title != "Wisp-only Agent" {
+		t.Fatalf("hq-wisp-only = %+v, want wisp fallback", got)
+	}
+
+	logBytes, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatalf("read bd log: %v", err)
+	}
+	for _, line := range strings.Split(strings.TrimSpace(string(logBytes)), "\n") {
+		if line == "list" || strings.HasPrefix(line, "list ") {
+			t.Fatalf("agent issue lookup used bd list: %q\nfull log:\n%s", line, logBytes)
+		}
+	}
+	log := string(logBytes)
+	if !strings.Contains(log, "query --json ephemeral=false") || !strings.Contains(log, "label=\"gt:agent\"") || !strings.Contains(log, "--limit=0") {
+		t.Fatalf("agent issue lookup did not use expected issue-only query; log:\n%s", log)
+	}
+}
+
+func TestListAgentIssueBeadsStatusAllUsesAll(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("test uses Unix shell script mocks for bd")
+	}
+	ResetBdAllowStaleCacheForTest()
+	t.Cleanup(ResetBdAllowStaleCacheForTest)
+
+	tmpDir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(tmpDir, ".beads"), 0755); err != nil {
+		t.Fatalf("mkdir .beads: %v", err)
+	}
+	binDir := t.TempDir()
+	logPath := filepath.Join(binDir, "bd.log")
+	script := `#!/bin/sh
+if [ "$1" = "--allow-stale" ]; then
+  echo "Error: unknown flag: --allow-stale" >&2
+  exit 0
+fi
+printf '%s\n' "$*" >> "` + logPath + `"
+if [ "$1" = "query" ]; then
+  echo '[]'
+  exit 0
+fi
+exit 0
+`
+	if err := os.WriteFile(filepath.Join(binDir, "bd"), []byte(script), 0755); err != nil {
+		t.Fatalf("write bd stub: %v", err)
+	}
+	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	if _, err := NewIsolated(tmpDir).ListAgentIssueBeads("all"); err != nil {
+		t.Fatalf("ListAgentIssueBeads(all): %v", err)
+	}
+	logBytes, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatalf("read bd log: %v", err)
+	}
+	log := string(logBytes)
+	if !strings.Contains(log, "--all") || !strings.Contains(log, "--limit=0") {
+		t.Fatalf("ListAgentIssueBeads(all) missing --all/--limit=0; log:\n%s", log)
+	}
+}
+
 func installMockBDCreateRecorder(t *testing.T, logPath string) {
 	t.Helper()
 

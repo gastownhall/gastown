@@ -87,8 +87,40 @@ func TestPickBestAgentBead(t *testing.T) {
 	if err != nil {
 		t.Fatalf("pickBestAgentBead returned error: %v", err)
 	}
-	if got == nil || got.ID != "rig-wisp" {
-		t.Fatalf("pickBestAgentBead picked %v, want rig-wisp", got)
+	if got == nil || got.ID != "rig-issue" {
+		t.Fatalf("pickBestAgentBead picked %v, want rig-issue", got)
+	}
+}
+
+func TestPickBestAgentBeadPrefersIssueOverDuplicateWisp(t *testing.T) {
+	candidates := []agentBeadCandidate{
+		candidate("hq-deacon", agentSourceTownWisps, "open"),
+		candidate("hq-deacon", agentSourceTownIssues, "open"),
+	}
+
+	got, err := pickBestAgentBead(candidates)
+	if err != nil {
+		t.Fatalf("pickBestAgentBead returned error: %v", err)
+	}
+	if got == nil || got.ID != "hq-deacon" || got.Source != agentSourceTownIssues {
+		t.Fatalf("pickBestAgentBead picked %+v, want town issue hq-deacon", got)
+	}
+}
+
+func TestNormalizeAgentResolveRig(t *testing.T) {
+	tests := []struct {
+		in   string
+		want string
+	}{
+		{in: "dotfiles/gastown", want: "dotfiles"},
+		{in: " gastown ", want: "gastown"},
+		{in: "", want: ""},
+	}
+
+	for _, tt := range tests {
+		if got := normalizeAgentResolveRig(tt.in); got != tt.want {
+			t.Fatalf("normalizeAgentResolveRig(%q) = %q, want %q", tt.in, got, tt.want)
+		}
 	}
 }
 
@@ -109,9 +141,9 @@ func TestPickBestAgentBeadSkipsClosed(t *testing.T) {
 
 func TestPickBestAgentBeadRejectsSameRankDuplicates(t *testing.T) {
 	candidates := []agentBeadCandidate{
-		candidate("rig-wisp-a", agentSourceRigWisps, "open"),
-		candidate("rig-wisp-b", agentSourceRigWisps, "open"),
-		candidate("rig-issue", agentSourceRigIssues, "open"),
+		candidate("rig-issue-a", agentSourceRigIssues, "open"),
+		candidate("rig-issue-b", agentSourceRigIssues, "open"),
+		candidate("town-issue", agentSourceTownIssues, "open"),
 	}
 
 	got, err := pickBestAgentBead(candidates)

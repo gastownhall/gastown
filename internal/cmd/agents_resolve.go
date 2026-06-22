@@ -25,8 +25,8 @@ var agentsResolveCmd = &cobra.Command{
 	Long: `Resolve the active agent bead for a role.
 
 The resolver searches the current rig database and the town database across
-both durable issues and ephemeral wisps. It prefers the current rig's wisp
-record, then rig issue, town wisp, and town issue. Closed beads are ignored.`,
+durable agent issues and legacy ephemeral wisps. Durable issues are the
+authoritative identity source; wisps are fallback records. Closed beads are ignored.`,
 	RunE: runAgentsResolve,
 }
 
@@ -64,7 +64,7 @@ type agentsResolveResult struct {
 
 func runAgentsResolve(cmd *cobra.Command, _ []string) error {
 	role := strings.TrimSpace(agentsResolveRole)
-	rig := strings.TrimSpace(agentsResolveRig)
+	rig := normalizeAgentResolveRig(agentsResolveRig)
 	if role == "" {
 		return fmt.Errorf("--role is required")
 	}
@@ -189,19 +189,28 @@ func loadAgentBeadsFromDir(beadsDir string, issueSource, wispSource agentBeadSou
 }
 
 func listAgentIssues(db *beads.Beads) ([]*beads.Issue, error) {
-	out, err := db.Run("list", "--label=gt:agent", "--include-infra", "--status=all", "--json", "--flat", "--no-pager", "--limit=0")
+	issuesByID, err := db.ListAgentIssueBeads("all")
 	if err != nil {
 		return nil, err
 	}
-	if len(out) == 0 || !json.Valid(out) {
-		return nil, nil
+	ids := make([]string, 0, len(issuesByID))
+	for id := range issuesByID {
+		ids = append(ids, id)
 	}
-
-	var issues []*beads.Issue
-	if err := json.Unmarshal(out, &issues); err != nil {
-		return nil, fmt.Errorf("parsing bd list output: %w", err)
+	sort.Strings(ids)
+	issues := make([]*beads.Issue, 0, len(ids))
+	for _, id := range ids {
+		issues = append(issues, issuesByID[id])
 	}
 	return issues, nil
+}
+
+func normalizeAgentResolveRig(rig string) string {
+	rig = strings.TrimSpace(rig)
+	if rig == "" {
+		return ""
+	}
+	return strings.SplitN(rig, "/", 2)[0]
 }
 
 func agentBeadMatches(issue *beads.Issue, role, rig string) bool {
@@ -264,13 +273,13 @@ func pickBestAgentBead(candidates []agentBeadCandidate) (*agentBeadCandidate, er
 
 func agentBeadSourceRank(source agentBeadSource) int {
 	switch source {
-	case agentSourceRigWisps:
-		return 0
 	case agentSourceRigIssues:
+		return 0
+	case agentSourceRigWisps:
 		return 1
-	case agentSourceTownWisps:
-		return 2
 	case agentSourceTownIssues:
+		return 2
+	case agentSourceTownWisps:
 		return 3
 	default:
 		return 99
