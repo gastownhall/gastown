@@ -694,7 +694,7 @@ func checkSlungWork(ctx RoleContext, hookedBead *beads.Issue) (bool, error) {
 	hasWorkflow := hasWorkflowAttachment(attachment)
 	isPatrol := hasWorkflow && isPatrolFormula(attachment.AttachedFormula)
 
-	outputAutonomousDirective(ctx, hookedBead, hasWorkflow, isPatrol)
+	outputAutonomousDirective(ctx, hookedBead, hasWorkflow, attachment.AttachedMolecule != "", isPatrol)
 	outputHookedBeadDetails(hookedBead)
 
 	if hasWorkflow {
@@ -906,7 +906,7 @@ func rigBeadsRoot(ctx RoleContext) string {
 }
 
 // outputAutonomousDirective displays the AUTONOMOUS WORK MODE header and instructions.
-func outputAutonomousDirective(ctx RoleContext, hookedBead *beads.Issue, hasMolecule, isPatrol bool) {
+func outputAutonomousDirective(ctx RoleContext, hookedBead *beads.Issue, hasWorkflow, hasAttachedMolecule, isPatrol bool) {
 	roleAnnounce := buildRoleAnnouncement(ctx)
 
 	fmt.Println()
@@ -923,15 +923,19 @@ func outputAutonomousDirective(ctx RoleContext, hookedBead *beads.Issue, hasMole
 	fmt.Println()
 	fmt.Println("1. Announce: \"" + roleAnnounce + "\" (ONE line, no elaboration)")
 
-	if hasMolecule {
+	if hasWorkflow {
 		if isPatrol {
 			fmt.Println("2. This hook is a patrol workflow")
 			fmt.Println("3. Continue the patrol steps shown below")
 			fmt.Println("4. At cycle end, report or hand off exactly as the patrol formula instructs")
-		} else {
+		} else if hasAttachedMolecule {
 			fmt.Println("2. This bead has an ATTACHED MOLECULE (formula workflow)")
 			fmt.Println("3. Work through molecule steps in order - see CURRENT STEP below")
 			fmt.Println("4. Close each step with `bd close <step-id>`, then check `bd mol current` for next step")
+		} else {
+			fmt.Println("2. This bead has an attached formula workflow")
+			fmt.Println("3. Work through the formula steps shown below")
+			fmt.Println("4. Use `gt prime` to review the workflow if needed")
 		}
 	} else {
 		fmt.Printf("2. Then IMMEDIATELY run: `bd show %s`\n", hookedBead.ID)
@@ -952,11 +956,11 @@ func outputAutonomousDirective(ctx RoleContext, hookedBead *beads.Issue, hasMole
 	fmt.Println("- Ask clarifying questions")
 	fmt.Println("- Describe what you're going to do")
 	fmt.Println("- Check mail first (hook takes priority)")
-	if hasMolecule {
+	if hasWorkflow {
 		if isPatrol {
 			fmt.Println("- Skip patrol steps or restart the patrol without evidence")
 		} else {
-			fmt.Println("- Skip molecule steps or work on the base bead directly")
+			fmt.Println("- Skip workflow steps or work on the base bead directly")
 		}
 	}
 	if ctx.Role == RolePolecat {

@@ -61,8 +61,8 @@ func TestOutputMoleculeStatus_FormulaWispShowsWorkflowContext(t *testing.T) {
 			DoneSteps:  0,
 			ReadySteps: []string{"tool-wisp-step-1"},
 		},
-		NextAction: "Show the workflow steps: gt prime",
 	}
+	status.NextAction = fallbackNextAction(status)
 
 	oldStdout := os.Stdout
 	r, w, _ := os.Pipe()
@@ -108,8 +108,8 @@ func TestOutputMoleculeStatus_PatrolWispUsesInferredWorkflowContext(t *testing.T
 		HasWork:         true,
 		PinnedBead:      bead,
 		AttachedFormula: attachment.AttachedFormula,
-		NextAction:      "Show the workflow steps: gt prime",
 	}
+	status.NextAction = fallbackNextAction(status)
 
 	oldStdout := os.Stdout
 	r, w, _ := os.Pipe()

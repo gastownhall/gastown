@@ -911,6 +911,12 @@ func TestCheckSlungWork_StandaloneFormulaUsesWorkflowOutput(t *testing.T) {
 	if !strings.Contains(output, "ATTACHED FORMULA") {
 		t.Fatalf("expected standalone formula hook to use workflow output, got:\n%s", output)
 	}
+	if !strings.Contains(output, "attached formula workflow") {
+		t.Fatalf("expected formula-only autonomous guidance, got:\n%s", output)
+	}
+	if strings.Contains(output, "ATTACHED MOLECULE") || strings.Contains(output, "bd mol current") {
+		t.Fatalf("formula-only hook should not use molecule child-step guidance, got:\n%s", output)
+	}
 	if strings.Contains(output, "Bead details:") {
 		t.Fatalf("expected standalone formula hook to skip plain bead preview, got:\n%s", output)
 	}

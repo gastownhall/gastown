@@ -273,7 +273,7 @@ func (m *Manager) Start(foreground bool, agentOverride string, envOverrides []st
 		Recipient: session.BeaconRecipient("witness", "", m.rig.Name),
 		Sender:    "deacon",
 		Topic:     "patrol",
-	}, "Run `gt prime --hook` and begin patrol.")
+	}, "Continue from the startup-injected context and begin patrol. If no context is visible, run `gt prime --hook` once.")
 	_ = runtime.DeliverStartupPromptFallback(t, sessionID, initialPrompt, runtimeConfig, constants.ClaudeStartTimeout)
 
 	// Stream witness's Claude Code JSONL conversation log to VictoriaLogs (opt-in).
@@ -356,7 +356,7 @@ func buildWitnessStartCommand(rigPath, rigName, townRoot, sessionName, agentOver
 		Recipient: session.BeaconRecipient("witness", "", rigName),
 		Sender:    "deacon",
 		Topic:     "patrol",
-	}, "Run `gt prime --hook` and begin patrol.")
+	}, "Continue from the startup-injected context and begin patrol. If no context is visible, run `gt prime --hook` once.")
 	command, err := config.BuildStartupCommandFromConfig(config.AgentEnvConfig{
 		Role:             "witness",
 		Rig:              rigName,
