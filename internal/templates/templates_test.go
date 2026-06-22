@@ -611,6 +611,37 @@ func TestRenderRole_BootUsesNudgeNotRawTmux(t *testing.T) {
 	}
 }
 
+func TestRenderRole_BootCwdInstruction(t *testing.T) {
+	tmpl, err := New()
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+
+	workDir := "/sentinel/boot/workdir"
+	output, err := tmpl.RenderRole("boot", RoleData{
+		Role:          "boot",
+		TownRoot:      "/test/town",
+		TownName:      "town",
+		WorkDir:       workDir,
+		DefaultBranch: "main",
+		MayorSession:  "gt-town-mayor",
+		DeaconSession: "gt-town-deacon",
+	})
+	if err != nil {
+		t.Fatalf("RenderRole() error = %v", err)
+	}
+
+	want := fmt.Sprintf("**IMPORTANT**: Always work from `%s` directory.", workDir)
+	if !strings.Contains(output, want) {
+		t.Fatalf("boot template missing cwd instruction %q:\n%s", want, output)
+	}
+
+	stale := "**IMPORTANT**: Always work from `/test/town/deacon/` directory."
+	if strings.Contains(output, stale) {
+		t.Fatalf("boot template still contains stale cwd instruction %q:\n%s", stale, output)
+	}
+}
+
 func TestCreatePolecatCLAUDEmd(t *testing.T) {
 	dir := t.TempDir()
 
