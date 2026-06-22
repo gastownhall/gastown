@@ -438,8 +438,26 @@ func TestParsePluginMD_StuckAgentDogUsesCanonicalHeartbeatPath(t *testing.T) {
 	if !strings.Contains(plugin.Instructions, "GT_STUCK_AGENT_DOG_DEACON_STALE_SECONDS") {
 		t.Fatalf("expected configurable deacon stale threshold in instructions, got:\n%s", plugin.Instructions)
 	}
-	if !strings.Contains(plugin.Instructions, "heartbeat_write_divergence") {
-		t.Fatalf("expected heartbeat write-divergence handling in instructions, got:\n%s", plugin.Instructions)
+	if !strings.Contains(plugin.Instructions, "NOTICE-only in stuck-agent-dog") {
+		t.Fatalf("expected deacon stale heartbeat notice-only guidance in instructions, got:\n%s", plugin.Instructions)
+	}
+	if !strings.Contains(plugin.Instructions, "daemon owns heartbeat nudge/restart") {
+		t.Fatalf("expected daemon-owned heartbeat handling guidance in instructions, got:\n%s", plugin.Instructions)
+	}
+	if strings.Contains(plugin.Instructions, "stuck_heartbeat_") || strings.Contains(plugin.Instructions, "stuck-agent-dog:deacon:stuck-heartbeat") {
+		t.Fatalf("did not expect stale heartbeat escalation guidance in instructions, got:\n%s", plugin.Instructions)
+	}
+
+	runScript, err := os.ReadFile(filepath.Join("..", "..", "plugins", "stuck-agent-dog", "run.sh"))
+	if err != nil {
+		t.Skipf("stuck-agent-dog run script not found (expected in plugins/): %v", err)
+	}
+	runInstructions := string(runScript)
+	if !strings.Contains(runInstructions, "DEACON_NOTICE=\"heartbeat_stale_") {
+		t.Fatalf("expected stale deacon heartbeat to be recorded as notice in run.sh")
+	}
+	if strings.Contains(runInstructions, "DEACON_ISSUE=\"stuck_heartbeat_") || strings.Contains(runInstructions, "stuck-agent-dog:deacon:stuck-heartbeat") {
+		t.Fatalf("did not expect stale deacon heartbeat escalation path in run.sh")
 	}
 }
 

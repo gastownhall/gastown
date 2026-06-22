@@ -19,13 +19,15 @@ severity = "high"
 
 # Stuck Agent Dog
 
-Detects stuck or crashed polecats and deacons by inspecting tmux session context
-before taking action. Unlike the daemon's blind kill-and-restart approach, this
-plugin checks whether an agent is truly unresponsive before restarting.
+Detects stuck or crashed polecats and deacons by inspecting central runtime
+health before taking action. The plugin checks whether an agent is truly
+unresponsive before restarting or escalating.
 
-**Design principle**: The daemon should NEVER kill workers. It detects and logs.
-This plugin (running as a Dog agent with AI judgment) makes the restart decision
-after inspecting tmux pane output for signs of life.
+**Design principle**: The daemon should NEVER kill workers based on blind
+polecat liveness. This plugin (running as a Dog agent with AI judgment) makes
+polecat restart decisions after inspecting central runtime health. Deacon
+heartbeat staleness is different: the Go daemon owns heartbeat nudge/restart,
+and this plugin only escalates a dead Deacon session or dead Deacon runtime.
 
 Reference: WAR-ROOM-SERIAL-KILLER.md, commit f3d47a96.
 
@@ -165,11 +167,12 @@ echo "Health summary: ${#CRASHED[@]} crashed, ${#STUCK[@]} stuck, $HEALTHY healt
 
 ## Step 3: Check deacon health
 
-The deacon session is `hq-deacon`. Check heartbeat staleness from the JSON
-`timestamp` field in `deacon/heartbeat.json` (fall back to file mtime only if
-the timestamp is missing or malformed). A live Deacon with no `in_progress` work
-is not an actionable stuck-heartbeat event; log and skip so idle patrol backoff
-does not produce escalation noise.
+The deacon session is `hq-deacon`. A dead session or dead runtime is actionable
+and escalates. Heartbeat staleness from the JSON `timestamp` field in
+`deacon/heartbeat.json` (falling back to file mtime only if the timestamp is
+missing or malformed) is NOTICE-only in stuck-agent-dog: it never sets
+`DEACON_ISSUE` and never calls `gt escalate`. The daemon owns heartbeat
+nudge/restart so the dog does not duplicate another heartbeat policy surface.
 
 ```bash
 echo ""
@@ -177,22 +180,30 @@ echo "=== Deacon Health ==="
 
 DEACON_SESSION="hq-deacon"
 DEACON_ISSUE=""
-DEACON_DIVERGENCE=""
-DEACON_PROCESS_ALIVE=0
+DEACON_NOTICE=""
 
 if ! tmux has-session -t "$DEACON_SESSION" 2>/dev/null; then
   echo "  CRASHED: Deacon session is dead"
   DEACON_ISSUE="crashed"
 else
-  DEACON_PID=$(tmux list-panes -t "$DEACON_SESSION" -F '#{pane_pid}' 2>/dev/null | head -1 || true)
-  DEACON_COMM=$(ps -o comm= -p "$DEACON_PID" 2>/dev/null || true)
-  if [ -z "$DEACON_COMM" ]; then
-    echo "  ZOMBIE: Deacon process dead (pid=$DEACON_PID), session alive"
-    DEACON_ISSUE="zombie"
-  else
-    echo "  Process alive: pid=$DEACON_PID comm=$DEACON_COMM"
-    DEACON_PROCESS_ALIVE=1
-  fi
+  DEACON_HEALTH=$(gt session health "$DEACON_SESSION" --json --max-inactivity 0s 2>/dev/null \
+    | jq -r '.status // empty' 2>/dev/null || true)
+  case "$DEACON_HEALTH" in
+    healthy|agent-hung)
+      echo "  OK: Deacon central health is $DEACON_HEALTH"
+      ;;
+    agent-dead)
+      echo "  ZOMBIE: Deacon agent runtime dead, session alive"
+      DEACON_ISSUE="zombie"
+      ;;
+    session-dead)
+      echo "  CRASHED: Deacon central health reports session dead"
+      DEACON_ISSUE="crashed"
+      ;;
+    *)
+      echo "  WARN: Deacon central liveness probe inconclusive"
+      ;;
+  esac
 
   HEARTBEAT_FILE="$TOWN_ROOT/deacon/heartbeat.json"
   if [ -z "$DEACON_ISSUE" ] && [ -f "$HEARTBEAT_FILE" ]; then
@@ -201,20 +212,8 @@ else
     HEARTBEAT_AGE=$(( NOW - ${HEARTBEAT_TIME:-0} ))
 
     if [ "$HEARTBEAT_AGE" -gt "${GT_STUCK_AGENT_DOG_DEACON_STALE_SECONDS:-1200}" ]; then
-      ACTIVITY_TIME=$(tmux display-message -t "$DEACON_SESSION" -p '#{window_activity}' 2>/dev/null || true)
-      case "$ACTIVITY_TIME" in
-        ''|*[!0-9]*) ACTIVITY_AGE="" ;;
-        *) ACTIVITY_AGE=$(( NOW - ACTIVITY_TIME )) ;;
-      esac
-      if [ -n "$ACTIVITY_AGE" ] && [ "$ACTIVITY_AGE" -le "${GT_STUCK_AGENT_DOG_ACTIVITY_GRACE_SECONDS:-1200}" ]; then
-        echo "  DIVERGENCE: heartbeat file stale (${HEARTBEAT_AGE}s) but session active ${ACTIVITY_AGE}s ago — write divergence, not stuck"
-        DEACON_DIVERGENCE="heartbeat_write_divergence_${HEARTBEAT_AGE}s_active_${ACTIVITY_AGE}s"
-      elif [ "$DEACON_PROCESS_ALIVE" -eq 1 ] && ! has_in_progress_work; then
-        echo "  SKIP: Deacon heartbeat stale (${HEARTBEAT_AGE}s old) but process is alive and no in_progress work exists"
-      else
-        echo "  STUCK: Deacon heartbeat stale (${HEARTBEAT_AGE}s old, no recent session activity)"
-        DEACON_ISSUE="stuck_heartbeat_${HEARTBEAT_AGE}s"
-      fi
+      echo "  NOTICE: Deacon heartbeat ${HEARTBEAT_AGE}s old (>${GT_STUCK_AGENT_DOG_DEACON_STALE_SECONDS:-1200}s) — heartbeat age is notice-only; daemon owns heartbeat nudge/restart"
+      DEACON_NOTICE="heartbeat_stale_${HEARTBEAT_AGE}s"
     else
       echo "  OK: Deacon heartbeat ${HEARTBEAT_AGE}s old"
     fi
@@ -243,19 +242,19 @@ For STUCK agents (session alive, agent dead):
 - Kill the zombie session, then restart
 - `agent-hung` is not STUCK for polecats; central health keeps that observe-only.
 
-For DEACON stuck (stale heartbeat):
-- Capture pane output: `tmux capture-pane -t hq-deacon -p -S -20`
-- If output shows active work (recent timestamps, command output), the heartbeat
-  file may just be stale — nudge instead of kill
-- If output shows no recent activity, escalation is warranted
-- Use a stable escalation fingerprint (`stuck-agent-dog:deacon:stuck-heartbeat`)
-  for stale-heartbeat events; do not include the age seconds in the fingerprint.
+For Deacon heartbeat staleness:
+- Heartbeat age is NOTICE-only in this plugin, even when very stale.
+- It must never set `DEACON_ISSUE` or trigger `gt escalate`.
+- The daemon owns heartbeat nudge/restart; this dog only records visibility.
+- Real Deacon death is handled by dead session or dead runtime checks above.
 
 **Decision framework:**
 1. If central health is `session-dead` and hook status is actionable → request restart
 2. If central health is `agent-dead` and hook status is actionable → clear zombie, request restart
 3. If central health is `agent-hung` → observe/report only; do not restart polecat research sessions
-4. If mass death detected (threshold default 3) → escalate and skip all per-agent actions
+4. If the Deacon session is dead or its runtime is dead → escalate.
+5. If Deacon heartbeat age is stale → NOTICE-only; do not escalate.
+6. If mass death detected (threshold default 3) → escalate and skip all per-agent actions
 
 ## Step 5: Mass death check
 
@@ -331,12 +330,6 @@ if [ -n "$DEACON_ISSUE" ]; then
   echo "Escalating deacon issue: $DEACON_ISSUE"
   DEACON_SEVERITY="HIGH"
   DEACON_FINGERPRINT="stuck-agent-dog:deacon:$DEACON_ISSUE"
-  case "$DEACON_ISSUE" in
-    stuck_heartbeat_*)
-      DEACON_SEVERITY="MEDIUM"
-      DEACON_FINGERPRINT="stuck-agent-dog:deacon:stuck-heartbeat"
-      ;;
-  esac
   gt escalate "Deacon $DEACON_ISSUE detected by stuck-agent-dog" \
     -s "$DEACON_SEVERITY" \
     --source "plugin:stuck-agent-dog" \
@@ -350,6 +343,9 @@ fi
 SUMMARY="Agent health check: ${#CRASHED[@]} crashed, ${#STUCK[@]} stuck, $HEALTHY healthy"
 if [ -n "$DEACON_ISSUE" ]; then
   SUMMARY="$SUMMARY, deacon=$DEACON_ISSUE"
+fi
+if [ -n "$DEACON_NOTICE" ]; then
+  SUMMARY="$SUMMARY, deacon_notice=$DEACON_NOTICE (not escalated)"
 fi
 echo "=== $SUMMARY ==="
 ```

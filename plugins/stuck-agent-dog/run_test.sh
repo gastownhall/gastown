@@ -172,7 +172,12 @@ case "${1:-}" in
     printf '999\n'
     ;;
   display-message)
-    date +%s
+    session=$(arg_after_t "$@" || true)
+    if [ -n "$session" ] && [ -f "$TEST_STATE/activity/$session" ]; then
+      cat "$TEST_STATE/activity/$session"
+    else
+      date +%s
+    fi
     ;;
   capture-pane)
     printf 'active opencode research in progress\n'
@@ -199,7 +204,11 @@ case "${1:-}" in
     printf '[{"status":"%s"}]\n' "$status"
     ;;
   list)
-    printf '[]\n'
+    if [ -f "$TEST_STATE/in_progress" ]; then
+      printf '[{"id":"gt-work"}]\n'
+    else
+      printf '[]\n'
+    fi
     ;;
   create)
     printf '%s\n' "$*" >> "$TEST_STATE/bd.log"
@@ -234,7 +243,7 @@ setup_case() {
   export GT_TOWN_ROOT="$TEST_TMP/town"
   local bin_dir="$TEST_TMP/bin"
 
-  mkdir -p "$TEST_STATE/health" "$TEST_STATE/nohook" "$TEST_STATE/sessions" "$TEST_STATE/status" "$bin_dir"
+  mkdir -p "$TEST_STATE/activity" "$TEST_STATE/health" "$TEST_STATE/nohook" "$TEST_STATE/sessions" "$TEST_STATE/status" "$bin_dir"
   mkdir -p "$GT_TOWN_ROOT/gastown/polecats" "$GT_TOWN_ROOT/deacon"
   printf '{"rigs":{"gastown":{"beads":{"prefix":"gt"}}}}\n' > "$GT_TOWN_ROOT/rigs.json"
   : > "$TEST_STATE/mail.log"
@@ -337,6 +346,36 @@ test_mass_death_skips_actions() {
   assert_file_contains "$TEST_STATE/output.log" "Skipping per-agent restart/kill actions" "mass death: action loops skipped"
 }
 
+test_deacon_stale_heartbeat_notice_only() {
+  setup_case
+  printf '{"timestamp":"1970-01-01T00:00:00Z"}\n' > "$GT_TOWN_ROOT/deacon/heartbeat.json"
+  printf '0\n' > "$TEST_STATE/activity/hq-deacon"
+  touch "$TEST_STATE/in_progress"
+  run_script
+
+  assert_file_empty "$TEST_STATE/escalate.log" "deacon stale heartbeat: no escalation"
+  assert_file_contains "$TEST_STATE/output.log" "NOTICE: Deacon heartbeat" "deacon stale heartbeat: notice logged"
+  assert_file_contains "$TEST_STATE/output.log" "deacon_notice=heartbeat_stale_" "deacon stale heartbeat: summary records notice"
+}
+
+test_deacon_dead_session_escalates() {
+  setup_case
+  rm -f "$TEST_STATE/sessions/hq-deacon"
+  run_script
+
+  assert_line_count "$TEST_STATE/escalate.log" 1 "deacon dead session: one escalation"
+  assert_file_contains "$TEST_STATE/escalate.log" "Deacon crashed detected by stuck-agent-dog" "deacon dead session: escalated crash"
+}
+
+test_deacon_agent_dead_escalates() {
+  setup_case
+  printf 'agent-dead\n' > "$TEST_STATE/health/hq-deacon"
+  run_script
+
+  assert_line_count "$TEST_STATE/escalate.log" 1 "deacon agent dead: one escalation"
+  assert_file_contains "$TEST_STATE/escalate.log" "Deacon zombie detected by stuck-agent-dog" "deacon agent dead: escalated zombie"
+}
+
 test_healthy_runtime opencode
 test_healthy_runtime bun
 test_healthy_runtime node
@@ -346,6 +385,9 @@ test_dead_agent_restarts_one
 test_dead_session_restarts_one
 test_closed_hook_skips_restart
 test_mass_death_skips_actions
+test_deacon_stale_heartbeat_notice_only
+test_deacon_dead_session_escalates
+test_deacon_agent_dead_escalates
 
 printf '\n%s passed, %s failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

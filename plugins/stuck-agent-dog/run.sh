@@ -34,7 +34,6 @@ integer_or_default() {
 POLECAT_MAX_INACTIVITY="${GT_STUCK_AGENT_DOG_MAX_INACTIVITY:-0s}"
 [ "$POLECAT_MAX_INACTIVITY" = "0" ] && POLECAT_MAX_INACTIVITY="0s"
 DEACON_STALE_SECONDS=$(integer_or_default "${GT_STUCK_AGENT_DOG_DEACON_STALE_SECONDS:-}" 1200)
-ACTIVITY_GRACE_SECONDS=$(integer_or_default "${GT_STUCK_AGENT_DOG_ACTIVITY_GRACE_SECONDS:-}" "$DEACON_STALE_SECONDS")
 MASS_DEATH_THRESHOLD=$(integer_or_default "${GT_STUCK_AGENT_DOG_MASS_DEATH_THRESHOLD:-}" 3)
 
 heartbeat_epoch() {
@@ -53,29 +52,6 @@ heartbeat_epoch() {
   # command substitution and breaking downstream arithmetic (hq-wisp-0vrp).
   # BSD/macOS stat (-f %m) is the fallback.
   stat -c %Y "$file" 2>/dev/null || stat -f %m "$file" 2>/dev/null
-}
-
-has_in_progress_work() {
-  local locations=("$TOWN_ROOT")
-  local rig=""
-  local loc=""
-  local output=""
-  local count=""
-
-  while IFS='|' read -r rig _prefix; do
-    [ -z "$rig" ] && continue
-    [ -d "$TOWN_ROOT/$rig" ] && locations+=("$TOWN_ROOT/$rig")
-  done <<< "$RIG_PREFIX_MAP"
-
-  for loc in "${locations[@]}"; do
-    output=$(cd "$loc" && bd list --status=in_progress --json --limit=1 2>/dev/null) || return 0
-    count=$(printf '%s' "$output" | jq 'length' 2>/dev/null || echo 1)
-    if [ "${count:-1}" -gt 0 ]; then
-      return 0
-    fi
-  done
-
-  return 1
 }
 
 # --- Beads resolution helpers -------------------------------------------------
@@ -232,22 +208,30 @@ log "=== Deacon Health ==="
 
 DEACON_SESSION="hq-deacon"
 DEACON_ISSUE=""
-DEACON_DIVERGENCE=""
-DEACON_PROCESS_ALIVE=0
+DEACON_NOTICE=""
 
 if ! tmux has-session -t "$DEACON_SESSION" 2>/dev/null; then
   log "  CRASHED: Deacon session is dead"
   DEACON_ISSUE="crashed"
 else
-  DEACON_PID=$(tmux list-panes -t "$DEACON_SESSION" -F '#{pane_pid}' 2>/dev/null | head -1 || true)
-  DEACON_COMM=$(ps -o comm= -p "$DEACON_PID" 2>/dev/null || true)
-  if [ -z "$DEACON_COMM" ]; then
-    log "  ZOMBIE: Deacon process dead (pid=$DEACON_PID), session alive"
-    DEACON_ISSUE="zombie"
-  else
-    log "  Process alive: pid=$DEACON_PID comm=$DEACON_COMM"
-    DEACON_PROCESS_ALIVE=1
-  fi
+  DEACON_HEALTH=$(gt session health "$DEACON_SESSION" --json --max-inactivity 0s 2>/dev/null \
+    | jq -r '.status // empty' 2>/dev/null || true)
+  case "$DEACON_HEALTH" in
+    healthy|agent-hung)
+      log "  OK: Deacon central health is $DEACON_HEALTH"
+      ;;
+    agent-dead)
+      log "  ZOMBIE: Deacon agent runtime dead, session alive"
+      DEACON_ISSUE="zombie"
+      ;;
+    session-dead)
+      log "  CRASHED: Deacon central health reports session dead"
+      DEACON_ISSUE="crashed"
+      ;;
+    *)
+      log "  WARN: Deacon central liveness probe inconclusive"
+      ;;
+  esac
 
   HEARTBEAT_FILE="$TOWN_ROOT/deacon/heartbeat.json"
   if [ -z "$DEACON_ISSUE" ] && [ -f "$HEARTBEAT_FILE" ]; then
@@ -256,25 +240,8 @@ else
     HEARTBEAT_AGE=$(( NOW - ${HEARTBEAT_TIME:-0} ))
 
     if [ "$HEARTBEAT_AGE" -gt "$DEACON_STALE_SECONDS" ]; then
-      # Cross-check tmux activity before declaring stuck: heartbeat.json is
-      # only ONE of three heartbeat stores (hq-qxl9). A live session with
-      # recent activity means the file-write path diverged (e.g. a long
-      # turn, or the agent refreshing a different store) — not a stuck
-      # Deacon. Escalating that as stuck caused a false-positive storm.
-      ACTIVITY_TIME=$(tmux display-message -t "$DEACON_SESSION" -p '#{window_activity}' 2>/dev/null || true)
-      case "$ACTIVITY_TIME" in
-        ''|*[!0-9]*) ACTIVITY_AGE="" ;;
-        *) ACTIVITY_AGE=$(( NOW - ACTIVITY_TIME )) ;;
-      esac
-      if [ -n "$ACTIVITY_AGE" ] && [ "$ACTIVITY_AGE" -le "$ACTIVITY_GRACE_SECONDS" ]; then
-        log "  DIVERGENCE: heartbeat file stale (${HEARTBEAT_AGE}s) but session active ${ACTIVITY_AGE}s ago — write divergence, not stuck"
-        DEACON_DIVERGENCE="heartbeat_write_divergence_${HEARTBEAT_AGE}s_active_${ACTIVITY_AGE}s"
-      elif [ "$DEACON_PROCESS_ALIVE" -eq 1 ] && ! has_in_progress_work; then
-        log "  SKIP: Deacon heartbeat stale (${HEARTBEAT_AGE}s old) but process is alive and no in_progress work exists"
-      else
-        log "  STUCK: Deacon heartbeat stale (${HEARTBEAT_AGE}s old, >${DEACON_STALE_SECONDS}s threshold), no recent session activity"
-        DEACON_ISSUE="stuck_heartbeat_${HEARTBEAT_AGE}s"
-      fi
+      log "  NOTICE: Deacon heartbeat ${HEARTBEAT_AGE}s old (>${DEACON_STALE_SECONDS}s) — heartbeat age is notice-only; daemon owns heartbeat nudge/restart"
+      DEACON_NOTICE="heartbeat_stale_${HEARTBEAT_AGE}s"
     else
       log "  OK: Deacon heartbeat ${HEARTBEAT_AGE}s old"
     fi
@@ -331,12 +298,6 @@ if [ -n "$DEACON_ISSUE" ]; then
 	log "Escalating deacon issue: $DEACON_ISSUE"
 	DEACON_SEVERITY="HIGH"
 	DEACON_FINGERPRINT="stuck-agent-dog:deacon:$DEACON_ISSUE"
-	case "$DEACON_ISSUE" in
-		stuck_heartbeat_*)
-			DEACON_SEVERITY="MEDIUM"
-			DEACON_FINGERPRINT="stuck-agent-dog:deacon:stuck-heartbeat"
-			;;
-	esac
 	gt escalate "Deacon $DEACON_ISSUE detected by stuck-agent-dog" \
 		-s "$DEACON_SEVERITY" \
 		--source "plugin:stuck-agent-dog" \
@@ -347,7 +308,7 @@ fi
 
 SUMMARY="Agent health: ${#CRASHED[@]} crashed, ${#STUCK[@]} stuck, $HEALTHY healthy"
 [ -n "$DEACON_ISSUE" ] && SUMMARY="$SUMMARY, deacon=$DEACON_ISSUE"
-[ -n "$DEACON_DIVERGENCE" ] && SUMMARY="$SUMMARY, deacon=$DEACON_DIVERGENCE (not escalated)"
+[ -n "$DEACON_NOTICE" ] && SUMMARY="$SUMMARY, deacon_notice=$DEACON_NOTICE (not escalated)"
 log ""
 log "=== $SUMMARY ==="
 
