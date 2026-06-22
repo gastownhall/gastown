@@ -1832,7 +1832,10 @@ func (b *Beads) ForceCloseWithReason(reason string, ids ...string) error {
 	groups := make([]closeGroup, 0, len(ids))
 	groupByDir := make(map[string]int, len(ids))
 	for _, id := range ids {
-		target := b.forIssueID(id)
+		target, err := b.forIssueID(id)
+		if err != nil {
+			return fmt.Errorf("resolving force-close target for %s: %w", id, err)
+		}
 		targetDir := target.getResolvedBeadsDir()
 		if idx, ok := groupByDir[targetDir]; ok {
 			groups[idx].ids = append(groups[idx].ids, id)
