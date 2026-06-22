@@ -13,9 +13,9 @@ refreshed its session heartbeat while the file store aged past threshold).
   `GT_ROLE=deacon` → `deacon.Touch()` / `deacon.TouchWithAction()`
   (`internal/deacon/heartbeat.go`).
 - **Read by:** the stuck-agent-dog plugin (parses the JSON `timestamp`, falling
-  back to mtime for malformed legacy files, and cross-checks tmux activity
-  before escalating) and the Go daemon (`deacon.ReadHeartbeat`; thresholds 5m
-  stale / 20m very-stale → poke).
+  back to mtime for malformed legacy files, and records stale age as NOTICE-only)
+  and the Go daemon (`deacon.ReadHeartbeat`; thresholds 5m stale / 20m
+  very-stale → poke/restart).
 - **Also touches:** the legacy `deacon/.deacon-heartbeat` mtime file for old
   shell scripts.
 
@@ -49,7 +49,7 @@ refreshed its session heartbeat while the file store aged past threshold).
 - **Polecats / Witness / Refinery:** `gt heartbeat` (session store) is the
   one that matters.
 - **Monitoring scripts:** never declare an agent stuck from a single store.
-  Cross-check tmux session activity (`tmux display-message -p
-  '#{window_activity}'`) before escalating — a live session with a stale
-  store is *heartbeat-write divergence*, not a stuck agent. The
-  stuck-agent-dog plugin does this since hq-qxl9.
+  A live session with a stale store is *heartbeat-write divergence*, not a stuck
+  agent. The stuck-agent-dog plugin treats Deacon heartbeat staleness as
+  NOTICE-only and escalates only dead Deacon session/runtime evidence; the Go
+  daemon owns heartbeat nudge/restart.
