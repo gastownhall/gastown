@@ -4,7 +4,6 @@ package beads
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -597,12 +596,17 @@ func (b *Beads) GetAgentBead(id string) (*Issue, *AgentFields, error) {
 		return target.GetAgentBead(id)
 	}
 
-	issue, err := b.Show(id)
+	issue, err := b.GetAgentIssueBead(id)
 	if err != nil {
-		if errors.Is(err, ErrNotFound) {
+		return nil, nil, err
+	}
+	if issue == nil {
+		if wispBeads, _ := b.ListAgentBeadsFromWisps(); wispBeads != nil {
+			issue = wispBeads[id]
+		}
+		if issue == nil {
 			return nil, nil, nil
 		}
-		return nil, nil, err
 	}
 
 	if !IsAgentBead(issue) {
@@ -612,6 +616,32 @@ func (b *Beads) GetAgentBead(id string) (*Issue, *AgentFields, error) {
 	fields := ParseAgentFields(issue.Description)
 	fields.AgentState = ResolveAgentState(issue.Description, issue.AgentState)
 	return issue, fields, nil
+}
+
+// GetAgentIssueBead retrieves one issue-backed agent bead without using bd show,
+// whose broad issue/wisp lookup fails when a durable issue and wisp share an ID.
+func (b *Beads) GetAgentIssueBead(id string) (*Issue, error) {
+	clauses := []string{
+		"ephemeral=false",
+		"id=" + quoteBDQueryValue(id),
+		"label=" + quoteBDQueryValue("gt:agent"),
+	}
+	out, err := b.run("query", "--json", strings.Join(clauses, " AND "), "--all", "--limit=0")
+	if err != nil {
+		return nil, err
+	}
+	if len(out) == 0 || !isJSONBytes(out) {
+		return nil, nil
+	}
+
+	var issues []*Issue
+	if err := json.Unmarshal(out, &issues); err != nil {
+		return nil, fmt.Errorf("parsing bd query output: %w", err)
+	}
+	if len(issues) == 0 {
+		return nil, nil
+	}
+	return issues[0], nil
 }
 
 // ListAgentBeads returns all agent beads in a single query.
