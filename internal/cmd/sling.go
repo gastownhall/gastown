@@ -715,6 +715,11 @@ func runSling(cmd *cobra.Command, args []string) (retErr error) {
 		} else if parts := strings.SplitN(target, "/", 2); len(parts) >= 1 {
 			targetRig = parts[0]
 		}
+		if targetRig != "" {
+			if err := verifyBeadExistsInTargetRigDatabase(beadID, targetRig, townRoot); err != nil {
+				return err
+			}
+		}
 		formulaName = resolveFormula(slingFormula, false, townRoot, targetRig)
 		preflightVars := append([]string(nil), loadRigCommandVars(townRoot, targetRig)...)
 		preflightVars = append(preflightVars, slingVars...)
@@ -728,6 +733,11 @@ func runSling(cmd *cobra.Command, args []string) (retErr error) {
 			return err
 		}
 	} else if formulaName != "" && isPolecatWorkTarget(target) {
+		if parts := strings.SplitN(target, "/", 2); len(parts) >= 1 && parts[0] != "" {
+			if err := verifyBeadExistsInTargetRigDatabase(beadID, parts[0], townRoot); err != nil {
+				return err
+			}
+		}
 		preflightVars := append([]string(nil), slingVars...)
 		if err := preflightFormulaBond(formulaName, beadID, info.Title, "", townRoot, preflightVars); err != nil {
 			return err
