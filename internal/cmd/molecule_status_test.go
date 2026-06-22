@@ -61,7 +61,7 @@ func TestOutputMoleculeStatus_FormulaWispShowsWorkflowContext(t *testing.T) {
 			DoneSteps:  0,
 			ReadySteps: []string{"tool-wisp-step-1"},
 		},
-		NextAction: "Show the workflow steps: gt prime or bd mol current tool-wisp-demo",
+		NextAction: "Show the workflow steps: gt prime",
 	}
 
 	oldStdout := os.Stdout
@@ -85,8 +85,11 @@ func TestOutputMoleculeStatus_FormulaWispShowsWorkflowContext(t *testing.T) {
 	if strings.Contains(output, "Attach a molecule to start work") {
 		t.Fatalf("formula wisp should not suggest gt mol attach, got:\n%s", output)
 	}
-	if !strings.Contains(output, "Show the workflow steps: gt prime or bd mol current tool-wisp-demo") {
+	if !strings.Contains(output, "Show the workflow steps: gt prime") {
 		t.Fatalf("expected workflow next action, got:\n%s", output)
+	}
+	if strings.Contains(output, "bd mol current") {
+		t.Fatalf("formula-only wisp should not suggest bd mol current, got:\n%s", output)
 	}
 }
 
@@ -105,7 +108,7 @@ func TestOutputMoleculeStatus_PatrolWispUsesInferredWorkflowContext(t *testing.T
 		HasWork:         true,
 		PinnedBead:      bead,
 		AttachedFormula: attachment.AttachedFormula,
-		NextAction:      "Show the workflow steps: gt prime or bd mol current hq-wisp-refinery",
+		NextAction:      "Show the workflow steps: gt prime",
 	}
 
 	oldStdout := os.Stdout
@@ -125,5 +128,8 @@ func TestOutputMoleculeStatus_PatrolWispUsesInferredWorkflowContext(t *testing.T
 	}
 	if strings.Contains(output, "No molecule attached") || strings.Contains(output, "Attach a molecule to start work") {
 		t.Fatalf("patrol wisp should not render as naked hooked work, got:\n%s", output)
+	}
+	if strings.Contains(output, "bd mol current") {
+		t.Fatalf("patrol wisp should not suggest bd mol current, got:\n%s", output)
 	}
 }

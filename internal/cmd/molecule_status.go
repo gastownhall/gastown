@@ -526,7 +526,7 @@ func runMoleculeStatus(cmd *cobra.Command, args []string) error {
 	} else if status.AttachedMolecule == "" && status.AttachedFormula == "" {
 		status.NextAction = "Attach a molecule to start work: gt mol attach <bead-id> <molecule-id>"
 	} else if status.AttachedFormula != "" && status.NextAction == "" && status.PinnedBead != nil {
-		status.NextAction = "Show the workflow steps: gt prime or bd mol current " + status.PinnedBead.ID
+		status.NextAction = "Show the workflow steps: gt prime"
 	}
 
 	// JSON output

@@ -247,6 +247,25 @@ func attachmentFormulaVars(attachment *beads.AttachmentFields) []string {
 	return vars
 }
 
+func workflowFormulaVars(ctx RoleContext, attachment *beads.AttachmentFields) []string {
+	if attachment == nil {
+		return nil
+	}
+	vars := patrolFormulaVarsForContext(ctx, attachment.AttachedFormula)
+	return append(vars, attachmentFormulaVars(attachment)...)
+}
+
+func patrolFormulaVarsForContext(ctx RoleContext, formulaName string) []string {
+	switch formulaName {
+	case constants.MolWitnessPatrol:
+		return buildWitnessPatrolVars(ctx)
+	case constants.MolRefineryPatrol:
+		return buildRefineryPatrolVars(ctx)
+	default:
+		return nil
+	}
+}
+
 func workflowAttachmentForHookedBead(issue *beads.Issue) *beads.AttachmentFields {
 	attachment := beads.ParseAttachmentFields(issue)
 	if hasWorkflowAttachment(attachment) {
