@@ -87,7 +87,7 @@ func (m *Mailbox) storeListFromDir() ([]*Message, error) {
 			if seen[si.ID] {
 				continue
 			}
-			if si.Status == beadsdk.StatusOpen || string(si.Status) == "hooked" {
+			if inboxVisible(string(si.Status), si.Labels, true) {
 				seen[si.ID] = true
 				messages = append(messages, sdkIssueToMessage(si))
 			}
@@ -129,6 +129,15 @@ func (m *Mailbox) storeCloseInDir(id string) error {
 			return ErrMessageNotFound
 		}
 		return fmt.Errorf("store close message: %w", err)
+	}
+	if err := m.store.AddLabel(ctx, id, mailClosedLabel, ""); err != nil {
+		if strings.Contains(err.Error(), "not found") {
+			return ErrMessageNotFound
+		}
+		if isLabelAlreadySet(err) {
+			return nil
+		}
+		return fmt.Errorf("store stamp closed mail label: %w", err)
 	}
 	return nil
 }
@@ -226,6 +235,15 @@ func (m *Mailbox) storeMarkUnread(id string) error {
 			return ErrMessageNotFound
 		}
 		return fmt.Errorf("store reopen message: %w", err)
+	}
+	if err := m.store.RemoveLabel(ctx, id, mailClosedLabel, ""); err != nil {
+		if strings.Contains(err.Error(), "not found") {
+			return ErrMessageNotFound
+		}
+		if isLabelMissing(err) {
+			return nil
+		}
+		return fmt.Errorf("store remove closed mail label: %w", err)
 	}
 	return nil
 }

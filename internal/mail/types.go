@@ -421,7 +421,7 @@ func (bm *BeadsMessage) ToMessage() *Message {
 		Subject:         bm.Title,
 		Body:            bm.Description,
 		Timestamp:       bm.CreatedAt,
-		Read:            bm.Status == "closed" || bm.HasLabel("read"),
+		Read:            bm.Status == "closed" || bm.HasLabel("read") || bm.HasLabel(mailClosedLabel),
 		Priority:        priority,
 		Type:            msgType,
 		ThreadID:        bm.threadID,

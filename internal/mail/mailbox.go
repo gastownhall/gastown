@@ -31,6 +31,27 @@ var (
 	ErrEmptyInbox      = errors.New("inbox is empty")
 )
 
+// mailClosedLabel durably records that a message bead was closed/dismissed.
+// Status can be resurrected from stale .beads/issues.jsonl imports; labels
+// survive that issue-row overwrite and keep dismissed mail hidden.
+const mailClosedLabel = "gt:mail-closed"
+
+func inboxVisible(status string, labels []string, allowHooked bool) bool {
+	if hasLabel(labels, mailClosedLabel) {
+		return false
+	}
+	return status == "open" || (allowHooked && status == "hooked")
+}
+
+func hasLabel(labels []string, label string) bool {
+	for _, l := range labels {
+		if l == label {
+			return true
+		}
+	}
+	return false
+}
+
 // Mailbox manages messages for an identity via beads.
 // When store is non-nil, beads-mode methods use the in-process beadsdk.Storage
 // directly instead of shelling out to the bd CLI.
@@ -274,7 +295,7 @@ func appendBeadsMessages(messages []*Message, seen map[string]bool, msgs []Beads
 		if seen[bm.ID] {
 			continue
 		}
-		if bm.Status == "open" || (includeHooked && bm.Status == "hooked") {
+		if inboxVisible(bm.Status, bm.Labels, includeHooked) {
 			seen[bm.ID] = true
 			messages = append(messages, bm.ToMessage())
 		}
@@ -289,8 +310,8 @@ func appendWispMessages(messages []*Message, seen map[string]bool, wisps []wispQ
 		if seen[bm.ID] {
 			continue
 		}
-		include := wisp.assigneeMatch && (bm.Status == "open" || bm.Status == "hooked")
-		include = include || (wisp.ccMatch && bm.Status == "open")
+		include := wisp.assigneeMatch && inboxVisible(bm.Status, bm.Labels, true)
+		include = include || (wisp.ccMatch && inboxVisible(bm.Status, bm.Labels, false))
 		if include {
 			seen[bm.ID] = true
 			messages = append(messages, bm.ToMessage())
@@ -617,6 +638,19 @@ func (m *Mailbox) closeInDir(id, beadsDir string) error {
 		return err
 	}
 
+	if err := m.stampClosedLabel(id, beadsDir); err != nil {
+		return fmt.Errorf("stamping closed mail label: %w", err)
+	}
+	return nil
+}
+
+func (m *Mailbox) stampClosedLabel(id, beadsDir string) error {
+	ctx, cancel := bdWriteCtx()
+	defer cancel()
+	_, err := runBdCommand(ctx, []string{"label", "add", id, mailClosedLabel}, m.workDir, beadsDir)
+	if err != nil && !isLabelAlreadySet(err) {
+		return err
+	}
 	return nil
 }
 
@@ -697,6 +731,16 @@ func (m *Mailbox) markReadOnlyBeads(id string) error {
 	return nil
 }
 
+func (m *Mailbox) unstampClosedLabel(id, beadsDir string) error {
+	ctx, cancel := bdWriteCtx()
+	defer cancel()
+	_, err := runBdCommand(ctx, []string{"label", "remove", id, mailClosedLabel}, m.workDir, beadsDir)
+	if err != nil && !isLabelMissing(err) {
+		return err
+	}
+	return nil
+}
+
 func (m *Mailbox) acknowledgeDeliveryForPrimary(id string) error {
 	if m.legacy {
 		return nil
@@ -718,6 +762,15 @@ func (m *Mailbox) acknowledgeDeliveryForPrimary(id string) error {
 func isBdNotFound(err error) bool {
 	bdErr, ok := err.(*bdError)
 	return ok && (bdErr.ContainsError("not found") || bdErr.ContainsError("no issue found"))
+}
+
+func isLabelAlreadySet(err error) bool {
+	msg := strings.ToLower(err.Error())
+	return strings.Contains(msg, "already has label") || strings.Contains(msg, "already exists") || strings.Contains(msg, "duplicate")
+}
+
+func isLabelMissing(err error) bool {
+	return strings.Contains(strings.ToLower(err.Error()), "does not have label")
 }
 
 // MarkUnreadOnly marks a message as unread (removes "read" label).
@@ -804,14 +857,14 @@ func (m *Mailbox) markUnreadBeads(id string) error {
 					}
 					return err2
 				}
-				return nil
+				return m.unstampClosedLabel(id, m.beadsDir)
 			}
 			return ErrMessageNotFound
 		}
 		return err
 	}
 
-	return nil
+	return m.unstampClosedLabel(id, primary)
 }
 
 func (m *Mailbox) markUnreadLegacy(id string) error {

@@ -457,11 +457,11 @@ printf '%s\n' "$*" >> "$BD_LOG"
 if [ "$1" = "list" ]; then
   case "$*" in
     *"--assignee gastown/synth"*)
-      printf '%s\n' '[{"id":"issue-direct-open","title":"Direct open","description":"","status":"open","priority":2,"assignee":"gastown/synth","created_at":"2026-06-12T12:00:05Z","labels":["gt:message","from:mayor/"]},{"id":"issue-direct-hooked","title":"Direct hooked","description":"","status":"hooked","priority":2,"assignee":"gastown/synth","created_at":"2026-06-12T12:00:04Z","labels":["gt:message","from:mayor/"]},{"id":"issue-direct-closed","title":"Direct closed","description":"","status":"closed","priority":2,"assignee":"gastown/synth","created_at":"2026-06-12T12:00:03Z","labels":["gt:message","from:mayor/"]}]'
+      printf '%s\n' '[{"id":"issue-direct-open","title":"Direct open","description":"","status":"open","priority":2,"assignee":"gastown/synth","created_at":"2026-06-12T12:00:05Z","labels":["gt:message","from:mayor/"]},{"id":"issue-direct-hooked","title":"Direct hooked","description":"","status":"hooked","priority":2,"assignee":"gastown/synth","created_at":"2026-06-12T12:00:04Z","labels":["gt:message","from:mayor/"]},{"id":"issue-direct-dismissed","title":"Direct dismissed","description":"","status":"open","priority":2,"assignee":"gastown/synth","created_at":"2026-06-12T12:00:03Z","labels":["gt:message","gt:mail-closed","from:mayor/"]},{"id":"issue-direct-closed","title":"Direct closed","description":"","status":"closed","priority":2,"assignee":"gastown/synth","created_at":"2026-06-12T12:00:02Z","labels":["gt:message","from:mayor/"]}]'
       exit 0
       ;;
     *"--label cc:gastown/synth"*)
-      printf '%s\n' '[{"id":"issue-cc-open","title":"CC open","description":"","status":"open","priority":2,"assignee":"mayor/","created_at":"2026-06-12T12:00:02Z","labels":["gt:message","cc:gastown/synth","from:mayor/"]},{"id":"issue-cc-hooked","title":"CC hooked","description":"","status":"hooked","priority":2,"assignee":"mayor/","created_at":"2026-06-12T12:00:01Z","labels":["gt:message","cc:gastown/synth","from:mayor/"]}]'
+      printf '%s\n' '[{"id":"issue-cc-open","title":"CC open","description":"","status":"open","priority":2,"assignee":"mayor/","created_at":"2026-06-12T12:00:02Z","labels":["gt:message","cc:gastown/synth","from:mayor/"]},{"id":"issue-cc-dismissed","title":"CC dismissed","description":"","status":"open","priority":2,"assignee":"mayor/","created_at":"2026-06-12T12:00:01Z","labels":["gt:message","gt:mail-closed","cc:gastown/synth","from:mayor/"]},{"id":"issue-cc-hooked","title":"CC hooked","description":"","status":"hooked","priority":2,"assignee":"mayor/","created_at":"2026-06-12T12:00:00Z","labels":["gt:message","cc:gastown/synth","from:mayor/"]}]'
       exit 0
       ;;
   esac
@@ -469,7 +469,7 @@ if [ "$1" = "list" ]; then
   exit 0
 fi
 if [ "$1" = "sql" ]; then
-  printf '%s\n' '[{"id":"wisp-direct-open","title":"Wisp direct open","description":"","status":"open","priority":2,"assignee":"gastown/synth","created_at":"2026-06-12T12:00:00Z","updated_at":"2026-06-12T12:00:00Z","labels_csv":"gt:message,from:mayor/","assignee_match":1,"cc_match":0},{"id":"wisp-direct-hooked","title":"Wisp direct hooked","description":"","status":"hooked","priority":2,"assignee":"gastown/synth","created_at":"2026-06-12T11:59:59Z","updated_at":"2026-06-12T11:59:59Z","labels_csv":"gt:message,from:mayor/","assignee_match":1,"cc_match":0},{"id":"wisp-cc-open","title":"Wisp CC open","description":"","status":"open","priority":2,"assignee":"mayor/","created_at":"2026-06-12T11:59:58Z","updated_at":"2026-06-12T11:59:58Z","labels_csv":"gt:message,cc:gastown/synth,from:mayor/","assignee_match":0,"cc_match":1},{"id":"wisp-cc-hooked","title":"Wisp CC hooked","description":"","status":"hooked","priority":2,"assignee":"mayor/","created_at":"2026-06-12T11:59:57Z","updated_at":"2026-06-12T11:59:57Z","labels_csv":"gt:message,cc:gastown/synth,from:mayor/","assignee_match":0,"cc_match":1},{"id":"issue-direct-open","title":"Duplicate wisp","description":"","status":"open","priority":2,"assignee":"gastown/synth","created_at":"2026-06-12T11:59:56Z","updated_at":"2026-06-12T11:59:56Z","labels_csv":"gt:message,from:mayor/","assignee_match":1,"cc_match":0}]'
+  printf '%s\n' '[{"id":"wisp-direct-open","title":"Wisp direct open","description":"","status":"open","priority":2,"assignee":"gastown/synth","created_at":"2026-06-12T12:00:00Z","updated_at":"2026-06-12T12:00:00Z","labels_csv":"gt:message,from:mayor/","assignee_match":1,"cc_match":0},{"id":"wisp-direct-dismissed","title":"Wisp direct dismissed","description":"","status":"open","priority":2,"assignee":"gastown/synth","created_at":"2026-06-12T11:59:59Z","updated_at":"2026-06-12T11:59:59Z","labels_csv":"gt:message,gt:mail-closed,from:mayor/","assignee_match":1,"cc_match":0},{"id":"wisp-direct-hooked","title":"Wisp direct hooked","description":"","status":"hooked","priority":2,"assignee":"gastown/synth","created_at":"2026-06-12T11:59:58Z","updated_at":"2026-06-12T11:59:58Z","labels_csv":"gt:message,from:mayor/","assignee_match":1,"cc_match":0},{"id":"wisp-cc-open","title":"Wisp CC open","description":"","status":"open","priority":2,"assignee":"mayor/","created_at":"2026-06-12T11:59:57Z","updated_at":"2026-06-12T11:59:57Z","labels_csv":"gt:message,cc:gastown/synth,from:mayor/","assignee_match":0,"cc_match":1},{"id":"wisp-cc-dismissed","title":"Wisp CC dismissed","description":"","status":"open","priority":2,"assignee":"mayor/","created_at":"2026-06-12T11:59:56Z","updated_at":"2026-06-12T11:59:56Z","labels_csv":"gt:message,gt:mail-closed,cc:gastown/synth,from:mayor/","assignee_match":0,"cc_match":1},{"id":"wisp-cc-hooked","title":"Wisp CC hooked","description":"","status":"hooked","priority":2,"assignee":"mayor/","created_at":"2026-06-12T11:59:55Z","updated_at":"2026-06-12T11:59:55Z","labels_csv":"gt:message,cc:gastown/synth,from:mayor/","assignee_match":0,"cc_match":1},{"id":"issue-direct-open","title":"Duplicate wisp","description":"","status":"open","priority":2,"assignee":"gastown/synth","created_at":"2026-06-12T11:59:54Z","updated_at":"2026-06-12T11:59:54Z","labels_csv":"gt:message,from:mayor/","assignee_match":1,"cc_match":0}]'
   exit 0
 fi
 printf 'unexpected bd args: %s\n' "$*" >&2
@@ -506,7 +506,11 @@ exit 1
 	}
 	wantAbsent := []string{
 		"issue-direct-closed",
+		"issue-direct-dismissed",
+		"issue-cc-dismissed",
 		"issue-cc-hooked",
+		"wisp-direct-dismissed",
+		"wisp-cc-dismissed",
 		"wisp-cc-hooked",
 	}
 	for _, id := range wantAbsent {
@@ -636,6 +640,197 @@ func TestParseWispTimestamp(t *testing.T) {
 				t.Fatalf("parseWispTimestamp(%q) location = %v, want UTC", tt.value, got.Location())
 			}
 		})
+	}
+}
+
+func TestInboxVisible(t *testing.T) {
+	tests := []struct {
+		name        string
+		status      string
+		labels      []string
+		allowHooked bool
+		want        bool
+	}{
+		{"open assignee visible", "open", nil, true, true},
+		{"open cc visible", "open", nil, false, true},
+		{"closed hidden", "closed", nil, true, false},
+		{"hooked visible when allowed", "hooked", nil, true, true},
+		{"hooked hidden for cc", "hooked", nil, false, false},
+		{"reimported open dismissed hidden", "open", []string{mailClosedLabel}, true, false},
+		{"reimported open dismissed cc hidden", "open", []string{mailClosedLabel}, false, false},
+		{"dismissed among labels hidden", "open", []string{"gt:message", mailClosedLabel}, true, false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := inboxVisible(tt.status, tt.labels, tt.allowHooked); got != tt.want {
+				t.Fatalf("inboxVisible(%q, %v, %v) = %v, want %v", tt.status, tt.labels, tt.allowHooked, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestAppendBeadsMessagesSkipsClosedMailLabel(t *testing.T) {
+	msgs := []BeadsMessage{
+		{ID: "open", Status: "open", Labels: []string{"gt:message"}},
+		{ID: "open-dismissed", Status: "open", Labels: []string{"gt:message", mailClosedLabel}},
+		{ID: "hooked", Status: "hooked", Labels: []string{"gt:message"}},
+		{ID: "hooked-dismissed", Status: "hooked", Labels: []string{"gt:message", mailClosedLabel}},
+		{ID: "closed", Status: "closed", Labels: []string{"gt:message"}},
+	}
+
+	assignee := appendBeadsMessages(nil, map[string]bool{}, msgs, true)
+	if got, want := messageIDs(assignee), []string{"open", "hooked"}; fmt.Sprint(got) != fmt.Sprint(want) {
+		t.Fatalf("assignee message IDs = %v, want %v", got, want)
+	}
+
+	cc := appendBeadsMessages(nil, map[string]bool{}, msgs, false)
+	if got, want := messageIDs(cc), []string{"open"}; fmt.Sprint(got) != fmt.Sprint(want) {
+		t.Fatalf("cc message IDs = %v, want %v", got, want)
+	}
+}
+
+func TestAppendWispMessagesSkipsClosedMailLabel(t *testing.T) {
+	wisps := []wispQueryMessage{
+		{message: BeadsMessage{ID: "assignee-open", Status: "open", Labels: []string{"gt:message"}}, assigneeMatch: true},
+		{message: BeadsMessage{ID: "assignee-dismissed", Status: "open", Labels: []string{"gt:message", mailClosedLabel}}, assigneeMatch: true},
+		{message: BeadsMessage{ID: "assignee-hooked", Status: "hooked", Labels: []string{"gt:message"}}, assigneeMatch: true},
+		{message: BeadsMessage{ID: "cc-open", Status: "open", Labels: []string{"gt:message"}}, ccMatch: true},
+		{message: BeadsMessage{ID: "cc-dismissed", Status: "open", Labels: []string{"gt:message", mailClosedLabel}}, ccMatch: true},
+		{message: BeadsMessage{ID: "cc-hooked", Status: "hooked", Labels: []string{"gt:message"}}, ccMatch: true},
+	}
+
+	got := messageIDs(appendWispMessages(nil, map[string]bool{}, wisps))
+	want := []string{"assignee-open", "assignee-hooked", "cc-open"}
+	if fmt.Sprint(got) != fmt.Sprint(want) {
+		t.Fatalf("wisp message IDs = %v, want %v", got, want)
+	}
+}
+
+func TestMailClosedLabelMarksMessageRead(t *testing.T) {
+	msg := (&BeadsMessage{ID: "msg-dismissed", Status: "open", Labels: []string{mailClosedLabel}}).ToMessage()
+	if !msg.Read {
+		t.Fatal("mailClosedLabel should mark direct message reads as read")
+	}
+}
+
+func TestCloseInDirStampsClosedMailLabel(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("shell fake bd is POSIX-only")
+	}
+	logPath := installFakeBD(t, `#!/bin/sh
+printf '%s\n' "$*" >> "$BD_LOG"
+case "$1" in
+  close|label) exit 0 ;;
+esac
+exit 1
+`)
+
+	m := NewMailboxWithBeadsDir("gastown/synth", t.TempDir(), t.TempDir())
+	if err := m.closeInDir("msg-1", m.beadsDir); err != nil {
+		t.Fatalf("closeInDir: %v", err)
+	}
+	assertBDLogContains(t, logPath, "close msg-1")
+	assertBDLogContains(t, logPath, "label add msg-1 "+mailClosedLabel)
+}
+
+func TestCloseInDirReturnsClosedLabelStampError(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("shell fake bd is POSIX-only")
+	}
+	installFakeBD(t, `#!/bin/sh
+case "$1" in
+  close) exit 0 ;;
+  label) printf 'label backend down\n' >&2; exit 1 ;;
+esac
+exit 1
+`)
+
+	m := NewMailboxWithBeadsDir("gastown/synth", t.TempDir(), t.TempDir())
+	err := m.closeInDir("msg-1", m.beadsDir)
+	if err == nil || !strings.Contains(err.Error(), "stamping closed mail label") {
+		t.Fatalf("closeInDir error = %v, want closed label stamp failure", err)
+	}
+}
+
+func TestMarkUnreadBeadsRemovesClosedMailLabel(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("shell fake bd is POSIX-only")
+	}
+	logPath := installFakeBD(t, `#!/bin/sh
+printf '%s\n' "$*" >> "$BD_LOG"
+case "$1" in
+  reopen|label) exit 0 ;;
+esac
+exit 1
+`)
+
+	m := NewMailboxWithBeadsDir("gastown/synth", t.TempDir(), t.TempDir())
+	if err := m.markUnreadBeads("msg-1"); err != nil {
+		t.Fatalf("markUnreadBeads: %v", err)
+	}
+	assertBDLogContains(t, logPath, "reopen msg-1")
+	assertBDLogContains(t, logPath, "label remove msg-1 "+mailClosedLabel)
+}
+
+func TestMarkReadOnlyDoesNotRemoveClosedMailLabel(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("shell fake bd is POSIX-only")
+	}
+	logPath := installFakeBD(t, `#!/bin/sh
+printf '%s\n' "$*" >> "$BD_LOG"
+case "$1" in
+  show)
+    printf '%s\n' '[{"id":"msg-1","title":"Message","status":"open","assignee":"gastown/synth","created_at":"2026-06-12T12:00:00Z","labels":["gt:message"]}]'
+    exit 0
+    ;;
+  label) exit 0 ;;
+esac
+exit 1
+`)
+
+	m := NewMailboxWithBeadsDir("gastown/synth", t.TempDir(), t.TempDir())
+	if err := m.markReadOnlyBeads("msg-1"); err != nil {
+		t.Fatalf("markReadOnlyBeads: %v", err)
+	}
+	logBytes, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatalf("read bd log: %v", err)
+	}
+	if strings.Contains(string(logBytes), mailClosedLabel) {
+		t.Fatalf("MarkReadOnly must not touch %s; log:\n%s", mailClosedLabel, string(logBytes))
+	}
+}
+
+func messageIDs(messages []*Message) []string {
+	ids := make([]string, 0, len(messages))
+	for _, msg := range messages {
+		ids = append(ids, msg.ID)
+	}
+	return ids
+}
+
+func installFakeBD(t *testing.T, script string) string {
+	t.Helper()
+	binDir := t.TempDir()
+	logPath := filepath.Join(t.TempDir(), "bd.log")
+	fakeBD := filepath.Join(binDir, "bd")
+	if err := os.WriteFile(fakeBD, []byte(script), 0755); err != nil {
+		t.Fatalf("write fake bd: %v", err)
+	}
+	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	t.Setenv("BD_LOG", logPath)
+	return logPath
+}
+
+func assertBDLogContains(t *testing.T, logPath, want string) {
+	t.Helper()
+	logBytes, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatalf("read bd log: %v", err)
+	}
+	if !strings.Contains(string(logBytes), want) {
+		t.Fatalf("bd log missing %q:\n%s", want, string(logBytes))
 	}
 }
 
