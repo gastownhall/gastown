@@ -462,9 +462,6 @@ func verifyBeadExistsInTargetRigDatabase(beadID, targetRig, townRoot string) err
 		Stderr(io.Discard).
 		Output()
 	if err != nil || len(strings.TrimSpace(string(out))) == 0 {
-		if routedBeadExistsForTargetRig(beadID, targetRig, townRoot) {
-			return nil
-		}
 		return fmt.Errorf("bead %s is not present in target rig %q beads database; refusing to sling before creating hooks or molecule side effects", beadID, targetRig)
 	}
 
@@ -473,22 +470,10 @@ func verifyBeadExistsInTargetRigDatabase(beadID, targetRig, townRoot string) err
 		return fmt.Errorf("checking target rig %q database for bead %s: %w", targetRig, beadID, err)
 	}
 	if len(infos) == 0 {
-		if routedBeadExistsForTargetRig(beadID, targetRig, townRoot) {
-			return nil
-		}
 		return fmt.Errorf("bead %s is not present in target rig %q beads database; refusing to sling before creating hooks or molecule side effects", beadID, targetRig)
 	}
 
 	return nil
-}
-
-func routedBeadExistsForTargetRig(beadID, targetRig, townRoot string) bool {
-	prefixRig := beads.GetRigNameForPrefix(townRoot, beads.ExtractPrefix(beadID))
-	if prefixRig != targetRig {
-		return false
-	}
-	out, err := bdShowBeadRoutedCmdFromTownRoot(townRoot, beadID).Stderr(io.Discard).Output()
-	return err == nil && len(strings.TrimSpace(string(out))) > 0
 }
 
 func bdShowBeadOutput(beadID string) ([]byte, error) {

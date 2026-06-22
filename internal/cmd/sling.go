@@ -733,12 +733,25 @@ func runSling(cmd *cobra.Command, args []string) (retErr error) {
 			return err
 		}
 	} else if formulaName != "" && isPolecatWorkTarget(target) {
-		if parts := strings.SplitN(target, "/", 2); len(parts) >= 1 && parts[0] != "" {
-			if err := verifyBeadExistsInTargetRigDatabase(beadID, parts[0], townRoot); err != nil {
+		targetRig := ""
+		if rigName, isRig := IsRigName(target); isRig {
+			targetRig = rigName
+		} else if parts := strings.SplitN(target, "/", 2); len(parts) >= 1 {
+			targetRig = parts[0]
+		}
+		if targetRig != "" {
+			if err := verifyBeadExistsInTargetRigDatabase(beadID, targetRig, townRoot); err != nil {
 				return err
 			}
 		}
-		preflightVars := append([]string(nil), slingVars...)
+		preflightVars := append([]string(nil), loadRigCommandVars(townRoot, targetRig)...)
+		preflightVars = append(preflightVars, slingVars...)
+		if slingBaseBranch != "" && slingBaseBranch != "main" {
+			preflightVars = append(preflightVars, fmt.Sprintf("base_branch=%s", slingBaseBranch))
+		}
+		if slingResumeBranch != "" {
+			preflightVars = append(preflightVars, fmt.Sprintf("resume_branch=%s", slingResumeBranch))
+		}
 		if err := preflightFormulaBond(formulaName, beadID, info.Title, "", townRoot, preflightVars); err != nil {
 			return err
 		}

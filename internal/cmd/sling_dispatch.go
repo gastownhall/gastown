@@ -324,6 +324,9 @@ func executeSling(params SlingParams) (*SlingResult, error) {
 		if spawnInfo.BaseBranch != "" && spawnInfo.BaseBranch != "main" {
 			allVars = append(allVars, fmt.Sprintf("base_branch=%s", spawnInfo.BaseBranch))
 		}
+		if params.ResumeBranch != "" {
+			allVars = append(allVars, fmt.Sprintf("resume_branch=%s", params.ResumeBranch))
+		}
 
 		// GH#gt-zqvj: Inject prior attempt context when re-dispatching an issue
 		// that already has an open MR from a previous polecat. The new polecat
