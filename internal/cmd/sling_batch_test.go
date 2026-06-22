@@ -739,6 +739,7 @@ exit 0
 	t.Setenv("PATH", binDir+":"+os.Getenv("PATH"))
 	t.Setenv("BEADS_DIR", filepath.Join(townRoot, "wrong", ".beads"))
 	t.Setenv("BEADS_DOLT_SERVER_DATABASE", "gastown")
+	t.Setenv("GT_DOLT_DATA", "")
 	t.Setenv("BEADS_DB", filepath.Join(townRoot, "wrong.db"))
 	t.Setenv("BD_DB", filepath.Join(townRoot, "wrong.bd"))
 	t.Setenv("BEADS_DOLT_DATA_DIR", filepath.Join(townRoot, "wrong-data"))

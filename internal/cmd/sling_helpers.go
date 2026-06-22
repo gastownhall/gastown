@@ -3,6 +3,7 @@ package cmd
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"math/rand"
@@ -102,6 +103,8 @@ type beadInfo struct {
 	IssueType    string           `json:"issue_type,omitempty"`
 	Ephemeral    bool             `json:"ephemeral,omitempty"`
 }
+
+var errBeadTargetRigMismatch = errors.New("bead does not resolve to target rig")
 
 func workSnapshotFromBeadInfo(beadID string, info *beadInfo) workitem.Snapshot {
 	if info == nil {
@@ -427,11 +430,10 @@ func verifyBeadExists(beadID string) error {
 	return nil
 }
 
-// verifyBeadExistsInTargetRigDatabase checks the target rig's beads database
-// directly instead of following prefix routing. This prevents gt sling from
-// spawning polecats or creating molecule/hook side effects for beads that only
-// resolve from HQ or another rig database.
-func verifyBeadExistsInTargetRigDatabase(beadID, targetRig, townRoot string) error {
+// verifyBeadResolvesForTargetRig checks the bead through the same prefix-routed
+// database context used by gt show, hook updates, scheduler readiness, and
+// formula bonding, then verifies that context belongs to the target rig.
+func verifyBeadResolvesForTargetRig(beadID, targetRig, townRoot string) error {
 	if beadID == "" {
 		return nil
 	}
@@ -442,25 +444,17 @@ func verifyBeadExistsInTargetRigDatabase(beadID, targetRig, townRoot string) err
 		return fmt.Errorf("cannot verify bead %s in target rig %q: town root is unavailable; refusing to sling before creating hooks or molecule side effects", beadID, targetRig)
 	}
 
-	targetRigDir := beads.GetRigDirForName(townRoot, targetRig)
-	targetBeadsDir := ""
-	if targetRigDir != "" {
-		targetBeadsDir = filepath.Join(targetRigDir, ".beads")
-	} else {
-		targetBeadsDir = doltserver.FindRigBeadsDir(townRoot, targetRig)
-		targetRigDir = filepath.Dir(targetBeadsDir)
-	}
-	if targetBeadsDir == "" || targetRigDir == "." {
+	targetBeadsDir := targetRigBeadsDir(townRoot, targetRig)
+	if targetBeadsDir == "" {
 		return fmt.Errorf("cannot resolve target rig %q beads database for bead %s; refusing to sling before creating hooks or molecule side effects", targetRig, beadID)
 	}
 
-	out, err := BdCmd("show", beadID, "--json").
-		AllowStale().
-		Dir(targetRigDir).
-		WithBeadsDir(targetBeadsDir).
-		StripBeadsDir().
-		Stderr(io.Discard).
-		Output()
+	resolvedBeadsDir := beads.ResolveBeadsDirForID(filepath.Join(townRoot, ".beads"), beadID)
+	if !sameBeadsDir(resolvedBeadsDir, targetBeadsDir) {
+		return fmt.Errorf("%w: bead %s does not resolve to target rig %q beads database; refusing to sling before creating hooks or molecule side effects", errBeadTargetRigMismatch, beadID, targetRig)
+	}
+
+	out, err := bdShowBeadDirectCmdFromTownRoot(townRoot, beadID).Stderr(io.Discard).Output()
 	if err != nil || len(strings.TrimSpace(string(out))) == 0 {
 		return fmt.Errorf("bead %s is not present in target rig %q beads database; refusing to sling before creating hooks or molecule side effects", beadID, targetRig)
 	}
@@ -474,6 +468,33 @@ func verifyBeadExistsInTargetRigDatabase(beadID, targetRig, townRoot string) err
 	}
 
 	return nil
+}
+
+func targetRigBeadsDir(townRoot, targetRig string) string {
+	targetRigDir := beads.GetRigDirForName(townRoot, targetRig)
+	if targetRigDir != "" {
+		return beads.ResolveBeadsDir(targetRigDir)
+	}
+	targetBeadsDir := doltserver.FindRigBeadsDir(townRoot, targetRig)
+	if targetBeadsDir == "" {
+		return ""
+	}
+	return targetBeadsDir
+}
+
+func sameBeadsDir(a, b string) bool {
+	if a == "" || b == "" {
+		return false
+	}
+	a = filepath.Clean(a)
+	b = filepath.Clean(b)
+	if resolved, err := filepath.EvalSymlinks(a); err == nil {
+		a = resolved
+	}
+	if resolved, err := filepath.EvalSymlinks(b); err == nil {
+		b = resolved
+	}
+	return a == b
 }
 
 func bdShowBeadOutput(beadID string) ([]byte, error) {

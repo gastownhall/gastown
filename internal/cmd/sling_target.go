@@ -220,7 +220,7 @@ func resolveTarget(target string, opts ResolveTargetOptions) (*ResolvedTarget, e
 			}
 		}
 		if opts.BeadID != "" {
-			if err := verifyBeadExistsInTargetRigDatabase(opts.BeadID, rigName, opts.TownRoot); err != nil {
+			if err := verifyBeadResolvesForTargetRig(opts.BeadID, rigName, opts.TownRoot); err != nil {
 				return nil, err
 			}
 		}
@@ -268,7 +268,7 @@ func resolveTarget(target string, opts ResolveTargetOptions) (*ResolvedTarget, e
 				}
 			}
 			if opts.BeadID != "" {
-				if err := verifyBeadExistsInTargetRigDatabase(opts.BeadID, rigName, opts.TownRoot); err != nil {
+				if err := verifyBeadResolvesForTargetRig(opts.BeadID, rigName, opts.TownRoot); err != nil {
 					return nil, err
 				}
 			}
@@ -303,7 +303,7 @@ func resolveTarget(target string, opts ResolveTargetOptions) (*ResolvedTarget, e
 		parts := strings.Split(agentID, "/")
 		if len(parts) >= 3 && parts[1] == "polecats" {
 			rigName := parts[0]
-			if err := verifyBeadExistsInTargetRigDatabase(opts.BeadID, rigName, opts.TownRoot); err != nil {
+			if err := verifyBeadResolvesForTargetRig(opts.BeadID, rigName, opts.TownRoot); err != nil {
 				return nil, err
 			}
 		}

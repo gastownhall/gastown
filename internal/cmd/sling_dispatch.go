@@ -170,7 +170,7 @@ func executeSling(params SlingParams) (*SlingResult, error) {
 	}
 
 	if params.RigName != "" {
-		if err := verifyBeadExistsInTargetRigDatabase(params.BeadID, params.RigName, townRoot); err != nil {
+		if err := verifyBeadResolvesForTargetRig(params.BeadID, params.RigName, townRoot); err != nil {
 			result.ErrMsg = err.Error()
 			return result, err
 		}

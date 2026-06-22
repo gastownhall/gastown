@@ -300,6 +300,7 @@ exit /b 0
 	// with the route-resolved target rig database.
 	t.Setenv("BEADS_DIR", filepath.Join(townRoot, ".beads"))
 	t.Setenv("BEADS_DOLT_SERVER_DATABASE", "hq")
+	t.Setenv("GT_DOLT_DATA", "")
 	t.Setenv("BEADS_DB", filepath.Join(townRoot, "wrong.db"))
 	t.Setenv("BD_DB", filepath.Join(townRoot, "wrong.bd"))
 	t.Setenv("BEADS_DOLT_DATA_DIR", filepath.Join(townRoot, "wrong-data"))
@@ -945,13 +946,105 @@ exit /b 0
 
 	err = runSling(nil, []string{"gt-r2405", "gastown"})
 	if err == nil {
-		t.Fatal("expected target-rig database validation error")
+		t.Fatal("expected target-rig resolver validation error")
 	}
-	if !strings.Contains(err.Error(), "not present in target rig") {
+	if !strings.Contains(err.Error(), "does not resolve to target rig") {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if spawnCalled {
-		t.Fatal("spawnPolecatForSling was called before target-rig database validation rejected the bead")
+		t.Fatal("spawnPolecatForSling was called before target-rig resolver validation rejected the bead")
+	}
+}
+
+func TestTargetRigResolverAllowsRouteResolvedGtBead(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("skipping on windows: shell stub uses POSIX env logging")
+	}
+	beads.ResetBdAllowStaleCacheForTest()
+	t.Cleanup(beads.ResetBdAllowStaleCacheForTest)
+
+	townRoot := t.TempDir()
+	rigDir := filepath.Join(townRoot, "gastown", "mayor", "rig")
+	for _, dir := range []string{filepath.Join(townRoot, ".beads"), filepath.Join(townRoot, "mayor", "rig"), filepath.Join(rigDir, ".beads")} {
+		if err := os.MkdirAll(dir, 0755); err != nil {
+			t.Fatalf("mkdir %s: %v", dir, err)
+		}
+	}
+	routes := strings.Join([]string{
+		`{"prefix":"gt-","path":"gastown/mayor/rig"}`,
+		`{"prefix":"hq-","path":"."}`,
+		"",
+	}, "\n")
+	if err := os.WriteFile(filepath.Join(townRoot, ".beads", "routes.jsonl"), []byte(routes), 0644); err != nil {
+		t.Fatalf("write routes.jsonl: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(rigDir, ".beads", "metadata.json"), []byte(`{"dolt_database":"gastown","dolt_server_host":"127.0.0.1","dolt_server_port":3307}`), 0644); err != nil {
+		t.Fatalf("write rig metadata: %v", err)
+	}
+
+	binDir := filepath.Join(townRoot, "bin")
+	if err := os.MkdirAll(binDir, 0755); err != nil {
+		t.Fatalf("mkdir binDir: %v", err)
+	}
+	logPath := filepath.Join(townRoot, "bd.log")
+	bdScript := `#!/bin/sh
+set -e
+if [ "$1" = "--allow-stale" ] && [ "${2:-}" = "version" ]; then
+  echo 'bd version 1.0.0'
+  exit 0
+fi
+printf '%s|%s|%s|%s|%s\n' "$*" "$(pwd)" "${BEADS_DIR:-}" "${BEADS_DOLT_DATA_DIR:-}" "${BEADS_DOLT_SERVER_DATABASE:-}" >> "${BD_LOG}"
+cmd="$1"
+shift || true
+if [ "$cmd" = "--allow-stale" ]; then
+  cmd="$1"
+  shift || true
+fi
+case "$cmd" in
+  show)
+    echo '[{"title":"Route issue","status":"open","assignee":"","description":""}]'
+    ;;
+  *)
+    echo "unexpected command: $cmd" >&2
+    exit 2
+    ;;
+esac
+`
+	_ = writeBDStub(t, binDir, bdScript, "")
+
+	t.Setenv("BD_LOG", logPath)
+	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	t.Setenv("GT_DOLT_DATA", filepath.Join(townRoot, ".dolt-data"))
+	t.Setenv("BEADS_DOLT_DATA_DIR", filepath.Join(townRoot, "wrong-data"))
+	t.Setenv("BEADS_DOLT_SERVER_DATABASE", "hq")
+
+	if err := verifyBeadResolvesForTargetRig("gt-hq-oy83-cleanup", "gastown", townRoot); err != nil {
+		t.Fatalf("verifyBeadResolvesForTargetRig: %v", err)
+	}
+
+	logBytes, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatalf("read bd log: %v", err)
+	}
+	line := strings.TrimSpace(string(logBytes))
+	parts := strings.Split(line, "|")
+	if len(parts) != 5 {
+		t.Fatalf("malformed bd log: %q", line)
+	}
+	if !strings.Contains(parts[0], "show gt-hq-oy83-cleanup --json") {
+		t.Fatalf("bd args = %q, want route-resolved show", parts[0])
+	}
+	if parts[1] != rigDir {
+		t.Fatalf("bd cwd = %q, want %q", parts[1], rigDir)
+	}
+	if want := filepath.Join(rigDir, ".beads"); parts[2] != want {
+		t.Fatalf("BEADS_DIR = %q, want %q", parts[2], want)
+	}
+	if want := filepath.Join(townRoot, ".dolt-data"); parts[3] != want {
+		t.Fatalf("BEADS_DOLT_DATA_DIR = %q, want %q", parts[3], want)
+	}
+	if parts[4] != "" {
+		t.Fatalf("BEADS_DOLT_SERVER_DATABASE leaked: %q", parts[4])
 	}
 }
 
@@ -1067,9 +1160,9 @@ func TestScheduleBeadRejectsMissingTargetRigDatabaseBeforeContext(t *testing.T) 
 
 	err := scheduleBead("gt-r2405", "gastown", ScheduleOptions{})
 	if err == nil {
-		t.Fatal("expected target-rig database validation error")
+		t.Fatal("expected target-rig resolver validation error")
 	}
-	if !strings.Contains(err.Error(), "not present in target rig") {
+	if !strings.Contains(err.Error(), "does not resolve to target rig") {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
@@ -1080,7 +1173,7 @@ func TestScheduleBeadRejectsMissingTargetRigDatabaseBeforeContext(t *testing.T) 
 	log := string(logBytes)
 	for _, sideEffect := range []string{"create", "update", "cook", "mol", "close", "dep"} {
 		if strings.Contains(log, sideEffect) {
-			t.Fatalf("bd side effect %q ran before target-rig database validation rejected the bead; log:\n%s", sideEffect, log)
+			t.Fatalf("bd side effect %q ran before target-rig resolver validation rejected the bead; log:\n%s", sideEffect, log)
 		}
 	}
 }
@@ -1107,13 +1200,13 @@ func TestBatchSlingRejectsMissingTargetRigDatabaseBeforeSpawn(t *testing.T) {
 
 	err := runBatchSling([]string{"gt-r2405"}, "gastown", filepath.Join(townRoot, ".beads"))
 	if err == nil {
-		t.Fatal("expected target-rig database validation error")
+		t.Fatal("expected target-rig resolver validation error")
 	}
-	if !strings.Contains(err.Error(), "not present in target rig") {
+	if !strings.Contains(err.Error(), "does not resolve to target rig") {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if spawnCalled {
-		t.Fatal("spawnPolecatForSling was called before target-rig database validation rejected the bead")
+		t.Fatal("spawnPolecatForSling was called before target-rig resolver validation rejected the bead")
 	}
 }
 
@@ -1136,13 +1229,13 @@ func TestExecuteSlingRejectsMissingTargetRigDatabaseBeforeSpawn(t *testing.T) {
 		BeadsDir: filepath.Join(townRoot, ".beads"),
 	})
 	if err == nil {
-		t.Fatal("expected target-rig database validation error")
+		t.Fatal("expected target-rig resolver validation error")
 	}
-	if !strings.Contains(err.Error(), "not present in target rig") {
+	if !strings.Contains(err.Error(), "does not resolve to target rig") {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if spawnCalled {
-		t.Fatal("spawnPolecatForSling was called before target-rig database validation rejected the bead")
+		t.Fatal("spawnPolecatForSling was called before target-rig resolver validation rejected the bead")
 	}
 }
 
@@ -1162,9 +1255,9 @@ func TestResolveTargetRejectsLivePolecatMissingTargetRigDatabase(t *testing.T) {
 				TownRoot: townRoot,
 			})
 			if err == nil {
-				t.Fatal("expected target-rig database validation error")
+				t.Fatal("expected target-rig resolver validation error")
 			}
-			if !strings.Contains(err.Error(), "not present in target rig") {
+			if !strings.Contains(err.Error(), "does not resolve to target rig") {
 				t.Fatalf("unexpected error: %v", err)
 			}
 		})
@@ -1263,8 +1356,8 @@ func TestResolveTargetCreateDoesNotSpawnCrewShorthandWhenPaneMissing(t *testing.
 	}
 }
 
-func TestTargetRigDatabaseLookupFailsClosedWithoutTownRoot(t *testing.T) {
-	err := verifyBeadExistsInTargetRigDatabase("gt-r2405", "gastown", "")
+func TestTargetRigResolverFailsClosedWithoutTownRoot(t *testing.T) {
+	err := verifyBeadResolvesForTargetRig("gt-r2405", "gastown", "")
 	if err == nil {
 		t.Fatal("expected fail-closed error without town root")
 	}

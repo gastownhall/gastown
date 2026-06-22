@@ -716,7 +716,7 @@ func runSling(cmd *cobra.Command, args []string) (retErr error) {
 			targetRig = parts[0]
 		}
 		if targetRig != "" {
-			if err := verifyBeadExistsInTargetRigDatabase(beadID, targetRig, townRoot); err != nil {
+			if err := verifyBeadResolvesForTargetRig(beadID, targetRig, townRoot); err != nil {
 				return err
 			}
 		}
@@ -740,7 +740,7 @@ func runSling(cmd *cobra.Command, args []string) (retErr error) {
 			targetRig = parts[0]
 		}
 		if targetRig != "" {
-			if err := verifyBeadExistsInTargetRigDatabase(beadID, targetRig, townRoot); err != nil {
+			if err := verifyBeadResolvesForTargetRig(beadID, targetRig, townRoot); err != nil {
 				return err
 			}
 		}

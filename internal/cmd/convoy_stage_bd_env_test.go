@@ -123,6 +123,7 @@ exit 1
 
 func poisonBDTargetEnv(t *testing.T, townRoot string) {
 	t.Helper()
+	t.Setenv("GT_DOLT_DATA", "")
 	t.Setenv("BEADS_DIR", filepath.Join(townRoot, "wrong", ".beads"))
 	t.Setenv("BEADS_DOLT_SERVER_DATABASE", "stale")
 	t.Setenv("BEADS_DOLT_SERVER_HOST", "wrong-host")

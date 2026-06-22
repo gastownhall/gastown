@@ -168,6 +168,44 @@ func TestBuildPinnedBDEnvUsesSelectedConnectionMetadataWithoutDatabaseOverride(t
 	}
 }
 
+func TestBuildBDEnvRestoresGTDoltDataDir(t *testing.T) {
+	beadsDir := filepath.Join(t.TempDir(), ".beads")
+	if err := os.MkdirAll(beadsDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	metadata := []byte(`{"dolt_database":"rigdb","dolt_server_host":"127.0.0.1","dolt_server_port":4407}`)
+	if err := os.WriteFile(filepath.Join(beadsDir, "metadata.json"), metadata, 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	base := []string{
+		"PATH=/usr/bin",
+		"GT_DOLT_DATA=/town/.dolt-data",
+		"BEADS_DOLT_DATA_DIR=/wrong/data",
+		"BEADS_DOLT_SERVER_DATABASE=hq",
+	}
+
+	tests := []struct {
+		name string
+		env  []string
+	}{
+		{name: "pinned", env: BuildPinnedBDEnv(base, beadsDir)},
+		{name: "routing", env: BuildRoutingBDEnv(base, beadsDir)},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got := envMap(tc.env)
+			if got["BEADS_DOLT_DATA_DIR"] != "/town/.dolt-data" {
+				t.Fatalf("BEADS_DOLT_DATA_DIR = %q, want /town/.dolt-data in %v", got["BEADS_DOLT_DATA_DIR"], tc.env)
+			}
+			if value, ok := got["BEADS_DOLT_SERVER_DATABASE"]; ok {
+				t.Fatalf("BEADS_DOLT_SERVER_DATABASE should be stripped, got %q in %v", value, tc.env)
+			}
+		})
+	}
+}
+
 func TestBuildPinnedBDEnvStripsCaseVariantTargetEnvWhenKeysAreCaseInsensitive(t *testing.T) {
 	withCaseInsensitiveEnvKeys(t)
 
@@ -4709,6 +4747,7 @@ printf 'unknown\n'
 	}
 	t.Setenv("PATH", stubDir+string(os.PathListSeparator)+os.Getenv("PATH"))
 	t.Setenv("MOCK_BD_LOG", logPath)
+	t.Setenv("GT_DOLT_DATA", "")
 	t.Setenv("BEADS_DOLT_DATA_DIR", "/home/coder/gt/.dolt-data")
 	t.Setenv("BEADS_DOLT_HOST", "127.0.0.1")
 	t.Setenv("BEADS_DOLT_PORT", "3307")

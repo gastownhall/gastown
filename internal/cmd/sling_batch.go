@@ -36,7 +36,7 @@ func runBatchSling(beadIDs []string, rigName string, townBeadsDir string) error 
 		}
 	}
 	for _, beadID := range beadIDs {
-		if err := verifyBeadExistsInTargetRigDatabase(beadID, rigName, townRoot); err != nil {
+		if err := verifyBeadResolvesForTargetRig(beadID, rigName, townRoot); err != nil {
 			return err
 		}
 	}

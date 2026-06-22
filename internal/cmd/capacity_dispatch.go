@@ -586,10 +586,7 @@ func dispatchSingleBead(b capacity.PendingBead, townRoot, _ string) (*SlingResul
 	}
 
 	dp := capacity.ReconstructFromContext(b.Context)
-	beadsDir := b.ContextBeadsDir
-	if beadsDir == "" {
-		beadsDir = beads.ResolveBeadsDirForID(filepath.Join(townRoot, ".beads"), dp.BeadID)
-	}
+	beadsDir := beads.ResolveBeadsDirForID(filepath.Join(townRoot, ".beads"), dp.BeadID)
 
 	params := SlingParams{
 		BeadID:           dp.BeadID,
@@ -641,14 +638,6 @@ func validateDryRunDispatchPlan(townRoot string, plan capacity.DispatchPlan) cap
 			plan.Skipped++
 			continue
 		}
-		if b.TargetRig != "" {
-			if err := verifyBeadExistsInTargetRigDatabase(b.WorkBeadID, b.TargetRig, townRoot); err != nil {
-				fmt.Fprintf(os.Stderr, "%s dry-run_skip reason=target_db bead=%s target_rig=%s: %v\n",
-					style.Dim.Render("○"), b.WorkBeadID, b.TargetRig, err)
-				plan.Skipped++
-				continue
-			}
-		}
 		validated = append(validated, b)
 	}
 	plan.ToDispatch = validated
@@ -666,25 +655,24 @@ func validatePendingBeadForDispatch(townRoot string, b capacity.PendingBead, esc
 		return fmt.Errorf("%w: %s", errNonConcreteWorkBead, assessment.Reason)
 	}
 
-	// Cross-rig prefix guard (gt-el4). A bead whose ID prefix does not match the
-	// target rig's registered prefix must not be dispatched — the polecat would
-	// land in a rig DB that cannot resolve the bead and hang in prime.
 	if b.TargetRig == "" {
 		return nil
 	}
-	rigPath := filepath.Join(townRoot, b.TargetRig)
-	rigPrefix := rigBeadsPrefix(townRoot, rigPath, b.TargetRig)
-	if capacity.AcceptsPrefix(rigPrefix, b.WorkBeadID) {
+	err := verifyBeadResolvesForTargetRig(b.WorkBeadID, b.TargetRig, townRoot)
+	if err == nil {
 		return nil
+	}
+	if !errors.Is(err, errBeadTargetRigMismatch) {
+		return err
 	}
 	gotPrefix := capacity.BeadIDPrefix(b.WorkBeadID)
 	fmt.Fprintf(os.Stderr,
-		"%s dispatch_refused reason=cross_rig_prefix bead=%s target_rig=%s rig_prefix=%s bead_prefix=%s\n",
-		style.Warning.Render("⚠"), b.WorkBeadID, b.TargetRig, rigPrefix, gotPrefix)
+		"%s dispatch_refused reason=cross_rig_prefix bead=%s target_rig=%s bead_prefix=%s\n",
+		style.Warning.Render("⚠"), b.WorkBeadID, b.TargetRig, gotPrefix)
 	if escalate && shouldFireCrossRigEscalation(b.TargetRig, gotPrefix, time.Now()) {
 		fireCrossRigEscalation(b.TargetRig, gotPrefix, b.WorkBeadID)
 	}
-	return capacity.ErrCrossRigPrefix
+	return fmt.Errorf("%w: %v", capacity.ErrCrossRigPrefix, err)
 }
 
 // isDaemonDispatch returns true when dispatch is triggered by the daemon heartbeat.
