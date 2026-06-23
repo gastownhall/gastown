@@ -2776,9 +2776,8 @@ func getAgentBeadAge(bd *BdCli, workDir, agentBeadID string) time.Duration {
 }
 
 // getBeadStatus returns the status of a bead (e.g., "open", "closed", "hooked").
-// Returns the status string and true if the lookup succeeded, or ("", false) if
-// the bead couldn't be queried (network error, cross-rig routing failure, etc.).
-// Callers must check the bool to distinguish "bead not found/reaped" from "lookup error."
+// Returns the status string and true only when the lookup returned a concrete
+// bead. Missing or ambiguous results fail closed as unverified.
 func getBeadStatus(bd *BdCli, workDir, beadID string) (string, bool) {
 	if beadID == "" {
 		return "", false
@@ -2791,8 +2790,7 @@ func getBeadStatus(bd *BdCli, workDir, beadID string) (string, bool) {
 		Status string `json:"status"`
 	}
 	if err := json.Unmarshal([]byte(output), &issues); err != nil || len(issues) == 0 {
-		// Valid response but no results — bead was reaped/deleted.
-		return "", true
+		return "", false
 	}
 	return issues[0].Status, true
 }
@@ -2800,14 +2798,7 @@ func getBeadStatus(bd *BdCli, workDir, beadID string) (string, bool) {
 func witnessActiveWorkEvidence(bd *BdCli, workDir, rigName, polecatName string, agentState beads.AgentState, hookBead string) polecat.ActiveWorkEvidence {
 	reader := beadCLIShower{bd: bd, workDir: workDir}
 	assignee := fmt.Sprintf("%s/polecats/%s", rigName, polecatName)
-	evidence := polecat.ActiveWorkEvidence{HookSafe: true}
-	evidence.Merge(polecat.AssessActiveWork(reader, assignee, "", ""))
-	if hookBead != "" {
-		hookStatus, hookFound := getBeadStatus(bd, workDir, hookBead)
-		evidence.Merge(polecat.AssessHookStatus(hookBead, hookStatus, hookFound))
-	}
-	evidence.Merge(polecat.AssessAgentStateWork(agentState))
-	return evidence
+	return polecat.AssessActiveWork(reader, assignee, agentState, hookBead)
 }
 
 // resetAbandonedBead resets a dead polecat's hooked bead so it can be re-dispatched.

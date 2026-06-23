@@ -2988,7 +2988,7 @@ func TestWitnessActiveWorkEvidencePrefersHookOverSpawningState(t *testing.T) {
 	}
 }
 
-func TestWitnessActiveWorkEvidenceTreatsReapedHookAsTerminal(t *testing.T) {
+func TestWitnessActiveWorkEvidenceMissingHookFailsClosed(t *testing.T) {
 	bd, _ := mockBd(
 		func(args []string) (string, error) {
 			if len(args) > 0 && args[0] == "list" {
@@ -3000,8 +3000,23 @@ func TestWitnessActiveWorkEvidenceTreatsReapedHookAsTerminal(t *testing.T) {
 	)
 
 	got := witnessActiveWorkEvidence(bd, t.TempDir(), "testrig", "scavenger", beads.AgentStateIdle, "ma-poc.4")
-	if got.BlocksCleanup || !got.HookSafe || !got.HookTerminal {
-		t.Fatalf("active work evidence = %+v, want verified reaped hook terminal", got)
+	if !got.BlocksCleanup || got.HookSafe || got.HookTerminal {
+		t.Fatalf("active work evidence = %+v, want missing hook to fail closed", got)
+	}
+	if got.Blocker != "hook_bead=ma-poc.4 status=missing" {
+		t.Fatalf("blocker = %q, want missing hook blocker", got.Blocker)
+	}
+}
+
+func TestGetBeadStatusEmptyResultIsUnverified(t *testing.T) {
+	bd, _ := mockBd(
+		func(args []string) (string, error) { return "[]", nil },
+		func(args []string) error { return nil },
+	)
+
+	status, ok := getBeadStatus(bd, t.TempDir(), "ma-poc.4")
+	if ok || status != "" {
+		t.Fatalf("getBeadStatus(empty) = (%q, %v), want unverified", status, ok)
 	}
 }
 
