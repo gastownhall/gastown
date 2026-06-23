@@ -2166,6 +2166,10 @@ func handleZombieRestart(bd *BdCli, workDir, rigName, polecatName string, agentS
 	// Instead archive the polecat — its work is done.
 	if !activeWork.RequiresRestart {
 		if merged, err := verifyBranchAlreadyMerged(workDir, rigName, polecatName); err == nil && merged {
+			if activeWork.BlocksCleanup {
+				zombie.Action = fmt.Sprintf("archive-deferred-work-already-merged (blocker=%s)", activeWork.Blocker)
+				return
+			}
 			zombie.Action = "archived-work-already-merged (aa-apw)"
 			if nukeErr := NukePolecat(bd, workDir, rigName, polecatName); nukeErr != nil {
 				zombie.Error = fmt.Errorf("archive: %w", nukeErr)
