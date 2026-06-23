@@ -2164,7 +2164,7 @@ func handleZombieRestart(bd *BdCli, workDir, rigName, polecatName string, agentS
 	// ancestor check), do NOT restart. Restarting would let the polecat push its
 	// pre-squash HEAD and create a duplicate MR for work already in main.
 	// Instead archive the polecat — its work is done.
-	if !activeWork.BlocksCleanup {
+	if !activeWork.RequiresRestart {
 		if merged, err := verifyBranchAlreadyMerged(workDir, rigName, polecatName); err == nil && merged {
 			zombie.Action = "archived-work-already-merged (aa-apw)"
 			if nukeErr := NukePolecat(bd, workDir, rigName, polecatName); nukeErr != nil {
