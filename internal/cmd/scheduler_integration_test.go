@@ -237,6 +237,34 @@ func hasSlingContext(t *testing.T, hqPath, workBeadID string) bool {
 	return findSlingContext(t, hqPath, workBeadID) != nil
 }
 
+func withFakeTmuxNoSessions(t *testing.T, env []string) []string {
+	t.Helper()
+	binDir := filepath.Join(t.TempDir(), "bin")
+	if err := os.MkdirAll(binDir, 0755); err != nil {
+		t.Fatalf("mkdir fake tmux bin: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(binDir, "tmux"), []byte(`#!/bin/sh
+for arg in "$@"; do
+  if [ "$arg" = "has-session" ]; then
+    echo "can't find session" >&2
+    exit 1
+  fi
+done
+exit 0
+`), 0755); err != nil {
+		t.Fatalf("write fake tmux: %v", err)
+	}
+
+	updated := append([]string(nil), env...)
+	for i, entry := range updated {
+		if strings.HasPrefix(entry, "PATH=") {
+			updated[i] = "PATH=" + binDir + string(os.PathListSeparator) + strings.TrimPrefix(entry, "PATH=")
+			return updated
+		}
+	}
+	return append(updated, "PATH="+binDir)
+}
+
 // --------------------------------------------------------------------------
 // Tests
 // --------------------------------------------------------------------------
@@ -569,6 +597,19 @@ func TestSchedulerClearThenDirectSlingIgnoresClosedContext(t *testing.T) {
 	}
 	if !strings.Contains(out, "Would run: bd update "+beadID) {
 		t.Fatalf("direct sling dry-run output = %q, want hook update", out)
+	}
+
+	updateCmd := exec.Command("bd", "update", beadID, "--status=hooked", "--assignee=testrig/polecats/toast")
+	updateCmd.Dir = rigPath
+	if out, err := updateCmd.CombinedOutput(); err != nil {
+		t.Fatalf("bd update %s to stale hooked assignment failed: %v\n%s", beadID, err, out)
+	}
+	out, _ = runGTCmdMayFail(t, gtBinary, hqPath, withFakeTmuxNoSessions(t, env), "sling", beadID, "testrig/polecats/toast", "--hook-raw-bead", "--dry-run")
+	if strings.Contains(out, "already scheduled") || strings.Contains(out, "already hooked") {
+		t.Fatalf("direct sling after scheduler clear still treated stale state as a lock:\n%s", out)
+	}
+	if !strings.Contains(out, "auto-forcing re-sling") {
+		t.Fatalf("direct sling output = %q, want dead-assignee auto-force", out)
 	}
 }
 
