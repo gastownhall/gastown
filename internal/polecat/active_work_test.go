@@ -70,6 +70,28 @@ func TestAssessHookWork(t *testing.T) {
 	}
 }
 
+func TestAssessHookWorkMissingFailsClosed(t *testing.T) {
+	got := AssessHookWork(fakeActiveWorkReader{issues: map[string]*beads.Issue{}}, "gt-missing")
+	if !got.BlocksCleanup || got.HookSafe || got.HookTerminal {
+		t.Fatalf("AssessHookWork(missing) = %+v, want fail-closed blocker", got)
+	}
+	if !strings.Contains(got.Blocker, "hook_bead=gt-missing status=missing") {
+		t.Fatalf("blocker = %q, want missing hook blocker", got.Blocker)
+	}
+}
+
+func TestAssessHookStatusVerifiedRetiredHookIsSafe(t *testing.T) {
+	got := AssessHookStatus("gt-retired", "", true)
+	if got.BlocksCleanup || !got.HookSafe || !got.HookTerminal {
+		t.Fatalf("AssessHookStatus(verified retired) = %+v, want safe terminal hook", got)
+	}
+
+	unverified := AssessHookStatus("gt-retired", "", false)
+	if !unverified.BlocksCleanup || unverified.HookSafe || unverified.HookTerminal {
+		t.Fatalf("AssessHookStatus(unverified retired) = %+v, want fail-closed blocker", unverified)
+	}
+}
+
 func TestAssessActiveWork(t *testing.T) {
 	tests := []struct {
 		name           string
