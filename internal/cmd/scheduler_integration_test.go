@@ -244,8 +244,13 @@ func withFakeTmuxNoSessions(t *testing.T, env []string) []string {
 		t.Fatalf("mkdir fake tmux bin: %v", err)
 	}
 	if err := os.WriteFile(filepath.Join(binDir, "tmux"), []byte(`#!/bin/sh
+cmdline="$*"
 for arg in "$@"; do
   if [ "$arg" = "has-session" ]; then
+    case "$cmdline" in
+      *toast*) ;;
+      *) echo "unexpected tmux session: $cmdline" >&2; exit 2 ;;
+    esac
     echo "can't find session" >&2
     exit 1
   fi
@@ -637,7 +642,8 @@ func TestSchedulerClearThenDirectSlingIgnoresClosedContext(t *testing.T) {
 	if !strings.Contains(out, "Would run: bd update "+beadID+" --status=open --assignee=") {
 		t.Fatalf("direct sling output = %q, want dry-run stale unhook", out)
 	}
-	if !strings.Contains(out, "Would run: bd update "+beadID) {
+	wantHookUpdate := "Would run: bd update " + beadID + " --status=hooked --assignee=testrig/polecats/<new>"
+	if !strings.Contains(out, wantHookUpdate) {
 		t.Fatalf("direct sling output = %q, want hook update after stale assignment", out)
 	}
 	status, assignee := getBeadStatusAndAssignee(t, beadID, rigPath)
