@@ -142,6 +142,37 @@ func TestIsDeferredBead(t *testing.T) {
 	}
 }
 
+func TestDispatchStatusPredicates(t *testing.T) {
+	tests := []struct {
+		status           string
+		wantTerminal     bool
+		wantProtected    bool
+		wantActiveAssign bool
+	}{
+		{status: "open"},
+		{status: "blocked"},
+		{status: "closed", wantTerminal: true},
+		{status: "tombstone", wantTerminal: true},
+		{status: "pinned", wantProtected: true},
+		{status: "hooked", wantProtected: true, wantActiveAssign: true},
+		{status: "in_progress", wantProtected: true, wantActiveAssign: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.status, func(t *testing.T) {
+			if got := isTerminalWorkStatus(tt.status); got != tt.wantTerminal {
+				t.Fatalf("isTerminalWorkStatus(%q) = %v, want %v", tt.status, got, tt.wantTerminal)
+			}
+			if got := isProtectedDispatchStatus(tt.status); got != tt.wantProtected {
+				t.Fatalf("isProtectedDispatchStatus(%q) = %v, want %v", tt.status, got, tt.wantProtected)
+			}
+			if got := isActiveAssignmentStatus(tt.status); got != tt.wantActiveAssign {
+				t.Fatalf("isActiveAssignmentStatus(%q) = %v, want %v", tt.status, got, tt.wantActiveAssign)
+			}
+		})
+	}
+}
+
 func TestValidateConcreteWorkBeadInfoRejectsInternalArtifacts(t *testing.T) {
 	tests := []struct {
 		name   string

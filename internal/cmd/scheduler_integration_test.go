@@ -538,6 +538,67 @@ func TestSchedulerSlingContextIdempotency(t *testing.T) {
 	}
 }
 
+func TestSchedulerClearThenDirectSlingIgnoresClosedContext(t *testing.T) {
+	hqPath, rigPath, gtBinary, env := setupSchedulerIntegrationTown(t)
+
+	beadID := createTestBead(t, rigPath, "Clear then direct sling test")
+	slingToScheduler(t, gtBinary, hqPath, env, beadID, "testrig")
+	if !hasSlingContext(t, hqPath, beadID) {
+		t.Fatalf("bead %s has no sling context after scheduling", beadID)
+	}
+
+	out := runGTCmdOutput(t, gtBinary, hqPath, env, "scheduler", "clear", "--bead", beadID)
+	if !strings.Contains(out, "closed 1 context") {
+		t.Fatalf("scheduler clear output = %q, want closed context count", out)
+	}
+	if hasSlingContext(t, hqPath, beadID) {
+		t.Fatalf("bead %s still has open sling context after scheduler clear", beadID)
+	}
+
+	t.Chdir(hqPath)
+	scheduled := areScheduled([]string{beadID})
+	singleScheduled := isScheduled(beadID)
+	if scheduled[beadID] || singleScheduled {
+		t.Fatalf("bead %s still considered scheduled after scheduler clear: %v", beadID, scheduled)
+	}
+
+	configureScheduler(t, hqPath, -1, 1)
+	out = runGTCmdOutput(t, gtBinary, hqPath, env, "sling", beadID, "testrig", "--hook-raw-bead", "--dry-run")
+	if strings.Contains(out, "already scheduled") || strings.Contains(out, "Would schedule") {
+		t.Fatalf("direct sling after scheduler clear used stale scheduler state:\n%s", out)
+	}
+	if !strings.Contains(out, "Would run: bd update "+beadID) {
+		t.Fatalf("direct sling dry-run output = %q, want hook update", out)
+	}
+}
+
+func TestScheduleBead_WorkStatusBeatsOpenContextIdempotency(t *testing.T) {
+	hqPath, rigPath, gtBinary, env := setupSchedulerIntegrationTown(t)
+
+	beadID := createTestBead(t, rigPath, "Scheduled but already assigned")
+	slingToScheduler(t, gtBinary, hqPath, env, beadID, "testrig")
+	if !hasSlingContext(t, hqPath, beadID) {
+		t.Fatalf("bead %s has no sling context after scheduling", beadID)
+	}
+
+	updateCmd := exec.Command("bd", "update", beadID, "--status=hooked", "--assignee=testrig/polecats/toast")
+	updateCmd.Dir = rigPath
+	if out, err := updateCmd.CombinedOutput(); err != nil {
+		t.Fatalf("bd update %s to hooked failed: %v\n%s", beadID, err, out)
+	}
+
+	out, err := runGTCmdMayFail(t, gtBinary, hqPath, env, "sling", beadID, "testrig", "--hook-raw-bead")
+	if err == nil {
+		t.Fatalf("expected gt sling to fail for already hooked bead, got success\noutput: %s", out)
+	}
+	if strings.Contains(out, "already scheduled") {
+		t.Fatalf("scheduleBead returned stale context idempotency instead of work status:\n%s", out)
+	}
+	if !strings.Contains(out, "already hooked") || !strings.Contains(out, "testrig/polecats/toast") {
+		t.Fatalf("gt sling output = %q, want hooked status error", out)
+	}
+}
+
 // TestSchedulerSlingContextWorkBeadPristine verifies that scheduling a bead
 // does NOT modify the work bead's description or labels.
 func TestSchedulerSlingContextWorkBeadPristine(t *testing.T) {

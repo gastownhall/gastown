@@ -223,6 +223,19 @@ func validateStandaloneFormulaTarget(formulaName, target string) error {
 	return nil
 }
 
+func isTerminalWorkStatus(status string) bool {
+	return beads.IssueStatus(strings.TrimSpace(status)).IsTerminal()
+}
+
+func isProtectedDispatchStatus(status string) bool {
+	s := beads.IssueStatus(strings.TrimSpace(status))
+	return s == beads.IssueStatusPinned || s.IsAssigned()
+}
+
+func isActiveAssignmentStatus(status string) bool {
+	return beads.IssueStatus(strings.TrimSpace(status)).IsAssigned()
+}
+
 // isDeferredBead checks whether a bead should be rejected from slinging because
 // it has been deferred. Returns true if the bead has status "deferred" or if its
 // description contains deferral keywords like "deferred to post-launch".

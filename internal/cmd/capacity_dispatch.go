@@ -392,7 +392,7 @@ func cleanupStaleContexts(townRoot string) {
 	for i, ctx := range staleCheckContexts {
 		fields := staleCheckFields[i]
 		info, found := workBeadInfo[fields.WorkBeadID]
-		if found && (info.Status == "hooked" || info.Status == "closed" || info.Status == "tombstone") {
+		if found && (beads.IssueStatus(info.Status) == beads.IssueStatusHooked || isTerminalWorkStatus(info.Status)) {
 			_ = beadsForContextRecord(ctx).CloseSlingContext(ctx.issue.ID, "stale-work-bead")
 			continue
 		}
@@ -792,7 +792,7 @@ func isScheduledWorkBeadReady(workBeadID string, info beadStatusInfo, found bool
 	if !found || blockedWorkIDs[workBeadID] {
 		return false
 	}
-	return info.Status == "open"
+	return beads.IssueStatus(info.Status) == beads.StatusOpen
 }
 
 func concreteWorkAssessment(workBeadID string, info beadStatusInfo) workitem.Assessment {

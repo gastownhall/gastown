@@ -428,7 +428,7 @@ func scheduledBeadInfoFromWork(ctxTitle string, fields *capacity.SlingContextFie
 	if found {
 		title = info.Title
 		status = info.Status
-		if status == "hooked" || status == "closed" || status == "tombstone" {
+		if beads.IssueStatus(status) == beads.IssueStatusHooked || isTerminalWorkStatus(status) {
 			return scheduledBeadInfo{}, false
 		}
 	}
