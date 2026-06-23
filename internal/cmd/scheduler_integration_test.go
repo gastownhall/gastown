@@ -604,12 +604,15 @@ func TestSchedulerClearThenDirectSlingIgnoresClosedContext(t *testing.T) {
 	if out, err := updateCmd.CombinedOutput(); err != nil {
 		t.Fatalf("bd update %s to stale hooked assignment failed: %v\n%s", beadID, err, out)
 	}
-	out, _ = runGTCmdMayFail(t, gtBinary, hqPath, withFakeTmuxNoSessions(t, env), "sling", beadID, "testrig/polecats/toast", "--hook-raw-bead", "--dry-run")
+	out = runGTCmdOutput(t, gtBinary, hqPath, withFakeTmuxNoSessions(t, env), "sling", beadID, "testrig", "--hook-raw-bead", "--dry-run")
 	if strings.Contains(out, "already scheduled") || strings.Contains(out, "already hooked") {
 		t.Fatalf("direct sling after scheduler clear still treated stale state as a lock:\n%s", out)
 	}
 	if !strings.Contains(out, "auto-forcing re-sling") {
 		t.Fatalf("direct sling output = %q, want dead-assignee auto-force", out)
+	}
+	if !strings.Contains(out, "Would run: bd update "+beadID) {
+		t.Fatalf("direct sling output = %q, want hook update after stale assignment", out)
 	}
 }
 
