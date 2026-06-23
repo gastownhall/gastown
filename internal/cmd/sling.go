@@ -860,10 +860,9 @@ func runSling(cmd *cobra.Command, args []string) (retErr error) {
 		if len(assigneeParts) >= 3 && assigneeParts[1] == "polecats" {
 			oldRigName := assigneeParts[0]
 			oldPolecatName := assigneeParts[2]
-
-			// Send LIFECYCLE:Shutdown to witness - will auto-nuke if clean,
-			// otherwise create cleanup wisp for manual intervention
-			if townRoot != "" {
+			if slingDryRun {
+				fmt.Printf("Would send LIFECYCLE:Shutdown to %s/witness for %s\n", oldRigName, oldPolecatName)
+			} else if townRoot != "" {
 				router := mail.NewRouter(townRoot)
 				defer router.WaitPendingNotifications()
 				shutdownMsg := &mail.Message{
@@ -882,9 +881,10 @@ func runSling(cmd *cobra.Command, args []string) (retErr error) {
 			}
 		}
 
-		// Unhook the bead from old owner (set status back to open)
 		unhookDir := beads.ResolveHookDir(townRoot, beadID, "")
-		if err := BdCmd("update", beadID, "--status=open", "--assignee=").
+		if slingDryRun {
+			fmt.Printf("Would run: bd update %s --status=open --assignee=\n", beadID)
+		} else if err := BdCmd("update", beadID, "--status=open", "--assignee=").
 			Dir(unhookDir).
 			WithAutoCommit().
 			Run(); err != nil {

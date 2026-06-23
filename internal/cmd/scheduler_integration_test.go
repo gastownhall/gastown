@@ -250,7 +250,8 @@ for arg in "$@"; do
     exit 1
   fi
 done
-exit 0
+echo "unexpected tmux command: $*" >&2
+exit 2
 `), 0755); err != nil {
 		t.Fatalf("write fake tmux: %v", err)
 	}
@@ -263,6 +264,28 @@ exit 0
 		}
 	}
 	return append(updated, "PATH="+binDir)
+}
+
+func getBeadStatusAndAssignee(t *testing.T, beadID, dir string) (string, string) {
+	t.Helper()
+	args := beads.MaybePrependAllowStale([]string{"show", beadID, "--json"})
+	cmd := exec.Command("bd", args...)
+	cmd.Dir = dir
+	out, err := cmd.Output()
+	if err != nil {
+		t.Fatalf("bd show %s failed: %v", beadID, err)
+	}
+	var issues []struct {
+		Status   string `json:"status"`
+		Assignee string `json:"assignee"`
+	}
+	if err := json.Unmarshal(out, &issues); err != nil {
+		t.Fatalf("parse bd show %s: %v", beadID, err)
+	}
+	if len(issues) == 0 {
+		t.Fatalf("bd show %s returned no results", beadID)
+	}
+	return issues[0].Status, issues[0].Assignee
 }
 
 // --------------------------------------------------------------------------
@@ -605,14 +628,21 @@ func TestSchedulerClearThenDirectSlingIgnoresClosedContext(t *testing.T) {
 		t.Fatalf("bd update %s to stale hooked assignment failed: %v\n%s", beadID, err, out)
 	}
 	out = runGTCmdOutput(t, gtBinary, hqPath, withFakeTmuxNoSessions(t, env), "sling", beadID, "testrig", "--hook-raw-bead", "--dry-run")
-	if strings.Contains(out, "already scheduled") || strings.Contains(out, "already hooked") {
+	if strings.Contains(out, "already scheduled") || strings.Contains(out, "Use --force") {
 		t.Fatalf("direct sling after scheduler clear still treated stale state as a lock:\n%s", out)
 	}
 	if !strings.Contains(out, "auto-forcing re-sling") {
 		t.Fatalf("direct sling output = %q, want dead-assignee auto-force", out)
 	}
+	if !strings.Contains(out, "Would run: bd update "+beadID+" --status=open --assignee=") {
+		t.Fatalf("direct sling output = %q, want dry-run stale unhook", out)
+	}
 	if !strings.Contains(out, "Would run: bd update "+beadID) {
 		t.Fatalf("direct sling output = %q, want hook update after stale assignment", out)
+	}
+	status, assignee := getBeadStatusAndAssignee(t, beadID, rigPath)
+	if status != "hooked" || assignee != "testrig/polecats/toast" {
+		t.Fatalf("dry-run mutated stale assignment: status=%q assignee=%q", status, assignee)
 	}
 }
 
