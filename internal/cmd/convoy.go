@@ -503,59 +503,35 @@ func bdDepListRawIDs(dir, issueID, direction, depType string) ([]string, error) 
 		return nil, fmt.Errorf("invalid bead ID: %q", issueID)
 	}
 
-	// The dependency target was historically a single depends_on_id column.
-	// The schema migration split it into typed columns
-	// (depends_on_issue_id / depends_on_wisp_id / depends_on_external), where
-	// cross-database refs live in depends_on_external as "external:<prefix>:<id>".
-	// "down": targets issueID depends on → COALESCE the three target columns.
-	// "up":   issues that depend on issueID → match issueID against all three.
-	var selectExpr, whereClause, parseKey string
+	var parseKey string
 	if direction == "up" {
-		selectExpr = "issue_id"
 		parseKey = "issue_id"
-		whereClause = fmt.Sprintf(
-			"(depends_on_issue_id = '%s' OR depends_on_wisp_id = '%s' OR %s)",
-			issueID, issueID, sqlExternalDepTargetClause(issueID))
 	} else {
-		selectExpr = "COALESCE(depends_on_issue_id, depends_on_wisp_id, depends_on_external) AS depends_on_id"
 		parseKey = "depends_on_id"
-		whereClause = fmt.Sprintf("issue_id = '%s'", issueID)
 	}
-
-	query := fmt.Sprintf("SELECT %s FROM dependencies WHERE %s", selectExpr, whereClause)
-	if depType != "" {
-		if !isValidBeadID(depType) {
-			return nil, fmt.Errorf("invalid dep type: %q", depType)
-		}
-		query += fmt.Sprintf(" AND type = '%s'", depType)
+	if depType != "" && !isValidBeadID(depType) {
+		return nil, fmt.Errorf("invalid dep type: %q", depType)
 	}
 
 	if ids, err := bdDepListRawIDsViaDolt(dir, issueID, direction, depType); err == nil {
 		return ids, nil
 	}
 
-	out, err := runBdJSONWithAutoCommit(dir, "sql", query, "--json")
-	if err != nil {
-		return nil, fmt.Errorf("bd sql for deps of %s: %w", issueID, err)
-	}
-
-	// Parse JSON array of single-column rows
-	var rows []map[string]string
-	if err := json.Unmarshal(out, &rows); err != nil {
-		return nil, fmt.Errorf("parsing dep sql for %s: %w", issueID, err)
-	}
-
-	seen := make(map[string]bool, len(rows))
-	var ids []string
-	for _, row := range rows {
-		rawID := row[parseKey]
-		id := beads.ExtractIssueID(rawID)
-		if id != "" && !seen[id] {
-			seen[id] = true
-			ids = append(ids, id)
+	var lastErr error
+	for _, legacy := range []bool{false, true} {
+		query := rawDepSQLLiteral(issueID, direction, depType, legacy)
+		out, err := runBdJSONWithAutoCommit(dir, "sql", query, "--json")
+		if err != nil {
+			lastErr = err
+			continue
 		}
+		ids, err := parseRawDepRows(out, parseKey)
+		if err != nil {
+			return nil, fmt.Errorf("parsing dep sql for %s: %w", issueID, err)
+		}
+		return ids, nil
 	}
-	return ids, nil
+	return nil, fmt.Errorf("bd sql for deps of %s: %w", issueID, lastErr)
 }
 
 func bdDepListRawIDsViaDolt(dir, issueID, direction, depType string) ([]string, error) {
@@ -612,6 +588,14 @@ func rawDepSQLArgs(issueID, direction, depType string, legacy bool) (string, []a
 	return query, args
 }
 
+func rawDepSQLLiteral(issueID, direction, depType string, legacy bool) string {
+	query, args := rawDepSQLArgs(issueID, direction, depType, legacy)
+	for _, arg := range args {
+		query = strings.Replace(query, "?", "'"+arg.(string)+"'", 1)
+	}
+	return query
+}
+
 func queryRawDepIDs(ctx context.Context, db *sql.DB, query string, args []any) ([]string, error) {
 	rows, err := db.QueryContext(ctx, query, args...)
 	if err != nil {
@@ -637,6 +621,23 @@ func queryRawDepIDs(ctx context.Context, db *sql.DB, query string, args []any) (
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err
+	}
+	return ids, nil
+}
+
+func parseRawDepRows(out []byte, parseKey string) ([]string, error) {
+	var rows []map[string]string
+	if err := json.Unmarshal(out, &rows); err != nil {
+		return nil, err
+	}
+	seen := make(map[string]bool, len(rows))
+	var ids []string
+	for _, row := range rows {
+		id := beads.ExtractIssueID(row[parseKey])
+		if id != "" && !seen[id] {
+			seen[id] = true
+			ids = append(ids, id)
+		}
 	}
 	return ids, nil
 }

@@ -220,16 +220,15 @@ func (b *Beads) CreateAgentBead(id, title string, fields *AgentFields) (*Issue, 
 	target := b.agentBeadTarget()
 	targetDir := target.getResolvedBeadsDir()
 
-	// Ensure target database has custom types configured.
-	// This is cached (sentinel file + in-memory) so repeated calls are fast.
-	// On fresh rigs, this may fail if the database can't be initialized.
-	// Don't bail out — try the bd create calls anyway (GH#1769).
-	_ = EnsureCustomTypes(targetDir)
-
 	description := FormatAgentDescription(title, fields)
 	if issue, err := target.createAgentBeadViaStore(context.Background(), id, title, description); err == nil {
 		return issue, nil
 	}
+
+	// Ensure target database has custom types configured before falling back to
+	// the bd CLI. The store path above avoids stale external bd schema during
+	// fresh install; this remains for older stores or non-server configurations.
+	_ = EnsureCustomTypes(targetDir)
 
 	buildArgs := func() []string {
 		a := []string{"create", "--json",
