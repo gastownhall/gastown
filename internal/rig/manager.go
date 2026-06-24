@@ -650,21 +650,12 @@ func (m *Manager) AddRig(opts AddRigOptions) (*Rig, error) {
 			}
 		}
 
-		// Always ensure issue_prefix and custom types are configured, even when
-		// metadata.json was tracked in git (bdDatabaseExists returned true).
-		// The tracked metadata.json tells bd HOW to connect but doesn't guarantee
-		// the server-side database has issue_prefix set for this workspace.
-		configCmd := exec.Command("bd", "config", "set", "types.custom", constants.BeadsCustomTypes)
-		configCmd.Dir = mayorRigPath
-		configCmd.Env = sourceBdEnv
-		_, _ = configCmd.CombinedOutput() // Ignore errors - older beads don't need this
-
-		prefixSetCmd := exec.Command("bd", "config", "set", "issue_prefix", opts.BeadsPrefix)
-		prefixSetCmd.Dir = mayorRigPath
-		prefixSetCmd.Env = sourceBdEnv
-		if prefixOutput, prefixErr := prefixSetCmd.CombinedOutput(); prefixErr != nil {
-			fmt.Printf("  Warning: Could not set issue_prefix: %v (%s)\n", prefixErr, strings.TrimSpace(string(prefixOutput)))
-		}
+		// Always ensure issue_prefix and custom types are present in config.yaml,
+		// even when metadata.json was tracked in git. Avoid `bd config set` here:
+		// newer bd rejects issue_prefix mutation and older bd can initialize stale
+		// schema views before current Gas Town code gets control.
+		_ = beads.EnsureConfigYAMLValue(sourceBeadsDir, "types.custom", constants.BeadsCustomTypes)
+		_ = beads.EnsureConfigYAMLValue(sourceBeadsDir, "issue-prefix", opts.BeadsPrefix)
 	}
 
 	// NOTE: No per-directory CLAUDE.md/AGENTS.md is created for any agent.
@@ -709,23 +700,19 @@ func (m *Manager) AddRig(opts AddRigOptions) (*Rig, error) {
 		return nil, fmt.Errorf("rig init left a duplicate Dolt database: %w", err)
 	}
 
-	// Set issue_prefix on the correct server-side database.
-	// InitBeads ran bd config set issue_prefix, but against the wrong database
-	// (beads_<prefix> from bd init, not <rigName> from the centralized server).
-	// Now that EnsureMetadata has corrected dolt_database, re-set it.
+	// Set issue_prefix on the correct server-side database. bd 1.0+ rejects
+	// `bd config set issue_prefix`, so write both config.yaml and Dolt config
+	// directly after metadata points at the canonical rig database.
 	{
 		resolvedBeadsDir := beads.ResolveBeadsDir(rigPath)
-		bdEnv := bdSubprocessEnv(resolvedBeadsDir, opts.Name)
-		prefixCmd := exec.Command("bd", "config", "set", "issue_prefix", opts.BeadsPrefix)
-		prefixCmd.Dir = rigPath
-		prefixCmd.Env = bdEnv
-		if out, err := prefixCmd.CombinedOutput(); err != nil {
-			fmt.Printf("  Warning: Could not set issue_prefix on rig database: %v (%s)\n", err, strings.TrimSpace(string(out)))
+		if err := beads.EnsureConfigYAMLValue(resolvedBeadsDir, "issue-prefix", opts.BeadsPrefix); err != nil {
+			fmt.Printf("  Warning: Could not set issue-prefix in config.yaml: %v\n", err)
 		}
-		typesCmd := exec.Command("bd", "config", "set", "types.custom", constants.BeadsCustomTypes)
-		typesCmd.Dir = rigPath
-		typesCmd.Env = bdEnv
-		_, _ = typesCmd.CombinedOutput()
+		if err := beads.EnsureDoltConfigValue(resolvedBeadsDir, "issue_prefix", opts.BeadsPrefix); err != nil {
+			fmt.Printf("  Warning: Could not set issue_prefix in rig database: %v\n", err)
+		}
+		_ = beads.EnsureConfigYAMLValue(resolvedBeadsDir, "types.custom", constants.BeadsCustomTypes)
+		_ = beads.EnsureDoltConfigValue(resolvedBeadsDir, "types.custom", constants.BeadsCustomTypes)
 	}
 
 	// Auto-create DoltHub remote for the rig's beads database.

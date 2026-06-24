@@ -27,6 +27,9 @@ func CleanGTEnv(extraEnv ...string) []string {
 		if strings.HasPrefix(e, "BD_") {
 			continue
 		}
+		if strings.HasPrefix(e, "BEADS_DIR=") || strings.HasPrefix(e, "BEADS_DB=") || strings.HasPrefix(e, "BEADS_DOLT_SERVER_DATABASE=") {
+			continue
+		}
 		clean = append(clean, e)
 	}
 	return append(clean, extraEnv...)

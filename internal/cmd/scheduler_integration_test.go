@@ -38,7 +38,7 @@ var schedulerTestCounter atomic.Int32
 // shared Dolt test server. Uses local init (bd init --prefix --server-port)
 // which reliably creates the schema and records the ephemeral port in
 // metadata.json so subsequent bd commands reach the test server.
-func initBeadsDBForServer(t *testing.T, dir, prefix string) {
+func initBeadsDBForServer(t *testing.T, dir, prefix, homeDir string) {
 	t.Helper()
 
 	args := []string{"init", "--prefix", prefix}
@@ -51,6 +51,7 @@ func initBeadsDBForServer(t *testing.T, dir, prefix string) {
 	}
 	cmd := exec.Command("bd", args...)
 	cmd.Dir = dir
+	cmd.Env = append(cleanSchedulerTestEnv(homeDir), "BEADS_DIR="+filepath.Join(dir, ".beads"))
 	out, err := cmd.CombinedOutput()
 	t.Logf("bd init --prefix %s in %s: exit=%v\n%s", prefix, dir, err, out)
 	if err != nil {
@@ -150,13 +151,13 @@ func setupSchedulerIntegrationTown(t *testing.T) (hqPath, rigPath, gtBinary stri
 	if err := beads.WriteRoutes(townBeadsDir, routes); err != nil {
 		t.Fatalf("write routes: %v", err)
 	}
-	initBeadsDBForServer(t, hqPath, hqPrefix)
+	initBeadsDBForServer(t, hqPath, hqPrefix, tmpDir)
 
 	// --- testrig directory (loadRig checks os.Stat on townRoot/<rigName>) ---
 	if err := os.MkdirAll(rigPath, 0755); err != nil {
 		t.Fatalf("mkdir rigPath: %v", err)
 	}
-	initBeadsDBForServer(t, rigPath, rigPrefix)
+	initBeadsDBForServer(t, rigPath, rigPrefix, tmpDir)
 
 	// Drop test databases on cleanup to prevent orphaned databases on the Dolt server.
 	t.Cleanup(func() {
@@ -649,13 +650,13 @@ func setupMultiRigSchedulerTown(t *testing.T) (hqPath, rig1Path, rig2Path, gtBin
 	if err := beads.WriteRoutes(townBeadsDir, routes); err != nil {
 		t.Fatalf("write routes: %v", err)
 	}
-	initBeadsDBForServer(t, hqPath, hqPrefix)
+	initBeadsDBForServer(t, hqPath, hqPrefix, tmpDir)
 
 	// --- rig1 ---
 	if err := os.MkdirAll(rig1Path, 0755); err != nil {
 		t.Fatalf("mkdir rig1Path: %v", err)
 	}
-	initBeadsDBForServer(t, rig1Path, rig1Prefix)
+	initBeadsDBForServer(t, rig1Path, rig1Prefix, tmpDir)
 	// Write routes to rig1's .beads/ so bd can resolve cross-rig IDs (needed for
 	// cross-rig dep creation via external refs).
 	if err := beads.WriteRoutes(filepath.Join(rig1Path, ".beads"), routes); err != nil {
@@ -673,7 +674,7 @@ func setupMultiRigSchedulerTown(t *testing.T) (hqPath, rig1Path, rig2Path, gtBin
 	if err := os.MkdirAll(rig2Path, 0755); err != nil {
 		t.Fatalf("mkdir rig2Path: %v", err)
 	}
-	initBeadsDBForServer(t, rig2Path, rig2Prefix)
+	initBeadsDBForServer(t, rig2Path, rig2Prefix, tmpDir)
 	if err := beads.WriteRoutes(filepath.Join(rig2Path, ".beads"), routes); err != nil {
 		t.Fatalf("write rig2 routes: %v", err)
 	}

@@ -37,17 +37,23 @@ func TestCleanGTEnv_PreservesDoltPort(t *testing.T) {
 
 func TestCleanGTEnv_PreservesBeadsDoltPort(t *testing.T) {
 	t.Setenv("BEADS_DOLT_PORT", "13307")
+	t.Setenv("BEADS_DOLT_SERVER_DATABASE", "wrong")
+	t.Setenv("BEADS_DIR", "/wrong/.beads")
 	t.Setenv("BD_DEBUG", "1")
 
 	env := CleanGTEnv()
 
-	var hasBeadsPort, hasBDDebug bool
+	var hasBeadsPort, hasBDDebug, hasBeadsDB, hasBeadsDir bool
 	for _, e := range env {
 		switch {
 		case strings.HasPrefix(e, "BEADS_DOLT_PORT="):
 			hasBeadsPort = true
 		case strings.HasPrefix(e, "BD_DEBUG="):
 			hasBDDebug = true
+		case strings.HasPrefix(e, "BEADS_DOLT_SERVER_DATABASE="):
+			hasBeadsDB = true
+		case strings.HasPrefix(e, "BEADS_DIR="):
+			hasBeadsDir = true
 		}
 	}
 
@@ -56,6 +62,9 @@ func TestCleanGTEnv_PreservesBeadsDoltPort(t *testing.T) {
 	}
 	if hasBDDebug {
 		t.Error("CleanGTEnv preserved BD_DEBUG — must strip it")
+	}
+	if hasBeadsDB || hasBeadsDir {
+		t.Error("CleanGTEnv preserved stale beads target selectors")
 	}
 }
 
