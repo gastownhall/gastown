@@ -701,14 +701,17 @@ func (m *Manager) AddRig(opts AddRigOptions) (*Rig, error) {
 	// `bd config set issue_prefix`, so write both config.yaml and Dolt config
 	// directly after metadata points at the canonical rig database.
 	{
-		resolvedBeadsDir := beads.ResolveBeadsDir(rigPath)
-		if err := beads.EnsureConfigYAMLValue(resolvedBeadsDir, "issue-prefix", opts.BeadsPrefix); err != nil {
-			fmt.Printf("  Warning: Could not set issue-prefix in config.yaml: %v\n", err)
+		rigRootBeadsDir := filepath.Join(rigPath, ".beads")
+		resolvedBeadsDir := beads.ResolveBeadsDir(rigRootBeadsDir)
+		if _, err := os.Stat(filepath.Join(rigRootBeadsDir, "redirect")); os.IsNotExist(err) {
+			if err := beads.EnsureConfigYAMLValue(resolvedBeadsDir, "issue-prefix", opts.BeadsPrefix); err != nil {
+				fmt.Printf("  Warning: Could not set issue-prefix in config.yaml: %v\n", err)
+			}
+			_ = beads.EnsureConfigYAMLValue(resolvedBeadsDir, "types.custom", constants.BeadsCustomTypes)
 		}
 		if err := beads.EnsureDoltConfigValue(resolvedBeadsDir, "issue_prefix", opts.BeadsPrefix); err != nil {
 			fmt.Printf("  Warning: Could not set issue_prefix in rig database: %v\n", err)
 		}
-		_ = beads.EnsureConfigYAMLValue(resolvedBeadsDir, "types.custom", constants.BeadsCustomTypes)
 		_ = beads.EnsureDoltConfigValue(resolvedBeadsDir, "types.custom", constants.BeadsCustomTypes)
 	}
 

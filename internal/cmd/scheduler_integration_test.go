@@ -174,9 +174,10 @@ func setupSchedulerIntegrationTown(t *testing.T) (hqPath, rigPath, gtBinary stri
 		}
 		defer db.Close()
 		for _, prefix := range []string{hqPrefix, rigPrefix} {
-			dbName := "beads_" + prefix
-			if _, err := db.Exec("DROP DATABASE IF EXISTS `" + dbName + "`"); err != nil {
-				t.Logf("cleanup: failed to drop %s: %v", dbName, err)
+			for _, dbName := range []string{prefix, "beads_" + prefix} {
+				if _, err := db.Exec("DROP DATABASE IF EXISTS `" + dbName + "`"); err != nil {
+					t.Logf("cleanup: failed to drop %s: %v", dbName, err)
+				}
 			}
 		}
 	})
@@ -703,9 +704,10 @@ func setupMultiRigSchedulerTown(t *testing.T) (hqPath, rig1Path, rig2Path, gtBin
 		}
 		defer db.Close()
 		for _, prefix := range []string{hqPrefix, rig1Prefix, rig2Prefix} {
-			dbName := "beads_" + prefix
-			if _, err := db.Exec("DROP DATABASE IF EXISTS `" + dbName + "`"); err != nil {
-				t.Logf("cleanup: failed to drop %s: %v", dbName, err)
+			for _, dbName := range []string{prefix, "beads_" + prefix} {
+				if _, err := db.Exec("DROP DATABASE IF EXISTS `" + dbName + "`"); err != nil {
+					t.Logf("cleanup: failed to drop %s: %v", dbName, err)
+				}
 			}
 		}
 	})
