@@ -578,11 +578,29 @@ func bdDepListRawIDsViaDolt(dir, issueID, direction, depType string) ([]string, 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
+	typedQuery, typedArgs := rawDepSQLArgs(issueID, direction, depType, false)
+	ids, err := queryRawDepIDs(ctx, db, typedQuery, typedArgs)
+	if err == nil {
+		return ids, nil
+	}
+	legacyQuery, legacyArgs := rawDepSQLArgs(issueID, direction, depType, true)
+	return queryRawDepIDs(ctx, db, legacyQuery, legacyArgs)
+}
+
+func rawDepSQLArgs(issueID, direction, depType string, legacy bool) (string, []any) {
 	var query string
 	var args []any
 	if direction == "up" {
-		query = "SELECT issue_id FROM dependencies WHERE (depends_on_issue_id = ? OR depends_on_wisp_id = ? OR depends_on_external LIKE ? ESCAPE '!')"
-		args = append(args, issueID, issueID, "%:"+strings.ReplaceAll(issueID, "_", "!_"))
+		if legacy {
+			query = "SELECT issue_id FROM dependencies WHERE depends_on_id = ?"
+			args = append(args, issueID)
+		} else {
+			query = "SELECT issue_id FROM dependencies WHERE (depends_on_issue_id = ? OR depends_on_wisp_id = ? OR depends_on_external LIKE ? ESCAPE '!')"
+			args = append(args, issueID, issueID, "%:"+strings.ReplaceAll(issueID, "_", "!_"))
+		}
+	} else if legacy {
+		query = "SELECT depends_on_id FROM dependencies WHERE issue_id = ?"
+		args = append(args, issueID)
 	} else {
 		query = "SELECT COALESCE(depends_on_issue_id, depends_on_wisp_id, depends_on_external) AS depends_on_id FROM dependencies WHERE issue_id = ?"
 		args = append(args, issueID)
@@ -591,7 +609,10 @@ func bdDepListRawIDsViaDolt(dir, issueID, direction, depType string) ([]string, 
 		query += " AND type = ?"
 		args = append(args, depType)
 	}
+	return query, args
+}
 
+func queryRawDepIDs(ctx context.Context, db *sql.DB, query string, args []any) ([]string, error) {
 	rows, err := db.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, err
