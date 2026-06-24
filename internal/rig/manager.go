@@ -650,12 +650,9 @@ func (m *Manager) AddRig(opts AddRigOptions) (*Rig, error) {
 			}
 		}
 
-		// Always ensure issue_prefix and custom types are present in config.yaml,
-		// even when metadata.json was tracked in git. Avoid `bd config set` here:
-		// newer bd rejects issue_prefix mutation and older bd can initialize stale
-		// schema views before current Gas Town code gets control.
-		_ = beads.EnsureConfigYAMLValue(sourceBeadsDir, "types.custom", constants.BeadsCustomTypes)
-		_ = beads.EnsureConfigYAMLValue(sourceBeadsDir, "issue-prefix", opts.BeadsPrefix)
+		// Do not mutate source repo config.yaml here: tracked-beads source repos
+		// must remain clean after rig add. Canonical rig config is written below
+		// after the shared rig .beads directory and metadata are established.
 	}
 
 	// NOTE: No per-directory CLAUDE.md/AGENTS.md is created for any agent.

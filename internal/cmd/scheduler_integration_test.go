@@ -49,6 +49,7 @@ func initBeadsDBForServer(t *testing.T, dir, prefix, homeDir string) {
 	if p := os.Getenv("GT_DOLT_PORT"); p != "" {
 		args = append(args, "--server", "--server-port", p)
 	}
+	args = append(args, "--database", prefix, "--force")
 	cmd := exec.Command("bd", args...)
 	cmd.Dir = dir
 	cmd.Env = append(cleanSchedulerTestEnv(homeDir), "BEADS_DIR="+filepath.Join(dir, ".beads"))

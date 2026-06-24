@@ -1011,7 +1011,6 @@ func TestRigAddRejectsInvalidNames(t *testing.T) {
 // witness and refinery agent beads via the manager's initAgentBeads.
 func TestRigAddCreatesAgentBeads(t *testing.T) {
 	requireDoltServer(t)
-	bdLogPath := mockBdCommand(t)
 	townRoot := setupTestTown(t)
 	bridgeDoltPidToTown(t, townRoot)
 	gitURL := createTestGitRepo(t, "agentbeadtest")
@@ -1035,13 +1034,6 @@ func TestRigAddCreatesAgentBeads(t *testing.T) {
 		t.Fatalf("AddRig: %v", err)
 	}
 
-	// Verify the mock bd was called with correct create commands
-	logContent, err := os.ReadFile(bdLogPath)
-	if err != nil {
-		t.Fatalf("reading bd log: %v", err)
-	}
-	logStr := string(logContent)
-
 	// Expected bead IDs that initAgentBeads should create
 	witnessID := beads.WitnessBeadIDWithPrefix(newRig.Config.Prefix, "agentbeadtest")
 	refineryID := beads.RefineryBeadIDWithPrefix(newRig.Config.Prefix, "agentbeadtest")
@@ -1054,15 +1046,11 @@ func TestRigAddCreatesAgentBeads(t *testing.T) {
 		{refineryID, "refinery agent bead"},
 	}
 
+	rigBeads := beads.NewWithBeadsDir(newRig.Path, beads.ResolveBeadsDir(newRig.Path))
 	for _, expected := range expectedIDs {
-		if !strings.Contains(logStr, expected.id) {
-			t.Errorf("bd create log should contain %s (%s), got:\n%s", expected.id, expected.desc, logStr)
+		if _, err := rigBeads.Show(expected.id); err != nil {
+			t.Errorf("expected %s (%s) to exist: %v", expected.id, expected.desc, err)
 		}
-	}
-
-	// Verify correct prefix is used (ab-)
-	if !strings.Contains(logStr, "ab-") {
-		t.Errorf("bd create log should contain prefix 'ab-', got:\n%s", logStr)
 	}
 }
 
