@@ -2,6 +2,7 @@ package beads
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -11,6 +12,50 @@ import (
 // beads namespace. Existing non-prefix settings are preserved.
 func EnsureConfigYAML(beadsDir, prefix string) error {
 	return ensureConfigYAML(beadsDir, prefix, false)
+}
+
+// EnsureConfigYAMLValue ensures config.yaml contains key: value while preserving
+// existing unrelated settings. It is used for install-time settings that must be
+// present before older bd binaries can safely open the Dolt schema.
+func EnsureConfigYAMLValue(beadsDir, key, value string) error {
+	key = strings.TrimSpace(key)
+	if key == "" {
+		return fmt.Errorf("empty config key")
+	}
+	wantLine := key + ": " + value
+	configPath := filepath.Join(beadsDir, "config.yaml")
+	data, err := os.ReadFile(configPath)
+	if os.IsNotExist(err) {
+		return os.WriteFile(configPath, []byte(wantLine+"\n"), 0644)
+	}
+	if err != nil {
+		return err
+	}
+
+	content := strings.ReplaceAll(string(data), "\r\n", "\n")
+	lines := strings.Split(content, "\n")
+	found := false
+	for i, line := range lines {
+		if strings.HasPrefix(strings.TrimSpace(line), key+":") {
+			lines[i] = wantLine
+			found = true
+		}
+	}
+	if !found {
+		if len(lines) > 0 && lines[len(lines)-1] == "" {
+			lines = lines[:len(lines)-1]
+		}
+		lines = append(lines, wantLine)
+	}
+
+	newContent := strings.Join(lines, "\n")
+	if !strings.HasSuffix(newContent, "\n") {
+		newContent += "\n"
+	}
+	if newContent == content {
+		return nil
+	}
+	return os.WriteFile(configPath, []byte(newContent), 0644)
 }
 
 // EnsureConfigYAMLIfMissing creates config.yaml with the required defaults when

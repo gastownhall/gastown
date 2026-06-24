@@ -178,6 +178,33 @@ func EnsureCustomTypes(beadsDir string) error {
 	return nil
 }
 
+// EnsureCustomTypesConfigYAML records Gas Town custom types directly in
+// config.yaml. Fresh install uses this before invoking any bd config command so
+// older cached bd binaries do not initialize legacy views against the new schema.
+func EnsureCustomTypesConfigYAML(beadsDir string) error {
+	if beadsDir == "" {
+		return fmt.Errorf("empty beads directory")
+	}
+	if _, err := os.Stat(beadsDir); os.IsNotExist(err) {
+		return fmt.Errorf("beads directory does not exist: %s", beadsDir)
+	}
+
+	typesList := strings.Join(constants.BeadsCustomTypesList(), ",")
+
+	ensuredMu.Lock()
+	defer ensuredMu.Unlock()
+
+	if ensuredDirs[beadsDir] {
+		return nil
+	}
+	if err := EnsureConfigYAMLValue(beadsDir, "types.custom", typesList); err != nil {
+		return err
+	}
+	_ = os.WriteFile(filepath.Join(beadsDir, typesSentinel), []byte(typesList+"\n"), 0644)
+	ensuredDirs[beadsDir] = true
+	return nil
+}
+
 // EnsureCustomStatuses ensures the target beads directory has custom statuses configured.
 // Uses the same two-level caching strategy as EnsureCustomTypes:
 //   - In-memory cache for multiple operations in the same CLI invocation

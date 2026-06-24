@@ -2,10 +2,14 @@ package cmd
 
 import (
 	"bytes"
+	"context"
 	"crypto/rand"
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -526,6 +530,10 @@ func bdDepListRawIDs(dir, issueID, direction, depType string) ([]string, error) 
 		query += fmt.Sprintf(" AND type = '%s'", depType)
 	}
 
+	if ids, err := bdDepListRawIDsViaDolt(dir, issueID, direction, depType); err == nil {
+		return ids, nil
+	}
+
 	out, err := runBdJSONWithAutoCommit(dir, "sql", query, "--json")
 	if err != nil {
 		return nil, fmt.Errorf("bd sql for deps of %s: %w", issueID, err)
@@ -546,6 +554,68 @@ func bdDepListRawIDs(dir, issueID, direction, depType string) ([]string, error) 
 			seen[id] = true
 			ids = append(ids, id)
 		}
+	}
+	return ids, nil
+}
+
+func bdDepListRawIDsViaDolt(dir, issueID, direction, depType string) ([]string, error) {
+	beadsDir := beads.ResolveBeadsDir(dir)
+	cfg, ok := readBeadsRuntimeConfig(beadsDir)
+	if !ok || cfg.Database == "" || cfg.Port == 0 {
+		return nil, fmt.Errorf("missing server metadata for %s", beadsDir)
+	}
+	host := cfg.Host
+	if host == "" {
+		host = "127.0.0.1"
+	}
+	dsn := fmt.Sprintf("root@tcp(%s)/%s?parseTime=true", net.JoinHostPort(host, strconv.Itoa(cfg.Port)), url.PathEscape(cfg.Database))
+	db, err := sql.Open("mysql", dsn)
+	if err != nil {
+		return nil, err
+	}
+	defer db.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	var query string
+	var args []any
+	if direction == "up" {
+		query = "SELECT issue_id FROM dependencies WHERE (depends_on_issue_id = ? OR depends_on_wisp_id = ? OR depends_on_external LIKE ? ESCAPE '!')"
+		args = append(args, issueID, issueID, "%:"+strings.ReplaceAll(issueID, "_", "!_"))
+	} else {
+		query = "SELECT COALESCE(depends_on_issue_id, depends_on_wisp_id, depends_on_external) AS depends_on_id FROM dependencies WHERE issue_id = ?"
+		args = append(args, issueID)
+	}
+	if depType != "" {
+		query += " AND type = ?"
+		args = append(args, depType)
+	}
+
+	rows, err := db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	seen := make(map[string]bool)
+	var ids []string
+	for rows.Next() {
+		var rawID sql.NullString
+		if err := rows.Scan(&rawID); err != nil {
+			return nil, err
+		}
+		if !rawID.Valid {
+			continue
+		}
+		id := beads.ExtractIssueID(rawID.String)
+		if id != "" && !seen[id] {
+			seen[id] = true
+			ids = append(ids, id)
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
 	}
 	return ids, nil
 }

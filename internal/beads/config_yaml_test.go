@@ -135,6 +135,39 @@ func TestEnsureConfigYAML_DisablesAutoExport(t *testing.T) {
 	}
 }
 
+func TestEnsureConfigYAMLValue(t *testing.T) {
+	beadsDir := t.TempDir()
+	configPath := filepath.Join(beadsDir, "config.yaml")
+	if err := os.WriteFile(configPath, []byte("prefix: hq\ntypes.custom: old\n"), 0644); err != nil {
+		t.Fatalf("write config.yaml: %v", err)
+	}
+
+	if err := EnsureConfigYAMLValue(beadsDir, "types.custom", "agent,role"); err != nil {
+		t.Fatalf("EnsureConfigYAMLValue replace: %v", err)
+	}
+	if err := EnsureConfigYAMLValue(beadsDir, "allowed_prefixes", "hq,hq-cv"); err != nil {
+		t.Fatalf("EnsureConfigYAMLValue append: %v", err)
+	}
+
+	data, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatalf("read config.yaml: %v", err)
+	}
+	got := string(data)
+	for _, want := range []string{
+		"prefix: hq\n",
+		"types.custom: agent,role\n",
+		"allowed_prefixes: hq,hq-cv\n",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("config.yaml missing %q:\n%s", want, got)
+		}
+	}
+	if strings.Contains(got, "types.custom: old") {
+		t.Fatalf("config.yaml kept stale value:\n%s", got)
+	}
+}
+
 func TestConfigYAMLDisablesAutoExport(t *testing.T) {
 	tests := []struct {
 		name    string
