@@ -50,12 +50,16 @@ func initBeadsDBForServer(t *testing.T, dir, prefix, homeDir string) {
 		args = append(args, "--server", "--server-port", p)
 	}
 	args = append(args, "--database", prefix, "--force")
+	beadsDir := filepath.Join(dir, ".beads")
+	if err := os.MkdirAll(beadsDir, 0755); err != nil {
+		t.Fatalf("mkdir %s: %v", beadsDir, err)
+	}
 	if err := dropExactTestDatabases(prefix); err != nil {
 		t.Fatalf("drop stale scheduler database %s: %v", prefix, err)
 	}
 	cmd := exec.Command("bd", args...)
 	cmd.Dir = dir
-	cmd.Env = append(cleanSchedulerTestEnv(homeDir), "BEADS_DIR="+filepath.Join(dir, ".beads"))
+	cmd.Env = append(cleanSchedulerTestEnv(homeDir), "BEADS_DIR="+beadsDir)
 	out, err := cmd.CombinedOutput()
 	t.Logf("bd init --prefix %s in %s: exit=%v\n%s", prefix, dir, err, out)
 	if err != nil {
@@ -64,12 +68,12 @@ func initBeadsDBForServer(t *testing.T, dir, prefix, homeDir string) {
 
 	// Create empty issues.jsonl to prevent bd auto-export from corrupting
 	// routes.jsonl (same as initBeadsDBWithPrefix does).
-	issuesPath := filepath.Join(dir, ".beads", "issues.jsonl")
+	issuesPath := filepath.Join(beadsDir, "issues.jsonl")
 	if err := os.WriteFile(issuesPath, []byte(""), 0644); err != nil {
 		t.Fatalf("create issues.jsonl in %s: %v", dir, err)
 	}
 
-	if err := beads.EnsureCustomTypes(filepath.Join(dir, ".beads")); err != nil {
+	if err := beads.EnsureCustomTypes(beadsDir); err != nil {
 		t.Fatalf("ensure custom types in %s: %v", dir, err)
 	}
 }
