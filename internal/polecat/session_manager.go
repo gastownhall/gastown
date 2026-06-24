@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -176,14 +177,21 @@ func (m *SessionManager) clonePath(polecat string) string {
 
 // freshBranchName returns a unique branch name for a new polecat session.
 // Mirrors the naming convention in Manager.buildBranchName:
-//   - polecat/<name>/<issue>@<timestamp> when an issue is known
+//   - polecat/<name>/<issue>-<timestamp> when an issue is known
 //   - polecat/<name>-<timestamp> otherwise
+//
+// The historical separator was `@`, but that character is rejected by
+// `anthropics/claude-code-action`'s head-ref validator
+// (`^[a-zA-Z0-9][a-zA-Z0-9/_.#+,-]*$`, hq-5w371 / blocks hq-1svtk),
+// so the @claude review action 100%-failed on every polecat PR. The
+// separator changed to `-` 2026-06-24; parseFreshBranchName accepts
+// both forms so in-flight `@`-form branches continue to round-trip.
 //
 // parseFreshBranchName is the structural inverse.
 func (m *SessionManager) freshBranchName(polecatName, issue string) string {
 	ts := strconv.FormatInt(time.Now().UnixMilli(), 36)
 	if issue != "" {
-		return fmt.Sprintf("polecat/%s/%s@%s", polecatName, issue, ts)
+		return fmt.Sprintf("polecat/%s/%s-%s", polecatName, issue, ts)
 	}
 	return fmt.Sprintf("polecat/%s-%s", polecatName, ts)
 }
@@ -196,10 +204,25 @@ type freshBranchMeta struct {
 	ok      bool
 }
 
+// polecatTimestampSuffix matches the base36 UnixMilli timestamp tail that
+// freshBranchName / Manager.buildBranchName append after the issue. Millis
+// fit in ~8 base36 chars so we require ≥6 lowercase alphanumerics with no
+// dots (issue IDs use dots for subtasks, base36 timestamps never do).
+// Tighter than `[a-z0-9]+` so short issue tails (e.g. the `xyz` in
+// `gt-xyz`) are not mistaken for a timestamp when none was appended.
+var polecatTimestampSuffix = regexp.MustCompile(`^[0-9a-z]{6,}$`)
+
 // parseFreshBranchName is the structural inverse of freshBranchName. It
 // does not consult git or the filesystem; it recognizes the two formats
 // the formatter emits. Used in place of substring heuristics so that
 // branch-naming changes can be made in a single place.
+//
+// Accepts both the historical `@` separator and the current `-` separator
+// between issue and timestamp (the with-issue form) so in-flight branches
+// created before the hq-5w371 rename still parse. `@` is unambiguous
+// (legacy). For `-`, the rightmost `-` is only treated as the separator
+// when the suffix matches polecatTimestampSuffix — otherwise the segment
+// is taken as an issue with no ts (e.g. `polecat/foo/gt-xyz`).
 func parseFreshBranchName(branch string) freshBranchMeta {
 	const prefix = "polecat/"
 	if !strings.HasPrefix(branch, prefix) {
@@ -207,17 +230,23 @@ func parseFreshBranchName(branch string) freshBranchMeta {
 	}
 	rest := branch[len(prefix):]
 	if slash := strings.Index(rest, "/"); slash >= 0 {
-		// polecat/<name>/<issue>@<ts>
+		// polecat/<name>/<issue>{@|-}<ts>
 		if slash == 0 {
 			return freshBranchMeta{}
 		}
 		name := rest[:slash]
 		tail := rest[slash+1:]
-		at := strings.LastIndex(tail, "@")
-		if at <= 0 || at == len(tail)-1 {
-			return freshBranchMeta{}
+		// Legacy `@` form.
+		if at := strings.LastIndex(tail, "@"); at > 0 && at < len(tail)-1 {
+			return freshBranchMeta{polecat: name, issue: tail[:at], ok: true}
 		}
-		return freshBranchMeta{polecat: name, issue: tail[:at], ok: true}
+		// Current `-` form: rightmost `-` separates issue from ts only when
+		// the suffix looks like a base36 timestamp.
+		if dash := strings.LastIndex(tail, "-"); dash > 0 && dash < len(tail)-1 &&
+			polecatTimestampSuffix.MatchString(tail[dash+1:]) {
+			return freshBranchMeta{polecat: name, issue: tail[:dash], ok: true}
+		}
+		return freshBranchMeta{}
 	}
 	// polecat/<name>-<ts> (no slash in rest)
 	dash := strings.LastIndex(rest, "-")

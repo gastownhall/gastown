@@ -617,8 +617,14 @@ type AddOptions struct {
 // - {timestamp}: unique timestamp
 //
 // If no template is configured or template is empty, uses default format:
-// - polecat/{name}/{issue}@{timestamp} when issue is available
+// - polecat/{name}/{issue}-{timestamp} when issue is available
 // - polecat/{name}-{timestamp} otherwise
+//
+// The historical separator was `@`, but `anthropics/claude-code-action`'s
+// head-ref validator rejects `@` (regex `^[a-zA-Z0-9][a-zA-Z0-9/_.#+,-]*$`)
+// — root cause of hq-1svtk / hq-5w371. Switched to `-` 2026-06-24.
+// Parsers in session_manager.parseFreshBranchName and mq_submit.parseBranchName
+// accept both `@` and `-` so in-flight branches still round-trip.
 func (m *Manager) buildBranchName(name, issue string) string {
 	template := m.rig.GetStringConfig("polecat_branch_template")
 
@@ -626,7 +632,7 @@ func (m *Manager) buildBranchName(name, issue string) string {
 	if template == "" {
 		timestamp := strconv.FormatInt(time.Now().UnixMilli(), 36)
 		if issue != "" {
-			return fmt.Sprintf("polecat/%s/%s@%s", name, issue, timestamp)
+			return fmt.Sprintf("polecat/%s/%s-%s", name, issue, timestamp)
 		}
 		return fmt.Sprintf("polecat/%s-%s", name, timestamp)
 	}

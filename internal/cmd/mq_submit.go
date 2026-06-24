@@ -29,25 +29,52 @@ type branchInfo struct {
 // issuePattern matches issue IDs in branch names (e.g., "gt-xyz" or "gt-abc.1")
 var issuePattern = regexp.MustCompile(`([a-z]+-[a-z0-9]+(?:\.[0-9]+)?)`)
 
+// polecatTimestampSuffix matches the base36 UnixMilli timestamp tail that
+// freshBranchName / buildBranchName append after the issue. Millis fit in
+// ~8 base36 chars so we require ≥6 lowercase alphanumerics with no dots
+// (issue IDs use dots for subtasks, base36 timestamps never do). Tighter
+// than `[a-z0-9]+` so that short issue tails like `gt-xyz` are not
+// mistaken for a timestamp when no timestamp was appended.
+var polecatTimestampSuffix = regexp.MustCompile(`^[0-9a-z]{6,}$`)
+
+// stripPolecatTimestampSuffix removes the trailing `@<ts>` or `-<ts>`
+// from the third segment of a polecat branch (`polecat/<worker>/<segment>`).
+// `@` is unambiguous (legacy form). `-` is ambiguous because issue IDs
+// themselves contain `-`, so it's only stripped when the suffix after the
+// rightmost `-` looks like a base36 timestamp. Returns the segment
+// unchanged if neither marker is present (e.g. `polecat/foo/gt-abc`).
+func stripPolecatTimestampSuffix(segment string) string {
+	if atIdx := strings.Index(segment, "@"); atIdx > 0 {
+		return segment[:atIdx]
+	}
+	if dashIdx := strings.LastIndex(segment, "-"); dashIdx > 0 && dashIdx < len(segment)-1 {
+		if polecatTimestampSuffix.MatchString(segment[dashIdx+1:]) {
+			return segment[:dashIdx]
+		}
+	}
+	return segment
+}
+
 // parseBranchName extracts issue ID and worker from a branch name.
 // Supports formats:
-//   - polecat/<worker>/<issue>  → issue=<issue>, worker=<worker>
-//   - polecat/<worker>-<timestamp>  → issue="", worker=<worker> (modern polecat branches)
-//   - <issue>                   → issue=<issue>, worker=""
+//   - polecat/<worker>/<issue>                → issue=<issue>, worker=<worker>  (no timestamp)
+//   - polecat/<worker>/<issue>-<timestamp>    → issue=<issue>, worker=<worker>  (current, hq-5w371+)
+//   - polecat/<worker>/<issue>@<timestamp>    → issue=<issue>, worker=<worker>  (legacy)
+//   - polecat/<worker>-<timestamp>            → issue="", worker=<worker> (modern no-issue form)
+//   - <issue>                                 → issue=<issue>, worker=""
+//
+// The `@` form is the historical default; switched to `-` 2026-06-24
+// (hq-5w371) because `anthropics/claude-code-action` rejects `@` in
+// head refs. The parser accepts both so in-flight branches round-trip.
 func parseBranchName(branch string) branchInfo {
 	info := branchInfo{Branch: branch}
 
-	// Try polecat/<worker>/<issue> or polecat/<worker>/<issue>@<timestamp> format
+	// Try polecat/<worker>/<issue>{-,@}<timestamp> format
 	if strings.HasPrefix(branch, constants.BranchPolecatPrefix) {
 		parts := strings.SplitN(branch, "/", 3)
 		if len(parts) == 3 {
 			info.Worker = parts[1]
-			// Strip @timestamp suffix if present (e.g., "gt-abc@mk123" -> "gt-abc")
-			issue := parts[2]
-			if atIdx := strings.Index(issue, "@"); atIdx > 0 {
-				issue = issue[:atIdx]
-			}
-			info.Issue = issue
+			info.Issue = stripPolecatTimestampSuffix(parts[2])
 			return info
 		}
 		// Modern polecat branch format: polecat/<worker>-<timestamp>

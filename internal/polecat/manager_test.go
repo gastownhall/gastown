@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"sort"
 	"strconv"
@@ -1010,7 +1011,7 @@ func TestBuildBranchName(t *testing.T) {
 			name:     "default_with_issue",
 			template: "", // Empty template = default behavior
 			issue:    "gt-123",
-			want:     "polecat/alpha/gt-123@", // timestamp suffix varies
+			want:     "polecat/alpha/gt-123-", // hq-5w371: `-` separator (was `@`); timestamp suffix varies
 		},
 		{
 			name:     "default_without_issue",
@@ -1082,6 +1083,61 @@ func TestBuildBranchName(t *testing.T) {
 						t.Errorf("buildBranchName() = %q, want %q", got, tt.want)
 					}
 				}
+			}
+		})
+	}
+}
+
+// claudeCodeActionHeadRefRegex mirrors the head-ref validator inside
+// `anthropics/claude-code-action` (pinned at SHA
+// 2fee15510437d71399d9139ed60433470484a8fb). Any character it rejects in
+// the generated branch name surfaces as "Action failed with error: Invalid
+// branch name: …" on every @claude review request — the regression
+// hq-1svtk / hq-5w371 captured (root cause: the `@` separator). Keep this
+// test green to avoid silently regressing the action's accept-set on
+// future renames.
+var claudeCodeActionHeadRefRegex = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9/_.#+,-]*$`)
+
+// TestBuildBranchName_ClaudeActionCompatible asserts that the default
+// branch-name generator produces a ref accepted by claude-code-action.
+// Generates with several plausible issue ID shapes (dashes, dots,
+// subtasks) so future template tweaks that re-introduce `@` (or any
+// other rejected char) fail at unit-test time rather than in production.
+func TestBuildBranchName_ClaudeActionCompatible(t *testing.T) {
+	tmpDir := t.TempDir()
+	gitCmd := exec.Command("git", "init")
+	gitCmd.Dir = tmpDir
+	if err := gitCmd.Run(); err != nil {
+		t.Fatalf("git init: %v", err)
+	}
+
+	r := &rig.Rig{Name: "test-rig", Path: tmpDir}
+	g := git.NewGit(tmpDir)
+	m := NewManager(r, g, nil)
+
+	cases := []struct {
+		name  string
+		pname string
+		issue string
+	}{
+		{name: "simple issue", pname: "mutant", issue: "gt-abc"},
+		{name: "dotted subtask", pname: "raider", issue: "gt-4kp9.5.5.1"},
+		{name: "hq prefix", pname: "pipboy", issue: "hq-571c"},
+		{name: "no issue", pname: "ghoul", issue: ""},
+		{name: "long name", pname: "thunderchief", issue: "gt-jns7.1"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			got := m.buildBranchName(c.pname, c.issue)
+			if !claudeCodeActionHeadRefRegex.MatchString(got) {
+				t.Errorf("buildBranchName(%q, %q) = %q rejected by claude-code-action regex %q",
+					c.pname, c.issue, got, claudeCodeActionHeadRefRegex)
+			}
+			// Negative pin: `@` must not appear anywhere in the generated
+			// ref (the specific character that caused hq-1svtk).
+			if strings.Contains(got, "@") {
+				t.Errorf("buildBranchName(%q, %q) = %q contains '@'; hq-5w371 banned this character",
+					c.pname, c.issue, got)
 			}
 		})
 	}
