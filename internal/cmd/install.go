@@ -732,15 +732,10 @@ func initTownBeads(townPath string) error {
 		return fmt.Errorf("ensuring config.yaml: %w", err)
 	}
 
-	beadsEnv := withBeadsDirEnv(beadsDir)
-
-	// Set beads.role to maintainer (town-level beads are always maintainer-owned).
-	// Without this, bd doctor warns about missing role configuration.
-	roleSetCmd := exec.Command("bd", "config", "set", "beads.role", "maintainer")
-	roleSetCmd.Dir = townPath
-	roleSetCmd.Env = beadsEnv
-	if roleOutput, roleErr := roleSetCmd.CombinedOutput(); roleErr != nil {
-		fmt.Printf("   %s Could not set beads.role: %s\n", style.Dim.Render("⚠"), strings.TrimSpace(string(roleOutput)))
+	// Set beads.role to maintainer (town-level beads are always maintainer-owned)
+	// without invoking old bd config/schema initialization during fresh install.
+	if err := beads.EnsureConfigYAMLValue(beadsDir, "beads.role", "maintainer"); err != nil {
+		fmt.Printf("   %s Could not set beads.role: %v\n", style.Dim.Render("⚠"), err)
 	}
 
 	// Configure custom types for Gas Town before any bd config command can force
