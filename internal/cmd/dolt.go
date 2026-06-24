@@ -748,7 +748,14 @@ func readBeadsRuntimeConfig(beadsDir, townRoot string) (beadsRuntimeConfig, bool
 	}
 	port := metadata.DoltServerPort
 	if port == 0 {
-		port = doltserver.DefaultConfig(townRoot).Port
+		if data, err := os.ReadFile(filepath.Join(beadsDir, "dolt-server.port")); err == nil {
+			if parsed, err := strconv.Atoi(strings.TrimSpace(string(data))); err == nil && parsed > 0 {
+				port = parsed
+			}
+		}
+	}
+	if port == 0 {
+		port = doltserver.DefaultPort
 	}
 	database := metadata.DoltDatabase
 	if database == "" {

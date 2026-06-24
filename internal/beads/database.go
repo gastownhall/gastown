@@ -134,20 +134,36 @@ func BuildMutationNeutralBDEnv(base []string) []string {
 // ArgsAreReadOnly classifies bd CLI arguments for env policy. Unknown commands
 // are treated as mutations so they cannot accidentally inherit read-only mode.
 func ArgsAreReadOnly(args []string) bool {
-	args = stripBDGlobalFlags(args)
+	if len(args) == 1 && isBDReadOnlyGlobalFlag(args[0]) {
+		return true
+	}
+	if HasBDTargetSelectorFlag(append([]string{"bd"}, args...)) {
+		return false
+	}
+	var ok bool
+	args, ok = stripBDGlobalFlags(args)
+	if !ok {
+		return false
+	}
 	if len(args) == 0 {
 		return false
 	}
 	switch args[0] {
-	case "show", "list", "ready", "blocked", "stats", "stale", "orphans", "activity", "query", "version":
+	case "show", "list", "ready", "blocked", "stats", "stale", "orphans", "activity", "query", "search", "version", "help":
 		return true
 	case "dep":
 		return len(args) > 1 && args[1] == "list"
+	case "formula":
+		return len(args) > 1 && (args[1] == "list" || args[1] == "show")
+	case "kv":
+		return len(args) > 1 && (args[1] == "get" || args[1] == "list")
+	case "message":
+		return len(args) > 1 && args[1] == "thread"
 	case "mol":
-		return len(args) > 2 && args[1] == "wisp" && args[2] == "list"
+		return len(args) > 1 && (args[1] == "current" || (len(args) > 2 && args[1] == "wisp" && args[2] == "list"))
 	case "sql":
 		query := strings.ToLower(strings.Join(stripBDCommandFlags(args[1:]), " "))
-		return strings.HasPrefix(strings.TrimSpace(query), "select")
+		return hasReadOnlySQLPrefix(strings.TrimSpace(query))
 	case "config":
 		return len(args) > 1 && args[1] == "get"
 	default:
@@ -155,11 +171,28 @@ func ArgsAreReadOnly(args []string) bool {
 	}
 }
 
-func stripBDGlobalFlags(args []string) []string {
+func isBDReadOnlyGlobalFlag(arg string) bool {
+	return arg == "--version" || arg == "-V" || arg == "--help" || arg == "-h"
+}
+
+func stripBDGlobalFlags(args []string) ([]string, bool) {
 	for len(args) > 0 && strings.HasPrefix(args[0], "--") {
+		if args[0] == "--" {
+			return nil, false
+		}
+		name := args[0]
+		if cut, _, hasValue := strings.Cut(name, "="); hasValue {
+			name = cut
+		}
+		if !bdBoolGlobalFlags[name] {
+			return nil, false
+		}
 		args = args[1:]
 	}
-	return args
+	if len(args) > 0 && strings.HasPrefix(args[0], "-") {
+		return nil, false
+	}
+	return args, true
 }
 
 func stripBDCommandFlags(args []string) []string {
@@ -167,6 +200,15 @@ func stripBDCommandFlags(args []string) []string {
 		args = args[1:]
 	}
 	return args
+}
+
+func hasReadOnlySQLPrefix(query string) bool {
+	for _, prefix := range []string{"select", "show", "explain", "describe"} {
+		if strings.HasPrefix(query, prefix) {
+			return true
+		}
+	}
+	return false
 }
 
 // SuppressBDSideEffects disables Beads JSONL export/backup/push side effects for

@@ -65,9 +65,10 @@ func mutateTrackingRelationViaStore(townRoot, trackerID, issueID string, add boo
 }
 
 func fallbackTrackingRelation(townRoot, trackerID, issueID string, add bool, storeErr error) error {
-	args := []string{"dep", "add", trackerID, issueID, "--type=tracks"}
+	targetID := trackingDependsOnID(townRoot, issueID)
+	args := []string{"dep", "add", trackerID, targetID, "--type=tracks"}
 	if !add {
-		args = []string{"dep", "remove", trackerID, issueID, "--type=tracks"}
+		args = []string{"dep", "remove", trackerID, targetID, "--type=tracks"}
 	}
 
 	if out, err := BdCmd(args...).Dir(townRoot).WithAutoCommit().StripBeadsDir().CombinedOutput(); err != nil {

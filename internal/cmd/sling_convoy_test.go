@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 )
 
@@ -153,6 +154,61 @@ func TestBdDepListRawIDsValidation(t *testing.T) {
 	_, err = bdDepListRawIDs("/tmp", "valid-id", "down", "'; DROP TABLE deps; --")
 	if err == nil {
 		t.Error("bdDepListRawIDs should reject SQL injection in depType")
+	}
+}
+
+func TestBdDepListRawIDsUsesAutoCommitEnv(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("skipping on windows")
+	}
+
+	binDir := t.TempDir()
+	logPath := filepath.Join(t.TempDir(), "bd.log")
+	writeBDStub(t, binDir, `#!/usr/bin/env sh
+{
+	printf 'args:'
+	for arg in "$@"; do
+		printf '[%s]' "$arg"
+	done
+	printf '\nBD_READONLY=%s\n' "${BD_READONLY-}"
+	printf 'BD_DOLT_AUTO_COMMIT=%s\n' "${BD_DOLT_AUTO_COMMIT-}"
+} >> "$BD_STUB_LOG"
+printf '[{"depends_on_id":"external:ag:ag-95s.1"}]\n'
+`, "")
+	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	t.Setenv("BD_STUB_LOG", logPath)
+	t.Setenv("BD_READONLY", "true")
+	t.Setenv("BD_DOLT_AUTO_COMMIT", "off")
+
+	workDir := t.TempDir()
+	beadsDir := filepath.Join(workDir, ".beads")
+	if err := os.MkdirAll(beadsDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(beadsDir, "metadata.json"), []byte(`{"dolt_database":"hq"}`), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	ids, err := bdDepListRawIDs(workDir, "hq-cv-test", "down", "tracks")
+	if err != nil {
+		t.Fatalf("bdDepListRawIDs: %v", err)
+	}
+	if len(ids) != 1 || ids[0] != "ag-95s.1" {
+		t.Fatalf("ids = %v, want [ag-95s.1]", ids)
+	}
+	logBytes, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	log := string(logBytes)
+	for _, want := range []string{
+		"args:[sql][SELECT COALESCE",
+		"\nBD_READONLY=\n",
+		"BD_DOLT_AUTO_COMMIT=on",
+	} {
+		if !strings.Contains(log, want) {
+			t.Fatalf("bd stub log missing %q:\n%s", want, log)
+		}
 	}
 }
 

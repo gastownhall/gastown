@@ -743,19 +743,6 @@ func initTownBeads(townPath string) error {
 		fmt.Printf("   %s Could not set beads.role: %s\n", style.Dim.Render("⚠"), strings.TrimSpace(string(roleOutput)))
 	}
 
-	// Explicitly set issue_prefix config (bd init --prefix may not persist it in newer versions).
-	// bd >= 1.0.0 rejects this with "cannot be set via 'bd config set'" because init persists
-	// it directly; treat that as already-set rather than a failure.
-	prefixSetCmd := exec.Command("bd", "config", "set", "issue_prefix", "hq")
-	prefixSetCmd.Dir = townPath
-	prefixSetCmd.Env = beadsEnv
-	if prefixOutput, prefixErr := prefixSetCmd.CombinedOutput(); prefixErr != nil {
-		out := strings.TrimSpace(string(prefixOutput))
-		if !strings.Contains(out, "cannot be set via") {
-			return fmt.Errorf("bd config set issue_prefix failed: %s", out)
-		}
-	}
-
 	// Configure custom types for Gas Town (agent, role, rig, convoy, slot).
 	// These were extracted from beads core in v0.46.0 and now require explicit config.
 	if err := beads.EnsureCustomTypes(beadsDir); err != nil {

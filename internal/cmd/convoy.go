@@ -449,18 +449,25 @@ func getTownBeadsDir() (string, error) {
 // "exit status 1". BEADS_DIR is stripped from the subprocess environment to
 // prevent stale overrides from interfering with bd's workspace detection.
 func runBdJSON(dir string, args ...string) ([]byte, error) {
-	return runBdJSONWithOptions(dir, false, args...)
+	return runBdJSONWithOptions(dir, false, false, args...)
 }
 
 func runBdJSONAllowStale(dir string, args ...string) ([]byte, error) {
-	return runBdJSONWithOptions(dir, true, args...)
+	return runBdJSONWithOptions(dir, true, false, args...)
 }
 
-func runBdJSONWithOptions(dir string, allowStale bool, args ...string) ([]byte, error) {
+func runBdJSONWithAutoCommit(dir string, args ...string) ([]byte, error) {
+	return runBdJSONWithOptions(dir, false, true, args...)
+}
+
+func runBdJSONWithOptions(dir string, allowStale, autoCommit bool, args ...string) ([]byte, error) {
 	var stdout, stderr bytes.Buffer
 	bdc := BdCmd(args...).Dir(dir).StripBeadsDir().Stderr(&stderr)
 	if allowStale {
 		bdc.AllowStale()
+	}
+	if autoCommit {
+		bdc.WithAutoCommit()
 	}
 	cmd := bdc.Build()
 	cmd.Dir = dir
@@ -519,7 +526,7 @@ func bdDepListRawIDs(dir, issueID, direction, depType string) ([]string, error) 
 		query += fmt.Sprintf(" AND type = '%s'", depType)
 	}
 
-	out, err := runBdJSON(dir, "sql", query, "--json")
+	out, err := runBdJSONWithAutoCommit(dir, "sql", query, "--json")
 	if err != nil {
 		return nil, fmt.Errorf("bd sql for deps of %s: %w", issueID, err)
 	}

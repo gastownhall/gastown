@@ -218,7 +218,7 @@ The staged convoy can later be launched with 'gt convoy launch'.`,
 func runConvoyStage(cmd *cobra.Command, args []string) error {
 	// Step 1: Validate args.
 	if err := validateStageArgs(args); err != nil {
-		return err
+		return convoyStageError(err)
 	}
 
 	// Step 2: Resolve bead types via bd show for each arg.
@@ -227,7 +227,7 @@ func runConvoyStage(cmd *cobra.Command, args []string) error {
 	for _, arg := range args {
 		result, err := bdShow(arg)
 		if err != nil {
-			return fmt.Errorf("cannot resolve bead %s: %w", arg, err)
+			return convoyStageError(fmt.Errorf("cannot resolve bead %s: %w", arg, err))
 		}
 		if isConvoyIssue(result.IssueType, result.Labels) {
 			beadTypes[arg] = "convoy"
@@ -240,7 +240,7 @@ func runConvoyStage(cmd *cobra.Command, args []string) error {
 	// Step 3: Determine input kind.
 	input, err := resolveInputKind(beadTypes)
 	if err != nil {
-		return err
+		return convoyStageError(err)
 	}
 
 	// Step 3b: Detect re-stage scenario.
@@ -258,7 +258,7 @@ func runConvoyStage(cmd *cobra.Command, args []string) error {
 	// Step 4: Collect beads and deps.
 	beads, deps, err := collectBeads(input)
 	if err != nil {
-		return err
+		return convoyStageError(err)
 	}
 
 	// Step 5: Build the DAG.
@@ -271,11 +271,11 @@ func runConvoyStage(cmd *cobra.Command, args []string) error {
 		slingableIDs := dagSlingableIDs(dag)
 		overlaps, err := findOverlappingConvoys(slingableIDs)
 		if err != nil {
-			return fmt.Errorf("checking for overlapping convoys: %w", err)
+			return convoyStageError(fmt.Errorf("checking for overlapping convoys: %w", err))
 		}
 		autoRestage, autoConvoyID, err := handleOverlappingConvoys(overlaps)
 		if err != nil {
-			return err
+			return convoyStageError(err)
 		}
 		if autoRestage {
 			isRestage = true
@@ -397,6 +397,28 @@ func runConvoyStage(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
+func convoyStageError(err error) error {
+	if err == nil || !convoyStageJSON {
+		return err
+	}
+	out, renderErr := renderJSON(StageResult{
+		Status: "error",
+		Errors: []FindingJSON{{
+			Category: "error",
+			BeadIDs:  []string{},
+			Message:  err.Error(),
+		}},
+		Warnings: []FindingJSON{},
+		Waves:    []WaveJSON{},
+		Tree:     []TreeNodeJSON{},
+	})
+	if renderErr != nil {
+		return renderErr
+	}
+	fmt.Print(out)
+	return err
+}
+
 // runConvoyStageJSON handles the --json output path for convoy staging.
 // It builds a StageResult, marshals it, and prints to stdout.
 // On errors, it still outputs JSON but returns an error for non-zero exit code.
@@ -423,7 +445,7 @@ func runConvoyStageJSON(dag *ConvoyDAG, input *StageInput, errs, warns []Staging
 	// No errors: compute waves and create/update convoy.
 	waves, gated, err := computeWaves(dag)
 	if err != nil {
-		return err
+		return convoyStageError(err)
 	}
 
 	// Append validation bead as final wave (epic input only).
@@ -432,7 +454,7 @@ func runConvoyStageJSON(dag *ConvoyDAG, input *StageInput, errs, warns []Staging
 		epicID := input.IDs[0]
 		waves, validationBeadID, err = appendValidationWave(dag, waves, epicID)
 		if err != nil {
-			return fmt.Errorf("creating validation bead: %w", err)
+			return convoyStageError(fmt.Errorf("creating validation bead: %w", err))
 		}
 	}
 
@@ -461,14 +483,14 @@ func runConvoyStageJSON(dag *ConvoyDAG, input *StageInput, errs, warns []Staging
 
 	if isRestage {
 		if err := updateStagedConvoy(restageConvoyID, dag, waves, status, title); err != nil {
-			return err
+			return convoyStageError(err)
 		}
 		result.ConvoyID = restageConvoyID
 		result.Restaged = true
 	} else {
 		convoyID, err := createStagedConvoy(dag, waves, status, title)
 		if err != nil {
-			return err
+			return convoyStageError(err)
 		}
 		result.ConvoyID = convoyID
 	}

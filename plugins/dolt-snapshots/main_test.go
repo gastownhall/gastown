@@ -3,6 +3,7 @@ package main
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -93,8 +94,8 @@ func TestIsSystemDB(t *testing.T) {
 		{"lora_forge", false},
 		{"node0", false},
 		// Edge cases: names that start with system prefixes but aren't
-		{"testdb", false},        // exactly "testdb" with no underscore
-		{"beads", false},         // exactly "beads"
+		{"testdb", false},           // exactly "testdb" with no underscore
+		{"beads", false},            // exactly "beads"
 		{"beads_production", false}, // doesn't match beads_t or beads_pt
 	}
 
@@ -236,6 +237,8 @@ func TestResolveDependencyDB(t *testing.T) {
 		{"external:petals:pe-k0e.1.1", "petals"},
 		{"external:lora_forge:lf-mx5rb", "lora_forge"},
 		{"external:node0:no-2yg", "node0"},
+		{"external:pe:pe-k0e.1.1", "petals"},
+		{"external:lf:lf-mx5rb", "lora_forge"},
 
 		// Prefix format (via routes)
 		{"pe-k0e", "petals"},
@@ -276,6 +279,23 @@ func TestResolveDependencyDB_EmptyRoutes(t *testing.T) {
 	// Prefix deps fail without routes
 	if got := resolveDependencyDB("pe-123", routes); got != "" {
 		t.Errorf("Expected empty for prefix dep with empty routes, got %q", got)
+	}
+}
+
+func TestConvoyDependencyTargetsQueryUsesTypedTargets(t *testing.T) {
+	query := convoyDependencyTargetsQuery()
+	if strings.Contains(query, "d.depends_on_id") {
+		t.Fatalf("query should not select legacy physical depends_on_id column:\n%s", query)
+	}
+	for _, want := range []string{
+		"COALESCE(d.depends_on_issue_id, d.depends_on_wisp_id, d.depends_on_external) AS depends_on_id",
+		"COALESCE(d.depends_on_issue_id, d.depends_on_wisp_id, d.depends_on_external) IS NOT NULL",
+		"d.issue_id = ?",
+		"d.type = 'tracks'",
+	} {
+		if !strings.Contains(query, want) {
+			t.Fatalf("query missing %q:\n%s", want, query)
+		}
 	}
 }
 

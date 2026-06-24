@@ -366,12 +366,24 @@ func TestBuildMutationBDEnvForcesWritableCommit(t *testing.T) {
 
 func TestArgsAreReadOnlyClassifiesKnownReadCommands(t *testing.T) {
 	cases := [][]string{
+		{"--version"},
+		{"--help"},
 		{"show", "gt-123", "--json"},
 		{"--allow-stale", "show", "gt-123", "--json"},
+		{"search", "term", "--json"},
 		{"query", "merge-request", "--json"},
 		{"dep", "list", "hq-cv-123", "--json"},
+		{"formula", "list"},
+		{"formula", "show", "mol-polecat-work"},
+		{"kv", "get", "key"},
+		{"kv", "list"},
+		{"message", "thread", "hq-msg", "--json"},
+		{"mol", "current", "--json"},
 		{"mol", "wisp", "list", "--json"},
 		{"sql", "SELECT 1"},
+		{"sql", "SHOW TABLES"},
+		{"sql", "EXPLAIN SELECT 1"},
+		{"sql", "DESCRIBE dependencies"},
 		{"sql", "--csv", "SELECT 1"},
 		{"config", "get", "issue_prefix"},
 	}
@@ -387,10 +399,25 @@ func TestArgsAreReadOnlyClassifiesKnownReadCommands(t *testing.T) {
 
 func TestArgsAreReadOnlyFailsClosedForMutations(t *testing.T) {
 	cases := [][]string{
+		{"--db", "hq", "show", "gt-123"},
+		{"--directory", "/tmp", "list"},
+		{"--repo", "gastown", "show", "gt-123"},
+		{"--unknown", "show", "gt-123"},
 		{"update", "gt-123", "--status=open"},
 		{"close", "gt-123"},
+		{"label", "add", "gt-123", "read"},
+		{"message", "send", "mayor", "--body", "hi"},
+		{"formula", "cook", "mol-polecat-work"},
+		{"kv", "set", "key", "value"},
 		{"mol", "wisp", "formula"},
+		{"mol", "wisp", "create", "mol-test"},
 		{"sql", "UPDATE issues SET status='open'"},
+		{"sql", "DELETE FROM issues"},
+		{"sql", "INSERT INTO issues (id) VALUES ('gt-1')"},
+		{"sql", "WITH x AS (SELECT 1) SELECT * FROM x"},
+		{"sql", "WITH x AS (SELECT 1) UPDATE issues SET status='open'"},
+		{"sql", "WITH x AS (SELECT 1) DELETE FROM issues"},
+		{"sql", "WITH x AS (SELECT 1) INSERT INTO issues (id) VALUES ('gt-1')"},
 		{"config", "set", "issue_prefix", "gt"},
 	}
 	for _, args := range cases {

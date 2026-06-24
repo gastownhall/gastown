@@ -382,12 +382,7 @@ func findConvoysNeedingSnapshots(db *sql.DB) ([]convoyRow, error) {
 // discoverConvoyDatabases finds which rig databases a convoy touches
 // by looking at its tracked issues' prefixes.
 func discoverConvoyDatabases(db *sql.DB, convoyID string, databases []string, routes map[string]string) ([]string, error) {
-	query := `
-		SELECT DISTINCT d.depends_on_id
-		FROM hq.dependencies d
-		WHERE d.issue_id = ? AND d.type = 'tracks'
-	`
-	rows, err := db.Query(query, convoyID)
+	rows, err := db.Query(convoyDependencyTargetsQuery(), convoyID)
 	if err != nil {
 		return nil, err
 	}
@@ -421,15 +416,27 @@ func discoverConvoyDatabases(db *sql.DB, convoyID string, databases []string, ro
 	return result, rows.Err()
 }
 
+func convoyDependencyTargetsQuery() string {
+	return `
+		SELECT DISTINCT COALESCE(d.depends_on_issue_id, d.depends_on_wisp_id, d.depends_on_external) AS depends_on_id
+		FROM hq.dependencies d
+		WHERE d.issue_id = ? AND d.type = 'tracks'
+			AND COALESCE(d.depends_on_issue_id, d.depends_on_wisp_id, d.depends_on_external) IS NOT NULL
+	`
+}
+
 // resolveDependencyDB extracts the database name from a dependency ID.
 // Handles two formats:
-//   - "external:<rig_name>:<bead_id>" → rig_name
+//   - "external:<prefix-or-rig>:<bead_id>" → routes[prefix] or rig name
 //   - "<prefix>-<id>" → routes[prefix]
 func resolveDependencyDB(depID string, routes map[string]string) string {
 	if strings.HasPrefix(depID, "external:") {
-		// Format: external:<rig_name>:<bead_id>
+		// Format: external:<prefix-or-rig>:<bead_id>
 		parts := strings.SplitN(depID, ":", 3)
 		if len(parts) >= 2 {
+			if mapped, ok := routes[parts[1]]; ok {
+				return mapped
+			}
 			return parts[1]
 		}
 		return ""

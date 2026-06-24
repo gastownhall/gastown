@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
@@ -323,15 +322,7 @@ func runHook(_ *cobra.Command, args []string) error {
 			fmt.Printf("%s Replacing completed bead %s...\n", style.Dim.Render("ℹ"), existing.ID)
 			if !hookDryRun {
 				if hasAttachment {
-					// Close completed molecule bead (use bd close --force for pinned)
-					closeArgs := []string{"close", existing.ID, "--force",
-						"--reason=Auto-replaced by gt hook (molecule complete)"}
-					if sessionID := runtime.SessionIDFromEnv(); sessionID != "" {
-						closeArgs = append(closeArgs, "--session="+sessionID)
-					}
-					closeCmd := exec.Command("bd", closeArgs...)
-					closeCmd.Stderr = os.Stderr
-					if err := closeCmd.Run(); err != nil {
+					if err := closeCompletedHookedMolecule(workDir, existing.ID); err != nil {
 						return fmt.Errorf("closing completed bead %s: %w", existing.ID, err)
 					}
 				} else {
@@ -440,6 +431,14 @@ func runHook(_ *cobra.Command, args []string) error {
 	}
 
 	return nil
+}
+
+func closeCompletedHookedMolecule(workDir, beadID string) error {
+	closeArgs := []string{"close", beadID, "--force", "--reason=Auto-replaced by gt hook (molecule complete)"}
+	if sessionID := runtime.SessionIDFromEnv(); sessionID != "" {
+		closeArgs = append(closeArgs, "--session="+sessionID)
+	}
+	return BdCmd(closeArgs...).Dir(workDir).WithAutoCommit().Run()
 }
 
 // checkPinnedBeadComplete checks if a pinned bead's attached molecule is 100% complete.
