@@ -50,6 +50,9 @@ func initBeadsDBForServer(t *testing.T, dir, prefix, homeDir string) {
 		args = append(args, "--server", "--server-port", p)
 	}
 	args = append(args, "--database", prefix, "--force")
+	if err := dropExactTestDatabases(prefix); err != nil {
+		t.Fatalf("drop stale scheduler database %s: %v", prefix, err)
+	}
 	cmd := exec.Command("bd", args...)
 	cmd.Dir = dir
 	cmd.Env = append(cleanSchedulerTestEnv(homeDir), "BEADS_DIR="+filepath.Join(dir, ".beads"))

@@ -131,6 +131,8 @@ func dropStaleBeadsDatabases() error {
 				shouldDrop = true
 			} else if name == "hq" {
 				shouldDrop = true // Created by beads_db_init_test.go
+			} else if isSchedulerTestDatabase(name) {
+				shouldDrop = true // Created by scheduler_integration_test.go
 			}
 			if shouldDrop && !systemDBs[name] {
 				if _, err := db.Exec("DROP DATABASE IF EXISTS `" + name + "`"); err != nil {
@@ -168,4 +170,37 @@ func dropStaleBeadsDatabases() error {
 
 	fmt.Fprintf(os.Stderr, "[dropStaleBeadsDatabases] cleaned: %v\n", dropped)
 	return nil
+}
+
+func dropExactTestDatabases(prefixes ...string) error {
+	dsn := "root:@tcp(127.0.0.1:" + testutil.DoltContainerPort() + ")/"
+	db, err := sql.Open("mysql", dsn)
+	if err != nil {
+		return fmt.Errorf("connecting to dolt server: %w", err)
+	}
+	defer db.Close()
+	for _, prefix := range prefixes {
+		for _, name := range []string{prefix, "beads_" + prefix} {
+			if _, err := db.Exec("DROP DATABASE IF EXISTS `" + name + "`"); err != nil {
+				return fmt.Errorf("drop %s: %w", name, err)
+			}
+		}
+	}
+	_, _ = db.Exec("CALL dolt_purge_dropped_databases()")
+	return nil
+}
+
+func isSchedulerTestDatabase(name string) bool {
+	if len(name) < 2 {
+		return false
+	}
+	if name[0] != 'h' && name[0] != 'r' && name[0] != 's' {
+		return false
+	}
+	for _, r := range name[1:] {
+		if r < '0' || r > '9' {
+			return false
+		}
+	}
+	return true
 }
