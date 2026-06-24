@@ -41,7 +41,7 @@ var schedulerTestCounter atomic.Int32
 func initBeadsDBForServer(t *testing.T, dir, prefix, homeDir string) {
 	t.Helper()
 
-	args := []string{"init", "--prefix", prefix}
+	args := []string{"init", "--prefix", prefix, "--non-interactive", "--skip-agents", "--skip-hooks"}
 	// Forward GT_DOLT_PORT so bd connects to the ephemeral test server
 	// instead of defaulting to port 3307.
 	// bd v1.0.0+ defaults to embedded mode; --server is required to use an
