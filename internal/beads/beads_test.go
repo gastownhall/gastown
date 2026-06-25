@@ -103,6 +103,18 @@ func TestListIssuesUsesIssueQueryAndDisablesLimit(t *testing.T) {
 	}
 }
 
+func TestIssueFilterFromListOptsSetsEphemeralFilter(t *testing.T) {
+	durable := issueFilterFromListOpts(ListOptions{})
+	if durable.Ephemeral == nil || *durable.Ephemeral {
+		t.Fatalf("default issue filter Ephemeral = %v, want false", durable.Ephemeral)
+	}
+
+	wisp := issueFilterFromListOpts(ListOptions{Ephemeral: true})
+	if wisp.Ephemeral == nil || !*wisp.Ephemeral {
+		t.Fatalf("ephemeral issue filter Ephemeral = %v, want true", wisp.Ephemeral)
+	}
+}
+
 // TestCreateOptions verifies CreateOptions fields.
 func TestCreateOptions(t *testing.T) {
 	opts := CreateOptions{

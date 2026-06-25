@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"sort"
+	"time"
 
 	"github.com/steveyegge/gastown/internal/beads"
 )
@@ -78,20 +79,40 @@ func mergeBeadLists(primary, secondary []*beads.Issue) []*beads.Issue {
 	}
 
 	sort.SliceStable(merged, func(i, j int) bool {
-		return beadRecencyKey(merged[i]) > beadRecencyKey(merged[j])
+		left := beadRecencyTime(merged[i])
+		right := beadRecencyTime(merged[j])
+		if !left.Equal(right) {
+			return left.After(right)
+		}
+		return beadSortID(merged[i]) > beadSortID(merged[j])
 	})
 	return merged
 }
 
-func beadRecencyKey(issue *beads.Issue) string {
+func beadRecencyTime(issue *beads.Issue) time.Time {
+	if issue == nil {
+		return time.Time{}
+	}
+	if ts := parseBeadTime(issue.UpdatedAt); !ts.IsZero() {
+		return ts
+	}
+	return parseBeadTime(issue.CreatedAt)
+}
+
+func parseBeadTime(value string) time.Time {
+	if value == "" {
+		return time.Time{}
+	}
+	ts, err := time.Parse(time.RFC3339Nano, value)
+	if err != nil {
+		return time.Time{}
+	}
+	return ts
+}
+
+func beadSortID(issue *beads.Issue) string {
 	if issue == nil {
 		return ""
-	}
-	if issue.UpdatedAt != "" {
-		return issue.UpdatedAt
-	}
-	if issue.CreatedAt != "" {
-		return issue.CreatedAt
 	}
 	return issue.ID
 }
