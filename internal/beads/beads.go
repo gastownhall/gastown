@@ -902,12 +902,18 @@ func stripEnvPrefixes(environ []string, prefixes ...string) []string {
 // "bd list" only searches the issues table and misses wisps entirely.
 func (b *Beads) List(opts ListOptions) ([]*Issue, error) {
 	if b.store != nil {
+		if !opts.Ephemeral {
+			return b.storeListIssues(opts)
+		}
 		return b.storeList(opts)
 	}
 	if opts.Ephemeral {
 		return b.listEphemeral(opts)
 	}
+	return b.listIssues(opts)
+}
 
+func (b *Beads) listIssues(opts ListOptions) ([]*Issue, error) {
 	args := []string{"list", "--json"}
 
 	if opts.Status != "" {
@@ -961,11 +967,11 @@ func (b *Beads) List(opts ListOptions) ([]*Issue, error) {
 // ListIssues searches the durable issues table directly. Unlike bd list, this
 // cannot be confused by duplicate IDs that also exist in the wisps table.
 func (b *Beads) ListIssues(opts ListOptions) ([]*Issue, error) {
+	opts.Ephemeral = false
 	if b.store != nil {
-		opts.Ephemeral = false
-		return b.storeList(opts)
+		return b.storeListIssues(opts)
 	}
-	return b.listByEphemeral(opts, false)
+	return b.listIssues(opts)
 }
 
 // listEphemeral searches the wisps table using "bd query" with ephemeral=true.

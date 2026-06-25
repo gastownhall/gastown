@@ -14,22 +14,23 @@ import (
 // Embeds beadsdk.Storage to satisfy unimplemented methods (they panic if called).
 type mockStorage struct {
 	beadsdk.Storage // embedded for unimplemented methods
-	issues     map[string]*beadsdk.Issue
-	labels     map[string][]string // issueID -> labels
-	deps       map[string][]string // issueID -> depends-on IDs
-	nextID     int
-	prefix     string
-	closed     map[string]bool
-	closeErr   error
-	createErr  error
-	updateErr  error
-	searchErr  error
-	getErr     error
-	addLabelErr    error
-	removeLabelErr error
-	addDepErr      error
-	removeDepErr   error
-	getLabelsErr   error
+	issues          map[string]*beadsdk.Issue
+	labels          map[string][]string // issueID -> labels
+	deps            map[string][]string // issueID -> depends-on IDs
+	nextID          int
+	prefix          string
+	closed          map[string]bool
+	closeErr        error
+	createErr       error
+	updateErr       error
+	searchErr       error
+	getErr          error
+	addLabelErr     error
+	removeLabelErr  error
+	addDepErr       error
+	removeDepErr    error
+	getLabelsErr    error
+	lastFilter      beadsdk.IssueFilter
 }
 
 func newMockStorage() *mockStorage {
@@ -127,6 +128,7 @@ func (m *mockStorage) DeleteIssue(_ context.Context, id string) error {
 }
 
 func (m *mockStorage) SearchIssues(_ context.Context, query string, filter beadsdk.IssueFilter) ([]*beadsdk.Issue, error) {
+	m.lastFilter = filter
 	if m.searchErr != nil {
 		return nil, m.searchErr
 	}
@@ -213,7 +215,6 @@ func (m *mockStorage) RemoveDependency(_ context.Context, issueID, dependsOnID, 
 	}
 	return nil
 }
-
 
 func (m *mockStorage) AddLabel(_ context.Context, issueID, label, _ string) error {
 	if m.addLabelErr != nil {
@@ -313,6 +314,21 @@ func TestStoreListWithStatusFilter(t *testing.T) {
 	}
 }
 
+func TestStoreListIssuesSkipsWisps(t *testing.T) {
+	store := newMockStorage()
+	b := newTestBeads(store)
+
+	if _, err := b.ListIssues(ListOptions{Status: StatusHooked, Assignee: "agent", Priority: -1}); err != nil {
+		t.Fatalf("ListIssues: %v", err)
+	}
+	if !store.lastFilter.SkipWisps {
+		t.Fatal("ListIssues store filter SkipWisps = false, want true")
+	}
+	if store.lastFilter.Ephemeral == nil || *store.lastFilter.Ephemeral {
+		t.Fatalf("ListIssues store filter Ephemeral = %v, want false", store.lastFilter.Ephemeral)
+	}
+}
+
 func TestStoreListError(t *testing.T) {
 	store := newMockStorage()
 	store.searchErr = errors.New("db down")
@@ -322,7 +338,7 @@ func TestStoreListError(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error")
 	}
-	if !errors.Is(err, store.searchErr) && err.Error() != "store list: db down" {
+	if !errors.Is(err, store.searchErr) && err.Error() != "store list issues: db down" {
 		t.Fatalf("unexpected error: %v", err)
 	}
 }

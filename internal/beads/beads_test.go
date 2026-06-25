@@ -77,7 +77,7 @@ func TestListEphemeralQuotesQueryValuesAndDisablesLimit(t *testing.T) {
 	}
 }
 
-func TestListIssuesUsesIssueQueryAndDisablesLimit(t *testing.T) {
+func TestListIssuesUsesBdListAndDisablesLimit(t *testing.T) {
 	ResetBdAllowStaleCacheForTest()
 	logPath := installMockBDRecorder(t)
 
@@ -95,7 +95,7 @@ func TestListIssuesUsesIssueQueryAndDisablesLimit(t *testing.T) {
 
 	logOutput := readMockBDLog(t, logPath)
 	for _, want := range []string{
-		`query --json ephemeral=false AND status="hooked" AND parent="gt-wisp/root" AND assignee="deacon/dogs/alpha" --limit=0`,
+		`list --json --status=hooked --parent=gt-wisp/root --assignee=deacon/dogs/alpha --limit=0`,
 	} {
 		if !strings.Contains(logOutput, want) {
 			t.Fatalf("bd log missing %q\nlog:\n%s", want, logOutput)

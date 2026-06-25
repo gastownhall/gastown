@@ -230,6 +230,22 @@ func (b *Beads) storeList(opts ListOptions) ([]*Issue, error) {
 	return sdkIssuesToIssues(sdkIssues), nil
 }
 
+// storeListIssues implements durable issue listing without merging wisps.
+func (b *Beads) storeListIssues(opts ListOptions) ([]*Issue, error) {
+	ctx, cancel := storeCtx()
+	defer cancel()
+
+	opts.Ephemeral = false
+	filter := issueFilterFromListOpts(opts)
+	filter.SkipWisps = true
+	sdkIssues, err := b.store.SearchIssues(ctx, "", filter)
+	if err != nil {
+		return nil, fmt.Errorf("store list issues: %w", err)
+	}
+
+	return sdkIssuesToIssues(sdkIssues), nil
+}
+
 // storeShow implements Show using the in-process store.
 func (b *Beads) storeShow(id string) (*Issue, error) {
 	ctx, cancel := storeCtx()
