@@ -255,7 +255,7 @@ func listPolecatDirectoryNames(rigPath string) ([]string, error) {
 }
 
 func applyAgentFieldsToCapacitySnapshot(snapshot *polecatCapacitySnapshot, rigPath, rigName, polecatName string, fields *beads.AgentFields, tmuxClient *tmux.Tmux) {
-	if fields != nil && applyCanonicalCapacitySnapshot(snapshot, rigPath, rigName, polecatName, fields, tmuxClient) {
+	if applyCanonicalCapacitySnapshot(snapshot, rigPath, rigName, polecatName, fields, tmuxClient) {
 		return
 	}
 
@@ -310,17 +310,21 @@ func applyAgentFieldsToCapacitySnapshot(snapshot *polecatCapacitySnapshot, rigPa
 }
 
 func applyCanonicalCapacitySnapshot(snapshot *polecatCapacitySnapshot, rigPath, rigName, polecatName string, fields *beads.AgentFields, tmuxClient *tmux.Tmux) bool {
-	if snapshot == nil || fields == nil || rigPath == "" {
+	if snapshot == nil || rigPath == "" {
 		return false
 	}
 	mgr := polecat.NewManager(&rig.Rig{Name: rigName, Path: rigPath}, git.NewGit(rigPath), tmuxClient)
-	state := polecat.State(strings.TrimSpace(fields.AgentState))
-	if state == "" {
-		state = polecat.StateIdle
-	}
-	issueID := fields.LastSourceIssue
-	if issueID == "" {
-		issueID = fields.HookBead
+	state := polecat.StateIdle
+	issueID := ""
+	if fields != nil {
+		state = polecat.State(strings.TrimSpace(fields.AgentState))
+		if state == "" {
+			state = polecat.StateIdle
+		}
+		issueID = fields.LastSourceIssue
+		if issueID == "" {
+			issueID = fields.HookBead
+		}
 	}
 	if p, err := mgr.Get(polecatName); err == nil && p != nil {
 		state = p.State

@@ -19,15 +19,16 @@ type ActiveWorkReader interface {
 // BlocksCleanup is broader than Active: protected states and lookup failures are
 // unsafe for cleanup even when they are not proof that work is actively running.
 type ActiveWorkEvidence struct {
-	Active          bool
-	Protected       bool
-	BlocksCleanup   bool
-	RequiresRestart bool
-	Blocker         string
-	HookBead        string
-	HookSafe        bool
-	HookTerminal    bool
-	AssignedIssue   string
+	Active               bool
+	Protected            bool
+	BlocksCleanup        bool
+	RequiresRestart      bool
+	CountsTowardCapacity bool
+	Blocker              string
+	HookBead             string
+	HookSafe             bool
+	HookTerminal         bool
+	AssignedIssue        string
 }
 
 // AssessActiveWork returns the active/protected/unsafe work evidence for a
@@ -72,6 +73,7 @@ func (e *ActiveWorkEvidence) Merge(next ActiveWorkEvidence) {
 	e.Protected = e.Protected || next.Protected
 	e.BlocksCleanup = e.BlocksCleanup || next.BlocksCleanup
 	e.RequiresRestart = e.RequiresRestart || next.RequiresRestart
+	e.CountsTowardCapacity = e.CountsTowardCapacity || next.CountsTowardCapacity
 	if e.Blocker == "" && next.Blocker != "" {
 		e.Blocker = next.Blocker
 	}
@@ -129,14 +131,15 @@ func AssessHookStatus(hookBead, status string, verified bool) ActiveWorkEvidence
 
 func hookEvidence(hookBead string, safe, terminal, active bool, blocker string) ActiveWorkEvidence {
 	return ActiveWorkEvidence{
-		Active:          active,
-		Protected:       blocker != "" && !active,
-		BlocksCleanup:   blocker != "",
-		RequiresRestart: active,
-		Blocker:         blocker,
-		HookBead:        hookBead,
-		HookSafe:        safe,
-		HookTerminal:    terminal,
+		Active:               active,
+		Protected:            blocker != "" && !active,
+		BlocksCleanup:        blocker != "",
+		RequiresRestart:      active,
+		CountsTowardCapacity: active,
+		Blocker:              blocker,
+		HookBead:             hookBead,
+		HookSafe:             safe,
+		HookTerminal:         terminal,
 	}
 }
 
@@ -173,13 +176,14 @@ func assessAssignedWork(reader ActiveWorkReader, assignee string) ActiveWorkEvid
 		}
 		active := assignedIssueRequiresRestart(issue)
 		return ActiveWorkEvidence{
-			Active:          active,
-			Protected:       !active,
-			BlocksCleanup:   true,
-			RequiresRestart: active,
-			Blocker:         fmt.Sprintf("assigned_work=%s status=%s", issue.ID, issue.Status),
-			AssignedIssue:   issue.ID,
-			HookSafe:        true,
+			Active:               active,
+			Protected:            !active,
+			BlocksCleanup:        true,
+			RequiresRestart:      active,
+			CountsTowardCapacity: active,
+			Blocker:              fmt.Sprintf("assigned_work=%s status=%s", issue.ID, issue.Status),
+			AssignedIssue:        issue.ID,
+			HookSafe:             true,
 		}
 	}
 	return ActiveWorkEvidence{HookSafe: true}

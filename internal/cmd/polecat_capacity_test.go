@@ -432,11 +432,12 @@ func TestCapacitySnapshotIdleRecoveryDoesNotConsumeFreeCapacity(t *testing.T) {
 	active := polecatCapacitySnapshot{Max: 1}
 	activeInput := polecat.WorkstateInput{State: polecat.StateIdle, CleanupStatus: polecat.CleanupClean}
 	activeInput.ApplyActiveWork(polecat.ActiveWorkEvidence{
-		Active:          true,
-		BlocksCleanup:   true,
-		RequiresRestart: true,
-		Blocker:         "hook_bead=gt-work status=hooked",
-		HookBead:        "gt-work",
+		Active:               true,
+		BlocksCleanup:        true,
+		RequiresRestart:      true,
+		CountsTowardCapacity: true,
+		Blocker:              "hook_bead=gt-work status=hooked",
+		HookBead:             "gt-work",
 	})
 	activeDisposition := polecat.DecideWorkstate(activeInput)
 	applyWorkstateDispositionToCapacitySnapshot(&active, polecat.StateIdle, activeDisposition)

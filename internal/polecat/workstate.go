@@ -63,8 +63,7 @@ func (in *WorkstateInput) ApplyActiveWork(evidence ActiveWorkEvidence) {
 	}
 	in.ActiveWorkBlocker = evidence.Blocker
 	in.HookBead = evidence.HookBead
-	activeAssignedWork := evidence.AssignedIssue != "" || evidence.HookBead != ""
-	in.ActiveWorkCountsTowardCapacity = in.ActiveWorkCountsTowardCapacity || (activeAssignedWork && (evidence.Active || evidence.RequiresRestart))
+	in.ActiveWorkCountsTowardCapacity = in.ActiveWorkCountsTowardCapacity || evidence.CountsTowardCapacity
 }
 
 // DecideWorkstate returns the canonical disposition for a polecat.

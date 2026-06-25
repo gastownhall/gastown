@@ -29,6 +29,14 @@ func TestDecideWorkstateCanonicalFields(t *testing.T) {
 			want: WorkstateDisposition{Verdict: WorkstateVerdictNeedsRecovery, Reason: "active-work", NeedsRecovery: true, ReuseStatus: "idle-recovery-needed"},
 		},
 		{
+			name: "protected assigned work plus stale agent state does not synthesize capacity",
+			in: activeWorkstateInput(StateIdle, CleanupClean, mergedActiveWorkEvidence(
+				ActiveWorkEvidence{Protected: true, BlocksCleanup: true, Blocker: "assigned_work=gt-work status=blocked", AssignedIssue: "gt-work"},
+				ActiveWorkEvidence{Active: true, BlocksCleanup: true, RequiresRestart: true, Blocker: "agent_state=working"},
+			)),
+			want: WorkstateDisposition{Verdict: WorkstateVerdictNeedsRecovery, Reason: "active-work", NeedsRecovery: true, ReuseStatus: "idle-recovery-needed"},
+		},
+		{
 			name: "unsubmitted branch needs mq submit",
 			in:   WorkstateInput{State: StateIdle, CleanupStatus: CleanupClean, Branch: "polecat/test", MQCheckRequired: true, HasSubmittableWork: true},
 			want: WorkstateDisposition{Verdict: WorkstateVerdictNeedsMQSubmit, Reason: "mq-not-submitted", NeedsRecovery: true, NeedsMQSubmit: true, MQStatus: "not_submitted", ReuseStatus: "idle-recovery-needed"},
@@ -84,4 +92,9 @@ func activeWorkstateInput(state State, cleanup CleanupStatus, evidence ActiveWor
 	in := WorkstateInput{State: state, CleanupStatus: cleanup}
 	in.ApplyActiveWork(evidence)
 	return in
+}
+
+func mergedActiveWorkEvidence(first, second ActiveWorkEvidence) ActiveWorkEvidence {
+	first.Merge(second)
+	return first
 }
