@@ -114,8 +114,13 @@ func TestBuildPinnedBDEnvUsesSelectedConnectionMetadata(t *testing.T) {
 	if got["BEADS_DIR"] != beadsDir {
 		t.Fatalf("BEADS_DIR = %q, want %q in %v", got["BEADS_DIR"], beadsDir, env)
 	}
-	if value, ok := got["BEADS_DOLT_SERVER_DATABASE"]; ok {
-		t.Fatalf("BEADS_DOLT_SERVER_DATABASE should be stripped, got %q in %v", value, env)
+	// In shared-server mode the database is pinned EXPLICITLY by name from the
+	// selected beadsDir's metadata: the inherited (wrong) "hq" value is stripped
+	// and replaced with the metadata's "rigdb". BEADS_DIR alone does not reliably
+	// select the server database for all bd subcommands (e.g. `bd mol bond`), so
+	// the name must be pinned. See pinnedDoltTargetEnvFromBeadsDir / hq-qzrce.
+	if got["BEADS_DOLT_SERVER_DATABASE"] != "rigdb" {
+		t.Fatalf("BEADS_DOLT_SERVER_DATABASE = %q, want %q (pinned from metadata) in %v", got["BEADS_DOLT_SERVER_DATABASE"], "rigdb", env)
 	}
 	if got["BEADS_DOLT_SERVER_HOST"] != "127.0.0.1" {
 		t.Fatalf("BEADS_DOLT_SERVER_HOST = %q, want 127.0.0.1 in %v", got["BEADS_DOLT_SERVER_HOST"], env)
@@ -130,6 +135,52 @@ func TestBuildPinnedBDEnvUsesSelectedConnectionMetadata(t *testing.T) {
 	}
 	if got["BEADS_DOLT_AUTO_START"] != "0" {
 		t.Fatalf("BEADS_DOLT_AUTO_START should be preserved, got %q in %v", got["BEADS_DOLT_AUTO_START"], env)
+	}
+}
+
+// TestBuildPinnedBDEnvPinsRigDatabaseInsideTown is the regression test for
+// hq-qzrce: a rig beads dir that lives inside a real town (so FindTownRoot
+// resolves) must NOT receive BEADS_DOLT_DATA_DIR pointing at the town data dir.
+// `bd mol bond`/`bd mol wisp` resolve the target database from BEADS_DOLT_DATA_DIR
+// and ignore BEADS_DIR, so re-adding the town data dir made rig-bead (mm-*) bonds
+// land in the town/HQ database ("'<id>' not found"), breaking scheduler dispatch
+// and causing polecats to false-complete. The earlier
+// TestBuildPinnedBDEnvUsesSelectedConnectionMetadata used a temp dir with no town,
+// so FindTownRoot returned "" and this re-addition path was never exercised.
+func TestBuildPinnedBDEnvPinsRigDatabaseInsideTown(t *testing.T) {
+	townRoot := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(townRoot, "mayor"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(townRoot, "mayor", "town.json"), []byte(`{"name":"gt"}`), 0644); err != nil {
+		t.Fatal(err)
+	}
+	beadsDir := filepath.Join(townRoot, "minime", ".beads")
+	if err := os.MkdirAll(beadsDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	metadata := []byte(`{"dolt_database":"minime","dolt_server_host":"127.0.0.1","dolt_server_port":3307}`)
+	if err := os.WriteFile(filepath.Join(beadsDir, "metadata.json"), metadata, 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	env := BuildPinnedBDEnv([]string{
+		"PATH=/usr/bin",
+		"BEADS_DOLT_DATA_DIR=" + filepath.Join(townRoot, ".dolt-data"),
+	}, beadsDir)
+	got := envMap(env)
+
+	if got["BEADS_DIR"] != beadsDir {
+		t.Fatalf("BEADS_DIR = %q, want %q in %v", got["BEADS_DIR"], beadsDir, env)
+	}
+	// The database must be pinned explicitly by name from metadata...
+	if got["BEADS_DOLT_SERVER_DATABASE"] != "minime" {
+		t.Fatalf("BEADS_DOLT_SERVER_DATABASE = %q, want %q (pinned) in %v", got["BEADS_DOLT_SERVER_DATABASE"], "minime", env)
+	}
+	// ...and BEADS_DOLT_DATA_DIR must NOT be present, even though the beads dir is
+	// inside a town: in shared-server mode it overrides BEADS_DIR for `bd mol bond`.
+	if value, ok := got["BEADS_DOLT_DATA_DIR"]; ok {
+		t.Fatalf("BEADS_DOLT_DATA_DIR must be absent in shared-server pinned env, got %q in %v", value, env)
 	}
 }
 

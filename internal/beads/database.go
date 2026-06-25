@@ -72,8 +72,44 @@ func BuildPinnedBDEnv(base []string, beadsDir string) []string {
 		return addGTDerivedDoltTargetEnv(env)
 	}
 	env = append(env, "BEADS_DIR="+beadsDir)
-	env = append(env, doltTargetEnvFromBeadsDir(beadsDir)...)
+	env = append(env, pinnedDoltTargetEnvFromBeadsDir(beadsDir)...)
 	return addGTDerivedDoltTargetEnv(env)
+}
+
+// pinnedDoltTargetEnvFromBeadsDir returns Dolt connection env for a bd subprocess
+// that must be pinned to the single database belonging to beadsDir.
+//
+// In shared-server mode it selects the database EXPLICITLY by name via
+// BEADS_DOLT_SERVER_DATABASE and deliberately omits BEADS_DOLT_DATA_DIR. This is
+// the key difference from doltTargetEnvFromBeadsDir (used for prefix routing,
+// which must NOT pin a database): some bd subcommands — notably `bd mol bond` /
+// `bd mol wisp` — resolve the target database from BEADS_DOLT_DATA_DIR (the town
+// data dir) and ignore BEADS_DIR. When a rig bead (e.g. mm-*) is bonded with the
+// town data dir present, bd looks in the town/HQ database, reports
+// "'<id>' not found (not an issue ID or formula name)", and the scheduler
+// dispatch fails — so the polecat boots with no work and false-completes
+// (hq-qzrce). Pinning the database by name and dropping DATA_DIR makes the bond
+// land in the correct rig database.
+//
+// In embedded (non-server) mode there is no server database to name, so we fall
+// back to data-dir targeting via doltTargetEnvFromBeadsDir.
+func pinnedDoltTargetEnvFromBeadsDir(beadsDir string) []string {
+	if beadsDir == "" {
+		return nil
+	}
+	meta := readDoltMetadata(beadsDir)
+	if meta.Host == "" || meta.Port == "" {
+		// Embedded / no shared server: keep data-dir targeting.
+		return doltTargetEnvFromBeadsDir(beadsDir)
+	}
+	var env []string
+	if db := DatabaseNameFromMetadata(beadsDir); db != "" {
+		env = append(env, "BEADS_DOLT_SERVER_DATABASE="+db)
+	}
+	env = append(env, "BEADS_DOLT_SERVER_HOST="+meta.Host)
+	env = append(env, "BEADS_DOLT_SERVER_PORT="+meta.Port)
+	env = append(env, "BEADS_DOLT_PORT="+meta.Port)
+	return env
 }
 
 // BuildRoutingBDEnv returns env for a bd subprocess that intentionally relies on
