@@ -958,13 +958,27 @@ func (b *Beads) List(opts ListOptions) ([]*Issue, error) {
 	return issues, nil
 }
 
+// ListIssues searches the durable issues table directly. Unlike bd list, this
+// cannot be confused by duplicate IDs that also exist in the wisps table.
+func (b *Beads) ListIssues(opts ListOptions) ([]*Issue, error) {
+	if b.store != nil {
+		opts.Ephemeral = false
+		return b.storeList(opts)
+	}
+	return b.listByEphemeral(opts, false)
+}
+
 // listEphemeral searches the wisps table using "bd query" with ephemeral=true.
 // This is necessary because "bd list" only searches the issues table and does
 // not support an --ephemeral flag. Wisps (ephemeral issues like merge-request
 // beads) live in a separate table since beads v0.59.
 func (b *Beads) listEphemeral(opts ListOptions) ([]*Issue, error) {
-	// Build query expression: ephemeral=true AND <filters>
-	clauses := []string{"ephemeral=true"}
+	return b.listByEphemeral(opts, true)
+}
+
+func (b *Beads) listByEphemeral(opts ListOptions, ephemeral bool) ([]*Issue, error) {
+	// Build query expression: ephemeral=<value> AND <filters>
+	clauses := []string{fmt.Sprintf("ephemeral=%t", ephemeral)}
 
 	if opts.Label != "" {
 		clauses = append(clauses, "label="+quoteBDQueryValue(opts.Label))
@@ -982,6 +996,9 @@ func (b *Beads) listEphemeral(opts ListOptions) ([]*Issue, error) {
 	}
 	if opts.Assignee != "" {
 		clauses = append(clauses, "assignee="+quoteBDQueryValue(opts.Assignee))
+	}
+	if opts.NoAssignee {
+		clauses = append(clauses, "assignee=\"\"")
 	}
 
 	queryExpr := strings.Join(clauses, " AND ")

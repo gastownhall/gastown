@@ -833,29 +833,10 @@ func findAgentWorkOnce(ctx RoleContext, agentID string) (*beads.Issue, error) {
 		}
 	}
 
-	// Fallback: query by assignee
-	hookedBeads, err := b.List(beads.ListOptions{
-		Status:   beads.StatusHooked,
-		Assignee: agentID,
-		Priority: -1,
-	})
+	// Fallback: query by assignee.
+	hookedBeads, err := listAssignedActiveWork(b, agentID)
 	if err != nil {
-		return nil, fmt.Errorf("querying hooked beads: %w", err)
-	}
-
-	// Fall back to in_progress beads (session interrupted before completion)
-	if len(hookedBeads) == 0 {
-		inProgressBeads, err := b.List(beads.ListOptions{
-			Status:   "in_progress",
-			Assignee: agentID,
-			Priority: -1,
-		})
-		if err != nil {
-			return nil, fmt.Errorf("querying in-progress beads: %w", err)
-		}
-		if len(inProgressBeads) > 0 {
-			hookedBeads = inProgressBeads
-		}
+		return nil, fmt.Errorf("querying active work: %w", err)
 	}
 
 	// Town-level fallback: rig-level agents (polecats, crew) may have hooked
@@ -863,18 +844,8 @@ func findAgentWorkOnce(ctx RoleContext, agentID string) (*beads.Issue, error) {
 	// Matches the fallback in molecule_status.go and unsling.go. (gt-dtq7)
 	if len(hookedBeads) == 0 && !isTownLevelRole(agentID) && ctx.TownRoot != "" {
 		townB := beads.New(filepath.Join(ctx.TownRoot, ".beads"))
-		if townHooked, err := townB.List(beads.ListOptions{
-			Status:   beads.StatusHooked,
-			Assignee: agentID,
-			Priority: -1,
-		}); err == nil && len(townHooked) > 0 {
-			hookedBeads = townHooked
-		} else if townIP, err := townB.List(beads.ListOptions{
-			Status:   "in_progress",
-			Assignee: agentID,
-			Priority: -1,
-		}); err == nil && len(townIP) > 0 {
-			hookedBeads = townIP
+		if townWork, err := listAssignedActiveWork(townB, agentID); err == nil && len(townWork) > 0 {
+			hookedBeads = townWork
 		}
 		// Town-level fallback errors are non-fatal — rig-level query succeeded
 	}

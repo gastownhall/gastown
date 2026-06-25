@@ -77,6 +77,32 @@ func TestListEphemeralQuotesQueryValuesAndDisablesLimit(t *testing.T) {
 	}
 }
 
+func TestListIssuesUsesIssueQueryAndDisablesLimit(t *testing.T) {
+	ResetBdAllowStaleCacheForTest()
+	logPath := installMockBDRecorder(t)
+
+	b := New(t.TempDir())
+	_, err := b.ListIssues(ListOptions{
+		Status:   StatusHooked,
+		Assignee: "deacon/dogs/alpha",
+		Parent:   "gt-wisp/root",
+		Priority: -1,
+		Limit:    0,
+	})
+	if err != nil {
+		t.Fatalf("ListIssues() error = %v", err)
+	}
+
+	logOutput := readMockBDLog(t, logPath)
+	for _, want := range []string{
+		`query --json ephemeral=false AND status="hooked" AND parent="gt-wisp/root" AND assignee="deacon/dogs/alpha" --limit=0`,
+	} {
+		if !strings.Contains(logOutput, want) {
+			t.Fatalf("bd log missing %q\nlog:\n%s", want, logOutput)
+		}
+	}
+}
+
 // TestCreateOptions verifies CreateOptions fields.
 func TestCreateOptions(t *testing.T) {
 	opts := CreateOptions{

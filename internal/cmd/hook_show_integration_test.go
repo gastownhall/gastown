@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/steveyegge/gastown/internal/beads"
+	"github.com/steveyegge/gastown/internal/constants"
 )
 
 type hookShowJSON struct {
@@ -116,5 +117,120 @@ func TestHookShowShorthandResolvesToCanonical(t *testing.T) {
 	if active.BeadID != issue.ID || active.Status != "in_progress" {
 		t.Fatalf("in-progress target mismatch: got bead=%q status=%q, want bead=%q status=in_progress",
 			active.BeadID, active.Status, issue.ID)
+	}
+}
+
+func TestHookShowAndStatusFindEphemeralPatrolWisp(t *testing.T) {
+	if _, err := exec.LookPath("bd"); err != nil {
+		t.Skip("bd not installed, skipping integration test")
+	}
+
+	_, polecatDir, rigPrefix := setupHookTestTown(t)
+	rigDir := filepath.Join(polecatDir, "..", "..", "mayor", "rig")
+	initBeadsDBWithPrefix(t, rigDir, rigPrefix)
+
+	b := beads.New(rigDir)
+	patrol, err := b.Create(beads.CreateOptions{
+		Title:     constants.MolRefineryPatrol + " (wisp)",
+		Type:      "molecule",
+		Priority:  -1,
+		Ephemeral: true,
+	})
+	if err != nil {
+		t.Fatalf("create patrol wisp: %v", err)
+	}
+
+	hooked := beads.StatusHooked
+	assignee := "gastown/refinery"
+	if err := b.Update(patrol.ID, beads.UpdateOptions{
+		Status:   &hooked,
+		Assignee: &assignee,
+	}); err != nil {
+		t.Fatalf("hook patrol wisp: %v", err)
+	}
+
+	oldWD, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("getwd: %v", err)
+	}
+	if err := os.Chdir(polecatDir); err != nil {
+		t.Fatalf("chdir to polecat dir: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = os.Chdir(oldWD)
+	})
+
+	prevJSON := moleculeJSON
+	moleculeJSON = true
+	t.Cleanup(func() {
+		moleculeJSON = prevJSON
+	})
+
+	showOut := captureStdout(t, func() {
+		if err := runHookShow(nil, []string{assignee}); err != nil {
+			t.Fatalf("runHookShow(%q): %v", assignee, err)
+		}
+	})
+	var show hookShowJSON
+	if err := json.Unmarshal([]byte(showOut), &show); err != nil {
+		t.Fatalf("parse hook show output %q: %v", showOut, err)
+	}
+	if show.BeadID != patrol.ID || show.Status != beads.StatusHooked {
+		t.Fatalf("hook show mismatch: got bead=%q status=%q, want bead=%q status=%q",
+			show.BeadID, show.Status, patrol.ID, beads.StatusHooked)
+	}
+
+	statusOut := captureStdout(t, func() {
+		if err := runMoleculeStatus(nil, []string{assignee}); err != nil {
+			t.Fatalf("runMoleculeStatus(%q): %v", assignee, err)
+		}
+	})
+	var status MoleculeStatusInfo
+	if err := json.Unmarshal([]byte(statusOut), &status); err != nil {
+		t.Fatalf("parse hook status output %q: %v", statusOut, err)
+	}
+	if !status.HasWork || status.PinnedBead == nil || status.PinnedBead.ID != patrol.ID {
+		t.Fatalf("hook status mismatch: has_work=%v pinned=%+v, want patrol %s",
+			status.HasWork, status.PinnedBead, patrol.ID)
+	}
+}
+
+func TestPrimeStateFindsEphemeralPatrolWisp(t *testing.T) {
+	if _, err := exec.LookPath("bd"); err != nil {
+		t.Skip("bd not installed, skipping integration test")
+	}
+
+	townRoot, polecatDir, rigPrefix := setupHookTestTown(t)
+	rigDir := filepath.Join(polecatDir, "..", "..", "mayor", "rig")
+	initBeadsDBWithPrefix(t, rigDir, rigPrefix)
+
+	b := beads.New(rigDir)
+	patrol, err := b.Create(beads.CreateOptions{
+		Title:     constants.MolRefineryPatrol + " (wisp)",
+		Type:      "molecule",
+		Priority:  -1,
+		Ephemeral: true,
+	})
+	if err != nil {
+		t.Fatalf("create patrol wisp: %v", err)
+	}
+
+	hooked := beads.StatusHooked
+	assignee := "gastown/refinery"
+	if err := b.Update(patrol.ID, beads.UpdateOptions{
+		Status:   &hooked,
+		Assignee: &assignee,
+	}); err != nil {
+		t.Fatalf("hook patrol wisp: %v", err)
+	}
+
+	state := detectSessionState(RoleContext{
+		Role:     RoleRefinery,
+		Rig:      "gastown",
+		WorkDir:  polecatDir,
+		TownRoot: townRoot,
+	})
+	if state.State != "autonomous" || state.HookedBead != patrol.ID {
+		t.Fatalf("prime state = %+v, want autonomous with hooked bead %s", state, patrol.ID)
 	}
 }

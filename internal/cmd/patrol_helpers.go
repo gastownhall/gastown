@@ -51,14 +51,10 @@ func findActivePatrol(cfg PatrolConfig) (patrolID, patrolLine string, found bool
 		b = beads.New(cfg.BeadsDir)
 	}
 
-	// Find hooked patrol beads for this agent
-	hookedBeads, listErr := b.List(beads.ListOptions{
-		Status:   beads.StatusHooked,
-		Assignee: cfg.Assignee,
-		Priority: -1,
-	})
+	// Find active patrol beads for this agent across durable issues and wisps.
+	hookedBeads, listErr := listAssignedActiveWork(b, cfg.Assignee)
 	if listErr != nil {
-		return "", "", false, fmt.Errorf("listing hooked beads: %w", listErr)
+		return "", "", false, fmt.Errorf("listing active patrol work: %w", listErr)
 	}
 
 	// Identify active patrol and collect stale ones for cleanup.
@@ -128,11 +124,7 @@ func findActivePatrol(cfg PatrolConfig) (patrolID, patrolLine string, found bool
 // children materialized yet. This prevents findActivePatrol from closing a
 // just-created patrol during the window between root creation and step population.
 func checkHasOpenChildren(b *beads.Beads, parentID string) (bool, error) {
-	children, err := b.List(beads.ListOptions{
-		Parent:   parentID,
-		Status:   "all",
-		Priority: -1,
-	})
+	children, err := listChildrenAcrossTables(b, parentID)
 	if err != nil {
 		return false, err
 	}
@@ -164,12 +156,8 @@ func burnPreviousPatrolWisps(cfg PatrolConfig) {
 		b = beads.New(cfg.BeadsDir)
 	}
 
-	// Find all hooked patrol beads for this agent
-	hookedBeads, err := b.List(beads.ListOptions{
-		Status:   beads.StatusHooked,
-		Assignee: cfg.Assignee,
-		Priority: -1,
-	})
+	// Find all active patrol beads for this agent across durable issues and wisps.
+	hookedBeads, err := listAssignedActiveWork(b, cfg.Assignee)
 	if err != nil {
 		style.PrintWarning("burn: could not list hooked beads: %v", err)
 		return

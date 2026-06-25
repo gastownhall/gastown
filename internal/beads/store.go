@@ -183,10 +183,8 @@ func issueFilterFromListOpts(opts ListOptions) beadsdk.IssueFilter {
 		f.NoAssignee = true
 	}
 
-	if opts.Ephemeral {
-		eph := true
-		f.Ephemeral = &eph
-	}
+	eph := opts.Ephemeral
+	f.Ephemeral = &eph
 
 	return f
 }

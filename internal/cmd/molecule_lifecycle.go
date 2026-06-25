@@ -283,9 +283,9 @@ squashed_at: %s
 			Title:       digestTitle,
 			Description: digestDesc,
 			Labels:      []string{"gt:task"},
-			Priority:    4,       // P4 - backlog priority for digests
+			Priority:    4, // P4 - backlog priority for digests
 			Actor:       target,
-			Ephemeral:   true,    // Don't export to JSONL - daily aggregation handles permanent record
+			Ephemeral:   true, // Don't export to JSONL - daily aggregation handles permanent record
 		})
 		if err != nil {
 			return fmt.Errorf("creating digest: %w", err)
@@ -376,10 +376,7 @@ func forceCloseDescendants(b *beads.Beads, parentID string) (int, error) {
 }
 
 func closeDescendantsImpl(b *beads.Beads, parentID string, force bool) (int, error) {
-	children, err := b.List(beads.ListOptions{
-		Parent: parentID,
-		Status: "all",
-	})
+	children, err := listChildrenAcrossTables(b, parentID)
 	if err != nil {
 		return 0, fmt.Errorf("listing children of %s: %w", parentID, err)
 	}

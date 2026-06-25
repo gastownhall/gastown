@@ -775,12 +775,12 @@ func TestSquashClosesDescendantsAndRoot(t *testing.T) {
 while [ "$1" = "--allow-stale" ]; do shift; done
 cmd="$1"; shift
 case "$cmd" in
-  list)
+  list|query)
     if echo "$*" | grep -q "status=pinned"; then
       echo '[{"id":"gt-handoff-1","title":"witness Handoff","status":"pinned","description":"attached_molecule: gt-wisp-mol2"}]'
-    elif echo "$*" | grep -q "parent=gt-wisp-mol2"; then
+    elif echo "$*" | grep -Eq 'parent="?gt-wisp-mol2"?'; then
       echo '[{"id":"gt-step-1","title":"Step 1","status":"open"},{"id":"gt-step-2","title":"Step 2","status":"closed"}]'
-    elif echo "$*" | grep -q "parent=gt-step"; then
+    elif echo "$*" | grep -Eq 'parent="?gt-step'; then
       echo '[]'
     else
       echo '[]'
