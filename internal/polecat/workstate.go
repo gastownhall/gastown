@@ -13,29 +13,30 @@ const (
 // WorkstateInput contains the lifecycle, git, and merge-queue facts needed to
 // classify a polecat consistently across list, recovery, witness, and capacity.
 type WorkstateInput struct {
-	State                State
-	HookBead             string
-	ActiveWorkBlocker    string
-	CleanupStatus        CleanupStatus
-	IgnoreCleanupStatus  bool
-	PushFailed           bool
-	MRFailed             bool
-	Branch               string
-	GitDirty             bool
-	GitDirtyReason       string
-	StashCount           int
-	UnpushedCommits      int
-	GitCheckFailed       bool
-	GitCheckFailedReason string
-	ActiveMR             string
-	ActiveMRBlocker      string
-	ActiveMRMalformed    bool
-	MQCheckRequired      bool
-	HasSubmittableWork   bool
-	MQNotRequired        bool
-	AssignedBeadTerminal bool
-	MRSubmitted          bool
-	MQLookupFailed       bool
+	State                          State
+	HookBead                       string
+	ActiveWorkBlocker              string
+	ActiveWorkCountsTowardCapacity bool
+	CleanupStatus                  CleanupStatus
+	IgnoreCleanupStatus            bool
+	PushFailed                     bool
+	MRFailed                       bool
+	Branch                         string
+	GitDirty                       bool
+	GitDirtyReason                 string
+	StashCount                     int
+	UnpushedCommits                int
+	GitCheckFailed                 bool
+	GitCheckFailedReason           string
+	ActiveMR                       string
+	ActiveMRBlocker                string
+	ActiveMRMalformed              bool
+	MQCheckRequired                bool
+	HasSubmittableWork             bool
+	MQNotRequired                  bool
+	AssignedBeadTerminal           bool
+	MRSubmitted                    bool
+	MQLookupFailed                 bool
 }
 
 // WorkstateDisposition is the canonical polecat lifecycle decision. It is pure
@@ -62,6 +63,8 @@ func (in *WorkstateInput) ApplyActiveWork(evidence ActiveWorkEvidence) {
 	}
 	in.ActiveWorkBlocker = evidence.Blocker
 	in.HookBead = evidence.HookBead
+	activeAssignedWork := evidence.AssignedIssue != "" || evidence.HookBead != ""
+	in.ActiveWorkCountsTowardCapacity = in.ActiveWorkCountsTowardCapacity || (activeAssignedWork && (evidence.Active || evidence.RequiresRestart))
 }
 
 // DecideWorkstate returns the canonical disposition for a polecat.
@@ -75,7 +78,7 @@ func DecideWorkstate(in WorkstateInput) WorkstateDisposition {
 			Verdict:              WorkstateVerdictNeedsRecovery,
 			Reason:               "active-mr-malformed",
 			NeedsRecovery:        true,
-			CountsTowardCapacity: true,
+			CountsTowardCapacity: in.State != StateIdle || in.ActiveWorkCountsTowardCapacity,
 			ReuseStatus:          "idle-recovery-needed",
 			Blockers:             []string{blocker},
 		}
@@ -165,7 +168,7 @@ func DecideWorkstate(in WorkstateInput) WorkstateDisposition {
 		}
 		d.Verdict = WorkstateVerdictNeedsRecovery
 		d.NeedsRecovery = true
-		d.CountsTowardCapacity = true
+		d.CountsTowardCapacity = in.ActiveWorkCountsTowardCapacity
 		d.ReuseStatus = "idle-recovery-needed"
 		return d
 	}
@@ -180,7 +183,6 @@ func DecideWorkstate(in WorkstateInput) WorkstateDisposition {
 			d.Reason = "mq-lookup-failed"
 			d.NeedsRecovery = true
 			d.MQStatus = "unknown"
-			d.CountsTowardCapacity = true
 			d.ReuseStatus = "idle-recovery-needed"
 			d.Blockers = append(d.Blockers, "mq_status=unknown")
 			return d
@@ -190,7 +192,6 @@ func DecideWorkstate(in WorkstateInput) WorkstateDisposition {
 			d.NeedsRecovery = true
 			d.NeedsMQSubmit = true
 			d.MQStatus = "not_submitted"
-			d.CountsTowardCapacity = true
 			d.ReuseStatus = "idle-recovery-needed"
 			d.Blockers = append(d.Blockers, "mq_status=not_submitted")
 			return d

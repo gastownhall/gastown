@@ -16,6 +16,7 @@ import (
 
 	"github.com/steveyegge/gastown/internal/beads"
 	"github.com/steveyegge/gastown/internal/config"
+	"github.com/steveyegge/gastown/internal/polecat"
 	"github.com/steveyegge/gastown/internal/scheduler/capacity"
 	"github.com/steveyegge/gastown/internal/testutil"
 	"github.com/steveyegge/gastown/internal/tmux"
@@ -402,6 +403,49 @@ func TestApplyAgentFieldsToCapacitySnapshotSeparatesPendingMR(t *testing.T) {
 				t.Fatalf("snapshot = %+v, want %+v", snapshot, tt.want)
 			}
 		})
+	}
+}
+
+func TestCapacitySnapshotIdleRecoveryDoesNotConsumeFreeCapacity(t *testing.T) {
+	snapshot := polecatCapacitySnapshot{Max: 30}
+	for i := 0; i < 3; i++ {
+		disposition := polecat.DecideWorkstate(polecat.WorkstateInput{State: polecat.StateWorking, CleanupStatus: polecat.CleanupClean})
+		applyWorkstateDispositionToCapacitySnapshot(&snapshot, polecat.StateWorking, disposition)
+	}
+	for i := 0; i < 29; i++ {
+		disposition := polecat.DecideWorkstate(polecat.WorkstateInput{State: polecat.StateIdle, CleanupStatus: polecat.CleanupUnpushed})
+		applyWorkstateDispositionToCapacitySnapshot(&snapshot, polecat.StateIdle, disposition)
+	}
+	for i := 0; i < 3; i++ {
+		disposition := polecat.DecideWorkstate(polecat.WorkstateInput{State: polecat.StateIdle, CleanupStatus: polecat.CleanupClean})
+		applyWorkstateDispositionToCapacitySnapshot(&snapshot, polecat.StateIdle, disposition)
+	}
+	snapshot.Free = snapshot.Max - snapshot.occupied()
+	if snapshot.Free < 0 {
+		snapshot.Free = 0
+	}
+
+	if snapshot.Working != 3 || snapshot.RecoveryBlocked != 29 || snapshot.ReusableIdle != 3 || snapshot.Free != 27 {
+		t.Fatalf("snapshot = %+v, want working=3 recovery_blocked=29 reusable_idle=3 free=27", snapshot)
+	}
+
+	active := polecatCapacitySnapshot{Max: 1}
+	activeInput := polecat.WorkstateInput{State: polecat.StateIdle, CleanupStatus: polecat.CleanupClean}
+	activeInput.ApplyActiveWork(polecat.ActiveWorkEvidence{
+		Active:          true,
+		BlocksCleanup:   true,
+		RequiresRestart: true,
+		Blocker:         "hook_bead=gt-work status=hooked",
+		HookBead:        "gt-work",
+	})
+	activeDisposition := polecat.DecideWorkstate(activeInput)
+	applyWorkstateDispositionToCapacitySnapshot(&active, polecat.StateIdle, activeDisposition)
+	active.Free = active.Max - active.occupied()
+	if active.Free < 0 {
+		active.Free = 0
+	}
+	if active.RecoveryBlocked != 1 || active.Free != 0 {
+		t.Fatalf("active snapshot = %+v, want recovery_blocked=1 free=0", active)
 	}
 }
 

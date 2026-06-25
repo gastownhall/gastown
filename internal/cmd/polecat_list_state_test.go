@@ -211,6 +211,7 @@ func TestWorkstateDispositionProjectionAgreement(t *testing.T) {
 		wantMQSubmit bool
 		wantSafe     bool
 		wantCapacity polecatCapacitySnapshot
+		wantOccupied int
 	}{
 		{
 			name:         "reusable idle",
@@ -224,6 +225,13 @@ func TestWorkstateDispositionProjectionAgreement(t *testing.T) {
 			in:           polecat.WorkstateInput{State: polecat.StateIdle, CleanupStatus: polecat.CleanupUnpushed},
 			wantRecovery: true,
 			wantCapacity: polecatCapacitySnapshot{RecoveryBlocked: 1},
+		},
+		{
+			name:         "active idle work still occupies capacity",
+			in:           polecat.WorkstateInput{State: polecat.StateIdle, CleanupStatus: polecat.CleanupClean, ActiveWorkBlocker: "hook_bead=gt-work status=hooked", ActiveWorkCountsTowardCapacity: true},
+			wantRecovery: true,
+			wantCapacity: polecatCapacitySnapshot{RecoveryBlocked: 1},
+			wantOccupied: 1,
 		},
 		{
 			name:         "stale stash cleanup ignored is reusable capacity",
@@ -249,6 +257,7 @@ func TestWorkstateDispositionProjectionAgreement(t *testing.T) {
 			name:         "working",
 			in:           polecat.WorkstateInput{State: polecat.StateWorking, CleanupStatus: polecat.CleanupClean},
 			wantCapacity: polecatCapacitySnapshot{Working: 1},
+			wantOccupied: 1,
 		},
 		{
 			name:         "pending active mr",
@@ -283,6 +292,9 @@ func TestWorkstateDispositionProjectionAgreement(t *testing.T) {
 			applyWorkstateDispositionToCapacitySnapshot(&snapshot, tt.in.State, disposition)
 			if snapshot.Working != tt.wantCapacity.Working || snapshot.RecoveryBlocked != tt.wantCapacity.RecoveryBlocked || snapshot.ReusableIdle != tt.wantCapacity.ReusableIdle || snapshot.PendingMR != tt.wantCapacity.PendingMR {
 				t.Fatalf("capacity projection = %+v, want %+v", snapshot, tt.wantCapacity)
+			}
+			if got := snapshot.occupied(); got != tt.wantOccupied {
+				t.Fatalf("capacity occupied = %d, want %d (snapshot %+v)", got, tt.wantOccupied, snapshot)
 			}
 		})
 	}
