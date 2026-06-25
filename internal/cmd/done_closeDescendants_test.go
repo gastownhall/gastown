@@ -74,7 +74,7 @@ case "$cmd" in
     ;;
   list|query|sql)
     # Return children when listing with parent=gt-wisp-xyz
-    if echo "$*" | grep -Eq 'parent="?gt-wisp-xyz"?'; then
+    if echo "$*" | grep -q "gt-wisp-xyz"; then
       echo '[{"id":"gt-step-1","title":"Step 1","status":"open"},{"id":"gt-step-2","title":"Step 2","status":"open"}]'
     else
       echo '[]'
@@ -381,7 +381,7 @@ case "$cmd" in
     ;;
   list|query|sql)
     # Return one open child and one already-closed child
-    if echo "$*" | grep -Eq 'parent="?gt-wisp-xyz"?'; then
+    if echo "$*" | grep -q "gt-wisp-xyz"; then
       echo '[{"id":"gt-step-open","title":"Step Open","status":"open"},{"id":"gt-step-closed","title":"Step Closed","status":"closed"}]'
     else
       echo '[]'
@@ -529,10 +529,10 @@ case "$cmd" in
     ;;
   list|query|sql)
     # Return children based on parent
-    if echo "$*" | grep -Eq 'parent="?gt-wisp-xyz"?'; then
+    if echo "$*" | grep -q "gt-wisp-xyz"; then
       # Wisp has one child
       echo '[{"id":"gt-child","title":"Child","status":"open"}]'
-    elif echo "$*" | grep -Eq 'parent="?gt-child"?'; then
+    elif echo "$*" | grep -q "gt-child"; then
       # Child has one grandchild
       echo '[{"id":"gt-grandchild","title":"Grandchild","status":"open"}]'
     else

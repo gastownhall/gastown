@@ -991,7 +991,9 @@ func (b *Beads) listIssuesSQL(opts ListOptions) ([]*Issue, error) {
 		where = append(where, fmt.Sprintf("i.priority = %d", opts.Priority))
 	}
 	if opts.Parent != "" {
-		where = append(where, "i.id IN (SELECT depends_on_id FROM dependencies WHERE issue_id = "+quoteSQLString(opts.Parent)+" AND type = 'parent-child')")
+		parent := quoteSQLString(opts.Parent)
+		where = append(where, "EXISTS (SELECT 1 FROM dependencies d WHERE d.issue_id = i.id AND d.type = 'parent-child' AND "+
+			"(d.depends_on_issue_id = "+parent+" OR d.depends_on_wisp_id = "+parent+" OR d.depends_on_external = "+parent+"))")
 	}
 	if opts.Assignee != "" {
 		where = append(where, "i.assignee = "+quoteSQLString(opts.Assignee))

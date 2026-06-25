@@ -99,7 +99,8 @@ func TestListIssuesUsesSQLIssuesTable(t *testing.T) {
 		`FROM issues i LEFT JOIN labels l ON i.id = l.issue_id`,
 		`COALESCE(i.ephemeral, 0) = 0`,
 		`i.status = 'hooked'`,
-		`i.id IN (SELECT depends_on_id FROM dependencies WHERE issue_id = 'gt-wisp/root' AND type = 'parent-child')`,
+		`EXISTS (SELECT 1 FROM dependencies d WHERE d.issue_id = i.id AND d.type = 'parent-child'`,
+		`d.depends_on_issue_id = 'gt-wisp/root' OR d.depends_on_wisp_id = 'gt-wisp/root' OR d.depends_on_external = 'gt-wisp/root'`,
 		`i.assignee = 'deacon/dogs/alpha'`,
 	} {
 		if !strings.Contains(logOutput, want) {
