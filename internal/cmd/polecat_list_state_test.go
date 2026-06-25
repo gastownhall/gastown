@@ -247,6 +247,18 @@ func TestWorkstateDispositionProjectionAgreement(t *testing.T) {
 			wantCapacity: polecatCapacitySnapshot{RecoveryBlocked: 1},
 		},
 		{
+			name:         "live git dirty remains recovery blocked without capacity",
+			in:           polecat.WorkstateInput{State: polecat.StateIdle, CleanupStatus: polecat.CleanupClean, GitDirty: true, GitDirtyReason: "git_state=has_uncommitted"},
+			wantRecovery: true,
+			wantCapacity: polecatCapacitySnapshot{RecoveryBlocked: 1},
+		},
+		{
+			name:         "live unpushed commits remain recovery blocked without capacity",
+			in:           polecat.WorkstateInput{State: polecat.StateIdle, CleanupStatus: polecat.CleanupClean, UnpushedCommits: 2},
+			wantRecovery: true,
+			wantCapacity: polecatCapacitySnapshot{RecoveryBlocked: 1},
+		},
+		{
 			name:         "needs mq submit",
 			in:           polecat.WorkstateInput{State: polecat.StateIdle, CleanupStatus: polecat.CleanupClean, Branch: "polecat/test", MQCheckRequired: true, HasSubmittableWork: true},
 			wantRecovery: true,
