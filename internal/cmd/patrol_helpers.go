@@ -52,7 +52,7 @@ func findActivePatrol(cfg PatrolConfig) (patrolID, patrolLine string, found bool
 	}
 
 	// Find active patrol beads for this agent across durable issues and wisps.
-	hookedBeads, listErr := listAssignedActiveWork(b, cfg.Assignee)
+	hookedBeads, listErr := listAssignedActiveWorkAcrossStatuses(b, cfg.Assignee)
 	if listErr != nil {
 		return "", "", false, fmt.Errorf("listing active patrol work: %w", listErr)
 	}
@@ -157,7 +157,7 @@ func burnPreviousPatrolWisps(cfg PatrolConfig) {
 	}
 
 	// Find all active patrol beads for this agent across durable issues and wisps.
-	hookedBeads, err := listAssignedActiveWork(b, cfg.Assignee)
+	hookedBeads, err := listAssignedActiveWorkAcrossStatuses(b, cfg.Assignee)
 	if err != nil {
 		style.PrintWarning("burn: could not list hooked beads: %v", err)
 		return

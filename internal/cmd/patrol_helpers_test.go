@@ -738,6 +738,44 @@ func TestFindActivePatrolHooked(t *testing.T) {
 	}
 }
 
+func TestFindActivePatrolFindsInProgressBehindHookedNonPatrol(t *testing.T) {
+	requireBd(t)
+	tmpDir, b := setupPatrolTestDB(t)
+
+	molName := "mol-test-patrol"
+	assignee := "testrig/witness"
+
+	other, err := b.Create(beads.CreateOptions{Title: "other hooked work", Priority: -1})
+	if err != nil {
+		t.Fatalf("create other work: %v", err)
+	}
+	hooked := beads.StatusHooked
+	if err := b.Update(other.ID, beads.UpdateOptions{Status: &hooked, Assignee: &assignee}); err != nil {
+		t.Fatalf("hook other work: %v", err)
+	}
+
+	rootID := createHookedPatrol(t, b, molName, assignee, false /* root-only */)
+	inProgress := statusInProgress
+	if err := b.Update(rootID, beads.UpdateOptions{Status: &inProgress}); err != nil {
+		t.Fatalf("mark patrol in progress: %v", err)
+	}
+
+	cfg := PatrolConfig{
+		PatrolMolName: molName,
+		BeadsDir:      tmpDir,
+		Assignee:      assignee,
+		Beads:         b,
+	}
+
+	patrolID, _, found, findErr := findActivePatrol(cfg)
+	if findErr != nil {
+		t.Fatalf("findActivePatrol error: %v", findErr)
+	}
+	if !found || patrolID != rootID {
+		t.Fatalf("findActivePatrol found=%v id=%q, want %q", found, patrolID, rootID)
+	}
+}
+
 func TestRunPatrolReportNoActivePatrolStartsReplacement(t *testing.T) {
 	requireBd(t)
 	tmpDir, b := setupPatrolTestDB(t)

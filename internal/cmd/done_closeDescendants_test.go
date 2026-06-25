@@ -72,7 +72,7 @@ case "$cmd" in
         ;;
     esac
     ;;
-  list|query)
+  list|query|sql)
     # Return children when listing with parent=gt-wisp-xyz
     if echo "$*" | grep -Eq 'parent="?gt-wisp-xyz"?'; then
       echo '[{"id":"gt-step-1","title":"Step 1","status":"open"},{"id":"gt-step-2","title":"Step 2","status":"open"}]'
@@ -379,7 +379,7 @@ case "$cmd" in
         ;;
     esac
     ;;
-  list|query)
+  list|query|sql)
     # Return one open child and one already-closed child
     if echo "$*" | grep -Eq 'parent="?gt-wisp-xyz"?'; then
       echo '[{"id":"gt-step-open","title":"Step Open","status":"open"},{"id":"gt-step-closed","title":"Step Closed","status":"closed"}]'
@@ -527,7 +527,7 @@ case "$cmd" in
         ;;
     esac
     ;;
-  list|query)
+  list|query|sql)
     # Return children based on parent
     if echo "$*" | grep -Eq 'parent="?gt-wisp-xyz"?'; then
       # Wisp has one child

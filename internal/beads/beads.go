@@ -971,7 +971,95 @@ func (b *Beads) ListIssues(opts ListOptions) ([]*Issue, error) {
 	if b.store != nil {
 		return b.storeListIssues(opts)
 	}
-	return b.listIssues(opts)
+	return b.listIssuesSQL(opts)
+}
+
+func (b *Beads) listIssuesSQL(opts ListOptions) ([]*Issue, error) {
+	where := []string{"COALESCE(i.ephemeral, 0) = 0"}
+
+	if opts.Status == "" {
+		where = append(where, "i.status != 'closed'")
+	} else if opts.Status != "all" {
+		where = append(where, "i.status = "+quoteSQLString(opts.Status))
+	}
+	if opts.Label != "" {
+		where = append(where, "EXISTS (SELECT 1 FROM labels lf WHERE lf.issue_id = i.id AND lf.label = "+quoteSQLString(opts.Label)+")")
+	} else if opts.Type != "" {
+		where = append(where, "EXISTS (SELECT 1 FROM labels lf WHERE lf.issue_id = i.id AND lf.label = "+quoteSQLString("gt:"+opts.Type)+")")
+	}
+	if opts.Priority >= 0 {
+		where = append(where, fmt.Sprintf("i.priority = %d", opts.Priority))
+	}
+	if opts.Parent != "" {
+		where = append(where, "i.id IN (SELECT depends_on_id FROM dependencies WHERE issue_id = "+quoteSQLString(opts.Parent)+" AND type = 'parent-child')")
+	}
+	if opts.Assignee != "" {
+		where = append(where, "i.assignee = "+quoteSQLString(opts.Assignee))
+	}
+	if opts.NoAssignee {
+		where = append(where, "(i.assignee IS NULL OR i.assignee = '')")
+	}
+
+	query := "SELECT i.id, i.title, i.description, i.status, i.issue_type, i.priority, i.assignee, " +
+		"i.created_at, i.updated_at, i.created_by, COALESCE(GROUP_CONCAT(l.label), '') AS labels_csv " +
+		"FROM issues i LEFT JOIN labels l ON i.id = l.issue_id " +
+		"WHERE " + strings.Join(where, " AND ") + " " +
+		"GROUP BY i.id, i.title, i.description, i.status, i.issue_type, i.priority, i.assignee, i.created_at, i.updated_at, i.created_by " +
+		"ORDER BY i.updated_at DESC, i.created_at DESC, i.id DESC"
+	if opts.Limit > 0 {
+		query += fmt.Sprintf(" LIMIT %d", opts.Limit)
+	}
+
+	out, err := b.run("sql", "--json", query)
+	if err != nil {
+		return nil, err
+	}
+	if len(out) == 0 || !isJSONBytes(out) {
+		return nil, nil
+	}
+
+	var rows []struct {
+		ID          string `json:"id"`
+		Title       string `json:"title"`
+		Description string `json:"description"`
+		Status      string `json:"status"`
+		Type        string `json:"issue_type"`
+		Priority    int    `json:"priority"`
+		Assignee    string `json:"assignee"`
+		CreatedAt   string `json:"created_at"`
+		UpdatedAt   string `json:"updated_at"`
+		CreatedBy   string `json:"created_by"`
+		LabelsCSV   string `json:"labels_csv"`
+	}
+	if err := json.Unmarshal(out, &rows); err != nil {
+		return nil, fmt.Errorf("parsing bd sql output: %w", err)
+	}
+
+	issues := make([]*Issue, 0, len(rows))
+	for _, row := range rows {
+		issue := &Issue{
+			ID:          row.ID,
+			Title:       row.Title,
+			Description: row.Description,
+			Status:      row.Status,
+			Type:        row.Type,
+			Priority:    row.Priority,
+			Assignee:    row.Assignee,
+			CreatedAt:   row.CreatedAt,
+			UpdatedAt:   row.UpdatedAt,
+			CreatedBy:   row.CreatedBy,
+		}
+		if row.LabelsCSV != "" {
+			issue.Labels = strings.Split(row.LabelsCSV, ",")
+		}
+		issues = append(issues, issue)
+	}
+
+	return issues, nil
+}
+
+func quoteSQLString(value string) string {
+	return "'" + strings.ReplaceAll(value, "'", "''") + "'"
 }
 
 // listEphemeral searches the wisps table using "bd query" with ephemeral=true.

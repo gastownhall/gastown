@@ -77,7 +77,7 @@ func TestListEphemeralQuotesQueryValuesAndDisablesLimit(t *testing.T) {
 	}
 }
 
-func TestListIssuesUsesBdListAndDisablesLimit(t *testing.T) {
+func TestListIssuesUsesSQLIssuesTable(t *testing.T) {
 	ResetBdAllowStaleCacheForTest()
 	logPath := installMockBDRecorder(t)
 
@@ -95,7 +95,12 @@ func TestListIssuesUsesBdListAndDisablesLimit(t *testing.T) {
 
 	logOutput := readMockBDLog(t, logPath)
 	for _, want := range []string{
-		`list --json --status=hooked --parent=gt-wisp/root --assignee=deacon/dogs/alpha --limit=0`,
+		`sql --json SELECT`,
+		`FROM issues i LEFT JOIN labels l ON i.id = l.issue_id`,
+		`COALESCE(i.ephemeral, 0) = 0`,
+		`i.status = 'hooked'`,
+		`i.id IN (SELECT depends_on_id FROM dependencies WHERE issue_id = 'gt-wisp/root' AND type = 'parent-child')`,
+		`i.assignee = 'deacon/dogs/alpha'`,
 	} {
 		if !strings.Contains(logOutput, want) {
 			t.Fatalf("bd log missing %q\nlog:\n%s", want, logOutput)
