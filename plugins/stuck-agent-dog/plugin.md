@@ -60,37 +60,30 @@ Gather all polecats and the deacon session. We check crashed sessions
 echo "=== Stuck Agent Dog: Checking agent health ==="
 
 TOWN_ROOT="$HOME/gt"
-RIGS_JSON_PATH="${TOWN_ROOT}/rigs.json"
 
-# Fallback for older/runtime-copied layouts that still expose rigs.json under mayor/.
-if [ ! -f "$RIGS_JSON_PATH" ] && [ -f "$TOWN_ROOT/mayor/rigs.json" ]; then
-  RIGS_JSON_PATH="$TOWN_ROOT/mayor/rigs.json"
-fi
-
-# Read rigs.json for rig names and beads prefixes
+# Read the live rig registry for operational rig names and beads prefixes.
 # CRITICAL: We need both the rig name (for filesystem paths like $TOWN_ROOT/$RIG/polecats/)
 # and the beads prefix (for tmux session names like $PREFIX-$NAME).
 # These can differ — e.g. rig "cfutons" may have prefix "CF".
-if [ ! -f "$RIGS_JSON_PATH" ]; then
-  echo "SKIP: rigs.json not found at $RIGS_JSON_PATH"
+if ! RIG_JSON=$(gt rig list --json 2>/dev/null); then
+  echo "SKIP: gt rig list --json unavailable; cannot verify operational rig state"
   exit 0
 fi
 
-if ! RIG_PREFIX_MAP=$(jq -r '
-  if (.rigs | type) == "object" then
-    .rigs | to_entries[] | "\(.key)|\(.value.beads.prefix // .key)"
-  else
-    empty
-  end
-' "$RIGS_JSON_PATH" 2>/dev/null); then
-  echo "SKIP: could not parse rigs.json"
+if ! RIG_PREFIX_MAP=$(printf '%s' "$RIG_JSON" | jq -r '
+  if type == "array" then .[] else empty end
+  | select((.status // "" | ascii_downcase) == "operational")
+  | select((.name // "") != "" and (.beads_prefix // "") != "")
+  | "\(.name)|\(.beads_prefix)"
+' 2>/dev/null); then
+  echo "SKIP: gt rig list --json not parseable; cannot verify operational rig state"
   exit 0
 fi
 
 # Filter out any malformed/blank rows so partial registry state fails safe.
 RIG_PREFIX_MAP=$(printf '%s\n' "$RIG_PREFIX_MAP" | awk -F'|' 'NF >= 2 && $1 != "" && $2 != ""')
 if [ -z "$RIG_PREFIX_MAP" ]; then
-  echo "SKIP: no rigs found in rigs.json"
+  echo "SKIP: no operational rigs found"
   exit 0
 fi
 ```
@@ -99,7 +92,7 @@ fi
 
 For each rig, enumerate polecats and check their session status.
 A polecat is a concern if:
-- It has hooked work (hook_bead is set)
+- `gt hook show --json` reports active work with status `hooked` or `in_progress`
 - Its central runtime-aware health is `session-dead` OR `agent-dead`
 
 Polecat liveness must use `gt session health`, which wraps the central
@@ -134,16 +127,18 @@ while IFS='|' read -r RIG PREFIX; do
         ;;
       session-dead)
         # Check hook/status through the target rig workspace before acting.
-        # Only open/hooked/in_progress work is restartable.
-        HOOK_BEAD=$(rig_hook_bead "$RIG" "$PCAT_NAME")
-        if [ -n "$HOOK_BEAD" ] && bead_restartable "$SESSION_NAME" "$RIG" "$HOOK_BEAD"; then
+        # Only hook-show statuses hooked/in_progress are restartable.
+        HOOK_ASSIGNMENT=$(rig_hook_assignment "$RIG" "$PCAT_NAME")
+        IFS='|' read -r HOOK_BEAD HOOK_STATUS <<< "$HOOK_ASSIGNMENT"
+        if hook_restartable "$SESSION_NAME" "$HOOK_BEAD" "$HOOK_STATUS"; then
           CRASHED+=("$SESSION_NAME|$RIG|$PCAT_NAME|$HOOK_BEAD")
           echo "  CRASHED: $SESSION_NAME (hook=$HOOK_BEAD)"
         fi
         ;;
       agent-dead)
-        HOOK_BEAD=$(rig_hook_bead "$RIG" "$PCAT_NAME")
-        if [ -n "$HOOK_BEAD" ] && bead_restartable "$SESSION_NAME" "$RIG" "$HOOK_BEAD"; then
+        HOOK_ASSIGNMENT=$(rig_hook_assignment "$RIG" "$PCAT_NAME")
+        IFS='|' read -r HOOK_BEAD HOOK_STATUS <<< "$HOOK_ASSIGNMENT"
+        if hook_restartable "$SESSION_NAME" "$HOOK_BEAD" "$HOOK_STATUS"; then
           STUCK+=("$SESSION_NAME|$RIG|$PCAT_NAME|$HOOK_BEAD|agent_dead")
           echo "  ZOMBIE: $SESSION_NAME (agent runtime dead, hook=$HOOK_BEAD)"
         fi
@@ -234,10 +229,10 @@ refinery). If you find yourself considering a session not in these arrays, STOP.
 
 **You (the dog agent) must evaluate each case:**
 
-For CRASHED agents (session dead, work on hook):
+For CRASHED agents (session dead, active work on hook):
 - This is almost always a legitimate crash needing restart
-- Exception: if the polecat just ran `gt done` and the hook hasn't cleared yet
-- Check bead status: if the root wisp is closed, the polecat completed normally
+- If `gt hook show --json` no longer reports `hooked|in_progress`, skip it.
+- Do not do a separate `bd show` status lookup; hook state is the active-work authority.
 
 For STUCK agents (session alive, agent dead):
 - Kill the zombie session, then restart
@@ -252,26 +247,37 @@ For DEACON stuck (stale heartbeat):
   for stale-heartbeat events; do not include the age seconds in the fingerprint.
 
 **Decision framework:**
-1. If central health is `session-dead` and hook status is actionable → request restart
-2. If central health is `agent-dead` and hook status is actionable → clear zombie, request restart
+1. If central health is `session-dead` and hook status is `hooked|in_progress` → request restart
+2. If central health is `agent-dead` and hook status is `hooked|in_progress` → clear zombie, request restart
 3. If central health is `agent-hung` → observe/report only; do not restart polecat research sessions
-4. If mass death detected (threshold default 3) → escalate and skip all per-agent actions
+4. If confirmed mass death remains after live re-check (threshold default 3) → escalate and skip all per-agent actions
 
 ## Step 5: Mass death check
 
-If multiple agents crashed in the same cycle, this may indicate a systemic
-issue (Dolt outage, OOM, etc.). Escalate instead of blindly restarting all.
-The executable script checks this before per-agent actions and skips all
-restart/kill loops for that cycle.
+If multiple active polecats crash in the same cycle, this may indicate a
+systemic issue (Dolt outage, OOM, etc.). The executable script re-checks live
+health and active hook state before CRITICAL escalation. If the confirmed count
+drops below threshold, normal per-agent action proceeds for the remaining
+confirmed outages.
 
 ```bash
 TOTAL_ISSUES=$(( ${#CRASHED[@]} + ${#STUCK[@]} ))
 MASS_DEATH=0
-if [ "$TOTAL_ISSUES" -ge "${GT_STUCK_AGENT_DOG_MASS_DEATH_THRESHOLD:-3}" ]; then
-  MASS_DEATH=1
-  echo "MASS DEATH: $TOTAL_ISSUES agents down in same cycle — escalating"
-  gt escalate "Mass agent death: $TOTAL_ISSUES agents down" -s CRITICAL
-  echo "Skipping per-agent restart/kill actions during mass-death escalation"
+if [ "$TOTAL_ISSUES" -ge "$MASS_DEATH_THRESHOLD" ]; then
+  confirm_polecat_outages
+  CRASHED=("${CONFIRMED_CRASHED[@]}")
+  STUCK=("${CONFIRMED_STUCK[@]}")
+  CONFIRMED_TOTAL=$(( ${#CRASHED[@]} + ${#STUCK[@]} ))
+
+  if [ "$CONFIRMED_TOTAL" -ge "$MASS_DEATH_THRESHOLD" ]; then
+    MASS_DEATH=1
+    echo "MASS DEATH: $CONFIRMED_TOTAL agents down confirmed — escalating"
+    gt escalate "Mass agent death: $CONFIRMED_TOTAL agents down" \
+      -s CRITICAL \
+      --source "plugin:stuck-agent-dog" \
+      --fingerprint "stuck-agent-dog:mass-death"
+    echo "Skipping per-agent restart/kill actions during mass-death escalation"
+  fi
 fi
 ```
 

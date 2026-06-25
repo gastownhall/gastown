@@ -16,11 +16,6 @@ if [ -z "$TOWN_ROOT" ]; then
   fi
 fi
 
-RIGS_JSON_PATH="${TOWN_ROOT}/rigs.json"
-if [ ! -f "$RIGS_JSON_PATH" ] && [ -f "$TOWN_ROOT/mayor/rigs.json" ]; then
-  RIGS_JSON_PATH="$TOWN_ROOT/mayor/rigs.json"
-fi
-
 integer_or_default() {
   local value="$1"
   local default="$2"
@@ -31,11 +26,27 @@ integer_or_default() {
   esac
 }
 
+positive_integer_or_default() {
+  local value="$1"
+  local default="$2"
+
+  case "$value" in
+    ''|*[!0-9]*) echo "$default" ;;
+    *)
+      if [ "$value" -ge 1 ]; then
+        echo "$value"
+      else
+        echo "$default"
+      fi
+      ;;
+  esac
+}
+
 POLECAT_MAX_INACTIVITY="${GT_STUCK_AGENT_DOG_MAX_INACTIVITY:-0s}"
 [ "$POLECAT_MAX_INACTIVITY" = "0" ] && POLECAT_MAX_INACTIVITY="0s"
 DEACON_STALE_SECONDS=$(integer_or_default "${GT_STUCK_AGENT_DOG_DEACON_STALE_SECONDS:-}" 1200)
 ACTIVITY_GRACE_SECONDS=$(integer_or_default "${GT_STUCK_AGENT_DOG_ACTIVITY_GRACE_SECONDS:-}" "$DEACON_STALE_SECONDS")
-MASS_DEATH_THRESHOLD=$(integer_or_default "${GT_STUCK_AGENT_DOG_MASS_DEATH_THRESHOLD:-}" 3)
+MASS_DEATH_THRESHOLD=$(positive_integer_or_default "${GT_STUCK_AGENT_DOG_MASS_DEATH_THRESHOLD:-}" 3)
 
 heartbeat_epoch() {
   local file="$1"
@@ -99,37 +110,32 @@ rig_workdir() {
   return 1
 }
 
-rig_hook_bead() {
+rig_hook_assignment() {
   local rig="$1" pcat="$2" dir=""
+  local hook_json="" bead="" status=""
 
   if ! dir=$(rig_workdir "$rig"); then
     return 0
   fi
 
-  ( cd "$dir" 2>/dev/null && gt hook show "$rig/polecats/$pcat" --json 2>/dev/null ) \
-    | jq -r '.bead_id // empty' 2>/dev/null || true
-}
-
-rig_bead_status() {
-  local rig="$1" bead="$2" dir=""
-
-  if ! dir=$(rig_workdir "$rig"); then
+  hook_json=$( ( cd "$dir" 2>/dev/null && gt hook show "$rig/polecats/$pcat" --json 2>/dev/null ) || true )
+  if [ -z "$hook_json" ]; then
     return 0
   fi
 
-  ( cd "$dir" 2>/dev/null && bd show "$bead" --json 2>/dev/null ) \
-    | jq -r '.[0].status // empty' 2>/dev/null || true
+  bead=$(printf '%s' "$hook_json" | jq -r '.bead_id // empty' 2>/dev/null || true)
+  status=$(printf '%s' "$hook_json" | jq -r '.status // empty' 2>/dev/null || true)
+  [ -n "$bead" ] || return 0
+
+  printf '%s|%s\n' "$bead" "$status"
 }
 
-bead_restartable() {
-  local session="$1" rig="$2" bead="$3" status=""
-
-  status=$(rig_bead_status "$rig" "$bead")
+hook_restartable() {
+  local session="$1" bead="$2" status="$3"
 
   case "$status" in
-    open|hooked|in_progress) return 0 ;;
-    closed) log "  SKIP $session: bead closed (completed normally)" ;;
-    "") log "  SKIP $session: hook=$bead status unavailable" ;;
+    hooked|in_progress) [ -n "$bead" ] && return 0 ;;
+    empty|"") log "  SKIP $session: no active hook" ;;
     *) log "  SKIP $session: hook=$bead status=$status not actionable" ;;
   esac
 
@@ -147,30 +153,84 @@ session_health_status() {
   printf '%s\n' "$status"
 }
 
+operational_rig_prefix_map() {
+  local rig_json="" rows=""
+
+  if ! rig_json=$(cd "$TOWN_ROOT" 2>/dev/null && gt rig list --json 2>/dev/null); then
+    log "SKIP: gt rig list --json unavailable; cannot verify operational rig state" >&2
+    return 0
+  fi
+
+  if ! rows=$(printf '%s' "$rig_json" | jq -r '
+    if type == "array" then .[] else empty end
+    | select((.status // "" | ascii_downcase) == "operational")
+    | select((.name // "") != "" and (.beads_prefix // "") != "")
+    | "\(.name)|\(.beads_prefix)"
+  ' 2>/dev/null); then
+    log "SKIP: gt rig list --json not parseable; cannot verify operational rig state" >&2
+    return 0
+  fi
+
+  printf '%s\n' "$rows" | awk -F'|' 'NF >= 2 && $1 != "" && $2 != ""'
+}
+
+confirm_current_polecat_outage() {
+  local session="$1" rig="$2" pcat="$3"
+  local health_status="" hook_assignment="" hook_bead="" hook_status=""
+
+  health_status=$(session_health_status "$session" || true)
+  case "$health_status" in
+    session-dead|session_dead)
+      hook_assignment=$(rig_hook_assignment "$rig" "$pcat" || true)
+      IFS='|' read -r hook_bead hook_status <<< "$hook_assignment"
+      if hook_restartable "$session" "$hook_bead" "$hook_status"; then
+        CONFIRMED_CRASHED+=("$session|$rig|$pcat|$hook_bead")
+      fi
+      ;;
+    agent-dead|agent_dead)
+      hook_assignment=$(rig_hook_assignment "$rig" "$pcat" || true)
+      IFS='|' read -r hook_bead hook_status <<< "$hook_assignment"
+      if hook_restartable "$session" "$hook_bead" "$hook_status"; then
+        CONFIRMED_STUCK+=("$session|$rig|$pcat|$hook_bead|agent_dead")
+      fi
+      ;;
+    healthy|agent-hung|agent_hung)
+      log "  NOTICE: $session recovered before mass-death escalation (health=$health_status)"
+      ;;
+    *)
+      log "  NOTICE: $session not confirmed before mass-death escalation (health=${health_status:-unknown})"
+      ;;
+  esac
+}
+
+confirm_polecat_outages() {
+  local entry="" session="" rig="" pcat="" hook="" reason=""
+
+  CONFIRMED_CRASHED=()
+  CONFIRMED_STUCK=()
+
+  for entry in ${CRASHED[@]+"${CRASHED[@]}"}; do
+    [ -n "$entry" ] || continue
+    IFS='|' read -r session rig pcat hook <<< "$entry"
+    confirm_current_polecat_outage "$session" "$rig" "$pcat"
+  done
+
+  for entry in ${STUCK[@]+"${STUCK[@]}"}; do
+    [ -n "$entry" ] || continue
+    IFS='|' read -r session rig pcat hook reason <<< "$entry"
+    confirm_current_polecat_outage "$session" "$rig" "$pcat"
+  done
+}
+
 # --- Enumerate agents ---------------------------------------------------------
 
 log "=== Checking agent health ==="
 
-if [ ! -f "$RIGS_JSON_PATH" ]; then
-  log "SKIP: rigs.json not found"
-  exit 0
-fi
-
-# Build rig_name|prefix mapping
-if ! RIG_PREFIX_MAP=$(jq -r '
-  if (.rigs | type) == "object" then
-    .rigs | to_entries[] | "\(.key)|\(.value.beads.prefix // .key)"
-  else
-    empty
-  end
-' "$RIGS_JSON_PATH" 2>/dev/null); then
-  log "SKIP: could not parse rigs.json"
-  exit 0
-fi
-
-RIG_PREFIX_MAP=$(printf '%s\n' "$RIG_PREFIX_MAP" | awk -F'|' 'NF >= 2 && $1 != "" && $2 != ""')
+# Build operational rig_name|prefix mapping. The rig registry is the live
+# parked/docked filter; if it is unavailable, fail closed.
+RIG_PREFIX_MAP=$(operational_rig_prefix_map)
 if [ -z "$RIG_PREFIX_MAP" ]; then
-  log "SKIP: no rigs in rigs.json"
+  log "SKIP: no operational rigs found"
   exit 0
 fi
 
@@ -196,8 +256,9 @@ while IFS='|' read -r RIG PREFIX; do
         HEALTHY=$((HEALTHY + 1))
         ;;
       agent-dead|agent_dead)
-        HOOK_BEAD=$(rig_hook_bead "$RIG" "$PCAT_NAME")
-        if [ -n "$HOOK_BEAD" ] && bead_restartable "$SESSION_NAME" "$RIG" "$HOOK_BEAD"; then
+        HOOK_ASSIGNMENT=$(rig_hook_assignment "$RIG" "$PCAT_NAME")
+        IFS='|' read -r HOOK_BEAD HOOK_STATUS <<< "$HOOK_ASSIGNMENT"
+        if hook_restartable "$SESSION_NAME" "$HOOK_BEAD" "$HOOK_STATUS"; then
           STUCK+=("$SESSION_NAME|$RIG|$PCAT_NAME|$HOOK_BEAD|agent_dead")
           log "  ZOMBIE: $SESSION_NAME (agent runtime dead, hook=$HOOK_BEAD)"
         fi
@@ -209,8 +270,9 @@ while IFS='|' read -r RIG PREFIX; do
         log "  OBSERVE: $SESSION_NAME runtime alive but inactive beyond $POLECAT_MAX_INACTIVITY; not restarting"
         ;;
       session-dead|session_dead)
-        HOOK_BEAD=$(rig_hook_bead "$RIG" "$PCAT_NAME")
-        if [ -n "$HOOK_BEAD" ] && bead_restartable "$SESSION_NAME" "$RIG" "$HOOK_BEAD"; then
+        HOOK_ASSIGNMENT=$(rig_hook_assignment "$RIG" "$PCAT_NAME")
+        IFS='|' read -r HOOK_BEAD HOOK_STATUS <<< "$HOOK_ASSIGNMENT"
+        if hook_restartable "$SESSION_NAME" "$HOOK_BEAD" "$HOOK_STATUS"; then
           CRASHED+=("$SESSION_NAME|$RIG|$PCAT_NAME|$HOOK_BEAD")
           log "  CRASHED: $SESSION_NAME (hook=$HOOK_BEAD)"
         fi
@@ -286,11 +348,23 @@ fi
 TOTAL_ISSUES=$(( ${#CRASHED[@]} + ${#STUCK[@]} ))
 MASS_DEATH=0
 if [ "$TOTAL_ISSUES" -ge "$MASS_DEATH_THRESHOLD" ]; then
-  MASS_DEATH=1
   log ""
-  log "MASS DEATH: $TOTAL_ISSUES agents down — escalating instead of restarting"
-  gt escalate "Mass agent death: $TOTAL_ISSUES agents down" \
-    -s CRITICAL 2>/dev/null || true
+  log "Mass-death candidate threshold reached ($TOTAL_ISSUES); re-checking live health before escalation"
+  confirm_polecat_outages
+  CRASHED=("${CONFIRMED_CRASHED[@]}")
+  STUCK=("${CONFIRMED_STUCK[@]}")
+  CONFIRMED_TOTAL=$(( ${#CRASHED[@]} + ${#STUCK[@]} ))
+
+  if [ "$CONFIRMED_TOTAL" -ge "$MASS_DEATH_THRESHOLD" ]; then
+    MASS_DEATH=1
+    log "MASS DEATH: $CONFIRMED_TOTAL agents down confirmed — escalating instead of restarting"
+    gt escalate "Mass agent death: $CONFIRMED_TOTAL agents down" \
+      -s CRITICAL \
+      --source "plugin:stuck-agent-dog" \
+      --fingerprint "stuck-agent-dog:mass-death" 2>/dev/null || true
+  else
+    log "NOTICE: mass-death candidates dropped to $CONFIRMED_TOTAL after live re-check; no CRITICAL escalation"
+  fi
 fi
 
 # --- Take action --------------------------------------------------------------
