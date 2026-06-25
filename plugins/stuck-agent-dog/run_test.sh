@@ -99,6 +99,10 @@ case "${1:-}" in
     if [ "${2:-}" = "show" ]; then
       target="${3:-}"
       name="${target##*/}"
+      printf '%s|%s\n' "$PWD" "$*" >> "$TEST_STATE/hook_calls.log"
+      if [ "${4:-}" != "--json" ]; then
+        exit 1
+      fi
       if [ -f "$TEST_STATE/hook_fail/$name" ]; then
         exit 1
       fi
@@ -107,7 +111,11 @@ case "${1:-}" in
       else
         status="hooked"
         if [ -f "$TEST_STATE/hook_status/$name" ]; then
-          status=$(tr -d '\n' < "$TEST_STATE/hook_status/$name")
+          status=$(sed -n '1p' "$TEST_STATE/hook_status/$name" | tr -d '\n')
+          if [ "$(wc -l < "$TEST_STATE/hook_status/$name" | tr -d ' ')" -gt 1 ]; then
+            sed '1d' "$TEST_STATE/hook_status/$name" > "$TEST_STATE/hook_status/$name.tmp"
+            mv "$TEST_STATE/hook_status/$name.tmp" "$TEST_STATE/hook_status/$name"
+          fi
         fi
         printf '{"agent":"%s","bead_id":"gt-hook-%s","status":"%s"}\n' "$target" "$name" "$status"
       fi
@@ -278,6 +286,7 @@ setup_case() {
   : > "$TEST_STATE/kill.log"
   : > "$TEST_STATE/escalate.log"
   : > "$TEST_STATE/health_calls.log"
+  : > "$TEST_STATE/hook_calls.log"
   : > "$TEST_STATE/bd.log"
   touch "$TEST_STATE/sessions/hq-deacon"
 
@@ -323,7 +332,7 @@ test_healthy_runtime() {
   assert_file_contains "$TEST_STATE/health_calls.log" "gt-$runtime --max-inactivity 0s" "$runtime healthy: used central health"
 }
 
-test_long_research_active_pane() {
+test_agent_hung_observe_only() {
   setup_case
   export GT_STUCK_AGENT_DOG_MAX_INACTIVITY=30m
   add_polecat research agent-hung
@@ -334,6 +343,14 @@ test_long_research_active_pane() {
   assert_file_empty "$TEST_STATE/escalate.log" "active research: no mass-death escalation"
   assert_file_contains "$TEST_STATE/output.log" "OBSERVE: gt-research runtime alive" "active research: observed live runtime"
   assert_file_contains "$TEST_STATE/output.log" "0 crashed, 0 stuck, 1 healthy" "active research: counted healthy"
+}
+
+test_hook_show_uses_json_and_rig_workdir() {
+  setup_case
+  add_polecat alpha agent-dead
+  run_script
+
+  assert_file_contains "$TEST_STATE/hook_calls.log" "$GT_TOWN_ROOT/gastown|hook show gastown/polecats/alpha --json" "hook show: used rig workdir and json"
 }
 
 test_dead_agent_restarts_one() {
@@ -461,6 +478,22 @@ test_mass_death_recheck_recovered() {
   assert_file_contains "$TEST_STATE/output.log" "dropped to 0 after live re-check" "recovered mass candidates: recheck suppressed critical"
 }
 
+test_mass_death_recheck_hook_cleared() {
+  setup_case
+  add_polecat alpha agent-dead
+  add_polecat beta agent-dead
+  add_polecat gamma agent-dead
+  printf 'hooked\nempty\n' > "$TEST_STATE/hook_status/alpha"
+  printf 'hooked\nempty\n' > "$TEST_STATE/hook_status/beta"
+  printf 'hooked\nempty\n' > "$TEST_STATE/hook_status/gamma"
+  run_script
+
+  assert_file_empty "$TEST_STATE/kill.log" "cleared hooks: no kills"
+  assert_file_empty "$TEST_STATE/mail.log" "cleared hooks: no restart mail"
+  assert_file_empty "$TEST_STATE/escalate.log" "cleared hooks: no mass-death escalation"
+  assert_file_contains "$TEST_STATE/output.log" "dropped to 0 after live re-check" "cleared hooks: hook recheck suppressed critical"
+}
+
 test_mass_death_recheck_one_remaining_restarts() {
   setup_case
   add_polecat alpha agent-dead
@@ -523,7 +556,8 @@ test_healthy_runtime opencode
 test_healthy_runtime bun
 test_healthy_runtime node
 test_healthy_runtime claude
-test_long_research_active_pane
+test_agent_hung_observe_only
+test_hook_show_uses_json_and_rig_workdir
 test_dead_agent_restarts_one
 test_in_progress_hook_restarts_one
 test_dead_session_restarts_one
@@ -533,6 +567,7 @@ test_non_actionable_hook_statuses_do_not_mass_death
 test_docked_rig_skipped
 test_rig_list_unavailable_fails_closed
 test_mass_death_recheck_recovered
+test_mass_death_recheck_hook_cleared
 test_mass_death_recheck_one_remaining_restarts
 test_mass_death_recheck_reclassifies_dead_statuses
 test_mass_death_skips_actions

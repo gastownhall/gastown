@@ -1,6 +1,6 @@
 +++
 name = "stuck-agent-dog"
-description = "Context-aware stuck/crashed agent detection and restart for polecats and deacons"
+description = "Context-aware stuck/crashed polecat restart and deacon escalation"
 version = 1
 
 [gate]
@@ -19,13 +19,13 @@ severity = "high"
 
 # Stuck Agent Dog
 
-Detects stuck or crashed polecats and deacons by inspecting tmux session context
-before taking action. Unlike the daemon's blind kill-and-restart approach, this
-plugin checks whether an agent is truly unresponsive before restarting.
+Detects stuck or crashed polecats before restart and escalates deacon issues.
+Unlike the daemon's blind kill-and-restart approach, this plugin checks central
+health and active work state before acting.
 
 **Design principle**: The daemon should NEVER kill workers. It detects and logs.
-This plugin (running as a Dog agent with AI judgment) makes the restart decision
-after inspecting tmux pane output for signs of life.
+This plugin makes polecat restart decisions from central health plus active hook
+state, and escalates deacon issues without restarting the deacon itself.
 
 Reference: WAR-ROOM-SERIAL-KILLER.md, commit f3d47a96.
 
@@ -220,10 +220,11 @@ fi
 ## Step 4: Inspect context before acting (AI judgment)
 
 **This is the key difference from daemon blind-kill.** For each crashed or stuck
-agent, inspect the tmux pane context to determine if restart is appropriate.
+polecat, act only when central runtime health and active hook state agree that
+the polecat is currently actionable.
 
-**SCOPE REMINDER: You may ONLY act on entries in the `CRASHED[]` and `STUCK[]`
-arrays populated by Steps 2-3. These arrays contain ONLY polecats and deacon.
+**SCOPE REMINDER: You may ONLY kill/restart-request entries in the `CRASHED[]`
+and `STUCK[]` arrays populated by Step 2. These arrays contain ONLY polecats.
 Do NOT inspect, evaluate, or act on ANY other sessions (crew, mayor, witness,
 refinery). If you find yourself considering a session not in these arrays, STOP.**
 
@@ -239,10 +240,10 @@ For STUCK agents (session alive, agent dead):
 - `agent-hung` is not STUCK for polecats; central health keeps that observe-only.
 
 For DEACON stuck (stale heartbeat):
-- Capture pane output: `tmux capture-pane -t hq-deacon -p -S -20`
-- If output shows active work (recent timestamps, command output), the heartbeat
-  file may just be stale — nudge instead of kill
-- If output shows no recent activity, escalation is warranted
+- Cross-check session activity and process/work state before declaring it stuck.
+- If session activity is recent or there is no active `in_progress` work, skip.
+- If heartbeat is stale with no recent activity and active work may exist,
+  escalation is warranted.
 - Use a stable escalation fingerprint (`stuck-agent-dog:deacon:stuck-heartbeat`)
   for stale-heartbeat events; do not include the age seconds in the fingerprint.
 
