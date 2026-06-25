@@ -1666,12 +1666,26 @@ func (t *Tmux) canonicalPaneTarget(session, pane string) string {
 	out, err := t.run("display-message", "-t", pane, "-p", "#{session_name}:#{window_index}.#{pane_index}")
 	if err == nil {
 		target := strings.TrimSpace(out)
-		if target != "" {
+		// Accept the resolved target ONLY when it is well-formed AND belongs to
+		// the session we intend to nudge. A stale/bogus pane can make
+		// display-message succeed with empty fields (":.") instead of erroring,
+		// and because tmux pane IDs are global and get reused after a server
+		// restart, a stale ID can also resolve into a *different* session — both
+		// would mis-target send-keys.
+		if target != "" && strings.HasPrefix(target, session+":") {
 			return target
 		}
 	}
 
-	return pane
+	// The pane ID could not be resolved to a live pane in this session — it is
+	// stale (e.g. a GT_PANE_ID declared before a tmux server restart, when pane
+	// IDs reset) or otherwise gone. Returning the raw pane ID here is what caused
+	// recurring "send-keys: can't find window: %NNNN" nudge failures (gy-avjr):
+	// the dead ID flows straight into send-keys. Fall back to the stable session
+	// NAME instead — tmux resolves it to the session's active pane, which always
+	// exists if the session does. Worst case (multi-pane session, agent not
+	// focused) we nudge the active pane rather than fail entirely.
+	return session
 }
 
 // NudgeSessionWithOpts is like NudgeSession but accepts delivery options.

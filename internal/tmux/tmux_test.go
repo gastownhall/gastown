@@ -2545,3 +2545,51 @@ func TestValidateCommandBinary(t *testing.T) {
 		})
 	}
 }
+
+// TestCanonicalPaneTarget_StalePaneFallsBackToSession is the gy-avjr regression:
+// when a pane ID cannot be resolved (stale — e.g. a GT_PANE_ID declared before a
+// tmux server restart reset pane IDs), canonicalPaneTarget must fall back to the
+// stable session NAME, NOT return the dead pane ID. Returning the dead ID is what
+// produced recurring "send-keys: can't find window: %NNNN" nudge failures.
+func TestCanonicalPaneTarget_StalePaneFallsBackToSession(t *testing.T) {
+	tm := newTestTmux(t)
+	sessionName := "gt-test-canonical-" + fmt.Sprintf("%d", os.Getpid())
+
+	_ = tm.KillSession(sessionName)
+	if err := tm.NewSession(sessionName, ""); err != nil {
+		t.Fatalf("NewSession: %v", err)
+	}
+	defer func() { _ = tm.KillSession(sessionName) }()
+
+	// Empty pane → session name (existing contract).
+	if got := tm.canonicalPaneTarget(sessionName, ""); got != sessionName {
+		t.Errorf("empty pane: got %q, want session %q", got, sessionName)
+	}
+
+	// Stale/nonexistent pane ID → must fall back to the session name, never the
+	// dead pane ID (the gy-avjr bug).
+	stale := "%999999"
+	if got := tm.canonicalPaneTarget(sessionName, stale); got == stale {
+		t.Errorf("stale pane %q was returned verbatim — would feed send-keys a dead target; want fallback to session %q", stale, sessionName)
+	} else if got != sessionName {
+		t.Errorf("stale pane: got %q, want session fallback %q", got, sessionName)
+	}
+
+	// A live pane ID → resolves to a real session:window.pane target that
+	// send-keys can use (sanity that the success path still works).
+	out, err := tm.run("list-panes", "-t", sessionName, "-F", "#{pane_id}")
+	if err != nil {
+		t.Fatalf("list-panes: %v", err)
+	}
+	livePane := strings.TrimSpace(strings.Split(strings.TrimSpace(out), "\n")[0])
+	if livePane != "" {
+		got := tm.canonicalPaneTarget(sessionName, livePane)
+		if got == "" {
+			t.Errorf("live pane %q resolved to empty target", livePane)
+		}
+		// The resolved target must itself be addressable by tmux.
+		if _, err := tm.run("display-message", "-t", got, "-p", "#{pane_id}"); err != nil {
+			t.Errorf("resolved target %q is not addressable: %v", got, err)
+		}
+	}
+}
