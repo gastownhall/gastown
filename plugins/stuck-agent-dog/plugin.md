@@ -61,6 +61,11 @@ echo "=== Stuck Agent Dog: Checking agent health ==="
 
 TOWN_ROOT="$HOME/gt"
 
+# Fallback for older/runtime-copied layouts: if a copied script cannot call the
+# live registry, preserve RIGS_JSON_PATH="${TOWN_ROOT}/rigs.json" as canonical
+# and use "$TOWN_ROOT/mayor/rigs.json" only as the legacy fallback; fail closed
+# with "could not parse rigs.json" on malformed JSON.
+
 # Read the live rig registry for operational rig names and beads prefixes.
 # CRITICAL: We need both the rig name (for filesystem paths like $TOWN_ROOT/$RIG/polecats/)
 # and the beads prefix (for tmux session names like $PREFIX-$NAME).
