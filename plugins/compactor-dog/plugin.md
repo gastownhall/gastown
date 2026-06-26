@@ -36,7 +36,7 @@ to decide if maintenance is needed.** Consider:
 
 ```bash
 DOLT_HOST="127.0.0.1"
-DOLT_PORT=3307
+DOLT_PORT="${GT_DOLT_PORT:-3307}"
 DOLT_USER="root"
 DOLT_DATA_DIR="$HOME/gt/.dolt-data"
 STATE_FILE="$HOME/gt/.dolt-data/.compactor-state.json"

@@ -13,6 +13,7 @@ import (
 
 	_ "github.com/go-sql-driver/mysql"
 	"github.com/spf13/cobra"
+	agentconfig "github.com/steveyegge/gastown/internal/config"
 	"github.com/steveyegge/gastown/internal/doltserver"
 	"github.com/steveyegge/gastown/internal/style"
 	"github.com/steveyegge/gastown/internal/workspace"
@@ -80,7 +81,7 @@ func runMaintain(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("not in a Gas Town workspace: %w", err)
 	}
 
-	config := doltserver.DefaultConfig(townRoot)
+	config := maintainDoltConfig(townRoot)
 	if config.IsRemote() {
 		return fmt.Errorf("maintain requires local Dolt server (remote: %s)", config.HostPort())
 	}
@@ -227,6 +228,14 @@ func runMaintain(cmd *cobra.Command, args []string) error {
 	fmt.Printf("  Databases gc'd: %d\n", gcCount)
 
 	return nil
+}
+
+func maintainDoltConfig(townRoot string) *doltserver.Config {
+	config := doltserver.DefaultConfig(townRoot)
+	if port := agentconfig.ResolveDoltPort(townRoot); port > 0 {
+		config.Port = port
+	}
+	return config
 }
 
 // maintainCountCommits returns the number of Dolt commits in a database.

@@ -19,8 +19,8 @@ set -euo pipefail
 
 # --- Configuration -----------------------------------------------------------
 
-DOLT_HOST="${DOLT_HOST:-127.0.0.1}"
-DOLT_PORT="${DOLT_PORT:-3307}"
+DOLT_HOST="${DOLT_HOST:-${GT_DOLT_HOST:-127.0.0.1}}"
+DOLT_PORT="${DOLT_PORT:-${GT_DOLT_PORT:-3307}}"
 DOLT_USER="${DOLT_USER:-root}"
 COMMIT_THRESHOLD="${COMMIT_THRESHOLD:-2000}"
 # Default: auto-discover production databases via SHOW DATABASES.

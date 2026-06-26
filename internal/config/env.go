@@ -318,11 +318,17 @@ func AgentEnv(cfg AgentEnvConfig) map[string]string {
 	if _, ok := env["BEADS_DOLT_SERVER_PORT"]; !ok {
 		if v := os.Getenv("BEADS_DOLT_SERVER_PORT"); v != "" {
 			env["BEADS_DOLT_SERVER_PORT"] = v
+			if _, legacySet := env["BEADS_DOLT_PORT"]; !legacySet && os.Getenv("BEADS_DOLT_PORT") == "" {
+				env["BEADS_DOLT_PORT"] = v
+			}
 		}
 	}
 	if _, ok := env["BEADS_DOLT_PORT"]; !ok {
 		if v := os.Getenv("BEADS_DOLT_PORT"); v != "" {
 			env["BEADS_DOLT_PORT"] = v
+			if _, serverSet := env["BEADS_DOLT_SERVER_PORT"]; !serverSet && os.Getenv("BEADS_DOLT_SERVER_PORT") == "" {
+				env["BEADS_DOLT_SERVER_PORT"] = v
+			}
 		}
 	}
 

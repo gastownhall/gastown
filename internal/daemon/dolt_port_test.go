@@ -36,10 +36,29 @@ func TestDoltServerPortPrefersEnabledManagerPort(t *testing.T) {
 
 	d := &Daemon{
 		config:     &Config{TownRoot: townRoot},
-		doltServer: &DoltServerManager{config: &DoltServerConfig{Port: 6617}},
+		doltServer: &DoltServerManager{config: &DoltServerConfig{Enabled: true, Port: 6617}},
 	}
 	if got := d.doltServerPort(); got != 6617 {
 		t.Fatalf("doltServerPort() = %d, want manager port 6617", got)
+	}
+}
+
+func TestDoltServerPortIgnoresDisabledManagerPort(t *testing.T) {
+	townRoot := t.TempDir()
+	statePath := filepath.Join(townRoot, "daemon", "dolt-state.json")
+	if err := os.MkdirAll(filepath.Dir(statePath), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(statePath, []byte(`{"running":true,"port":5517}`), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	d := &Daemon{
+		config:     &Config{TownRoot: townRoot},
+		doltServer: &DoltServerManager{config: &DoltServerConfig{Enabled: false, Port: 3307}},
+	}
+	if got := d.doltServerPort(); got != 5517 {
+		t.Fatalf("doltServerPort() = %d, want resolved runtime port 5517", got)
 	}
 }
 

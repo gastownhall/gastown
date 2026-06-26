@@ -882,6 +882,7 @@ func TestAgentEnv_PropagatesDoltPort(t *testing.T) {
 	t.Run("gt_dolt_port_set", func(t *testing.T) {
 		t.Setenv("GT_DOLT_PORT", "13307")
 		t.Setenv("BEADS_DOLT_PORT", "")
+		t.Setenv("BEADS_DOLT_SERVER_PORT", "")
 		env := AgentEnv(AgentEnvConfig{Role: "crew", Rig: "myrig", AgentName: "alice"})
 		assertEnv(t, env, "GT_DOLT_PORT", "13307")
 		assertEnv(t, env, "BEADS_DOLT_PORT", "13307")
@@ -892,6 +893,7 @@ func TestAgentEnv_PropagatesDoltPort(t *testing.T) {
 	t.Run("gt_dolt_port_overrides_legacy_beads_port", func(t *testing.T) {
 		t.Setenv("GT_DOLT_PORT", "13307")
 		t.Setenv("BEADS_DOLT_PORT", "99999")
+		t.Setenv("BEADS_DOLT_SERVER_PORT", "99999")
 		env := AgentEnv(AgentEnvConfig{Role: "polecat", Rig: "myrig", AgentName: "Toast"})
 		assertEnv(t, env, "GT_DOLT_PORT", "13307")
 		assertEnv(t, env, "BEADS_DOLT_PORT", "13307")
@@ -902,23 +904,29 @@ func TestAgentEnv_PropagatesDoltPort(t *testing.T) {
 	t.Run("beads_only", func(t *testing.T) {
 		t.Setenv("GT_DOLT_PORT", "")
 		t.Setenv("BEADS_DOLT_PORT", "3307")
+		t.Setenv("BEADS_DOLT_SERVER_PORT", "")
 		env := AgentEnv(AgentEnvConfig{Role: "witness", Rig: "myrig"})
 		if _, ok := env["GT_DOLT_PORT"]; ok {
 			t.Error("GT_DOLT_PORT should not be set when env is empty")
 		}
 		assertEnv(t, env, "BEADS_DOLT_PORT", "3307")
+		assertEnv(t, env, "BEADS_DOLT_SERVER_PORT", "3307")
 	})
 
 	// Subtest: neither set → neither propagated
 	t.Run("neither_set", func(t *testing.T) {
 		t.Setenv("GT_DOLT_PORT", "")
 		t.Setenv("BEADS_DOLT_PORT", "")
+		t.Setenv("BEADS_DOLT_SERVER_PORT", "")
 		env := AgentEnv(AgentEnvConfig{Role: "mayor"})
 		if _, ok := env["GT_DOLT_PORT"]; ok {
 			t.Error("GT_DOLT_PORT should not be set")
 		}
 		if _, ok := env["BEADS_DOLT_PORT"]; ok {
 			t.Error("BEADS_DOLT_PORT should not be set")
+		}
+		if _, ok := env["BEADS_DOLT_SERVER_PORT"]; ok {
+			t.Error("BEADS_DOLT_SERVER_PORT should not be set")
 		}
 	})
 }
@@ -1334,16 +1342,19 @@ func TestAgentEnv_InjectsDoltPortFromRunningStateForDog(t *testing.T) {
 func TestAgentEnv_NoDoltPortWithoutTownRoot(t *testing.T) {
 	t.Setenv("GT_DOLT_PORT", "")    // isolate from live Dolt server
 	t.Setenv("BEADS_DOLT_PORT", "") // isolate from live Dolt server
+	t.Setenv("BEADS_DOLT_SERVER_PORT", "")
 	env := AgentEnv(AgentEnvConfig{
 		Role: "mayor",
 	})
 	assertNotSet(t, env, "GT_DOLT_PORT")
 	assertNotSet(t, env, "BEADS_DOLT_PORT")
+	assertNotSet(t, env, "BEADS_DOLT_SERVER_PORT")
 }
 
 func TestAgentEnv_NoDoltPortWithoutConfig(t *testing.T) {
 	t.Setenv("GT_DOLT_PORT", "")    // isolate from live Dolt server
 	t.Setenv("BEADS_DOLT_PORT", "") // isolate from live Dolt server
+	t.Setenv("BEADS_DOLT_SERVER_PORT", "")
 	tmpDir := t.TempDir()
 	env := AgentEnv(AgentEnvConfig{
 		Role:     "mayor",
@@ -1351,6 +1362,7 @@ func TestAgentEnv_NoDoltPortWithoutConfig(t *testing.T) {
 	})
 	assertNotSet(t, env, "GT_DOLT_PORT")
 	assertNotSet(t, env, "BEADS_DOLT_PORT")
+	assertNotSet(t, env, "BEADS_DOLT_SERVER_PORT")
 }
 
 func TestClaudeConfigDir_Default(t *testing.T) {

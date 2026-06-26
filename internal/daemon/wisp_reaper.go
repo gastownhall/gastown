@@ -341,7 +341,7 @@ func (d *Daemon) reapWispsInline(config *WispReaperConfig, maxAge, deleteAge tim
 
 // doltServerPort returns the configured Dolt server port.
 func (d *Daemon) doltServerPort() int {
-	if d != nil && d.doltServer != nil && d.doltServer.config.Port > 0 {
+	if d != nil && d.doltServer != nil && d.doltServer.IsEnabled() && d.doltServer.config.Port > 0 {
 		return d.doltServer.config.Port
 	}
 	townRoot := ""

@@ -10,7 +10,8 @@ Your role is set by the GT_ROLE environment variable and injected by `{{cmd}} pr
 ## Dolt Server — Operational Awareness (All Agents)
 
 Dolt is the data plane for beads (issues, mail, identity, work history). It runs
-as a single server on port 3307 serving all databases. **It is fragile.**
+as a single server on the configured port (default 3307) serving all databases.
+**It is fragile.**
 
 ### If you detect Dolt trouble
 
