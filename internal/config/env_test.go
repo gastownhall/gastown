@@ -1264,6 +1264,37 @@ func TestResolveDoltPort_GTDoltPortTakesPrecedenceOverConfigYAML(t *testing.T) {
 	}
 }
 
+func TestResolveDoltPort_DaemonJSONIsLastFallback(t *testing.T) {
+	tmpDir := t.TempDir()
+	t.Setenv("GT_DOLT_PORT", "")
+
+	doltDataDir := filepath.Join(tmpDir, ".dolt-data")
+	if err := os.MkdirAll(doltDataDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(doltDataDir, "config.yaml"), []byte("listener:\n  port: 3315\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	mayorDir := filepath.Join(tmpDir, "mayor")
+	if err := os.MkdirAll(mayorDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(mayorDir, "daemon.json"), []byte(`{"env":{"GT_DOLT_PORT":"9999"}}`), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	got := ResolveDoltPort(tmpDir)
+	if got != 3315 {
+		t.Errorf("ResolveDoltPort() = %d, want config.yaml port 3315 over daemon.json", got)
+	}
+
+	t.Setenv("GT_DOLT_PORT", "3316")
+	got = ResolveDoltPort(tmpDir)
+	if got != 3316 {
+		t.Errorf("ResolveDoltPort() = %d, want GT_DOLT_PORT 3316 over config.yaml and daemon.json", got)
+	}
+}
+
 func TestResolveDoltPort_FromDaemonJSON(t *testing.T) {
 	t.Setenv("GT_DOLT_PORT", "") // isolate from live Dolt server
 	tmpDir := t.TempDir()

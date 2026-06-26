@@ -34,8 +34,8 @@ whether the other layers work.
 DOLT_DATA_DIR="$GT_TOWN_ROOT/.dolt-data"
 PROD_DBS=("hq" "gt" "mo")
 JSONL_EXPORT_DIR="$GT_TOWN_ROOT/.dolt-archive/jsonl"
-DOLT_HOST="${GT_DOLT_HOST:-127.0.0.1}"
-DOLT_PORT="${GT_DOLT_PORT:-3307}"
+DOLT_HOST="${GT_DOLT_HOST:-${DOLT_HOST:-127.0.0.1}}"
+DOLT_PORT="${GT_DOLT_PORT:-${DOLT_PORT:-3307}}"
 DOLT_USER="root"
 ```
 
