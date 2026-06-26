@@ -26,7 +26,7 @@ This is infrastructure cleanup work:
 | alert_threshold | config | Open wisp count that triggers escalation (default 500) |
 | dry_run | config | If "true", report without acting |
 | databases | config | Comma-separated DB list (default: auto-discover) |
-| dolt_port | config | Dolt server port (default 3307) |
+| dolt_port | daemon/env | Optional display port; commands inherit GT_DOLT_PORT |
 | db_delay | config | Delay between databases to reduce Dolt load (default 250ms) |
 
 ## Safety
@@ -63,13 +63,13 @@ Discover databases and count candidates for each operation.
 
 **1. List databases to scan:**
 ```bash
-gt reaper databases --port={{dolt_port}} --json
+gt reaper databases --json
 ```
 Or use configured database list from {{databases}} variable.
 
 **2. Scan each database:**
 ```bash
-gt reaper scan --db=<name> --port={{dolt_port}} \\
+gt reaper scan --db=<name> \\
   --max-age={{max_age}} --purge-age={{purge_age}} \\
   --mail-age={{mail_delete_age}} --stale-age={{stale_issue_age}} \\
   --db-delay={{db_delay}} \\
@@ -99,7 +99,7 @@ step-wisps immediately when their parent molecule is already closed.
 
 **1. For each database with `reap_candidates` or `molecule_step_candidates`:**
 ```bash
-gt reaper reap --db=<name> --port={{dolt_port}} \\
+gt reaper reap --db=<name> \\
   --max-age={{max_age}} --db-delay={{db_delay}} {{#if dry_run}}--dry-run{{/if}} --json
 ```
 
@@ -125,7 +125,7 @@ Delete closed wisps past purge_age and closed mail past mail_delete_age.
 
 **1. For each database with purge candidates:**
 ```bash
-gt reaper purge --db=<name> --port={{dolt_port}} \\
+gt reaper purge --db=<name> \\
   --purge-age={{purge_age}} --mail-age={{mail_delete_age}} \\
   --db-delay={{db_delay}} \\
   {{#if dry_run}}--dry-run{{/if}} --json
@@ -150,7 +150,7 @@ Close issues that have been open with no status change past stale_issue_age.
 
 **1. For each database with stale candidates:**
 ```bash
-gt reaper auto-close --db=<name> --port={{dolt_port}} \\
+gt reaper auto-close --db=<name> \\
   --stale-age={{stale_issue_age}} \\
   --db-delay={{db_delay}} \\
   {{#if dry_run}}--dry-run{{/if}} --json
@@ -251,8 +251,8 @@ description = "Comma-separated database names (empty = auto-discover)"
 default = ""
 
 [vars.dolt_port]
-description = "Dolt server port"
-default = "3307"
+description = "Optional legacy/display Dolt server port; runtime commands inherit GT_DOLT_PORT"
+default = ""
 
 [vars.db_delay]
 description = "Delay between databases to reduce Dolt load"

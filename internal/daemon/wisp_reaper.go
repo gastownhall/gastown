@@ -6,7 +6,9 @@ import (
 	"strings"
 	"time"
 
+	agentconfig "github.com/steveyegge/gastown/internal/config"
 	"github.com/steveyegge/gastown/internal/constants"
+	"github.com/steveyegge/gastown/internal/doltserver"
 	"github.com/steveyegge/gastown/internal/reaper"
 	"github.com/steveyegge/gastown/internal/util"
 )
@@ -339,8 +341,15 @@ func (d *Daemon) reapWispsInline(config *WispReaperConfig, maxAge, deleteAge tim
 
 // doltServerPort returns the configured Dolt server port.
 func (d *Daemon) doltServerPort() int {
-	if d.doltServer != nil {
+	if d != nil && d.doltServer != nil && d.doltServer.config.Port > 0 {
 		return d.doltServer.config.Port
 	}
-	return 3307
+	townRoot := ""
+	if d != nil && d.config != nil {
+		townRoot = d.config.TownRoot
+	}
+	if port := agentconfig.ResolveDoltPort(townRoot); port > 0 {
+		return port
+	}
+	return doltserver.DefaultPort
 }

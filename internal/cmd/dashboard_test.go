@@ -81,7 +81,7 @@ func TestEnsureDoltPortEnv_ReadsStateFile(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	state := doltserver.State{Port: 13307}
+	state := doltserver.State{Running: true, Port: 13307}
 	data, err := json.Marshal(state)
 	if err != nil {
 		t.Fatal(err)
@@ -102,6 +102,9 @@ func TestEnsureDoltPortEnv_ReadsStateFile(t *testing.T) {
 	if got := os.Getenv("BEADS_DOLT_PORT"); got != "13307" {
 		t.Errorf("BEADS_DOLT_PORT = %q, want %q", got, "13307")
 	}
+	if got := os.Getenv("BEADS_DOLT_SERVER_PORT"); got != "13307" {
+		t.Errorf("BEADS_DOLT_SERVER_PORT = %q, want %q", got, "13307")
+	}
 }
 
 func TestEnsureDoltPortEnv_FallsBackToDefault(t *testing.T) {
@@ -120,6 +123,9 @@ func TestEnsureDoltPortEnv_FallsBackToDefault(t *testing.T) {
 	if got := os.Getenv("BEADS_DOLT_PORT"); got != want {
 		t.Errorf("BEADS_DOLT_PORT = %q, want %q (default)", got, want)
 	}
+	if got := os.Getenv("BEADS_DOLT_SERVER_PORT"); got != want {
+		t.Errorf("BEADS_DOLT_SERVER_PORT = %q, want %q (default)", got, want)
+	}
 }
 
 func TestEnsureDoltPortEnv_OverridesWrongPort(t *testing.T) {
@@ -133,7 +139,7 @@ func TestEnsureDoltPortEnv_OverridesWrongPort(t *testing.T) {
 	if err := os.MkdirAll(daemonDir, 0755); err != nil {
 		t.Fatal(err)
 	}
-	state := doltserver.State{Port: 3307}
+	state := doltserver.State{Running: true, Port: 3307}
 	data, _ := json.Marshal(state)
 	if err := os.WriteFile(filepath.Join(daemonDir, "dolt-state.json"), data, 0644); err != nil {
 		t.Fatal(err)
@@ -146,5 +152,8 @@ func TestEnsureDoltPortEnv_OverridesWrongPort(t *testing.T) {
 	}
 	if got := os.Getenv("BEADS_DOLT_PORT"); got != "3307" {
 		t.Errorf("BEADS_DOLT_PORT = %q, want %q (should override wrong port)", got, "3307")
+	}
+	if got := os.Getenv("BEADS_DOLT_SERVER_PORT"); got != "3307" {
+		t.Errorf("BEADS_DOLT_SERVER_PORT = %q, want %q (should override wrong port)", got, "3307")
 	}
 }

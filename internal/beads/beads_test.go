@@ -168,6 +168,51 @@ func TestBuildPinnedBDEnvUsesSelectedConnectionMetadataWithoutDatabaseOverride(t
 	}
 }
 
+func TestBuildBDEnvGTDoltPortOverridesStaleMetadata(t *testing.T) {
+	beadsDir := filepath.Join(t.TempDir(), ".beads")
+	if err := os.MkdirAll(beadsDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	metadata := []byte(`{"dolt_database":"rigdb","dolt_server_host":"127.0.0.1","dolt_server_port":3307}`)
+	if err := os.WriteFile(filepath.Join(beadsDir, "metadata.json"), metadata, 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	base := []string{
+		"PATH=/usr/bin",
+		"GT_DOLT_PORT=5507",
+		"BEADS_DOLT_SERVER_PORT=9999",
+		"BEADS_DOLT_PORT=9999",
+		"BEADS_DOLT_SERVER_DATABASE=hq",
+	}
+	for _, tc := range []struct {
+		name string
+		env  []string
+	}{
+		{"pinned", BuildPinnedBDEnv(base, beadsDir)},
+		{"routing", BuildRoutingBDEnv(base, beadsDir)},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got := envMap(tc.env)
+			if got["BEADS_DOLT_SERVER_PORT"] != "5507" || got["BEADS_DOLT_PORT"] != "5507" {
+				t.Fatalf("ports = server:%q legacy:%q, want 5507 in %v", got["BEADS_DOLT_SERVER_PORT"], got["BEADS_DOLT_PORT"], tc.env)
+			}
+			if count := countEnvPrefix(tc.env, "BEADS_DOLT_SERVER_PORT="); count != 1 {
+				t.Fatalf("BEADS_DOLT_SERVER_PORT count = %d, want 1 in %v", count, tc.env)
+			}
+			if count := countEnvPrefix(tc.env, "BEADS_DOLT_PORT="); count != 1 {
+				t.Fatalf("BEADS_DOLT_PORT count = %d, want 1 in %v", count, tc.env)
+			}
+			if _, ok := got["BEADS_DOLT_SERVER_DATABASE"]; ok {
+				t.Fatalf("BEADS_DOLT_SERVER_DATABASE should be stripped in %v", tc.env)
+			}
+			if got["BEADS_DOLT_SERVER_HOST"] != "127.0.0.1" {
+				t.Fatalf("BEADS_DOLT_SERVER_HOST = %q, want metadata host in %v", got["BEADS_DOLT_SERVER_HOST"], tc.env)
+			}
+		})
+	}
+}
+
 func TestBuildBDEnvRestoresGTDoltDataDir(t *testing.T) {
 	beadsDir := filepath.Join(t.TempDir(), ".beads")
 	if err := os.MkdirAll(beadsDir, 0755); err != nil {
