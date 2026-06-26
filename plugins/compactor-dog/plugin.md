@@ -35,7 +35,7 @@ to decide if maintenance is needed.** Consider:
 ## Config
 
 ```bash
-DOLT_HOST="127.0.0.1"
+DOLT_HOST="${GT_DOLT_HOST:-127.0.0.1}"
 DOLT_PORT="${GT_DOLT_PORT:-3307}"
 DOLT_USER="root"
 DOLT_DATA_DIR="$HOME/gt/.dolt-data"

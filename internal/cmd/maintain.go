@@ -5,6 +5,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -86,11 +87,14 @@ func runMaintain(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("maintain requires local Dolt server (remote: %s)", config.HostPort())
 	}
 
-	// Verify server is running (needed for reap + flatten phases).
-	running, _, err := doltserver.IsRunning(townRoot)
-	if err != nil || !running {
+	// Verify the resolved runtime endpoint is reachable. Do not call
+	// doltserver.IsRunning here: it rebuilds DefaultConfig and can re-check a
+	// stale config.yaml port after daemon state resolved a different runtime port.
+	conn, err := net.DialTimeout("tcp", config.HostPort(), 2*time.Second)
+	if err != nil {
 		return fmt.Errorf("Dolt server not running — start with 'gt dolt start'")
 	}
+	_ = conn.Close()
 
 	// Phase 0: Build and display maintenance plan.
 	fmt.Printf("%s Building maintenance plan...\n", style.Bold.Render("●"))

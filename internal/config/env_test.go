@@ -913,6 +913,15 @@ func TestAgentEnv_PropagatesDoltPort(t *testing.T) {
 		assertEnv(t, env, "BEADS_DOLT_SERVER_PORT", "3307")
 	})
 
+	t.Run("conflicting_beads_ports_legacy_wins", func(t *testing.T) {
+		t.Setenv("GT_DOLT_PORT", "")
+		t.Setenv("BEADS_DOLT_PORT", "3308")
+		t.Setenv("BEADS_DOLT_SERVER_PORT", "9999")
+		env := AgentEnv(AgentEnvConfig{Role: "witness", Rig: "myrig"})
+		assertEnv(t, env, "BEADS_DOLT_PORT", "3308")
+		assertEnv(t, env, "BEADS_DOLT_SERVER_PORT", "3308")
+	})
+
 	// Subtest: neither set → neither propagated
 	t.Run("neither_set", func(t *testing.T) {
 		t.Setenv("GT_DOLT_PORT", "")
@@ -1138,7 +1147,7 @@ func TestParsePortFromConfigYAML(t *testing.T) {
 }
 
 func TestResolveDoltPort_FromConfigYAML(t *testing.T) {
-	t.Parallel()
+	t.Setenv("GT_DOLT_PORT", "")
 	tmpDir := t.TempDir()
 	doltDataDir := filepath.Join(tmpDir, ".dolt-data")
 	if err := os.MkdirAll(doltDataDir, 0755); err != nil {
@@ -1200,6 +1209,7 @@ func TestResolveDoltPort_RunningStateTakesPrecedence(t *testing.T) {
 }
 
 func TestResolveDoltPort_StoppedStateFallsThrough(t *testing.T) {
+	t.Setenv("GT_DOLT_PORT", "")
 	tmpDir := t.TempDir()
 	doltDataDir := filepath.Join(tmpDir, ".dolt-data")
 	if err := os.MkdirAll(doltDataDir, 0755); err != nil {
@@ -1232,7 +1242,7 @@ func TestResolveDoltPort_FromEnvVar(t *testing.T) {
 	}
 }
 
-func TestResolveDoltPort_ConfigYAMLTakesPrecedence(t *testing.T) {
+func TestResolveDoltPort_GTDoltPortTakesPrecedenceOverConfigYAML(t *testing.T) {
 	tmpDir := t.TempDir()
 	t.Setenv("GT_DOLT_PORT", "9999")
 
@@ -1249,8 +1259,8 @@ func TestResolveDoltPort_ConfigYAMLTakesPrecedence(t *testing.T) {
 	}
 
 	got := ResolveDoltPort(tmpDir)
-	if got != 3307 {
-		t.Errorf("ResolveDoltPort() = %d, want 3307 (config.yaml > env var)", got)
+	if got != 9999 {
+		t.Errorf("ResolveDoltPort() = %d, want 9999 (GT_DOLT_PORT > config.yaml)", got)
 	}
 }
 

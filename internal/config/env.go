@@ -315,20 +315,16 @@ func AgentEnv(cfg AgentEnvConfig) map[string]string {
 			env["BEADS_DOLT_SERVER_PORT"] = v
 		}
 	}
-	if _, ok := env["BEADS_DOLT_SERVER_PORT"]; !ok {
-		if v := os.Getenv("BEADS_DOLT_SERVER_PORT"); v != "" {
-			env["BEADS_DOLT_SERVER_PORT"] = v
-			if _, legacySet := env["BEADS_DOLT_PORT"]; !legacySet && os.Getenv("BEADS_DOLT_PORT") == "" {
-				env["BEADS_DOLT_PORT"] = v
-			}
-		}
-	}
-	if _, ok := env["BEADS_DOLT_PORT"]; !ok {
-		if v := os.Getenv("BEADS_DOLT_PORT"); v != "" {
-			env["BEADS_DOLT_PORT"] = v
-			if _, serverSet := env["BEADS_DOLT_SERVER_PORT"]; !serverSet && os.Getenv("BEADS_DOLT_SERVER_PORT") == "" {
-				env["BEADS_DOLT_SERVER_PORT"] = v
-			}
+	if _, ok := env["GT_DOLT_PORT"]; !ok {
+		legacyPort := os.Getenv("BEADS_DOLT_PORT")
+		serverPort := os.Getenv("BEADS_DOLT_SERVER_PORT")
+		switch {
+		case legacyPort != "":
+			env["BEADS_DOLT_PORT"] = legacyPort
+			env["BEADS_DOLT_SERVER_PORT"] = legacyPort
+		case serverPort != "":
+			env["BEADS_DOLT_PORT"] = serverPort
+			env["BEADS_DOLT_SERVER_PORT"] = serverPort
 		}
 	}
 
@@ -442,8 +438,8 @@ func sanitizeOTELAttrValue(s string, maxLen int) string {
 //
 // Resolution order for spawned clients:
 //  1. running daemon/dolt-state.json port (actual runtime endpoint)
-//  2. .dolt-data/config.yaml listener.port (machine-generated config)
-//  3. GT_DOLT_PORT environment variable
+//  2. GT_DOLT_PORT environment variable
+//  3. .dolt-data/config.yaml listener.port (machine-generated config)
 //  4. mayor/daemon.json env.GT_DOLT_PORT
 //  5. 0 (caller should skip injection or choose an explicit default)
 //
@@ -456,20 +452,20 @@ func ResolveDoltPort(townRoot string) int {
 		return port
 	}
 
-	// 2. Read from .dolt-data/config.yaml.
+	// 2. Environment variable.
+	if p := os.Getenv("GT_DOLT_PORT"); p != "" {
+		if port, err := strconv.Atoi(p); err == nil && port > 0 {
+			return port
+		}
+	}
+
+	// 3. Read from .dolt-data/config.yaml.
 	if townRoot != "" {
 		configPath := filepath.Join(townRoot, ".dolt-data", "config.yaml")
 		if data, err := os.ReadFile(configPath); err == nil {
 			if port := parsePortFromConfigYAML(data); port > 0 {
 				return port
 			}
-		}
-	}
-
-	// 3. Environment variable.
-	if p := os.Getenv("GT_DOLT_PORT"); p != "" {
-		if port, err := strconv.Atoi(p); err == nil && port > 0 {
-			return port
 		}
 	}
 
