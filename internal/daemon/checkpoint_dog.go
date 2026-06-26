@@ -158,6 +158,19 @@ func (d *Daemon) checkpointWorktree(workDir, rigName, polecatName string) bool {
 		_, _ = runGitCmd(workDir, "reset", "HEAD", "--", dir)
 	}
 
+	// Unstage nested runtime/ephemeral dirs (e.g. web/.beads/, service/foo/.claude/).
+	// The root-level loop above only resets top-level dirs like .beads/ — it does NOT
+	// cover paths like web/.beads/redirect. When a file was previously tracked on the
+	// branch (committed before a gitignore rule landed), git add -A re-stages it on
+	// every checkpoint even though it is now gitignored, because git tracks changes to
+	// known paths regardless of .gitignore. Scanning staged paths and unstaging any
+	// that contain a runtime-dir component at any depth fixes this.
+	if stagedOut, err := runGitCmd(workDir, "diff", "--cached", "--name-only"); err == nil {
+		for _, dir := range nestedRuntimeArtifactDirs(stagedOut) {
+			_, _ = runGitCmd(workDir, "reset", "HEAD", "--", dir)
+		}
+	}
+
 	// Unstage deletions of tracked files. A checkpoint should preserve work
 	// (additions + modifications), never commit deletions of tracked files.
 	// This prevents the bug where a polecat's working tree has a missing
@@ -217,6 +230,42 @@ func resolveCheckpointWorkDir(polecatsDir, polecatName, rigName string) string {
 		return flat
 	}
 	return ""
+}
+
+// nestedRuntimeArtifactDirs scans staged file paths and returns the deduplicated
+// set of path prefixes that end at a runtime artifact directory component. It
+// skips root-level dirs (depth 0) because those are already handled by the
+// runtimeExcludeDirs reset loop. Only truly nested occurrences (depth ≥ 1) are
+// returned so callers can issue targeted git reset HEAD -- <prefix>/ commands.
+//
+// Example: given "web/.beads/redirect\nservice/foo/.claude/settings.json",
+// returns ["web/.beads/", "service/foo/.claude/"].
+func nestedRuntimeArtifactDirs(stagedOutput string) []string {
+	seen := make(map[string]bool)
+	var dirs []string
+	for _, f := range strings.Split(strings.TrimSpace(stagedOutput), "\n") {
+		if f == "" {
+			continue
+		}
+		parts := strings.Split(filepath.ToSlash(f), "/")
+		for i, part := range parts {
+			if i == 0 {
+				// Root-level already handled by runtimeExcludeDirs loop.
+				continue
+			}
+			for _, dir := range runtimeExcludeDirs {
+				if part == strings.TrimSuffix(dir, "/") {
+					prefix := strings.Join(parts[:i+1], "/") + "/"
+					if !seen[prefix] {
+						seen[prefix] = true
+						dirs = append(dirs, prefix)
+					}
+					break
+				}
+			}
+		}
+	}
+	return dirs
 }
 
 // runGitCmd executes a git command in the given directory and returns stdout.

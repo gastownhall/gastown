@@ -204,3 +204,61 @@ func TestIsGitWorktree(t *testing.T) {
 		t.Error(".git file (linked worktree) should count as worktree")
 	}
 }
+
+func TestNestedRuntimeArtifactDirs_Empty(t *testing.T) {
+	if got := nestedRuntimeArtifactDirs(""); len(got) != 0 {
+		t.Errorf("expected empty for empty input, got %v", got)
+	}
+}
+
+func TestNestedRuntimeArtifactDirs_RootLevelSkipped(t *testing.T) {
+	// Root-level runtime dirs are already handled by runtimeExcludeDirs loop.
+	got := nestedRuntimeArtifactDirs(".beads/redirect\n.claude/settings.json")
+	if len(got) != 0 {
+		t.Errorf("expected root-level dirs to be skipped, got %v", got)
+	}
+}
+
+func TestNestedRuntimeArtifactDirs_NestedBeads(t *testing.T) {
+	// web/.beads/redirect — the exact bug that triggered this fix.
+	got := nestedRuntimeArtifactDirs("web/.beads/redirect")
+	if len(got) != 1 || got[0] != "web/.beads/" {
+		t.Errorf("expected [web/.beads/], got %v", got)
+	}
+}
+
+func TestNestedRuntimeArtifactDirs_DeepNested(t *testing.T) {
+	// service/accent-ci/.beads/redirect — two-level prefix.
+	got := nestedRuntimeArtifactDirs("service/accent-ci/.beads/redirect")
+	if len(got) != 1 || got[0] != "service/accent-ci/.beads/" {
+		t.Errorf("expected [service/accent-ci/.beads/], got %v", got)
+	}
+}
+
+func TestNestedRuntimeArtifactDirs_MultipleDeduped(t *testing.T) {
+	// Two staged files under the same nested dir should produce only one entry.
+	input := "web/.beads/redirect\nweb/.beads/other-file"
+	got := nestedRuntimeArtifactDirs(input)
+	if len(got) != 1 || got[0] != "web/.beads/" {
+		t.Errorf("expected deduped [web/.beads/], got %v", got)
+	}
+}
+
+func TestNestedRuntimeArtifactDirs_MixedRootAndNested(t *testing.T) {
+	// Root-level skipped; nested collected.
+	input := ".beads/redirect\nweb/.beads/redirect\nservice/foo/.claude/settings.json"
+	got := nestedRuntimeArtifactDirs(input)
+	if len(got) != 2 {
+		t.Fatalf("expected 2 nested dirs, got %v", got)
+	}
+	gotSet := make(map[string]bool)
+	for _, d := range got {
+		gotSet[d] = true
+	}
+	if !gotSet["web/.beads/"] {
+		t.Errorf("missing web/.beads/ in %v", got)
+	}
+	if !gotSet["service/foo/.claude/"] {
+		t.Errorf("missing service/foo/.claude/ in %v", got)
+	}
+}
