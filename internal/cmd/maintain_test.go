@@ -1,6 +1,8 @@
 package cmd
 
 import (
+	"os"
+	"path/filepath"
 	"testing"
 )
 
@@ -78,5 +80,28 @@ func TestMaintainDBInfo(t *testing.T) {
 func TestMaintainConstants(t *testing.T) {
 	if defaultMaintainThreshold != 100 {
 		t.Errorf("expected default threshold 100, got %d", defaultMaintainThreshold)
+	}
+}
+
+func TestMaintainDoltConfigUsesResolvedRuntimePort(t *testing.T) {
+	townRoot := t.TempDir()
+	doltDataDir := filepath.Join(townRoot, ".dolt-data")
+	if err := os.MkdirAll(doltDataDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(doltDataDir, "config.yaml"), []byte("listener:\n  port: 3307\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	statePath := filepath.Join(townRoot, "daemon", "dolt-state.json")
+	if err := os.MkdirAll(filepath.Dir(statePath), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(statePath, []byte(`{"running":true,"port":5519}`), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	config := maintainDoltConfig(townRoot)
+	if config.Port != 5519 {
+		t.Fatalf("maintainDoltConfig().Port = %d, want 5519", config.Port)
 	}
 }

@@ -193,6 +193,24 @@ func TestMolConvoyFeedFormula_VariableValidation(t *testing.T) {
 	}
 }
 
+func TestMolDogReaperFormula_DoesNotForceDoltPort(t *testing.T) {
+	formulaPath := filepath.Join("formulas", constants.MolDogReaper+".formula.toml")
+	data, err := os.ReadFile(formulaPath)
+	if err != nil {
+		t.Skipf("Formula file not found: %v", err)
+	}
+	text := string(data)
+	for _, forbidden := range []string{
+		"--port={{dolt_port}}",
+		"default = \"3307\"",
+		"default 3307",
+	} {
+		if strings.Contains(text, forbidden) {
+			t.Fatalf("mol-dog-reaper formula should inherit GT_DOLT_PORT, found %q", forbidden)
+		}
+	}
+}
+
 // TestAllEmbeddedFormulas_VariableValidation ensures no embedded formula
 // has undefined template variables. This prevents future regressions.
 func TestAllEmbeddedFormulas_VariableValidation(t *testing.T) {

@@ -136,7 +136,7 @@ bd create --title="Found bug" --type=bug --priority=2  # File discovered work
 
 ## Dolt Connectivity
 
-Beads data is stored in **Dolt** (git-for-data) on port 3307. If `bd` commands hang or fail:
+Beads data is stored in **Dolt** (git-for-data) on the configured port (default 3307). If `bd` commands hang or fail:
 
 ```bash
 gt dolt status                     # Check server health + latency

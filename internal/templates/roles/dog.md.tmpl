@@ -126,11 +126,14 @@ Each formula tells you exactly what CLI commands to run. Here is the quick refer
 
 ```bash
 gt reaper databases --json                          # List databases to scan
-gt reaper scan --db=<name> --port=3307 --json       # Count candidates
-gt reaper reap --db=<name> --port=3307 --json       # Close stale wisps
-gt reaper purge --db=<name> --port=3307 --json      # Delete old closed wisps + mail
-gt reaper auto-close --db=<name> --port=3307 --json # Close stale issues
+gt reaper scan --db=<name> --json                   # Count candidates
+gt reaper reap --db=<name> --json                   # Close stale wisps
+gt reaper purge --db=<name> --json                  # Delete old closed wisps + mail
+gt reaper auto-close --db=<name> --json             # Close stale issues
 ```
+
+Port is inherited from `GT_DOLT_PORT` / `BEADS_DOLT_SERVER_PORT`; pass `--port`
+only for an explicit one-off override.
 
 Steps: scan → reap → purge → auto-close → report
 

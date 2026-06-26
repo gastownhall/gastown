@@ -93,8 +93,8 @@ func TestIsSystemDB(t *testing.T) {
 		{"lora_forge", false},
 		{"node0", false},
 		// Edge cases: names that start with system prefixes but aren't
-		{"testdb", false},        // exactly "testdb" with no underscore
-		{"beads", false},         // exactly "beads"
+		{"testdb", false},           // exactly "testdb" with no underscore
+		{"beads", false},            // exactly "beads"
 		{"beads_production", false}, // doesn't match beads_t or beads_pt
 	}
 
@@ -280,20 +280,29 @@ func TestResolveDependencyDB_EmptyRoutes(t *testing.T) {
 }
 
 func TestResolveHost(t *testing.T) {
+	t.Setenv("GT_DOLT_HOST", "")
+	t.Setenv("DOLT_HOST", "")
+
 	// Flag takes precedence
 	if got := resolveHost("192.168.1.1"); got != "192.168.1.1" {
 		t.Errorf("resolveHost with flag = %q, want 192.168.1.1", got)
 	}
 
-	// Env var
-	os.Setenv("DOLT_HOST", "10.0.0.1")
-	defer os.Unsetenv("DOLT_HOST")
+	// GT_DOLT_HOST takes precedence over DOLT_HOST.
+	t.Setenv("GT_DOLT_HOST", "10.0.0.2")
+	t.Setenv("DOLT_HOST", "10.0.0.1")
+	if got := resolveHost(""); got != "10.0.0.2" {
+		t.Errorf("resolveHost with GT_DOLT_HOST = %q, want 10.0.0.2", got)
+	}
+
+	// DOLT_HOST is the fallback env var.
+	t.Setenv("GT_DOLT_HOST", "")
 	if got := resolveHost(""); got != "10.0.0.1" {
 		t.Errorf("resolveHost with DOLT_HOST = %q, want 10.0.0.1", got)
 	}
 
 	// Default
-	os.Unsetenv("DOLT_HOST")
+	t.Setenv("DOLT_HOST", "")
 	if got := resolveHost(""); got != "127.0.0.1" {
 		t.Errorf("resolveHost default = %q, want 127.0.0.1", got)
 	}

@@ -167,6 +167,99 @@ func TestBuildPinnedBDEnvUsesSelectedConnectionMetadata(t *testing.T) {
 	}
 }
 
+func TestBuildBDEnvGTDoltPortOverridesStaleMetadata(t *testing.T) {
+	beadsDir := filepath.Join(t.TempDir(), ".beads")
+	if err := os.MkdirAll(beadsDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	metadata := []byte(`{"dolt_database":"rigdb","dolt_server_host":"127.0.0.1","dolt_server_port":3307}`)
+	if err := os.WriteFile(filepath.Join(beadsDir, "metadata.json"), metadata, 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	base := []string{
+		"PATH=/usr/bin",
+		"GT_DOLT_PORT=5507",
+		"BEADS_DOLT_SERVER_PORT=9999",
+		"BEADS_DOLT_PORT=9999",
+		"BEADS_DOLT_SERVER_DATABASE=hq",
+	}
+	for _, tc := range []struct {
+		name       string
+		env        []string
+		wantDBName string
+	}{
+		{"pinned", BuildPinnedBDEnv(base, beadsDir), "rigdb"},
+		{"routing", BuildRoutingBDEnv(base, beadsDir), ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got := envMap(tc.env)
+			if got["BEADS_DOLT_SERVER_PORT"] != "5507" || got["BEADS_DOLT_PORT"] != "5507" {
+				t.Fatalf("ports = server:%q legacy:%q, want 5507 in %v", got["BEADS_DOLT_SERVER_PORT"], got["BEADS_DOLT_PORT"], tc.env)
+			}
+			if count := countEnvPrefix(tc.env, "BEADS_DOLT_SERVER_PORT="); count != 1 {
+				t.Fatalf("BEADS_DOLT_SERVER_PORT count = %d, want 1 in %v", count, tc.env)
+			}
+			if count := countEnvPrefix(tc.env, "BEADS_DOLT_PORT="); count != 1 {
+				t.Fatalf("BEADS_DOLT_PORT count = %d, want 1 in %v", count, tc.env)
+			}
+			if tc.wantDBName == "" {
+				if _, ok := got["BEADS_DOLT_SERVER_DATABASE"]; ok {
+					t.Fatalf("BEADS_DOLT_SERVER_DATABASE should be stripped in %v", tc.env)
+				}
+			} else if got["BEADS_DOLT_SERVER_DATABASE"] != tc.wantDBName {
+				t.Fatalf("BEADS_DOLT_SERVER_DATABASE = %q, want %q in %v", got["BEADS_DOLT_SERVER_DATABASE"], tc.wantDBName, tc.env)
+			}
+			if got["BEADS_DOLT_SERVER_HOST"] != "127.0.0.1" {
+				t.Fatalf("BEADS_DOLT_SERVER_HOST = %q, want metadata host in %v", got["BEADS_DOLT_SERVER_HOST"], tc.env)
+			}
+		})
+	}
+}
+
+func TestBuildBDEnvRestoresGTDoltDataDir(t *testing.T) {
+	beadsDir := filepath.Join(t.TempDir(), ".beads")
+	if err := os.MkdirAll(beadsDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	metadata := []byte(`{"dolt_database":"rigdb","dolt_server_host":"127.0.0.1","dolt_server_port":4407}`)
+	if err := os.WriteFile(filepath.Join(beadsDir, "metadata.json"), metadata, 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	base := []string{
+		"PATH=/usr/bin",
+		"GT_DOLT_DATA=/town/.dolt-data",
+		"BEADS_DOLT_DATA_DIR=/wrong/data",
+		"BEADS_DOLT_SERVER_DATABASE=hq",
+	}
+
+	tests := []struct {
+		name       string
+		env        []string
+		wantDBName string
+	}{
+		{name: "pinned", env: BuildPinnedBDEnv(base, beadsDir), wantDBName: "rigdb"},
+		{name: "routing", env: BuildRoutingBDEnv(base, beadsDir), wantDBName: ""},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got := envMap(tc.env)
+			if got["BEADS_DOLT_DATA_DIR"] != "/town/.dolt-data" {
+				t.Fatalf("BEADS_DOLT_DATA_DIR = %q, want /town/.dolt-data in %v", got["BEADS_DOLT_DATA_DIR"], tc.env)
+			}
+			if tc.wantDBName == "" {
+				if value, ok := got["BEADS_DOLT_SERVER_DATABASE"]; ok {
+					t.Fatalf("BEADS_DOLT_SERVER_DATABASE should be stripped, got %q in %v", value, tc.env)
+				}
+			} else if got["BEADS_DOLT_SERVER_DATABASE"] != tc.wantDBName {
+				t.Fatalf("BEADS_DOLT_SERVER_DATABASE = %q, want %q in %v", got["BEADS_DOLT_SERVER_DATABASE"], tc.wantDBName, tc.env)
+			}
+		})
+	}
+}
+
 func TestBuildPinnedBDEnvStripsCaseVariantTargetEnvWhenKeysAreCaseInsensitive(t *testing.T) {
 	withCaseInsensitiveEnvKeys(t)
 
@@ -4382,6 +4475,7 @@ func TestBuildRunEnv_OverridesStaleDoltPortFromBeadsDir(t *testing.T) {
 		t.Fatalf("write dolt-server.port: %v", err)
 	}
 
+	t.Setenv("GT_DOLT_PORT", "")
 	t.Setenv("BEADS_DOLT_PORT", "3307")
 
 	env := (&Beads{workDir: tmpDir}).buildRunEnv()
@@ -4410,6 +4504,7 @@ func TestBuildRoutingEnv_OverridesStaleDoltPortFromBeadsDir(t *testing.T) {
 		t.Fatalf("write dolt-server.port: %v", err)
 	}
 
+	t.Setenv("GT_DOLT_PORT", "")
 	t.Setenv("BEADS_DOLT_PORT", "3307")
 
 	env := (&Beads{workDir: tmpDir}).buildRoutingEnv()

@@ -294,18 +294,29 @@ func New(config *Config) (*Daemon, error) {
 		logger.Printf("Patrols disabled via town settings: %v", names)
 	}
 
+	setDaemonDoltPortEnv := func(port int, source string) {
+		if port <= 0 {
+			return
+		}
+		portStr := strconv.Itoa(port)
+		os.Setenv("GT_DOLT_PORT", portStr)
+		os.Setenv("BEADS_DOLT_PORT", portStr)
+		os.Setenv("BEADS_DOLT_SERVER_PORT", portStr)
+		logger.Printf("Set GT_DOLT_PORT=%s from %s", portStr, source)
+	}
+
 	// Initialize Dolt server manager if configured
 	var doltServer *DoltServerManager
+	doltServerEnabled := false
 	if patrolConfig != nil && patrolConfig.Patrols != nil && patrolConfig.Patrols.DoltServer != nil {
 		doltServer = NewDoltServerManager(config.TownRoot, patrolConfig.Patrols.DoltServer, logger.Printf)
 		if doltServer.IsEnabled() {
+			doltServerEnabled = true
 			logger.Printf("Dolt server management enabled (port %d)", patrolConfig.Patrols.DoltServer.Port)
 			// Propagate Dolt connection info to process env so AgentEnv() passes it to
 			// all spawned agent sessions. Without this, bd in agent sessions
 			// auto-starts rogue Dolt instances or connects to localhost. (GH#2412)
-			portStr := strconv.Itoa(patrolConfig.Patrols.DoltServer.Port)
-			os.Setenv("GT_DOLT_PORT", portStr)
-			os.Setenv("BEADS_DOLT_PORT", portStr)
+			setDaemonDoltPortEnv(patrolConfig.Patrols.DoltServer.Port, "enabled Dolt server config")
 			if patrolConfig.Patrols.DoltServer.Host != "" {
 				os.Setenv("GT_DOLT_HOST", patrolConfig.Patrols.DoltServer.Host)
 				os.Setenv("BEADS_DOLT_SERVER_HOST", patrolConfig.Patrols.DoltServer.Host)
@@ -313,16 +324,14 @@ func New(config *Config) (*Daemon, error) {
 		}
 	}
 
-	// Fallback: if GT_DOLT_PORT still isn't set (no DoltServerManager, daemon
-	// started independently of gt up), detect the port from dolt config.
-	// This ensures AgentEnv() always has the port for spawned sessions. (GH#2412)
-	if os.Getenv("GT_DOLT_PORT") == "" {
-		doltCfg := doltserver.DefaultConfig(config.TownRoot)
-		if doltCfg.Port > 0 {
-			portStr := strconv.Itoa(doltCfg.Port)
-			os.Setenv("GT_DOLT_PORT", portStr)
-			os.Setenv("BEADS_DOLT_PORT", portStr)
-			logger.Printf("Set GT_DOLT_PORT=%s from Dolt config (fallback)", portStr)
+	// Fallback: if the daemon is not itself managing Dolt, resolve the port from
+	// the running state/config/env and propagate it to all spawned tasks. This
+	// keeps maintenance dogs from inheriting stale 3307 Beads defaults. (GH#4348)
+	if !doltServerEnabled {
+		if port := agentconfig.ResolveDoltPort(config.TownRoot); port > 0 {
+			setDaemonDoltPortEnv(port, "resolved Dolt runtime config")
+		} else if doltCfg := doltserver.DefaultConfig(config.TownRoot); doltCfg.Port > 0 {
+			setDaemonDoltPortEnv(doltCfg.Port, "Dolt default config")
 		}
 	}
 

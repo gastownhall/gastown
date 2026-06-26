@@ -112,6 +112,9 @@ func resolveHost(flag string) string {
 	if flag != "" {
 		return flag
 	}
+	if h := os.Getenv("GT_DOLT_HOST"); h != "" {
+		return h
+	}
 	if h := os.Getenv("DOLT_HOST"); h != "" {
 		return h
 	}

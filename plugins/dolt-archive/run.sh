@@ -10,8 +10,8 @@ set -euo pipefail
 
 # --- Configuration -----------------------------------------------------------
 
-DOLT_HOST="${DOLT_HOST:-127.0.0.1}"
-DOLT_PORT="${DOLT_PORT:-3307}"
+DOLT_HOST="${GT_DOLT_HOST:-${DOLT_HOST:-127.0.0.1}}"
+DOLT_PORT="${GT_DOLT_PORT:-${DOLT_PORT:-3307}}"
 DOLT_USER="${DOLT_USER:-root}"
 DOLT_DATA_DIR="${DOLT_DATA_DIR:-$HOME/gt/.dolt-data}"
 JSONL_EXPORT_DIR="$HOME/gt/.dolt-archive/jsonl"

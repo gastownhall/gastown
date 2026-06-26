@@ -24,7 +24,7 @@ This is infrastructure work. You:
 
 | Variable | Source | Description |
 |----------|--------|-------------|
-| port | config | Dolt server port (default 3307) |
+| port | daemon/env | Optional display Dolt server port; runtime inherits GT_DOLT_PORT |
 | latency_threshold | config | Latency warning threshold (default 1s) |
 
 ## Safety
@@ -63,7 +63,7 @@ Time the probe query. Warn if > {{latency_threshold}}.
 **If server unreachable:**
 This is a critical failure. Escalate immediately:
 ```bash
-gt escalate -s CRITICAL "Dolt: server unreachable on port {{port}}"
+gt escalate -s CRITICAL "Dolt: server unreachable on configured Dolt port"
 ```
 
 **Exit criteria:** Server connectivity confirmed (or escalated)."""
@@ -172,8 +172,8 @@ Status: COMPLETE"
 
 [vars]
 [vars.port]
-description = "Dolt server port"
-default = "3307"
+description = "Optional display Dolt server port; daemon/env supplied"
+default = ""
 
 [vars.latency_threshold]
 description = "Latency warning threshold"
