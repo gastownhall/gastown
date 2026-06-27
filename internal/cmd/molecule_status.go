@@ -11,7 +11,6 @@ import (
 
 	"github.com/spf13/cobra"
 	"github.com/steveyegge/gastown/internal/beads"
-	"github.com/steveyegge/gastown/internal/config"
 	"github.com/steveyegge/gastown/internal/git"
 	"github.com/steveyegge/gastown/internal/style"
 	"github.com/steveyegge/gastown/internal/workspace"
@@ -37,7 +36,7 @@ func buildAgentBeadID(identity string, role Role, townRoot string) string {
 
 	// Helper to get prefix for a rig
 	getPrefix := func(rig string) string {
-		return config.GetRigPrefix(townRoot, rig)
+		return beads.GetPrefixForRig(townRoot, rig)
 	}
 
 	// If role is unknown or empty, try to infer from identity

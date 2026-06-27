@@ -503,7 +503,19 @@ func runHookShow(cmd *cobra.Command, args []string) error {
 			if rigName != "" && rigName != "mayor" && rigName != "deacon" {
 				// Agent beads can be stale or missing during recovery. The source
 				// work assignment is authoritative, so query the target rig DB directly.
-				workDir = filepath.Join(townRoot, rigName, "mayor", "rig")
+				//
+				// Do not hardcode <rig>/mayor/rig here: routed Gas Town workspaces
+				// can store the rig beads database at the rig root while keeping
+				// source code in mayor/rig. ResolveHookDir follows routes.jsonl and
+				// supports both layouts.
+				role, _, _ := parseRoleString(target)
+				agentBeadID := buildAgentBeadID(target, role, townRoot)
+				fallbackPath := filepath.Join(townRoot, rigName)
+				if resolved := beads.ResolveHookDir(townRoot, agentBeadID, fallbackPath); resolved != "" {
+					workDir = resolved
+				} else {
+					workDir = fallbackPath
+				}
 			}
 		}
 	}
