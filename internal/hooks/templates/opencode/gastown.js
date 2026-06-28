@@ -1,24 +1,26 @@
-// Gas Town OpenCode plugin: hooks SessionStart/Compaction via events.
-// Injects gt prime context into the system prompt via experimental.chat.system.transform.
-export const GasTown = async ({ $, directory }) => {
+// Gas Town OpenCode plugin.
+// - SessionStart/Compaction: inject `gt prime --hook` context (system.transform).
+// - TURN-BOUNDARY DRAIN (parity with Claude's UserPromptSubmit hook): on
+//   `session.idle`, drain the gt nudge/mail queue via `gt mail check --inject`
+//   and, if there is queued work, push it back into the session as a new prompt
+//   through the OpenCode SDK client. This makes OpenCode self-driving WITHOUT
+//   relying on gt's tmux nudge-poller (which is unreliable for OpenCode because
+//   it has no detectable ready-prompt and no resume). Long-lived roles (mayor)
+//   poll while idle so newly-queued work wakes them; one-shot roles (polecat)
+//   only drain at the boundary and then let gt reap them.
+export const GasTown = async ({ $, directory, client }) => {
   const role = (process.env.GT_ROLE || "").toLowerCase();
   const gtBin = process.env.GT_BIN || "gt";
   let didInit = false;
 
-  // Promise-based context loading ensures the system transform hook can
-  // await the result even if session.created hasn't resolved yet.
   let primePromise = null;
 
   const outputTail = (value, maxChars = 2000) => {
     if (value === undefined || value === null) return "<empty>";
     let text;
-    if (typeof value === "string") {
-      text = value;
-    } else if (value instanceof Uint8Array) {
-      text = new TextDecoder().decode(value);
-    } else {
-      text = String(value);
-    }
+    if (typeof value === "string") text = value;
+    else if (value instanceof Uint8Array) text = new TextDecoder().decode(value);
+    else text = String(value);
     text = text.trimEnd();
     if (!text) return "<empty>";
     if (text.length <= maxChars) return text;
@@ -27,9 +29,7 @@ export const GasTown = async ({ $, directory }) => {
 
   const exitCode = (err) => {
     const candidates = [err?.exitCode, err?.exit_code, err?.status, err?.code];
-    for (const code of candidates) {
-      if (typeof code === "number") return code;
-    }
+    for (const code of candidates) if (typeof code === "number") return code;
     return null;
   };
 
@@ -62,8 +62,7 @@ export const GasTown = async ({ $, directory }) => {
     const code = exitCode(err);
     const message = err?.message || String(err);
     const timeout = code === 124 || /exit code 124|timed?\s*out/i.test(message)
-      ? "yes (exit code 124 / timeout)"
-      : "not indicated";
+      ? "yes (exit code 124 / timeout)" : "not indicated";
     const lines = [
       "[gastown] command failed",
       `command: ${cmd}`,
@@ -75,9 +74,7 @@ export const GasTown = async ({ $, directory }) => {
     ];
     if (isDoltBackedCommand(cmd)) {
       lines.push(`dolt_status_tail:\n${outputTail(await captureDoltStatus())}`);
-      lines.push(
-        "suggested_recovery: If Dolt is unhealthy or another gt/bd command is hanging, capture SIGQUIT and `gt dolt status` diagnostics before escalating; otherwise retry after the timeout clears."
-      );
+      lines.push("suggested_recovery: If Dolt is unhealthy or another gt/bd command is hanging, capture SIGQUIT and `gt dolt status` diagnostics before escalating; otherwise retry after the timeout clears.");
     } else {
       lines.push("suggested_recovery: Inspect the command, stdout/stderr tails, and retry once the timeout or process failure is resolved.");
     }
@@ -93,11 +90,14 @@ export const GasTown = async ({ $, directory }) => {
     return parts[0];
   };
 
-  const eventSessionID = (event) => event?.properties?.info?.id || event?.sessionID || event?.session?.id || "";
+  const eventSessionID = (event) =>
+    event?.properties?.sessionID ||
+    event?.properties?.info?.id ||
+    event?.sessionID ||
+    event?.session?.id || "";
 
   const captureRun = async (cmd) => {
     try {
-      // .text() captures stdout as a string and suppresses terminal echo.
       return await $`/bin/sh -lc ${cmd}`.cwd(directory).text();
     } catch (err) {
       await logFailure(cmd, err);
@@ -107,46 +107,83 @@ export const GasTown = async ({ $, directory }) => {
 
   const loadPrime = async (source = "startup", sessionID = "") => {
     const env = [`GT_HOOK_SOURCE=${shellQuote(source)}`];
-    if (sessionID) {
-      env.push(`GT_SESSION_ID=${shellQuote(sessionID)}`);
+    if (sessionID) env.push(`GT_SESSION_ID=${shellQuote(sessionID)}`);
+    return await captureRun(`${env.join(" ")} ${gtCommand()} prime --hook`);
+  };
+
+  // --- Turn-boundary drain / propulsion -------------------------------------
+  // Mirror Claude's UserPromptSubmit gate: witness/refinery/deacon/boot do NOT
+  // self-drive (they wake on their own signals); everyone else does.
+  const selfDrives = !/witness|refinery|deacon|boot/.test(role);
+  // Roles that must stay alive across empty-idle (poll until work arrives).
+  const longLived = /mayor/.test(role);
+  const pollMs = Math.max(5000, parseInt(process.env.GT_OC_POLL_MS || "20000", 10) || 20000);
+  let pollTimer = null;
+  let draining = false;
+
+  // Drain the queue; if there is queued work, start a new turn with it.
+  // Returns true iff a new prompt was injected.
+  const drainAndContinue = async (sid) => {
+    if (!sid || draining) return false;
+    draining = true;
+    try {
+      const out = await captureRun(`${gtCommand()} mail check --inject`);
+      if (out && out.trim()) {
+        try {
+          await client.session.prompt({
+            path: { id: sid },
+            body: { parts: [{ type: "text", text: out }] },
+          });
+          return true;
+        } catch (err) {
+          await logFailure(`session.prompt(drain sid=${sid})`, err);
+        }
+      }
+      return false;
+    } finally {
+      draining = false;
     }
-    let context = await captureRun(`${env.join(" ")} ${gtCommand()} prime --hook`);
-    // NOTE: session-started nudge to deacon removed — it interrupted
-    // the deacon's await-signal backoff. Deacon wakes on beads activity.
-    return context;
+  };
+
+  const stopPoll = () => { if (pollTimer) { clearTimeout(pollTimer); pollTimer = null; } };
+
+  // Keep checking while idle; the moment work appears, inject it (which fires a
+  // new turn -> session.idle again -> this restarts naturally).
+  const startPoll = (sid) => {
+    if (pollTimer) return;
+    const tick = async () => {
+      pollTimer = null;
+      const acted = await drainAndContinue(sid);
+      if (!acted) pollTimer = setTimeout(tick, pollMs);
+    };
+    pollTimer = setTimeout(tick, pollMs);
   };
 
   return {
     event: async ({ event }) => {
       if (event?.type === "session.created") {
-        if (didInit) return;
-        didInit = true;
-        // Start loading prime context early; system.transform will await it.
-        primePromise = loadPrime("startup", eventSessionID(event));
-      }
-      if (event?.type === "session.compacted") {
-        // Reset so next system.transform gets fresh context.
-        primePromise = loadPrime("compact", eventSessionID(event));
-      }
-      if (event?.type === "session.deleted") {
-        const sessionID = event.properties?.info?.id;
-        if (sessionID) {
-          await captureRun(`${gtCommand()} costs record --session ${shellQuote(sessionID)}`);
+        if (!didInit) {
+          didInit = true;
+          primePromise = loadPrime("startup", eventSessionID(event));
         }
+      } else if (event?.type === "session.compacted") {
+        primePromise = loadPrime("compact", eventSessionID(event));
+      } else if (event?.type === "session.deleted") {
+        const sessionID = event.properties?.info?.id;
+        if (sessionID) await captureRun(`${gtCommand()} costs record --session ${shellQuote(sessionID)}`);
+        stopPoll();
+      } else if (event?.type === "session.idle" && selfDrives) {
+        const sid = eventSessionID(event);
+        stopPoll();
+        const acted = await drainAndContinue(sid);
+        if (!acted && longLived) startPoll(sid);
       }
     },
     "experimental.chat.system.transform": async (input, output) => {
-      // If session.created hasn't fired yet, start loading now.
-      if (!primePromise) {
-        primePromise = loadPrime("startup");
-      }
+      if (!primePromise) primePromise = loadPrime("startup");
       const context = await primePromise;
-      if (context) {
-        output.system.push(context);
-      } else {
-        // Reset so next transform retries instead of pushing empty forever.
-        primePromise = null;
-      }
+      if (context) output.system.push(context);
+      else primePromise = null;
     },
     "experimental.session.compacting": async ({ sessionID }, output) => {
       const roleDisplay = simpleRole(role) || "unknown";

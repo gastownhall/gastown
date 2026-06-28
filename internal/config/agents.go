@@ -376,6 +376,7 @@ var builtinPresets = map[AgentPreset]*AgentPresetInfo{
 		HooksProvider:     "opencode",
 		HooksDir:          ".opencode/plugins",
 		HooksSettingsFile: "gastown.js",
+		HasTurnBoundaryDrain: true, // OpenCode self-drives via .opencode/plugins/gastown.js session.idle
 		ReadyDelayMs:      8000,
 		InstructionsFile:  "AGENTS.md",
 		// ACP support
