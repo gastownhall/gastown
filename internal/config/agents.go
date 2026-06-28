@@ -361,11 +361,12 @@ var builtinPresets = map[AgentPreset]*AgentPresetInfo{
 			"OPENCODE_CONFIG_CONTENT": `{"lsp":true}`,
 		},
 		ProcessNames:        []string{"opencode", "node", "bun"}, // Runs as Node.js or Bun
-		SessionIDEnv:        "",                                  // OpenCode manages sessions internally
-		ResumeFlag:          "",                                  // No resume support yet
-		ResumeStyle:         "",
+		SessionIDEnv:        "",                                  // OpenCode has no session-id env; --continue resumes most-recent in the role dir
+		ResumeFlag:          "--session",                         // `opencode --session <id>` continues a specific session
+		ContinueFlag:        "--continue",                        // `opencode --continue` auto-resumes the most recent session
+		ResumeStyle:         "flag",
 		SupportsHooks:       true, // Uses .opencode/plugins/gastown.js
-		SupportsForkSession: false,
+		SupportsForkSession: true, // `opencode --fork` (with --continue/--session)
 		NonInteractive: &NonInteractiveConfig{
 			Subcommand: "run",
 			OutputFlag: "--format json",
