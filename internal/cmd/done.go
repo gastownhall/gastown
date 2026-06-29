@@ -569,8 +569,8 @@ func runDone(cmd *cobra.Command, args []string) (retErr error) {
 			return fmt.Errorf("cannot complete: uncommitted changes would be lost\nCommit your changes first, or use --status DEFERRED to exit without completing\nUncommitted: %s", workStatus.String())
 		}
 
-		// Check if branch has commits ahead of the clean target base.
-		// If not, work may have been pushed directly to main - that's fine, just skip MR
+		// Check if branch has commits ahead of the clean target base. In fork-backed
+		// rigs this is upstream/main, not the fork's origin/main.
 		aheadCount, err := g.CommitsAhead(baseRef, "HEAD")
 		if err != nil {
 			// Fallback to local branch comparison if origin not available
@@ -596,7 +596,8 @@ func runDone(cmd *cobra.Command, args []string) (retErr error) {
 			}
 		}
 
-		// If no commits ahead, work was likely pushed directly to main (or already merged)
+		// If no commits ahead, work was likely already merged or is a legitimate
+		// report-only completion. Fork-backed rigs must not infer success from fork main.
 		// For polecats, zero commits usually means the polecat sleepwalked through
 		// implementation without writing code (gastown#1484, beads#emma).
 		// The --cleanup-status=clean escape is preserved for legitimate report-only
@@ -630,7 +631,7 @@ func runDone(cmd *cobra.Command, args []string) (retErr error) {
 			// (non-code tasks like email/research per GH#2496):
 			// zero commits is valid.
 			fmt.Printf("%s Branch has no commits ahead of %s\n", style.Bold.Render("→"), baseRef)
-			fmt.Printf("  Work was likely pushed directly to main or already merged.\n")
+			fmt.Printf("  Work was likely already merged or report-only.\n")
 			fmt.Printf("  Skipping MR creation - completing without merge request.\n\n")
 
 			// G15 fix: Close the base issue when completing with no MR.
@@ -656,7 +657,7 @@ func runDone(cmd *cobra.Command, args []string) (retErr error) {
 				}
 
 				if !skipClose {
-					closeReason := "Completed with no code changes (already fixed or pushed directly to main)"
+					closeReason := "Completed with no code changes (already fixed or already merged)"
 					noMRCommitSHA, _ := g.Rev("HEAD")
 					if doneSkipVerify {
 						noteVerifiedPushSkipped(cwd, issueID, defaultBranch, noMRCommitSHA, "--skip-verify on no-MR close")
@@ -664,6 +665,9 @@ func runDone(cmd *cobra.Command, args []string) (retErr error) {
 							closeReason = fmt.Sprintf("%s\nskip_verify: true\ntarget_branch: %s\ncommit_sha: %s", closeReason, defaultBranch, noMRCommitSHA)
 						}
 					} else if !isNoMergeTask {
+						if g.ForkBackedRemote("origin") {
+							return fmt.Errorf("cannot close no-MR code bead in fork/upstream mode: %s has no commits ahead of %s; use the fork PR flow instead", branch, baseRef)
+						}
 						if verifyErr := g.VerifyPushedCommit("origin", defaultBranch, noMRCommitSHA); verifyErr != nil {
 							noteVerifiedPushFailure(cwd, issueID, defaultBranch, noMRCommitSHA, verifyErr)
 							return fmt.Errorf("cannot close no-MR code bead: %w", verifyErr)
@@ -702,9 +706,8 @@ func runDone(cmd *cobra.Command, args []string) (retErr error) {
 		// artifacts that will pollute the PR diff. (GH#2220)
 		//
 		// gh#3400: Refresh remote tracking refs first so contamination check (and
-		// the auto-rebase below) sees the current state of origin. Without this,
-		// the local view of origin/<base> may be stale and we'd skip a rebase that
-		// is actually needed.
+		// the auto-rebase below) sees the current clean base. In fork-backed rigs,
+		// that base is upstream/main, not the fork's origin/main.
 		contaminationBase := baseRef
 		if doneTarget != "" && doneTarget != defaultBranch {
 			contaminationBase = doneContaminationBaseRef(defaultBranch, doneTarget)
@@ -723,8 +726,8 @@ func runDone(cmd *cobra.Command, args []string) (retErr error) {
 			if contam.Behind >= blockThreshold {
 				return fmt.Errorf("branch contamination: %d commits behind %s (threshold: %d)\n"+
 					"The branch is severely stale and will include unrelated changes in the PR.\n"+
-					"Fix: git fetch origin && git rebase %s",
-					contam.Behind, contaminationBase, blockThreshold, contaminationBase)
+					"Fix: git fetch %s && git rebase %s",
+					contam.Behind, contaminationBase, blockThreshold, fetchRemote, contaminationBase)
 			} else if contam.Behind >= warnThreshold {
 				style.PrintWarning("branch is %d commits behind %s — consider rebasing to avoid PR contamination", contam.Behind, contaminationBase)
 			}

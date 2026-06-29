@@ -1497,7 +1497,7 @@ func TestPushSubmoduleChanges_Integration(t *testing.T) {
 
 	// Call pushSubmoduleChanges — this should push the submodule commit
 	g := gitpkg.NewGit(parent)
-	pushSubmoduleChanges(g, "main")
+	pushSubmoduleChanges(g, "origin/main")
 
 	// Verify the submodule commit IS now on the remote
 	lsCmd = exec.Command("git", "ls-remote", subRemote, "refs/heads/main")
@@ -1537,7 +1537,7 @@ func TestPushSubmoduleChanges_NoSubmodules(t *testing.T) {
 
 	// Should not panic or error — just a no-op
 	g := gitpkg.NewGit(parent)
-	pushSubmoduleChanges(g, "main")
+	pushSubmoduleChanges(g, "origin/main")
 }
 
 // TestAutoCommitSafetyNet verifies that the gt done auto-commit safety net

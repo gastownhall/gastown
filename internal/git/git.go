@@ -1025,7 +1025,7 @@ func (g *Git) CleanBaseRef(remote, defaultBranch, target string) string {
 // upstream/main. It returns an empty string for local branch names.
 func RemoteForRef(ref string) string {
 	remote, _, ok := strings.Cut(strings.TrimSpace(ref), "/")
-	if !ok || remote == "" || strings.HasPrefix(remote, "refs") {
+	if !ok || (remote != "origin" && remote != "upstream") {
 		return ""
 	}
 	return remote

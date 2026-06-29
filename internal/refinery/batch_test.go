@@ -134,6 +134,24 @@ func TestDefaultBatchConfig(t *testing.T) {
 	}
 }
 
+func TestFastForwardBatch_BlocksForkBackedDefaultPush(t *testing.T) {
+	workDir, g, cleanup := testGitRepo(t)
+	defer cleanup()
+	addDistinctUpstreamRemote(t, workDir, g)
+	e := newTestEngineer(t, workDir, g)
+	before := run(t, workDir, "git", "rev-parse", "origin/main")
+
+	writeFile(t, workDir, "batched.txt", "batched\n")
+	run(t, workDir, "git", "add", ".")
+	run(t, workDir, "git", "commit", "-m", "batch result")
+
+	result := e.fastForwardBatch(context.Background(), nil, "main", &BatchResult{})
+	if result.Error == nil || !strings.Contains(result.Error.Error(), "refusing direct push") {
+		t.Fatalf("expected fork-backed default push refusal, got: %+v", result)
+	}
+	assertOriginMainUnchangedAndReset(t, workDir, before)
+}
+
 // --- AssembleBatch tests ---
 
 func TestAssembleBatch_EmptyQueue(t *testing.T) {
