@@ -635,6 +635,7 @@ func runRefineryUnclaimed(cmd *cobra.Command, args []string) error {
 		Status:   "open",
 		Label:    "gt:merge-request",
 		Priority: -1,
+		Rig:      rigName,
 	})
 	if err != nil {
 		return fmt.Errorf("listing merge requests: %w", err)

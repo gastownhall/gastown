@@ -32,6 +32,10 @@ func TestIsMergeRequestReadyForSelection(t *testing.T) {
 			},
 		},
 		{
+			name:  "open issue with unhydrated dependency count is not ready",
+			issue: &beads.Issue{Status: "open", DependencyCount: 1},
+		},
+		{
 			name: "closed dependency overrides stale blocked count",
 			issue: &beads.Issue{
 				Status:         "open",

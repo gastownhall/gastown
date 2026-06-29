@@ -42,6 +42,7 @@ func runMQList(cmd *cobra.Command, args []string) error {
 	opts := beads.ListOptions{
 		Label:    "gt:merge-request",
 		Priority: -1,
+		Rig:      rigName,
 	}
 
 	// Apply status filter if specified

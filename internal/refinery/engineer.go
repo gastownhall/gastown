@@ -1965,6 +1965,7 @@ func (e *Engineer) ListReadyMRs() ([]*MRInfo, error) {
 		Status:   "open",
 		Label:    "gt:merge-request",
 		Priority: -1, // No priority filter
+		Rig:      e.rig.Name,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("querying beads for merge-requests: %w", err)
@@ -2033,6 +2034,7 @@ func (e *Engineer) ListBlockedMRs() ([]*MRInfo, error) {
 		Status:   "open",
 		Label:    "gt:merge-request",
 		Priority: -1, // No priority filter
+		Rig:      e.rig.Name,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("querying beads for merge-requests: %w", err)
@@ -2079,6 +2081,7 @@ func (e *Engineer) ListAllOpenMRs() ([]*MRInfo, error) {
 		Status:   "open",
 		Label:    "gt:merge-request",
 		Priority: -1,
+		Rig:      e.rig.Name,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("querying beads for merge-requests: %w", err)
@@ -2120,6 +2123,7 @@ func (e *Engineer) ListQueueAnomalies(now time.Time) ([]*MRAnomaly, error) {
 		Status:   "open",
 		Label:    "gt:merge-request",
 		Priority: -1,
+		Rig:      e.rig.Name,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("querying beads for merge-requests: %w", err)

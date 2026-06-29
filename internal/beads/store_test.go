@@ -767,8 +767,17 @@ func TestStoreShowMultipleHydratesDependencyMetadata(t *testing.T) {
 	store.issues["gt-blocker"] = &beadsdk.Issue{ID: "gt-blocker", Title: "blocker", Status: beadsdk.StatusOpen}
 	store.issues["gt-wait"] = &beadsdk.Issue{ID: "gt-wait", Title: "closed wait", Status: beadsdk.StatusClosed}
 	store.issues["gt-parent"] = &beadsdk.Issue{ID: "gt-parent", Title: "parent", Status: beadsdk.StatusOpen}
+	store.issues["gt-merge-mr"] = &beadsdk.Issue{
+		ID:     "gt-merge-mr",
+		Title:  "merge-blocked request",
+		Status: beadsdk.StatusOpen,
+		Dependencies: []*beadsdk.Dependency{
+			{IssueID: "gt-merge-mr", DependsOnID: "gt-merged", Type: beadsdk.DependencyType("merge-blocks")},
+		},
+	}
+	store.issues["gt-merged"] = &beadsdk.Issue{ID: "gt-merged", Title: "merged dependency", Status: beadsdk.StatusClosed, CloseReason: "Merged in gt-wisp"}
 
-	issues, err := b.storeShowMultiple([]string{"gt-mr"})
+	issues, err := b.storeShowMultiple([]string{"gt-mr", "gt-merge-mr"})
 	if err != nil {
 		t.Fatalf("storeShowMultiple: %v", err)
 	}
@@ -790,6 +799,9 @@ func TestStoreShowMultipleHydratesDependencyMetadata(t *testing.T) {
 	}
 	if !HasUnresolvedBlockers(issue) {
 		t.Fatal("SDK dependencies should feed shared blocker semantics")
+	}
+	if HasUnresolvedBlockers(issues["gt-merge-mr"]) {
+		t.Fatal("store-backed merged merge-block should be resolved")
 	}
 }
 

@@ -341,6 +341,7 @@ func (m *Manager) Queue() ([]QueueItem, error) {
 		Label:    "gt:merge-request",
 		Status:   "open",
 		Priority: -1, // No priority filter
+		Rig:      m.rig.Name,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("querying merge queue from beads: %w", err)

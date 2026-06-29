@@ -318,6 +318,9 @@ func unresolvedBlockingDependencyIDs(issue *Issue) ([]string, int) {
 		if issue.BlockedByCount > count {
 			count = issue.BlockedByCount
 		}
+		if issue.DependencyCount > count {
+			count = issue.DependencyCount
+		}
 		return ids, count
 	}
 
@@ -360,7 +363,7 @@ func isBlockingDependencyType(depType string) bool {
 func isResolvedDependency(dep IssueDep) bool {
 	status := strings.ToLower(strings.TrimSpace(dep.Status))
 	switch status {
-	case "tombstone":
+	case "tombstone", "pinned":
 		return true
 	case "closed":
 		if strings.EqualFold(strings.TrimSpace(dep.DependencyType), "merge-blocks") {
@@ -383,6 +386,7 @@ type ListOptions struct {
 	NoAssignee bool   // filter for issues with no assignee
 	Limit      int    // Max results (0 = unlimited, overrides bd default of 50)
 	Ephemeral  bool   // Search wisps table (ephemeral issues) instead of issues table
+	Rig        string // filter merge-request descriptions by rig before hydration
 }
 
 // CreateOptions specifies options for creating an issue.
@@ -1232,7 +1236,23 @@ func (b *Beads) ListMergeRequests(opts ListOptions) ([]*Issue, error) {
 		}
 	}
 
+	issueResults = filterMergeRequestsByRig(issueResults, opts.Rig)
 	return b.hydrateMergeRequestDetails(issueResults)
+}
+
+func filterMergeRequestsByRig(issues []*Issue, rigName string) []*Issue {
+	if rigName == "" || len(issues) == 0 {
+		return issues
+	}
+	filtered := make([]*Issue, 0, len(issues))
+	for _, issue := range issues {
+		fields := ParseMRFields(issue)
+		if fields != nil && fields.Rig != "" && !strings.EqualFold(fields.Rig, rigName) {
+			continue
+		}
+		filtered = append(filtered, issue)
+	}
+	return filtered
 }
 
 func (b *Beads) hydrateMergeRequestDetails(issues []*Issue) ([]*Issue, error) {

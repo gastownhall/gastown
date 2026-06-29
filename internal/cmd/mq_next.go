@@ -65,6 +65,7 @@ func runMQNext(cmd *cobra.Command, args []string) error {
 		Label:    "gt:merge-request",
 		Status:   "open",
 		Priority: -1, // No priority filter
+		Rig:      rigName,
 	}
 
 	issues, err := b.ListMergeRequests(opts)
