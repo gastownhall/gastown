@@ -281,6 +281,95 @@ type IssueDep struct {
 	Priority       int    `json:"priority"`
 	Type           string `json:"issue_type"`
 	DependencyType string `json:"dependency_type,omitempty"`
+	CloseReason    string `json:"close_reason,omitempty"`
+}
+
+var blockingDependencyTypes = map[string]bool{
+	"blocks":             true,
+	"conditional-blocks": true,
+	"waits-for":          true,
+	"merge-blocks":       true,
+}
+
+// HasUnresolvedBlockers reports whether an issue has any unresolved blocking
+// dependencies. Detailed dependency data takes precedence over list counters.
+func HasUnresolvedBlockers(issue *Issue) bool {
+	_, count := unresolvedBlockingDependencyIDs(issue)
+	return count > 0
+}
+
+// FirstUnresolvedBlockerID returns the first unresolved blocker ID, or empty if
+// the issue is unblocked or only a blocker count is available.
+func FirstUnresolvedBlockerID(issue *Issue) string {
+	ids, _ := unresolvedBlockingDependencyIDs(issue)
+	if len(ids) == 0 {
+		return ""
+	}
+	return ids[0]
+}
+
+func unresolvedBlockingDependencyIDs(issue *Issue) ([]string, int) {
+	if issue == nil {
+		return nil, 0
+	}
+	if len(issue.Dependencies) == 0 {
+		ids := normalizedIssueIDs(issue.BlockedBy)
+		count := len(ids)
+		if issue.BlockedByCount > count {
+			count = issue.BlockedByCount
+		}
+		return ids, count
+	}
+
+	seen := make(map[string]bool)
+	ids := make([]string, 0, len(issue.Dependencies))
+	count := 0
+	for _, dep := range issue.Dependencies {
+		if !isBlockingDependencyType(dep.DependencyType) || isResolvedDependency(dep) {
+			continue
+		}
+		count++
+		id := ExtractIssueID(dep.ID)
+		if id == "" || seen[id] {
+			continue
+		}
+		seen[id] = true
+		ids = append(ids, id)
+	}
+	return ids, count
+}
+
+func normalizedIssueIDs(ids []string) []string {
+	seen := make(map[string]bool, len(ids))
+	result := make([]string, 0, len(ids))
+	for _, id := range ids {
+		id = ExtractIssueID(id)
+		if id == "" || seen[id] {
+			continue
+		}
+		seen[id] = true
+		result = append(result, id)
+	}
+	return result
+}
+
+func isBlockingDependencyType(depType string) bool {
+	return blockingDependencyTypes[strings.ToLower(strings.TrimSpace(depType))]
+}
+
+func isResolvedDependency(dep IssueDep) bool {
+	status := strings.ToLower(strings.TrimSpace(dep.Status))
+	switch status {
+	case "tombstone":
+		return true
+	case "closed":
+		if strings.EqualFold(strings.TrimSpace(dep.DependencyType), "merge-blocks") {
+			return strings.HasPrefix(dep.CloseReason, "Merged in ")
+		}
+		return true
+	default:
+		return false
+	}
 }
 
 // ListOptions specifies filters for listing issues.
@@ -1063,7 +1152,8 @@ func isJSONBytes(b []byte) bool {
 // ListMergeRequests returns merge-request beads from both the issues table
 // and the wisps table. MRs are created as ephemeral (wisps) by gt mq submit,
 // but bd list only queries the issues table. This method queries the wisps
-// table via bd sql --json to get full data including labels and assignee.
+// table via bd sql --json, then hydrates each MR with bd show detail so
+// dependency readiness fields are consistent for display and selection.
 func (b *Beads) ListMergeRequests(opts ListOptions) ([]*Issue, error) {
 	// 1. Query issues table (bd list) — don't use Ephemeral since bd query
 	// can't parse colons in label values like "gt:merge-request".
@@ -1142,7 +1232,81 @@ func (b *Beads) ListMergeRequests(opts ListOptions) ([]*Issue, error) {
 		}
 	}
 
-	return issueResults, nil
+	return b.hydrateMergeRequestDetails(issueResults)
+}
+
+func (b *Beads) hydrateMergeRequestDetails(issues []*Issue) ([]*Issue, error) {
+	if len(issues) == 0 {
+		return issues, nil
+	}
+
+	ids := make([]string, 0, len(issues))
+	for _, issue := range issues {
+		if issue != nil && issue.ID != "" {
+			ids = append(ids, issue.ID)
+		}
+	}
+	if len(ids) == 0 {
+		return issues, nil
+	}
+
+	details, err := b.ShowMultiple(ids)
+	if err != nil {
+		return nil, fmt.Errorf("hydrating merge-request dependencies: %w", err)
+	}
+
+	hydrated := make([]*Issue, 0, len(issues))
+	for _, issue := range issues {
+		if issue == nil || issue.ID == "" {
+			hydrated = append(hydrated, issue)
+			continue
+		}
+
+		detail, ok := details[issue.ID]
+		if !ok || detail == nil {
+			return nil, fmt.Errorf("hydrating merge-request dependencies: %s: %w", issue.ID, ErrNotFound)
+		}
+
+		mergeListIssueFields(detail, issue)
+		normalizeUnresolvedBlockers(detail)
+		hydrated = append(hydrated, detail)
+	}
+
+	return hydrated, nil
+}
+
+func mergeListIssueFields(detail, listed *Issue) {
+	detail.Ephemeral = detail.Ephemeral || listed.Ephemeral
+	if detail.Title == "" {
+		detail.Title = listed.Title
+	}
+	if detail.Description == "" {
+		detail.Description = listed.Description
+	}
+	if detail.Status == "" {
+		detail.Status = listed.Status
+	}
+	if detail.Assignee == "" {
+		detail.Assignee = listed.Assignee
+	}
+	if detail.CreatedAt == "" {
+		detail.CreatedAt = listed.CreatedAt
+	}
+	if detail.UpdatedAt == "" {
+		detail.UpdatedAt = listed.UpdatedAt
+	}
+	if detail.CreatedBy == "" {
+		detail.CreatedBy = listed.CreatedBy
+	}
+	if len(detail.Labels) == 0 {
+		detail.Labels = listed.Labels
+	}
+}
+
+func normalizeUnresolvedBlockers(issue *Issue) {
+	ids, count := unresolvedBlockingDependencyIDs(issue)
+	issue.BlockedBy = ids
+	issue.BlockedByCount = count
 }
 
 // ListByAssignee returns all issues assigned to a specific assignee.

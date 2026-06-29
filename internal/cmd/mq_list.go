@@ -64,8 +64,8 @@ func runMQList(cmd *cobra.Command, args []string) error {
 			return fmt.Errorf("querying ready MRs: %w", err)
 		}
 		for _, issue := range allOpen {
-			if len(issue.BlockedBy) > 0 || issue.BlockedByCount > 0 {
-				continue // Skip blocked issues
+			if !isMergeRequestReadyForSelection(issue) {
+				continue
 			}
 			issues = append(issues, issue)
 		}
@@ -201,7 +201,7 @@ func runMQList(cmd *cobra.Command, args []string) error {
 		// Determine display status
 		displayStatus := issue.Status
 		if issue.Status == "open" {
-			if len(issue.BlockedBy) > 0 || issue.BlockedByCount > 0 {
+			if beads.HasUnresolvedBlockers(issue) {
 				displayStatus = "blocked"
 			} else {
 				displayStatus = "ready"
@@ -305,16 +305,16 @@ func runMQList(cmd *cobra.Command, args []string) error {
 	for _, item := range scored {
 		issue := item.issue
 		displayStatus := issue.Status
-		if issue.Status == "open" && (len(issue.BlockedBy) > 0 || issue.BlockedByCount > 0) {
+		if issue.Status == "open" && beads.HasUnresolvedBlockers(issue) {
 			displayStatus = "blocked"
 		}
-		if displayStatus == "blocked" && len(issue.BlockedBy) > 0 {
+		if blockerID := beads.FirstUnresolvedBlockerID(issue); displayStatus == "blocked" && blockerID != "" {
 			displayID := issue.ID
 			if len(displayID) > 12 {
 				displayID = displayID[:12]
 			}
 			fmt.Printf("  %s %s\n", style.Dim.Render(displayID+":"),
-				style.Dim.Render(fmt.Sprintf("waiting on %s", issue.BlockedBy[0])))
+				style.Dim.Render(fmt.Sprintf("waiting on %s", blockerID)))
 		}
 	}
 

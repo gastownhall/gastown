@@ -1889,18 +1889,6 @@ func conflictTaskMetadata(description string) map[string]string {
 	return metadata
 }
 
-// IsBeadOpen checks if a bead is still open (not closed).
-// This is used as a status checker to filter blocked MRs.
-func (e *Engineer) IsBeadOpen(beadID string) (bool, error) {
-	issue, err := e.beads.Show(beadID)
-	if err != nil {
-		// If we can't find the bead, treat as not open (fail open - allow MR to proceed)
-		return false, nil
-	}
-	// "closed" status means the bead is done
-	return issue.Status != "closed", nil
-}
-
 // issueToMRInfo converts a beads issue (with parsed MR fields) into an MRInfo.
 // Shared by ListReadyMRs, ListBlockedMRs, and ListAllOpenMRs.
 func issueToMRInfo(issue *beads.Issue, fields *beads.MRFields) *MRInfo {
@@ -1956,21 +1944,14 @@ func issueToMRInfo(issue *beads.Issue, fields *beads.MRFields) *MRInfo {
 	}
 }
 
-// firstOpenBlocker returns the ID of the first open blocker for an issue,
-// or empty string if none are open.
+// firstOpenBlocker returns the first unresolved blocker ID for an issue.
 func (e *Engineer) firstOpenBlocker(issue *beads.Issue) string {
-	for _, blockerID := range issue.BlockedBy {
-		isOpen, err := e.IsBeadOpen(blockerID)
-		if err == nil && isOpen {
-			return blockerID
-		}
-	}
-	return ""
+	return beads.FirstUnresolvedBlockerID(issue)
 }
 
 // ListReadyMRs returns MRs that are ready for processing:
 // - Not claimed by another worker (checked via assignee field)
-// - Not blocked by an open task (checked via firstOpenBlocker)
+// - Not blocked by unresolved dependencies
 // Sorted by priority (highest first).
 //
 // Uses bd list instead of bd ready because MRs are ephemeral beads and
@@ -1998,7 +1979,7 @@ func (e *Engineer) ListReadyMRs() ([]*MRInfo, error) {
 		}
 
 		// Skip blocked MRs (replaces bd ready's blocker filtering)
-		if blockedBy := e.firstOpenBlocker(issue); blockedBy != "" {
+		if beads.HasUnresolvedBlockers(issue) {
 			continue
 		}
 
@@ -2060,16 +2041,15 @@ func (e *Engineer) ListBlockedMRs() ([]*MRInfo, error) {
 	// Filter for blocked issues (those with open blockers)
 	var mrs []*MRInfo
 	for _, issue := range issues {
-		// Skip if not blocked
-		if len(issue.BlockedBy) == 0 {
+		if issue.Status != "open" {
 			continue
 		}
 
-		// Check if any blocker is still open
-		blockedBy := e.firstOpenBlocker(issue)
-		if blockedBy == "" {
-			continue // All blockers are closed, not blocked
+		if !beads.HasUnresolvedBlockers(issue) {
+			continue
 		}
+
+		blockedBy := e.firstOpenBlocker(issue)
 
 		fields := beads.ParseMRFields(issue)
 		if fields == nil {

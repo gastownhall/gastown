@@ -117,16 +117,21 @@ func sdkIssueToIssue(si *beadsdk.Issue) *Issue {
 	if len(si.Dependencies) > 0 {
 		var deps []string
 		for _, dep := range si.Dependencies {
-			switch dep.Type {
-			case beadsdk.DepParentChild:
+			if dep.IssueID != si.ID {
+				continue
+			}
+
+			issue.Dependencies = append(issue.Dependencies, IssueDep{
+				ID:             dep.DependsOnID,
+				DependencyType: string(dep.Type),
+			})
+
+			switch {
+			case dep.Type == beadsdk.DepParentChild:
 				// If this issue depends on the parent, the parent is the DependsOnID
-				if dep.IssueID == si.ID {
-					issue.Parent = dep.DependsOnID
-				}
-			case beadsdk.DepBlocks:
-				if dep.IssueID == si.ID {
-					deps = append(deps, dep.DependsOnID)
-				}
+				issue.Parent = dep.DependsOnID
+			case isBlockingDependencyType(string(dep.Type)):
+				deps = append(deps, dep.DependsOnID)
 			}
 		}
 		if len(deps) > 0 {

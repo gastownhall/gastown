@@ -14,22 +14,22 @@ import (
 // Embeds beadsdk.Storage to satisfy unimplemented methods (they panic if called).
 type mockStorage struct {
 	beadsdk.Storage // embedded for unimplemented methods
-	issues     map[string]*beadsdk.Issue
-	labels     map[string][]string // issueID -> labels
-	deps       map[string][]string // issueID -> depends-on IDs
-	nextID     int
-	prefix     string
-	closed     map[string]bool
-	closeErr   error
-	createErr  error
-	updateErr  error
-	searchErr  error
-	getErr     error
-	addLabelErr    error
-	removeLabelErr error
-	addDepErr      error
-	removeDepErr   error
-	getLabelsErr   error
+	issues          map[string]*beadsdk.Issue
+	labels          map[string][]string // issueID -> labels
+	deps            map[string][]string // issueID -> depends-on IDs
+	nextID          int
+	prefix          string
+	closed          map[string]bool
+	closeErr        error
+	createErr       error
+	updateErr       error
+	searchErr       error
+	getErr          error
+	addLabelErr     error
+	removeLabelErr  error
+	addDepErr       error
+	removeDepErr    error
+	getLabelsErr    error
 }
 
 func newMockStorage() *mockStorage {
@@ -213,7 +213,6 @@ func (m *mockStorage) RemoveDependency(_ context.Context, issueID, dependsOnID, 
 	}
 	return nil
 }
-
 
 func (m *mockStorage) AddLabel(_ context.Context, issueID, label, _ string) error {
 	if m.addLabelErr != nil {
@@ -724,6 +723,37 @@ func TestSdkIssueToIssueDependsOnInit(t *testing.T) {
 	}
 	if len(issue.DependsOn) != 2 {
 		t.Fatalf("expected 2 deps, got %d", len(issue.DependsOn))
+	}
+}
+
+func TestSdkIssueToIssuePopulatesDetailedBlockers(t *testing.T) {
+	si := &beadsdk.Issue{
+		ID:     "gt-mr",
+		Title:  "merge request",
+		Status: beadsdk.StatusOpen,
+		Dependencies: []*beadsdk.Dependency{
+			{IssueID: "gt-mr", DependsOnID: "gt-blocker", Type: beadsdk.DepBlocks},
+			{IssueID: "gt-mr", DependsOnID: "gt-wait", Type: beadsdk.DependencyType("waits-for")},
+			{IssueID: "gt-mr", DependsOnID: "gt-parent", Type: beadsdk.DepParentChild},
+			{IssueID: "gt-dependent", DependsOnID: "gt-mr", Type: beadsdk.DepBlocks},
+		},
+	}
+
+	issue := sdkIssueToIssue(si)
+	if issue.Parent != "gt-parent" {
+		t.Fatalf("Parent = %q, want gt-parent", issue.Parent)
+	}
+	if len(issue.DependsOn) != 2 {
+		t.Fatalf("DependsOn len = %d, want 2: %#v", len(issue.DependsOn), issue.DependsOn)
+	}
+	if len(issue.Dependencies) != 3 {
+		t.Fatalf("Dependencies len = %d, want 3: %#v", len(issue.Dependencies), issue.Dependencies)
+	}
+	if got := FirstUnresolvedBlockerID(issue); got != "gt-blocker" {
+		t.Fatalf("FirstUnresolvedBlockerID() = %q, want gt-blocker", got)
+	}
+	if !HasUnresolvedBlockers(issue) {
+		t.Fatal("SDK dependencies should feed shared blocker semantics")
 	}
 }
 
