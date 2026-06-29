@@ -79,6 +79,30 @@ func (m *mockStorage) GetIssuesByIDs(_ context.Context, ids []string) ([]*beadsd
 	return result, nil
 }
 
+func (m *mockStorage) GetDependenciesWithMetadata(_ context.Context, issueID string) ([]*beadsdk.IssueWithDependencyMetadata, error) {
+	issue, ok := m.issues[issueID]
+	if !ok {
+		return nil, fmt.Errorf("issue %s not found", issueID)
+	}
+
+	var result []*beadsdk.IssueWithDependencyMetadata
+	for _, dep := range issue.Dependencies {
+		if dep.IssueID != issueID {
+			continue
+		}
+
+		target, ok := m.issues[dep.DependsOnID]
+		if !ok {
+			target = &beadsdk.Issue{ID: dep.DependsOnID}
+		}
+		result = append(result, &beadsdk.IssueWithDependencyMetadata{
+			Issue:          *target,
+			DependencyType: dep.Type,
+		})
+	}
+	return result, nil
+}
+
 func (m *mockStorage) UpdateIssue(_ context.Context, id string, updates map[string]interface{}, _ string) error {
 	if m.updateErr != nil {
 		return m.updateErr
@@ -726,8 +750,10 @@ func TestSdkIssueToIssueDependsOnInit(t *testing.T) {
 	}
 }
 
-func TestSdkIssueToIssuePopulatesDetailedBlockers(t *testing.T) {
-	si := &beadsdk.Issue{
+func TestStoreShowMultipleHydratesDependencyMetadata(t *testing.T) {
+	store := newMockStorage()
+	b := newTestBeads(store)
+	store.issues["gt-mr"] = &beadsdk.Issue{
 		ID:     "gt-mr",
 		Title:  "merge request",
 		Status: beadsdk.StatusOpen,
@@ -738,8 +764,18 @@ func TestSdkIssueToIssuePopulatesDetailedBlockers(t *testing.T) {
 			{IssueID: "gt-dependent", DependsOnID: "gt-mr", Type: beadsdk.DepBlocks},
 		},
 	}
+	store.issues["gt-blocker"] = &beadsdk.Issue{ID: "gt-blocker", Title: "blocker", Status: beadsdk.StatusOpen}
+	store.issues["gt-wait"] = &beadsdk.Issue{ID: "gt-wait", Title: "closed wait", Status: beadsdk.StatusClosed}
+	store.issues["gt-parent"] = &beadsdk.Issue{ID: "gt-parent", Title: "parent", Status: beadsdk.StatusOpen}
 
-	issue := sdkIssueToIssue(si)
+	issues, err := b.storeShowMultiple([]string{"gt-mr"})
+	if err != nil {
+		t.Fatalf("storeShowMultiple: %v", err)
+	}
+	issue := issues["gt-mr"]
+	if issue == nil {
+		t.Fatal("missing hydrated issue")
+	}
 	if issue.Parent != "gt-parent" {
 		t.Fatalf("Parent = %q, want gt-parent", issue.Parent)
 	}

@@ -121,11 +121,6 @@ func sdkIssueToIssue(si *beadsdk.Issue) *Issue {
 				continue
 			}
 
-			issue.Dependencies = append(issue.Dependencies, IssueDep{
-				ID:             dep.DependsOnID,
-				DependencyType: string(dep.Type),
-			})
-
 			switch {
 			case dep.Type == beadsdk.DepParentChild:
 				// If this issue depends on the parent, the parent is the DependsOnID
@@ -140,6 +135,36 @@ func sdkIssueToIssue(si *beadsdk.Issue) *Issue {
 	}
 
 	return issue
+}
+
+func sdkDependencyMetadataToIssueDep(dep *beadsdk.IssueWithDependencyMetadata) IssueDep {
+	if dep == nil {
+		return IssueDep{}
+	}
+	return IssueDep{
+		ID:             dep.ID,
+		Title:          dep.Title,
+		Status:         string(dep.Status),
+		Priority:       dep.Priority,
+		Type:           string(dep.IssueType),
+		DependencyType: string(dep.DependencyType),
+		CloseReason:    dep.CloseReason,
+	}
+}
+
+func sdkDependencyMetadataToIssueDeps(deps []*beadsdk.IssueWithDependencyMetadata) []IssueDep {
+	if len(deps) == 0 {
+		return nil
+	}
+	issueDeps := make([]IssueDep, 0, len(deps))
+	for _, dep := range deps {
+		issueDep := sdkDependencyMetadataToIssueDep(dep)
+		if issueDep.ID == "" {
+			continue
+		}
+		issueDeps = append(issueDeps, issueDep)
+	}
+	return issueDeps
 }
 
 // sdkIssuesToIssues converts a slice of SDK issues to gastown issues.
@@ -250,7 +275,10 @@ func (b *Beads) storeShow(id string) (*Issue, error) {
 		return nil, fmt.Errorf("store show: %w", err)
 	}
 
-	issue := sdkIssueToIssue(si)
+	issue, err := b.storeHydrateIssueDetails(ctx, sdkIssueToIssue(si))
+	if err != nil {
+		return nil, err
+	}
 
 	// Enrich with labels (SDK GetIssue may not include them)
 	if issue.Labels == nil {
@@ -279,9 +307,26 @@ func (b *Beads) storeShowMultiple(ids []string) (map[string]*Issue, error) {
 
 	result := make(map[string]*Issue, len(sdkIssues))
 	for _, si := range sdkIssues {
-		result[si.ID] = sdkIssueToIssue(si)
+		issue, hydrateErr := b.storeHydrateIssueDetails(ctx, sdkIssueToIssue(si))
+		if hydrateErr != nil {
+			return nil, hydrateErr
+		}
+		result[si.ID] = issue
 	}
 	return result, nil
+}
+
+func (b *Beads) storeHydrateIssueDetails(ctx context.Context, issue *Issue) (*Issue, error) {
+	if issue == nil {
+		return nil, nil
+	}
+	deps, err := b.store.GetDependenciesWithMetadata(ctx, issue.ID)
+	if err != nil {
+		return nil, fmt.Errorf("store dependencies for %s: %w", issue.ID, err)
+	}
+	issue.Dependencies = sdkDependencyMetadataToIssueDeps(deps)
+	issue.DependencyCount = len(issue.Dependencies)
+	return issue, nil
 }
 
 // storeCreate implements Create using the in-process store.

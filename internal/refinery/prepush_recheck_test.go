@@ -71,6 +71,13 @@ func (s *prepushStore) GetLabels(_ context.Context, id string) ([]string, error)
 	return append([]string(nil), issue.Labels...), nil
 }
 
+func (s *prepushStore) GetDependenciesWithMetadata(_ context.Context, id string) ([]*beadsdk.IssueWithDependencyMetadata, error) {
+	if _, ok := s.issues[id]; !ok {
+		return nil, fmt.Errorf("issue %s not found", id)
+	}
+	return nil, nil
+}
+
 func (s *prepushStore) UpdateIssue(_ context.Context, id string, updates map[string]interface{}, _ string) error {
 	issue, ok := s.issues[id]
 	if !ok {
