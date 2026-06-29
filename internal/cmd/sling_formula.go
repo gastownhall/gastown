@@ -333,6 +333,7 @@ func runSlingFormula(ctx context.Context, args []string) (err error) {
 		WorkDesc:             formulaName,
 		TownRoot:             townRoot,
 		SkipPolecatAdmission: admission != nil,
+		Role:                 slingRole,
 	})
 	if err != nil {
 		return err

@@ -115,6 +115,10 @@ type NamePool struct {
 	// MaxSize is the maximum number of themed names before overflow.
 	MaxSize int `json:"max_size"`
 
+	// rolePools maps role name to the ordered list of polecat names in that sub-pool.
+	// Populated from NamepoolConfig.Pools at manager init time; never persisted.
+	rolePools map[string][]string
+
 	// stateFile is the path to persist pool state.
 	stateFile string
 
@@ -157,6 +161,35 @@ func NewNamePoolWithConfig(rigPath, rigName, theme string, customNames []string,
 // SetTownRoot sets the town root for custom theme resolution.
 func (p *NamePool) SetTownRoot(townRoot string) {
 	p.townRoot = townRoot
+}
+
+// SetRolePools installs the role-to-names mapping from NamepoolConfig.Pools.
+func (p *NamePool) SetRolePools(pools map[string][]string) {
+	p.rolePools = pools
+}
+
+// AllocateFromRole allocates a name from the named role sub-pool.
+// If role is empty or the role has no pool configured, it falls back to Allocate().
+// Returns an error only when the role pool exists but all its names are already in use.
+func (p *NamePool) AllocateFromRole(role string) (string, error) {
+	if role == "" || len(p.rolePools) == 0 {
+		return p.Allocate()
+	}
+	roleNames, ok := p.rolePools[role]
+	if !ok || len(roleNames) == 0 {
+		return p.Allocate()
+	}
+
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	for _, name := range roleNames {
+		if !p.InUse[name] {
+			p.InUse[name] = true
+			return name, nil
+		}
+	}
+	return "", fmt.Errorf("role pool %q exhausted: all %d names in use", role, len(roleNames))
 }
 
 // getNames returns the list of names to use for the pool.

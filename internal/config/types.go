@@ -1516,6 +1516,15 @@ type NamepoolConfig struct {
 	// MaxBeforeNumbering is when to start appending numbers.
 	// Default is 50. After this many polecats, names become name-01, name-02, etc.
 	MaxBeforeNumbering int `json:"max_before_numbering,omitempty"`
+
+	// Pools partitions the name pool into named sub-pools by role.
+	// Maps role name to the list of polecat names assigned to that role.
+	// gt sling --role <name> picks only from the matching sub-pool.
+	Pools map[string][]string `json:"pools,omitempty"`
+
+	// DefaultPool is the role sub-pool to use when --role is not specified.
+	// When empty and Pools is set, falls back to the full pool.
+	DefaultPool string `json:"default_pool,omitempty"`
 }
 
 // DefaultNamepoolConfig returns a NamepoolConfig with sensible defaults.

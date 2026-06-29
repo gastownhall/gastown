@@ -61,6 +61,7 @@ type SlingSpawnOptions struct {
 	BaseBranch    string // Override base branch for polecat worktree (e.g., "develop", "release/v2")
 	ResumeBranch  string // Resume an existing branch (e.g. PR head) instead of creating polecat/<name>/<bead>@<ts>
 	SkipAdmission bool   // Caller already holds a polecat admission reservation
+	Role          string // Named role sub-pool for polecat name allocation (e.g., "pr-review")
 }
 
 func effectivePolecatDirCap(configured int) int {
@@ -192,6 +193,7 @@ func SpawnPolecatForSling(rigName string, opts SlingSpawnOptions) (*SpawnedPolec
 			HookBead:     opts.HookBead,
 			BaseBranch:   baseBranch,
 			ResumeBranch: opts.ResumeBranch,
+			Role:         opts.Role,
 		}
 		reuseOK := false
 		if _, err := polecatMgr.ReuseIdlePolecat(polecatName, addOpts); err != nil {
@@ -294,6 +296,7 @@ func SpawnPolecatForSling(rigName string, opts SlingSpawnOptions) (*SpawnedPolec
 		HookBead:     opts.HookBead,
 		BaseBranch:   baseBranch,
 		ResumeBranch: opts.ResumeBranch,
+		Role:         opts.Role,
 	}
 
 	// No idle polecat available — allocate and create atomically (GH#2215).

@@ -129,6 +129,7 @@ type ResolveTargetOptions struct {
 	BaseBranch           string // Override base branch for polecat worktree
 	ResumeBranch         string // Existing branch to resume (e.g. PR head); mutually exclusive with BaseBranch
 	SkipPolecatAdmission bool   // Caller already holds a capacity reservation
+	Role                 string // Named role sub-pool for polecat name allocation (e.g., "pr-review")
 }
 
 // ResolvedTarget holds the results of target resolution.
@@ -241,6 +242,7 @@ func resolveTarget(target string, opts ResolveTargetOptions) (*ResolvedTarget, e
 			BaseBranch:    opts.BaseBranch,
 			ResumeBranch:  opts.ResumeBranch,
 			SkipAdmission: opts.SkipPolecatAdmission,
+			Role:          opts.Role,
 		}
 		spawnInfo, err := spawnPolecatForSling(rigName, spawnOpts)
 		if err != nil {
@@ -283,6 +285,7 @@ func resolveTarget(target string, opts ResolveTargetOptions) (*ResolvedTarget, e
 				BaseBranch:    opts.BaseBranch,
 				ResumeBranch:  opts.ResumeBranch,
 				SkipAdmission: opts.SkipPolecatAdmission,
+				Role:          opts.Role,
 			}
 			spawnInfo, spawnErr := spawnPolecatForSling(rigName, spawnOpts)
 			if spawnErr != nil {

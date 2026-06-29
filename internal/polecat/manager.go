@@ -181,6 +181,9 @@ func NewManager(r *rig.Rig, g *git.Git, t *tmux.Tmux) *Manager {
 			names,
 			settings.Namepool.MaxBeforeNumbering,
 		)
+		if len(settings.Namepool.Pools) > 0 {
+			pool.SetRolePools(settings.Namepool.Pools)
+		}
 	} else {
 		// Fallback: check rig-level config.json for polecat_names
 		// (pool-init and gt rig config write namepool config here).
@@ -539,6 +542,10 @@ type AddOptions struct {
 	// updating the existing PR. Mutually exclusive with BaseBranch (resume implies its
 	// own start point). When empty, normal fresh-branch behavior is used.
 	ResumeBranch string
+	// Role selects a named sub-pool for name allocation (e.g., "pr-review").
+	// When set, AllocateAndAdd picks a name only from the role's configured pool.
+	// When empty, allocation uses the full pool (existing behavior).
+	Role string
 }
 
 // Add creates a new polecat as a git worktree from the repo base.
@@ -673,7 +680,12 @@ func (m *Manager) AllocateAndAdd(opts AddOptions) (string, *Polecat, error) {
 
 	m.reconcilePoolInternal()
 
-	name, err := m.namePool.Allocate()
+	var name string
+	if opts.Role != "" {
+		name, err = m.namePool.AllocateFromRole(opts.Role)
+	} else {
+		name, err = m.namePool.Allocate()
+	}
 	if err != nil {
 		_ = poolLock.Unlock()
 		return "", nil, err

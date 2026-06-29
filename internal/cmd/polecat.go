@@ -11,6 +11,7 @@ import (
 
 	"github.com/spf13/cobra"
 	"github.com/steveyegge/gastown/internal/beads"
+	"github.com/steveyegge/gastown/internal/config"
 	"github.com/steveyegge/gastown/internal/git"
 	"github.com/steveyegge/gastown/internal/polecat"
 	"github.com/steveyegge/gastown/internal/rig"
@@ -2290,6 +2291,20 @@ func runPolecatPoolInit(cmd *cobra.Command, args []string) error {
 	fmt.Printf("Initializing persistent polecat pool for %s (target size: %d)\n", rigName, poolSize)
 	if len(existing) > 0 {
 		fmt.Printf("  Existing polecats: %d\n", len(existing))
+	}
+
+	// Show role pool assignments from settings if configured.
+	settingsPath := filepath.Join(r.Path, "settings", "config.json")
+	if settings, err := config.LoadRigSettings(settingsPath); err == nil &&
+		settings.Namepool != nil && len(settings.Namepool.Pools) > 0 {
+		fmt.Printf("  Role pools:\n")
+		for role, names := range settings.Namepool.Pools {
+			marker := ""
+			if role == settings.Namepool.DefaultPool {
+				marker = " (default)"
+			}
+			fmt.Printf("    %s%s: %s\n", role, marker, strings.Join(names, ", "))
+		}
 	}
 
 	// Build the list of names to create

@@ -38,6 +38,7 @@ type SlingParams struct {
 	NoBoot       bool     // --no-boot
 	Mode         string   // --ralph: "" (normal) or "ralph"
 	ReviewOnly   bool     // --review-only: review and report back only, no merge/commit/push
+	Role         string   // --role: pick polecat from named role sub-pool
 
 	// Execution behavior (set by caller, not serialized to queue)
 	SkipCook         bool   // Batch optimization: formula already cooked
@@ -237,6 +238,7 @@ func executeSling(params SlingParams) (*SlingResult, error) {
 		Agent:        params.Agent,
 		BaseBranch:   params.BaseBranch,
 		ResumeBranch: params.ResumeBranch,
+		Role:         params.Role,
 		// Create is always true for rig targets: executeSling only handles
 		// rig-targeted dispatch (batch sling + queue dispatch), where a fresh
 		// polecat must be spawned. The single-sling path (runSling) handles
