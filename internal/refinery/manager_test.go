@@ -1,8 +1,10 @@
 package refinery
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"testing"
@@ -64,6 +66,234 @@ func TestManager_SessionName(t *testing.T) {
 	got := mgr.SessionName()
 	if got != want {
 		t.Errorf("SessionName() = %s, want %s", got, want)
+	}
+}
+
+func TestSafetyStopFromIssue(t *testing.T) {
+	stop := safetyStopFromIssue("", &beads.Issue{
+		ID:     "gt-testrig-refinery",
+		Labels: []string{"gt:agent", "safety_stop:hq-vmrwr"},
+	})
+	if stop == nil {
+		t.Fatal("expected safety stop")
+	}
+	if stop.AgentID != "gt-testrig-refinery" || stop.Label != "safety_stop:hq-vmrwr" || stop.StopID != "hq-vmrwr" {
+		t.Fatalf("stop = %+v", stop)
+	}
+
+	if got := safetyStopFromIssue("gt-testrig-refinery", &beads.Issue{Labels: []string{"gt:agent"}}); got != nil {
+		t.Fatalf("unexpected safety stop: %+v", got)
+	}
+}
+
+func TestActiveSafetyStopUsesRoutesPrefix(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("mock bd script uses POSIX shell")
+	}
+	townRoot := t.TempDir()
+	for _, dir := range []string{filepath.Join(townRoot, "mayor"), filepath.Join(townRoot, ".beads"), filepath.Join(townRoot, "beads")} {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatalf("mkdir %s: %v", dir, err)
+		}
+	}
+	if err := os.WriteFile(filepath.Join(townRoot, "mayor", "town.json"), []byte(`{"name":"test"}`), 0o644); err != nil {
+		t.Fatalf("write town.json: %v", err)
+	}
+	if err := beads.WriteRoutes(filepath.Join(townRoot, ".beads"), []beads.Route{{Prefix: "bd-", Path: "beads/mayor/rig"}}); err != nil {
+		t.Fatalf("write routes: %v", err)
+	}
+
+	binDir := t.TempDir()
+	writeRoutePrefixSafetyStopMockBD(t, binDir)
+	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	stop, err := ActiveSafetyStop(townRoot, "beads")
+	if err != nil {
+		t.Fatalf("ActiveSafetyStop: %v", err)
+	}
+	if stop == nil {
+		t.Fatal("expected safety stop from route-prefixed refinery bead")
+	}
+	if stop.AgentID != "bd-beads-refinery" {
+		t.Fatalf("AgentID = %q, want bd-beads-refinery", stop.AgentID)
+	}
+}
+
+func TestManager_StartSafetyStoppedDoesNotCreateSession(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("mock bd/tmux scripts use POSIX shell")
+	}
+	setupTestRegistry(t)
+
+	townRoot := t.TempDir()
+	for _, dir := range []string{filepath.Join(townRoot, "mayor"), filepath.Join(townRoot, ".beads"), filepath.Join(townRoot, "testrig")} {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatalf("mkdir %s: %v", dir, err)
+		}
+	}
+	if err := os.WriteFile(filepath.Join(townRoot, "mayor", "town.json"), []byte(`{"name":"test"}`), 0o644); err != nil {
+		t.Fatalf("write town.json: %v", err)
+	}
+
+	binDir := t.TempDir()
+	logPath := filepath.Join(t.TempDir(), "commands.log")
+	writeSafetyStopMockBD(t, binDir)
+	writeSafetyStopMockTmux(t, binDir, logPath)
+	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	mgr := NewManager(&rig.Rig{Name: "testrig", Path: filepath.Join(townRoot, "testrig")})
+	err := mgr.Start(false, "")
+	if !errors.Is(err, ErrSafetyStopped) {
+		t.Fatalf("Start error = %v, want ErrSafetyStopped", err)
+	}
+	logData, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatalf("read command log: %v", err)
+	}
+	if strings.Contains(string(logData), "new-session") {
+		t.Fatalf("Start created a tmux session despite safety stop; log:\n%s", logData)
+	}
+}
+
+func TestManager_StartSafetyStoppedKillsLeftoverSession(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("mock bd/tmux scripts use POSIX shell")
+	}
+	setupTestRegistry(t)
+
+	townRoot := t.TempDir()
+	for _, dir := range []string{filepath.Join(townRoot, "mayor"), filepath.Join(townRoot, ".beads"), filepath.Join(townRoot, "testrig")} {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatalf("mkdir %s: %v", dir, err)
+		}
+	}
+	if err := os.WriteFile(filepath.Join(townRoot, "mayor", "town.json"), []byte(`{"name":"test"}`), 0o644); err != nil {
+		t.Fatalf("write town.json: %v", err)
+	}
+
+	binDir := t.TempDir()
+	logPath := filepath.Join(t.TempDir(), "commands.log")
+	writeSafetyStopMockBD(t, binDir)
+	writeSafetyStopRunningMockTmux(t, binDir, logPath)
+	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	mgr := NewManager(&rig.Rig{Name: "testrig", Path: filepath.Join(townRoot, "testrig")})
+	err := mgr.Start(false, "")
+	if !errors.Is(err, ErrSafetyStopped) {
+		t.Fatalf("Start error = %v, want ErrSafetyStopped", err)
+	}
+	logData, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatalf("read command log: %v", err)
+	}
+	log := string(logData)
+	if !strings.Contains(log, "kill-session") {
+		t.Fatalf("Start did not kill leftover safety-stopped session; log:\n%s", logData)
+	}
+	if strings.Contains(log, "new-session") {
+		t.Fatalf("Start created a tmux session despite safety stop; log:\n%s", logData)
+	}
+}
+
+func writeSafetyStopMockBD(t *testing.T, binDir string) {
+	t.Helper()
+	script := `#!/bin/sh
+cmd=""
+for arg in "$@"; do
+  case "$arg" in
+    --*) ;;
+    *) cmd="$arg"; break ;;
+  esac
+done
+case "$cmd" in
+  version)
+    echo "bd test"
+    ;;
+  show)
+    printf '%s\n' '[{"id":"gt-testrig-refinery","title":"Refinery","issue_type":"task","labels":["gt:agent","safety_stop:hq-vmrwr"],"status":"open","description":"role_type: refinery\nrig: testrig\nagent_state: idle"}]'
+    ;;
+  *)
+    echo "unexpected bd command: $*" >&2
+    exit 9
+    ;;
+esac
+`
+	if err := os.WriteFile(filepath.Join(binDir, "bd"), []byte(script), 0o755); err != nil {
+		t.Fatalf("write fake bd: %v", err)
+	}
+}
+
+func writeRoutePrefixSafetyStopMockBD(t *testing.T, binDir string) {
+	t.Helper()
+	script := `#!/bin/sh
+cmd=""
+for arg in "$@"; do
+  case "$arg" in
+    --*) ;;
+    *) cmd="$arg"; break ;;
+  esac
+done
+case "$cmd" in
+  version)
+    echo "bd test"
+    ;;
+  show)
+    case "$*" in
+      *bd-beads-refinery*)
+        printf '%s\n' '[{"id":"bd-beads-refinery","title":"Refinery","issue_type":"task","labels":["gt:agent","safety_stop:hq-vmrwr"],"status":"open","description":"role_type: refinery\nrig: beads\nagent_state: idle"}]'
+        ;;
+      *)
+        printf '%s\n' '[]'
+        ;;
+    esac
+    ;;
+  *)
+    echo "unexpected bd command: $*" >&2
+    exit 9
+    ;;
+esac
+`
+	if err := os.WriteFile(filepath.Join(binDir, "bd"), []byte(script), 0o755); err != nil {
+		t.Fatalf("write fake bd: %v", err)
+	}
+}
+
+func writeSafetyStopMockTmux(t *testing.T, binDir, logPath string) {
+	t.Helper()
+	script := `#!/bin/sh
+printf '%s\n' "$*" >> "` + logPath + `"
+case "$1" in
+  has-session)
+    exit 1
+    ;;
+  *)
+    exit 0
+    ;;
+esac
+`
+	if err := os.WriteFile(filepath.Join(binDir, "tmux"), []byte(script), 0o755); err != nil {
+		t.Fatalf("write fake tmux: %v", err)
+	}
+}
+
+func writeSafetyStopRunningMockTmux(t *testing.T, binDir, logPath string) {
+	t.Helper()
+	script := `#!/bin/sh
+printf '%s\n' "$*" >> "` + logPath + `"
+case "$1" in
+  has-session)
+    exit 0
+    ;;
+  display-message)
+    exit 1
+    ;;
+  *)
+    exit 0
+    ;;
+esac
+`
+	if err := os.WriteFile(filepath.Join(binDir, "tmux"), []byte(script), 0o755); err != nil {
+		t.Fatalf("write fake tmux: %v", err)
 	}
 }
 

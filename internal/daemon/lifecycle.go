@@ -15,6 +15,7 @@ import (
 	"github.com/steveyegge/gastown/internal/config"
 	"github.com/steveyegge/gastown/internal/constants"
 	gtgit "github.com/steveyegge/gastown/internal/git"
+	"github.com/steveyegge/gastown/internal/refinery"
 	"github.com/steveyegge/gastown/internal/rig"
 	"github.com/steveyegge/gastown/internal/session"
 	"github.com/steveyegge/gastown/internal/tmux"
@@ -352,6 +353,14 @@ func (d *Daemon) restartSession(sessionName, identity string) error {
 		if operational, reason := d.isRigOperational(parsed.RigName); !operational {
 			d.logger.Printf("Skipping session restart for %s: %s", identity, reason)
 			return fmt.Errorf("cannot restart session: %s", reason)
+		}
+	}
+	if parsed.RoleType == constants.RoleRefinery {
+		if stop, err := refinery.ActiveSafetyStop(d.config.TownRoot, parsed.RigName); err != nil {
+			return fmt.Errorf("checking refinery safety stop: %w", err)
+		} else if stop != nil {
+			d.logger.Printf("Skipping session restart for %s: %s", identity, stop.Reason())
+			return refinery.NewSafetyStoppedError(stop)
 		}
 	}
 

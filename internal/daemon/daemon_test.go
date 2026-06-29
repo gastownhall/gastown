@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/gofrs/flock"
+	"github.com/steveyegge/gastown/internal/tmux"
 )
 
 func TestDefaultConfig(t *testing.T) {
@@ -150,6 +151,86 @@ func TestSyncWorkspaceRefusesTownRootWorkDir(t *testing.T) {
 		t.Fatalf("HEAD changed after nested sync: got %s, want %s", got, headBefore)
 	}
 	assertDaemonTownFilesPreserved(t, townRoot, filesBefore)
+}
+
+func TestEnsureRefineryRunningSafetyStoppedDoesNotSpawn(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("mock bd/tmux scripts use POSIX shell")
+	}
+	townRoot := t.TempDir()
+	writeDaemonTownFile(t, townRoot, "mayor/town.json", `{"name":"test"}`)
+	writeDaemonTownFile(t, townRoot, ".beads/metadata.json", `{"prefix":"hq"}`)
+	writeDaemonTownFile(t, townRoot, "events/refinery/pending.event", "{}")
+	if err := os.MkdirAll(filepath.Join(townRoot, "testrig"), 0o755); err != nil {
+		t.Fatalf("mkdir rig: %v", err)
+	}
+
+	binDir := t.TempDir()
+	logPath := filepath.Join(binDir, "commands.log")
+	writeDaemonSafetyStopMockBD(t, binDir, logPath)
+	writeDaemonSafetyStopMockTmux(t, binDir, logPath)
+	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	d := &Daemon{
+		config: DefaultConfig(townRoot),
+		logger: log.New(io.Discard, "", 0),
+		tmux:   tmux.NewTmux(),
+	}
+	d.ensureRefineryRunning("testrig")
+
+	logData, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatalf("read command log: %v", err)
+	}
+	if strings.Contains(string(logData), "new-session") {
+		t.Fatalf("daemon spawned refinery despite safety stop; log:\n%s", logData)
+	}
+}
+
+func writeDaemonSafetyStopMockBD(t *testing.T, binDir, logPath string) {
+	t.Helper()
+	script := `#!/bin/sh
+printf 'bd %s\n' "$*" >> "` + logPath + `"
+cmd=""
+for arg in "$@"; do
+  case "$arg" in
+    --*) ;;
+    *) cmd="$arg"; break ;;
+  esac
+done
+case "$cmd" in
+  version)
+    echo "bd test"
+    ;;
+  show)
+    printf '%s\n' '[{"id":"gt-testrig-refinery","title":"Refinery","issue_type":"task","labels":["gt:agent","safety_stop:hq-vmrwr"],"status":"open","description":"role_type: refinery\nrig: testrig\nagent_state: idle"}]'
+    ;;
+  *)
+    exit 0
+    ;;
+esac
+`
+	if err := os.WriteFile(filepath.Join(binDir, "bd"), []byte(script), 0o755); err != nil {
+		t.Fatalf("write fake bd: %v", err)
+	}
+}
+
+func writeDaemonSafetyStopMockTmux(t *testing.T, binDir, logPath string) {
+	t.Helper()
+	script := `#!/bin/sh
+printf 'tmux %s\n' "$*" >> "` + logPath + `"
+case "$1" in
+  has-session)
+    exit 1
+    ;;
+  *)
+    exit 0
+    ;;
+esac
+`
+	if err := os.WriteFile(filepath.Join(binDir, "tmux"), []byte(script), 0o755); err != nil {
+		t.Fatalf("write fake tmux: %v", err)
+	}
 }
 
 func writeDaemonTownFile(t *testing.T, root, rel, contents string) {

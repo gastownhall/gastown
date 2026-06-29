@@ -15,6 +15,7 @@ import (
 	"github.com/steveyegge/gastown/internal/config"
 	"github.com/steveyegge/gastown/internal/constants"
 	"github.com/steveyegge/gastown/internal/deacon"
+	"github.com/steveyegge/gastown/internal/refinery"
 	"github.com/steveyegge/gastown/internal/rig"
 	"github.com/steveyegge/gastown/internal/session"
 	"github.com/steveyegge/gastown/internal/style"
@@ -518,6 +519,20 @@ func outputStartupDirective(ctx RoleContext) {
 			fmt.Println("---")
 			fmt.Println()
 			fmt.Printf("Rig %s is %s. No patrol needed. Exit cleanly.\n", ctx.Rig, reason)
+			return
+		}
+		if stop, err := refinery.ActiveSafetyStop(ctx.TownRoot, ctx.Rig); err != nil {
+			fmt.Println()
+			fmt.Println("---")
+			fmt.Println()
+			style.PrintWarning("could not check refinery safety stop: %v", err)
+			fmt.Println("No patrol needed. Exit cleanly until safety-stop state can be verified.")
+			return
+		} else if stop != nil {
+			fmt.Println()
+			fmt.Println("---")
+			fmt.Println()
+			fmt.Printf("Refinery %s is %s. No patrol needed. Exit cleanly.\n", ctx.Rig, stop.Reason())
 			return
 		}
 		fmt.Println()

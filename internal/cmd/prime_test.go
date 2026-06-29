@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -954,6 +955,62 @@ func TestCheckSlungWork_StandaloneFormulaUsesWorkflowOutput(t *testing.T) {
 	}
 	if !strings.Contains(output, "--var version=1.2.3") {
 		t.Fatalf("expected standalone formula context to be shown, got:\n%s", output)
+	}
+}
+
+func TestCheckSlungWork_RefinerySafetyStoppedSkipsWorkflowOutput(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("mock bd script uses POSIX shell")
+	}
+	townRoot := setupRefinerySafetyStopTown(t)
+	installRefinerySafetyStopMockBD(t)
+
+	ctx := RoleContext{Role: RoleRefinery, Rig: "testrig", TownRoot: townRoot}
+	hookedBead := &beads.Issue{
+		ID:    "gt-wisp-refinery",
+		Title: constants.MolRefineryPatrol,
+		Description: strings.Join([]string{
+			"attached_formula: " + constants.MolRefineryPatrol,
+			`attached_vars: ["target_branch=main"]`,
+		}, "\n"),
+	}
+
+	var found bool
+	var gotErr error
+	output := captureStdout(t, func() {
+		found, gotErr = checkSlungWork(ctx, hookedBead)
+	})
+	if gotErr != nil {
+		t.Fatalf("checkSlungWork() error = %v", gotErr)
+	}
+	if !found {
+		t.Fatalf("checkSlungWork() = false, want true")
+	}
+	if !strings.Contains(output, "REFINERY SAFETY STOP ACTIVE") {
+		t.Fatalf("expected safety-stop directive, got:\n%s", output)
+	}
+	for _, forbidden := range []string{"ATTACHED FORMULA", "AUTONOMOUS WORK MODE", "Work through each patrol step"} {
+		if strings.Contains(output, forbidden) {
+			t.Fatalf("did not expect %q while safety-stopped, got:\n%s", forbidden, output)
+		}
+	}
+}
+
+func TestOutputStartupDirective_RefinerySafetyStoppedSkipsPatrolNew(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("mock bd script uses POSIX shell")
+	}
+	townRoot := setupRefinerySafetyStopTown(t)
+	installRefinerySafetyStopMockBD(t)
+
+	output := captureStdout(t, func() {
+		outputStartupDirective(RoleContext{Role: RoleRefinery, Rig: "testrig", TownRoot: townRoot})
+	})
+	if !strings.Contains(output, "No patrol needed. Exit cleanly.") {
+		t.Fatalf("expected safety-stop startup directive, got:\n%s", output)
+	}
+	if strings.Contains(output, "gt patrol new") || strings.Contains(output, "create patrol") {
+		t.Fatalf("startup directive should not tell safety-stopped refinery to create patrol, got:\n%s", output)
 	}
 }
 

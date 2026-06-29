@@ -119,6 +119,21 @@ func (m *Manager) Start(foreground bool, agentOverride string) error {
 		return fmt.Errorf("foreground mode is deprecated; use background mode (remove --foreground flag)")
 	}
 
+	townRoot := filepath.Dir(m.rig.Path)
+	stop, err := ActiveSafetyStop(townRoot, m.rig.Name)
+	if err != nil {
+		return fmt.Errorf("checking refinery safety stop: %w", err)
+	}
+	if stop != nil {
+		if running, _ := t.HasSession(sessionID); running {
+			_, _ = fmt.Fprintf(m.output, "Refinery %s is safety-stopped; killing leftover session %s.\n", m.rig.Name, sessionID)
+			if err := t.KillSessionWithProcesses(sessionID); err != nil {
+				return fmt.Errorf("%w: killing leftover refinery session: %v", NewSafetyStoppedError(stop), err)
+			}
+		}
+		return NewSafetyStoppedError(stop)
+	}
+
 	// Check if session already exists
 	running, _ := t.HasSession(sessionID)
 	if running {
@@ -166,7 +181,6 @@ func (m *Manager) Start(foreground bool, agentOverride string) error {
 
 	// Ensure runtime settings exist in the shared refinery parent directory.
 	// Settings are passed to Claude Code via --settings flag.
-	townRoot := filepath.Dir(m.rig.Path)
 
 	// Resolve CLAUDE_CONFIG_DIR from accounts.json so refinery sessions
 	// use the correct account. Mirrors the daemon restart path (lifecycle.go).

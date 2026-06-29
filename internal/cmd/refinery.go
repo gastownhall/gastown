@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -496,7 +497,7 @@ func runRefineryAttach(cmd *cobra.Command, args []string) error {
 	}
 
 	// Use getRefineryManager to validate rig (and infer from cwd if needed)
-	mgr, _, rigName, err := getRefineryManager(rigName)
+	mgr, r, rigName, err := getRefineryManager(rigName)
 	if err != nil {
 		return err
 	}
@@ -509,6 +510,17 @@ func runRefineryAttach(cmd *cobra.Command, args []string) error {
 	running, err := t.HasSession(sessionID)
 	if err != nil {
 		return fmt.Errorf("checking session: %w", err)
+	}
+	if stop, err := refinery.ActiveSafetyStop(filepath.Dir(r.Path), rigName); err != nil {
+		return fmt.Errorf("checking refinery safety stop: %w", err)
+	} else if stop != nil {
+		if running {
+			fmt.Printf("Refinery %s is safety-stopped; stopping leftover session %s.\n", rigName, sessionID)
+			if err := mgr.Stop(); err != nil && err != refinery.ErrNotRunning {
+				return fmt.Errorf("%w: stopping leftover refinery session: %v", refinery.NewSafetyStoppedError(stop), err)
+			}
+		}
+		return refinery.NewSafetyStoppedError(stop)
 	}
 	if !running {
 		// Auto-start if not running
@@ -529,7 +541,7 @@ func runRefineryRestart(cmd *cobra.Command, args []string) error {
 		rigName = args[0]
 	}
 
-	mgr, _, rigName, err := getRefineryManager(rigName)
+	mgr, r, rigName, err := getRefineryManager(rigName)
 	if err != nil {
 		return err
 	}
@@ -539,6 +551,14 @@ func runRefineryRestart(cmd *cobra.Command, args []string) error {
 	}
 
 	fmt.Printf("Restarting refinery for %s...\n", rigName)
+	if stop, err := refinery.ActiveSafetyStop(filepath.Dir(r.Path), rigName); err != nil {
+		return fmt.Errorf("checking refinery safety stop: %w", err)
+	} else if stop != nil {
+		if err := mgr.Stop(); err != nil && err != refinery.ErrNotRunning {
+			return fmt.Errorf("%w: stopping leftover refinery session: %v", refinery.NewSafetyStoppedError(stop), err)
+		}
+		return refinery.NewSafetyStoppedError(stop)
+	}
 
 	// Stop if running (ignore ErrNotRunning)
 	if err := mgr.Stop(); err != nil && err != refinery.ErrNotRunning {

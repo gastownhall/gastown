@@ -1797,6 +1797,20 @@ func (d *Daemon) ensureRefineryRunning(rigName string) {
 		}
 		return
 	}
+	if stop, err := refinery.ActiveSafetyStop(d.config.TownRoot, rigName); err != nil {
+		d.logger.Printf("Skipping refinery auto-start for %s: cannot verify safety stop: %v", rigName, err)
+		return
+	} else if stop != nil {
+		d.logger.Printf("Skipping refinery auto-start for %s: %s", rigName, stop.Reason())
+		name := session.RefinerySessionName(session.PrefixFor(rigName))
+		if exists, _ := d.tmux.HasSession(name); exists {
+			d.logger.Printf("Killing leftover refinery %s (%s)", name, stop.Reason())
+			if err := d.tmux.KillSessionWithProcesses(name); err != nil {
+				d.logger.Printf("Error killing leftover refinery %s: %v", name, err)
+			}
+		}
+		return
+	}
 
 	// Event gate: don't spawn a new Claude session when there's nothing to process.
 	// If a refinery session is already running, Start() returns ErrAlreadyRunning (cheap).
@@ -1831,9 +1845,13 @@ func (d *Daemon) ensureRefineryRunning(rigName string) {
 	// See: daemon.log "is hung (no activity for 30m0s), killing for restart"
 
 	if err := mgr.Start(false, ""); err != nil {
-		if err == refinery.ErrAlreadyRunning {
+		if errors.Is(err, refinery.ErrAlreadyRunning) {
 			// Already running - this is the expected case when fix is working
 			d.logger.Printf("Refinery for %s already running, skipping spawn", rigName)
+			return
+		}
+		if errors.Is(err, refinery.ErrSafetyStopped) {
+			d.logger.Printf("Skipping refinery auto-start for %s: %v", rigName, err)
 			return
 		}
 		d.logger.Printf("Error starting refinery for %s: %v", rigName, err)

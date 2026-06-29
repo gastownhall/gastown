@@ -2,12 +2,14 @@ package cmd
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"os/exec"
 	"strings"
 
 	"github.com/steveyegge/gastown/internal/beads"
 	"github.com/steveyegge/gastown/internal/cli"
+	"github.com/steveyegge/gastown/internal/refinery"
 	"github.com/steveyegge/gastown/internal/style"
 	"golang.org/x/text/cases"
 	"golang.org/x/text/language"
@@ -201,6 +203,12 @@ func burnPreviousPatrolWisps(cfg PatrolConfig) {
 // self-cleaning regardless of the caller.
 // Returns the patrol ID or an error.
 func autoSpawnPatrol(cfg PatrolConfig) (string, error) {
+	if stop, err := refineryPatrolSafetyStop(cfg); err != nil {
+		return "", err
+	} else if stop != nil {
+		return "", refinery.NewSafetyStoppedError(stop)
+	}
+
 	// Resolve the beads directory following redirects.
 	// This ensures bd targets the correct database (e.g., rig database
 	// instead of HQ) regardless of inherited BEADS_DIR. See gt-ctir.
@@ -331,6 +339,10 @@ func outputPatrolContext(cfg PatrolConfig) {
 		var err error
 		patrolID, err = autoSpawnPatrol(cfg)
 		if err != nil {
+			if errors.Is(err, refinery.ErrSafetyStopped) {
+				fmt.Println(style.Dim.Render(err.Error()))
+				return
+			}
 			if patrolID != "" {
 				fmt.Printf("⚠ %s\n", err.Error())
 			} else {
@@ -357,4 +369,15 @@ func outputPatrolContext(cfg PatrolConfig) {
 		fmt.Println()
 		fmt.Printf("Current patrol ID: %s\n", patrolID)
 	}
+}
+
+func refineryPatrolSafetyStop(cfg PatrolConfig) (*refinery.SafetyStop, error) {
+	if cfg.RoleName != "refinery" {
+		return nil, nil
+	}
+	rigName := strings.TrimSuffix(cfg.Assignee, "/refinery")
+	if rigName == cfg.Assignee || rigName == "" {
+		return nil, nil
+	}
+	return refinery.ActiveSafetyStop(cfg.BeadsDir, rigName)
 }
