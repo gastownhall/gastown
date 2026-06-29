@@ -1,0 +1,232 @@
+{
+  "schema_version": "pr-sheriff-evidence/v1",
+  "policy_version": "pr-sheriff-policy/v1.1",
+  "generated_at": "2026-06-29T14:21:31Z",
+  "run_id": "pr-4350-sheriff-2026-06-29",
+  "subject": {
+    "forge": "github",
+    "repo_id": "gastownhall/gastown",
+    "default_branch": "main",
+    "change_type": "pull_request",
+    "change_id": "4350",
+    "url": "https://github.com/gastownhall/gastown/pull/4350",
+    "title": "fix: collapse mol-orphan-scan scope default",
+    "author": "Bella-Giraffety",
+    "author_tier": "trusted",
+    "draft": false,
+    "base_ref": "main",
+    "base_sha": "1bae8a3ca9f8693ea70bb2fbd101f87a8882d0eb",
+    "head_ref": "Bella-Giraffety/gastown:polecat/mayor/gt-mol-orphan-scan-formula-validation",
+    "head_sha": "371c5babafb9df8856a75c507545e619cfd40c3b",
+    "diff_summary": {
+      "additions": 0,
+      "deletions": 1,
+      "changed_files": 1,
+      "paths": [
+        "internal/formula/formulas/mol-orphan-scan.formula.toml"
+      ]
+    }
+  },
+  "repo_policy": {
+    "label_aliases": [],
+    "feature_kind_values": ["feature", "enhancement"],
+    "merge_ready_status_values": ["review-approved", "merge-ready"],
+    "approver_roles": ["maintainer", "owner", "policy_approver", "designated_reviewer"],
+    "evidence_locations": ["pr_thread", "review_thread", "artifact_store", "ci_log", "local_report", "bead"],
+    "baseline_checks": [
+      "Reject go.mod replace directives",
+      "Reject issues.jsonl",
+      "Windows Smoke Test",
+      "Test",
+      "Lint",
+      "Integration Tests"
+    ],
+    "no_verification_reasons": ["docs_only"]
+  },
+  "action_plan": {
+    "id": "action-plan-pr-4350-refresh",
+    "mode": "merge_as_is",
+    "proposed_action_ref": "action-plan-pr-4350-refresh",
+    "summary": "Treat PR #4350 as merge-ready after the existing one-line formula fix was refreshed onto post-#4344 main, CI passed, and PR Sheriff evidence passed.",
+    "created_at": "2026-06-29T14:05:00Z"
+  },
+  "labels": {
+    "observed": [
+      {"name": "status/merge-ready", "family": "status", "semantic_value": "merge-ready"},
+      {"name": "priority/p1", "family": "priority", "semantic_value": "p1"},
+      {"name": "kind/bug", "family": "kind", "semantic_value": "bug"}
+    ],
+    "status": "merge-ready",
+    "priority": "p1",
+    "kind": "bug",
+    "snapshot_artifact_ref": "label-snapshot-final"
+  },
+  "artifacts": [
+    {
+      "id": "label-snapshot-final",
+      "kind": "pr_metadata",
+      "uri": "https://github.com/gastownhall/gastown/pull/4350",
+      "actor": "gastown/polecats/synth",
+      "created_at": "2026-06-29T14:21:31Z",
+      "digest": null,
+      "summary": "PR labels are kind/bug, priority/p1, status/merge-ready; mergeStateStatus CLEAN; head 371c5babafb9df8856a75c507545e619cfd40c3b."
+    },
+    {
+      "id": "diff-summary-final",
+      "kind": "diff_summary",
+      "uri": "https://github.com/gastownhall/gastown/pull/4350/files",
+      "actor": "gastown/polecats/synth",
+      "created_at": "2026-06-29T14:21:31Z",
+      "digest": null,
+      "summary": "Compare main...PR head is ahead_by=1 behind_by=0 with one deletion in internal/formula/formulas/mol-orphan-scan.formula.toml."
+    },
+    {
+      "id": "focused-local-verify",
+      "kind": "local_verification",
+      "uri": "file:///tmp/opencode/pr-4350-verify",
+      "actor": "gastown/polecats/synth",
+      "created_at": "2026-06-29T14:10:00Z",
+      "digest": null,
+      "summary": "Focused verification on PR head: go test ./internal/formula -count=1 passed; CGO_ENABLED=0 go test ./internal/doctor -run TestFormulaCheck -count=1 passed; bd --readonly cook mol-orphan-scan dry-run passed with BEADS_DIR; runtime cook with --var scope=town passed."
+    },
+    {
+      "id": "ci-final-green",
+      "kind": "ci_log",
+      "uri": "https://github.com/gastownhall/gastown/actions/runs/28378040439",
+      "actor": "github-actions",
+      "created_at": "2026-06-29T14:20:00Z",
+      "digest": null,
+      "summary": "Fresh post-#4344 CI for head 371c5bab passed Test, Integration Tests, Lint, Reject issues.jsonl, and Reject go.mod replace directives; Windows Smoke Test passed in run 28378040451."
+    },
+    {
+      "id": "blocker-scan-final",
+      "kind": "blocker_scan",
+      "uri": "https://github.com/gastownhall/gastown/pull/4350",
+      "actor": "gastown/polecats/synth",
+      "created_at": "2026-06-29T14:21:31Z",
+      "digest": null,
+      "summary": "Scanned labels, PR comments, review comments, CI, and related bead notes. No do-not-merge label, no change-request reviews, no security blocker, no unresolved PR blocker after fresh green CI."
+    }
+  ],
+  "implementation": {
+    "code_changed_by_sheriff": false,
+    "mode": "merge_as_is",
+    "first_code_change_at": null,
+    "modified_paths": [],
+    "commits": []
+  },
+  "evidence": {
+    "research_legs": [
+      {"id": "research-1", "independence_key": "research-pr-metadata", "artifact_ref": "https://github.com/gastownhall/gastown/pull/4350#research-pr-metadata", "completed_at": "2026-06-29T14:05:00Z", "actor": "research-pr-metadata", "lens": "PR metadata", "summary": "Initial PR was open, non-draft, mergeable but unstable, with labels kind/bug priority/p1 status/reviewing and stale red CI before refresh."},
+      {"id": "research-2", "independence_key": "research-diff-correctness", "artifact_ref": "https://github.com/gastownhall/gastown/pull/4350/files#research-diff-correctness", "completed_at": "2026-06-29T14:05:00Z", "actor": "research-diff-correctness", "lens": "diff correctness", "summary": "Diff removes only the redundant scope default while leaving scope required; caller-provided scope remains the source of truth."},
+      {"id": "research-3", "independence_key": "research-beads-convoy", "artifact_ref": "urn:bead:gt-active-convoy-4350-recovery#research-beads-convoy", "completed_at": "2026-06-29T14:05:00Z", "actor": "research-beads-convoy", "lens": "beads convoy", "summary": "Related convoy hq-cv-dfjvs and formula bead gt-mol-orphan-scan-formula-validation were open/in-progress pending fresh PR evidence."},
+      {"id": "research-4", "independence_key": "research-ci-after-4344", "artifact_ref": "https://github.com/gastownhall/gastown/pull/4344#research-ci-after-4344", "completed_at": "2026-06-29T14:05:00Z", "actor": "research-ci-after-4344", "lens": "post-4344 CI", "summary": "PR #4344 merged as 1bae8a3 with green checks; PR #4350 needed a refresh because old failures were pre-#4344."},
+      {"id": "research-5", "independence_key": "research-formula-tests", "artifact_ref": "focused-local-verify", "completed_at": "2026-06-29T14:05:00Z", "actor": "research-formula-tests", "lens": "formula tests", "summary": "Focused formula and doctor tests plus bd cook dry-runs are the relevant fast verification for the one-line formula change."},
+      {"id": "research-6", "independence_key": "research-security-risk", "artifact_ref": "https://github.com/gastownhall/gastown/pull/4350/files#research-security-risk", "completed_at": "2026-06-29T14:05:00Z", "actor": "research-security-risk", "lens": "security", "summary": "No secrets, auth, CI workflow, dependency, generated state, or logging risk; the change reduces implicit town-wide defaulting."},
+      {"id": "research-7", "independence_key": "research-cleanup-first", "artifact_ref": "diff-summary-final", "completed_at": "2026-06-29T14:05:00Z", "actor": "research-cleanup-first", "lens": "cleanup-first", "summary": "The deletion collapses contradictory required+default metadata and adds no workaround layer."},
+      {"id": "research-8", "independence_key": "research-blocker-scan", "artifact_ref": "blocker-scan-final", "completed_at": "2026-06-29T14:05:00Z", "actor": "research-blocker-scan", "lens": "blocker scan", "summary": "Initial blockers were stale red CI and status/reviewing; final scan after refresh found those resolved except normal merge queue ownership."},
+      {"id": "research-9", "independence_key": "research-label-policy", "artifact_ref": "label-snapshot-final", "completed_at": "2026-06-29T14:05:00Z", "actor": "research-label-policy", "lens": "label policy", "summary": "Final labels have exactly one status, priority, and kind: merge-ready, p1, bug."},
+      {"id": "research-10", "independence_key": "research-rebase-feasibility", "artifact_ref": "diff-summary-final", "completed_at": "2026-06-29T14:05:00Z", "actor": "research-rebase-feasibility", "lens": "rebase feasibility", "summary": "The one-line change replayed cleanly onto upstream/main 1bae8a3; final branch is ahead_by=1 behind_by=0."},
+      {"id": "research-11", "independence_key": "research-supersession", "artifact_ref": "https://github.com/gastownhall/gastown/blob/1bae8a3ca9f8693ea70bb2fbd101f87a8882d0eb/internal/formula/formulas/mol-orphan-scan.formula.toml#L323-L326", "completed_at": "2026-06-29T14:05:00Z", "actor": "research-supersession", "lens": "supersession", "summary": "Current upstream/main still had required=true plus default=town, so PR #4350 was still needed and not superseded."},
+      {"id": "research-12", "independence_key": "research-scope-source-truth", "artifact_ref": "https://github.com/gastownhall/gastown/pull/4350/files#research-scope-source-truth", "completed_at": "2026-06-29T14:05:00Z", "actor": "research-scope-source-truth", "lens": "scope source of truth", "summary": "Committed source after the PR requires caller-provided scope; deacon patrol dispatch supplies --var scope=town."},
+      {"id": "research-13", "independence_key": "research-baseline-red", "artifact_ref": "ci-final-green", "completed_at": "2026-06-29T14:05:00Z", "actor": "research-baseline-red", "lens": "baseline-red", "summary": "Old baseline-red waiver was not valid; fresh post-#4344 CI is now green, so no waiver is needed."},
+      {"id": "research-14", "independence_key": "research-ops-policy", "artifact_ref": "https://github.com/gastownhall/gastown/pull/4350#research-ops-policy", "completed_at": "2026-06-29T14:05:00Z", "actor": "research-ops-policy", "lens": "operations policy", "summary": "No upstream main push; the fork PR flow is respected and PR #4350 remains the merge vehicle."},
+      {"id": "research-15", "independence_key": "research-acceptance-map", "artifact_ref": "urn:bead:gt-active-convoy-4350-recovery#research-acceptance-map", "completed_at": "2026-06-29T14:05:00Z", "actor": "research-acceptance-map", "lens": "acceptance mapping", "summary": "Acceptance requires current PR status/checker evidence and a current convoy note; final PR state now satisfies the PR evidence side."}
+    ],
+    "pre_implementation_reviews": [
+      {"id": "pre-1", "independence_key": "pre-review-branch-update-1", "artifact_ref": "https://github.com/gastownhall/gastown/pull/4350#pre-review-1", "reviewed_action_ref": "action-plan-pr-4350-refresh", "completed_at": "2026-06-29T14:07:00Z", "actor": "pre-review-branch-update-1", "verdict": "approve", "summary": "Approved the same-PR refresh as sound, minimal, and cleanup-first; required final diff, focused verification, and fresh CI."},
+      {"id": "pre-2", "independence_key": "pre-review-branch-update-2", "artifact_ref": "https://github.com/gastownhall/gastown/pull/4350#pre-review-2", "reviewed_action_ref": "action-plan-pr-4350-refresh", "completed_at": "2026-06-29T14:07:00Z", "actor": "pre-review-branch-update-2", "verdict": "approve", "summary": "Approved in-place refresh over replacement PR because it preserves attribution and avoids overhead or workaround code."},
+      {"id": "pre-3", "independence_key": "pre-review-branch-update-3", "artifact_ref": "https://github.com/gastownhall/gastown/pull/4350#pre-review-3", "reviewed_action_ref": "action-plan-pr-4350-refresh", "completed_at": "2026-06-29T14:07:00Z", "actor": "pre-review-branch-update-3", "verdict": "approve", "summary": "Approved as a kind/bug action requiring no feature approval; required green CI and no closure until evidence exists."},
+      {"id": "pre-4", "independence_key": "pre-review-branch-update-4", "artifact_ref": "https://github.com/gastownhall/gastown/pull/4350#pre-review-4", "reviewed_action_ref": "action-plan-pr-4350-refresh", "completed_at": "2026-06-29T14:07:00Z", "actor": "pre-review-branch-update-4", "verdict": "approve", "summary": "Approved because final intended action adds no alternate dispatch path or validation bypass."},
+      {"id": "pre-5", "independence_key": "pre-review-branch-update-5", "artifact_ref": "https://github.com/gastownhall/gastown/pull/4350#pre-review-5", "reviewed_action_ref": "action-plan-pr-4350-refresh", "completed_at": "2026-06-29T14:07:00Z", "actor": "pre-review-branch-update-5", "verdict": "approve", "summary": "Approved with required changes limited to preserving the one-line diff, running focused checks, and persisting evidence."}
+    ],
+    "post_implementation_reviews": [
+      {"id": "post-1", "independence_key": "post-review-371c5ba-1", "artifact_ref": "https://github.com/gastownhall/gastown/pull/4350#post-review-1", "reviewed_action_ref": "action-plan-pr-4350-refresh", "reviewed_head_sha": "371c5babafb9df8856a75c507545e619cfd40c3b", "completed_at": "2026-06-29T14:12:00Z", "actor": "post-review-371c5ba-1", "verdict": "approve", "summary": "Final diff is one deletion and cleanup-first; no required changes."},
+      {"id": "post-2", "independence_key": "post-review-371c5ba-2", "artifact_ref": "https://github.com/gastownhall/gastown/pull/4350#post-review-2", "reviewed_action_ref": "action-plan-pr-4350-refresh", "reviewed_head_sha": "371c5babafb9df8856a75c507545e619cfd40c3b", "completed_at": "2026-06-29T14:12:00Z", "actor": "post-review-371c5ba-2", "verdict": "approve", "summary": "Head is current with upstream/main and attribution is acceptable; no required changes."},
+      {"id": "post-3", "independence_key": "post-review-371c5ba-3", "artifact_ref": "https://github.com/gastownhall/gastown/pull/4350#post-review-3", "reviewed_action_ref": "action-plan-pr-4350-refresh", "reviewed_head_sha": "371c5babafb9df8856a75c507545e619cfd40c3b", "completed_at": "2026-06-29T14:12:00Z", "actor": "post-review-371c5ba-3", "verdict": "approve", "summary": "Focused validation evidence is appropriate and no new conceptual surface area was introduced."},
+      {"id": "post-4", "independence_key": "post-review-371c5ba-4", "artifact_ref": "https://github.com/gastownhall/gastown/pull/4350#post-review-4", "reviewed_action_ref": "action-plan-pr-4350-refresh", "reviewed_head_sha": "371c5babafb9df8856a75c507545e619cfd40c3b", "completed_at": "2026-06-29T14:12:00Z", "actor": "post-review-371c5ba-4", "verdict": "approve", "summary": "No auth, secrets, dependency, generated-state, or CI workflow risk introduced."},
+      {"id": "post-5", "independence_key": "post-review-371c5ba-5", "artifact_ref": "https://github.com/gastownhall/gastown/pull/4350#post-review-5", "reviewed_action_ref": "action-plan-pr-4350-refresh", "reviewed_head_sha": "371c5babafb9df8856a75c507545e619cfd40c3b", "completed_at": "2026-06-29T14:12:00Z", "actor": "post-review-371c5ba-5", "verdict": "approve", "summary": "Acceptance mapping passes for the PR evidence side after fresh CI and merge-ready status."}
+    ]
+  },
+  "cleanup_first": {
+    "assessment": "convergent",
+    "rationale": "The PR collapses a contradictory second source of mol-orphan-scan scope by deleting the formula default and relying on the explicit caller-provided required var.",
+    "prohibited_patterns": [
+      {"kind": "bandaid", "present": false, "exception_reason": "none", "evidence_ref": null},
+      {"kind": "workaround_layer", "present": false, "exception_reason": "none", "evidence_ref": null},
+      {"kind": "compatibility_shim", "present": false, "exception_reason": "none", "evidence_ref": null},
+      {"kind": "patch_on_patch", "present": false, "exception_reason": "none", "evidence_ref": null},
+      {"kind": "scope_creep", "present": false, "exception_reason": "none", "evidence_ref": null}
+    ]
+  },
+  "enhancement_approval": {
+    "required": false,
+    "required_reason": null,
+    "approved": false,
+    "approver": null,
+    "approver_role": null,
+    "approval_ref": null,
+    "approved_at": null
+  },
+  "verification": {
+    "focused_checks": [
+      {"name": "internal/formula", "command_or_check": "go test ./internal/formula -count=1", "outcome": "pass", "artifact_ref": "focused-local-verify", "reason": "Focused formula parser and validation coverage for the changed formula."},
+      {"name": "internal/doctor formula check", "command_or_check": "CGO_ENABLED=0 go test ./internal/doctor -run TestFormulaCheck -count=1", "outcome": "pass", "artifact_ref": "focused-local-verify", "reason": "Focused formula provisioning health check without local ICU link dependency."},
+      {"name": "bd cook mol-orphan-scan", "command_or_check": "BEADS_DIR=/home/coder/gt/gastown/polecats/synth/gastown/.beads bd --readonly cook internal/formula/formulas/mol-orphan-scan.formula.toml --dry-run", "outcome": "pass", "artifact_ref": "focused-local-verify", "reason": "Compile-time formula cook succeeds and shows scope as required without a default."},
+      {"name": "bd runtime cook mol-orphan-scan", "command_or_check": "BEADS_DIR=/home/coder/gt/gastown/polecats/synth/gastown/.beads bd --readonly cook internal/formula/formulas/mol-orphan-scan.formula.toml --mode=runtime --var scope=town --dry-run", "outcome": "pass", "artifact_ref": "focused-local-verify", "reason": "Runtime cook succeeds when caller supplies scope=town."}
+    ],
+    "ci_checks": [
+      {"name": "Reject go.mod replace directives", "outcome": "pass", "head_outcome": "pass", "run_url": "https://github.com/gastownhall/gastown/actions/runs/28378040439/job/84072806912", "artifact_ref": "ci-final-green", "reason": "Fresh post-#4344 PR head check passed."},
+      {"name": "Reject issues.jsonl", "outcome": "pass", "head_outcome": "pass", "run_url": "https://github.com/gastownhall/gastown/actions/runs/28378040439/job/84072806790", "artifact_ref": "ci-final-green", "reason": "Fresh post-#4344 PR head check passed."},
+      {"name": "Windows Smoke Test", "outcome": "pass", "head_outcome": "pass", "run_url": "https://github.com/gastownhall/gastown/actions/runs/28378040451/job/84072806636", "artifact_ref": "ci-final-green", "reason": "Fresh post-#4344 PR head check passed."},
+      {"name": "Test", "outcome": "pass", "head_outcome": "pass", "run_url": "https://github.com/gastownhall/gastown/actions/runs/28378040439/job/84072806833", "artifact_ref": "ci-final-green", "reason": "Fresh post-#4344 PR head check passed."},
+      {"name": "Lint", "outcome": "pass", "head_outcome": "pass", "run_url": "https://github.com/gastownhall/gastown/actions/runs/28378040439/job/84072806880", "artifact_ref": "ci-final-green", "reason": "Fresh post-#4344 PR head check passed."},
+      {"name": "Integration Tests", "outcome": "pass", "head_outcome": "pass", "run_url": "https://github.com/gastownhall/gastown/actions/runs/28378040439/job/84072806882", "artifact_ref": "ci-final-green", "reason": "Fresh post-#4344 PR head check passed."}
+    ]
+  },
+  "baseline_red_waiver": {
+    "requested": false,
+    "approved": false,
+    "approved_by": null,
+    "approver_role": null,
+    "approved_at": null,
+    "approval_ref": null,
+    "failing_checks": [],
+    "unrelated_rationale": "",
+    "evidence_refs": []
+  },
+  "replacement_flow": {
+    "required": false,
+    "mode": "none",
+    "state": "not_applicable",
+    "original_change_url": null,
+    "replacement_change_url": null,
+    "replacement_branch": null,
+    "replacement_commit_refs": [],
+    "original_author": null,
+    "evidence_reuse": {"reused_artifact_refs": [], "fresh_artifact_refs": [], "rationale": "not applicable"},
+    "attribution": {"required": false, "required_reason": null, "preserved": false, "method": "not_required", "artifact_refs": []},
+    "superseded_closure": {"required": false, "state": "not_required", "closure_intent_ref": null, "replacement_merge_ref": null, "closure_ref": null}
+  },
+  "blocker_scan": {
+    "scanned_sources": ["labels", "pr_comments", "review_comments", "bead_notes", "ci_checks"],
+    "unresolved_blockers_found": false,
+    "blocker_refs": [],
+    "resolution_refs": [],
+    "scanned_at": "2026-06-29T14:21:31Z",
+    "summary": "Scanned labels, PR comments, review comments, fresh CI, and related bead notes. No unresolved PR merge blocker remains after fresh green CI and status/merge-ready label. Related convoy remains open only until the PR is actually merged."
+  },
+  "gates": [],
+  "final": {
+    "verdict": "merge_as_is",
+    "decision_valid": true,
+    "merge_path_allowed": true,
+    "blocking_gates": [],
+    "target_change_url": "https://github.com/gastownhall/gastown/pull/4350",
+    "target_head_sha": "371c5babafb9df8856a75c507545e619cfd40c3b",
+    "decided_by": "gastown/polecats/synth",
+    "decided_at": "2026-06-29T14:21:31Z",
+    "reason": "Final PR head is based on post-#4344 main, has a one-line convergent formula fix, fresh CI is green, labels are merge-ready, and no blockers remain for merging PR #4350 as-is.",
+    "required_actions": []
+  }
+}
