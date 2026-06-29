@@ -80,7 +80,10 @@ const (
 func doneContaminationBaseRef(defaultBranch, explicitTarget string) string {
 	targetBranch := defaultBranch
 	if explicitTarget != "" {
-		targetBranch = strings.TrimPrefix(explicitTarget, "origin/")
+		targetBranch = strings.TrimSpace(explicitTarget)
+		if strings.HasPrefix(targetBranch, "origin/") || strings.HasPrefix(targetBranch, "upstream/") {
+			return targetBranch
+		}
 	}
 
 	return "origin/" + targetBranch
@@ -528,6 +531,7 @@ func runDone(cmd *cobra.Command, args []string) (retErr error) {
 	if rigCfg, err := rig.LoadRigConfig(filepath.Join(townRoot, rigName)); err == nil && rigCfg.DefaultBranch != "" {
 		defaultBranch = rigCfg.DefaultBranch
 	}
+	baseRef := g.CleanBaseRef("origin", defaultBranch, doneTarget)
 
 	// For COMPLETED, we need an issue ID and branch must not be the default branch
 	var mrID string
@@ -565,10 +569,9 @@ func runDone(cmd *cobra.Command, args []string) (retErr error) {
 			return fmt.Errorf("cannot complete: uncommitted changes would be lost\nCommit your changes first, or use --status DEFERRED to exit without completing\nUncommitted: %s", workStatus.String())
 		}
 
-		// Check if branch has commits ahead of origin/default
+		// Check if branch has commits ahead of the clean target base.
 		// If not, work may have been pushed directly to main - that's fine, just skip MR
-		originDefault := "origin/" + defaultBranch
-		aheadCount, err := g.CommitsAhead(originDefault, "HEAD")
+		aheadCount, err := g.CommitsAhead(baseRef, "HEAD")
 		if err != nil {
 			// Fallback to local branch comparison if origin not available
 			aheadCount, err = g.CommitsAhead(defaultBranch, branch)
@@ -618,7 +621,7 @@ func runDone(cmd *cobra.Command, args []string) (retErr error) {
 						"Polecats must have at least 1 commit to submit.\n"+
 						"If the bug was already fixed upstream: gt done --status DEFERRED\n"+
 						"If you're blocked: gt done --status ESCALATED",
-						originDefault)
+						baseRef)
 				}
 			}
 
@@ -626,7 +629,7 @@ func runDone(cmd *cobra.Command, args []string) (retErr error) {
 			// (report-only tasks like audits/reviews), or no_merge polecat
 			// (non-code tasks like email/research per GH#2496):
 			// zero commits is valid.
-			fmt.Printf("%s Branch has no commits ahead of %s\n", style.Bold.Render("→"), originDefault)
+			fmt.Printf("%s Branch has no commits ahead of %s\n", style.Bold.Render("→"), baseRef)
 			fmt.Printf("  Work was likely pushed directly to main or already merged.\n")
 			fmt.Printf("  Skipping MR creation - completing without merge request.\n\n")
 
@@ -702,9 +705,16 @@ func runDone(cmd *cobra.Command, args []string) (retErr error) {
 		// the auto-rebase below) sees the current state of origin. Without this,
 		// the local view of origin/<base> may be stale and we'd skip a rebase that
 		// is actually needed.
-		contaminationBase := doneContaminationBaseRef(defaultBranch, doneTarget)
-		if fetchErr := g.Fetch("origin"); fetchErr != nil {
-			style.PrintWarning("could not fetch origin before contamination check: %v (proceeding with local refs)", fetchErr)
+		contaminationBase := baseRef
+		if doneTarget != "" && doneTarget != defaultBranch {
+			contaminationBase = doneContaminationBaseRef(defaultBranch, doneTarget)
+		}
+		fetchRemote := git.RemoteForRef(contaminationBase)
+		if fetchRemote == "" {
+			fetchRemote = "origin"
+		}
+		if fetchErr := g.Fetch(fetchRemote); fetchErr != nil {
+			style.PrintWarning("could not fetch %s before contamination check: %v (proceeding with local refs)", fetchRemote, fetchErr)
 		}
 		contam, err := g.CheckBranchContamination(contaminationBase)
 		if err == nil && contam.Behind > 0 {
@@ -729,7 +739,7 @@ func runDone(cmd *cobra.Command, args []string) (retErr error) {
 			if rebased {
 				fmt.Printf("%s Branch rebased onto %s\n", style.Bold.Render("✓"), contaminationBase)
 				// Recompute commits ahead since rebase rewrote history.
-				aheadCount, _ = g.CommitsAhead("origin/"+defaultBranch, "HEAD")
+				aheadCount, _ = g.CommitsAhead(baseRef, "HEAD")
 			} else if skipReason != "" {
 				style.PrintWarning("branch is %d commits behind %s but %s; skipping auto-rebase", contam.Behind, contaminationBase, skipReason)
 			}
@@ -738,9 +748,9 @@ func runDone(cmd *cobra.Command, args []string) (retErr error) {
 		// Strip Gas Town overlay from CLAUDE.md / CLAUDE.local.md (gt-p35).
 		// Polecats commit the overlay (polecat lifecycle boilerplate) into repos,
 		// overwriting project-specific CLAUDE.md content. Detect and revert before push.
-		if stripped := stripOverlayCLAUDEmd(g, defaultBranch); stripped {
+		if stripped := stripOverlayCLAUDEmd(g, defaultBranch, baseRef); stripped {
 			// Recalculate commits ahead since we added a cleanup commit
-			aheadCount, _ = g.CommitsAhead("origin/"+defaultBranch, "HEAD")
+			aheadCount, _ = g.CommitsAhead(baseRef, "HEAD")
 		}
 
 		// Determine merge strategy from convoy (gt-myofa.3)
@@ -775,7 +785,7 @@ func runDone(cmd *cobra.Command, args []string) (retErr error) {
 		if convoyInfo != nil && convoyInfo.MergeStrategy == "direct" {
 			fmt.Printf("%s Direct merge strategy: pushing to %s\n", style.Bold.Render("→"), defaultBranch)
 			// Push submodule changes before direct push (gt-dzs)
-			pushSubmoduleChanges(g, defaultBranch)
+			pushSubmoduleChanges(g, baseRef)
 			directRefspec := branch + ":" + defaultBranch
 			directPushErr := g.Push("origin", directRefspec, false)
 			if directPushErr != nil {
@@ -852,7 +862,7 @@ func runDone(cmd *cobra.Command, args []string) (retErr error) {
 		// If the parent repo's submodule pointer references commits that don't
 		// exist on the submodule's remote, the Refinery MR will be broken.
 		// Detect modified submodules and push each one first.
-		pushSubmoduleChanges(g, defaultBranch)
+		pushSubmoduleChanges(g, baseRef)
 
 		// Use explicit refspec (branch:branch) to create the remote branch.
 		// Without refspec, git push follows the tracking config — polecat branches
@@ -988,7 +998,7 @@ func runDone(cmd *cobra.Command, args []string) (retErr error) {
 						}
 					}
 					// Add diff stat for quick review context
-					if diffStat, diffErr := g.DiffStat(defaultBranch + "..." + branch); diffErr == nil && diffStat != "" {
+					if diffStat, diffErr := g.DiffStat(baseRef + "..." + branch); diffErr == nil && diffStat != "" {
 						prBodyBuilder.WriteString("## Changes\n\n```\n")
 						prBodyBuilder.WriteString(diffStat)
 						prBodyBuilder.WriteString("```\n\n")
@@ -1267,12 +1277,13 @@ func runDone(cmd *cobra.Command, args []string) (retErr error) {
 			if donePreVerified {
 				description += "\npre_verified: true"
 				description += fmt.Sprintf("\npre_verified_at: %s", time.Now().UTC().Format(time.RFC3339))
-				// Capture current origin/target HEAD as the verified base.
+				// Capture current clean target HEAD as the verified base.
 				// The polecat rebased onto this SHA before running gates.
-				if verifiedBase, baseErr := g.Rev("origin/" + target); baseErr == nil {
+				verifiedBaseRef := g.CleanBaseRef("origin", defaultBranch, target)
+				if verifiedBase, baseErr := g.Rev(verifiedBaseRef); baseErr == nil {
 					description += fmt.Sprintf("\npre_verified_base: %s", verifiedBase)
 				} else {
-					style.PrintWarning("could not resolve origin/%s for pre-verified base: %v (pre-verification data incomplete)", target, baseErr)
+					style.PrintWarning("could not resolve %s for pre-verified base: %v (pre-verification data incomplete)", verifiedBaseRef, baseErr)
 				}
 			}
 
@@ -1500,9 +1511,13 @@ notifyWitness:
 			oldBranch := branch
 
 			fmt.Printf("%s Syncing worktree to %s...\n", style.Bold.Render("→"), defaultBranch)
-			syncRef := "origin/" + defaultBranch
-			if err := g.Fetch("origin"); err != nil {
-				style.PrintWarning("could not fetch origin before idle sync: %v (using local refs)", err)
+			syncRef := g.CleanDefaultBranchBaseRef("origin", defaultBranch)
+			fetchRemote := git.RemoteForRef(syncRef)
+			if fetchRemote == "" {
+				fetchRemote = "origin"
+			}
+			if err := g.Fetch(fetchRemote); err != nil {
+				style.PrintWarning("could not fetch %s before idle sync: %v (using local refs)", fetchRemote, err)
 			}
 			if err := g.CheckoutDetach(syncRef); err != nil {
 				if fallbackErr := g.CheckoutDetach(defaultBranch); fallbackErr != nil {
@@ -1555,12 +1570,12 @@ notifyWitness:
 	return nil
 }
 
-// pushSubmoduleChanges detects submodules modified between origin/defaultBranch
+// pushSubmoduleChanges detects submodules modified between baseRef
 // and HEAD, and pushes each submodule's new commit to its remote before the
 // parent repo push. This prevents the parent's submodule pointer from
 // referencing commits that don't exist on the submodule's remote (gt-dzs).
-func pushSubmoduleChanges(g *git.Git, defaultBranch string) {
-	subChanges, err := g.SubmoduleChanges("origin/"+defaultBranch, "HEAD")
+func pushSubmoduleChanges(g *git.Git, baseRef string) {
+	subChanges, err := g.SubmoduleChanges(baseRef, "HEAD")
 	if err != nil {
 		// Non-fatal: repos without submodules return nil, nil.
 		// Only warn if the error is real (not just "no submodules").
@@ -2206,11 +2221,9 @@ func isPolecatActor(actor string) bool {
 // and a cleanup commit is created.
 //
 // Returns true if a cleanup commit was created.
-func stripOverlayCLAUDEmd(g *git.Git, defaultBranch string) bool {
-	originRef := "origin/" + defaultBranch
-
-	// Check which files changed on this branch vs origin/main
-	changedFiles, err := g.DiffNameOnly(originRef, "HEAD")
+func stripOverlayCLAUDEmd(g *git.Git, defaultBranch, baseRef string) bool {
+	// Check which files changed on this branch vs the clean target base.
+	changedFiles, err := g.DiffNameOnly(baseRef, "HEAD")
 	if err != nil {
 		// Can't determine diff — skip silently (push will still work)
 		return false
@@ -2238,10 +2251,10 @@ func stripOverlayCLAUDEmd(g *git.Git, defaultBranch string) bool {
 		// Read current CLAUDE.md from HEAD
 		currentContent, showErr := g.ShowFile("HEAD", "CLAUDE.md")
 		if showErr == nil && strings.Contains(currentContent, templates.PolecatLifecycleMarker) {
-			// Current CLAUDE.md has overlay content — restore from origin
-			origContent, origErr := g.ShowFile(originRef, "CLAUDE.md")
+			// Current CLAUDE.md has overlay content — restore from the clean base.
+			origContent, origErr := g.ShowFile(baseRef, "CLAUDE.md")
 			if origErr != nil {
-				// CLAUDE.md didn't exist on origin/main — the overlay created it.
+				// CLAUDE.md didn't exist on the clean base — the overlay created it.
 				// Remove it from tracking.
 				if rmErr := g.RmCached("CLAUDE.md"); rmErr == nil {
 					needsCommit = true
@@ -2249,9 +2262,9 @@ func stripOverlayCLAUDEmd(g *git.Git, defaultBranch string) bool {
 						style.Bold.Render("→"), defaultBranch)
 				}
 			} else {
-				// CLAUDE.md existed on origin — restore original content
+				// CLAUDE.md existed on the clean base — restore original content
 				_ = origContent // Restore via checkout
-				if coErr := g.CheckoutFileFromRef(originRef, "CLAUDE.md"); coErr == nil {
+				if coErr := g.CheckoutFileFromRef(baseRef, "CLAUDE.md"); coErr == nil {
 					if addErr := g.Add("CLAUDE.md"); addErr == nil {
 						needsCommit = true
 						fmt.Printf("%s Restored original CLAUDE.md (stripped Gas Town overlay)\n",

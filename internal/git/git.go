@@ -975,9 +975,114 @@ func (g *Git) GetPushURL(remote string) (string, error) {
 	return strings.TrimSpace(out), nil
 }
 
+// ForkBackedRemote reports whether pushes to remote land somewhere other than
+// the canonical fetch base. This covers both split push URLs and fork remotes
+// with a distinct upstream remote.
+func (g *Git) ForkBackedRemote(remote string) bool {
+	fetchURL, fetchErr := g.RemoteURL(remote)
+	if fetchErr != nil {
+		return false
+	}
+	pushURL, pushErr := g.GetPushURL(remote)
+	if pushErr == nil && pushURL != "" && !sameGitRemoteURL(fetchURL, pushURL) {
+		return true
+	}
+	upstreamURL, upstreamErr := g.GetUpstreamURL()
+	return upstreamErr == nil && upstreamURL != "" && !sameGitRemoteURL(fetchURL, upstreamURL)
+}
+
+// CleanDefaultBranchBaseRef returns the ref that should be used as a clean base
+// for default-branch work. In split push-url setups origin still fetches from
+// upstream, so origin/<default> is clean. When origin itself is a fork and a
+// distinct upstream remote is present, upstream/<default> is the clean base.
+func (g *Git) CleanDefaultBranchBaseRef(remote, defaultBranch string) string {
+	if defaultBranch == "" {
+		defaultBranch = "main"
+	}
+	fetchURL, fetchErr := g.RemoteURL(remote)
+	upstreamURL, upstreamErr := g.GetUpstreamURL()
+	if fetchErr == nil && upstreamErr == nil && upstreamURL != "" && !sameGitRemoteURL(fetchURL, upstreamURL) {
+		return "upstream/" + defaultBranch
+	}
+	return remote + "/" + defaultBranch
+}
+
+// CleanBaseRef returns a fully qualified base ref for a target branch. Explicit
+// origin/ or upstream/ refs are preserved; default-branch targets use the clean
+// fork-aware base.
+func (g *Git) CleanBaseRef(remote, defaultBranch, target string) string {
+	target = strings.TrimSpace(target)
+	if target == "" || target == defaultBranch {
+		return g.CleanDefaultBranchBaseRef(remote, defaultBranch)
+	}
+	if strings.HasPrefix(target, "origin/") || strings.HasPrefix(target, "upstream/") {
+		return target
+	}
+	return remote + "/" + target
+}
+
+// RemoteForRef returns the remote prefix from refs like origin/main or
+// upstream/main. It returns an empty string for local branch names.
+func RemoteForRef(ref string) string {
+	remote, _, ok := strings.Cut(strings.TrimSpace(ref), "/")
+	if !ok || remote == "" || strings.HasPrefix(remote, "refs") {
+		return ""
+	}
+	return remote
+}
+
+// RefuseForkBackedDefaultPush fails closed before default-branch pushes in a
+// fork/upstream topology. Feature branch pushes to the fork remain allowed.
+func (g *Git) RefuseForkBackedDefaultPush(remote, refspec, defaultBranch string) error {
+	if defaultBranch == "" {
+		defaultBranch = "main"
+	}
+	destination := pushDestinationBranch(refspec)
+	if destination != defaultBranch || !g.ForkBackedRemote(remote) {
+		return nil
+	}
+	return fmt.Errorf("refusing direct push to %s/%s: fork/upstream rig detected; push a feature branch and use the Mayor-managed fork PR flow to upstream %s (no refs were pushed)", remote, destination, defaultBranch)
+}
+
+func pushDestinationBranch(refspec string) string {
+	refspec = strings.TrimSpace(refspec)
+	for strings.HasPrefix(refspec, "+") {
+		refspec = strings.TrimPrefix(refspec, "+")
+	}
+	if _, dst, ok := strings.Cut(refspec, ":"); ok {
+		refspec = dst
+	}
+	refspec = strings.TrimPrefix(refspec, "refs/heads/")
+	return strings.TrimSpace(refspec)
+}
+
+func sameGitRemoteURL(a, b string) bool {
+	return normalizeGitRemoteURL(a) == normalizeGitRemoteURL(b)
+}
+
+func normalizeGitRemoteURL(raw string) string {
+	s := strings.TrimSpace(raw)
+	s = strings.TrimSuffix(s, "/")
+	s = strings.TrimSuffix(s, ".git")
+	s = strings.TrimPrefix(s, "https://")
+	s = strings.TrimPrefix(s, "http://")
+	s = strings.TrimPrefix(s, "ssh://")
+	s = strings.TrimPrefix(s, "git://")
+	if strings.HasPrefix(s, "git@") {
+		s = strings.TrimPrefix(s, "git@")
+		s = strings.Replace(s, ":", "/", 1)
+	} else if at := strings.LastIndex(s, "@"); at >= 0 {
+		s = s[at+1:]
+	}
+	return strings.ToLower(strings.TrimSuffix(s, "/"))
+}
+
 // Push pushes to the remote branch with a timeout to prevent indefinite hangs
 // when the remote is unreachable.
 func (g *Git) Push(remote, branch string, force bool) error {
+	if err := g.RefuseForkBackedDefaultPush(remote, branch, g.RemoteDefaultBranch()); err != nil {
+		return err
+	}
 	args := []string{"push", remote, branch}
 	if force {
 		args = append(args, "--force")
@@ -990,6 +1095,9 @@ func (g *Git) Push(remote, branch string, force bool) error {
 // Used by gt mq integration land to set GT_INTEGRATION_LAND=1, which the
 // pre-push hook checks to allow integration branch content landing on main.
 func (g *Git) PushWithEnv(remote, branch string, force bool, env []string) error {
+	if err := g.RefuseForkBackedDefaultPush(remote, branch, g.RemoteDefaultBranch()); err != nil {
+		return err
+	}
 	args := []string{"push", remote, branch}
 	if force {
 		args = append(args, "--force")

@@ -27,6 +27,12 @@ func TestDoneContaminationBaseRef(t *testing.T) {
 			explicitTarget: "origin/upstream-rebuild-main",
 			want:           "origin/upstream-rebuild-main",
 		},
+		{
+			name:           "preserves upstream-qualified base",
+			defaultBranch:  "main",
+			explicitTarget: "upstream/main",
+			want:           "upstream/main",
+		},
 	}
 
 	for _, tt := range tests {

@@ -2759,6 +2759,96 @@ func initTestRepoWithSplitRemote(t *testing.T) (string, string, string, string) 
 	return localDir, upstream, fork, mainBranch
 }
 
+func TestForkBackedDefaultPushGuard_SplitPushURL(t *testing.T) {
+	localDir, _, _, mainBranch := initTestRepoWithSplitRemote(t)
+	g := NewGit(localDir)
+
+	if !g.ForkBackedRemote("origin") {
+		t.Fatal("split push URL should be detected as fork-backed")
+	}
+	if got := g.CleanDefaultBranchBaseRef("origin", mainBranch); got != "origin/"+mainBranch {
+		t.Fatalf("CleanDefaultBranchBaseRef split = %q, want origin/%s", got, mainBranch)
+	}
+
+	refspecs := []string{
+		mainBranch,
+		"refs/heads/" + mainBranch,
+		"feature:" + mainBranch,
+		"feature:refs/heads/" + mainBranch,
+		"HEAD:" + mainBranch,
+		"+feature:" + mainBranch,
+		":" + mainBranch,
+	}
+	for _, refspec := range refspecs {
+		if err := g.RefuseForkBackedDefaultPush("origin", refspec, mainBranch); err == nil {
+			t.Fatalf("RefuseForkBackedDefaultPush(%q) returned nil, want refusal", refspec)
+		}
+	}
+	if err := g.PushWithEnv("origin", "HEAD:"+mainBranch, false, []string{"GT_INTEGRATION_LAND=1"}); err == nil {
+		t.Fatal("PushWithEnv should not let GT_INTEGRATION_LAND bypass fork default-branch guard")
+	}
+}
+
+func TestForkBackedDefaultPushGuard_OriginForkWithUpstream(t *testing.T) {
+	localDir, upstream, fork, mainBranch := initTestRepoWithSplitRemote(t)
+	g := NewGit(localDir)
+	if err := g.ClearPushURL("origin"); err != nil {
+		t.Fatalf("ClearPushURL: %v", err)
+	}
+	if _, err := g.SetRemoteURL("origin", fork); err != nil {
+		t.Fatalf("SetRemoteURL origin fork: %v", err)
+	}
+	if err := g.AddUpstreamRemote(upstream); err != nil {
+		t.Fatalf("AddUpstreamRemote: %v", err)
+	}
+
+	if !g.ForkBackedRemote("origin") {
+		t.Fatal("origin fork plus distinct upstream should be detected as fork-backed")
+	}
+	if got := g.CleanDefaultBranchBaseRef("origin", mainBranch); got != "upstream/"+mainBranch {
+		t.Fatalf("CleanDefaultBranchBaseRef fork = %q, want upstream/%s", got, mainBranch)
+	}
+	if err := g.Push("origin", "feature:"+mainBranch, false); err == nil {
+		t.Fatal("Push should block feature-to-default refspec in fork/upstream topology")
+	}
+}
+
+func TestForkBackedDefaultPushGuard_AllowsNormalDefaultPush(t *testing.T) {
+	localDir, _, mainBranch := initTestRepoWithRemote(t)
+	g := NewGit(localDir)
+
+	if g.ForkBackedRemote("origin") {
+		t.Fatal("plain origin remote should not be fork-backed")
+	}
+	if err := g.RefuseForkBackedDefaultPush("origin", mainBranch, mainBranch); err != nil {
+		t.Fatalf("normal default push should be allowed: %v", err)
+	}
+}
+
+func TestForkBackedDefaultPushGuard_AllowsFeatureBranchPush(t *testing.T) {
+	localDir, _, _, _ := initTestRepoWithSplitRemote(t)
+	g := NewGit(localDir)
+
+	if err := g.CreateBranch("polecat/fork-policy"); err != nil {
+		t.Fatalf("CreateBranch: %v", err)
+	}
+	if err := g.Checkout("polecat/fork-policy"); err != nil {
+		t.Fatalf("Checkout: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(localDir, "policy.txt"), []byte("policy\n"), 0644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	if err := g.Add("policy.txt"); err != nil {
+		t.Fatalf("Add: %v", err)
+	}
+	if err := g.Commit("fork policy feature"); err != nil {
+		t.Fatalf("Commit: %v", err)
+	}
+	if err := g.Push("origin", "polecat/fork-policy:polecat/fork-policy", false); err != nil {
+		t.Fatalf("feature branch push should remain allowed: %v", err)
+	}
+}
+
 // TestPushRemoteBranchExists_SplitURL is the core regression test for GH#3224:
 // with a split fetch/push URL, RemoteBranchExists checks the fetch URL (upstream)
 // while PushRemoteBranchExists checks the push URL (fork/bare repo).
