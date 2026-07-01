@@ -16,6 +16,7 @@ import (
 	"time"
 
 	beadsdk "github.com/steveyegge/beads"
+	"github.com/steveyegge/gastown/internal/deps"
 	"github.com/steveyegge/gastown/internal/runtime"
 	"github.com/steveyegge/gastown/internal/telemetry"
 	"github.com/steveyegge/gastown/internal/util"
@@ -25,7 +26,7 @@ import (
 // ZFC: Only define errors that don't require stderr parsing for decisions.
 // ErrNotARepo and ErrSyncConflict were removed - agents should handle these directly.
 var (
-	ErrNotInstalled = errors.New("bd not installed: run 'pip install beads-cli' or see https://github.com/anthropics/beads")
+	ErrNotInstalled = errors.New("issue tracker CLI not installed")
 	ErrNotFound     = errors.New("issue not found")
 	ErrFlagTitle    = errors.New("title looks like a CLI flag (starts with '-'); use --title=\"...\" to set flag-like titles intentionally")
 )
@@ -59,7 +60,11 @@ func BdSupportsAllowStale() bool {
 // BdSupportsAllowStaleWithEnv returns true if the installed bd binary accepts
 // --allow-stale, probing with the provided environment when supplied.
 func BdSupportsAllowStaleWithEnv(env []string) bool {
-	bdPath, err := exec.LookPath("bd")
+	return supportsAllowStaleWithEnv("bd", env)
+}
+
+func supportsAllowStaleWithEnv(commandName string, env []string) bool {
+	bdPath, err := exec.LookPath(commandName)
 	if err != nil {
 		return false
 	}
@@ -114,7 +119,11 @@ func MaybePrependAllowStale(args []string) []string {
 // MaybePrependAllowStaleWithEnv prepends --allow-stale to args if bd supports it,
 // probing with the provided environment when supplied.
 func MaybePrependAllowStaleWithEnv(env []string, args []string) []string {
-	if BdSupportsAllowStaleWithEnv(env) {
+	return MaybePrependAllowStaleWithCommand("bd", env, args)
+}
+
+func MaybePrependAllowStaleWithCommand(commandName string, env []string, args []string) []string {
+	if supportsAllowStaleWithEnv(commandName, env) {
 		return append([]string{"--allow-stale"}, args...)
 	}
 	return args
@@ -644,6 +653,7 @@ func (b *Beads) run(args ...string) ([]byte, error) {
 // newlines in --description, which bd 1.0.3+ rejects).
 func (b *Beads) runWithStdin(stdinData []byte, args ...string) (_ []byte, retErr error) {
 	start := time.Now()
+	cliName := b.commandName()
 	// Declare buffers before defer so the closure captures them after cmd.Run.
 	var stdout, stderr bytes.Buffer
 	defer func() {
@@ -659,7 +669,7 @@ func (b *Beads) runWithStdin(stdinData []byte, args ...string) (_ []byte, retErr
 	// (e.g., after daemon is killed during shutdown). Only if bd supports it.
 	beadsDir := b.getResolvedBeadsDir()
 	runEnv := append(b.buildRunEnv(), "BEADS_DIR="+beadsDir)
-	fullArgs := MaybePrependAllowStaleWithEnv(runEnv, args)
+	fullArgs := MaybePrependAllowStaleWithCommand(cliName, runEnv, args)
 
 	// Bound the subprocess runtime so a slow Dolt response doesn't leave bd
 	// blocking forever (under memory pressure that invites Jetsam SIGKILL).
@@ -670,7 +680,7 @@ func (b *Beads) runWithStdin(stdinData []byte, args ...string) (_ []byte, retErr
 	// Always explicitly set BEADS_DIR to prevent inherited env vars from
 	// causing prefix mismatches. Use explicit beadsDir if set, otherwise
 	// resolve from working directory.
-	cmd := exec.CommandContext(ctx, "bd", fullArgs...) //nolint:gosec // G204: bd is a trusted internal tool
+	cmd := exec.CommandContext(ctx, cliName, fullArgs...) //nolint:gosec // G204: issue tracker CLI is trusted
 	util.SetDetachedProcessGroup(cmd)
 	cmd.Dir = b.workDir
 
@@ -697,7 +707,7 @@ func (b *Beads) runWithStdin(stdinData []byte, args ...string) (_ []byte, retErr
 		}
 		stdout.Reset()
 		stderr.Reset()
-		cmd = exec.CommandContext(ctx, "bd", retryArgs...) //nolint:gosec // G204: bd is a trusted internal tool
+		cmd = exec.CommandContext(ctx, cliName, retryArgs...) //nolint:gosec // G204: issue tracker CLI is trusted
 		util.SetDetachedProcessGroup(cmd)
 		cmd.Dir = b.workDir
 		cmd.Env = runEnv
@@ -731,18 +741,19 @@ func (b *Beads) runWithStdin(stdinData []byte, args ...string) (_ []byte, retErr
 // See: sling_helpers.go verifyBeadExists/hookBeadWithRetry for the same pattern.
 func (b *Beads) runWithRouting(args ...string) (_ []byte, retErr error) { //nolint:unparam // mirrors run() signature for consistency
 	start := time.Now()
+	cliName := b.commandName()
 	var stdout, stderr bytes.Buffer
 	defer func() {
 		telemetry.RecordBDCall(context.Background(), args, float64(time.Since(start).Milliseconds()), retErr, stdout.Bytes(), stderr.String())
 	}()
 	runEnv := b.buildRoutingEnv()
-	fullArgs := MaybePrependAllowStaleWithEnv(runEnv, args)
+	fullArgs := MaybePrependAllowStaleWithCommand(cliName, runEnv, args)
 
 	// Bound subprocess runtime — see bdSubprocessTimeout doc comment.
 	ctx, cancel := context.WithTimeout(context.Background(), resolveBdSubprocessTimeout())
 	defer cancel()
 
-	cmd := exec.CommandContext(ctx, "bd", fullArgs...) //nolint:gosec // G204: bd is a trusted internal tool
+	cmd := exec.CommandContext(ctx, cliName, fullArgs...) //nolint:gosec // G204: issue tracker CLI is trusted
 	util.SetDetachedProcessGroup(cmd)
 	cmd.Dir = b.workDir
 
@@ -777,8 +788,9 @@ func (b *Beads) Run(args ...string) ([]byte, error) {
 // acceptable as they enable basic error handling without decision-making.
 func (b *Beads) wrapError(err error, stderr string, args []string) error {
 	stderr = strings.TrimSpace(stderr)
+	cliName := b.commandName()
 
-	// Check for bd not installed
+	// Check for issue tracker CLI not installed
 	if execErr, ok := err.(*exec.Error); ok && errors.Is(execErr.Err, exec.ErrNotFound) {
 		return ErrNotInstalled
 	}
@@ -791,9 +803,13 @@ func (b *Beads) wrapError(err error, stderr string, args []string) error {
 	}
 
 	if stderr != "" {
-		return fmt.Errorf("bd %s: %s", strings.Join(args, " "), stderr)
+		return fmt.Errorf("%s %s: %s", cliName, strings.Join(args, " "), stderr)
 	}
-	return fmt.Errorf("bd %s: %w", strings.Join(args, " "), err)
+	return fmt.Errorf("%s %s: %w", cliName, strings.Join(args, " "), err)
+}
+
+func (b *Beads) commandName() string {
+	return deps.IssueTrackerCommandName(deps.IssueTrackerBackendForCommand(b.getTownRoot()))
 }
 
 // isSubprocessCrash returns true if the error indicates the subprocess crashed

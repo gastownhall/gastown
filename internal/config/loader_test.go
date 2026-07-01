@@ -59,10 +59,11 @@ func TestTownConfigRoundTrip(t *testing.T) {
 	path := filepath.Join(dir, "mayor", "town.json")
 
 	original := &TownConfig{
-		Type:      "town",
-		Version:   1,
-		Name:      "test-town",
-		CreatedAt: time.Now().Truncate(time.Second),
+		Type:                "town",
+		Version:             1,
+		Name:                "test-town",
+		IssueTrackerBackend: "minibeads",
+		CreatedAt:           time.Now().Truncate(time.Second),
 	}
 
 	if err := SaveTownConfig(path, original); err != nil {
@@ -79,6 +80,9 @@ func TestTownConfigRoundTrip(t *testing.T) {
 	}
 	if loaded.Type != original.Type {
 		t.Errorf("Type = %q, want %q", loaded.Type, original.Type)
+	}
+	if loaded.IssueTrackerBackend != original.IssueTrackerBackend {
+		t.Errorf("IssueTrackerBackend = %q, want %q", loaded.IssueTrackerBackend, original.IssueTrackerBackend)
 	}
 }
 

@@ -3,6 +3,7 @@ package deps
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
@@ -21,6 +22,20 @@ const MinBeadsVersion = "0.57.0"
 // BeadsInstallPath is the go install path for beads.
 const BeadsInstallPath = "github.com/steveyegge/beads/cmd/bd@latest"
 
+// IssueTrackerBackend identifies the issue-store implementation used by Gas Town.
+type IssueTrackerBackend string
+
+const (
+	IssueTrackerBackendDefault   IssueTrackerBackend = ""
+	IssueTrackerBackendUpstream  IssueTrackerBackend = "beads"
+	IssueTrackerBackendMinibeads IssueTrackerBackend = "minibeads"
+
+	// Backward-compatible aliases for callers still using Beads terminology.
+	BeadsBackendDefault   = IssueTrackerBackendDefault
+	BeadsBackendUpstream  = IssueTrackerBackendUpstream
+	BeadsBackendMinibeads = IssueTrackerBackendMinibeads
+)
+
 // BeadsStatus represents the state of the beads installation.
 type BeadsStatus int
 
@@ -31,29 +46,127 @@ const (
 	BeadsUnknown                     // bd found but couldn't parse version
 )
 
-// CheckBeads checks if bd is installed and compatible.
+// RequestedIssueTrackerBackend returns the explicitly requested Beads-compatible
+// issue tracker backend. Empty means the default upstream Beads/Dolt backend.
+func RequestedIssueTrackerBackend() IssueTrackerBackend {
+	backend, ok := requestedIssueTrackerBackendFromEnv()
+	if !ok {
+		return IssueTrackerBackendDefault
+	}
+	return backend
+}
+
+func requestedIssueTrackerBackendFromEnv() (IssueTrackerBackend, bool) {
+	value := os.Getenv("GT_ISSUE_TRACKER_BACKEND")
+	if value == "" {
+		value = os.Getenv("GT_BEADS_BACKEND")
+	}
+	if strings.TrimSpace(value) == "" {
+		return IssueTrackerBackendDefault, false
+	}
+	backend := normalizeIssueTrackerBackend(value)
+	return backend, true
+}
+
+func normalizeIssueTrackerBackend(value string) IssueTrackerBackend {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "", "beads", "bd", "upstream":
+		return IssueTrackerBackendDefault
+	case "mb", "minibeads":
+		return IssueTrackerBackendMinibeads
+	default:
+		return IssueTrackerBackendDefault
+	}
+}
+
+// EffectiveIssueTrackerBackend returns the backend selected by explicit env vars,
+// then by mayor/town.json when available, then by the running gt distribution
+// or issue tracker CLIs on PATH, otherwise by the default upstream Beads/Dolt
+// backend.
+func EffectiveIssueTrackerBackend(townRoot string) IssueTrackerBackend {
+	if backend, ok := requestedIssueTrackerBackendFromEnv(); ok {
+		return backend
+	}
+	if backend, ok := issueTrackerBackendFromTown(townRoot); ok {
+		return backend
+	}
+	if backend, ok := installedIssueTrackerBackend(); ok {
+		return backend
+	}
+	return IssueTrackerBackendDefault
+}
+
+// IssueTrackerBackendForCommand returns the backend to use when dispatching an
+// issue-tracker subprocess. It intentionally does not probe bd/mb versions,
+// because command construction must not perform extra issue-tracker calls.
+func IssueTrackerBackendForCommand(townRoot string) IssueTrackerBackend {
+	if backend, ok := requestedIssueTrackerBackendFromEnv(); ok {
+		return backend
+	}
+	if backend, ok := issueTrackerBackendFromTown(townRoot); ok {
+		return backend
+	}
+	if runningFromMiniBeadsEdition() {
+		return IssueTrackerBackendMinibeads
+	}
+	return IssueTrackerBackendDefault
+}
+
+// RequestedBeadsBackend is kept for compatibility with older internal callers.
+func RequestedBeadsBackend() IssueTrackerBackend {
+	return RequestedIssueTrackerBackend()
+}
+
+// UsingMiniBeads reports whether Gas Town should use minibeads for local
+// compatibility paths.
+func UsingMiniBeads() bool {
+	return RequestedIssueTrackerBackend() == IssueTrackerBackendMinibeads
+}
+
+// UsingMiniBeadsForTown reports whether the effective backend for a town is
+// minibeads, honoring env overrides first and persisted town config second.
+func UsingMiniBeadsForTown(townRoot string) bool {
+	return EffectiveIssueTrackerBackend(townRoot) == IssueTrackerBackendMinibeads
+}
+
+// CheckBeads checks if the env-requested issue tracker is installed and compatible.
 // Returns status and the installed version (if found).
 func CheckBeads() (BeadsStatus, string) {
-	// Check if bd exists in PATH
-	path, err := exec.LookPath("bd")
+	return CheckBeadsForBackend(RequestedIssueTrackerBackend())
+}
+
+// IssueTrackerCommandName returns the executable name for an issue tracker
+// backend. Upstream Beads is exposed as bd; minibeads is exposed as mb.
+func IssueTrackerCommandName(backend IssueTrackerBackend) string {
+	if backend == IssueTrackerBackendMinibeads {
+		return "mb"
+	}
+	return "bd"
+}
+
+// CheckBeadsForBackend checks if the configured issue tracker CLI is installed
+// and compatible with a backend.
+func CheckBeadsForBackend(backend IssueTrackerBackend) (BeadsStatus, string) {
+	cliName := IssueTrackerCommandName(backend)
+	path, err := exec.LookPath(cliName)
 	if err != nil {
 		return BeadsNotFound, ""
 	}
-	_ = path // bd found
 
-	// Get version (with timeout to prevent hanging on broken bd installs).
-	// 10s is generous but necessary: under heavy CI load (parallel test
-	// packages), even a trivial shell script can take >3s to start.
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-	cmd := exec.CommandContext(ctx, "bd", "version")
-	util.SetDetachedProcessGroup(cmd)
-	output, err := cmd.Output()
-	if err != nil {
+	outputStr, ok := issueTrackerVersionOutput(path)
+	if !ok {
 		return BeadsUnknown, ""
 	}
 
-	version := parseBeadsVersion(string(output))
+	if backend == IssueTrackerBackendMinibeads {
+		version := parseMiniBeadsVersion(outputStr)
+		if version == "" {
+			return BeadsUnknown, ""
+		}
+		return BeadsOK, "minibeads " + version
+	}
+
+	version := parseBeadsVersion(outputStr)
 	if version == "" {
 		return BeadsUnknown, ""
 	}
@@ -66,17 +179,20 @@ func CheckBeads() (BeadsStatus, string) {
 	return BeadsOK, version
 }
 
-// EnsureBeads checks for bd and installs it if missing or outdated.
-// Returns nil if bd is available and compatible.
-// If autoInstall is true, will attempt to install bd when missing.
-func EnsureBeads(autoInstall bool) error {
-	status, version := CheckBeads()
+// EnsureBeadsForBackend checks for the selected issue tracker CLI and installs
+// upstream beads only for the default upstream backend. Minibeads must already
+// be available as mb.
+func EnsureBeadsForBackend(backend IssueTrackerBackend, autoInstall bool) error {
+	status, version := CheckBeadsForBackend(backend)
 
 	switch status {
 	case BeadsOK:
 		return nil
 
 	case BeadsNotFound:
+		if backend == IssueTrackerBackendMinibeads {
+			return fmt.Errorf("minibeads (mb) not found in PATH\n\nBuild minibeads and ensure the mb binary is on PATH")
+		}
 		if !autoInstall {
 			return fmt.Errorf("beads (bd) not found in PATH\n\nInstall with: go install %s", BeadsInstallPath)
 		}
@@ -87,11 +203,21 @@ func EnsureBeads(autoInstall bool) error {
 			version, MinBeadsVersion, BeadsInstallPath)
 
 	case BeadsUnknown:
+		if backend == IssueTrackerBackendMinibeads {
+			return fmt.Errorf("mb was found but its version response was not recognized; expected `mb version X.Y.Z`")
+		}
 		// Found bd but couldn't determine version - proceed with warning
 		return nil
 	}
 
 	return nil
+}
+
+// EnsureBeads checks for bd and installs it if missing or outdated.
+// Returns nil if bd is available and compatible.
+// If autoInstall is true, will attempt to install bd when missing.
+func EnsureBeads(autoInstall bool) error {
+	return EnsureBeadsForBackend(RequestedIssueTrackerBackend(), autoInstall)
 }
 
 // installBeads runs go install to install the latest beads.
@@ -149,4 +275,89 @@ func parseBeadsVersion(output string) string {
 		return matches[1]
 	}
 	return ""
+}
+
+func parseMiniBeadsVersion(output string) string {
+	re := regexp.MustCompile(`mb version (\d+\.\d+\.\d+)`)
+	matches := re.FindStringSubmatch(output)
+	if len(matches) >= 2 {
+		return matches[1]
+	}
+	return ""
+}
+
+func installedIssueTrackerBackend() (IssueTrackerBackend, bool) {
+	if runningFromMiniBeadsEdition() {
+		return IssueTrackerBackendMinibeads, true
+	}
+
+	if path, ok := lookPathIssueTracker("bd"); ok {
+		if versionOutput, ok := issueTrackerVersionOutput(path); ok && parseBeadsVersion(versionOutput) != "" {
+			return IssueTrackerBackendDefault, true
+		}
+	}
+
+	return IssueTrackerBackendDefault, false
+}
+
+func runningFromMiniBeadsEdition() bool {
+	exe, err := os.Executable()
+	if err != nil {
+		return false
+	}
+	siblingMB := filepath.Join(filepath.Dir(exe), "mb")
+	if runtimePathExecutable(siblingMB) {
+		if versionOutput, ok := issueTrackerVersionOutput(siblingMB); ok && parseMiniBeadsVersion(versionOutput) != "" {
+			return true
+		}
+	}
+	return false
+}
+
+func lookPathIssueTracker(name string) (string, bool) {
+	path, err := exec.LookPath(name)
+	if err != nil {
+		return "", false
+	}
+	return path, true
+}
+
+func issueTrackerVersionOutput(path string) (string, bool) {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, path, "version")
+	util.SetDetachedProcessGroup(cmd)
+	output, err := cmd.Output()
+	if err != nil {
+		return "", false
+	}
+	return string(output), true
+}
+
+func runtimePathExecutable(path string) bool {
+	info, err := os.Stat(path)
+	if err != nil || info.IsDir() {
+		return false
+	}
+	return info.Mode()&0111 != 0
+}
+
+func issueTrackerBackendFromTown(townRoot string) (IssueTrackerBackend, bool) {
+	if townRoot == "" {
+		return IssueTrackerBackendDefault, false
+	}
+	data, err := os.ReadFile(filepath.Join(townRoot, "mayor", "town.json"))
+	if err != nil {
+		return IssueTrackerBackendDefault, false
+	}
+	var town struct {
+		IssueTrackerBackend string `json:"issue_tracker_backend"`
+	}
+	if err := json.Unmarshal(data, &town); err != nil {
+		return IssueTrackerBackendDefault, false
+	}
+	if strings.TrimSpace(town.IssueTrackerBackend) == "" {
+		return IssueTrackerBackendDefault, false
+	}
+	return normalizeIssueTrackerBackend(town.IssueTrackerBackend), true
 }

@@ -1153,7 +1153,7 @@ func agentAddressToIDs(address string) (beadID, sessionName string, err error) {
 
 // getAgentBeadUpdateTime gets the update time from an agent bead.
 func getAgentBeadUpdateTime(townRoot, beadID string) (time.Time, error) {
-	cmd := exec.Command("bd", "show", beadID, "--json")
+	cmd := issueTrackerCommand("show", beadID, "--json")
 	cmd.Dir = townRoot
 
 	output, err := cmd.Output()

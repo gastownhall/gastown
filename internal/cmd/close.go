@@ -82,7 +82,7 @@ func runClose(cmd *cobra.Command, args []string) error {
 	// the bead's prefix to the owning rig's directory and strip BEADS_DIR so
 	// bd discovers the database from the working directory.
 	bdArgs := append([]string{"close"}, convertedArgs...)
-	bdCmd := exec.Command("bd", bdArgs...)
+	bdCmd := issueTrackerCommand(bdArgs...)
 	bdCmd.Stdin = os.Stdin
 	bdCmd.Stdout = os.Stdout
 	bdCmd.Stderr = os.Stderr
@@ -145,7 +145,7 @@ func closeChildren(parentID string, visited map[string]bool, depth int) error {
 
 	// Query children via bd children --json.
 	// Route to the correct rig database via prefix resolution.
-	childCmd := exec.Command("bd", "children", parentID, "--json")
+	childCmd := issueTrackerCommand("children", parentID, "--json")
 	if dir := resolveBeadDir(parentID); dir != "" && dir != "." {
 		childCmd.Dir = dir
 		childCmd.Env = filterEnvKey(os.Environ(), "BEADS_DIR")
@@ -192,7 +192,7 @@ func closeChildren(parentID string, visited map[string]bool, depth int) error {
 
 	fmt.Fprintf(os.Stderr, "Cascade: closing %d children of %s\n", len(childIDs), parentID)
 
-	closeBd := exec.Command("bd", closeArgs...)
+	closeBd := issueTrackerCommand(closeArgs...)
 	closeBd.Stdout = os.Stdout
 	closeBd.Stderr = os.Stderr
 	if dir := resolveBeadDir(parentID); dir != "" && dir != "." {
@@ -208,9 +208,9 @@ func extractBeadIDs(args []string) []string {
 	// Flags that consume a following argument (value flags without = form)
 	valueFlags := map[string]bool{
 		"--reason": true, "-r": true,
-		"--session": true,
-		"--actor": true,
-		"--db": true,
+		"--session":          true,
+		"--actor":            true,
+		"--db":               true,
 		"--dolt-auto-commit": true,
 		// Also handle the --comment alias (before conversion)
 		"--comment": true,

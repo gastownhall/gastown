@@ -94,7 +94,7 @@ func bdUpdateStatus(beadID, status string) error {
 	if err != nil {
 		return err
 	}
-	cmd := exec.Command("bd", "update", beadID, "--status="+status)
+	cmd := issueTrackerCommand("update", beadID, "--status="+status)
 	cmd.Dir = townBeads
 	if out, err := cmd.CombinedOutput(); err != nil {
 		return fmt.Errorf("bd update %s --status=%s: %w\noutput: %s", beadID, status, err, out)

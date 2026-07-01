@@ -161,9 +161,9 @@ func updateGitExclude(repoPath string) error {
 // This is best-effort: returns nil if beads isn't available or DB doesn't exist.
 // Handles gracefully: beads not installed, no .beads directory, or config errors.
 func registerCustomTypes(workDir string) error {
-	// Check if bd command is available
-	if _, err := exec.LookPath("bd"); err != nil {
-		return nil // beads not installed, skip silently
+	// Check if issue tracker command is available.
+	if _, err := exec.LookPath(issueTrackerCommandName()); err != nil {
+		return nil // issue tracker not installed, skip silently
 	}
 
 	// Check if .beads directory exists
@@ -173,7 +173,7 @@ func registerCustomTypes(workDir string) error {
 	}
 
 	// Try to set custom types
-	cmd := exec.Command("bd", "config", "set", "types.custom", constants.BeadsCustomTypes)
+	cmd := issueTrackerCommand("config", "set", "types.custom", constants.BeadsCustomTypes)
 	cmd.Dir = workDir
 	output, err := cmd.CombinedOutput()
 	if err != nil {

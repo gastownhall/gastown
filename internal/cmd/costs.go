@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"io/fs"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"regexp"
 	"sort"
@@ -39,7 +38,6 @@ var (
 	digestYesterday bool
 	digestDate      string
 	digestDryRun    bool
-
 )
 
 var costsCmd = &cobra.Command{
@@ -173,8 +171,8 @@ type TranscriptMessage struct {
 
 // TranscriptMessageBody contains the message content and usage info.
 type TranscriptMessageBody struct {
-	Model string          `json:"model"`
-	Role  string          `json:"role"`
+	Model string           `json:"model"`
+	Role  string           `json:"role"`
 	Usage *TranscriptUsage `json:"usage,omitempty"`
 }
 
@@ -465,7 +463,7 @@ func querySessionEventsFromLocation(location string) ([]CostEntry, error) {
 		"--json",
 	}
 
-	listCmd := exec.Command("bd", listArgs...)
+	listCmd := issueTrackerCommand(listArgs...)
 	listCmd.Dir = location
 	listOutput, err := listCmd.Output()
 	if err != nil {
@@ -489,7 +487,7 @@ func querySessionEventsFromLocation(location string) ([]CostEntry, error) {
 		showArgs = append(showArgs, item.ID)
 	}
 
-	showCmd := exec.Command("bd", showArgs...)
+	showCmd := issueTrackerCommand(showArgs...)
 	showCmd.Dir = location
 	showOutput, err := showCmd.Output()
 	if err != nil {
@@ -549,7 +547,7 @@ func queryDigestBeads(days int) ([]CostEntry, error) {
 		"--json",
 	}
 
-	listCmd := exec.Command("bd", listArgs...)
+	listCmd := issueTrackerCommand(listArgs...)
 	listOutput, err := listCmd.Output()
 	if err != nil {
 		return nil, nil
@@ -570,7 +568,7 @@ func queryDigestBeads(days int) ([]CostEntry, error) {
 		showArgs = append(showArgs, item.ID)
 	}
 
-	showCmd := exec.Command("bd", showArgs...)
+	showCmd := issueTrackerCommand(showArgs...)
 	showOutput, err := showCmd.Output()
 	if err != nil {
 		return nil, fmt.Errorf("showing events: %w", err)
@@ -1331,7 +1329,7 @@ func createCostDigestBead(digest CostDigest) (string, error) {
 		"--silent",
 	}
 
-	bdCmd := exec.Command("bd", bdArgs...)
+	bdCmd := issueTrackerCommand(bdArgs...)
 	output, err := bdCmd.CombinedOutput()
 	if err != nil {
 		return "", fmt.Errorf("creating digest bead: %w\nOutput: %s", err, string(output))
@@ -1340,7 +1338,7 @@ func createCostDigestBead(digest CostDigest) (string, error) {
 	digestID := strings.TrimSpace(string(output))
 
 	// Auto-close the digest (it's an audit record, not work)
-	closeCmd := exec.Command("bd", "close", digestID, "--reason=daily cost digest")
+	closeCmd := issueTrackerCommand("close", digestID, "--reason=daily cost digest")
 	_ = closeCmd.Run() // Best effort
 
 	return digestID, nil
@@ -1404,4 +1402,3 @@ func deleteSessionCostEntries(targetDate time.Time) (int, error) {
 
 	return deletedCount, nil
 }
-

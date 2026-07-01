@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -184,11 +183,11 @@ func listAnnounceMessages(townRoot, channelName string) ([]announceMessage, erro
 		"--label", "gt:message",
 		"--label", "announce_channel:" + channelName,
 		"--sort", "-created", // Newest first
-		"--limit", "0",       // No limit
+		"--limit", "0", // No limit
 		"--json",
 	}
 
-	cmd := exec.Command("bd", args...)
+	cmd := issueTrackerCommand(args...)
 	cmd.Env = append(os.Environ(), "BEADS_DIR="+beadsDir)
 
 	var stdout, stderr bytes.Buffer

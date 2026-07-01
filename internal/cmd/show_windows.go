@@ -13,12 +13,12 @@ import (
 // so that rig-prefixed beads (e.g., myproject-abc) are found in their rig
 // database rather than only the town-level hq database. (GH#2126)
 func execBdShow(args []string) error {
-	bdPath, err := exec.LookPath("bd")
-	if err != nil {
-		return fmt.Errorf("bd not found in PATH: %w", err)
-	}
-
 	invocation := currentBdShowInvocation(args)
+	cliName := invocation.ExecArgs[0]
+	bdPath, err := exec.LookPath(cliName)
+	if err != nil {
+		return fmt.Errorf("%s not found in PATH: %w", cliName, err)
+	}
 
 	cmd := exec.Command(bdPath, invocation.CommandArgs...)
 	cmd.Dir = invocation.Dir

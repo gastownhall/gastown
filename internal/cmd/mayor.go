@@ -11,6 +11,7 @@ import (
 	"github.com/steveyegge/gastown/internal/config"
 	"github.com/steveyegge/gastown/internal/constants"
 	"github.com/steveyegge/gastown/internal/daemon"
+	"github.com/steveyegge/gastown/internal/deps"
 	"github.com/steveyegge/gastown/internal/doltserver"
 	"github.com/steveyegge/gastown/internal/mayor"
 	"github.com/steveyegge/gastown/internal/session"
@@ -401,10 +402,9 @@ func runMayorRestart(cmd *cobra.Command, args []string) error {
 	return runMayorStart(cmd, args)
 }
 
-// ensureMayorInfra checks that daemon and dolt are running before attaching
-// to the Mayor session. Warns and auto-starts each if absent.
-// Returns an error if Dolt fails to start — a missing Dolt server is fatal
-// for the Mayor (it cannot operate without database access).
+// ensureMayorInfra checks that daemon and, for upstream beads towns, Dolt are
+// running before attaching to the Mayor session. Warns and auto-starts each if
+// absent. Returns an error if Dolt fails to start for an upstream beads town.
 // Daemon failures are non-fatal (warned but do not block).
 func ensureMayorInfra(townRoot string) error {
 	// Load daemon.json env vars (e.g., GT_DOLT_PORT) so Dolt uses the right port.
@@ -423,6 +423,10 @@ func ensureMayorInfra(townRoot string) error {
 		} else {
 			fmt.Printf("  %s Daemon started\n", style.Bold.Render("✓"))
 		}
+	}
+
+	if deps.UsingMiniBeadsForTown(townRoot) {
+		return nil
 	}
 
 	// Dolt (fatal on failure — Mayor requires database access)

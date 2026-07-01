@@ -19,6 +19,7 @@ import (
 	"github.com/steveyegge/gastown/internal/constants"
 	"github.com/steveyegge/gastown/internal/crew"
 	"github.com/steveyegge/gastown/internal/daemon"
+	"github.com/steveyegge/gastown/internal/deps"
 	"github.com/steveyegge/gastown/internal/doltserver"
 	"github.com/steveyegge/gastown/internal/git"
 	"github.com/steveyegge/gastown/internal/mail"
@@ -809,35 +810,37 @@ func gatherStatus() (TownStatus, error) {
 		status.Daemon = &ServiceInfo{Running: daemonRunning, PID: daemonPid}
 	}
 
-	// Dolt status
-	doltCfg := doltserver.DefaultConfig(townRoot)
-	if doltCfg.IsRemote() {
-		status.Dolt = &DoltInfo{Remote: true, Port: doltCfg.Port}
-	} else {
-		doltRunning, doltPid, _ := doltserver.IsRunning(townRoot)
-		port := doltCfg.Port
-		if doltRunning {
-			// Read the actual port from state — doltCfg.Port comes from
-			// DefaultConfig which reads GT_DOLT_PORT from the shell env,
-			// but gt status is typically run without that env var set.
-			if state, err := doltserver.LoadState(townRoot); err == nil && state.Port > 0 {
-				port = state.Port
+	if !deps.UsingMiniBeadsForTown(townRoot) {
+		// Dolt status
+		doltCfg := doltserver.DefaultConfig(townRoot)
+		if doltCfg.IsRemote() {
+			status.Dolt = &DoltInfo{Remote: true, Port: doltCfg.Port}
+		} else {
+			doltRunning, doltPid, _ := doltserver.IsRunning(townRoot)
+			port := doltCfg.Port
+			if doltRunning {
+				// Read the actual port from state — doltCfg.Port comes from
+				// DefaultConfig which reads GT_DOLT_PORT from the shell env,
+				// but gt status is typically run without that env var set.
+				if state, err := doltserver.LoadState(townRoot); err == nil && state.Port > 0 {
+					port = state.Port
+				}
 			}
-		}
-		doltInfo := &DoltInfo{
-			Running: doltRunning,
-			PID:     doltPid,
-			Port:    port,
-			DataDir: doltCfg.DataDir,
-		}
-		// Check if port is held by another town's Dolt
-		if !doltRunning {
-			if conflictPid, conflictDir := doltserver.CheckPortConflict(townRoot); conflictPid > 0 {
-				doltInfo.PortConflict = true
-				doltInfo.ConflictOwner = conflictDir
+			doltInfo := &DoltInfo{
+				Running: doltRunning,
+				PID:     doltPid,
+				Port:    port,
+				DataDir: doltCfg.DataDir,
 			}
+			// Check if port is held by another town's Dolt
+			if !doltRunning {
+				if conflictPid, conflictDir := doltserver.CheckPortConflict(townRoot); conflictPid > 0 {
+					doltInfo.PortConflict = true
+					doltInfo.ConflictOwner = conflictDir
+				}
+			}
+			status.Dolt = doltInfo
 		}
-		status.Dolt = doltInfo
 	}
 
 	// Tmux status

@@ -15,12 +15,13 @@ import (
 
 // TownConfig represents the main town identity (mayor/town.json).
 type TownConfig struct {
-	Type       string    `json:"type"`                  // "town"
-	Version    int       `json:"version"`               // schema version
-	Name       string    `json:"name"`                  // town identifier (internal)
-	Owner      string    `json:"owner,omitempty"`       // owner email (entity identity)
-	PublicName string    `json:"public_name,omitempty"` // public display name
-	CreatedAt  time.Time `json:"created_at"`
+	Type                string    `json:"type"`                            // "town"
+	Version             int       `json:"version"`                         // schema version
+	Name                string    `json:"name"`                            // town identifier (internal)
+	Owner               string    `json:"owner,omitempty"`                 // owner email (entity identity)
+	PublicName          string    `json:"public_name,omitempty"`           // public display name
+	IssueTrackerBackend string    `json:"issue_tracker_backend,omitempty"` // "beads" or "minibeads"
+	CreatedAt           time.Time `json:"created_at"`
 }
 
 // MayorConfig represents town-level behavioral configuration (mayor/config.json).

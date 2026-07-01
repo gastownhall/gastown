@@ -160,7 +160,7 @@ func (b *bdCmd) buildEnv() []string {
 // This allows callers to further customize the command before execution.
 func (b *bdCmd) Build() *exec.Cmd {
 	args := b.resolvedArgs()
-	cmd := exec.Command("bd", args...)
+	cmd := issueTrackerCommand(args...)
 	cmd.Dir = b.dir
 	cmd.Env = b.buildEnv()
 	cmd.Stderr = b.stderr
@@ -178,7 +178,7 @@ func resolveBdCmdTimeout() time.Duration {
 
 func (b *bdCmd) buildContextCommand(ctx context.Context) *exec.Cmd {
 	args := b.resolvedArgs()
-	cmd := exec.CommandContext(ctx, "bd", args...)
+	cmd := issueTrackerCommandContext(ctx, args...)
 	util.SetProcessGroup(cmd)
 	cmd.Dir = b.dir
 	cmd.Env = b.buildEnv()
@@ -273,7 +273,7 @@ func (b *bdCmd) CombinedOutput() ([]byte, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), deadline)
 	defer cancel()
 	args := b.resolvedArgs()
-	cmd := exec.CommandContext(ctx, "bd", args...)
+	cmd := issueTrackerCommandContext(ctx, args...)
 	util.SetProcessGroup(cmd)
 	cmd.Dir = b.dir
 	cmd.Env = b.buildEnv()

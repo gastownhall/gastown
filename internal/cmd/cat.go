@@ -3,7 +3,6 @@ package cmd
 import (
 	"fmt"
 	"os"
-	"os/exec"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -48,7 +47,7 @@ func runCat(cmd *cobra.Command, args []string) error {
 		bdArgs = append(bdArgs, "--json")
 	}
 
-	bdCmd := exec.Command("bd", bdArgs...)
+	bdCmd := issueTrackerCommand(bdArgs...)
 	bdCmd.Stdout = os.Stdout
 	bdCmd.Stderr = os.Stderr
 	// Route to the correct rig database via prefix resolution.

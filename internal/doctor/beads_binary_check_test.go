@@ -18,7 +18,7 @@ func TestBeadsBinaryCheck_Metadata(t *testing.T) {
 	if check.Name() != "beads-binary" {
 		t.Errorf("Name() = %q, want %q", check.Name(), "beads-binary")
 	}
-	if check.Description() != "Check that beads (bd) is installed and meets minimum version" {
+	if check.Description() != "Check that the issue tracker CLI is installed and meets minimum version" {
 		t.Errorf("Description() = %q", check.Description())
 	}
 	if check.Category() != CategoryInfrastructure {
@@ -33,6 +33,11 @@ func TestBeadsBinaryCheck_BdInstalled(t *testing.T) {
 	// Skip if bd is not actually installed in the test environment
 	if _, err := exec.LookPath("bd"); err != nil {
 		t.Skip("bd not installed, skipping installed-path test")
+	}
+	if output, err := exec.Command("bd", "version").Output(); err == nil {
+		if !strings.Contains(string(output), "bd version") {
+			t.Skipf("installed bd is not upstream beads, skipping installed-path test: %s", strings.TrimSpace(string(output)))
+		}
 	}
 
 	check := NewBeadsBinaryCheck()
@@ -57,14 +62,18 @@ func TestBeadsBinaryCheck_BdInstalled(t *testing.T) {
 
 // writeFakeBd creates a platform-appropriate fake "bd" executable in dir.
 func writeFakeBd(t *testing.T, dir string, script string, batScript string) {
+	writeFakeTool(t, dir, "bd", script, batScript)
+}
+
+func writeFakeTool(t *testing.T, dir string, name string, script string, batScript string) {
 	t.Helper()
 	if runtime.GOOS == "windows" {
-		path := filepath.Join(dir, "bd.bat")
+		path := filepath.Join(dir, name+".bat")
 		if err := os.WriteFile(path, []byte(batScript), 0755); err != nil {
 			t.Fatal(err)
 		}
 	} else {
-		path := filepath.Join(dir, "bd")
+		path := filepath.Join(dir, name)
 		if err := os.WriteFile(path, []byte(script), 0755); err != nil {
 			t.Fatal(err)
 		}
@@ -164,5 +173,49 @@ func TestBeadsBinaryCheck_BdVersionUnparseable(t *testing.T) {
 	result := check.Run(ctx)
 	if result.Status != StatusWarning {
 		t.Errorf("expected StatusWarning when bd version unparseable, got %v: %s", result.Status, result.Message)
+	}
+}
+
+func TestBeadsBinaryCheck_MiniBeadsUsesMB(t *testing.T) {
+	fakeDir := t.TempDir()
+	writeFakeTool(t, fakeDir, "mb",
+		"#!/bin/sh\necho 'mb version 0.21.4'\n",
+		"@echo off\r\necho mb version 0.21.4\r\n",
+	)
+	t.Setenv("PATH", fakeDir)
+	t.Setenv("GT_ISSUE_TRACKER_BACKEND", "minibeads")
+	t.Setenv("GT_BEADS_BACKEND", "")
+
+	check := NewBeadsBinaryCheck()
+	ctx := &CheckContext{TownRoot: t.TempDir()}
+
+	result := check.Run(ctx)
+	if result.Status != StatusOK {
+		t.Fatalf("expected StatusOK, got %v: %s", result.Status, result.Message)
+	}
+	if !strings.Contains(result.Message, "mb minibeads 0.21.4") {
+		t.Errorf("expected mb version message, got %q", result.Message)
+	}
+}
+
+func TestBeadsBinaryCheck_MiniBeadsDoesNotUseBD(t *testing.T) {
+	fakeDir := t.TempDir()
+	writeFakeBd(t, fakeDir,
+		fmt.Sprintf("#!/bin/sh\necho 'bd version %s'\n", deps.MinBeadsVersion),
+		fmt.Sprintf("@echo off\r\necho bd version %s\r\n", deps.MinBeadsVersion),
+	)
+	t.Setenv("PATH", fakeDir)
+	t.Setenv("GT_ISSUE_TRACKER_BACKEND", "minibeads")
+	t.Setenv("GT_BEADS_BACKEND", "")
+
+	check := NewBeadsBinaryCheck()
+	ctx := &CheckContext{TownRoot: t.TempDir()}
+
+	result := check.Run(ctx)
+	if result.Status != StatusError {
+		t.Fatalf("expected StatusError without mb, got %v: %s", result.Status, result.Message)
+	}
+	if result.Message != "minibeads (mb) not found in PATH" {
+		t.Errorf("unexpected message: %q", result.Message)
 	}
 }

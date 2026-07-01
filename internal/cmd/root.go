@@ -122,7 +122,8 @@ func persistentPreRun(cmd *cobra.Command, args []string) error {
 	// Env var fallback ensures commands invoked from outside the town directory
 	// (e.g., "gt agents menu" via a cross-socket tmux binding) still connect to
 	// the correct town socket rather than silently using the wrong server.
-	if townRoot := detectTownRootFromCwd(); townRoot != "" {
+	townRoot := detectTownRootFromCwd()
+	if townRoot != "" {
 		if err := session.InitRegistry(townRoot); err != nil {
 			fmt.Fprintf(os.Stderr, "WARNING: failed to initialize town registry: %v\n", err)
 		}
@@ -151,10 +152,13 @@ func persistentPreRun(cmd *cobra.Command, args []string) error {
 	if beadsExempt || isRoleCommand(cmd) {
 		return nil
 	}
+	if townRoot == "" {
+		return nil
+	}
 
 	// Check beads version (non-blocking - warn only)
-	if err := CheckBeadsVersion(); err != nil {
-		fmt.Fprintf(os.Stderr, "\n%s beads (bd) version issue:\n", style.Bold.Render("⚠️  WARNING:"))
+	if err := CheckBeadsVersionForTown(townRoot); err != nil {
+		fmt.Fprintf(os.Stderr, "\n%s issue tracker version issue:\n", style.Bold.Render("⚠️  WARNING:"))
 		fmt.Fprintf(os.Stderr, "   %v\n", err)
 		fmt.Fprintf(os.Stderr, "   Run %s for details.\n\n", style.Dim.Render("gt doctor"))
 	}

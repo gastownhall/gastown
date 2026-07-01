@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -64,12 +63,12 @@ type ChangelogEntry struct {
 
 // closedBead is the raw shape from bd list --status=closed --json.
 type closedBead struct {
-	ID          string `json:"id"`
-	Title       string `json:"title"`
-	IssueType   string `json:"issue_type"`
-	Ephemeral   bool   `json:"ephemeral"`
-	ClosedAt    string `json:"closed_at"`
-	CloseReason string `json:"close_reason"`
+	ID          string   `json:"id"`
+	Title       string   `json:"title"`
+	IssueType   string   `json:"issue_type"`
+	Ephemeral   bool     `json:"ephemeral"`
+	ClosedAt    string   `json:"closed_at"`
+	CloseReason string   `json:"close_reason"`
 	Labels      []string `json:"labels"`
 }
 
@@ -166,7 +165,7 @@ func collectChangelogEntries(townRoot string, since time.Time) ([]ChangelogEntry
 
 // fetchClosedBeads queries a single beads location for non-ephemeral closed beads since cutoff.
 func fetchClosedBeads(dir, rig string, since time.Time) ([]ChangelogEntry, error) {
-	cmd := exec.Command("bd", "list", "--status=closed", "--all", "--limit=0", "--json")
+	cmd := issueTrackerCommand("list", "--status=closed", "--all", "--limit=0", "--json")
 	cmd.Dir = dir
 	out, err := cmd.Output()
 	if err != nil {

@@ -6,6 +6,7 @@ import (
 	"os/exec"
 	"strings"
 
+	"github.com/steveyegge/gastown/internal/deps"
 	"github.com/steveyegge/gastown/internal/util"
 )
 
@@ -23,7 +24,7 @@ const (
 
 // Command builds a bd command with the shared Gas Town bd environment policy.
 func Command(dir, fallbackBeadsDir string, mode SubprocessEnvMode, args ...string) *exec.Cmd {
-	cmd := exec.Command("bd", args...) //nolint:gosec // G204: args are constructed internally
+	cmd := exec.Command(commandNameForDir(dir), args...) //nolint:gosec // G204: args are constructed internally
 	ConfigureCommand(cmd, dir, fallbackBeadsDir, mode)
 	return cmd
 }
@@ -31,9 +32,13 @@ func Command(dir, fallbackBeadsDir string, mode SubprocessEnvMode, args ...strin
 // CommandContext builds a context-bound bd command with the shared Gas Town bd
 // environment policy.
 func CommandContext(ctx context.Context, dir, fallbackBeadsDir string, mode SubprocessEnvMode, args ...string) *exec.Cmd {
-	cmd := exec.CommandContext(ctx, "bd", args...) //nolint:gosec // G204: args are constructed internally
+	cmd := exec.CommandContext(ctx, commandNameForDir(dir), args...) //nolint:gosec // G204: args are constructed internally
 	ConfigureCommand(cmd, dir, fallbackBeadsDir, mode)
 	return cmd
+}
+
+func commandNameForDir(dir string) string {
+	return deps.IssueTrackerCommandName(deps.IssueTrackerBackendForCommand(FindTownRoot(dir)))
 }
 
 // ConfigureCommand applies the shared bd subprocess policy to an existing

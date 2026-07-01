@@ -18,6 +18,8 @@ import (
 
 func TestBuildBdInitArgs_AlwaysIncludesServerPortWithoutReinit(t *testing.T) {
 	townDir := t.TempDir()
+	t.Setenv("GT_BEADS_BACKEND", "")
+	t.Setenv("GT_ISSUE_TRACKER_BACKEND", "beads")
 	t.Setenv("GT_DOLT_PORT", "")
 	t.Setenv("BEADS_DOLT_PORT", "")
 
@@ -42,6 +44,8 @@ func TestBuildBdInitArgs_AlwaysIncludesServerPortWithoutReinit(t *testing.T) {
 func TestBuildBdInitArgs_RespectsGTDoltPortEnv(t *testing.T) {
 	townDir := t.TempDir()
 
+	t.Setenv("GT_BEADS_BACKEND", "")
+	t.Setenv("GT_ISSUE_TRACKER_BACKEND", "beads")
 	t.Setenv("GT_DOLT_PORT", "4400")
 
 	args := buildBdInitArgs(townDir)
@@ -62,6 +66,8 @@ func TestBuildBdInitArgs_ConfigYAMLTakesPrecedence(t *testing.T) {
 		t.Fatalf("write config.yaml: %v", err)
 	}
 
+	t.Setenv("GT_BEADS_BACKEND", "")
+	t.Setenv("GT_ISSUE_TRACKER_BACKEND", "beads")
 	t.Setenv("GT_DOLT_PORT", "4400")
 
 	args := buildBdInitArgs(townDir)
@@ -73,6 +79,8 @@ func TestBuildBdInitArgs_ConfigYAMLTakesPrecedence(t *testing.T) {
 
 func TestBuildBdInitArgs_PortMatchesDefaultConfig(t *testing.T) {
 	townDir := t.TempDir()
+	t.Setenv("GT_BEADS_BACKEND", "")
+	t.Setenv("GT_ISSUE_TRACKER_BACKEND", "beads")
 
 	args := buildBdInitArgs(townDir)
 	cfg := doltserver.DefaultConfig(townDir)
@@ -80,6 +88,79 @@ func TestBuildBdInitArgs_PortMatchesDefaultConfig(t *testing.T) {
 	if args[5] != strconv.Itoa(cfg.Port) {
 		t.Fatalf("port should match DefaultConfig: args=%q, config=%d", args[5], cfg.Port)
 	}
+}
+
+func TestBuildBdInitArgs_MiniBeadsUsesRepoLocalInit(t *testing.T) {
+	t.Setenv("GT_BEADS_BACKEND", "")
+	t.Setenv("GT_ISSUE_TRACKER_BACKEND", "minibeads")
+
+	args := buildBdInitArgs(t.TempDir())
+
+	want := []string{"init", "--prefix", "hq"}
+	if strings.Join(args, "\x00") != strings.Join(want, "\x00") {
+		t.Fatalf("minibeads init args = %v, want %v", args, want)
+	}
+}
+
+func TestBuildBdInitArgs_MiniBeadsFromTownConfig(t *testing.T) {
+	townDir := t.TempDir()
+	t.Setenv("GT_BEADS_BACKEND", "")
+	t.Setenv("GT_ISSUE_TRACKER_BACKEND", "")
+	mayorDir := filepath.Join(townDir, "mayor")
+	if err := os.MkdirAll(mayorDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(mayorDir, "town.json"), []byte(`{
+  "type": "town",
+  "version": 1,
+  "name": "test-town",
+  "issue_tracker_backend": "minibeads",
+  "created_at": "2026-07-01T00:00:00Z"
+}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	args := buildBdInitArgs(townDir)
+
+	want := []string{"init", "--prefix", "hq"}
+	if strings.Join(args, "\x00") != strings.Join(want, "\x00") {
+		t.Fatalf("minibeads init args = %v, want %v", args, want)
+	}
+}
+
+func TestSelectedIssueTrackerBackend(t *testing.T) {
+	t.Run("default beads dolt", func(t *testing.T) {
+		t.Setenv("GT_BEADS_BACKEND", "")
+		t.Setenv("GT_ISSUE_TRACKER_BACKEND", "beads")
+		backend := selectedIssueTrackerBackend()
+		if backend.Name() != "beads" {
+			t.Fatalf("backend.Name() = %q, want beads", backend.Name())
+		}
+		if !backend.ShowPostInstallDoltHint() {
+			t.Fatal("beads backend should show Dolt stop hint")
+		}
+	})
+
+	t.Run("minibeads", func(t *testing.T) {
+		t.Setenv("GT_BEADS_BACKEND", "")
+		t.Setenv("GT_ISSUE_TRACKER_BACKEND", "mb")
+		backend := selectedIssueTrackerBackend()
+		if backend.Name() != "minibeads" {
+			t.Fatalf("backend.Name() = %q, want minibeads", backend.Name())
+		}
+		if backend.ShowPostInstallDoltHint() {
+			t.Fatal("minibeads backend should not show Dolt stop hint")
+		}
+		if err := backend.PreflightInstall(t.TempDir(), 3307); err != nil {
+			t.Fatalf("minibeads preflight should not require Dolt: %v", err)
+		}
+		if err := backend.InitializeStorage(t.TempDir()); err != nil {
+			t.Fatalf("minibeads storage init should not require Dolt: %v", err)
+		}
+		if err := backend.WaitUntilReady(t.TempDir()); err != nil {
+			t.Fatalf("minibeads readiness should not require Dolt: %v", err)
+		}
+	})
 }
 
 func TestEnsureBeadsConfigYAML_CreatesWhenMissing(t *testing.T) {

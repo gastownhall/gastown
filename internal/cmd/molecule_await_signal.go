@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
@@ -457,7 +456,7 @@ func updateAgentHeartbeat(agentBead, beadsDir string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), bdCallTimeout)
 	defer cancel()
 
-	cmd := exec.CommandContext(ctx, "bd", args...) //nolint:gosec // G204: bd is a trusted internal tool
+	cmd := issueTrackerCommandContext(ctx, args...) //nolint:gosec // G204: bd is a trusted internal tool
 	cmd.Env = append(os.Environ(), "BEADS_DIR="+beadsDir)
 	return cmd.Run()
 }
@@ -493,7 +492,7 @@ func setAgentIdleCycles(agentBead, beadsDir string, cycles int) error {
 	ctx, cancel := context.WithTimeout(context.Background(), bdCallTimeout)
 	defer cancel()
 
-	cmd := exec.CommandContext(ctx, "bd", args...) //nolint:gosec // G204: bd is a trusted internal tool
+	cmd := issueTrackerCommandContext(ctx, args...) //nolint:gosec // G204: bd is a trusted internal tool
 	cmd.Env = append(os.Environ(), "BEADS_DIR="+beadsDir)
 
 	if err := cmd.Run(); err != nil {
@@ -529,7 +528,7 @@ func setAgentBackoffUntil(agentBead, beadsDir string, until time.Time) error {
 	ctx, cancel := context.WithTimeout(context.Background(), bdCallTimeout)
 	defer cancel()
 
-	cmd := exec.CommandContext(ctx, "bd", args...) //nolint:gosec // G204: bd is a trusted internal tool
+	cmd := issueTrackerCommandContext(ctx, args...) //nolint:gosec // G204: bd is a trusted internal tool
 	cmd.Env = append(os.Environ(), "BEADS_DIR="+beadsDir)
 	if err := cmd.Run(); err != nil {
 		return fmt.Errorf("setting backoff-until label: %w", err)
@@ -571,7 +570,7 @@ func clearAgentBackoffUntil(agentBead, beadsDir string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), bdCallTimeout)
 	defer cancel()
 
-	cmd := exec.CommandContext(ctx, "bd", args...) //nolint:gosec // G204: bd is a trusted internal tool
+	cmd := issueTrackerCommandContext(ctx, args...) //nolint:gosec // G204: bd is a trusted internal tool
 	cmd.Env = append(os.Environ(), "BEADS_DIR="+beadsDir)
 	if err := cmd.Run(); err != nil {
 		return fmt.Errorf("clearing backoff-until label: %w", err)

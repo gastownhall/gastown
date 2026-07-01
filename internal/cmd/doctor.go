@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
+	"github.com/steveyegge/gastown/internal/deps"
 	"github.com/steveyegge/gastown/internal/doctor"
 	"github.com/steveyegge/gastown/internal/workspace"
 )
@@ -151,6 +152,7 @@ func runDoctor(cmd *cobra.Command, args []string) error {
 
 	// Create doctor and register checks
 	d := doctor.NewDoctor()
+	usingMiniBeads := deps.UsingMiniBeadsForTown(townRoot)
 
 	// Register workspace-level checks first (fundamental)
 	d.RegisterAll(doctor.WorkspaceChecks()...)
@@ -170,10 +172,14 @@ func runDoctor(cmd *cobra.Command, args []string) error {
 	// 4. Dolt server is reachable (everything downstream depends on this)
 	d.Register(doctor.NewStaleBinaryCheck())
 	d.Register(doctor.NewBeadsBinaryCheck())
-	d.Register(doctor.NewDoltBinaryCheck())
+	if !usingMiniBeads {
+		d.Register(doctor.NewDoltBinaryCheck())
+	}
 	d.Register(doctor.NewClaudeBinaryCheck())
 	d.Register(doctor.NewGroqCompoundCheck())
-	d.Register(doctor.NewDoltServerReachableCheck())
+	if !usingMiniBeads {
+		d.Register(doctor.NewDoltServerReachableCheck())
+	}
 
 	d.Register(doctor.NewTownGitCheck())
 	d.Register(doctor.NewTownRootBranchCheck())
@@ -188,19 +194,25 @@ func runDoctor(cmd *cobra.Command, args []string) error {
 	d.Register(doctor.NewTmuxGlobalEnvCheck())
 	d.Register(doctor.NewBootHealthCheck())
 	d.Register(doctor.NewTownBeadsConfigCheck())
-	d.Register(doctor.NewDoltConfigCheck())
+	if !usingMiniBeads {
+		d.Register(doctor.NewDoltConfigCheck())
+	}
 	d.Register(doctor.NewCustomTypesCheck())
 	d.Register(doctor.NewCustomStatusesCheck())
 	d.Register(doctor.NewFormulaCheck())
 	d.Register(doctor.NewOverlayHealthCheck())
 	d.Register(doctor.NewPrefixConflictCheck())
 	d.Register(doctor.NewRigNameMismatchCheck())
-	d.Register(doctor.NewRigConfigSyncCheck())      // Check all registered rigs have config.json
-	d.Register(doctor.NewStaleDoltPortCheck())      // Check for stale Dolt port files
-	d.Register(doctor.NewStaleSQLServerInfoCheck()) // Check for stale sql-server.info files (GH#2770)
+	d.Register(doctor.NewRigConfigSyncCheck()) // Check all registered rigs have config.json
+	if !usingMiniBeads {
+		d.Register(doctor.NewStaleDoltPortCheck())      // Check for stale Dolt port files
+		d.Register(doctor.NewStaleSQLServerInfoCheck()) // Check for stale sql-server.info files (GH#2770)
+	}
 	d.Register(doctor.NewPrefixMismatchCheck())
 	d.Register(doctor.NewDatabasePrefixCheck())
-	d.Register(doctor.NewIdleTimeoutCheck()) // Verify dolt.idle-timeout: "0" for all rigs
+	if !usingMiniBeads {
+		d.Register(doctor.NewIdleTimeoutCheck()) // Verify dolt.idle-timeout: "0" for all rigs
+	}
 	d.Register(doctor.NewRoutesCheck())
 	d.Register(doctor.NewRigRoutesJSONLCheck())
 	d.Register(doctor.NewRoutingModeCheck())
@@ -277,8 +289,10 @@ func runDoctor(cmd *cobra.Command, args []string) error {
 	d.Register(doctor.NewHooksBaseCheck())
 
 	// Dolt data health checks (binary + server reachability moved to top as prerequisites)
-	d.Register(doctor.NewDoltMetadataCheck())
-	d.Register(doctor.NewDoltOrphanedDatabaseCheck())
+	if !usingMiniBeads {
+		d.Register(doctor.NewDoltMetadataCheck())
+		d.Register(doctor.NewDoltOrphanedDatabaseCheck())
+	}
 	d.Register(doctor.NewUnregisteredBeadsDirsCheck())
 	d.Register(doctor.NewNullAssigneeCheck())
 
