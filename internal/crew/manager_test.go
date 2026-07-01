@@ -673,6 +673,19 @@ func TestBuildResumeArgs(t *testing.T) {
 			sessionID: "abc-123",
 			wantErr:   "subcommand-style agents",
 		},
+		// Kiro: has ContinueFlag and specific resume-id flag
+		{
+			name:      "kiro last uses --resume",
+			agent:     "kiro",
+			sessionID: "last",
+			wantArgs:  "--resume",
+		},
+		{
+			name:      "kiro specific ID uses --resume-id",
+			agent:     "kiro",
+			sessionID: "abc-123",
+			wantArgs:  "--resume-id abc-123",
+		},
 		// Cursor: no ContinueFlag, flag-style resume
 		{
 			name:      "cursor last errors without ContinueFlag",

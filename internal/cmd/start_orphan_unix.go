@@ -11,7 +11,7 @@ import (
 	"github.com/steveyegge/gastown/internal/util"
 )
 
-// cleanupOrphanedClaude finds and kills orphaned Claude processes with a grace period.
+// cleanupOrphanedClaude finds and kills orphaned agent processes with a grace period.
 // This is a simpler synchronous implementation that:
 // 1. Finds orphaned processes (TTY-less, older than 60s, not in Gas Town sessions)
 // 2. Sends SIGTERM to all of them
@@ -87,7 +87,7 @@ func cleanupOrphanedClaude(graceSecs int) {
 	}
 }
 
-// verifyNoOrphans checks that no Claude processes survived shutdown.
+// verifyNoOrphans checks that no agent processes survived shutdown.
 // If any are found, it reports them and attempts a final SIGKILL.
 func verifyNoOrphans() {
 	orphans, err := util.FindOrphanedClaudeProcesses()
@@ -105,11 +105,11 @@ func verifyNoOrphans() {
 
 	totalSurvivors := len(orphans) + len(zombies)
 	if totalSurvivors == 0 {
-		fmt.Printf("  %s No orphaned Claude processes detected\n", style.Bold.Render("✓"))
+		fmt.Printf("  %s No orphaned agent processes detected\n", style.Bold.Render("✓"))
 		return
 	}
 
-	fmt.Printf("  %s %d Claude process(es) survived shutdown:\n",
+	fmt.Printf("  %s %d agent process(es) survived shutdown:\n",
 		style.Bold.Render("⚠"), totalSurvivors)
 
 	// Kill orphans (TTY-less)

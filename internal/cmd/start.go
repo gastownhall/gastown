@@ -31,7 +31,7 @@ import (
 )
 
 // defaultOrphanGraceSecs is the grace period (in seconds) between SIGTERM and SIGKILL
-// when automatically cleaning up orphaned Claude processes during shutdown.
+// when automatically cleaning up orphaned agent processes during shutdown.
 // This is shorter than the --cleanup-orphans-grace-secs default (60s) because
 // automatic cleanup runs after sessions are already killed, so processes have
 // already had time to shut down.
@@ -105,7 +105,7 @@ Use --nuclear to force cleanup even if polecats have uncommitted work (DANGER).
 Use --cleanup-orphans to use a longer grace period for orphan cleanup (default 60s).
 Use --cleanup-orphans-grace-secs to set that grace period.
 
-Orphaned Claude processes are always cleaned up after session termination.
+Orphaned agent processes are always cleaned up after session termination.
 By default, a 5-second grace period is used. The --cleanup-orphans flag
 extends this to --cleanup-orphans-grace-secs (default 60s) for stubborn processes.`,
 	RunE: runShutdown,
@@ -641,7 +641,7 @@ func runGracefulShutdown(t *tmux.Tmux, gtSessions []string, townRoot string) err
 	deaconSession := getDeaconSessionName()
 	stopped := killSessionsInOrder(t, gtSessions, mayorSession, deaconSession)
 
-	// Phase 5: Always clean up orphaned Claude processes after killing sessions.
+	// Phase 5: Always clean up orphaned agent processes after killing sessions.
 	// Processes can survive session kills if they caught/ignored SIGHUP or called setsid().
 	// Use the user-specified grace period if --cleanup-orphans was explicitly set,
 	// otherwise use a short default (5s) for the automatic sweep.
@@ -649,7 +649,7 @@ func runGracefulShutdown(t *tmux.Tmux, gtSessions []string, townRoot string) err
 	if shutdownCleanupOrphans {
 		graceSecs = shutdownCleanupOrphansGrace
 	}
-	fmt.Printf("\nPhase 5: Cleaning up orphaned Claude processes...\n")
+	fmt.Printf("\nPhase 5: Cleaning up orphaned agent processes...\n")
 	cleanupOrphanedClaude(graceSecs)
 
 	// Phase 6: Cleanup polecat worktrees and branches
@@ -664,7 +664,7 @@ func runGracefulShutdown(t *tmux.Tmux, gtSessions []string, townRoot string) err
 		stopDaemonIfRunning(townRoot)
 	}
 
-	// Phase 8: Verify no Claude processes survived
+	// Phase 8: Verify no agent processes survived
 	fmt.Printf("\nPhase 8: Verifying shutdown...\n")
 	verifyNoOrphans()
 
@@ -680,7 +680,7 @@ func runImmediateShutdown(t *tmux.Tmux, gtSessions []string, townRoot string) er
 	deaconSession := getDeaconSessionName()
 	stopped := killSessionsInOrder(t, gtSessions, mayorSession, deaconSession)
 
-	// Always clean up orphaned Claude processes after killing sessions.
+	// Always clean up orphaned agent processes after killing sessions.
 	// Processes can survive session kills if they caught/ignored SIGHUP or called setsid().
 	// Use the user-specified grace period if --cleanup-orphans was explicitly set,
 	// otherwise use a short default (5s) for the automatic sweep.
@@ -689,7 +689,7 @@ func runImmediateShutdown(t *tmux.Tmux, gtSessions []string, townRoot string) er
 		graceSecs = shutdownCleanupOrphansGrace
 	}
 	fmt.Println()
-	fmt.Println("Cleaning up orphaned Claude processes...")
+	fmt.Println("Cleaning up orphaned agent processes...")
 	cleanupOrphanedClaude(graceSecs)
 
 	// Cleanup polecat worktrees and branches
@@ -706,7 +706,7 @@ func runImmediateShutdown(t *tmux.Tmux, gtSessions []string, townRoot string) er
 		stopDaemonIfRunning(townRoot)
 	}
 
-	// Verify no Claude processes survived
+	// Verify no agent processes survived
 	fmt.Println()
 	fmt.Println("Verifying shutdown...")
 	verifyNoOrphans()

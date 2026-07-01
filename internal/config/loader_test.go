@@ -3811,11 +3811,11 @@ func TestBuildArgsWithPromptWarnsOnDroppedPrompt(t *testing.T) {
 //	}
 //
 // Manual test procedure:
-//  1. Set role_agents.mayor to each agent (claude, gemini, codex, cursor, auggie, amp, opencode)
+//  1. Set role_agents.mayor to each agent (claude, gemini, codex, kiro, cursor, auggie, amp, opencode)
 //  2. Run: gt start
 //  3. Verify mayor starts with correct agent config
 //  4. Run: GT_NUKE_ACKNOWLEDGED=1 gt down --nuke
-//  5. Repeat for all 7 built-in agents
+//  5. Repeat for each built-in agent under validation
 func TestRoleAgentConfigWithCustomAgent(t *testing.T) {
 	skipIfAgentBinaryMissing(t, "opencode", "claude")
 	t.Parallel()
@@ -3906,8 +3906,8 @@ func TestRoleAgentConfigWithCustomAgent(t *testing.T) {
 }
 
 // TestMultipleAgentTypes tests that various built-in agent presets work correctly.
-// NOTE: Only these are actual built-in presets: claude, gemini, codex, cursor, auggie, amp, opencode.
-// Variants like "claude-opus", "claude-haiku", "claude-sonnet" are NOT built-in - they need
+// NOTE: These are representative built-in presets. Model variants like
+// "claude-opus", "claude-haiku", "claude-sonnet" are NOT built-in - they need
 // to be defined as custom agents in TownSettings.Agents if specific model selection is needed.
 func TestMultipleAgentTypes(t *testing.T) {
 	t.Parallel()
@@ -3934,6 +3934,12 @@ func TestMultipleAgentTypes(t *testing.T) {
 			name:          "gemini built-in preset",
 			agentName:     "gemini",
 			expectCommand: "gemini",
+			isBuiltIn:     true,
+		},
+		{
+			name:          "kiro built-in preset",
+			agentName:     "kiro",
+			expectCommand: "kiro-cli",
 			isBuiltIn:     true,
 		},
 		{

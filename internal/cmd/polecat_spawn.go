@@ -57,7 +57,7 @@ type SlingSpawnOptions struct {
 	Account       string // Claude Code account handle to use
 	Create        bool   // Create polecat if it doesn't exist (currently always true for sling)
 	HookBead      string // Bead ID to set as hook_bead at spawn time (atomic assignment)
-	Agent         string // Agent override for this spawn (e.g., "gemini", "codex", "claude-haiku")
+	Agent         string // Agent override for this spawn (e.g., "gemini", "codex", "kiro", "claude-haiku")
 	BaseBranch    string // Override base branch for polecat worktree (e.g., "develop", "release/v2")
 	ResumeBranch  string // Resume an existing branch (e.g. PR head) instead of creating polecat/<name>/<bead>@<ts>
 	SkipAdmission bool   // Caller already holds a polecat admission reservation

@@ -56,6 +56,25 @@ func TestParseEtime(t *testing.T) {
 	}
 }
 
+func TestIsAgentOrphanCommNameIncludesKiro(t *testing.T) {
+	tests := []struct {
+		name string
+		want bool
+	}{
+		{"kiro-cli", true},
+		{"kiro", true},
+		{"vim", false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := isAgentOrphanCommName(tt.name); got != tt.want {
+				t.Errorf("isAgentOrphanCommName(%q) = %v, want %v", tt.name, got, tt.want)
+			}
+		})
+	}
+}
+
 func TestFindOrphanedClaudeProcesses(t *testing.T) {
 	// Live test that checks for orphaned processes on the current system.
 	// Should not fail — just returns whatever orphans exist (likely none in CI).

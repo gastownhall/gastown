@@ -253,18 +253,18 @@ Example:
 var deaconZombieScanCmd = &cobra.Command{
 	Use:        "zombie-scan",
 	SuggestFor: []string{"orphan-scan", "orphan_scan", "orphan"},
-	Short:      "Find and clean zombie Claude processes not in active tmux sessions",
-	Long: `Find and clean zombie Claude processes not in active tmux sessions.
+	Short:      "Find and clean zombie agent processes not in active tmux sessions",
+	Long: `Find and clean zombie agent processes not in active tmux sessions.
 
-Unlike cleanup-orphans (which uses TTY detection), zombie-scan uses tmux
-verification: it checks if each Claude process is in an active tmux session
-by comparing against actual pane PIDs.
+	Unlike cleanup-orphans (which uses TTY detection), zombie-scan uses tmux
+	verification: it checks if each agent process is in an active tmux session
+	by comparing against actual pane PIDs.
 
-A process is a zombie if:
-- It's a Claude/codex process
-- It's NOT the pane PID of any active tmux session
-- It's NOT a child of any pane PID
-- It's older than 60 seconds
+	A process is a zombie if:
+	- It's a tracked agent process
+	- It's NOT the pane PID of any active tmux session
+	- It's NOT a child of any pane PID
+	- It's older than 60 seconds
 
 This catches "ghost" processes that have a TTY (from a dead tmux session)
 but are no longer part of any active Gas Town session.
@@ -1419,7 +1419,7 @@ func runDeaconCleanupOrphans(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
-// runDeaconZombieScan finds and cleans zombie Claude processes not in active tmux sessions.
+// runDeaconZombieScan finds and cleans zombie agent processes not in active tmux sessions.
 func runDeaconZombieScan(cmd *cobra.Command, args []string) error {
 	// Find zombies using tmux verification
 	zombies, err := util.FindZombieClaudeProcesses()

@@ -384,7 +384,7 @@ func runDown(cmd *cobra.Command, args []string) error {
 			fmt.Printf("  PID cleanup warning: %s\n", e)
 		}
 
-		fmt.Println("Cleaning up orphaned Claude processes...")
+		fmt.Println("Cleaning up orphaned agent processes...")
 		cleanupOrphanedClaude(defaultDownOrphanGraceSecs)
 
 		time.Sleep(500 * time.Millisecond)
@@ -723,10 +723,10 @@ func verifyShutdown(t *tmux.Tmux, townRoot string) []string {
 		}
 	}
 
-	// Check for orphaned Claude/node processes
+	// Check for orphaned agent processes
 	// These can be left behind if tmux sessions were killed but child processes didn't terminate
 	if pids := findOrphanedClaudeProcesses(townRoot); len(pids) > 0 {
-		respawned = append(respawned, fmt.Sprintf("orphaned Claude processes (PIDs: %v)", pids))
+		respawned = append(respawned, fmt.Sprintf("orphaned agent processes (PIDs: %v)", pids))
 	}
 
 	// Check for respawned idle-monitors
@@ -742,7 +742,7 @@ func verifyShutdown(t *tmux.Tmux, townRoot string) []string {
 	return respawned
 }
 
-// findOrphanedClaudeProcesses finds Gas Town agent processes (claude/codex/opencode/cursor-agent/copilot/node)
+// findOrphanedClaudeProcesses finds Gas Town agent processes (claude/codex/kiro/opencode/cursor-agent/copilot/node)
 // that are running in the town directory but aren't associated with any active tmux session.
 // This can happen when tmux sessions are killed but child processes don't terminate.
 //
@@ -778,7 +778,7 @@ func findOrphanedClaudeProcesses(townRoot string) []int {
 		// Only consider known Gas Town process names
 		comm := strings.ToLower(fields[1])
 		switch comm {
-		case "claude", "claude-code", "codex", "opencode", "cursor-agent", "agent", "copilot", "node":
+		case "claude", "claude-code", "codex", "kiro-cli", "kiro", "opencode", "cursor-agent", "agent", "copilot", "node":
 			// Potential Gas Town process
 		default:
 			continue

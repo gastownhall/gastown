@@ -10,7 +10,7 @@ Gas City provider contract.
 ## What Gas Town Is
 
 Gas Town is a multi-agent workspace manager that orchestrates coding agents
-(Claude, Gemini, Codex, Cursor, AMP, OpenCode, Copilot, and others) through
+(Claude, Kiro, Gemini, Codex, Cursor, AMP, OpenCode, Copilot, and others) through
 tmux sessions. It provides:
 
 - **Identity and role management** — each agent gets a role (polecat, crew,
@@ -139,7 +139,7 @@ Every field from the `AgentPresetInfo` struct in `internal/config/agents.go`:
 | `prompt_flag` | string | Flag for passing prompts (e.g., `"-p"`) |
 | `output_flag` | string | Flag for structured output (e.g., `"--json"`) |
 
-### Example: Kiro preset
+### Built-in preset: Kiro CLI
 
 ```json
 {
@@ -147,24 +147,29 @@ Every field from the `AgentPresetInfo` struct in `internal/config/agents.go`:
   "agents": {
     "kiro": {
       "name": "kiro",
-      "command": "kiro",
-      "args": ["--autonomous"],
-      "process_names": ["kiro", "node"],
-      "session_id_env": "KIRO_SESSION_ID",
-      "resume_flag": "--resume",
+      "command": "kiro-cli",
+      "args": ["chat", "--trust-all-tools"],
+      "process_names": ["kiro-cli", "kiro"],
+      "resume_flag": "--resume-id",
+      "continue_flag": "--resume",
       "resume_style": "flag",
       "prompt_mode": "arg",
-      "ready_prompt_prefix": "> ",
       "ready_delay_ms": 5000,
       "instructions_file": "AGENTS.md",
       "non_interactive": {
-        "prompt_flag": "-p",
-        "output_flag": "--json"
+        "subcommand": "chat",
+        "output_flag": "--no-interactive"
       }
     }
   }
 }
 ```
+
+`kiro` ships as a built-in preset. Gas Town launches it as `kiro-cli chat
+--trust-all-tools`, passes the startup beacon as the positional chat input, and
+uses `kiro-cli chat --resume-id <id>` for explicit session resume. Kiro CLI also
+supports workspace configuration under `.kiro/`; see the repo-local `.kiro/`
+directory for Gas Town steering files and onboarding notes.
 
 ### Built-in preset: GitHub Copilot CLI
 
@@ -447,7 +452,7 @@ helpers) for headless execution. Configure via the `non_interactive` preset fiel
 }
 ```
 
-Gas Town builds the command as: `kiro exec -p "prompt" --json`
+Gas Town builds the command as: `agent-cli exec -p "prompt" --json`
 
 ### Session forking
 

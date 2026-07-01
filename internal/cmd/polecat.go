@@ -1801,7 +1801,7 @@ func runPolecatNuke(cmd *cobra.Command, args []string) error {
 		fmt.Printf("\n%s Nuked %d polecat(s).\n", style.SuccessPrefix, nuked)
 	}
 
-	// Final cleanup: Kill any orphaned Claude processes that escaped the session termination.
+	// Final cleanup: Kill any orphaned agent processes that escaped the session termination.
 	// This catches processes that called setsid() or were reparented during session shutdown.
 	if !polecatNukeDryRun {
 		cleanupOrphanedProcesses()
@@ -2002,7 +2002,7 @@ func nukeCleanupMolecules(workBeadID string, r *rig.Rig) {
 	}
 }
 
-// cleanupOrphanedProcesses kills Claude processes that survived session termination.
+// cleanupOrphanedProcesses kills agent processes that survived session termination.
 // Uses aggressive zombie detection via tmux session verification.
 func cleanupOrphanedProcesses() {
 	results, err := util.CleanupZombieClaudeProcesses()

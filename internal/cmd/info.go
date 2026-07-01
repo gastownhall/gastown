@@ -374,7 +374,7 @@ var versionChanges = []VersionChange{
 		Date:    "2026-01-17",
 		Changes: []string{
 			"NEW: gt show/cat - Inspect bead contents and metadata",
-			"NEW: gt orphans list/kill - Detect and clean up orphaned Claude processes",
+			"NEW: gt orphans list/kill - Detect and clean up orphaned agent processes",
 			"NEW: gt convoy close - Manual convoy closure command",
 			"NEW: gt commit/trail - Git wrappers with bead awareness",
 			"NEW: Plugin system - gt plugin run/history, gt dispatch --plugin",
@@ -388,7 +388,7 @@ var versionChanges = []VersionChange{
 			"CHANGED: MR tracking via beads - Removed mrqueue package",
 			"CHANGED: Desire-path commands - Agent ergonomics shortcuts",
 			"CHANGED: Explicit escalation in polecat templates",
-			"FIX: Kill process tree on shutdown - Prevents orphaned Claude processes",
+			"FIX: Kill process tree on shutdown - Prevents orphaned agent processes",
 			"FIX: Agent bead prefix alignment - Multi-hyphen IDs for consistency",
 			"FIX: Idle Polecat Heresy warnings in templates",
 			"FIX: Zombie session detection in doctor",

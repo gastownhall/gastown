@@ -426,6 +426,8 @@ func gasTownRuntimeYOLO(cmdName, args string) bool {
 	switch cmdName {
 	case "claude", "claude-code", "codex":
 		return strings.Contains(args, "--dangerously-skip-permissions")
+	case "kiro-cli", "kiro":
+		return strings.Contains(args, "chat") && argvHasFlag(args, "--trust-all-tools")
 	case "cursor-agent":
 		return argvHasFlag(args, "-f")
 	case "agent":
@@ -440,8 +442,8 @@ func gasTownRuntimeYOLO(cmdName, args string) bool {
 }
 
 // findRuntimeProcesses finds Gas Town agent processes by per-provider YOLO / launch signatures
-// in argv (not comm name alone): claude/codex --dangerously-skip-permissions, cursor-agent -f,
-// copilot --yolo, etc.
+// in argv (not comm name alone): claude/codex --dangerously-skip-permissions,
+// kiro-cli chat --trust-all-tools, cursor-agent -f, copilot --yolo, etc.
 func (c *OrphanProcessCheck) findRuntimeProcesses() ([]processInfo, error) {
 	var procs []processInfo
 

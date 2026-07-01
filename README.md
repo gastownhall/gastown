@@ -1,10 +1,10 @@
 # Gas Town
 
-**Multi-agent orchestration system for Claude Code, GitHub Copilot, and other AI agents with persistent work tracking**
+**Multi-agent orchestration system for Claude Code, Kiro CLI, GitHub Copilot, and other AI agents with persistent work tracking**
 
 ## Overview
 
-Gas Town is a workspace manager that lets you coordinate multiple AI coding agents (Claude Code, GitHub Copilot, Codex, Gemini, and others) working on different tasks. Instead of losing context when agents restart, Gas Town persists work state in git-backed hooks, enabling reliable multi-agent workflows.
+Gas Town is a workspace manager that lets you coordinate multiple AI coding agents (Claude Code, Kiro CLI, GitHub Copilot, Codex, Gemini, and others) working on different tasks. Instead of losing context when agents restart, Gas Town persists work state in git-backed hooks, enabling reliable multi-agent workflows.
 
 ### What Problem Does This Solve?
 
@@ -129,6 +129,7 @@ Federated work coordination network linking Gas Towns through DoltHub. Rigs post
 - **sqlite3** - for convoy database queries (usually pre-installed on macOS/Linux)
 - **tmux 3.0+** - recommended for full experience
 - **Claude Code CLI** (default runtime) - [claude.ai/code](https://claude.ai/code)
+- **Kiro CLI** (optional runtime) - [kiro.dev/docs/cli](https://kiro.dev/docs/cli/)
 - **Codex CLI** (optional runtime) - [developers.openai.com/codex/cli](https://developers.openai.com/codex/cli)
 - **GitHub Copilot CLI** (optional runtime) - [cli.github.com](https://cli.github.com) (requires Copilot seat)
 
@@ -413,7 +414,7 @@ gt feed                     # Real-time activity feed (TUI)
 gt feed --problems          # Start in problems view (stuck agent detection)
 ```
 
-**Built-in agent presets**: `claude`, `gemini`, `codex`, `cursor`, `auggie`, `amp`, `opencode`, `copilot`, `pi`, `omp`
+**Built-in agent presets**: `claude`, `gemini`, `codex`, `kiro`, `cursor`, `auggie`, `amp`, `opencode`, `copilot`, `pi`, `omp`, `vibe`, `groq-compound`
 
 ### Convoy (Work Tracking)
 

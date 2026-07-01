@@ -1443,6 +1443,8 @@ func TestPaneCurrentCommandIsAgent(t *testing.T) {
 		{"claude", true},
 		{"node", true},
 		{"codex", true},
+		{"kiro-cli", true},
+		{"kiro", true},
 		{"opencode", true},
 		{"cursor-agent", true},
 		{"copilot", true},

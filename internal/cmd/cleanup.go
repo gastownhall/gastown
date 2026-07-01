@@ -16,13 +16,13 @@ var (
 var cleanupCmd = &cobra.Command{
 	Use:     "cleanup",
 	GroupID: GroupWork,
-	Short:   "Clean up orphaned Claude processes",
-	Long: `Clean up orphaned Claude processes that survived session termination.
+	Short:   "Clean up orphaned agent processes",
+	Long: `Clean up orphaned agent processes that survived session termination.
 
-This command finds and kills Claude processes that are not associated with
+This command finds and kills agent processes that are not associated with
 any active Gas Town tmux session. These orphans can accumulate when:
 - Polecat sessions are killed without proper cleanup
-- Claude spawns subagent processes that outlive their parent
+- Agent runtimes spawn subprocesses that outlive their parent
 - Network or system issues interrupt normal shutdown
 
 Uses aggressive tmux session verification to detect ALL orphaned processes,
@@ -50,12 +50,12 @@ func runCleanup(cmd *cobra.Command, args []string) error {
 	}
 
 	if len(zombies) == 0 {
-		fmt.Printf("%s No orphaned Claude processes found\n", style.Bold.Render("✓"))
+		fmt.Printf("%s No orphaned agent processes found\n", style.Bold.Render("✓"))
 		return nil
 	}
 
 	// Show what we found
-	fmt.Printf("%s Found %d orphaned Claude process(es):\n\n", style.Warning.Render("⚠"), len(zombies))
+	fmt.Printf("%s Found %d orphaned agent process(es):\n\n", style.Warning.Render("⚠"), len(zombies))
 	for _, z := range zombies {
 		ageStr := formatProcessAgeCleanup(z.Age)
 		fmt.Printf("  %s %s (age: %s, tty: %s)\n",

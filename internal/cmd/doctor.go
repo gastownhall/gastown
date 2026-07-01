@@ -52,7 +52,7 @@ Infrastructure checks:
 Cleanup checks (fixable):
   - orphan-sessions          Detect orphaned tmux sessions
   - stalled-polecats         Detect polecats with dead sessions and unpushed work (fixable)
-  - orphan-processes         Detect orphaned Claude processes
+  - orphan-processes         Detect orphaned agent processes
   - session-name-format      Detect sessions with outdated naming format (fixable)
   - wisp-gc                  Detect and clean abandoned wisps (>1h)
   - misclassified-wisps      Detect issues that should be wisps (purges to wisps table, fixable)

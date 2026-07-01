@@ -409,7 +409,7 @@ func parseEtime(etime string) (int, error) {
 // TTY-less orphan / zombie cleanup (matches internal/config agent presets).
 func isAgentOrphanCommName(cmdLower string) bool {
 	switch cmdLower {
-	case "claude", "claude-code", "codex", "opencode", "cursor-agent", "agent", "copilot":
+	case "claude", "claude-code", "codex", "kiro-cli", "kiro", "opencode", "cursor-agent", "agent", "copilot":
 		return true
 	default:
 		return false
@@ -424,7 +424,7 @@ type OrphanedProcess struct {
 	TownRoot string // Gas Town workspace root, or "" if not in any workspace
 }
 
-// FindOrphanedClaudeProcesses finds Gas Town agent processes (claude/codex/opencode/cursor-agent/copilot, etc.)
+// FindOrphanedClaudeProcesses finds Gas Town agent processes (claude/codex/kiro/opencode/cursor-agent/copilot, etc.)
 // without a controlling terminal.
 // These are typically subagent processes spawned by Claude Code's Task tool that didn't
 // clean up properly after completion.
@@ -509,7 +509,7 @@ func FindOrphanedClaudeProcesses() ([]OrphanedProcess, error) {
 		}
 
 		// Skip processes NOT in a Gas Town workspace.
-		// Only kill orphaned Claude processes whose cwd is under a Gas Town
+		// Only kill orphaned agent processes whose cwd is under a Gas Town
 		// workspace root. This prevents killing user's Claude Code instances
 		// running in repos outside ~/gt/ (or wherever the workspace is).
 		townRoot := resolveTownRoot(pid)
@@ -572,7 +572,7 @@ func FindZombieClaudeProcesses() ([]ZombieProcess, error) {
 		return nil, nil
 	}
 
-	// Use ps to get PID, TTY, command, and elapsed time for all claude processes
+	// Use ps to get PID, TTY, command, and elapsed time for all tracked agent processes
 	out, err := exec.Command("ps", "-eo", "pid,tty,comm,etime").Output()
 	if err != nil {
 		return nil, fmt.Errorf("listing processes: %w", err)
@@ -768,7 +768,7 @@ func CleanupZombieClaudeProcesses() ([]ZombieCleanupResult, error) {
 	return results, lastErr
 }
 
-// CleanupOrphanedClaudeProcesses finds and kills orphaned claude/codex processes.
+// CleanupOrphanedClaudeProcesses finds and kills orphaned Gas Town agent processes.
 //
 // Uses a state machine to escalate signals:
 //  1. First encounter → SIGTERM, record in state file

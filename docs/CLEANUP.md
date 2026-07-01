@@ -8,11 +8,11 @@ A comprehensive catalog of all cleanup-related commands in the gastown/beads eco
 
 | Command | What it does |
 |---------|-------------|
-| `gt cleanup` | Kills orphaned Claude processes not tied to active tmux sessions |
-| `gt orphans procs list` | Lists orphaned Claude processes (PPID=1) |
-| `gt orphans procs kill` | Kills orphaned Claude processes (`--aggressive` for tmux-verified) |
-| `gt deacon cleanup-orphans` | Kills orphaned Claude subagent processes (no controlling TTY) |
-| `gt deacon zombie-scan` | Finds/kills zombie Claude processes not in active tmux sessions |
+| `gt cleanup` | Kills orphaned agent processes not tied to active tmux sessions |
+| `gt orphans procs list` | Lists orphaned agent processes (PPID=1) |
+| `gt orphans procs kill` | Kills orphaned agent processes (`--aggressive` for tmux-verified) |
+| `gt deacon cleanup-orphans` | Kills orphaned agent subprocesses (no controlling TTY) |
+| `gt deacon zombie-scan` | Finds/kills zombie agent processes not in active tmux sessions |
 
 ## Polecat (Agent Sandbox) Cleanup
 

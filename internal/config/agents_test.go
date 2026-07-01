@@ -20,8 +20,8 @@ func isClaudeCmd(cmd string) bool {
 func TestBuiltInAgentPresetSummary(t *testing.T) {
 	t.Parallel()
 	s := BuiltInAgentPresetSummary()
-	if !strings.Contains(s, "cursor") || !strings.Contains(s, "claude") {
-		t.Fatalf("BuiltInAgentPresetSummary() = %q, want cursor and claude", s)
+	if !strings.Contains(s, "cursor") || !strings.Contains(s, "claude") || !strings.Contains(s, "kiro") {
+		t.Fatalf("BuiltInAgentPresetSummary() = %q, want cursor, claude, and kiro", s)
 	}
 	names := strings.Split(s, ", ")
 	if !sort.StringsAreSorted(names) {
@@ -32,7 +32,7 @@ func TestBuiltInAgentPresetSummary(t *testing.T) {
 func TestBuiltinPresets(t *testing.T) {
 	t.Parallel()
 	// Ensure all built-in presets are accessible
-	presets := []AgentPreset{AgentClaude, AgentGemini, AgentCodex, AgentCursor, AgentAuggie, AgentAmp, AgentOpenCode, AgentCopilot, AgentPi, AgentOmp}
+	presets := []AgentPreset{AgentClaude, AgentGemini, AgentCodex, AgentKiro, AgentCursor, AgentAuggie, AgentAmp, AgentOpenCode, AgentCopilot, AgentPi, AgentOmp}
 
 	for _, preset := range presets {
 		info := GetAgentPreset(preset)
@@ -62,6 +62,7 @@ func TestGetAgentPresetByName(t *testing.T) {
 		{"claude", AgentClaude, false},
 		{"gemini", AgentGemini, false},
 		{"codex", AgentCodex, false},
+		{"kiro", AgentKiro, false},
 		{"cursor", AgentCursor, false},
 		{"auggie", AgentAuggie, false},
 		{"amp", AgentAmp, false},
@@ -98,6 +99,7 @@ func TestRuntimeConfigFromPreset(t *testing.T) {
 		{AgentClaude, "claude"}, // Note: claude may resolve to full path
 		{AgentGemini, "gemini"},
 		{AgentCodex, "codex"},
+		{AgentKiro, "kiro-cli"},
 		{AgentCursor, "cursor-agent"},
 		{AgentAuggie, "auggie"},
 		{AgentAmp, "amp"},
@@ -145,6 +147,7 @@ func TestIsKnownPreset(t *testing.T) {
 		{"claude", true},
 		{"gemini", true},
 		{"codex", true},
+		{"kiro", true},
 		{"cursor", true},
 		{"auggie", true},
 		{"amp", true},
@@ -544,6 +547,7 @@ func TestAgentPresetApprovalFlags(t *testing.T) {
 		{AgentClaude, "--dangerously-skip-permissions"},
 		{AgentGemini, "yolo"}, // Part of "--approval-mode yolo"
 		{AgentCodex, "--dangerously-bypass-approvals-and-sandbox"},
+		{AgentKiro, "--trust-all-tools"},
 		{AgentCopilot, "--yolo"},
 	}
 
@@ -634,6 +638,13 @@ func TestBuildResumeCommand(t *testing.T) {
 			contains:  []string{"codex", "resume", "codex-sess-789", "--dangerously-bypass-approvals-and-sandbox"},
 		},
 		{
+			name:      "kiro flag style",
+			agentName: "kiro",
+			sessionID: "kiro-sess-123",
+			wantEmpty: false,
+			contains:  []string{"kiro-cli", "chat", "--trust-all-tools", "--resume-id", "kiro-sess-123"},
+		},
+		{
 			name:      "empty session ID",
 			agentName: "claude",
 			sessionID: "",
@@ -683,6 +694,7 @@ func TestSupportsSessionResume(t *testing.T) {
 		{"claude", true},
 		{"gemini", true},
 		{"codex", true},
+		{"kiro", true},
 		{"cursor", true},
 		{"auggie", true},
 		{"amp", true},
@@ -708,6 +720,7 @@ func TestGetSessionIDEnvVar(t *testing.T) {
 		{"claude", "CLAUDE_SESSION_ID"},
 		{"gemini", "GEMINI_SESSION_ID"},
 		{"codex", ""},   // Codex uses JSONL output instead
+		{"kiro", ""},    // Kiro manages chat sessions on disk
 		{"cursor", ""},  // Cursor uses --resume with chatId directly
 		{"auggie", ""},  // Auggie uses --resume directly
 		{"amp", ""},     // AMP uses 'threads continue' subcommand
@@ -733,6 +746,7 @@ func TestGetProcessNames(t *testing.T) {
 		{"claude", []string{"node", "claude"}},
 		{"gemini", []string{"gemini"}},
 		{"codex", []string{"codex"}},
+		{"kiro", []string{"kiro-cli", "kiro"}},
 		{"cursor", []string{"cursor-agent", "agent"}},
 		{"auggie", []string{"auggie"}},
 		{"amp", []string{"amp"}},
@@ -761,7 +775,7 @@ func TestGetProcessNames(t *testing.T) {
 func TestListAgentPresetsMatchesConstants(t *testing.T) {
 	t.Parallel()
 	// Ensure all AgentPreset constants are returned by ListAgentPresets
-	allConstants := []AgentPreset{AgentClaude, AgentGemini, AgentCodex, AgentCursor, AgentAuggie, AgentAmp, AgentOpenCode, AgentCopilot, AgentPi, AgentOmp}
+	allConstants := []AgentPreset{AgentClaude, AgentGemini, AgentCodex, AgentKiro, AgentCursor, AgentAuggie, AgentAmp, AgentOpenCode, AgentCopilot, AgentPi, AgentOmp}
 	presets := ListAgentPresets()
 
 	// Convert to map for quick lookup
@@ -807,6 +821,11 @@ func TestAgentCommandGeneration(t *testing.T) {
 			preset:       AgentCodex,
 			wantCommand:  "codex",
 			wantContains: []string{"--dangerously-bypass-approvals-and-sandbox"},
+		},
+		{
+			preset:       AgentKiro,
+			wantCommand:  "kiro-cli",
+			wantContains: []string{"chat", "--trust-all-tools"},
 		},
 		{
 			preset:       AgentCursor,
@@ -861,6 +880,100 @@ func TestAgentCommandGeneration(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestKiroAgentPreset(t *testing.T) {
+	t.Parallel()
+	info := GetAgentPreset(AgentKiro)
+	if info == nil {
+		t.Fatal("kiro preset not found")
+	}
+
+	if info.Command != "kiro-cli" {
+		t.Errorf("kiro command = %q, want kiro-cli", info.Command)
+	}
+
+	wantArgs := []string{"chat", "--trust-all-tools"}
+	if len(info.Args) != len(wantArgs) {
+		t.Fatalf("kiro args = %v, want %v", info.Args, wantArgs)
+	}
+	for i, want := range wantArgs {
+		if info.Args[i] != want {
+			t.Errorf("kiro Args[%d] = %q, want %q", i, info.Args[i], want)
+		}
+	}
+
+	if len(info.ProcessNames) != 2 || info.ProcessNames[0] != "kiro-cli" || info.ProcessNames[1] != "kiro" {
+		t.Errorf("kiro ProcessNames = %v, want [kiro-cli kiro]", info.ProcessNames)
+	}
+
+	if info.SessionIDEnv != "" {
+		t.Errorf("kiro SessionIDEnv = %q, want empty", info.SessionIDEnv)
+	}
+	if info.ResumeFlag != "--resume-id" {
+		t.Errorf("kiro ResumeFlag = %q, want --resume-id", info.ResumeFlag)
+	}
+	if info.ContinueFlag != "--resume" {
+		t.Errorf("kiro ContinueFlag = %q, want --resume", info.ContinueFlag)
+	}
+	if info.ResumeStyle != "flag" {
+		t.Errorf("kiro ResumeStyle = %q, want flag", info.ResumeStyle)
+	}
+	if info.SupportsHooks {
+		t.Error("kiro should not enable Gas Town hook templates until a Kiro template provider exists")
+	}
+	if info.SupportsForkSession {
+		t.Error("kiro should not support fork session")
+	}
+	if info.NonInteractive == nil {
+		t.Fatal("kiro NonInteractive is nil")
+	}
+	if info.NonInteractive.Subcommand != "chat" {
+		t.Errorf("kiro NonInteractive.Subcommand = %q, want chat", info.NonInteractive.Subcommand)
+	}
+	if info.NonInteractive.OutputFlag != "--no-interactive" {
+		t.Errorf("kiro NonInteractive.OutputFlag = %q, want --no-interactive", info.NonInteractive.OutputFlag)
+	}
+	if info.PromptMode != "arg" {
+		t.Errorf("kiro PromptMode = %q, want arg", info.PromptMode)
+	}
+	if info.ReadyDelayMs != 5000 {
+		t.Errorf("kiro ReadyDelayMs = %d, want 5000", info.ReadyDelayMs)
+	}
+	if info.InstructionsFile != "AGENTS.md" {
+		t.Errorf("kiro InstructionsFile = %q, want AGENTS.md", info.InstructionsFile)
+	}
+}
+
+func TestKiroRuntimeConfigFromPreset(t *testing.T) {
+	t.Parallel()
+	rc := RuntimeConfigFromPreset(AgentKiro)
+	if rc == nil {
+		t.Fatal("RuntimeConfigFromPreset(kiro) returned nil")
+	}
+
+	if rc.Command != "kiro-cli" {
+		t.Errorf("RuntimeConfig.Command = %q, want kiro-cli", rc.Command)
+	}
+	if got := strings.Join(rc.Args, " "); got != "chat --trust-all-tools" {
+		t.Errorf("RuntimeConfig.Args = %q, want %q", got, "chat --trust-all-tools")
+	}
+	if rc.PromptMode != "arg" {
+		t.Errorf("RuntimeConfig.PromptMode = %q, want arg", rc.PromptMode)
+	}
+	wantCommand := "kiro-cli chat --trust-all-tools " + quoteForShell("hello")
+	if rc.BuildCommandWithPrompt("hello") != wantCommand {
+		t.Errorf("BuildCommandWithPrompt = %q, want %q", rc.BuildCommandWithPrompt("hello"), wantCommand)
+	}
+	if rc.Tmux == nil {
+		t.Fatal("RuntimeConfig.Tmux is nil")
+	}
+	if rc.Tmux.ReadyDelayMs != 5000 {
+		t.Errorf("RuntimeConfig.Tmux.ReadyDelayMs = %d, want 5000", rc.Tmux.ReadyDelayMs)
+	}
+	if got := strings.Join(rc.Tmux.ProcessNames, ","); got != "kiro-cli,kiro" {
+		t.Errorf("RuntimeConfig.Tmux.ProcessNames = %v, want [kiro-cli kiro]", rc.Tmux.ProcessNames)
 	}
 }
 

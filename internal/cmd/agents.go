@@ -105,7 +105,7 @@ var agentsCheckCmd = &cobra.Command{
 	Short: "Check for identity collisions and stale locks",
 	Long: `Check for identity collisions and stale locks.
 
-This command helps detect situations where multiple Claude processes
+This command helps detect situations where multiple agent processes
 think they own the same worker identity.
 
 Output shows:

@@ -27,6 +27,8 @@ const (
 	AgentGemini AgentPreset = "gemini"
 	// AgentCodex is OpenAI Codex.
 	AgentCodex AgentPreset = "codex"
+	// AgentKiro is Kiro CLI.
+	AgentKiro AgentPreset = "kiro"
 	// AgentCursor is Cursor Agent.
 	AgentCursor AgentPreset = "cursor"
 	// AgentAuggie is Auggie CLI.
@@ -57,7 +59,7 @@ const (
 // Adding a new agent = adding a builtinPresets entry + optional hook installer.
 // No provider-string switch statements should exist outside this registry.
 type AgentPresetInfo struct {
-	// Name is the preset identifier (e.g., "claude", "gemini", "codex", "cursor", "auggie", "amp", "copilot").
+	// Name is the preset identifier (e.g., "claude", "gemini", "codex", "kiro", "cursor", "copilot").
 	Name AgentPreset `json:"name"`
 
 	// Command is the CLI binary to invoke.
@@ -295,6 +297,28 @@ var builtinPresets = map[AgentPreset]*AgentPresetInfo{
 		ReadyPromptPrefix: "› ",
 		ReadyDelayMs:      3000,
 		InstructionsFile:  "AGENTS.md",
+	},
+	AgentKiro: {
+		Name:    AgentKiro,
+		Command: "kiro-cli",
+		// Kiro CLI routes interactive sessions through "chat"; --trust-all-tools is
+		// the documented autonomous-mode equivalent for unattended tool execution.
+		Args:                []string{"chat", "--trust-all-tools"},
+		ProcessNames:        []string{"kiro-cli", "kiro"},
+		SessionIDEnv:        "", // Kiro manages chat session state on disk.
+		ResumeFlag:          "--resume-id",
+		ContinueFlag:        "--resume",
+		ResumeStyle:         "flag",
+		SupportsHooks:       false, // Kiro hooks are agent-config based; no Gas Town template yet.
+		SupportsForkSession: false,
+		NonInteractive: &NonInteractiveConfig{
+			Subcommand: "chat",
+			OutputFlag: "--no-interactive",
+		},
+		// Runtime defaults
+		PromptMode:       "arg",
+		ReadyDelayMs:     5000,
+		InstructionsFile: "AGENTS.md",
 	},
 	AgentCursor: {
 		Name:    AgentCursor,

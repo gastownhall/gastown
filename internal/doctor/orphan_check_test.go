@@ -469,6 +469,9 @@ func TestGasTownRuntimeYOLO(t *testing.T) {
 	}{
 		{"claude_gt", "claude", "/x/claude --dangerously-skip-permissions foo", true},
 		{"claude_personal", "claude", "/x/claude foo", false},
+		{"kiro_trust_all_tools", "kiro-cli", "kiro-cli chat --trust-all-tools", true},
+		{"kiro_alias", "kiro", "kiro chat --trust-all-tools", true},
+		{"kiro_plain", "kiro-cli", "kiro-cli chat", false},
 		{"cursor_agent", "cursor-agent", "cursor-agent -f --resume x", true},
 		{"cursor_no_f", "cursor-agent", "cursor-agent --resume x", false},
 		{"agent_symlink", "agent", "agent -f --resume x", true},

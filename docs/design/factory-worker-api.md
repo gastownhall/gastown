@@ -17,7 +17,7 @@ Gas Town has no stable interface with AI agents. Every integration is a hack:
 - **Account rotation**: macOS-only keychain token swapping
 - **Liveness**: walking tmux process trees via `pane_current_command` + `pgrep`
 - **Guard scripts**: exit code 2 from PreToolUse hooks to block commands
-- **Permission bypass**: 10 different `--dangerously-*` flags, one per agent vendor
+- **Permission bypass**: many vendor-specific trust/approval flags, one per agent runtime
 
 28+ touch points cataloged. All depend on implementation details of Claude Code,
 tmux, macOS Keychain, or filesystem conventions that can change without notice.
@@ -28,7 +28,7 @@ tmux, macOS Keychain, or filesystem conventions that can change without notice.
    terminal output.
 2. **Structured, not string-matched.** JSON messages, not regex on pane content.
 3. **Agent-agnostic.** One API, regardless of whether the worker is Claude, Gemini,
-   Codex, or a custom runtime.
+   Codex, Kiro, or a custom runtime.
 4. **Correlation by design.** A single `run_id` threads through every event from
    spawn to death.
 5. **Fail-closed defaults.** Unknown state = don't send work, don't kill session.

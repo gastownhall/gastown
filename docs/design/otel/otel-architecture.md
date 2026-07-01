@@ -410,7 +410,7 @@ run.id:uuid-1234
 | `GT_POLECAT` | `Toast`, `Shadow`, `Furiosa` | Polecat name (rig-specific) |
 | `GT_CREW` | `max`, `jane` | Crew member name |
 | `GT_SESSION` | `gt-gastown-Toast`, `hq-mayor` | Tmux session name |
-| `GT_AGENT` | Preset names: `claude`, `gemini`, `codex`, `cursor`, `copilot`, `opencode`, … | Agent override (if specified) |
+| `GT_AGENT` | Preset names: `claude`, `gemini`, `codex`, `kiro`, `cursor`, `copilot`, `opencode`, … | Agent override (if specified) |
 | `GT_RUN` | UUID v4 | **PR #2199** — Run identifier, primary waterfall correlation key |
 | `GT_ROOT` | `/Users/pa/gt` | Town root path |
 | `CLAUDE_CONFIG_DIR` | `~/gt/.claude` | Runtime config directory (for agent overrides) |
