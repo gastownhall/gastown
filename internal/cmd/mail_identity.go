@@ -76,6 +76,35 @@ func findLocalBeadsDir() (string, error) {
 	return "", fmt.Errorf("no .beads directory found")
 }
 
+// findCwdLocalBeadsDir finds the nearest .beads directory by walking up from CWD.
+//
+// Unlike findLocalBeadsDir, this intentionally ignores BEADS_DIR. Agent tracking
+// commands such as `gt agents resolve --rig` and `gt mol step await-event
+// --agent-bead` need the rig-local beads redirect implied by their working
+// directory. A broader session BEADS_DIR override can point at town beads and
+// make those commands update the wrong agent bead.
+func findCwdLocalBeadsDir() (string, error) {
+	cwd, err := os.Getwd()
+	if err != nil {
+		return "", err
+	}
+
+	path := cwd
+	for {
+		if _, err := os.Stat(filepath.Join(path, ".beads")); err == nil {
+			return path, nil
+		}
+
+		parent := filepath.Dir(path)
+		if parent == path {
+			break
+		}
+		path = parent
+	}
+
+	return "", fmt.Errorf("no .beads directory found")
+}
+
 // detectSender determines the current context's address.
 // Priority:
 //  1. GT_ROLE env var → use the role-based identity (agent session)

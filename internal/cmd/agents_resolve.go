@@ -73,7 +73,10 @@ func runAgentsResolve(cmd *cobra.Command, _ []string) error {
 	if err != nil {
 		return fmt.Errorf("getting working directory: %w", err)
 	}
-	workDir, err := findLocalBeadsDir()
+	workDir, err := findCwdLocalBeadsDir()
+	if err != nil {
+		workDir, err = findLocalBeadsDir()
+	}
 	if err != nil {
 		return err
 	}

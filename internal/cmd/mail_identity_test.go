@@ -73,3 +73,43 @@ func TestDetectSenderFromCwdUsesAgentFileRefineryIdentity(t *testing.T) {
 		t.Fatalf("detectSender() = %q, want %q", got, "x267/refinery")
 	}
 }
+
+func TestFindCwdLocalBeadsDirIgnoresBeadsDirOverride(t *testing.T) {
+	tmp := t.TempDir()
+	townBeads := filepath.Join(tmp, ".beads")
+	rigWorkDir := filepath.Join(tmp, "gastown", "refinery", "rig")
+	rigBeads := filepath.Join(rigWorkDir, ".beads")
+
+	if err := os.MkdirAll(townBeads, 0o755); err != nil {
+		t.Fatalf("mkdir town beads: %v", err)
+	}
+	if err := os.MkdirAll(rigBeads, 0o755); err != nil {
+		t.Fatalf("mkdir rig beads: %v", err)
+	}
+	t.Setenv("BEADS_DIR", townBeads)
+
+	oldWd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("getwd: %v", err)
+	}
+	defer func() { _ = os.Chdir(oldWd) }()
+	if err := os.Chdir(rigWorkDir); err != nil {
+		t.Fatalf("chdir rig work dir: %v", err)
+	}
+
+	got, err := findCwdLocalBeadsDir()
+	if err != nil {
+		t.Fatalf("findCwdLocalBeadsDir() error = %v", err)
+	}
+	if got != rigWorkDir {
+		t.Fatalf("findCwdLocalBeadsDir() = %q, want %q", got, rigWorkDir)
+	}
+
+	got, err = findLocalBeadsDir()
+	if err != nil {
+		t.Fatalf("findLocalBeadsDir() error = %v", err)
+	}
+	if got != tmp {
+		t.Fatalf("findLocalBeadsDir() = %q, want BEADS_DIR parent %q", got, tmp)
+	}
+}
