@@ -543,6 +543,31 @@ func TestGasTownLocalExcludePatterns_IncludesBeads(t *testing.T) {
 	}
 }
 
+// TestGasTownLocalExcludePatterns_IncludesNodeModules guards sbx-gastown-8awxz:
+// node_modules must be excluded in the per-worktree exclude so `git add -A` in
+// gt exit never sweeps a polecat's installed dependencies into a child-repo PR.
+// It lives in the local exclude (not the tracked .gitignore) so we don't mutate
+// child repos' committed ignore files.
+func TestGasTownLocalExcludePatterns_IncludesNodeModules(t *testing.T) {
+	found := false
+	for _, p := range gasTownLocalExcludePatterns() {
+		if p == "node_modules/" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Error("gasTownLocalExcludePatterns() must include node_modules/ (sbx-gastown-8awxz)")
+	}
+
+	// node_modules/ must NOT be forced into a child repo's tracked .gitignore.
+	for _, p := range gasTownIgnorePatterns() {
+		if p == "node_modules/" {
+			t.Error("gasTownIgnorePatterns() must NOT include node_modules/ - keep it in the per-worktree exclude only")
+		}
+	}
+}
+
 // Helper functions
 
 func containsLine(content, pattern string) bool {

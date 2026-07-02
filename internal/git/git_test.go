@@ -1723,6 +1723,10 @@ func TestIsGasTownRuntimePath(t *testing.T) {
 		{"__pycache__/", true},
 		{"__pycache__/foo.cpython-312.pyc", true},
 		{"src/__pycache__/bar.pyc", true},
+		{"node_modules/", true},
+		{"node_modules", true},
+		{"node_modules/lodash/index.js", true},
+		{"web/node_modules/react/index.js", true},
 		{"src/main.go", false},
 		{"README.md", false},
 		{".gitignore", false},
@@ -1832,6 +1836,85 @@ func TestCleanExcludingRuntime(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestUnstageRuntimeArtifacts is the regression guard for sbx-gastown-8awxz: the
+// gt-exit auto-commit safety net must not commit polecat runtime scaffolding
+// (.beads/ .runtime/ .claude/ node_modules) into a child-repo PR. We stage a mix
+// of real work and runtime artifacts, unstage the runtime, and assert only the
+// real work remains in the index while the working tree is untouched.
+func TestUnstageRuntimeArtifacts(t *testing.T) {
+	dir := initTestRepo(t)
+	g := NewGit(dir)
+
+	// Runtime scaffolding that a polecat worktree accumulates, plus real work.
+	files := map[string]string{
+		"src/main.go":              "package main\n",
+		".beads/redirect":          "somedb\n",
+		".runtime/session_id":      "abc123\n",
+		".claude/commands/done.md": "# done\n",
+		"node_modules/lodash/i.js": "module.exports={}\n",
+	}
+	for rel, content := range files {
+		p := filepath.Join(dir, rel)
+		if err := os.MkdirAll(filepath.Dir(p), 0755); err != nil {
+			t.Fatalf("mkdir %s: %v", rel, err)
+		}
+		if err := os.WriteFile(p, []byte(content), 0644); err != nil {
+			t.Fatalf("write %s: %v", rel, err)
+		}
+	}
+
+	// Mimic the gt-exit safety net: stage everything, then strip runtime.
+	if err := g.Add("-A"); err != nil {
+		t.Fatalf("Add -A: %v", err)
+	}
+	if err := g.UnstageRuntimeArtifacts(); err != nil {
+		t.Fatalf("UnstageRuntimeArtifacts: %v", err)
+	}
+
+	staged := stagedFiles(t, dir)
+	if _, ok := staged["src/main.go"]; !ok {
+		t.Errorf("real work src/main.go should remain staged; staged=%v", staged)
+	}
+	for _, rel := range []string{".beads/redirect", ".runtime/session_id", ".claude/commands/done.md", "node_modules/lodash/i.js"} {
+		if _, ok := staged[rel]; ok {
+			t.Errorf("runtime artifact %s should have been unstaged; staged=%v", rel, staged)
+		}
+	}
+
+	// Working tree must be untouched — the files still exist on disk.
+	for rel := range files {
+		if _, err := os.Stat(filepath.Join(dir, rel)); err != nil {
+			t.Errorf("working tree file %s should still exist: %v", rel, err)
+		}
+	}
+
+	// Idempotent / safe when nothing matching is staged.
+	if err := g.ResetFiles("src/main.go"); err != nil {
+		t.Fatalf("ResetFiles: %v", err)
+	}
+	if err := g.UnstageRuntimeArtifacts(); err != nil {
+		t.Fatalf("UnstageRuntimeArtifacts (empty index): %v", err)
+	}
+}
+
+// stagedFiles returns the set of paths currently staged in the index.
+func stagedFiles(t *testing.T, dir string) map[string]struct{} {
+	t.Helper()
+	cmd := exec.Command("git", "diff", "--cached", "--name-only")
+	cmd.Dir = dir
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("git diff --cached: %v: %s", err, out)
+	}
+	set := map[string]struct{}{}
+	for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+		if line != "" {
+			set[line] = struct{}{}
+		}
+	}
+	return set
 }
 
 func TestCheckBranchContamination(t *testing.T) {
