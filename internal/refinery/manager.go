@@ -481,6 +481,7 @@ func (m *Manager) issueToMR(issue *beads.Issue) *MergeRequest {
 		MergeCommit:  fields.MergeCommit,
 		Status:       MROpen,
 		CreatedAt:    parseTime(issue.CreatedAt),
+		AgentBead:    fields.AgentBead,
 	}
 }
 
@@ -587,6 +588,11 @@ func (m *Manager) RejectMR(idOrBranch string, reason string, notify bool) (*Merg
 		return nil, fmt.Errorf("failed to close MR bead: %w", err)
 	}
 
+	// Clear agent bead's active_mr reference (traceability cleanup, mm-bgf7).
+	if err := clearAgentActiveMR(b, mr.AgentBead); err != nil {
+		_, _ = fmt.Fprintf(m.output, "Warning: failed to clear agent bead %s active_mr: %v\n", mr.AgentBead, err)
+	}
+
 	// Update in-memory state for return value
 	if err := mr.Close(CloseReasonRejected); err != nil {
 		// Non-fatal: bead is already closed, just log
@@ -641,6 +647,13 @@ func (m *Manager) PostMerge(idOrBranch string) (*PostMergeResult, error) {
 		result.MRClosed = true
 	}
 
+	// Clear agent bead's active_mr reference (traceability cleanup, mm-bgf7).
+	// Runs regardless of which branch closed the MR bead, since a
+	// previously-closed MR may still have left the agent's active_mr stale.
+	if err := clearAgentActiveMR(b, mr.AgentBead); err != nil {
+		_, _ = fmt.Fprintf(m.output, "Warning: failed to clear agent bead %s active_mr: %v\n", mr.AgentBead, err)
+	}
+
 	// Close the source issue with reason and --force to bypass dependency checks.
 	// The source issue may have an attached molecule (wisp) whose open steps
 	// would block a normal bd close. ForceCloseWithReason bypasses this,
@@ -665,6 +678,17 @@ func (m *Manager) PostMerge(idOrBranch string) (*PostMergeResult, error) {
 	}
 
 	return result, nil
+}
+
+// clearAgentActiveMR clears the active_mr field on the given agent bead, if
+// set. Shared by RejectMR and PostMerge so both MR-closure paths clear the
+// owning polecat's stale active_mr reference (mm-bgf7 root cause: MR-bead
+// GC/closure previously left active_mr pointing at a dead bead).
+func clearAgentActiveMR(b *beads.Beads, agentBeadID string) error {
+	if agentBeadID == "" {
+		return nil
+	}
+	return b.ForAgentBead().UpdateAgentActiveMR(agentBeadID, "")
 }
 
 // notifyWorkerRejected sends a rejection notification to a polecat.

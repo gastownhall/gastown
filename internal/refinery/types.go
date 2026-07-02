@@ -24,6 +24,12 @@ type MergeRequest struct {
 	// IssueID is the beads issue being worked on.
 	IssueID string `json:"issue_id"`
 
+	// AgentBead is the polecat agent bead that owns this MR (if any). Used to
+	// clear the agent's active_mr field when the MR bead is closed, so GC/
+	// closure doesn't leave stale bookkeeping pointing at a dead bead
+	// (mm-bgf7).
+	AgentBead string `json:"agent_bead,omitempty"`
+
 	// SwarmID is the swarm this work belongs to (if any).
 	SwarmID string `json:"swarm_id,omitempty"`
 
