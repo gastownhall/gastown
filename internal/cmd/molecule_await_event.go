@@ -11,7 +11,6 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
-	"github.com/steveyegge/gastown/internal/beads"
 	"github.com/steveyegge/gastown/internal/channelevents"
 	"github.com/steveyegge/gastown/internal/style"
 	"github.com/steveyegge/gastown/internal/workspace"
@@ -160,12 +159,9 @@ func runMoleculeAwaitEvent(cmd *cobra.Command, args []string) error {
 	var backoffUntil time.Time
 	var beadsDir string
 	if awaitEventAgentBead != "" {
-		workDir, wdErr := findCwdLocalBeadsDir()
-		if wdErr != nil {
-			workDir, wdErr = findLocalBeadsDir()
-		}
+		var wdErr error
+		beadsDir, wdErr = resolveAgentTrackingBeadsDir()
 		if wdErr == nil {
-			beadsDir = beads.ResolveBeadsDir(workDir)
 			labels, labErr := getAgentLabels(awaitEventAgentBead, beadsDir)
 			if labErr != nil {
 				if !awaitEventQuiet {

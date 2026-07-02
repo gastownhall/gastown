@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/steveyegge/gastown/internal/beads"
 	"github.com/steveyegge/gastown/internal/constants"
 	"github.com/steveyegge/gastown/internal/workspace"
 )
@@ -79,10 +80,11 @@ func findLocalBeadsDir() (string, error) {
 // findCwdLocalBeadsDir finds the nearest .beads directory by walking up from CWD.
 //
 // Unlike findLocalBeadsDir, this intentionally ignores BEADS_DIR. Agent tracking
-// commands such as `gt agents resolve --rig` and `gt mol step await-event
-// --agent-bead` need the rig-local beads redirect implied by their working
-// directory. A broader session BEADS_DIR override can point at town beads and
-// make those commands update the wrong agent bead.
+// commands such as `gt agents resolve --rig`, `gt mol step await-event
+// --agent-bead`, and `gt mol step await-signal --agent-bead` need the
+// rig-local beads redirect implied by their working directory. A broader
+// session BEADS_DIR override can point at town beads and make those commands
+// update the wrong agent bead.
 func findCwdLocalBeadsDir() (string, error) {
 	cwd, err := os.Getwd()
 	if err != nil {
@@ -103,6 +105,26 @@ func findCwdLocalBeadsDir() (string, error) {
 	}
 
 	return "", fmt.Errorf("no .beads directory found")
+}
+
+// resolveAgentTrackingBeadsDir resolves the bead database used for agent state.
+// Agent tracking is tied to the agent's current rig, so cwd-local redirects must
+// win over an inherited town-level BEADS_DIR. The env-first resolver remains the
+// fallback for contexts that do not have a cwd-local .beads directory.
+func resolveAgentTrackingBeadsDir() (string, error) {
+	workDir, err := findCwdLocalBeadsDir()
+	if err != nil {
+		workDir, err = findLocalBeadsDir()
+	}
+	if err != nil {
+		return "", err
+	}
+
+	beadsDir := beads.ResolveBeadsDir(workDir)
+	if beadsDir == "" {
+		return "", fmt.Errorf("not in a beads workspace")
+	}
+	return beadsDir, nil
 }
 
 // detectSender determines the current context's address.
