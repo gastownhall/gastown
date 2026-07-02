@@ -337,7 +337,7 @@ func runMoleculeStatus(cmd *cobra.Command, args []string) error {
 
 	if len(args) > 0 {
 		// Explicit target provided
-		target = args[0]
+		target = normalizeHookShowTarget(args[0])
 		callerCtx := detectRole(cwd, townRoot)
 		validationRole = callerCtx.Role
 	} else {
@@ -374,15 +374,7 @@ func runMoleculeStatus(cmd *cobra.Command, args []string) error {
 	// Resolve to the agent's rig beads directory if CWD-based discovery
 	// found the wrong database. This matches runHookShow's resolution logic.
 	if !isTownLevelRole(target) && townRoot != "" {
-		agentBeadID := buildAgentBeadID(target, roleCtx.Role, townRoot)
-		if agentBeadID != "" {
-			rigName := strings.Split(target, "/")[0]
-			fallbackPath := filepath.Join(townRoot, rigName)
-			resolvedDir := beads.ResolveHookDir(townRoot, agentBeadID, fallbackPath)
-			if resolvedDir != "" {
-				workDir = resolvedDir
-			}
-		}
+		workDir = resolveHookLookupWorkDir(workDir, target, townRoot)
 	}
 
 	b := beads.New(workDir)

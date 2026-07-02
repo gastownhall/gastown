@@ -1,7 +1,9 @@
 package cmd
 
 import (
+	"path/filepath"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/steveyegge/gastown/internal/beads"
@@ -78,6 +80,21 @@ func listChildrenAcrossTables(b *beads.Beads, parentID string) ([]*beads.Issue, 
 		Status:   "all",
 		Priority: -1,
 	})
+}
+
+func resolveHookLookupWorkDir(workDir, target, townRoot string) string {
+	if townRoot == "" || isTownLevelRole(target) {
+		return workDir
+	}
+
+	rigName := strings.Split(target, "/")[0]
+	if rigName == "" || rigName == "mayor" || rigName == "deacon" {
+		return workDir
+	}
+	if rigDir := beads.GetRigDirForName(townRoot, rigName); rigDir != "" {
+		return rigDir
+	}
+	return filepath.Join(townRoot, rigName)
 }
 
 func mergeBeadLists(primary, secondary []*beads.Issue) []*beads.Issue {
