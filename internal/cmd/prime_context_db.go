@@ -33,9 +33,16 @@ import (
 //     We never block dispatch, never add more than contextDBTimeout of latency,
 //     and never fail a prime over the context-db.
 const (
-	// contextDBDefaultTopK is the number of concepts to retrieve when
-	// CONTEXT_DB_TOP_K is not set.
+	// contextDBDefaultTopK is the number of concepts to retrieve for an
+	// implement/work pull when CONTEXT_DB_TOP_K is not set.
 	contextDBDefaultTopK = 5
+	// contextDBReviewTopK is the role default for review pulls: a review keys on
+	// the PR/scope subsystem, so it wants a tighter, more focused set.
+	contextDBReviewTopK = 4
+	// contextDBPlanTopK is the role default for plan pulls: a plan spans the
+	// affected domains, so it wants broader orientation. Still bounded by the
+	// render token cap (contextDBMaxTotal), so a larger count can't bloat output.
+	contextDBPlanTopK = 8
 	// contextDBMaxTopK clamps the configured top_k so a misconfiguration can't
 	// pull an unbounded seed into the agent's context.
 	contextDBMaxTopK = 20
@@ -43,9 +50,13 @@ const (
 	// under the ~2s dispatch-latency budget so a slow/hung db never stalls a
 	// polecat launch.
 	contextDBTimeout = 1500 * time.Millisecond
-	// contextDBMaxQuery caps the query text (bead title+description) sent to the
-	// embedder. Long descriptions dilute the embedding and bloat the request.
+	// contextDBMaxQuery caps the query text (rig + bead title + description) sent
+	// to the embedder. Long descriptions dilute the embedding and bloat the request.
 	contextDBMaxQuery = 1200
+	// contextDBReviewMaxDesc caps the description portion for a review pull. A
+	// review keys on the PR/scope subsystem (the title), so the verbose work prose
+	// is trimmed harder to keep the embedding focused on scope.
+	contextDBReviewMaxDesc = 300
 	// contextDBMaxSnippet caps each hit's body snippet (chars).
 	contextDBMaxSnippet = 240
 	// contextDBMaxTotal caps the whole rendered block (chars) as a coarse token
@@ -75,13 +86,28 @@ func contextDBURL() string {
 	return strings.TrimSpace(os.Getenv("CONTEXT_DB_URL"))
 }
 
-// contextDBTopK resolves the configured top_k (CONTEXT_DB_TOP_K), defaulting to
-// contextDBDefaultTopK and clamped to [1, contextDBMaxTopK].
+// contextDBTopK resolves the work/default top_k. Retained for callers and tests
+// that want the baseline (env override + clamp) without a role.
 func contextDBTopK() int {
+	return contextDBTopKFor(queryKindWork)
+}
+
+// contextDBTopKFor resolves the top_k for a given query kind. The role default
+// (work=5, review=4, plan=8) is right-sized so the pull matches the role's need;
+// an explicit CONTEXT_DB_TOP_K env override always wins over the role default.
+// The result is clamped to [1, contextDBMaxTopK] so a misconfiguration can't pull
+// an unbounded seed.
+func contextDBTopKFor(kind contextDBQueryKind) int {
 	k := contextDBDefaultTopK
+	switch kind {
+	case queryKindReview:
+		k = contextDBReviewTopK
+	case queryKindPlan:
+		k = contextDBPlanTopK
+	}
 	if v := strings.TrimSpace(os.Getenv("CONTEXT_DB_TOP_K")); v != "" {
 		if parsed, err := strconv.Atoi(v); err == nil {
-			k = parsed
+			k = parsed // explicit override wins over the role default
 		}
 	}
 	if k < 1 {
@@ -241,7 +267,12 @@ func outputContextDBSeed(ctx RoleContext, hookedBead *beads.Issue) {
 		return
 	}
 
-	query := buildContextDBQuery(hookedBead)
+	// Shape the pull to the role: the attached formula tells us whether this is
+	// implement (work), review, or plan, which drives both the query emphasis and
+	// the top_k. Defaults to work when no formula is attached.
+	kind := contextDBQueryKindFromFormula(attachedFormula(hookedBead))
+
+	query := buildContextDBQuery(hookedBead, ctx.Rig, kind)
 	if query == "" {
 		return
 	}
@@ -249,11 +280,12 @@ func outputContextDBSeed(ctx RoleContext, hookedBead *beads.Issue) {
 	reqCtx, cancel := context.WithTimeout(context.Background(), contextDBTimeout)
 	defer cancel()
 
-	hits, err := fetchContextDBSeed(reqCtx, baseURL, query, ctx.Rig, contextDBTopK())
+	hits, err := fetchContextDBSeed(reqCtx, baseURL, query, ctx.Rig, contextDBTopKFor(kind))
 	if err != nil {
 		contextDBDebugf("seed skipped (degraded): %v", err)
 		return
 	}
+	hits = dedupeContextDBHits(hits)
 	if len(hits) == 0 {
 		contextDBDebugf("seed skipped: no hits for bead %s (rig=%s)", hookedBead.ID, ctx.Rig)
 		return
@@ -269,14 +301,104 @@ func outputContextDBSeed(ctx RoleContext, hookedBead *beads.Issue) {
 	logContextDBConceptIDs(hookedBead, hits)
 }
 
-// buildContextDBQuery composes the search query from the bead's title and
-// description, capped to contextDBMaxQuery chars.
-func buildContextDBQuery(b *beads.Issue) string {
-	query := strings.TrimSpace(b.Title + "\n" + b.Description)
+// contextDBQueryKind selects how the search query is shaped from the bead so the
+// pull is role-appropriate rather than a generic title+description dump.
+type contextDBQueryKind int
+
+const (
+	// queryKindWork — implement the bead → pull the rig core/subsystem (full detail).
+	queryKindWork contextDBQueryKind = iota
+	// queryKindReview — review a PR → pull the PR/scope subsystem (scope-led, trimmed).
+	queryKindReview
+	// queryKindPlan — plan work → pull the affected domains (full breadth).
+	queryKindPlan
+)
+
+// attachedFormula returns the bead's attached formula name (or "" when none),
+// tolerating a nil/parse-less bead.
+func attachedFormula(b *beads.Issue) string {
+	if b == nil {
+		return ""
+	}
+	if a := beads.ParseAttachmentFields(b); a != nil {
+		return a.AttachedFormula
+	}
+	return ""
+}
+
+// contextDBQueryKindFromFormula derives the query shape from the attached formula
+// name. Review is matched before plan so a "plan-review" formula counts as review.
+// Defaults to queryKindWork (the common case and the safe fallback).
+func contextDBQueryKindFromFormula(formula string) contextDBQueryKind {
+	f := strings.ToLower(strings.TrimSpace(formula))
+	switch {
+	case f == "":
+		return queryKindWork
+	case strings.Contains(f, "review") || strings.Contains(f, "pr-response") || strings.Contains(f, "pr-feedback"):
+		return queryKindReview
+	case strings.Contains(f, "plan") || strings.Contains(f, "prd"):
+		return queryKindPlan
+	default:
+		return queryKindWork
+	}
+}
+
+// buildContextDBQuery composes the search query from the bead, role-appropriately:
+// it anchors on the rig and leads with the title (the scope) before the
+// description, so the embedding is rig-scoped and scope-weighted rather than a
+// generic body dump. Review trims the verbose description (it keys on the PR/scope
+// subsystem). Capped to contextDBMaxQuery chars. Returns "" when the bead has no
+// title or description (preserves the no-content → no-pull guard).
+func buildContextDBQuery(b *beads.Issue, rig string, kind contextDBQueryKind) string {
+	title := strings.TrimSpace(b.Title)
+	desc := strings.TrimSpace(b.Description)
+	if title == "" && desc == "" {
+		return ""
+	}
+
+	if kind == queryKindReview && len(desc) > contextDBReviewMaxDesc {
+		desc = strings.TrimSpace(desc[:contextDBReviewMaxDesc])
+	}
+
+	var parts []string
+	if rig != "" {
+		parts = append(parts, "rig: "+rig)
+	}
+	if title != "" {
+		parts = append(parts, title)
+	}
+	if desc != "" {
+		parts = append(parts, desc)
+	}
+	query := strings.Join(parts, "\n")
 	if len(query) > contextDBMaxQuery {
-		query = query[:contextDBMaxQuery]
+		query = strings.TrimSpace(query[:contextDBMaxQuery])
 	}
 	return strings.TrimSpace(query)
+}
+
+// dedupeContextDBHits removes duplicate concepts (same concept_id) from the hit
+// list, preserving the first (highest-ranked) occurrence. The /search seam can
+// return the same concept twice once the graph-expansion layer lands — a concept
+// can be both a vector seed and an edge neighbor (context-db/api/app.py
+// §GRAPH-EXPANSION SEAM). Deduping keeps the orientation block tight (efficiency).
+// Hits with an empty concept_id are left as-is (unexpected; not collapsed).
+func dedupeContextDBHits(hits []contextDBHit) []contextDBHit {
+	if len(hits) <= 1 {
+		return hits
+	}
+	seen := make(map[string]struct{}, len(hits))
+	out := make([]contextDBHit, 0, len(hits))
+	for _, h := range hits {
+		if h.ConceptID != "" {
+			if _, ok := seen[h.ConceptID]; ok {
+				continue
+			}
+			seen[h.ConceptID] = struct{}{}
+		}
+		out = append(out, h)
+	}
+	return out
 }
 
 // logContextDBConceptIDs records the retrieved concept_ids on the bead so a

@@ -229,18 +229,129 @@ func TestOutputContextDBSeed_DisabledIsNoop(t *testing.T) {
 }
 
 func TestBuildContextDBQuery(t *testing.T) {
+	// Work pull with a rig: rig-anchored, title leads, description follows.
 	b := &beads.Issue{Title: "Fix sling", Description: "do the thing"}
-	if got := buildContextDBQuery(b); got != "Fix sling\ndo the thing" {
-		t.Errorf("buildContextDBQuery() = %q", got)
+	if got := buildContextDBQuery(b, "gastown-prime", queryKindWork); got != "rig: gastown-prime\nFix sling\ndo the thing" {
+		t.Errorf("buildContextDBQuery(work) = %q", got)
 	}
 
+	// No rig => no anchor line, title still leads.
+	if got := buildContextDBQuery(b, "", queryKindWork); got != "Fix sling\ndo the thing" {
+		t.Errorf("buildContextDBQuery(no rig) = %q", got)
+	}
+
+	// Query is capped to contextDBMaxQuery regardless of role.
 	long := &beads.Issue{Title: "T", Description: strings.Repeat("d", contextDBMaxQuery*2)}
-	if got := buildContextDBQuery(long); len(got) > contextDBMaxQuery {
+	if got := buildContextDBQuery(long, "r", queryKindWork); len(got) > contextDBMaxQuery {
 		t.Errorf("query not capped: len=%d", len(got))
 	}
 
+	// Empty bead (no title, no description) => no pull, even with a rig.
 	empty := &beads.Issue{}
-	if got := buildContextDBQuery(empty); got != "" {
+	if got := buildContextDBQuery(empty, "gastown-prime", queryKindWork); got != "" {
 		t.Errorf("buildContextDBQuery(empty) = %q, want empty", got)
+	}
+}
+
+func TestBuildContextDBQuery_ReviewTrimsDescription(t *testing.T) {
+	longDesc := strings.Repeat("d", contextDBReviewMaxDesc*2)
+	b := &beads.Issue{Title: "Review PR #12", Description: longDesc}
+
+	work := buildContextDBQuery(b, "gastown-prime", queryKindWork)
+	review := buildContextDBQuery(b, "gastown-prime", queryKindReview)
+
+	// Review keeps the scope (rig + title) but trims the verbose description harder.
+	if !strings.Contains(review, "rig: gastown-prime") || !strings.Contains(review, "Review PR #12") {
+		t.Errorf("review query dropped scope: %q", review)
+	}
+	if len(review) >= len(work) {
+		t.Errorf("review query (%d) should be shorter than work query (%d)", len(review), len(work))
+	}
+	// The description portion of the review query is bounded by contextDBReviewMaxDesc.
+	if got := strings.Count(review, "d"); got > contextDBReviewMaxDesc {
+		t.Errorf("review description not trimmed: %d d's, want <= %d", got, contextDBReviewMaxDesc)
+	}
+}
+
+func TestContextDBQueryKindFromFormula(t *testing.T) {
+	cases := []struct {
+		formula string
+		want    contextDBQueryKind
+	}{
+		{"", queryKindWork},
+		{"mol-polecat-work", queryKindWork},
+		{"mol-polecat-work-tdd", queryKindWork},
+		{"mol-foreman-pr-response", queryKindReview},
+		{"mol-code-review", queryKindReview},
+		{"mol-pr-feedback", queryKindReview},
+		{"mol-plan-prd", queryKindPlan},
+		{"mol-planning", queryKindPlan},
+		// review wins over plan when both substrings appear
+		{"mol-plan-review", queryKindReview},
+	}
+	for _, tc := range cases {
+		if got := contextDBQueryKindFromFormula(tc.formula); got != tc.want {
+			t.Errorf("contextDBQueryKindFromFormula(%q) = %d, want %d", tc.formula, got, tc.want)
+		}
+	}
+}
+
+func TestContextDBTopKFor(t *testing.T) {
+	// Role defaults (no env override).
+	t.Setenv("CONTEXT_DB_TOP_K", "")
+	roleCases := []struct {
+		kind contextDBQueryKind
+		want int
+	}{
+		{queryKindWork, contextDBDefaultTopK},
+		{queryKindReview, contextDBReviewTopK},
+		{queryKindPlan, contextDBPlanTopK},
+	}
+	for _, tc := range roleCases {
+		if got := contextDBTopKFor(tc.kind); got != tc.want {
+			t.Errorf("contextDBTopKFor(%d) = %d, want %d", tc.kind, got, tc.want)
+		}
+	}
+
+	// Explicit env override wins over the role default, still clamped.
+	t.Setenv("CONTEXT_DB_TOP_K", "7")
+	for _, kind := range []contextDBQueryKind{queryKindWork, queryKindReview, queryKindPlan} {
+		if got := contextDBTopKFor(kind); got != 7 {
+			t.Errorf("contextDBTopKFor(%d) with override = %d, want 7", kind, got)
+		}
+	}
+	t.Setenv("CONTEXT_DB_TOP_K", "999")
+	if got := contextDBTopKFor(queryKindPlan); got != contextDBMaxTopK {
+		t.Errorf("override not clamped: got %d, want %d", got, contextDBMaxTopK)
+	}
+}
+
+func TestDedupeContextDBHits(t *testing.T) {
+	hits := []contextDBHit{
+		{ConceptID: "a", Summary: "first a"},
+		{ConceptID: "b", Summary: "b"},
+		{ConceptID: "a", Summary: "second a (dropped)"},
+		{ConceptID: "", Summary: "empty id 1"},
+		{ConceptID: "", Summary: "empty id 2"},
+	}
+	got := dedupeContextDBHits(hits)
+	// a, b, and both empty-id hits survive (empty ids are not collapsed).
+	if len(got) != 4 {
+		t.Fatalf("dedupeContextDBHits() len = %d, want 4", len(got))
+	}
+	if got[0].ConceptID != "a" || got[0].Summary != "first a" {
+		t.Errorf("dedupe should keep first occurrence, got %+v", got[0])
+	}
+	if got[1].ConceptID != "b" {
+		t.Errorf("dedupe reordered hits: %+v", got)
+	}
+
+	// Nil / single-element inputs pass through untouched.
+	if got := dedupeContextDBHits(nil); got != nil {
+		t.Errorf("dedupeContextDBHits(nil) = %v, want nil", got)
+	}
+	single := []contextDBHit{{ConceptID: "a"}}
+	if got := dedupeContextDBHits(single); len(got) != 1 {
+		t.Errorf("dedupeContextDBHits(single) len = %d, want 1", len(got))
 	}
 }
