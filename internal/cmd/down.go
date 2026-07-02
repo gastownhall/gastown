@@ -758,6 +758,10 @@ func findOrphanedClaudeProcesses(townRoot string) []int {
 		return nil
 	}
 
+	return findOrphanedAgentPIDsFromPS(out, townRoot)
+}
+
+func findOrphanedAgentPIDsFromPS(out []byte, townRoot string) []int {
 	var orphaned []int
 	for _, line := range strings.Split(string(out), "\n") {
 		line = strings.TrimSpace(line)
@@ -777,10 +781,7 @@ func findOrphanedClaudeProcesses(townRoot string) []int {
 
 		// Only consider known Gas Town process names
 		comm := strings.ToLower(fields[1])
-		switch comm {
-		case "claude", "claude-code", "codex", "kiro-cli", "kiro", "opencode", "cursor-agent", "agent", "copilot", "node":
-			// Potential Gas Town process
-		default:
+		if !isShutdownOrphanAgentCommName(comm) {
 			continue
 		}
 
@@ -794,6 +795,15 @@ func findOrphanedClaudeProcesses(townRoot string) []int {
 	}
 
 	return orphaned
+}
+
+func isShutdownOrphanAgentCommName(comm string) bool {
+	switch comm {
+	case "claude", "claude-code", "codex", "kiro-cli", "kiro", "opencode", "cursor-agent", "agent", "copilot", "node":
+		return true
+	default:
+		return false
+	}
 }
 
 // cleanupLegacyDefaultSocket removes Gas Town sessions left on the "default"
