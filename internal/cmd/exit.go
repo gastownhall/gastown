@@ -122,6 +122,12 @@ func runExit(cmd *cobra.Command, args []string) error {
 		if addErr := g.Add("-A"); addErr != nil {
 			style.PrintWarning("auto-save: git add failed: %v", addErr)
 		} else {
+			// Unstage runtime scaffolding (.beads/ .runtime/ .claude/ .logs/
+			// __pycache__/ node_modules) that git add -A swept in. git add -A
+			// stages already-tracked runtime files regardless of ignore rules,
+			// so this commit-time guard is the reliable exclusion point — without
+			// it, polecat scaffolding leaks into child-repo PRs (sbx-gastown-8awxz).
+			_ = g.UnstageRuntimeArtifacts()
 			// Unstage overlay files
 			_ = g.ResetFiles("CLAUDE.local.md")
 			if claudeData, readErr := os.ReadFile(filepath.Join(cwd, "CLAUDE.md")); readErr == nil {

@@ -155,7 +155,12 @@ func gasTownLocalExcludePatterns() []string {
 	// (see EnsureGitignorePatterns comment). The local exclude file is safe to
 	// include it — it's per-worktree and invisible to `git status` without affecting
 	// the tracked .gitignore (gas-7vg defense-in-depth).
-	return append(patterns, ".beads/")
+	//
+	// node_modules/ is excluded here (not in gasTownIgnorePatterns) for the same
+	// reason: it belongs in the per-worktree exclude, not a child repo's tracked
+	// .gitignore. Without it, `git add -A` in the gt-exit safety net sweeps a
+	// polecat's installed dependencies into the commit (sbx-gastown-8awxz).
+	return append(patterns, ".beads/", "node_modules/")
 }
 
 // EnsureLocalExcludePatterns writes the standard Gas Town ignore patterns to the

@@ -619,6 +619,26 @@ func (g *Git) ResetFiles(paths ...string) error {
 	return err
 }
 
+// GasTownRuntimePathspecs are the top-level runtime-artifact paths that the
+// gt-exit auto-commit safety net unstages so polecat scaffolding never lands in
+// a child-repo commit (sbx-gastown-8awxz). These mirror the exclude patterns
+// written by EnsureLocalExcludePatterns, but are enforced at commit time as
+// defense-in-depth: `git add -A` stages already-tracked runtime files regardless
+// of ignore rules, some worktrees predate the exclude-file setup, and node_modules
+// was historically never excluded at all.
+func GasTownRuntimePathspecs() []string {
+	return []string{".beads", ".runtime", ".claude", ".logs", "__pycache__", "node_modules"}
+}
+
+// UnstageRuntimeArtifacts removes Gas Town runtime scaffolding from the index
+// without touching the working tree. Safe to call when nothing matching is
+// staged — git reset ignores pathspecs that match no files (exit 0).
+func (g *Git) UnstageRuntimeArtifacts() error {
+	args := append([]string{"reset", "-q", "HEAD", "--"}, GasTownRuntimePathspecs()...)
+	_, err := g.run(args...)
+	return err
+}
+
 // ShowFile returns the contents of a file at a given ref (e.g., "origin/main:CLAUDE.md").
 // Returns empty string and no error if the file does not exist at that ref.
 func (g *Git) ShowFile(ref, path string) (string, error) {
@@ -1801,6 +1821,7 @@ func isGasTownRuntimePath(path string) bool {
 		".runtime/", ".runtime\\",
 		".logs/", ".logs\\",
 		"__pycache__/", "__pycache__\\",
+		"node_modules/", "node_modules\\",
 	}
 	for _, prefix := range prefixes {
 		if strings.HasPrefix(path, prefix) || strings.Contains(path, "/"+prefix) {
@@ -1809,7 +1830,7 @@ func isGasTownRuntimePath(path string) bool {
 	}
 	// Also match bare directory entries from git status (e.g. ".claude/")
 	bare := strings.TrimSuffix(strings.TrimSuffix(path, "/"), "\\")
-	for _, name := range []string{".beads", ".claude", ".runtime", ".logs", "__pycache__"} {
+	for _, name := range []string{".beads", ".claude", ".runtime", ".logs", "__pycache__", "node_modules"} {
 		if bare == name {
 			return true
 		}
