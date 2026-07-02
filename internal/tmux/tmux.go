@@ -841,25 +841,44 @@ func collectReparentedGroupMembers(pgid string, knownPIDs map[string]bool) []str
 	return reparented
 }
 
-// getAllDescendants recursively finds all descendant PIDs of a process.
+// getAllDescendants finds all descendant PIDs of a process.
 // Returns PIDs in deepest-first order so killing them doesn't orphan grandchildren.
+//
+// Implemented as a single ps snapshot walked in memory, NOT recursive pgrep -P
+// calls: on macOS, pgrep -P <pid> returns EVERY process on the system when
+// <pid> no longer exists (exit 0), so a transient child exiting between the
+// parent listing and its own lookup made the old recursive walk explode into
+// an unbounded traversal of the whole process table (gt sling/down hangs) —
+// and the resulting kill list would have included every user process.
 func getAllDescendants(pid string) []string {
-	var result []string
-
-	// Get direct children using pgrep
-	out, err := exec.Command("pgrep", "-P", pid).Output()
+	out, err := exec.Command("ps", "-axo", "pid=,ppid=").Output()
 	if err != nil {
-		return result
+		return nil
 	}
 
-	children := strings.Fields(strings.TrimSpace(string(out)))
-	for _, child := range children {
-		// First add grandchildren (recursively) - deepest first
-		result = append(result, getAllDescendants(child)...)
-		// Then add this child
-		result = append(result, child)
+	childrenOf := make(map[string][]string)
+	for _, line := range strings.Split(string(out), "\n") {
+		f := strings.Fields(line)
+		if len(f) != 2 {
+			continue
+		}
+		childrenOf[f[1]] = append(childrenOf[f[1]], f[0])
 	}
 
+	var result []string
+	seen := map[string]bool{pid: true}
+	var walk func(string)
+	walk = func(p string) {
+		for _, child := range childrenOf[p] {
+			if seen[child] {
+				continue
+			}
+			seen[child] = true
+			walk(child) // grandchildren first - deepest first
+			result = append(result, child)
+		}
+	}
+	walk(pid)
 	return result
 }
 
@@ -2384,43 +2403,42 @@ func hasDescendantWithNames(pid string, names []string, depth int) bool {
 	return hasDescendantWithNamesPosix(pid, names, depth)
 }
 
-// hasDescendantWithNamesPosix uses pgrep to find child processes on Unix systems.
-func hasDescendantWithNamesPosix(pid string, names []string, depth int) bool {
-	const maxDepth = 10
-	if depth > maxDepth {
-		return false
-	}
-	// Use pgrep to find child processes
-	cmd := exec.Command("pgrep", "-P", pid, "-l")
-	out, err := cmd.Output()
+// hasDescendantWithNamesPosix walks the process tree from a single ps
+// snapshot. See getAllDescendants for why this must not use recursive
+// pgrep -P calls (macOS pgrep -P on a dead PID matches every process).
+func hasDescendantWithNamesPosix(pid string, names []string, _ int) bool {
+	out, err := exec.Command("ps", "-axo", "pid=,ppid=,comm=").Output()
 	if err != nil {
 		return false
 	}
-	// Build a set of names for fast lookup
 	nameSet := make(map[string]bool, len(names))
 	for _, n := range names {
 		nameSet[n] = true
 	}
-	// Check if any child matches, or recursively check grandchildren
-	lines := strings.Split(string(out), "\n")
-	for _, line := range lines {
-		line = strings.TrimSpace(line)
-		if line == "" {
+	childrenOf := make(map[string][]string)
+	nameOf := make(map[string]string)
+	for _, line := range strings.Split(string(out), "\n") {
+		f := strings.Fields(line)
+		if len(f) < 3 {
 			continue
 		}
-		// Format: "PID name" e.g., "29677 node"
-		parts := strings.Fields(line)
-		if len(parts) >= 2 {
-			childPid := parts[0]
-			childName := parts[1]
-			// Direct match
-			if nameSet[childName] {
+		childrenOf[f[1]] = append(childrenOf[f[1]], f[0])
+		nameOf[f[0]] = filepath.Base(f[2])
+	}
+	queue := []string{pid}
+	seen := map[string]bool{pid: true}
+	for len(queue) > 0 {
+		p := queue[0]
+		queue = queue[1:]
+		for _, child := range childrenOf[p] {
+			if seen[child] {
+				continue
+			}
+			seen[child] = true
+			if nameSet[nameOf[child]] {
 				return true
 			}
-			// Recursive check of descendants
-			if hasDescendantWithNames(childPid, names, depth+1) {
-				return true
-			}
+			queue = append(queue, child)
 		}
 	}
 	return false
