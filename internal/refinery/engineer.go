@@ -1629,6 +1629,19 @@ func (e *Engineer) closeMRWithReason(mr *MRInfo, closeReason string) error {
 		return fmt.Errorf("close MR: %w", err)
 	}
 	_, _ = fmt.Fprintf(e.output, "[Engineer] Closed MR bead: %s (%s)\n", mr.ID, closeReason)
+
+	// Clear the agent bead's active_mr reference now that this MR has reached
+	// a terminal state. Without this, check-recovery's fail-closed
+	// classification (polecat.AssessActiveMR) can report a permanent false
+	// active_mr blocker for an MR that was closed here — e.g. rejected as
+	// policy-ineligible via closeIneligibleMR, or closed as already-merged by
+	// recheckMRStillMergeable — since those paths previously never touched
+	// active_mr (only the separate HandleMRInfoSuccess merge path did).
+	if mr.AgentBead != "" {
+		if err := e.clearAgentActiveMR(mr.AgentBead); err != nil {
+			_, _ = fmt.Fprintf(e.output, "[Engineer] Warning: failed to clear agent bead %s active_mr: %v\n", mr.AgentBead, err)
+		}
+	}
 	return nil
 }
 

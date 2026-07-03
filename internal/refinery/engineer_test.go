@@ -205,6 +205,122 @@ esac
 	}
 }
 
+// TestCloseMRWithReasonClearsAgentActiveMR is a regression test for
+// hci-ek35r / gt polecat check-recovery false active_mr blockers.
+//
+// Before this fix, closeMRWithReason (used by closeIneligibleMR for
+// rejected/policy-ineligible MRs, and by recheckMRStillMergeable's
+// already-merged dedup path) closed the MR bead but never cleared the
+// originating agent bead's active_mr reference — only the separate
+// HandleMRInfoSuccess happy-path merge did that. That left active_mr
+// permanently pointing at a closed (or later-purged) MR bead, which
+// AssessActiveMR's fail-closed classification then reports as a
+// permanent pending blocker in `gt polecat check-recovery`.
+func TestCloseMRWithReasonClearsAgentActiveMR(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("test uses Unix shell script mock for bd")
+	}
+
+	townRoot := t.TempDir()
+	rigName := "gastown"
+	rigPath := filepath.Join(townRoot, rigName)
+	mayorRig := filepath.Join(rigPath, "mayor", "rig")
+	townBeadsDir := filepath.Join(townRoot, ".beads")
+	rigBeadsDir := filepath.Join(mayorRig, ".beads")
+
+	for _, dir := range []string{
+		filepath.Join(townRoot, "mayor"),
+		townBeadsDir,
+		rigBeadsDir,
+	} {
+		if err := os.MkdirAll(dir, 0755); err != nil {
+			t.Fatalf("mkdir %s: %v", dir, err)
+		}
+	}
+	if err := os.WriteFile(filepath.Join(townRoot, "mayor", "town.json"), []byte("{}"), 0644); err != nil {
+		t.Fatalf("write town.json: %v", err)
+	}
+	if err := beads.WriteRoutes(townBeadsDir, []beads.Route{
+		{Prefix: "hq-", Path: "."},
+		{Prefix: "gt-", Path: filepath.Join(rigName, "mayor", "rig")},
+	}); err != nil {
+		t.Fatalf("write routes: %v", err)
+	}
+
+	binDir := t.TempDir()
+	logPath := filepath.Join(binDir, "bd.log")
+	script := fmt.Sprintf(`#!/bin/sh
+LOG=%q
+printf 'args=%%s\n' "$*" >> "$LOG"
+cmd=""
+id=""
+for arg in "$@"; do
+  case "$arg" in
+    --*) ;;
+    *)
+      if [ -z "$cmd" ]; then cmd="$arg"; else if [ -z "$id" ]; then id="$arg"; fi; fi
+      ;;
+  esac
+done
+case "$cmd" in
+  version)
+    exit 0
+    ;;
+  show)
+    case "$id" in
+      gt-mr1)
+        printf '%%s\n' '[{"id":"gt-mr1","title":"gt-mr1","issue_type":"task","labels":[],"status":"open","description":"branch: polecat/nitro/gt-src1\ntarget: main\nsource_issue: gt-src1"}]'
+        ;;
+      gt-agent1)
+        printf '%%s\n' '[{"id":"gt-agent1","title":"gt-agent1","issue_type":"task","labels":["gt:agent"],"status":"open","description":"role_type: polecat\nrig: gastown\nagent_state: idle\nactive_mr: gt-mr1"}]'
+        ;;
+      *)
+        printf '%%s\n' '[]'
+        ;;
+    esac
+    exit 0
+    ;;
+  *)
+    exit 0
+    ;;
+esac
+`, logPath)
+	if err := os.WriteFile(filepath.Join(binDir, "bd"), []byte(script), 0755); err != nil {
+		t.Fatalf("write mock bd: %v", err)
+	}
+	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	e := &Engineer{
+		rig:    &rig.Rig{Name: rigName, Path: rigPath},
+		beads:  beads.NewWithBeadsDir(mayorRig, rigBeadsDir),
+		output: io.Discard,
+	}
+
+	mr := &MRInfo{ID: "gt-mr1", AgentBead: "gt-agent1", SourceIssue: "gt-src1"}
+	if err := e.closeMRWithReason(mr, "rejected: policy test"); err != nil {
+		t.Fatalf("closeMRWithReason: %v", err)
+	}
+
+	logBytes, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatalf("read mock log: %v", err)
+	}
+	logOutput := string(logBytes)
+
+	if !strings.Contains(logOutput, "args=show gt-mr1") {
+		t.Fatalf("expected MR bead to be shown; log:\n%s", logOutput)
+	}
+	if !strings.Contains(logOutput, "args=close gt-mr1") {
+		t.Fatalf("expected MR bead to be closed; log:\n%s", logOutput)
+	}
+	if !strings.Contains(logOutput, "args=show gt-agent1") {
+		t.Fatalf("expected agent bead to be looked up to clear active_mr; log:\n%s", logOutput)
+	}
+	if !strings.Contains(logOutput, "args=update gt-agent1") {
+		t.Fatalf("expected agent bead active_mr to be cleared via update; log:\n%s", logOutput)
+	}
+}
+
 func TestEngineer_LoadConfig_NoFile(t *testing.T) {
 	// Create a temp directory without config.json
 	tmpDir, err := os.MkdirTemp("", "engineer-test-*")
