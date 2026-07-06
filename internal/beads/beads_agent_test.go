@@ -8,6 +8,8 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+
+	beadsdk "github.com/steveyegge/beads"
 )
 
 func installMockBDFixedShowOutput(t *testing.T, showOutput string) {
@@ -251,6 +253,85 @@ func TestUpdateAgentState_UsesExplicitBeadsDir(t *testing.T) {
 	bd := NewWithBeadsDir(workDir, targetBeadsDir)
 	if err := bd.UpdateAgentState("gt-gastown-polecat-nux", "spawning"); err != nil {
 		t.Fatalf("UpdateAgentState: %v", err)
+	}
+}
+
+func TestClearAgentActiveMRIfMatches(t *testing.T) {
+	store := newMockStorage()
+	store.issues["gt-agent"] = &beadsdk.Issue{
+		ID:          "gt-agent",
+		Title:       "agent",
+		Status:      beadsdk.StatusOpen,
+		IssueType:   beadsdk.TypeTask,
+		Labels:      []string{"gt:agent"},
+		Description: "role_type: polecat\nrig: gastown\nagent_state: idle\nactive_mr: gt-mr",
+	}
+	bd := NewWithStore(t.TempDir(), store)
+
+	cleared, err := bd.ClearAgentActiveMRIfMatches("gt-agent", "gt-mr")
+	if err != nil {
+		t.Fatalf("ClearAgentActiveMRIfMatches: %v", err)
+	}
+	if !cleared {
+		t.Fatal("ClearAgentActiveMRIfMatches cleared=false, want true")
+	}
+	if got := ParseAgentFields(store.issues["gt-agent"].Description).ActiveMR; got != "" {
+		t.Fatalf("active_mr = %q, want cleared", got)
+	}
+}
+
+func TestClearAgentActiveMRIfMatchesNoopsWhenDifferentOrMissing(t *testing.T) {
+	store := newMockStorage()
+	store.issues["gt-agent"] = &beadsdk.Issue{
+		ID:          "gt-agent",
+		Title:       "agent",
+		Status:      beadsdk.StatusOpen,
+		IssueType:   beadsdk.TypeTask,
+		Labels:      []string{"gt:agent"},
+		Description: "role_type: polecat\nrig: gastown\nagent_state: idle\nactive_mr: gt-new",
+	}
+	bd := NewWithStore(t.TempDir(), store)
+
+	cleared, err := bd.ClearAgentActiveMRIfMatches("gt-agent", "gt-old")
+	if err != nil {
+		t.Fatalf("ClearAgentActiveMRIfMatches different: %v", err)
+	}
+	if cleared {
+		t.Fatal("ClearAgentActiveMRIfMatches cleared mismatched active_mr")
+	}
+	if got := ParseAgentFields(store.issues["gt-agent"].Description).ActiveMR; got != "gt-new" {
+		t.Fatalf("active_mr = %q, want gt-new", got)
+	}
+
+	cleared, err = bd.ClearAgentActiveMRIfMatches("gt-missing-agent", "gt-old")
+	if err != nil {
+		t.Fatalf("ClearAgentActiveMRIfMatches missing: %v", err)
+	}
+	if cleared {
+		t.Fatal("ClearAgentActiveMRIfMatches cleared missing agent")
+	}
+}
+
+func TestClearAgentActiveMRIfMatchesRejectsNonAgent(t *testing.T) {
+	store := newMockStorage()
+	store.issues["gt-issue"] = &beadsdk.Issue{
+		ID:          "gt-issue",
+		Title:       "not agent",
+		Status:      beadsdk.StatusOpen,
+		IssueType:   beadsdk.TypeTask,
+		Description: "active_mr: gt-mr",
+	}
+	bd := NewWithStore(t.TempDir(), store)
+
+	cleared, err := bd.ClearAgentActiveMRIfMatches("gt-issue", "gt-mr")
+	if err == nil {
+		t.Fatal("ClearAgentActiveMRIfMatches non-agent error = nil")
+	}
+	if cleared {
+		t.Fatal("ClearAgentActiveMRIfMatches cleared non-agent")
+	}
+	if got := store.issues["gt-issue"].Description; got != "active_mr: gt-mr" {
+		t.Fatalf("non-agent description mutated to %q", got)
 	}
 }
 

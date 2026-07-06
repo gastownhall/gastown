@@ -13,9 +13,151 @@ import (
 	"testing"
 	"time"
 
+	beadsdk "github.com/steveyegge/beads"
+
 	"github.com/steveyegge/gastown/internal/beads"
+	"github.com/steveyegge/gastown/internal/git"
 	"github.com/steveyegge/gastown/internal/rig"
 )
+
+type refineryTestStore struct {
+	beadsdk.Storage
+	issues       map[string]*beadsdk.Issue
+	closeReasons map[string]string
+}
+
+func newRefineryTestStore() *refineryTestStore {
+	return &refineryTestStore{
+		issues:       make(map[string]*beadsdk.Issue),
+		closeReasons: make(map[string]string),
+	}
+}
+
+func (s *refineryTestStore) GetIssue(_ context.Context, id string) (*beadsdk.Issue, error) {
+	issue, ok := s.issues[id]
+	if !ok {
+		return nil, fmt.Errorf("issue %s not found", id)
+	}
+	return issue, nil
+}
+
+func (s *refineryTestStore) GetIssuesByIDs(_ context.Context, ids []string) ([]*beadsdk.Issue, error) {
+	issues := make([]*beadsdk.Issue, 0, len(ids))
+	for _, id := range ids {
+		if issue, ok := s.issues[id]; ok {
+			issues = append(issues, issue)
+		}
+	}
+	return issues, nil
+}
+
+func (s *refineryTestStore) GetDependenciesWithMetadata(_ context.Context, _ string) ([]*beadsdk.IssueWithDependencyMetadata, error) {
+	return nil, nil
+}
+
+func (s *refineryTestStore) UpdateIssue(_ context.Context, id string, updates map[string]interface{}, _ string) error {
+	issue, ok := s.issues[id]
+	if !ok {
+		return fmt.Errorf("issue %s not found", id)
+	}
+	if v, ok := updates["description"]; ok {
+		issue.Description = v.(string)
+	}
+	if v, ok := updates["status"]; ok {
+		issue.Status = beadsdk.Status(v.(string))
+	}
+	issue.UpdatedAt = time.Now()
+	return nil
+}
+
+func (s *refineryTestStore) CloseIssue(_ context.Context, id, reason, _, _ string) error {
+	issue, ok := s.issues[id]
+	if !ok {
+		return fmt.Errorf("issue %s not found", id)
+	}
+	issue.Status = beadsdk.StatusClosed
+	now := time.Now()
+	issue.ClosedAt = &now
+	s.closeReasons[id] = reason
+	return nil
+}
+
+func (s *refineryTestStore) SearchIssues(_ context.Context, _ string, filter beadsdk.IssueFilter) ([]*beadsdk.Issue, error) {
+	var result []*beadsdk.Issue
+	for _, issue := range s.issues {
+		if filter.Status != nil && issue.Status != *filter.Status {
+			continue
+		}
+		if len(filter.Labels) > 0 && !refineryTestHasAllLabels(issue.Labels, filter.Labels) {
+			continue
+		}
+		result = append(result, issue)
+	}
+	return result, nil
+}
+
+func (s *refineryTestStore) GetLabels(_ context.Context, id string) ([]string, error) {
+	issue, ok := s.issues[id]
+	if !ok {
+		return nil, fmt.Errorf("issue %s not found", id)
+	}
+	return issue.Labels, nil
+}
+
+func (s *refineryTestStore) Close() error { return nil }
+
+func refineryTestHasLabel(labels []string, want string) bool {
+	for _, label := range labels {
+		if label == want {
+			return true
+		}
+	}
+	return false
+}
+
+func refineryTestHasAllLabels(labels []string, wants []string) bool {
+	for _, want := range wants {
+		if !refineryTestHasLabel(labels, want) {
+			return false
+		}
+	}
+	return true
+}
+
+func refineryTestIssue(id, title, desc string, labels ...string) *beadsdk.Issue {
+	now := time.Now()
+	return &beadsdk.Issue{
+		ID:          id,
+		Title:       title,
+		Description: desc,
+		Status:      beadsdk.StatusOpen,
+		IssueType:   beadsdk.TypeTask,
+		Priority:    2,
+		Labels:      labels,
+		CreatedAt:   now,
+		UpdatedAt:   now,
+	}
+}
+
+func newRefineryTestEngineer(t *testing.T, store *refineryTestStore) *Engineer {
+	t.Helper()
+	workDir := t.TempDir()
+	stubDir := t.TempDir()
+	stubPath := filepath.Join(stubDir, "gt")
+	if err := os.WriteFile(stubPath, []byte("#!/bin/sh\nexit 0\n"), 0755); err != nil {
+		t.Fatalf("write gt stub: %v", err)
+	}
+	t.Setenv("PATH", stubDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	return &Engineer{
+		rig:              &rig.Rig{Name: "gastown", Path: filepath.Join(workDir, "gastown")},
+		beads:            beads.NewWithStore(workDir, store),
+		git:              git.NewGit(workDir),
+		workDir:          workDir,
+		output:           io.Discard,
+		config:           DefaultMergeQueueConfig(),
+		mergeSlotRelease: func(_ string) error { return nil },
+	}
+}
 
 func TestDefaultMergeQueueConfig(t *testing.T) {
 	cfg := DefaultMergeQueueConfig()
@@ -117,7 +259,7 @@ func TestEngineerFirstOpenBlockerUsesDependencySemantics(t *testing.T) {
 	}
 }
 
-func TestEngineerClearAgentActiveMRUsesTownBeadsDir(t *testing.T) {
+func TestEngineerClearAgentActiveMRIfMatchesUsesTownBeadsDir(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("test uses Unix shell script mock for bd")
 	}
@@ -188,8 +330,12 @@ esac
 		beads:  beads.NewWithBeadsDir(mayorRig, rigBeadsDir),
 		output: io.Discard,
 	}
-	if err := e.clearAgentActiveMR("gt-gastown-polecat-rust"); err != nil {
-		t.Fatalf("clearAgentActiveMR: %v", err)
+	cleared, err := e.beads.ForAgentBead().ClearAgentActiveMRIfMatches("gt-gastown-polecat-rust", "gt-mr")
+	if err != nil {
+		t.Fatalf("ClearAgentActiveMRIfMatches: %v", err)
+	}
+	if !cleared {
+		t.Fatal("ClearAgentActiveMRIfMatches did not clear matching active_mr")
 	}
 
 	logBytes, err := os.ReadFile(logPath)
@@ -202,6 +348,206 @@ esac
 	}
 	if !strings.Contains(logOutput, "env="+townBeadsDir+" args=") || !strings.Contains(logOutput, "args=show") || !strings.Contains(logOutput, "args=update") {
 		t.Fatalf("refinery active_mr cleanup did not use town BEADS_DIR; log:\n%s", logOutput)
+	}
+}
+
+func TestCloseMRWithReasonRejectsAndClearsMatchingActiveMR(t *testing.T) {
+	store := newRefineryTestStore()
+	store.issues["gt-mr"] = refineryTestIssue("gt-mr", "MR", `branch: feature/pr4381
+target: main
+source_issue: gt-src
+rig: gastown
+agent_bead: gt-agent`, "gt:merge-request")
+	store.issues["gt-src"] = refineryTestIssue("gt-src", "source", "")
+	store.issues["gt-agent"] = refineryTestIssue("gt-agent", "agent", `role_type: polecat
+rig: gastown
+agent_state: idle
+active_mr: gt-mr`, "gt:agent")
+	e := newRefineryTestEngineer(t, store)
+
+	if err := e.closeMRWithReason(&MRInfo{ID: "gt-mr", SourceIssue: "gt-src", AgentBead: "gt-agent"}, "rejected: source_issue gt-src has no_merge=true", ""); err != nil {
+		t.Fatalf("closeMRWithReason: %v", err)
+	}
+
+	mrIssue, err := e.beads.Show("gt-mr")
+	if err != nil {
+		t.Fatalf("show MR: %v", err)
+	}
+	mrFields := beads.ParseMRFields(mrIssue)
+	if mrFields.CloseReason != string(CloseReasonRejected) {
+		t.Fatalf("MR close_reason = %q, want %q", mrFields.CloseReason, CloseReasonRejected)
+	}
+	if mrFields.MergeCommit != "" {
+		t.Fatalf("MR merge_commit = %q, want empty", mrFields.MergeCommit)
+	}
+	if got := store.closeReasons["gt-mr"]; got != "rejected: source_issue gt-src has no_merge=true" {
+		t.Fatalf("MR close reason = %q", got)
+	}
+	if store.issues["gt-src"].Status != beadsdk.StatusOpen {
+		t.Fatalf("source issue status = %s, want open", store.issues["gt-src"].Status)
+	}
+	if got := beads.ParseAgentFields(store.issues["gt-agent"].Description).ActiveMR; got != "" {
+		t.Fatalf("agent active_mr = %q, want cleared", got)
+	}
+}
+
+func TestRecheckAlreadyMergedClosesMRWithoutClosingSource(t *testing.T) {
+	store := newRefineryTestStore()
+	store.issues["gt-mr"] = refineryTestIssue("gt-mr", "MR", `branch: feature/pr4381
+target: main
+source_issue: gt-src
+rig: gastown
+close_reason: merged
+agent_bead: gt-agent`, "gt:merge-request")
+	store.issues["gt-src"] = refineryTestIssue("gt-src", "source", "")
+	store.issues["gt-agent"] = refineryTestIssue("gt-agent", "agent", `role_type: polecat
+rig: gastown
+agent_state: idle
+active_mr: gt-mr`, "gt:agent")
+	e := newRefineryTestEngineer(t, store)
+
+	result := e.recheckMRStillMergeable(&MRInfo{ID: "gt-mr", SourceIssue: "gt-src", Target: "main", AgentBead: "gt-agent"}, "main")
+	if result.Success || !result.NoMerge {
+		t.Fatalf("recheck result = %+v, want no-merge", result)
+	}
+	if got := store.closeReasons["gt-mr"]; got != string(CloseReasonMerged) {
+		t.Fatalf("MR close reason = %q, want merged", got)
+	}
+	if store.issues["gt-src"].Status != beadsdk.StatusOpen {
+		t.Fatalf("source issue status = %s, want open", store.issues["gt-src"].Status)
+	}
+	if got := beads.ParseAgentFields(store.issues["gt-agent"].Description).ActiveMR; got != "" {
+		t.Fatalf("agent active_mr = %q, want cleared", got)
+	}
+}
+
+func TestHandleMRInfoSuccessUsesTerminalCloseHelper(t *testing.T) {
+	store := newRefineryTestStore()
+	store.issues["gt-mr"] = refineryTestIssue("gt-mr", "MR", `branch: contributor/pr4381
+target: main
+source_issue: gt-src
+rig: gastown
+agent_bead: gt-agent`, "gt:merge-request")
+	store.issues["gt-src"] = refineryTestIssue("gt-src", "source", "")
+	store.issues["gt-agent"] = refineryTestIssue("gt-agent", "agent", `role_type: polecat
+rig: gastown
+agent_state: idle
+active_mr: gt-mr`, "gt:agent")
+	e := newRefineryTestEngineer(t, store)
+
+	e.HandleMRInfoSuccess(&MRInfo{ID: "gt-mr", Branch: "contributor/pr4381", Target: "main", SourceIssue: "gt-src", AgentBead: "gt-agent"}, ProcessResult{Success: true, MergeCommit: "abc123"})
+
+	mrIssue, err := e.beads.Show("gt-mr")
+	if err != nil {
+		t.Fatalf("show MR: %v", err)
+	}
+	mrFields := beads.ParseMRFields(mrIssue)
+	if mrFields.CloseReason != string(CloseReasonMerged) {
+		t.Fatalf("MR close_reason = %q, want merged", mrFields.CloseReason)
+	}
+	if mrFields.MergeCommit != "abc123" {
+		t.Fatalf("MR merge_commit = %q, want abc123", mrFields.MergeCommit)
+	}
+	if got := store.closeReasons["gt-mr"]; got != string(CloseReasonMerged) {
+		t.Fatalf("MR close reason = %q, want merged", got)
+	}
+	if got := store.closeReasons["gt-src"]; !strings.Contains(got, "Merged in gt-mr") || !strings.Contains(got, "commit_sha: abc123") {
+		t.Fatalf("source close reason = %q", got)
+	}
+	if got := beads.ParseAgentFields(store.issues["gt-agent"].Description).ActiveMR; got != "" {
+		t.Fatalf("agent active_mr = %q, want cleared", got)
+	}
+}
+
+func TestCloseSupersededConflictArtifactsUsesTerminalCloseHelper(t *testing.T) {
+	store := newRefineryTestStore()
+	store.issues["gt-sibling"] = refineryTestIssue("gt-sibling", "sibling MR", `branch: contributor/pr4381-retry
+target: main
+source_issue: gt-src
+rig: gastown
+conflict_task_id: gt-conflict
+agent_bead: gt-agent`, "gt:merge-request")
+	store.issues["gt-src"] = refineryTestIssue("gt-src", "source", "")
+	store.issues["gt-agent"] = refineryTestIssue("gt-agent", "agent", `role_type: polecat
+rig: gastown
+agent_state: idle
+active_mr: gt-sibling`, "gt:agent")
+	store.issues["gt-conflict"] = refineryTestIssue("gt-conflict", "conflict", `Resolve merge conflicts
+
+## Metadata
+- Original MR: gt-sibling
+- Original issue: gt-src`)
+	e := newRefineryTestEngineer(t, store)
+
+	e.closeSupersededConflictArtifacts(&MRInfo{ID: "gt-landed", SourceIssue: "gt-src"})
+
+	mrIssue, err := e.beads.Show("gt-sibling")
+	if err != nil {
+		t.Fatalf("show sibling MR: %v", err)
+	}
+	mrFields := beads.ParseMRFields(mrIssue)
+	if mrFields.CloseReason != string(CloseReasonSuperseded) {
+		t.Fatalf("sibling close_reason = %q, want superseded", mrFields.CloseReason)
+	}
+	if mrFields.MergeCommit != "" {
+		t.Fatalf("sibling merge_commit = %q, want empty", mrFields.MergeCommit)
+	}
+	if got := store.closeReasons["gt-sibling"]; got != "superseded by gt-landed" {
+		t.Fatalf("sibling close reason = %q", got)
+	}
+	if got := store.closeReasons["gt-conflict"]; !strings.Contains(got, "conflict moot: gt-src landed") {
+		t.Fatalf("conflict close reason = %q", got)
+	}
+	if store.issues["gt-src"].Status != beadsdk.StatusOpen {
+		t.Fatalf("source issue status = %s, want open", store.issues["gt-src"].Status)
+	}
+	if got := beads.ParseAgentFields(store.issues["gt-agent"].Description).ActiveMR; got != "" {
+		t.Fatalf("agent active_mr = %q, want cleared", got)
+	}
+}
+
+func TestTerminalCloseDoesNotClearNewerActiveMR(t *testing.T) {
+	store := newRefineryTestStore()
+	store.issues["gt-old"] = refineryTestIssue("gt-old", "old MR", `branch: contributor/pr4381-old
+target: main
+source_issue: gt-src
+rig: gastown
+agent_bead: gt-agent`, "gt:merge-request")
+	store.issues["gt-agent"] = refineryTestIssue("gt-agent", "agent", `role_type: polecat
+rig: gastown
+agent_state: idle
+active_mr: gt-new`, "gt:agent")
+	e := newRefineryTestEngineer(t, store)
+
+	if err := e.closeMRWithReason(&MRInfo{ID: "gt-old", AgentBead: "gt-agent"}, string(CloseReasonMerged), ""); err != nil {
+		t.Fatalf("closeMRWithReason: %v", err)
+	}
+	if got := beads.ParseAgentFields(store.issues["gt-agent"].Description).ActiveMR; got != "gt-new" {
+		t.Fatalf("agent active_mr = %q, want gt-new", got)
+	}
+	if got := store.closeReasons["gt-old"]; got != string(CloseReasonMerged) {
+		t.Fatalf("old MR close reason = %q, want merged", got)
+	}
+}
+
+func TestTerminalCloseAgentClearFailureIsNonFatal(t *testing.T) {
+	store := newRefineryTestStore()
+	store.issues["gt-mr"] = refineryTestIssue("gt-mr", "MR", `branch: contributor/pr4381
+target: main
+source_issue: gt-src
+rig: gastown
+agent_bead: gt-not-agent`, "gt:merge-request")
+	store.issues["gt-not-agent"] = refineryTestIssue("gt-not-agent", "not agent", `active_mr: gt-mr`)
+	e := newRefineryTestEngineer(t, store)
+
+	if err := e.closeMRWithReason(&MRInfo{ID: "gt-mr", AgentBead: "gt-not-agent"}, string(CloseReasonMerged), ""); err != nil {
+		t.Fatalf("closeMRWithReason returned active_mr clear error: %v", err)
+	}
+	if got := store.closeReasons["gt-mr"]; got != string(CloseReasonMerged) {
+		t.Fatalf("MR close reason = %q, want merged", got)
+	}
+	if got := store.issues["gt-not-agent"].Description; got != `active_mr: gt-mr` {
+		t.Fatalf("non-agent description mutated to %q", got)
 	}
 }
 
