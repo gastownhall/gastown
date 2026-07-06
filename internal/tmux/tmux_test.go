@@ -700,6 +700,67 @@ func TestGetAllDescendants(t *testing.T) {
 	}
 }
 
+func TestDescendantsFromPS(t *testing.T) {
+	t.Parallel()
+
+	snapshot := []byte(`
+1 0
+2 1
+3 1
+4 2
+5 4
+2 1
+1 5
+6
+7 99
+`)
+
+	got := descendantsFromPS("1", snapshot)
+	if strings.Join(got, ",") != "5,4,2,3" {
+		t.Fatalf("descendantsFromPS returned %v, want deepest-first [5 4 2 3]", got)
+	}
+
+	got = descendantsFromPS("42", snapshot)
+	if len(got) != 0 {
+		t.Fatalf("descendantsFromPS for nonexistent root returned %v, want empty", got)
+	}
+}
+
+func TestHasDescendantWithNamesFromPS(t *testing.T) {
+	t.Parallel()
+
+	snapshot := []byte(`
+1 0 /usr/bin/bash
+2 1 tmux: client
+3 2 /usr/local/bin/node
+4 99 /usr/local/bin/node
+5 99 ruby
+bad row
+6
+`)
+
+	if !hasDescendantWithNamesFromPS("1", []string{"node"}, snapshot) {
+		t.Fatal("expected node descendant to match")
+	}
+	if !hasDescendantWithNamesFromPS("1", []string{"tmux: client"}, snapshot) {
+		t.Fatal("expected multi-word comm descendant to match")
+	}
+	if hasDescendantWithNamesFromPS("1", []string{"ruby"}, snapshot) {
+		t.Fatal("unrelated ruby process should not match")
+	}
+	if hasDescendantWithNamesFromPS("42", []string{"node"}, snapshot) {
+		t.Fatal("nonexistent root should not match ambient node process")
+	}
+	if hasDescendantWithNamesFromPS("1", nil, snapshot) {
+		t.Fatal("nil names should not match")
+	}
+
+	rootOnly := []byte("1 0 node\n")
+	if hasDescendantWithNamesFromPS("1", []string{"node"}, rootOnly) {
+		t.Fatal("root process name should not match as its own descendant")
+	}
+}
+
 func TestKillSessionWithProcesses(t *testing.T) {
 	tm := newTestTmux(t)
 	sessionName := "gt-test-killproc-" + t.Name()

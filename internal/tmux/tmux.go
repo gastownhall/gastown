@@ -855,16 +855,22 @@ func getAllDescendants(pid string) []string {
 	if err != nil {
 		return nil
 	}
+	return descendantsFromPS(pid, out)
+}
 
+func descendantsFromPS(pid string, out []byte) []string {
 	childrenOf := make(map[string][]string)
 	for _, line := range strings.Split(string(out), "\n") {
 		f := strings.Fields(line)
-		if len(f) != 2 {
+		if len(f) < 2 {
 			continue
 		}
 		childrenOf[f[1]] = append(childrenOf[f[1]], f[0])
 	}
+	return walkDescendants(pid, childrenOf)
+}
 
+func walkDescendants(pid string, childrenOf map[string][]string) []string {
 	var result []string
 	seen := map[string]bool{pid: true}
 	var walk func(string)
@@ -2390,7 +2396,7 @@ func processMatchesNames(pid string, names []string) bool {
 }
 
 // hasDescendantWithNames checks if a process has any descendant (child, grandchild, etc.)
-// matching any of the given names. Recursively traverses the process tree up to maxDepth.
+// matching any of the given names.
 // Used when the pane command is a shell (bash, zsh, pwsh) that launched an agent.
 func hasDescendantWithNames(pid string, names []string, depth int) bool {
 	const maxDepth = 10 // Prevent infinite loops in case of circular references
@@ -2411,6 +2417,10 @@ func hasDescendantWithNamesPosix(pid string, names []string, _ int) bool {
 	if err != nil {
 		return false
 	}
+	return hasDescendantWithNamesFromPS(pid, names, out)
+}
+
+func hasDescendantWithNamesFromPS(pid string, names []string, out []byte) bool {
 	nameSet := make(map[string]bool, len(names))
 	for _, n := range names {
 		nameSet[n] = true
@@ -2423,7 +2433,7 @@ func hasDescendantWithNamesPosix(pid string, names []string, _ int) bool {
 			continue
 		}
 		childrenOf[f[1]] = append(childrenOf[f[1]], f[0])
-		nameOf[f[0]] = filepath.Base(f[2])
+		nameOf[f[0]] = filepath.Base(strings.Join(f[2:], " "))
 	}
 	queue := []string{pid}
 	seen := map[string]bool{pid: true}
