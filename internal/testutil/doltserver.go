@@ -113,7 +113,6 @@ func startSharedDoltContainer() {
 
 	doltCtr = ctr
 	doltCtrPort = p.Port()
-	clearInheritedBeadsWorkspaceEnv()
 	// Set both the canonical BEADS_DOLT_SERVER_PORT (resolved first in
 	// beads/config_sql.go) and the legacy BEADS_DOLT_PORT alias, mirroring the
 	// production paths (e.g. daemon.go).
