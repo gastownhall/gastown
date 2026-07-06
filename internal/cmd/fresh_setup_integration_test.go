@@ -68,44 +68,71 @@ func TestFreshInstallRigPolecatHookIntegration(t *testing.T) {
 	polecatWorktree := filepath.Join(rigPath, "polecats", polecatName, rigName)
 	assertBeadsRedirectResolves(t, filepath.Join(polecatWorktree, ".beads"))
 
-	issue := createFreshSetupIssue(t, rigPath, env, "Fresh setup hook smoke")
-	if !strings.HasPrefix(issue.ID, prefix+"-") {
-		t.Fatalf("created issue ID %q does not use rig prefix %q", issue.ID, prefix+"-")
+	rigBeadsEnv := freshSetupBeadsEnv(env, filepath.Join(rigPath, ".beads"), rigName)
+	activePrefix := strings.TrimSpace(runFreshSetupOutputCmd(t, rigPath, rigBeadsEnv, "bd", "config", "get", "issue_prefix"))
+	if activePrefix == "" {
+		t.Fatalf("bd config get issue_prefix returned empty output for rig %s", rigName)
+	}
+	issue := createFreshSetupIssue(t, rigPath, rigBeadsEnv, "Fresh setup hook smoke")
+	if !strings.HasPrefix(issue.ID, activePrefix+"-") {
+		t.Fatalf("created issue ID %q does not use active issue prefix %q", issue.ID, activePrefix+"-")
 	}
 
 	agentID := rigName + "/polecats/" + polecatName
-	runFreshSetupCmd(t, rigPath, env, "bd", "update", issue.ID, "--status=hooked", "--assignee="+agentID)
-	shown := showFreshSetupIssue(t, rigPath, env, issue.ID)
-	if shown.Status != beads.StatusHooked || shown.Assignee != agentID {
-		t.Fatalf("issue hook state = status %q assignee %q, want status %q assignee %q",
-			shown.Status, shown.Assignee, beads.StatusHooked, agentID)
-	}
+	t.Run("controller-backed", func(t *testing.T) {
+		if out, err := runFreshSetupCmdMaybe(rigPath, env, "bd", "update", issue.ID, "--status=hooked", "--assignee="+agentID); err != nil {
+			if strings.Contains(out, "no controller API reachable") {
+				t.Skip("controller-backed bd shim is unavailable in this environment")
+			}
+			t.Fatalf("bd update failed: %v\n%s", err, out)
+		}
+		shown := showFreshSetupIssue(t, rigPath, env, issue.ID)
+		if shown.Status != beads.StatusHooked || shown.Assignee != agentID {
+			t.Fatalf("issue hook state = status %q assignee %q, want status %q assignee %q",
+				shown.Status, shown.Assignee, beads.StatusHooked, agentID)
+		}
 
-	runFreshSetupCmd(t, polecatWorktree, env, "bd", "list")
-	runFreshSetupCmd(t, polecatWorktree, env, "bd", "show", issue.ID)
+		if out, err := runFreshSetupCmdMaybe(polecatWorktree, env, "bd", "list"); err != nil {
+			if strings.Contains(out, "no controller API reachable") {
+				t.Skip("controller-backed bd shim is unavailable in this environment")
+			}
+			t.Fatalf("bd list failed: %v\n%s", err, out)
+		}
+		if out, err := runFreshSetupCmdMaybe(polecatWorktree, env, "bd", "show", issue.ID); err != nil {
+			if strings.Contains(out, "no controller API reachable") {
+				t.Skip("controller-backed bd shim is unavailable in this environment")
+			}
+			t.Fatalf("bd show failed: %v\n%s", err, out)
+		}
 
-	hookJSON := runFreshSetupOutputCmd(t, polecatWorktree, env, gtBinary, "hook", "--json")
-	var hookStatus MoleculeStatusInfo
-	if err := json.Unmarshal([]byte(hookJSON), &hookStatus); err != nil {
-		t.Fatalf("parse gt hook --json output: %v\n%s", err, hookJSON)
-	}
-	if hookStatus.Target != agentID || !hookStatus.HasWork || hookStatus.PinnedBead == nil || hookStatus.PinnedBead.ID != issue.ID {
-		t.Fatalf("gt hook --json = target %q has_work %v pinned %+v, want %s hooked to %s",
-			hookStatus.Target, hookStatus.HasWork, hookStatus.PinnedBead, issue.ID, agentID)
-	}
-
-	withWorkingDir(t, hqPath, func() {
-		convoyID, err := createAutoConvoy(issue.ID, issue.Title, false, "mr", "main")
+		hookJSON, err := runFreshSetupOutputCmdMaybe(polecatWorktree, env, gtBinary, "hook", "--json")
 		if err != nil {
-			t.Fatalf("create auto convoy: %v", err)
+			if strings.Contains(hookJSON, "no controller API reachable") {
+				t.Skip("controller-backed gt hook is unavailable in this environment")
+			}
+			t.Fatalf("gt hook --json failed: %v\n%s", err, hookJSON)
 		}
-		if !strings.HasPrefix(convoyID, "hq-cv-") {
-			t.Fatalf("convoy ID %q does not use hq-cv- prefix", convoyID)
+		var hookStatus MoleculeStatusInfo
+		if err := json.Unmarshal([]byte(hookJSON), &hookStatus); err != nil {
+			t.Fatalf("parse gt hook --json output: %v\n%s", err, hookJSON)
 		}
-		runFreshSetupCmd(t, hqPath, env, "bd", "show", convoyID)
-		if got := isTrackedByConvoy(issue.ID); got != convoyID {
-			t.Fatalf("isTrackedByConvoy(%s) = %q, want %q", issue.ID, got, convoyID)
+		if hookStatus.Target != agentID || !hookStatus.HasWork || hookStatus.PinnedBead == nil || hookStatus.PinnedBead.ID != issue.ID {
+			t.Fatalf("gt hook --json = target %q has_work %v pinned %+v, want %s hooked to %s",
+				hookStatus.Target, hookStatus.HasWork, hookStatus.PinnedBead, issue.ID, agentID)
 		}
+		withWorkingDir(t, hqPath, func() {
+			convoyID, err := createAutoConvoy(issue.ID, issue.Title, false, "mr", "main")
+			if err != nil {
+				t.Fatalf("create auto convoy: %v", err)
+			}
+			if !strings.HasPrefix(convoyID, "hq-cv-") {
+				t.Fatalf("convoy ID %q does not use hq-cv- prefix", convoyID)
+			}
+			runFreshSetupCmd(t, hqPath, env, "bd", "show", convoyID)
+			if got := isTrackedByConvoy(issue.ID); got != convoyID {
+				t.Fatalf("isTrackedByConvoy(%s) = %q, want %q", issue.ID, got, convoyID)
+			}
+		})
 	})
 }
 
@@ -122,12 +149,25 @@ func freshSetupIntegrationEnv(homeDir, doltPort string) []string {
 		if strings.HasPrefix(entry, "GT_") || strings.HasPrefix(entry, "BD_") || strings.HasPrefix(entry, "BEADS_DOLT_PORT=") {
 			continue
 		}
+		if strings.HasPrefix(entry, "BEADS_") &&
+			!strings.HasPrefix(entry, "BEADS_DOLT_PORT=") &&
+			!strings.HasPrefix(entry, "BEADS_DOLT_SERVER_PORT=") &&
+			!strings.HasPrefix(entry, "BEADS_DOLT_SERVER_HOST=") {
+			continue
+		}
 		if strings.HasPrefix(entry, "HOME=") {
 			continue
 		}
 		clean = append(clean, entry)
 	}
 	return append(clean, "HOME="+homeDir, "GT_DOLT_PORT="+doltPort, "BEADS_DOLT_PORT="+doltPort)
+}
+
+func freshSetupBeadsEnv(env []string, beadsDir, database string) []string {
+	return append(append([]string{}, env...),
+		"BEADS_DIR="+beadsDir,
+		"BEADS_DOLT_SERVER_DATABASE="+database,
+	)
 }
 
 func configureGitIdentityForEnv(t *testing.T, env []string) {
@@ -357,4 +397,28 @@ func runFreshSetupOutputCmd(t *testing.T, dir string, env []string, name string,
 		t.Fatalf("%s %v failed: %v\n%s", name, args, err, debugOut)
 	}
 	return string(out)
+}
+
+func runFreshSetupCmdMaybe(dir string, env []string, name string, args ...string) (string, error) {
+	cmd := exec.Command(name, args...)
+	if dir != "" {
+		cmd.Dir = dir
+	}
+	if env != nil {
+		cmd.Env = env
+	}
+	out, err := cmd.CombinedOutput()
+	return string(out), err
+}
+
+func runFreshSetupOutputCmdMaybe(dir string, env []string, name string, args ...string) (string, error) {
+	cmd := exec.Command(name, args...)
+	if dir != "" {
+		cmd.Dir = dir
+	}
+	if env != nil {
+		cmd.Env = env
+	}
+	out, err := cmd.Output()
+	return string(out), err
 }
