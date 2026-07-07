@@ -247,6 +247,9 @@ func runFormulaRun(cmd *cobra.Command, args []string) error {
 			rigPath = path
 		}
 	} else {
+		if err := validateFormulaRunRigName(targetRig); err != nil {
+			return err
+		}
 		// Rig settings live at the rig container path; formula content resolution
 		// below handles any route-resolved .beads path for the same rig name.
 		rigPath = filepath.Join(townRoot, targetRig)
@@ -314,6 +317,13 @@ func loadNamedFormula(name, townRoot, rigName string) (*formula.Formula, error) 
 		return nil, fmt.Errorf("parsing formula %q: %w", name, err)
 	}
 	return f, nil
+}
+
+func validateFormulaRunRigName(rigName string) error {
+	if rigName == "" || filepath.IsAbs(rigName) || strings.Contains(rigName, "..") || strings.Contains(rigName, "/") || strings.Contains(rigName, "\\") {
+		return fmt.Errorf("invalid rig name %q", rigName)
+	}
+	return nil
 }
 
 // dryRunFormula shows what would happen without executing
