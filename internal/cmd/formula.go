@@ -72,7 +72,7 @@ var formulaListCmd = &cobra.Command{
 	Short: "List available formulas",
 	Long: `List available formulas from all search paths.
 
-Searches for formula files (.formula.toml, .formula.json) in:
+Searches for formulas in:
   1. Route-resolved rig .beads/formulas/
   2. Town .beads/formulas/
   3. Embedded formulas
@@ -247,11 +247,9 @@ func runFormulaRun(cmd *cobra.Command, args []string) error {
 			rigPath = path
 		}
 	} else {
-		// If rig specified, use its route-resolved path for default config lookup.
-		rigPath = beads.GetRigDirForName(townRoot, targetRig)
-		if rigPath == "" {
-			rigPath = filepath.Join(townRoot, targetRig)
-		}
+		// Rig settings live at the rig container path; formula content resolution
+		// below handles any route-resolved .beads path for the same rig name.
+		rigPath = filepath.Join(townRoot, targetRig)
 	}
 
 	// Get formula name from args or default
