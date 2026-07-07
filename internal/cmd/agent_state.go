@@ -94,15 +94,9 @@ type agentStateResult struct {
 func runAgentState(cmd *cobra.Command, args []string) error {
 	agentBead := args[0]
 
-	// Find beads directory
-	cwd, err := os.Getwd()
+	beadsDir, err := resolveAgentTrackingBeadsDir()
 	if err != nil {
-		return fmt.Errorf("getting working directory: %w", err)
-	}
-
-	beadsDir := beads.ResolveBeadsDir(cwd)
-	if beadsDir == "" {
-		return fmt.Errorf("not in a beads workspace")
+		return fmt.Errorf("not in a beads workspace: %w", err)
 	}
 
 	// Determine operation mode
