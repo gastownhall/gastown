@@ -1015,6 +1015,13 @@ func TestResolveFormulaContent(t *testing.T) {
 		}
 	})
 
+	t.Run("rejects path-like rig names", func(t *testing.T) {
+		_, err := ResolveFormulaContent("mol-polecat-work", t.TempDir(), "../outside")
+		if err == nil {
+			t.Fatal("expected error for path-like rig name")
+		}
+	})
+
 	t.Run("returns error when not found anywhere", func(t *testing.T) {
 		_, err := ResolveFormulaContent("mol-does-not-exist", "", "")
 		if err == nil {

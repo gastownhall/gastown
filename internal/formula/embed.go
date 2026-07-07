@@ -80,6 +80,9 @@ func ResolveFormulaContent(name, townRoot, rigName string) ([]byte, error) {
 
 	// Tier 1: rig-level (most specific)
 	if townRoot != "" && rigName != "" {
+		if err := validateFormulaPathComponent("rig", rigName); err != nil {
+			return nil, err
+		}
 		if rigDir := beads.GetRigDirForName(townRoot, rigName); rigDir != "" {
 			addPath(filepath.Join(beads.ResolveBeadsDir(rigDir), "formulas", filename))
 		}
@@ -122,13 +125,20 @@ func GetEmbeddedFormulaContent(name string) ([]byte, error) {
 }
 
 func formulaFilename(name string) (string, error) {
-	if name == "" || filepath.IsAbs(name) || strings.Contains(name, "..") || strings.Contains(name, "/") || strings.Contains(name, "\\") {
-		return "", fmt.Errorf("invalid formula name %q", name)
+	if err := validateFormulaPathComponent("formula", name); err != nil {
+		return "", err
 	}
 	if hasFormulaSuffix(name) {
 		return name, nil
 	}
 	return name + ".formula.toml", nil
+}
+
+func validateFormulaPathComponent(kind, value string) error {
+	if value == "" || filepath.IsAbs(value) || strings.Contains(value, "..") || strings.Contains(value, "/") || strings.Contains(value, "\\") {
+		return fmt.Errorf("invalid %s name %q", kind, value)
+	}
+	return nil
 }
 
 // hasFormulaSuffix checks if a name already has a formula file suffix.
