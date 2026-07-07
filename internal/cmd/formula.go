@@ -55,10 +55,8 @@ Commands:
   run     Execute a formula (pour and dispatch)
   create  Create a new formula template
 
-Search paths (in order):
-  1. Route-resolved rig .beads/formulas/
-  2. Town .beads/formulas/
-  3. Embedded formulas
+Named formula execution resolves formulas from the target rig, then town,
+then embedded formulas. List/show are delegated to bd.
 
 Examples:
   gt formula list                    # List all formulas
@@ -72,10 +70,7 @@ var formulaListCmd = &cobra.Command{
 	Short: "List available formulas",
 	Long: `List available formulas from all search paths.
 
-Searches for formulas in:
-  1. Route-resolved rig .beads/formulas/
-  2. Town .beads/formulas/
-  3. Embedded formulas
+Delegates to bd formula list, using bd's configured formula search paths.
 
 Examples:
   gt formula list            # List all formulas
