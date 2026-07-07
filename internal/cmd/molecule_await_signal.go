@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
@@ -134,7 +133,7 @@ func init() {
 
 func runMoleculeAwaitSignal(cmd *cobra.Command, args []string) error {
 	// Find beads directory (rig-local for bead operations)
-	workDir, err := findLocalBeadsDir()
+	beadsDir, err := resolveAgentTrackingBeadsDir()
 	if err != nil {
 		return fmt.Errorf("not in a beads workspace: %w", err)
 	}
@@ -144,8 +143,6 @@ func runMoleculeAwaitSignal(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return fmt.Errorf("not in a Gas Town workspace: %w", err)
 	}
-
-	beadsDir := beads.ResolveBeadsDir(workDir)
 
 	// Read current idle cycles and backoff window from agent bead (if specified)
 	var idleCycles int
@@ -457,8 +454,7 @@ func updateAgentHeartbeat(agentBead, beadsDir string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), bdCallTimeout)
 	defer cancel()
 
-	cmd := exec.CommandContext(ctx, "bd", args...) //nolint:gosec // G204: bd is a trusted internal tool
-	cmd.Env = append(os.Environ(), "BEADS_DIR="+beadsDir)
+	cmd := beads.CommandContext(ctx, filepath.Dir(beadsDir), beadsDir, beads.MutationPinned, args...)
 	return cmd.Run()
 }
 
@@ -493,8 +489,7 @@ func setAgentIdleCycles(agentBead, beadsDir string, cycles int) error {
 	ctx, cancel := context.WithTimeout(context.Background(), bdCallTimeout)
 	defer cancel()
 
-	cmd := exec.CommandContext(ctx, "bd", args...) //nolint:gosec // G204: bd is a trusted internal tool
-	cmd.Env = append(os.Environ(), "BEADS_DIR="+beadsDir)
+	cmd := beads.CommandContext(ctx, filepath.Dir(beadsDir), beadsDir, beads.MutationPinned, args...)
 
 	if err := cmd.Run(); err != nil {
 		return fmt.Errorf("setting idle label: %w", err)
@@ -529,8 +524,7 @@ func setAgentBackoffUntil(agentBead, beadsDir string, until time.Time) error {
 	ctx, cancel := context.WithTimeout(context.Background(), bdCallTimeout)
 	defer cancel()
 
-	cmd := exec.CommandContext(ctx, "bd", args...) //nolint:gosec // G204: bd is a trusted internal tool
-	cmd.Env = append(os.Environ(), "BEADS_DIR="+beadsDir)
+	cmd := beads.CommandContext(ctx, filepath.Dir(beadsDir), beadsDir, beads.MutationPinned, args...)
 	if err := cmd.Run(); err != nil {
 		return fmt.Errorf("setting backoff-until label: %w", err)
 	}
@@ -571,8 +565,7 @@ func clearAgentBackoffUntil(agentBead, beadsDir string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), bdCallTimeout)
 	defer cancel()
 
-	cmd := exec.CommandContext(ctx, "bd", args...) //nolint:gosec // G204: bd is a trusted internal tool
-	cmd.Env = append(os.Environ(), "BEADS_DIR="+beadsDir)
+	cmd := beads.CommandContext(ctx, filepath.Dir(beadsDir), beadsDir, beads.MutationPinned, args...)
 	if err := cmd.Run(); err != nil {
 		return fmt.Errorf("clearing backoff-until label: %w", err)
 	}

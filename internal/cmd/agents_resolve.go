@@ -73,13 +73,9 @@ func runAgentsResolve(cmd *cobra.Command, _ []string) error {
 	if err != nil {
 		return fmt.Errorf("getting working directory: %w", err)
 	}
-	workDir, err := findLocalBeadsDir()
+	currentBeadsDir, err := resolveAgentTrackingBeadsDir()
 	if err != nil {
 		return err
-	}
-	currentBeadsDir := beads.ResolveBeadsDir(workDir)
-	if currentBeadsDir == "" {
-		return fmt.Errorf("not in a beads workspace")
 	}
 
 	candidates, err := findAgentBeadCandidates(cwd, currentBeadsDir)

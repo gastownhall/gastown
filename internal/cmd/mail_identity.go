@@ -54,26 +54,7 @@ func findLocalBeadsDir() (string, error) {
 		}
 	}
 
-	// Fallback: walk up from CWD
-	cwd, err := os.Getwd()
-	if err != nil {
-		return "", err
-	}
-
-	path := cwd
-	for {
-		if _, err := os.Stat(filepath.Join(path, ".beads")); err == nil {
-			return path, nil
-		}
-
-		parent := filepath.Dir(path)
-		if parent == path {
-			break // Reached root
-		}
-		path = parent
-	}
-
-	return "", fmt.Errorf("no .beads directory found")
+	return findCwdBeadsWorkDir()
 }
 
 // detectSender determines the current context's address.
