@@ -303,6 +303,56 @@ func createStalePolecatCommit(t *testing.T, repoPath, startPoint, branchName str
 	return sha
 }
 
+func TestManagerGetMapsDoneAgentStateFromBead(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("shell script bd stub not supported on Windows")
+	}
+
+	binDir := t.TempDir()
+	bdScript := `#!/bin/sh
+cmd=""
+for arg in "$@"; do
+  case "$arg" in --*) ;; *) cmd="$arg"; break ;; esac
+done
+case "$cmd" in
+  list)
+    echo '[]'
+    ;;
+  show)
+    echo '[{"id":"gt-testrig-polecat-toast","title":"agent","issue_type":"agent","status":"open","description":"agent\n\nrole_type: polecat\nrig: testrig\nagent_state: done\nhook_bead: null\ncleanup_status: clean"}]'
+    ;;
+  config|update|slot)
+    exit 0
+    ;;
+  *)
+    exit 0
+    ;;
+esac
+`
+	if err := os.WriteFile(filepath.Join(binDir, "bd"), []byte(bdScript), 0755); err != nil {
+		t.Fatalf("write bd stub: %v", err)
+	}
+	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	townRoot := t.TempDir()
+	rigPath := filepath.Join(townRoot, "testrig")
+	if err := os.MkdirAll(filepath.Join(rigPath, "polecats", "toast", "testrig"), 0755); err != nil {
+		t.Fatalf("mkdir polecat path: %v", err)
+	}
+
+	mgr := NewManager(&rig.Rig{Name: "testrig", Path: rigPath}, git.NewGit(rigPath), nil)
+	p, err := mgr.Get("toast")
+	if err != nil {
+		t.Fatalf("mgr.Get(toast): %v", err)
+	}
+	if p.State != StateDone {
+		t.Fatalf("polecat state = %q, want %q", p.State, StateDone)
+	}
+	if p.Issue != "" {
+		t.Fatalf("polecat issue = %q, want empty", p.Issue)
+	}
+}
+
 func TestStateIsWorking(t *testing.T) {
 	tests := []struct {
 		state   State

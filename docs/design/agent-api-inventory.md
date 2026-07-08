@@ -656,8 +656,8 @@ structured data; no need to scrape terminal
 **What**: Agent signals work completion through GT commands and intent files.
 
 **Code**:
-- `internal/cmd/done.go` — `runDone()` (line ~81): persistent polecat model,
-  transitions to IDLE with sandbox preserved; exit constants: `ExitCompleted`,
+- `internal/cmd/done.go` — `runDone()` (line ~81): retired completion model,
+  transitions clean completions to DONE and exits the session; exit constants: `ExitCompleted`,
   `ExitEscalated`, `ExitDeferred` (line ~65)
 - `internal/cmd/signal_stop.go` — `runSignalStop()` (line ~47): Stop hook handler,
   checks unread mail and hooked work, returns JSON

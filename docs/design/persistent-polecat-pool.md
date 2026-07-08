@@ -61,7 +61,8 @@ SESSION (ephemeral)
          └──────────┘
 ```
 
-No `nuke` in the happy path. Polecats cycle: IDLE → WORKING → DONE → IDLE.
+This historical design described IDLE reuse after DONE. Current behavior retires
+clean completed sessions instead of returning them to the idle reuse pool.
 
 ### Pool Management
 
@@ -76,27 +77,24 @@ No `nuke` in the happy path. Polecats cycle: IDLE → WORKING → DONE → IDLE.
 **Initialization:** `gt rig add` or `gt polecat pool init <rig>` creates N polecats
 with identities and worktrees. They start in IDLE state.
 
-**Dispatch:** `gt sling <bead> <rig>` finds an IDLE polecat (already does this via
-`FindIdlePolecat()`), attaches work, starts session. No worktree creation needed.
+**Dispatch:** `gt sling <bead> <rig>` allocates capacity, attaches work, and starts
+a session on a fresh work branch.
 
 **Completion:** When a polecat finishes work:
 1. Push branch to origin
 2. Submit MR (if code changes)
 3. Clear hook_bead
-4. Sync worktree: `git checkout main && git pull`
-5. Set state to IDLE
-6. Session stays alive or cycles — doesn't matter, identity persists
+4. Set state to DONE
+5. Preserve branch/MR metadata for refinery/review
+6. Retire the live session
 
-### Sandbox Sync (DONE → IDLE transition)
+### Sandbox Retirement (DONE transition)
 
-When work completes and MR is merged (or no code changes):
+When work completes, `gt done` preserves the branch and handoff metadata:
 
 ```bash
-# In the polecat's worktree
-git checkout main
-git pull origin main
-git branch -D polecat/furiosa/<old-issue>+<timestamp>
-# Worktree is now clean, on main, ready for next assignment
+git push origin polecat/furiosa/<issue>@<suffix>
+# Refinery/review and cleanup own the remaining branch/worktree state
 ```
 
 When new work is slung:
@@ -115,7 +113,8 @@ No changes to refinery. Refinery still:
 2. Reviews and merges to main
 3. Deletes remote polecat branch (NEW: add this step)
 
-The polecat doesn't care — it already moved to main locally during DONE → IDLE.
+The polecat does not move to main locally during `gt done`; branch/MR metadata
+remains available for refinery/review and cleanup.
 
 ### Witness Integration
 
@@ -135,13 +134,13 @@ It should be rare and manual, not part of normal workflow.
 
 ### Branch Pollution Solution
 
-With persistent polecats, branches have clear owners:
+With retired completion, branches have clear owners:
 - Active branches: polecat is WORKING on them
 - Merged branches: refinery deletes after merge
-- Abandoned branches: polecat syncs to main on DONE → IDLE, old branch deleted locally
+- Abandoned branches: cleanup/recovery decides after durable handoff evidence
 
-The 219 stale branches came from nuked polecats that never cleaned up. With persistent
-polecats, branch lifecycle is managed by the polecat itself.
+The 219 stale branches came from nuked polecats that never cleaned up. Current
+branch lifecycle is managed by refinery/recovery, not local branch deletion in `gt done`.
 
 ### One-time Cleanup
 
@@ -156,23 +155,21 @@ git branch -r | grep 'origin/polecat/' | grep -v 'furiosa/gt-ziiu' | grep -v 'nu
 
 ### Phase 1: Stop the bleeding — SHIPPED
 - Witness no longer nukes idle polecats
-- `gt polecat done` transitions to IDLE instead of triggering nuke
+- `gt done` transitions to DONE and retires the session instead of local sync/reuse
 - Refinery deletes remote branch after merge
 
 ### Phase 2: Pool initialization — DEFERRED
 - `gt polecat pool init <rig>` creates N persistent polecats
 - Pool size configured in rig.config.json
-- Worktrees created once, reused across assignments
+- Worktrees are created for active work and retired after cleanup
 
-**Status:** Polecats are allocated on-demand by `gt sling` via `FindIdlePolecat()`
-and `AllocateAndAdd()`. Pre-allocation is unnecessary because idle polecats are
-reused automatically. Pool size enforcement is a future optimization, not a blocker.
+**Status:** Polecats are allocated on-demand by `gt sling` via capacity allocation.
+Pool size enforcement is a future optimization, not a blocker.
 
-### Phase 3: Sandbox sync — SHIPPED
-- DONE → IDLE transition syncs worktree to main (`done.go`)
-- IDLE → WORKING creates fresh branch (no worktree add) via `ReuseIdlePolecat()`
-- `gt sling` prefers idle polecats via `FindIdlePolecat()`
-- Branch-only reuse eliminates ~5s worktree creation overhead
+### Phase 3: Sandbox sync — SUPERSEDED
+- DONE no longer syncs the worktree to main in `gt done`
+- Clean completion sets done-state handoff and retires the session
+- Branch/MR metadata remains for refinery/review and cleanup
 
 ### Phase 4: Session independence — SHIPPED
 - Session cycling doesn't affect polecat state
@@ -189,8 +186,8 @@ reused automatically. Pool size enforcement is a future optimization, not a bloc
 
 | Component | Status | Key Files |
 |-----------|--------|-----------|
-| `gt done` (push, MR, idle, sandbox sync) | SHIPPED | `internal/cmd/done.go` |
-| `gt sling` (idle reuse, branch-only repair) | SHIPPED | `internal/cmd/sling.go`, `polecat_spawn.go` |
+| `gt done` (push, MR/PR handoff, done-state session retirement) | SHIPPED | `internal/cmd/done.go` |
+| `gt sling` (capacity allocation, branch setup) | SHIPPED | `internal/cmd/sling.go`, `polecat_spawn.go` |
 | `gt handoff` (session cycle, all roles) | SHIPPED | `internal/cmd/handoff.go` |
 | Witness patrol (zombie, stale, orphan detection) | SHIPPED | `internal/witness/handlers.go`, `internal/polecat/manager.go` |
 | Cleanup pipeline (POLECAT_DONE → MERGE_READY → MERGED) | SHIPPED | `internal/witness/handlers.go`, `internal/refinery/engineer.go` |

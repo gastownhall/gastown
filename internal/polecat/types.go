@@ -5,22 +5,23 @@ import "time"
 
 // State represents the current lifecycle state of a polecat.
 //
-// Polecats are PERSISTENT: they survive work completion and can be reused.
-// The four operating states are:
+// Polecat identity is persistent, but clean completion retires the live session.
+// The primary operating states are:
 //
 //   - Working: Session active, doing assigned work (normal operation)
-//   - Idle: Work completed, session killed, sandbox preserved for reuse
+//   - Idle: Available before assignment, with no pending completion cleanup
+//   - Done: Work completed, session retired, cleanup/refinery still owns state
 //   - ReviewNeeded: Session is live but no active work bead is attached
 //   - Stalled: Session stopped unexpectedly, was never nudged back to life
 //   - Zombie: Session called 'gt done' but cleanup failed - tried to die but couldn't
 //
-// The distinction matters: idle polecats completed their work successfully and
-// are ready for new assignments. Stalled polecats failed mid-work. Zombies
-// tried to exit but couldn't complete cleanup.
+// The distinction matters: idle polecats are available capacity. Done polecats
+// completed work and are waiting for cleanup/refinery state to clear. Stalled
+// polecats failed mid-work. Zombies tried to exit but couldn't complete cleanup.
 //
-// Note: These are LIFECYCLE states. The polecat IDENTITY (CV chain, mailbox, work
-// history) and SANDBOX (worktree) persist across sessions. An idle polecat keeps
-// its worktree so it can be quickly reassigned without creating a new one.
+// Note: These are LIFECYCLE states. The polecat IDENTITY (CV chain, mailbox,
+// work history) persists across sessions. Worktrees persist only while active
+// or awaiting cleanup; they are not reused after clean completion with pending state.
 //
 // "Stalled", "zombie", and related conditions are detected at query time by
 // cross-checking tmux session liveness against beads state. The Witness also
@@ -32,10 +33,8 @@ const (
 	// This is the initial and primary state after sling.
 	StateWorking State = "working"
 
-	// StateIdle means the polecat completed its work and the session was killed,
-	// but the sandbox (worktree) is preserved for reuse. An idle polecat has no
-	// hook_bead and no active session. It can be reassigned via gt sling without
-	// creating a new worktree.
+	// StateIdle means the polecat is available before assignment. It has no
+	// hook_bead, no active session, and no pending completion/MR cleanup state.
 	StateIdle State = "idle"
 
 	// StateDone means the polecat has completed its assigned work and called

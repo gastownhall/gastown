@@ -2232,9 +2232,7 @@ func (m *Manager) List() ([]*Polecat, error) {
 }
 
 // FindIdlePolecat returns the first idle polecat in the rig, or nil if none.
-// Idle polecats have completed their work and have a preserved sandbox (worktree)
-// that can be reused by gt sling without creating a new worktree.
-// Persistent polecat model (gt-4ac).
+// Idle means no hook, no active session, and no pending completion/MR cleanup state.
 func (m *Manager) FindIdlePolecat() (*Polecat, error) {
 	polecats, err := m.List()
 	if err != nil {
@@ -2780,13 +2778,21 @@ func (m *Manager) loadFromBeads(name string) (*Polecat, error) {
 		issueID = issue.ID
 	}
 
-	state := StateIdle
+	agentState := StateIdle
+	if agentErr == nil && fields != nil {
+		switch beads.AgentState(strings.TrimSpace(fields.AgentState)) {
+		case beads.AgentStateDone:
+			agentState = StateDone
+		}
+	}
+
+	state := agentState
 	if issueID != "" {
 		state = StateWorking
 		if sessionDead {
 			state = StateStalled
 		}
-	} else if sessionRunning && !sessionStale && !m.getCleanupStatusFromBead(name).IsSafe() {
+	} else if agentState == StateIdle && sessionRunning && !sessionStale && !m.getCleanupStatusFromBead(name).IsSafe() {
 		state = StateReviewNeeded
 	}
 

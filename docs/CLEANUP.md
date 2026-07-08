@@ -25,7 +25,7 @@ A comprehensive catalog of all cleanup-related commands in the gastown/beads eco
 | `gt polecat stale <rig>` | Detects stale polecats; `--cleanup` auto-nukes them |
 | `gt polecat check-recovery` | Pre-nuke safety check (SAFE_TO_NUKE vs NEEDS_RECOVERY) |
 | `gt polecat identity remove <rig> <name>` | Removes a polecat identity |
-| `gt done` | Polecat self-cleaning: pushes branch, submits MR (by default), self-nukes worktree, kills own session. MR skipped for `--status ESCALATED\|DEFERRED` or `no_merge` paths |
+| `gt done` | Polecat self-cleaning: pushes branch, submits MR/PR path as configured, preserves handoff metadata, kills own session. MR skipped for `--status ESCALATED\|DEFERRED` or `no_merge` paths |
 
 ## Git Artifact Cleanup
 
@@ -147,8 +147,7 @@ A comprehensive catalog of all cleanup-related commands in the gastown/beads eco
 | Function | Where | What it does |
 |----------|-------|-------------|
 | `cleanupOrphanedProcesses()` | `polecat.go` | Auto-runs after nuke/stale cleanup |
-| `selfNukePolecat()` | `done.go` | Self-destructs worktree during `gt done` |
-| `selfKillSession()` | `done.go` | Self-terminates tmux session |
+| `retirePolecatSessionAfterDone()` | `done.go` | Self-terminates tmux session with PID exclusion after durable handoff |
 | `rollbackSlingArtifacts()` | `sling.go` | Cleans up partial sling failures |
 | `cleanStaleHookedBeads()` | `unsling.go` | Repairs beads stuck in "hooked" state |
 | `gt signal stop` | `signal_stop.go` | Clears stop-state temp files at turn boundaries |

@@ -92,6 +92,10 @@ func buildPolecatInventoryItemFromEvidence(rigName, polecatName string, fields *
 		item.CleanupStatus = strings.TrimSpace(fields.CleanupStatus)
 		item.ActiveMR = strings.TrimSpace(fields.ActiveMR)
 		item.Branch = strings.TrimSpace(fields.Branch)
+		switch beads.AgentState(strings.TrimSpace(fields.AgentState)) {
+		case beads.AgentStateDone:
+			item.State = polecat.StateDone
+		}
 		input.CleanupStatus = polecat.CleanupStatus(item.CleanupStatus)
 		input.PushFailed = fields.PushFailed
 		input.MRFailed = fields.MRFailed
@@ -116,7 +120,7 @@ func buildPolecatInventoryItemFromEvidence(rigName, polecatName string, fields *
 		}
 		input.ActiveWorkBlocker = activeWorkEvidence.Blocker
 		input.ActiveWorkCountsTowardCapacity = activeWorkEvidence.CountsTowardCapacity
-	} else if running && !polecat.CleanupStatus(item.CleanupStatus).IsSafe() {
+	} else if item.State == polecat.StateIdle && running && !polecat.CleanupStatus(item.CleanupStatus).IsSafe() {
 		item.State = polecat.StateReviewNeeded
 	}
 

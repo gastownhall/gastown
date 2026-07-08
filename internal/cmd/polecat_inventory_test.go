@@ -106,6 +106,22 @@ func TestBuildPolecatInventoryItem(t *testing.T) {
 			wantState:   polecat.StateIdle,
 			wantVerdict: polecat.WorkstateVerdictPendingMR,
 		},
+		{
+			name:         "done without active mr is not reusable",
+			polecatName:  "done",
+			fields:       &beads.AgentFields{AgentState: string(beads.AgentStateDone), CleanupStatus: string(polecat.CleanupClean)},
+			wantState:    polecat.StateDone,
+			wantVerdict:  polecat.WorkstateVerdictNeedsRecovery,
+			wantRecovery: true,
+			wantCapacity: true,
+		},
+		{
+			name:        "done with active mr remains pending",
+			polecatName: "donepending",
+			fields:      &beads.AgentFields{AgentState: string(beads.AgentStateDone), CleanupStatus: string(polecat.CleanupClean), ActiveMR: "gt-mr"},
+			wantState:   polecat.StateDone,
+			wantVerdict: polecat.WorkstateVerdictPendingMR,
+		},
 	}
 
 	for _, tt := range tests {

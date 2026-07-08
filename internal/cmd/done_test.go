@@ -12,6 +12,7 @@ import (
 
 	"github.com/steveyegge/gastown/internal/beads"
 	gitpkg "github.com/steveyegge/gastown/internal/git"
+	"github.com/steveyegge/gastown/internal/session"
 )
 
 // TestDoneUsesResolveBeadsDir verifies that the done command correctly uses
@@ -776,35 +777,144 @@ func TestShouldNudgeRefinery(t *testing.T) {
 	}
 }
 
-func TestShouldSyncIdlePolecatWorktree(t *testing.T) {
+func TestShouldUpdateAgentStateOnDone(t *testing.T) {
+	tests := []struct {
+		name       string
+		pushFailed bool
+		mrFailed   bool
+		want       bool
+	}{
+		{"clean submission updates state", false, false, true},
+		{"push failure preserves hook", true, false, false},
+		{"mr failure preserves hook", false, true, false},
+		{"both failures preserve hook", true, true, false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := shouldUpdateAgentStateOnDone(tt.pushFailed, tt.mrFailed)
+			if got != tt.want {
+				t.Errorf("shouldUpdateAgentStateOnDone(%v, %v) = %v, want %v", tt.pushFailed, tt.mrFailed, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestUpdateAgentStateAfterSubmissionSkipsFailedSubmissions(t *testing.T) {
+	calls := 0
+	old := updateAgentStateOnDoneFn
+	updateAgentStateOnDoneFn = func(cwd, townRoot, exitType, issueID string) error {
+		calls++
+		return nil
+	}
+	t.Cleanup(func() { updateAgentStateOnDoneFn = old })
+
+	if err := updateAgentStateAfterSubmission("/work", "/town", ExitCompleted, "gt-abc", true, false); err != nil {
+		t.Fatalf("updateAgentStateAfterSubmission push failure: %v", err)
+	}
+	if err := updateAgentStateAfterSubmission("/work", "/town", ExitCompleted, "gt-abc", false, true); err != nil {
+		t.Fatalf("updateAgentStateAfterSubmission mr failure: %v", err)
+	}
+	if calls != 0 {
+		t.Fatalf("state update calls after failed submissions = %d, want 0", calls)
+	}
+
+	if err := updateAgentStateAfterSubmission("/work", "/town", ExitCompleted, "gt-abc", false, false); err != nil {
+		t.Fatalf("updateAgentStateAfterSubmission clean submission: %v", err)
+	}
+	if calls != 1 {
+		t.Fatalf("state update calls after clean submission = %d, want 1", calls)
+	}
+}
+
+func TestShouldRetirePolecatSessionAfterDone(t *testing.T) {
 	tests := []struct {
 		name          string
 		exitType      string
 		mergeStrategy string
 		pushFailed    bool
 		mrFailed      bool
-		syncSafe      bool
 		want          bool
 	}{
-		{"completed default strategy syncs", ExitCompleted, "", false, false, true, true},
-		{"completed direct strategy syncs", ExitCompleted, "direct", false, false, true, true},
-		{"completed mr strategy syncs", ExitCompleted, "mr", false, false, true, true},
-		{"local strategy keeps branch", ExitCompleted, "local", false, false, true, false},
-		{"deferred keeps branch", ExitDeferred, "", false, false, true, false},
-		{"escalated keeps branch", ExitEscalated, "", false, false, true, false},
-		{"push failure keeps branch", ExitCompleted, "", true, false, true, false},
-		{"mr failure keeps branch", ExitCompleted, "", false, true, true, false},
-		{"unsafe sync keeps branch", ExitCompleted, "", false, false, false, false},
+		{"completed default strategy retires", ExitCompleted, "", false, false, true},
+		{"completed direct strategy retires", ExitCompleted, "direct", false, false, true},
+		{"completed mr strategy retires", ExitCompleted, "mr", false, false, true},
+		{"local strategy preserves session", ExitCompleted, "local", false, false, false},
+		{"deferred preserves session", ExitDeferred, "", false, false, false},
+		{"escalated preserves session", ExitEscalated, "", false, false, false},
+		{"push failure preserves session", ExitCompleted, "", true, false, false},
+		{"mr failure preserves session", ExitCompleted, "", false, true, false},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := shouldSyncIdlePolecatWorktree(tt.exitType, tt.mergeStrategy, tt.pushFailed, tt.mrFailed, tt.syncSafe)
+			got := shouldRetirePolecatSessionAfterDone(tt.exitType, tt.mergeStrategy, tt.pushFailed, tt.mrFailed)
 			if got != tt.want {
-				t.Errorf("shouldSyncIdlePolecatWorktree(%q, %q, %v, %v, %v) = %v, want %v",
-					tt.exitType, tt.mergeStrategy, tt.pushFailed, tt.mrFailed, tt.syncSafe, got, tt.want)
+				t.Errorf("shouldRetirePolecatSessionAfterDone(%q, %q, %v, %v) = %v, want %v",
+					tt.exitType, tt.mergeStrategy, tt.pushFailed, tt.mrFailed, got, tt.want)
 			}
 		})
+	}
+}
+
+type fakeDoneSessionKiller struct {
+	name        string
+	excludePIDs []string
+	calls       int
+}
+
+func (f *fakeDoneSessionKiller) KillSessionWithProcessesExcluding(name string, excludePIDs []string) error {
+	f.calls++
+	f.name = name
+	f.excludePIDs = append([]string(nil), excludePIDs...)
+	return nil
+}
+
+func TestRetirePolecatSessionAfterDoneUsesPIDExclusion(t *testing.T) {
+	fake := &fakeDoneSessionKiller{}
+	old := newDoneSessionKiller
+	newDoneSessionKiller = func() doneSessionKiller { return fake }
+	t.Cleanup(func() { newDoneSessionKiller = old })
+
+	if err := retirePolecatSessionAfterDone("gastown", "nitro", 12345); err != nil {
+		t.Fatalf("retirePolecatSessionAfterDone: %v", err)
+	}
+	if fake.calls != 1 {
+		t.Fatalf("killer calls = %d, want 1", fake.calls)
+	}
+	wantSession := session.PolecatSessionName(session.PrefixFor("gastown"), "nitro")
+	if fake.name != wantSession {
+		t.Fatalf("session name = %q, want %q", fake.name, wantSession)
+	}
+	if len(fake.excludePIDs) != 1 || fake.excludePIDs[0] != "12345" {
+		t.Fatalf("excludePIDs = %#v, want [12345]", fake.excludePIDs)
+	}
+}
+
+func TestRetirePolecatSessionAfterDoneNoopsWithoutIdentity(t *testing.T) {
+	fake := &fakeDoneSessionKiller{}
+	old := newDoneSessionKiller
+	newDoneSessionKiller = func() doneSessionKiller { return fake }
+	t.Cleanup(func() { newDoneSessionKiller = old })
+
+	for _, tt := range []struct {
+		name        string
+		rigName     string
+		polecatName string
+		pid         int
+	}{
+		{"missing rig", "", "nitro", 12345},
+		{"missing polecat", "gastown", "", 12345},
+		{"missing pid", "gastown", "nitro", 0},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			if err := retirePolecatSessionAfterDone(tt.rigName, tt.polecatName, tt.pid); err != nil {
+				t.Fatalf("retirePolecatSessionAfterDone: %v", err)
+			}
+		})
+	}
+	if fake.calls != 0 {
+		t.Fatalf("killer calls = %d, want 0", fake.calls)
 	}
 }
 

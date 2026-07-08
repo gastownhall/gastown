@@ -260,8 +260,8 @@ with = "macro-formula"
 ```
 1. Work through formula checklist (shown inline by gt prime)
 2. Submit to merge queue via gt done
-3. gt done nukes sandbox and exits
-4. Witness removes worktree + branch
+3. gt done preserves branch/MR metadata and exits the session
+4. Witness/refinery cleanup handles any retired sandbox state
 ```
 
 ### Session Cycling

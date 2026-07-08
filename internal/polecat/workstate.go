@@ -57,6 +57,15 @@ type WorkstateDisposition struct {
 
 // DecideWorkstate returns the canonical disposition for a polecat.
 func DecideWorkstate(in WorkstateInput) WorkstateDisposition {
+	if in.ActiveMRBlocker != "" && !in.PushFailed && !in.MRFailed && (in.State == StateIdle || in.State == StateDone) {
+		return WorkstateDisposition{
+			Verdict:     WorkstateVerdictPendingMR,
+			Reason:      "active-mr-open",
+			ReuseStatus: "idle-pr-open",
+			Blockers:    []string{in.ActiveMRBlocker},
+		}
+	}
+
 	if in.State != StateIdle {
 		verdict := WorkstateVerdictNeedsRecovery
 		needsRecovery := true

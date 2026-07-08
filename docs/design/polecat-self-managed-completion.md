@@ -65,14 +65,14 @@ Polecat runs gt done
     ├── 5. Set agent_state = "done" (NOT idle)
     ├── 6. Clear hook_bead
     ├── 7. Nudge witness via tmux
-    ├── 8. Sync worktree to main, delete old branch
-    └── 9. Session goes idle (sandbox preserved)
+    ├── 8. Preserve branch/MR metadata for cleanup
+    └── 9. Session retires
          │
          ▼
     ┌─── WAIT ──────────────────────────────────────────┐
     │ Polecat is in "done" state.                       │
     │ Cannot accept new work until witness processes.    │
-    │ If witness is busy: polecat sits idle for minutes. │
+    │ If witness is busy: cleanup/refinery state remains.│
     └───────────────────────────────────────────────────┘
          │
          ▼ (next witness patrol cycle)
@@ -84,8 +84,8 @@ Witness survey-workers step
     │   ├── Create cleanup wisp (merge-requested state)
     │   ├── Send MERGE_READY to refinery
     │   └── Clear completion metadata
-    ├── Transition agent_state: done → idle
-    └── Polecat is now available for new work
+    ├── Resolve cleanup/refinery state
+    └── Completed polecat remains non-reusable until cleanup clears it
 ```
 
 **Time in "done" state:** 30s to several minutes, depending on witness patrol
@@ -103,12 +103,12 @@ Polecat runs gt done
     ├── 3. Create MR bead (type: merge-request, label: gt:merge-request)
     ├── 4. Write completion metadata to agent bead (for audit)
     ├── 5. Nudge refinery directly: "MERGE_READY <mr-id>"     ← NEW
-    ├── 6. Set agent_state = "idle"                           ← CHANGED
-    ├── 7. Clear hook_bead
-    ├── 8. Sync worktree to main, delete old branch
-    └── 9. Session goes idle (sandbox preserved)
-              │
-              └── Polecat is IMMEDIATELY available for new work
+    ├── 6. Set agent_state = "done"                           ← CURRENT
+	├── 7. Clear hook_bead
+	├── 8. Preserve branch/MR metadata
+	└── 9. Session retires
+	          │
+	          └── Cleanup/refinery owns remaining state
 ```
 
 **Key changes:**
