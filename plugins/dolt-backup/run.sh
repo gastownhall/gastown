@@ -81,6 +81,34 @@ fi
 
 log "Databases to backup (${#PROD_DBS[@]}): ${PROD_DBS[*]}"
 
+# --- Server detection ----------------------------------------------------------
+# Raw-opening a live DB dir (cd $DB_DIR && dolt ...) races the serving
+# sql-server's chunk-journal writes — hq lost that race 2026-07-08
+# (hq-wisp-6c2: "error bootstrapping chunk journal"). When the server is up,
+# run backups THROUGH it via CALL DOLT_BACKUP('sync-url', ...), which is
+# concurrency-safe. The raw CLI path remains only as the server-down fallback.
+SERVER_UP=0
+if pgrep -f 'dolt.*sql-server' >/dev/null 2>&1; then
+  # Retry the probe: the dolt CLI can transiently fail its local journal-index
+  # read even when it would route to a healthy server (known race under
+  # active server writes) — one failed probe must not demote us to the very
+  # raw path this fix exists to avoid.
+  for _probe in 1 2 3; do
+    if (cd "$DOLT_DATA_DIR" && timeout 10 dolt --use-db "${PROD_DBS[0]}" sql -q "SELECT 1" >/dev/null 2>&1); then
+      SERVER_UP=1
+      break
+    fi
+    sleep 2
+  done
+  if [[ $SERVER_UP -eq 1 ]]; then
+    log "Dolt sql-server detected: using server-mediated backups (CALL DOLT_BACKUP)"
+  else
+    log "WARNING: dolt sql-server process found but not answering after 3 probes; falling back to raw CLI backups"
+  fi
+else
+  log "No dolt sql-server running: using raw CLI backups"
+fi
+
 # --- Step 2: Backup each database ---------------------------------------------
 
 SYNCED=0
@@ -101,8 +129,14 @@ for DB in "${PROD_DBS[@]}"; do
     continue
   fi
 
-  # Get current HEAD hash
-  CURRENT_HASH=$(cd "$DB_DIR" && dolt log -n 1 --oneline 2>/dev/null | head -1 | cut -d' ' -f1 || true)
+  # Get current HEAD hash (through the server when it is up — raw reads can
+  # hit the journal race against active server writes)
+  if [[ $SERVER_UP -eq 1 ]]; then
+    CURRENT_HASH=$(cd "$DOLT_DATA_DIR" && timeout 15 dolt --use-db "$DB" sql -r csv -q "SELECT commit_hash FROM dolt_log LIMIT 1" 2>/dev/null | tail -1 || true)
+    [[ "$CURRENT_HASH" == "commit_hash" ]] && CURRENT_HASH=""
+  else
+    CURRENT_HASH=$(cd "$DB_DIR" && dolt log -n 1 --oneline 2>/dev/null | head -1 | cut -d' ' -f1 || true)
+  fi
   if [[ -z "$CURRENT_HASH" ]]; then
     log "  $DB: could not get HEAD hash, will sync anyway"
     CURRENT_HASH="unknown"
@@ -130,19 +164,6 @@ for DB in "${PROD_DBS[@]}"; do
     continue
   fi
 
-  # Ensure the backup remote exists before syncing. Without this, towns
-  # that never ran `dolt backup add` fail every sync (historically masked
-  # by the SYNC_RC bug below).
-  if ! (cd "$DB_DIR" && dolt backup -v 2>/dev/null | awk '{print $1}' | grep -qx "$BACKUP_NAME"); then
-    log "  $DB: backup remote $BACKUP_NAME missing, adding -> file://$BACKUP_DIR/$DB/$BACKUP_NAME"
-    if ! (cd "$DB_DIR" && dolt backup add "$BACKUP_NAME" "file://$BACKUP_DIR/$DB/$BACKUP_NAME" 2>&1); then
-      FAILED=$((FAILED + 1))
-      FAILED_DBS="$FAILED_DBS $DB(add-remote)"
-      log "  $DB: FAILED to add backup remote"
-      continue
-    fi
-  fi
-
   # Sync backup with timeout
   log "  $DB: syncing ($LAST_HASH -> $CURRENT_HASH)..."
   SYNC_START=$(date +%s)
@@ -152,7 +173,26 @@ for DB in "${PROD_DBS[@]}"; do
   # (PIPESTATUS reflects the `true`), recording failed syncs as successful
   # and writing hash markers for backups that never happened.
   SYNC_RC=0
-  SYNC_OUTPUT=$(cd "$DB_DIR" && timeout "$BACKUP_TIMEOUT" dolt backup sync "$BACKUP_NAME" 2>&1) || SYNC_RC=$?
+  if [[ $SERVER_UP -eq 1 ]]; then
+    # Server-mediated: CALL DOLT_BACKUP('sync-url', ...) needs no pre-added
+    # remote and cannot race the server's own journal writes.
+    SYNC_OUTPUT=$(cd "$DOLT_DATA_DIR" && timeout "$BACKUP_TIMEOUT" dolt --use-db "$DB" sql -q \
+      "CALL DOLT_BACKUP('sync-url', 'file://$BACKUP_DIR/$DB/$BACKUP_NAME')" 2>&1) || SYNC_RC=$?
+  else
+    # Raw CLI fallback (server down). Ensure the backup remote exists first —
+    # towns that never ran `dolt backup add` fail every sync otherwise
+    # (historically masked by the SYNC_RC bug above).
+    if ! (cd "$DB_DIR" && dolt backup -v 2>/dev/null | awk '{print $1}' | grep -qx "$BACKUP_NAME"); then
+      log "  $DB: backup remote $BACKUP_NAME missing, adding -> file://$BACKUP_DIR/$DB/$BACKUP_NAME"
+      if ! (cd "$DB_DIR" && dolt backup add "$BACKUP_NAME" "file://$BACKUP_DIR/$DB/$BACKUP_NAME" 2>&1); then
+        FAILED=$((FAILED + 1))
+        FAILED_DBS="$FAILED_DBS $DB(add-remote)"
+        log "  $DB: FAILED to add backup remote"
+        continue
+      fi
+    fi
+    SYNC_OUTPUT=$(cd "$DB_DIR" && timeout "$BACKUP_TIMEOUT" dolt backup sync "$BACKUP_NAME" 2>&1) || SYNC_RC=$?
+  fi
   SYNC_ELAPSED=$(( $(date +%s) - SYNC_START ))
 
   if [[ $SYNC_RC -eq 0 ]]; then
