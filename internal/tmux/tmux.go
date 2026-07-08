@@ -1658,23 +1658,51 @@ type NudgeOpts struct {
 	TownRoot string
 }
 
-// canonicalPaneTarget converts a pane identifier like "%23" into a tmux target
-// that send-keys can resolve reliably. Bare pane IDs work for display-message,
-// but for send-keys we prefer an explicit session:window.pane target.
+// canonicalPaneTarget converts a pane identifier like "%23" into an explicit
+// tmux session:window.pane target. If the pane is stale or resolves outside the
+// expected session, fall back to the session's first pane instead of the active
+// pane that a bare session target would select.
 func (t *Tmux) canonicalPaneTarget(session, pane string) string {
+	fallback := session + ":0.0"
 	if pane == "" {
-		return session
+		return fallback
 	}
 
-	out, err := t.run("display-message", "-t", pane, "-p", "#{session_name}:#{window_index}.#{pane_index}")
-	if err == nil {
-		target := strings.TrimSpace(out)
-		if target != "" {
-			return target
+	expectedSession := session
+	if out, err := t.run("display-message", "-t", session, "-p", "#{session_name}"); err == nil {
+		if resolved := strings.TrimSpace(out); resolved != "" {
+			expectedSession = resolved
 		}
 	}
 
-	return pane
+	out, err := t.run("display-message", "-t", pane, "-p", "#{session_name}\t#{window_index}\t#{pane_index}")
+	if err != nil {
+		return fallback
+	}
+	if target, ok := canonicalPaneTargetFromDisplay(expectedSession, out); ok {
+		return target
+	}
+	return fallback
+}
+
+func canonicalPaneTargetFromDisplay(expectedSession, out string) (string, bool) {
+	parts := strings.Split(strings.TrimSpace(out), "\t")
+	if len(parts) != 3 {
+		return "", false
+	}
+
+	session := strings.TrimSpace(parts[0])
+	window := strings.TrimSpace(parts[1])
+	pane := strings.TrimSpace(parts[2])
+	if session != expectedSession || !isTmuxIndex(window) || !isTmuxIndex(pane) {
+		return "", false
+	}
+	return fmt.Sprintf("%s:%s.%s", session, window, pane), true
+}
+
+func isTmuxIndex(value string) bool {
+	n, err := strconv.Atoi(value)
+	return err == nil && n >= 0
 }
 
 // NudgeSessionWithOpts is like NudgeSession but accepts delivery options.
@@ -1702,7 +1730,7 @@ func (t *Tmux) NudgeSessionWithOpts(session, message string, opts NudgeOpts) err
 
 	// Resolve the correct target: in multi-pane sessions, find the pane
 	// running the agent rather than sending to the focused pane.
-	target := session
+	target := session + ":0.0"
 	if agentPane, err := t.FindAgentPane(session); err == nil && agentPane != "" {
 		target = t.canonicalPaneTarget(session, agentPane)
 	}
