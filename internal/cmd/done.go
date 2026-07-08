@@ -14,6 +14,7 @@ import (
 
 	"github.com/spf13/cobra"
 	"github.com/steveyegge/gastown/internal/beads"
+	"github.com/steveyegge/gastown/internal/checkpoint"
 	"github.com/steveyegge/gastown/internal/config"
 	"github.com/steveyegge/gastown/internal/events"
 	"github.com/steveyegge/gastown/internal/git"
@@ -1027,6 +1028,8 @@ func runDone(cmd *cobra.Command, args []string) (retErr error) {
 		// Handle "direct" strategy: push to target branch, skip MR
 		if convoyInfo != nil && convoyInfo.MergeStrategy == "direct" {
 			fmt.Printf("%s Direct merge strategy: pushing to %s\n", style.Bold.Render("→"), defaultBranch)
+			// Keep crash-recovery WIP checkpoints sandbox-local (gastownhall/gastown#4440).
+			squashWIPCheckpointCommits(cwd, baseRef)
 			// Push submodule changes before direct push (gt-dzs)
 			pushSubmoduleChanges(g, baseRef)
 			directRefspec := branch + ":" + defaultBranch
@@ -1109,6 +1112,12 @@ func runDone(cmd *cobra.Command, args []string) (retErr error) {
 		// isn't pushed yet, Refinery finds nothing to merge. The worktree gets
 		// nuked at the end of gt done, so the commits are lost forever.
 		//
+		// Keep crash-recovery WIP checkpoints sandbox-local (gastownhall/gastown#4440).
+		// checkpoint_dog's "WIP: checkpoint (auto)" commits are a local crash-safety
+		// net and must never reach the remote. Runs after the resume check above so
+		// an already-pushed branch is never rewritten.
+		squashWIPCheckpointCommits(cwd, baseRef)
+
 		// Auto-push submodule changes BEFORE parent push (gt-dzs).
 		// If the parent repo's submodule pointer references commits that don't
 		// exist on the submodule's remote, the Refinery MR will be broken.
@@ -1860,6 +1869,23 @@ notifyWitness:
 	}
 
 	return nil
+}
+
+// squashWIPCheckpointCommits collapses checkpoint_dog's "WIP: checkpoint (auto)"
+// commits into a single commit before a push, so crash-recovery checkpoints stay
+// sandbox-local instead of landing on the remote branch (gastownhall/gastown#4440).
+// Safe because the refinery squash-merges polecat branches anyway. Failures are
+// warnings, not errors: pushing WIP junk is bad, but blocking gt done on a squash
+// failure would strand the work entirely.
+func squashWIPCheckpointCommits(workDir, baseRef string) {
+	n, err := checkpoint.SquashWIPCommits(workDir, baseRef)
+	if err != nil {
+		style.PrintWarning("could not squash WIP checkpoint commits: %v", err)
+		return
+	}
+	if n > 0 {
+		fmt.Printf("%s Squashed %d WIP checkpoint commit(s) before push\n", style.Bold.Render("✓"), n)
+	}
 }
 
 // pushSubmoduleChanges detects submodules modified between baseRef
