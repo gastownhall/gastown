@@ -157,13 +157,7 @@ func (m *Manager) start(foreground bool, agentOverride string, allowForkRig bool
 	}
 
 	if !allowForkRig {
-		if err := m.ForkRigStartError(); err != nil {
-			if running, _ := t.HasSession(sessionID); running {
-				_, _ = fmt.Fprintf(m.output, "Refinery %s is disabled for fork-backed rig; killing leftover session %s.\n", m.rig.Name, sessionID)
-				if killErr := t.KillSessionWithProcesses(sessionID); killErr != nil {
-					return fmt.Errorf("%w: killing leftover refinery session: %v", err, killErr)
-				}
-			}
+		if err := m.blockForkRigStart(t); err != nil {
 			return err
 		}
 	}
@@ -348,6 +342,27 @@ func (m *Manager) ForkRigStartError() error {
 		return nil
 	}
 	return NewForkRigError(m.rig.Name, cfg.UpstreamURL)
+}
+
+// BlockForkRigStart applies the fork-rig startup guard and kills any leftover
+// refinery session that would otherwise keep processing a fork-backed rig.
+func (m *Manager) BlockForkRigStart() error {
+	return m.blockForkRigStart(tmux.NewTmux())
+}
+
+func (m *Manager) blockForkRigStart(t *tmux.Tmux) error {
+	err := m.ForkRigStartError()
+	if err == nil {
+		return nil
+	}
+	sessionID := m.SessionName()
+	if running, _ := t.HasSession(sessionID); running {
+		_, _ = fmt.Fprintf(m.output, "Refinery %s is disabled for fork-backed rig; killing leftover session %s.\n", m.rig.Name, sessionID)
+		if killErr := t.KillSessionWithProcesses(sessionID); killErr != nil {
+			return fmt.Errorf("%w: killing leftover refinery session: %v", err, killErr)
+		}
+	}
+	return err
 }
 
 // repairRefineryWorktree recreates a missing refinery/rig worktree from the

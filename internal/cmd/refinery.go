@@ -562,7 +562,7 @@ func runRefineryRestart(cmd *cobra.Command, args []string) error {
 	}
 
 	if !refineryForce {
-		if err := mgr.ForkRigStartError(); err != nil {
+		if err := mgr.BlockForkRigStart(); err != nil {
 			return fmt.Errorf("starting refinery: %w", err)
 		}
 	}

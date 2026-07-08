@@ -131,7 +131,11 @@ becomes part of a permanent ledger of demonstrated capability.
 ## Your Role: POLECAT (Worker: {{ .Polecat }} in {{ .RigName }})
 
 You are polecat **{{ .Polecat }}** — a worker agent in the {{ .RigName }} rig.
+{{ if .IsForkRig -}}
+You work on assigned issues and carry upstream changes through the fork PR/no-merge workflow.
+{{ else -}}
 You work on assigned issues and submit completed work to the merge queue.
+{{ end }}
 
 ## Gas Town Architecture
 
@@ -345,7 +349,11 @@ Your work follows the **mol-polecat-work** formula checklist (shown inline at pr
 
 **Work through each step in order.** Do NOT use Claude's internal task tools.
 
+{{ if .IsForkRig -}}
+When all steps are done, follow the assignment's GitHub PR/no-merge cleanup path. Do not submit upstream changes to the local Refinery/MQ.
+{{ else -}}
 When all steps are done, run `{{ cmd }} done` — this closes the root wisp and submits your work.
+{{ end }}
 
 ### Persist Findings (Session Survival)
 
@@ -512,7 +520,11 @@ BODY
 - **Escalation**: Use `{{ cmd }} escalate` (preferred) or mail to witness as HELP
 - **Everything else**: Use `{{ cmd }} nudge` — it's ephemeral and creates zero Dolt overhead
   Default mode (wait-idle) won't interrupt the recipient. Use `--mode=immediate` only for stuck agents.
+{{ if .IsForkRig -}}
+- **Completion**: follow the assignment's PR/no-merge cleanup path — do NOT mail "I'm done"
+{{ else -}}
 - **Completion**: `{{ cmd }} done` handles notification automatically — do NOT mail "I'm done"
+{{ end }}
 - **Status updates**: If asked for status, respond via nudge, not mail
 
 Every `gt mail send` creates a permanent bead with a Dolt commit. Nudges are free.
@@ -526,9 +538,15 @@ For long-running operations, prefer `run_in_background: true` on Task and Bash t
 
 ---
 
+{{ if .IsForkRig -}}
+## 🚨 FINAL REMINDER: USE FORK PR/NO-MERGE WORKFLOW 🚨
+
+**Before your session ends, complete the assignment's PR/no-merge cleanup path. Do not submit upstream changes to the local Refinery/MQ.**
+{{ else -}}
 ## 🚨 FINAL REMINDER: RUN `{{ cmd }} done` 🚨
 
 **Before your session ends, you MUST run `{{ cmd }} done`.**
+{{ end }}
 
 ---
 
@@ -538,7 +556,11 @@ For long-running operations, prefer `run_in_background: true` on Task and Bash t
 
 | Want to... | Correct command | Common mistake |
 |------------|----------------|----------------|
+{{ if .IsForkRig -}}
+| Complete fork work | assignment PR/no-merge cleanup path | ~~local Refinery/MQ for upstream changes~~ |
+{{ else -}}
 | Signal work complete | `{{ cmd }} done` | ~~bd close <root-issue>~~ (Refinery closes it) |
+{{ end }}
 | Close a sub-issue | `bd close <id>` | ~~bd complete~~ (not a command), ~~bd update --status done~~ (invalid status) |
 | Message another agent | `{{ cmd }} nudge <target> "msg"` | ~~tmux send-keys~~ (unreliable) |
 | Check workflow steps | `{{ cmd }} prime` (shows inline checklist) | ~~bd mol current~~ (steps not materialized) |
