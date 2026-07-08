@@ -1207,6 +1207,15 @@ func runDone(cmd *cobra.Command, args []string) (retErr error) {
 		}
 		bd := beads.NewWithBeadsDir(cwd, resolvedBeads)
 
+		// AA-851 hard CI gate: block COMPLETED while this branch's PR has any
+		// check red or pending. Runs after push verification and BEFORE any
+		// issue close or MR-bead creation, so an abort leaves the polecat
+		// assigned with its hook bead open. No-PR and merged-PR pass through;
+		// CI-status errors fail open with a loud human escalation.
+		if gateErr := runDoneCIGate(bd, townRoot, rigName, cwd, branch, issueID, agentBeadID, sender); gateErr != nil {
+			return gateErr
+		}
+
 		// Check for no_merge flag - if set, skip merge queue and notify for review
 		sourceIssueForNoMerge, err := bd.Show(issueID)
 		if err == nil {
@@ -1257,19 +1266,33 @@ func runDone(cmd *cobra.Command, args []string) (retErr error) {
 					prBodyBuilder.WriteString("---\n")
 					prBodyBuilder.WriteString(fmt.Sprintf("*Polecat: %s | Issue: %s*\n", worker, issueID))
 					prBody := prBodyBuilder.String()
-					ghCmd := exec.CommandContext(context.Background(), "gh", "pr", "create",
-						"--base", defaultBranch,
-						"--head", branch,
-						"--title", prTitle,
-						"--body", prBody,
-					)
-					ghCmd.Dir = cwd
-					prOutput, prErr := ghCmd.Output()
-					if prErr != nil {
-						style.PrintWarning("could not create GitHub PR: %v", prErr)
-					} else {
-						prURL = strings.TrimSpace(string(prOutput))
-						fmt.Printf("%s GitHub PR created: %s\n", style.Bold.Render("✓"), prURL)
+					// Re-run idempotency (AA-851): a gt done that was aborted by
+					// the CI gate after creating the PR would otherwise fail here
+					// on a duplicate `gh pr create`. Reuse the existing open PR.
+					if existingNum, findErr := g.FindPRNumber(branch); findErr == nil && existingNum > 0 {
+						viewCmd := exec.CommandContext(context.Background(), "gh", "pr", "view",
+							fmt.Sprintf("%d", existingNum), "--json", "url", "--jq", ".url")
+						viewCmd.Dir = cwd
+						if viewOut, viewErr := viewCmd.Output(); viewErr == nil && len(strings.TrimSpace(string(viewOut))) > 0 {
+							prURL = strings.TrimSpace(string(viewOut))
+							fmt.Printf("%s Reusing existing GitHub PR: %s\n", style.Bold.Render("✓"), prURL)
+						}
+					}
+					if prURL == "" {
+						ghCmd := exec.CommandContext(context.Background(), "gh", "pr", "create",
+							"--base", defaultBranch,
+							"--head", branch,
+							"--title", prTitle,
+							"--body", prBody,
+						)
+						ghCmd.Dir = cwd
+						prOutput, prErr := ghCmd.Output()
+						if prErr != nil {
+							style.PrintWarning("could not create GitHub PR: %v", prErr)
+						} else {
+							prURL = strings.TrimSpace(string(prOutput))
+							fmt.Printf("%s GitHub PR created: %s\n", style.Bold.Render("✓"), prURL)
+						}
 					}
 				} else {
 					fmt.Printf("%s\n", style.Dim.Render("Work stays on feature branch for human review."))

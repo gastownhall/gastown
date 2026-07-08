@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/steveyegge/gastown/internal/beads"
+	"github.com/steveyegge/gastown/internal/cigate"
 	"github.com/steveyegge/gastown/internal/polecat"
 	"github.com/steveyegge/gastown/internal/rig"
 	"github.com/steveyegge/gastown/internal/style"
@@ -213,6 +214,19 @@ func checkPolecatSafety(target polecatTarget) *SafetyCheckResult {
 		} else if mr != nil {
 			result.OpenMR = mr.ID
 			result.Reasons = append(result.Reasons, fmt.Sprintf("has open MR (%s)", mr.ID))
+		}
+	}
+
+	// Check 4 (AA-851): PR CI not green — friendly early error surfaced by
+	// safety checks/dry-run. The nuke funnel (checkNukeCIGate) enforces the
+	// same gate even under --force.
+	if infoErr == nil && polecatInfo != nil && polecatInfo.Branch != "" {
+		cfg := loadCIGateConfig(target.r.Path)
+		if cfg.IsEnabled() && !cigate.EnvDisabled() {
+			res := cigate.New().CheckBranch(ciGateDirForPolecat(polecatInfo.ClonePath, target.r.Path), polecatInfo.Branch)
+			if res.Verdict.Blocks() {
+				result.Reasons = append(result.Reasons, fmt.Sprintf("PR CI not green: %s", res.Summary()))
+			}
 		}
 	}
 

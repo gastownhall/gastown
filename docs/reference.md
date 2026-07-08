@@ -84,7 +84,14 @@ town-level Gas Town beads.
     "integration_branch_polecat_enabled": true,
     "integration_branch_refinery_enabled": true,
     "integration_branch_template": "integration/{title}",
-    "integration_branch_auto_land": false
+    "integration_branch_auto_land": false,
+    "ci_gate": {
+      "enabled": true,
+      "pending_timeout": "30m",
+      "poll_interval": "30s",
+      "mayor_alert_after": "30m",
+      "escalation_cmd": ""
+    }
   }
 }
 ```
@@ -149,8 +156,29 @@ Town-level role defaults live in `mayor/config.json` under:
 | `integration_branch_refinery_enabled` | `*bool` | `true` | `gt done` / `gt mq submit` auto-target integration branches |
 | `integration_branch_template` | `string` | `"integration/{title}"` | Branch name template (`{title}`, `{epic}`, `{prefix}`, `{user}`) |
 | `integration_branch_auto_land` | `*bool` | `false` | Refinery patrol auto-lands when all children closed |
+| `ci_gate` | `object` | enabled | Hard CI gate (AA-851) — see below |
 
 See [Integration Branches](concepts/integration-branches.md) for integration branch details.
+
+**CI gate fields (`merge_queue.ci_gate`):**
+
+The hard CI gate blocks a polecat from completing (`gt done`) and from being
+nuked while its branch's PR has any CI check red or pending, and stops the
+refinery from merging such a PR (merge_strategy=pr). The gate only applies
+when a PR exists — no-PR branches and merged PRs pass through — so it is safe
+to leave enabled on direct-merge rigs. When CI state cannot be determined the
+gate FAILS OPEN but runs `escalation_cmd` so a human verifies.
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `enabled` | `*bool` | `true` | Enable the gate. Process-level kill switch: `GT_CI_GATE=off` |
+| `pending_timeout` | `string` | `"30m"` | How long `gt done` waits for pending checks before aborting with a human escalation (sized for slow Jenkins pipelines) |
+| `poll_interval` | `string` | `"30s"` | Initial poll interval while waiting; backs off to 4x |
+| `mayor_alert_after` | `string` | `"30m"` | How long a nuke can stay CI-blocked before the mayor is nudged |
+| `escalation_cmd` | `string` | `""` | Command run via `sh -c` on CI-status errors and pending timeouts. Receives `GT_CIGATE_EVENT`, `GT_CIGATE_TICKET` (from the bead's `Jira:`/`Ticket:` line), `GT_CIGATE_DETAIL`, `GT_CIGATE_PR_URL`, `GT_CIGATE_BRANCH`, `GT_CIGATE_AGENT` in the environment. Wire it to your tracker, e.g. a script that comments on the ticket and transitions it to a human-attention status |
+
+Overrides: `gt polecat nuke --ignore-ci` bypasses the nuke gate for one
+invocation; `GT_CI_GATE=off` disables the gate process-wide (emergencies only).
 
 ### Runtime (`.runtime/` - gitignored)
 

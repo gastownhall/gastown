@@ -142,6 +142,7 @@ var (
 	polecatNukeAll                       bool
 	polecatNukeDryRun                    bool
 	polecatNukeForce                     bool
+	polecatNukeIgnoreCI                  bool
 	polecatCheckRecoveryJSON             bool
 	polecatCheckRecoveryReconcileCleanup bool
 	polecatPoolInitDryRun                bool
@@ -346,6 +347,7 @@ func init() {
 	polecatNukeCmd.Flags().BoolVar(&polecatNukeAll, "all", false, "Nuke all polecats in the rig")
 	polecatNukeCmd.Flags().BoolVar(&polecatNukeDryRun, "dry-run", false, "Show what would be nuked without doing it")
 	polecatNukeCmd.Flags().BoolVarP(&polecatNukeForce, "force", "f", false, "Force nuke, bypassing all safety checks (LOSES WORK)")
+	polecatNukeCmd.Flags().BoolVar(&polecatNukeIgnoreCI, "ignore-ci", false, "Bypass the AA-851 CI gate (nuke even when the branch's PR has red/pending checks)")
 
 	// Check-recovery flags
 	polecatCheckRecoveryCmd.Flags().BoolVar(&polecatCheckRecoveryJSON, "json", false, "Output as JSON")
@@ -1791,7 +1793,7 @@ func runPolecatNuke(cmd *cobra.Command, args []string) error {
 			fmt.Printf("Nuking %s/%s...\n", p.rigName, p.polecatName)
 		}
 
-		if err := nukePolecatFullWithOptions(p.polecatName, p.rigName, p.mgr, p.r, nukePolecatOptions{PurgeClosedEphemerals: !batchPurge}); err != nil {
+		if err := nukePolecatFullWithOptions(p.polecatName, p.rigName, p.mgr, p.r, nukePolecatOptions{PurgeClosedEphemerals: !batchPurge, IgnoreCIGate: polecatNukeIgnoreCI}); err != nil {
 			nukeErrors = append(nukeErrors, fmt.Sprintf("%s/%s: %v", p.rigName, p.polecatName, err))
 			continue
 		}
@@ -1860,9 +1862,23 @@ func nukePolecatFull(polecatName, rigName string, mgr *polecat.Manager, r *rig.R
 
 type nukePolecatOptions struct {
 	PurgeClosedEphemerals bool
+	// IgnoreCIGate bypasses the AA-851 CI gate (nuke even when the branch's
+	// PR has red/pending checks). Set only by explicit --ignore-ci.
+	IgnoreCIGate bool
 }
 
 func nukePolecatFullWithOptions(polecatName, rigName string, mgr *polecat.Manager, r *rig.Rig, opts nukePolecatOptions) error {
+	// Step 0: AA-851 hard CI gate — refuse to reap a polecat whose branch has
+	// an open PR with red or pending checks. Runs before the tmux kill so a
+	// refused nuke leaves the session intact. Covers nuke (incl. --force),
+	// stale --cleanup, and the witness auto-nuke. Override: --ignore-ci or
+	// GT_CI_GATE=off.
+	if !opts.IgnoreCIGate {
+		if err := checkNukeCIGate(polecatName, rigName, mgr, r); err != nil {
+			return err
+		}
+	}
+
 	t := tmux.NewTmux()
 
 	// Step 1: Kill tmux session unconditionally to prevent ghost sessions

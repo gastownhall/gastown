@@ -18,6 +18,8 @@ import (
 	"time"
 
 	"github.com/steveyegge/gastown/internal/beads"
+	"github.com/steveyegge/gastown/internal/cigate"
+	"github.com/steveyegge/gastown/internal/config"
 	"github.com/steveyegge/gastown/internal/crew"
 	"github.com/steveyegge/gastown/internal/events"
 	"github.com/steveyegge/gastown/internal/git"
@@ -177,6 +179,12 @@ type MergeQueueConfig struct {
 	// Batch holds configuration for the batch-then-bisect merge queue.
 	// When nil or MaxBatchSize <= 1, batching is disabled and MRs process sequentially.
 	Batch *BatchConfig `json:"batch,omitempty"`
+
+	// CIGate mirrors the rig's merge_queue.ci_gate settings (AA-851). The
+	// refinery refuses to merge a PR whose checks are red or pending —
+	// belt-and-suspenders behind the gt done gate for merge_strategy=pr.
+	// Nil = enabled with defaults.
+	CIGate *config.CIGateConfig `json:"ci_gate,omitempty"`
 }
 
 // DefaultMergeQueueConfig returns sensible defaults for merge queue configuration.
@@ -269,6 +277,7 @@ type Engineer struct {
 	mergeSlotMaxRetries   int           // Max retries for slot acquisition (0 = no retry)
 	mergeSlotRetryBackoff time.Duration // Initial backoff between retries
 	testAllowSyntheticMRs bool          // Test-only: legacy merge-mechanics tests use synthetic MRs without beads.
+	ciGate                *cigate.Gate  // Test-injectable CI gate; nil = real gh-backed gate (AA-851)
 }
 
 // NewEngineer creates a new Engineer for the given rig.
@@ -355,6 +364,7 @@ func (e *Engineer) LoadConfig() error {
 		MergeStrategy        *string                   `json:"merge_strategy"`
 		VCSProvider          *string                   `json:"vcs_provider"`
 		RequireReview        *bool                     `json:"require_review"`
+		CIGate               *config.CIGateConfig      `json:"ci_gate"`
 	}
 
 	if err := json.Unmarshal(rawConfig.MergeQueue, &mqRaw); err != nil {
@@ -442,6 +452,9 @@ func (e *Engineer) LoadConfig() error {
 	if mqRaw.RequireReview != nil {
 		e.config.RequireReview = mqRaw.RequireReview
 	}
+	if mqRaw.CIGate != nil {
+		e.config.CIGate = mqRaw.CIGate
+	}
 
 	// Initialize the PR provider when merge_strategy=pr.
 	if e.config.MergeStrategy == "pr" {
@@ -495,6 +508,7 @@ type ProcessResult struct {
 	BranchNotFound bool // Source branch no longer exists (e.g. cleaned up after cherry-pick)
 	NoMerge        bool // MR/source is intentionally not merge-eligible, not a build failure
 	NeedsApproval  bool // PR exists but lacks required approving review (merge_strategy=pr)
+	NeedsCIGreen   bool // PR has red or pending CI checks (merge_strategy=pr); retried next poll (AA-851)
 }
 
 // doMerge performs the actual git merge operation.
@@ -759,6 +773,28 @@ func (e *Engineer) doMerge(ctx context.Context, mr *MRInfo, skipGates ...bool) P
 	}
 }
 
+// ciGateGate returns the CI gate, defaulting to the real gh-backed one.
+func (e *Engineer) ciGateGate() *cigate.Gate {
+	if e.ciGate != nil {
+		return e.ciGate
+	}
+	return cigate.New()
+}
+
+// ciGateMergeDecision maps a CI gate result to a merge-blocking ProcessResult,
+// or nil when the merge may proceed. Only RED and PENDING block; ERROR fails
+// open (callers log it loudly).
+func ciGateMergeDecision(res cigate.CheckResult) *ProcessResult {
+	if res.Verdict.Blocks() {
+		return &ProcessResult{
+			Success:      false,
+			NeedsCIGreen: true,
+			Error:        fmt.Sprintf("CI gate (AA-851): %s", res.Summary()),
+		}
+	}
+	return nil
+}
+
 // doMergePR handles merging via the VCS provider's PR merge API (merge_strategy=pr).
 // This respects branch protection/restriction rules including required reviews.
 // The VCS provider (GitHub, Bitbucket) is selected via vcs_provider config.
@@ -799,6 +835,20 @@ func (e *Engineer) doMergePR(ctx context.Context, mr *MRInfo) ProcessResult {
 		}
 	}
 	_, _ = fmt.Fprintf(e.output, "[Engineer] Found PR #%d for branch %s\n", prNumber, branch)
+
+	// Step PR.1.5 (AA-851): hard CI gate — never merge a PR with red or
+	// pending checks. Deferred like NeedsApproval: the MR stays queued and
+	// retries on the next poll. Belt-and-suspenders behind the gt done gate.
+	if e.config.CIGate.IsEnabled() && !cigate.EnvDisabled() {
+		res := e.ciGateGate().CheckBranch(e.workDir, branch)
+		if res.Verdict == cigate.VerdictError {
+			// Fail-open: unknown CI state must not wedge the queue, but log loudly.
+			_, _ = fmt.Fprintf(e.output, "[Engineer] Warning: CI gate could not determine CI status for PR #%d (%v) — failing open (AA-851)\n", prNumber, res.Err)
+		} else if blocked := ciGateMergeDecision(res); blocked != nil {
+			_, _ = fmt.Fprintf(e.output, "[Engineer] PR #%d CI not green — deferring merge: %s\n", prNumber, res.Summary())
+			return *blocked
+		}
+	}
 
 	// Step PR.2: Check approval status if require_review is enabled
 	requireReview := e.config.RequireReview != nil && *e.config.RequireReview
@@ -1475,6 +1525,14 @@ func (e *Engineer) HandleMRInfoFailure(mr *MRInfo, result ProcessResult) {
 	// No polecat notification needed; the PR just needs a human review on GitHub.
 	if result.NeedsApproval {
 		_, _ = fmt.Fprintf(e.output, "[Engineer] MR %s: PR awaiting human approval, will retry next poll\n", mr.ID)
+		return
+	}
+
+	// NeedsCIGreen (AA-851): the PR's checks are red or pending. Not a merge
+	// failure — the MR stays in queue and retries on the next poll, by which
+	// time the polecat should have fixed the failure or CI settled.
+	if result.NeedsCIGreen {
+		_, _ = fmt.Fprintf(e.output, "[Engineer] MR %s: PR CI not green, will retry next poll (%s)\n", mr.ID, result.Error)
 		return
 	}
 
