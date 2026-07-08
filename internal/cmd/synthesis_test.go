@@ -1,9 +1,13 @@
 package cmd
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
+
+	"github.com/steveyegge/gastown/internal/config"
 )
 
 func TestExpandOutputPath(t *testing.T) {
@@ -150,8 +154,14 @@ func TestLoadSynthesisFormulaUsesGTTownRootAndExistingConvoyMetadata(t *testing.
 }
 
 func TestLoadSynthesisFormulaPreservesExplicitPathPrecedence(t *testing.T) {
-	dir := t.TempDir()
-	explicitPath := filepath.Join(dir, "explicit.formula.toml")
+	townRoot := makeSynthesisTestWorkspace(t, "gastown")
+	withSynthesisTownRoot(t, townRoot)
+
+	formulasDir := filepath.Join(townRoot, ".beads", "formulas")
+	if err := os.MkdirAll(formulasDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	explicitPath := filepath.Join(formulasDir, "explicit.formula.toml")
 	if err := os.WriteFile(explicitPath, []byte(sprintfTestFormula("explicit-path", "explicit path wins")), 0644); err != nil {
 		t.Fatal(err)
 	}
@@ -168,6 +178,97 @@ func TestLoadSynthesisFormulaPreservesExplicitPathPrecedence(t *testing.T) {
 	if f == nil || f.Name != "explicit-path" {
 		t.Fatalf("loaded formula = %#v, want explicit-path", f)
 	}
+}
+
+func TestLoadSynthesisFormulaRejectsFormulaPathOutsideFormulaRoots(t *testing.T) {
+	townRoot := makeSynthesisTestWorkspace(t, "gastown")
+	withSynthesisTownRoot(t, townRoot)
+
+	explicitPath := filepath.Join(t.TempDir(), "outside.formula.toml")
+	if err := os.WriteFile(explicitPath, []byte(sprintfTestFormula("outside", "outside root")), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	meta := &ConvoyMeta{
+		FormulaPath: explicitPath,
+		Rig:         "gastown",
+	}
+	_, err := loadSynthesisFormula(meta, "gastown")
+	if err == nil {
+		t.Fatal("expected error for formula_path outside configured formula roots")
+	}
+	if !strings.Contains(err.Error(), "outside configured formula roots") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestResolveSynthesisTargetRigUsesMetadataRig(t *testing.T) {
+	townRoot := makeSynthesisTestWorkspace(t, "myrig")
+	withSynthesisTownRoot(t, townRoot)
+
+	got, err := resolveSynthesisTargetRigName(&ConvoyMeta{Rig: "myrig"}, "")
+	if err != nil {
+		t.Fatalf("resolveSynthesisTargetRigName() error: %v", err)
+	}
+	if got != "myrig" {
+		t.Fatalf("resolveSynthesisTargetRigName() = %q, want myrig", got)
+	}
+}
+
+func TestResolveSynthesisTargetRigRejectsUnknownExplicitRig(t *testing.T) {
+	townRoot := makeSynthesisTestWorkspace(t, "gastown")
+	withSynthesisTownRoot(t, townRoot)
+
+	_, err := resolveSynthesisTargetRigName(&ConvoyMeta{}, "missing")
+	if err == nil {
+		t.Fatal("expected error for unknown explicit rig")
+	}
+	if !strings.Contains(err.Error(), "unknown target rig") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func makeSynthesisTestWorkspace(t *testing.T, rigNames ...string) string {
+	t.Helper()
+	townRoot := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(townRoot, "mayor"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(townRoot, "mayor", "town.json"), []byte(`{"name":"test-town"}`), 0644); err != nil {
+		t.Fatal(err)
+	}
+	cfg := &config.RigsConfig{
+		Version: 1,
+		Rigs:    make(map[string]config.RigEntry),
+	}
+	for _, name := range rigNames {
+		if err := os.MkdirAll(filepath.Join(townRoot, name), 0755); err != nil {
+			t.Fatal(err)
+		}
+		cfg.Rigs[name] = config.RigEntry{}
+	}
+	data, err := json.Marshal(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(townRoot, "mayor", "rigs.json"), data, 0644); err != nil {
+		t.Fatal(err)
+	}
+	return townRoot
+}
+
+func withSynthesisTownRoot(t *testing.T, townRoot string) {
+	t.Helper()
+	oldWD, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chdir(oldWD) })
+	if err := os.Chdir(t.TempDir()); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("GT_ROOT", "")
+	t.Setenv("GT_TOWN_ROOT", townRoot)
 }
 
 func sprintfTestFormula(name, description string) string {

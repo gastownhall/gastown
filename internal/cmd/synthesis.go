@@ -140,7 +140,10 @@ func runSynthesisStart(cmd *cobra.Command, args []string) error {
 	}
 
 	fmt.Printf("%s Checking synthesis readiness for %s...\n", style.Bold.Render("🔬"), convoyID)
-	targetRig := resolveSynthesisTargetRig()
+	targetRig, err := resolveSynthesisTargetRig(meta)
+	if err != nil {
+		return err
+	}
 
 	// Load formula if specified
 	f, err := loadSynthesisFormula(meta, targetRig)
@@ -594,23 +597,37 @@ func slingSynthesis(beadID, targetRig string) error {
 	return slingCmd.Run()
 }
 
-func resolveSynthesisTargetRig() string {
-	if synthesisRig != "" {
-		return synthesisRig
-	}
+func resolveSynthesisTargetRig(meta *ConvoyMeta) (string, error) {
+	return resolveSynthesisTargetRigName(meta, synthesisRig)
+}
+
+func resolveSynthesisTargetRigName(meta *ConvoyMeta, requestedRig string) (string, error) {
 	townRoot, err := workspace.FindFromCwdOrError()
-	if err == nil {
-		rigName, _, rigErr := findCurrentRig(townRoot)
-		if rigErr == nil && rigName != "" {
-			return rigName
-		}
+	if err != nil {
+		return "", fmt.Errorf("finding town root: %w", err)
 	}
-	return "gastown"
+	if requestedRig != "" {
+		name, _, err := resolveRegisteredRig(townRoot, requestedRig)
+		return name, err
+	}
+	if meta != nil && meta.Rig != "" {
+		name, _, err := resolveRegisteredRig(townRoot, meta.Rig)
+		return name, err
+	}
+	if rigName, _, rigErr := findCurrentRig(townRoot); rigErr == nil && rigName != "" {
+		return rigName, nil
+	}
+	name, _, err := autoInferRig(townRoot)
+	return name, err
 }
 
 func loadSynthesisFormula(meta *ConvoyMeta, targetRig string) (*formula.Formula, error) {
+	rigName := meta.Rig
+	if rigName == "" {
+		rigName = targetRig
+	}
 	if meta.FormulaPath != "" {
-		f, err := formula.ParseFile(meta.FormulaPath)
+		f, err := loadExplicitSynthesisFormula(meta.FormulaPath, rigName)
 		if err != nil {
 			return nil, fmt.Errorf("loading formula: %w", err)
 		}
@@ -618,10 +635,6 @@ func loadSynthesisFormula(meta *ConvoyMeta, targetRig string) (*formula.Formula,
 	}
 	if meta.Formula == "" {
 		return nil, nil
-	}
-	rigName := meta.Rig
-	if rigName == "" {
-		rigName = targetRig
 	}
 	f, err := loadNamedFormulaFromCwd(meta.Formula, rigName)
 	if errors.Is(err, formula.ErrFormulaNotFound) {
@@ -631,6 +644,83 @@ func loadSynthesisFormula(meta *ConvoyMeta, targetRig string) (*formula.Formula,
 		return nil, fmt.Errorf("loading formula: %w", err)
 	}
 	return f, nil
+}
+
+func loadExplicitSynthesisFormula(path, rigName string) (*formula.Formula, error) {
+	if rigName != "" {
+		if err := validateFormulaRunRigName(rigName); err != nil {
+			return nil, err
+		}
+	}
+	townRoot, err := workspace.FindFromCwdOrError()
+	if err != nil {
+		return nil, fmt.Errorf("finding town root: %w", err)
+	}
+
+	formulaPath, err := canonicalFormulaPath(path)
+	if err != nil {
+		return nil, fmt.Errorf("resolving formula_path %q: %w", path, err)
+	}
+	for _, root := range synthesisFormulaRoots(townRoot, rigName) {
+		rootPath, err := canonicalFormulaPath(root)
+		if err != nil {
+			return nil, fmt.Errorf("resolving formula root %q: %w", root, err)
+		}
+		if pathWithinDir(rootPath, formulaPath) {
+			return formula.ParseFile(formulaPath)
+		}
+	}
+	return nil, fmt.Errorf("formula_path %q is outside configured formula roots", path)
+}
+
+func synthesisFormulaRoots(townRoot, rigName string) []string {
+	roots := make([]string, 0, 3)
+	seen := make(map[string]struct{})
+	add := func(path string) {
+		if path == "" {
+			return
+		}
+		path = filepath.Clean(path)
+		if _, ok := seen[path]; ok {
+			return
+		}
+		seen[path] = struct{}{}
+		roots = append(roots, path)
+	}
+
+	if townRoot != "" && rigName != "" {
+		if rigDir := beads.GetRigDirForName(townRoot, rigName); rigDir != "" {
+			add(filepath.Join(beads.ResolveBeadsDir(rigDir), "formulas"))
+		}
+		add(filepath.Join(townRoot, rigName, ".beads", "formulas"))
+	}
+	if townRoot != "" {
+		add(filepath.Join(townRoot, ".beads", "formulas"))
+	}
+	return roots
+}
+
+func canonicalFormulaPath(path string) (string, error) {
+	absPath, err := filepath.Abs(path)
+	if err != nil {
+		return "", err
+	}
+	realPath, err := filepath.EvalSymlinks(absPath)
+	if err == nil {
+		return filepath.Clean(realPath), nil
+	}
+	if os.IsNotExist(err) {
+		return filepath.Clean(absPath), nil
+	}
+	return "", err
+}
+
+func pathWithinDir(root, path string) bool {
+	rel, err := filepath.Rel(root, path)
+	if err != nil {
+		return false
+	}
+	return rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
 }
 
 func parseConvoyDescriptionMeta(meta *ConvoyMeta, description string) {
@@ -681,6 +771,10 @@ func TriggerSynthesisIfReady(convoyID, targetRig string) error {
 	fmt.Printf("%s All legs complete, starting synthesis...\n", style.Bold.Render("🔬"))
 
 	meta, err := getConvoyMeta(convoyID)
+	if err != nil {
+		return err
+	}
+	targetRig, err = resolveSynthesisTargetRigName(meta, targetRig)
 	if err != nil {
 		return err
 	}

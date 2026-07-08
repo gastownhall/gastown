@@ -219,35 +219,9 @@ func runFormulaRun(cmd *cobra.Command, args []string) error {
 	}
 
 	// Determine target rig first (needed for default formula lookup)
-	targetRig := formulaRunRig
-	var rigPath string
-	if targetRig == "" {
-		// Try to detect from current directory
-		rigName, r, rigErr := findCurrentRig(townRoot)
-		if rigErr == nil && rigName != "" {
-			targetRig = rigName
-			if r != nil {
-				rigPath = r.Path
-			}
-		}
-		// Still no rig — auto-select when there is exactly one registered rig,
-		// otherwise surface a helpful error (e.g. Deacon at HQ level on
-		// non-default installs where "gastown" rig does not exist).
-		if targetRig == "" {
-			name, path, inferErr := autoInferRig(townRoot)
-			if inferErr != nil {
-				return inferErr
-			}
-			targetRig = name
-			rigPath = path
-		}
-	} else {
-		if err := validateFormulaRunRigName(targetRig); err != nil {
-			return err
-		}
-		// Rig settings live at the rig container path; formula content resolution
-		// below handles any route-resolved .beads path for the same rig name.
-		rigPath = filepath.Join(townRoot, targetRig)
+	targetRig, rigPath, err := resolveFormulaRunTargetRig(townRoot, formulaRunRig)
+	if err != nil {
+		return err
 	}
 
 	// Get formula name from args or default
@@ -312,6 +286,57 @@ func loadNamedFormula(name, townRoot, rigName string) (*formula.Formula, error) 
 		return nil, fmt.Errorf("parsing formula %q: %w", name, err)
 	}
 	return f, nil
+}
+
+func resolveFormulaRunTargetRig(townRoot, requestedRig string) (string, string, error) {
+	if requestedRig != "" {
+		return resolveRegisteredRig(townRoot, requestedRig)
+	}
+
+	// Try to detect from current directory.
+	rigName, r, rigErr := findCurrentRig(townRoot)
+	if rigErr == nil && rigName != "" {
+		if r != nil && r.Path != "" {
+			return rigName, r.Path, nil
+		}
+		return rigName, filepath.Join(townRoot, rigName), nil
+	}
+
+	// Still no rig — auto-select when there is exactly one registered rig,
+	// otherwise surface a helpful error (e.g. Deacon at HQ level on
+	// non-default installs where "gastown" rig does not exist).
+	return autoInferRig(townRoot)
+}
+
+func resolveRegisteredRig(townRoot, rigName string) (string, string, error) {
+	if err := validateFormulaRunRigName(rigName); err != nil {
+		return "", "", err
+	}
+
+	rigs, err := discoverRigsForTownRoot(townRoot)
+	if err != nil {
+		return "", "", fmt.Errorf("cannot resolve target rig %q: %w", rigName, err)
+	}
+
+	names := make([]string, 0, len(rigs))
+	for _, r := range rigs {
+		if r == nil {
+			continue
+		}
+		names = append(names, r.Name)
+		if r.Name == rigName {
+			path := r.Path
+			if path == "" {
+				path = filepath.Join(townRoot, rigName)
+			}
+			return rigName, path, nil
+		}
+	}
+
+	if len(names) == 0 {
+		return "", "", fmt.Errorf("unknown target rig %q: no rigs registered in this workspace", rigName)
+	}
+	return "", "", fmt.Errorf("unknown target rig %q (available: %s)", rigName, strings.Join(names, ", "))
 }
 
 func validateFormulaRunRigName(rigName string) error {

@@ -119,7 +119,7 @@ func GetEmbeddedFormulaContent(name string) ([]byte, error) {
 	}
 	content, err := formulasFS.ReadFile("formulas/" + filename)
 	if err != nil {
-		return nil, fmt.Errorf("%w: embedded formula %q: %v", ErrFormulaNotFound, name, err)
+		return nil, fmt.Errorf("%w: embedded formula %q: %w", ErrFormulaNotFound, name, err)
 	}
 	return content, nil
 }

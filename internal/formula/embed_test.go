@@ -5,6 +5,8 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -1026,6 +1028,12 @@ func TestResolveFormulaContent(t *testing.T) {
 		_, err := ResolveFormulaContent("mol-does-not-exist", "", "")
 		if err == nil {
 			t.Error("expected error for non-existent formula")
+		}
+		if !errors.Is(err, ErrFormulaNotFound) {
+			t.Fatalf("error should match ErrFormulaNotFound, got: %v", err)
+		}
+		if !errors.Is(err, fs.ErrNotExist) {
+			t.Fatalf("error should preserve embedded fs.ErrNotExist, got: %v", err)
 		}
 	})
 }

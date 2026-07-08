@@ -142,6 +142,38 @@ func TestValidateFormulaRunRigNameRejectsPathLike(t *testing.T) {
 	}
 }
 
+func TestResolveRegisteredRigRejectsUnknown(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "mayor"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	rigDir := filepath.Join(root, "gastown")
+	if err := os.MkdirAll(rigDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	cfg := &config.RigsConfig{
+		Version: 1,
+		Rigs: map[string]config.RigEntry{
+			"gastown": {},
+		},
+	}
+	data, err := json.Marshal(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "mayor", "rigs.json"), data, 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	_, _, err = resolveRegisteredRig(root, "missing")
+	if err == nil {
+		t.Fatal("expected error for unknown target rig")
+	}
+	if !strings.Contains(err.Error(), "unknown target rig") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
 func TestBuildConvoyLegSlingArgs_AlwaysIncludesNoConvoy(t *testing.T) {
 	t.Parallel()
 
