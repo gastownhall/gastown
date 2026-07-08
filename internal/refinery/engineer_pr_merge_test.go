@@ -3,8 +3,6 @@ package refinery
 import (
 	"bytes"
 	"context"
-	"encoding/json"
-	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -18,7 +16,7 @@ func TestEngineer_LoadConfig_MergeStrategyPR(t *testing.T) {
 	tmpDir := t.TempDir()
 
 	requireReview := true
-	config := map[string]interface{}{
+	settings := map[string]interface{}{
 		"type":    "rig",
 		"version": 1,
 		"name":    "test-rig",
@@ -27,11 +25,7 @@ func TestEngineer_LoadConfig_MergeStrategyPR(t *testing.T) {
 			"require_review": requireReview,
 		},
 	}
-
-	data, _ := json.MarshalIndent(config, "", "  ")
-	if err := os.WriteFile(filepath.Join(tmpDir, "config.json"), data, 0644); err != nil {
-		t.Fatal(err)
-	}
+	writeEngineerSettingsConfig(t, tmpDir, settings)
 
 	r := &rig.Rig{Name: "test-rig", Path: tmpDir}
 	e := NewEngineer(r)
@@ -50,17 +44,13 @@ func TestEngineer_LoadConfig_MergeStrategyPR(t *testing.T) {
 func TestEngineer_LoadConfig_MergeStrategyDefault(t *testing.T) {
 	tmpDir := t.TempDir()
 
-	config := map[string]interface{}{
+	settings := map[string]interface{}{
 		"type":        "rig",
 		"version":     1,
 		"name":        "test-rig",
 		"merge_queue": map[string]interface{}{},
 	}
-
-	data, _ := json.MarshalIndent(config, "", "  ")
-	if err := os.WriteFile(filepath.Join(tmpDir, "config.json"), data, 0644); err != nil {
-		t.Fatal(err)
-	}
+	writeEngineerSettingsConfig(t, tmpDir, settings)
 
 	r := &rig.Rig{Name: "test-rig", Path: tmpDir}
 	e := NewEngineer(r)
