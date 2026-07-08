@@ -1800,13 +1800,7 @@ func (g *Git) ListPushRemoteRefs(remote, prefix string) ([]string, error) {
 
 // ListPushRemoteRefsWithHashes is ListPushRemoteRefs with commit hashes.
 func (g *Git) ListPushRemoteRefsWithHashes(remote, prefix string) ([]RemoteRef, error) {
-	fetchURL, fetchErr := g.RemoteURL(remote)
-	pushURL, pushErr := g.GetPushURL(remote)
-	if fetchErr != nil || pushErr != nil || pushURL == fetchURL {
-		return g.ListRemoteRefsWithHashes(remote, prefix)
-	}
-	// Query the push URL directly
-	return g.ListRemoteRefsWithHashes(pushURL, prefix)
+	return g.ListRemoteRefsWithHashes(g.pushTarget(remote), prefix)
 }
 
 // Rebase rebases the current branch onto the given ref.
@@ -2010,12 +2004,11 @@ func (g *Git) RemoteBranchTip(remote, branch string) (string, error) {
 // URL directly so verification matches where the branch was actually pushed.
 // Falls back to RemoteBranchExists when no custom push URL is configured.
 func (g *Git) PushRemoteBranchExists(remote, branch string) (bool, error) {
-	fetchURL, fetchErr := g.RemoteURL(remote)
-	pushURL, pushErr := g.GetPushURL(remote)
-	if fetchErr != nil || pushErr != nil || pushURL == fetchURL {
+	pushTarget := g.pushTarget(remote)
+	if pushTarget == remote {
 		return g.RemoteBranchExists(remote, branch)
 	}
-	out, err := g.run("ls-remote", "--heads", pushURL, branch)
+	out, err := g.run("ls-remote", "--heads", pushTarget, branch)
 	if err != nil {
 		return false, err
 	}
@@ -2027,12 +2020,20 @@ func (g *Git) PushRemoteBranchExists(remote, branch string) (bool, error) {
 // the fetch URL, verification must query the push URL because that is where the
 // preceding git push wrote.
 func (g *Git) PushRemoteBranchTip(remote, branch string) (string, error) {
+	pushTarget := g.pushTarget(remote)
+	if pushTarget == remote {
+		return g.RemoteBranchTip(remote, branch)
+	}
+	return g.RemoteBranchTip(pushTarget, branch)
+}
+
+func (g *Git) pushTarget(remote string) string {
 	fetchURL, fetchErr := g.RemoteURL(remote)
 	pushURL, pushErr := g.GetPushURL(remote)
 	if fetchErr != nil || pushErr != nil || pushURL == fetchURL {
-		return g.RemoteBranchTip(remote, branch)
+		return remote
 	}
-	return g.RemoteBranchTip(pushURL, branch)
+	return pushURL
 }
 
 // VerifyPushedCommit verifies that the push target branch tip is exactly commit.
@@ -2076,12 +2077,7 @@ func (g *Git) VerifyPushedCommitReachableFromPushTarget(remote, branch, commit s
 		return nil
 	}
 
-	fetchTarget := remote
-	fetchURL, fetchErr := g.RemoteURL(remote)
-	pushURL, pushErr := g.GetPushURL(remote)
-	if fetchErr == nil && pushErr == nil && pushURL != fetchURL {
-		fetchTarget = pushURL
-	}
+	fetchTarget := g.pushTarget(remote)
 	if _, err := g.run("fetch", "--no-tags", fetchTarget, "refs/heads/"+branch); err != nil {
 		return fmt.Errorf("verified_push_failed: unable to fetch %s/%s for ancestry check: %w", remote, branch, err)
 	}
@@ -2850,36 +2846,74 @@ func comparisonRefCandidates(ref, remote string) []string {
 }
 
 func (g *Git) preservationAgainstRef(ref string) (BranchPreservationStatus, error) {
+	return g.preservationOfRefAgainstRef("HEAD", ref)
+}
+
+func (g *Git) preservationOfRefAgainstRef(head, ref string) (BranchPreservationStatus, error) {
 	status := BranchPreservationStatus{ComparisonBase: ref}
-	if contains, err := g.refContainsHead(ref); err == nil && contains {
+	if contains, err := g.IsAncestor(head, ref); err == nil && contains {
 		status.Preserved = true
 		status.Evidence = "ancestor"
 		return status, nil
 	}
-	if preserved, err := g.mergeTreeNoopAgainstRef(ref); err == nil && preserved {
+	if preserved, err := g.mergeTreeNoopBetweenRefs(head, ref); err == nil && preserved {
 		status.Preserved = true
 		status.Evidence = "merge_tree_noop"
 		return status, nil
 	}
-	out, err := g.Cherry(ref, "HEAD")
+	out, err := g.Cherry(ref, head)
 	if err != nil {
 		return status, err
 	}
 	status.UnpreservedPatchCount = CountCherryUnmergedCommits(out)
 	status.Preserved = status.UnpreservedPatchCount == 0
+	if status.Preserved {
+		status.Evidence = "cherry"
+	}
 	return status, nil
 }
 
 func (g *Git) mergeTreeNoopAgainstRef(ref string) (bool, error) {
+	return g.mergeTreeNoopBetweenRefs("HEAD", ref)
+}
+
+func (g *Git) mergeTreeNoopBetweenRefs(head, ref string) (bool, error) {
 	refTree, err := g.run("rev-parse", ref+"^{tree}")
 	if err != nil {
 		return false, err
 	}
-	mergedTree, err := g.run("merge-tree", "--write-tree", ref, "HEAD")
+	mergedTree, err := g.run("merge-tree", "--write-tree", ref, head)
 	if err != nil {
 		return false, err
 	}
 	return strings.TrimSpace(mergedTree) == strings.TrimSpace(refTree), nil
+}
+
+// PushRemoteRefTargetStatus checks whether a push-remote ref is preserved on
+// target. It fetches the exact candidate ref first so remote-only tips and split
+// fetch/push remotes are classified against the listed hash, not stale tracking
+// refs.
+func (g *Git) PushRemoteRefTargetStatus(remote string, ref RemoteRef, target string) (BranchPreservationStatus, error) {
+	var status BranchPreservationStatus
+	refName := strings.TrimSpace(ref.Name)
+	expectedHash := strings.TrimSpace(ref.Hash)
+	if refName == "" || expectedHash == "" {
+		return status, fmt.Errorf("remote ref is missing name or hash")
+	}
+
+	if _, err := g.run("fetch", "--no-tags", g.pushTarget(remote), refName); err != nil {
+		return status, fmt.Errorf("fetching candidate %s: %w", refName, err)
+	}
+	fetchedHash, err := g.Rev("FETCH_HEAD")
+	if err != nil {
+		return status, fmt.Errorf("resolving fetched candidate %s: %w", refName, err)
+	}
+	fetchedHash = strings.TrimSpace(fetchedHash)
+	if fetchedHash != expectedHash {
+		return status, fmt.Errorf("candidate %s changed while pruning: expected %s, fetched %s", refName, shortSHA(expectedHash), shortSHA(fetchedHash))
+	}
+
+	return g.preservationOfRefAgainstRef("FETCH_HEAD", target)
 }
 
 // CountCherryUnmergedCommits counts `git cherry` lines whose patches are not

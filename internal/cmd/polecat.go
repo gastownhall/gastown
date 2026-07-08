@@ -2196,6 +2196,9 @@ func runPolecatPrune(cmd *cobra.Command, args []string) error {
 
 	// First, prune stale remote-tracking refs so we detect deleted remote branches
 	if err := repoGit.FetchPrune("origin"); err != nil {
+		if polecatPruneRemote {
+			return fmt.Errorf("refreshing origin before remote prune: %w", err)
+		}
 		fmt.Printf("  %s fetch --prune: %v (continuing anyway)\n", style.Warning.Render("⚠"), err)
 	}
 
@@ -2223,38 +2226,9 @@ func runPolecatPrune(cmd *cobra.Command, args []string) error {
 		fmt.Println()
 		fmt.Println("Pruning remote polecat branches...")
 
-		defaultBranch := repoGit.RemoteDefaultBranch()
-		remoteRefs, lsErr := repoGit.ListPushRemoteRefsWithHashes("origin", "refs/heads/polecat/")
-		if lsErr != nil {
-			return fmt.Errorf("listing remote refs: %w", lsErr)
-		}
-
-		remotePruned := 0
-		for _, ref := range remoteRefs {
-			if !strings.HasPrefix(ref.Name, "refs/heads/") {
-				continue
-			}
-			branch := strings.TrimPrefix(ref.Name, "refs/heads/")
-			// Use the listed remote tip, not the short branch name, so remote-only
-			// branches can be classified without a local branch.
-			merged, mergeErr := repoGit.IsAncestor(ref.Hash, "origin/"+defaultBranch)
-			if mergeErr != nil {
-				continue
-			}
-			if !merged {
-				continue
-			}
-
-			if polecatPruneDryRun {
-				fmt.Printf("  Would delete remote: %s\n", style.Dim.Render(branch))
-			} else {
-				if delErr := repoGit.DeleteRemoteBranchIfAt("origin", branch, ref.Hash); delErr != nil {
-					fmt.Printf("  %s remote %s: %v\n", style.Warning.Render("⚠"), branch, delErr)
-				} else {
-					fmt.Printf("  %s deleted remote %s\n", style.Success.Render("✓"), branch)
-				}
-			}
-			remotePruned++
+		remotePruned, remoteErr := pruneRemotePolecatBranches(repoGit, polecatPruneDryRun)
+		if remoteErr != nil {
+			return remoteErr
 		}
 
 		if remotePruned == 0 {
@@ -2269,6 +2243,41 @@ func runPolecatPrune(cmd *cobra.Command, args []string) error {
 	}
 
 	return nil
+}
+
+func pruneRemotePolecatBranches(repoGit *git.Git, dryRun bool) (int, error) {
+	defaultBranch := repoGit.RemoteDefaultBranch()
+	target := "origin/" + defaultBranch
+	remoteRefs, lsErr := repoGit.ListPushRemoteRefsWithHashes("origin", "refs/heads/polecat/")
+	if lsErr != nil {
+		return 0, fmt.Errorf("listing remote refs: %w", lsErr)
+	}
+
+	remotePruned := 0
+	for _, ref := range remoteRefs {
+		if !strings.HasPrefix(ref.Name, "refs/heads/") {
+			continue
+		}
+		branch := strings.TrimPrefix(ref.Name, "refs/heads/")
+		status, statusErr := repoGit.PushRemoteRefTargetStatus("origin", ref, target)
+		if statusErr != nil || !status.Preserved {
+			continue
+		}
+
+		if dryRun {
+			fmt.Printf("  Would delete remote: %s\n", style.Dim.Render(branch))
+			remotePruned++
+			continue
+		}
+		if delErr := repoGit.DeleteRemoteBranchIfAt("origin", branch, ref.Hash); delErr != nil {
+			fmt.Printf("  %s remote %s: %v\n", style.Warning.Render("⚠"), branch, delErr)
+			continue
+		}
+		fmt.Printf("  %s deleted remote %s\n", style.Success.Render("✓"), branch)
+		remotePruned++
+	}
+
+	return remotePruned, nil
 }
 
 // runPolecatPoolInit creates a persistent polecat pool for a rig.
