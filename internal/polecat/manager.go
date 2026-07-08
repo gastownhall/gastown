@@ -1132,6 +1132,10 @@ func (m *Manager) RemoveWithOptions(name string, force, nuclear, selfNuke bool) 
 	}
 	defer func() { _ = fl.Unlock() }()
 
+	return m.removeWithOptionsLocked(name, force, nuclear, selfNuke)
+}
+
+func (m *Manager) removeWithOptionsLocked(name string, force, nuclear, selfNuke bool) error {
 	if !m.exists(name) {
 		return ErrPolecatNotFound
 	}
@@ -1303,6 +1307,67 @@ func (m *Manager) RemoveWithOptions(name string, force, nuclear, selfNuke bool) 
 	_ = m.namePool.Save()
 
 	return nil
+}
+
+// ReclaimBrokenIdlePolecat removes a structurally broken idle sandbox before any
+// new hook is attached. It deliberately uses the normal non-force removal path.
+func (m *Manager) ReclaimBrokenIdlePolecat(name string) (retErr error) {
+	defer func() { telemetry.RecordPolecatRemove(context.Background(), name, retErr) }()
+
+	fl, err := m.lockPolecat(name)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = fl.Unlock() }()
+
+	if !m.exists(name) {
+		return ErrPolecatNotFound
+	}
+
+	current, err := m.loadFromBeads(name)
+	if err != nil {
+		return err
+	}
+	if current.State != StateIdle || current.Issue != "" {
+		return fmt.Errorf("not a clean idle polecat: state=%s issue=%s", current.State, current.Issue)
+	}
+
+	if err := VerifyWorktreeExists(current.ClonePath); err == nil {
+		return fmt.Errorf("worktree is healthy: %s", current.ClonePath)
+	} else if !IsStructuralWorktreeError(err) {
+		return fmt.Errorf("worktree check did not prove structural damage: %w", err)
+	}
+
+	agentID := m.agentBeadID(name)
+	agentIssue, fields, err := m.agentBeads().GetAgentBead(agentID)
+	if err != nil {
+		return fmt.Errorf("not safe to reclaim: agent_bead=%s lookup_error: %w", agentID, err)
+	}
+	if agentIssue == nil || fields == nil {
+		return fmt.Errorf("not safe to reclaim: agent_bead=%s missing", agentID)
+	}
+	if blocker := brokenIdleReclaimAgentBlocker(fields); blocker != "" {
+		return fmt.Errorf("not safe to reclaim: %s", blocker)
+	}
+	if blocker := m.brokenIdleReclaimSessionBlocker(name); blocker != "" {
+		return fmt.Errorf("not safe to reclaim: %s", blocker)
+	}
+	issues, err := m.beads.ListByAssignee(m.assigneeID(name))
+	if err != nil {
+		return fmt.Errorf("not safe to reclaim: assigned_work lookup_error: %w", err)
+	}
+	if work := activeWorkBeadsForCleanup(issues); len(work) > 0 {
+		return fmt.Errorf("not safe to reclaim: assigned_work=%s status=%s", work[0].ID, work[0].Status)
+	}
+	if blocker := brokenIdleReclaimDispositionBlocker(m.WorkstateDispositionForPolecat(name, current.State, current.Issue)); blocker != "" {
+		return fmt.Errorf("not safe to reclaim: %s", blocker)
+	}
+	mr, mrErr := m.beads.FindMRForBranch(fields.Branch)
+	if blocker := brokenIdleReclaimMRBlocker(fields.Branch, mr, mrErr); blocker != "" {
+		return fmt.Errorf("not safe to reclaim: %s", blocker)
+	}
+
+	return m.removeWithOptionsLocked(name, false, false, false)
 }
 
 // verifyRemovalComplete checks that polecat directories were actually removed.
@@ -2061,24 +2126,51 @@ func (m *Manager) cleanupOrphanPolecatState() {
 		name := entry.Name()
 		polecatDir := filepath.Join(polecatsDir, name)
 
-		// Check if this is a valid polecat with a working worktree
+		// Only remove truly partial spawn artifacts here. Named polecats with any
+		// agent/work/session evidence must go through the locked reclaim path.
 		clonePath := filepath.Join(polecatDir, m.rig.Name)
 		gitPath := filepath.Join(clonePath, ".git")
 
-		// Check if clone directory exists
 		if _, err := os.Stat(clonePath); os.IsNotExist(err) {
-			// Empty polecat directory without clone - remove it
-			_ = os.RemoveAll(polecatDir)
+			_ = m.removePartialOrphanPolecatDir(name, polecatDir)
 			continue
 		}
-
-		// Check if .git exists (file for worktree, or directory for full clone)
 		if _, err := os.Stat(gitPath); os.IsNotExist(err) {
-			// Clone exists but no .git - incomplete worktree, remove it
-			_ = os.RemoveAll(polecatDir)
+			_ = m.removePartialOrphanPolecatDir(name, polecatDir)
 			continue
 		}
 	}
+}
+
+func (m *Manager) removePartialOrphanPolecatDir(name, polecatDir string) error {
+	fl, err := m.lockPolecat(name)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = fl.Unlock() }()
+
+	if blocker := m.brokenIdleReclaimSessionBlocker(name); blocker != "" {
+		return fmt.Errorf("not safe to remove partial orphan: %s", blocker)
+	}
+
+	agentID := m.agentBeadID(name)
+	agentIssue, fields, err := m.agentBeads().GetAgentBead(agentID)
+	if err == nil && (agentIssue != nil || fields != nil) {
+		return fmt.Errorf("not safe to remove partial orphan: agent_bead=%s exists", agentID)
+	}
+	if err != nil && !errors.Is(err, beads.ErrNotFound) {
+		return err
+	}
+
+	issues, err := m.beads.ListByAssignee(m.assigneeID(name))
+	if err != nil {
+		return err
+	}
+	if work := activeWorkBeadsForCleanup(issues); len(work) > 0 {
+		return fmt.Errorf("not safe to remove partial orphan: assigned_work=%s status=%s", work[0].ID, work[0].Status)
+	}
+
+	return os.RemoveAll(polecatDir)
 }
 
 // PoolStatus returns information about the name pool.

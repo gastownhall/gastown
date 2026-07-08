@@ -126,8 +126,8 @@ switch ($cmd) {
     exit 0
   }
   'show' {
-    Write-Error '{"error":"not found"}'
-    exit 1
+			Write-Output '[{"id":"gt-gastown-polecat-toast","title":"agent","issue_type":"agent","description":"agent\n\nrole_type: polecat\nagent_state: idle\nhook_bead: null\ncleanup_status: clean\nactive_mr: null\nbranch: polecat/toast/gt-work@abc123","status":"open","created_at":"2025-01-01T00:00:00Z"}]'
+			exit 0
   }
   default { exit 0 }
 }
@@ -176,7 +176,7 @@ case "$cmd" in
       id="$arg"
       break
     done
-    printf '[{"id":"%s","title":"agent","issue_type":"agent","description":"agent\\n\\nrole_type: polecat\\nagent_state: idle\\nhook_bead: null\\ncleanup_status: clean"}]\n' "$id"
+    printf '[{"id":"%s","title":"agent","issue_type":"agent","description":"agent\\n\\nrole_type: polecat\\nagent_state: idle\\nhook_bead: null\\ncleanup_status: clean\\nactive_mr: null\\nbranch: polecat/toast/gt-work@abc123"}]\n' "$id"
     exit 0
     ;;
   *)
@@ -2034,6 +2034,69 @@ func TestStalePendingMarkerIsCleanedUp(t *testing.T) {
 
 	if _, err := os.Stat(pendingPath); !os.IsNotExist(err) {
 		t.Errorf("stale .pending file was not cleaned up by cleanupOrphanPolecatState")
+	}
+}
+
+func TestCleanupOrphanPolecatStatePreservesUnverifiedBrokenPolecat(t *testing.T) {
+	t.Parallel()
+
+	tmpDir := t.TempDir()
+	r := &rig.Rig{Name: "myrig", Path: tmpDir}
+	m := NewManager(r, nil, nil)
+
+	polecatDir := filepath.Join(tmpDir, "polecats", "furiosa")
+	clonePath := filepath.Join(polecatDir, r.Name)
+	if err := os.MkdirAll(clonePath, 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	m.cleanupOrphanPolecatState()
+
+	if _, err := os.Stat(polecatDir); err != nil {
+		t.Fatalf("broken named polecat dir was removed without safety proof: %v", err)
+	}
+}
+
+func TestReclaimBrokenIdlePolecatRemovesCleanStructuralFailure(t *testing.T) {
+	mgr, _ := setupCanonicalBranchManagerTest(t)
+	mgr.tmux = tmux.NewTmux()
+	if !mgr.tmux.IsAvailable() {
+		t.Skip("tmux is required to prove no live polecat session")
+	}
+
+	p, err := mgr.AddWithOptions("toast", AddOptions{})
+	if err != nil {
+		t.Fatalf("AddWithOptions: %v", err)
+	}
+	if err := os.Remove(filepath.Join(p.ClonePath, ".git")); err != nil {
+		t.Fatalf("break worktree .git: %v", err)
+	}
+
+	if err := mgr.ReclaimBrokenIdlePolecat("toast"); err != nil {
+		t.Fatalf("ReclaimBrokenIdlePolecat: %v", err)
+	}
+	if _, err := os.Stat(mgr.polecatDir("toast")); !os.IsNotExist(err) {
+		t.Fatalf("polecat dir still exists after reclaim, stat err=%v", err)
+	}
+}
+
+func TestReclaimBrokenIdlePolecatFailsClosedWithoutSessionEvidence(t *testing.T) {
+	mgr, _ := setupCanonicalBranchManagerTest(t)
+
+	p, err := mgr.AddWithOptions("toast", AddOptions{})
+	if err != nil {
+		t.Fatalf("AddWithOptions: %v", err)
+	}
+	if err := os.Remove(filepath.Join(p.ClonePath, ".git")); err != nil {
+		t.Fatalf("break worktree .git: %v", err)
+	}
+
+	err = mgr.ReclaimBrokenIdlePolecat("toast")
+	if err == nil || !strings.Contains(err.Error(), "session_state=unverified") {
+		t.Fatalf("ReclaimBrokenIdlePolecat error = %v, want session evidence blocker", err)
+	}
+	if _, statErr := os.Stat(mgr.polecatDir("toast")); statErr != nil {
+		t.Fatalf("polecat dir should be preserved after blocked reclaim: %v", statErr)
 	}
 }
 

@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
@@ -68,6 +67,33 @@ func effectivePolecatDirCap(configured int) int {
 		return minPolecatDirsPerRig
 	}
 	return configured
+}
+
+func reclaimBrokenIdlePolecatForSling(polecatMgr *polecat.Manager) (bool, error) {
+	polecats, err := polecatMgr.List()
+	if err != nil {
+		return false, err
+	}
+
+	for _, candidate := range polecats {
+		if candidate == nil || candidate.State != polecat.StateIdle || candidate.Issue != "" {
+			continue
+		}
+		verifyErr := verifyWorktreeExists(candidate.ClonePath)
+		if verifyErr == nil || !polecat.IsStructuralWorktreeError(verifyErr) {
+			continue
+		}
+
+		fmt.Printf("  Reclaiming broken idle polecat %s before allocation: %v\n", candidate.Name, verifyErr)
+		if err := polecatMgr.ReclaimBrokenIdlePolecat(candidate.Name); err != nil {
+			fmt.Printf("  Broken idle polecat %s was not safe to reclaim: %v\n", candidate.Name, err)
+			continue
+		}
+		fmt.Printf("  %s Broken idle polecat %s reclaimed before assigning new work\n", style.Bold.Render("✓"), candidate.Name)
+		return true, nil
+	}
+
+	return false, nil
 }
 
 // SpawnPolecatForSling creates a fresh polecat and optionally starts its session.
@@ -146,6 +172,12 @@ func SpawnPolecatForSling(rigName string, opts SlingSpawnOptions) (*SpawnedPolec
 				opts.HookBead, rigName, opts.HookBead)
 		}
 		witness.RecordBeadRespawn(townRoot, opts.HookBead)
+	}
+
+	if reclaimed, err := reclaimBrokenIdlePolecatForSling(polecatMgr); err != nil {
+		style.PrintWarning("could not reclaim broken idle polecat before allocation: %v", err)
+	} else if reclaimed {
+		fmt.Println("  Allocating fresh polecat after reclaiming broken idle sandbox...")
 	}
 
 	// Persistent polecat model (gt-4ac): try to reuse an idle polecat first.
@@ -493,49 +525,5 @@ func IsRigName(target string) (string, bool) {
 // and that it is a functional git repository. Returns an error if the worktree is missing,
 // has a broken .git reference, or fails basic git validation. (GH#2056)
 func verifyWorktreeExists(clonePath string) error {
-	// Check if directory exists
-	info, err := os.Stat(clonePath)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return fmt.Errorf("worktree directory does not exist: %s", clonePath)
-		}
-		return fmt.Errorf("checking worktree directory: %w", err)
-	}
-	if !info.IsDir() {
-		return fmt.Errorf("worktree path is not a directory: %s", clonePath)
-	}
-
-	// Check for .git file (worktrees have a .git file, not a .git directory)
-	gitPath := filepath.Join(clonePath, ".git")
-	if _, err := os.Stat(gitPath); err != nil {
-		if os.IsNotExist(err) {
-			return fmt.Errorf("worktree missing .git file (not a valid git worktree): %s", clonePath)
-		}
-		return fmt.Errorf("checking .git: %w", err)
-	}
-
-	// For worktree .git files, verify the gitdir reference points to a valid path.
-	// A broken reference (e.g., from os.Rename instead of git worktree move) causes
-	// "fatal: not a git repository" for every git operation.
-	gitContent, err := os.ReadFile(gitPath)
-	if err == nil {
-		content := strings.TrimSpace(string(gitContent))
-		if strings.HasPrefix(content, "gitdir: ") {
-			gitdirPath := strings.TrimPrefix(content, "gitdir: ")
-			if !filepath.IsAbs(gitdirPath) {
-				gitdirPath = filepath.Join(clonePath, gitdirPath)
-			}
-			if _, err := os.Stat(gitdirPath); err != nil {
-				return fmt.Errorf("worktree .git references nonexistent gitdir %s: %w", gitdirPath, err)
-			}
-		}
-	}
-
-	// Final validation: run git rev-parse to confirm the worktree is functional
-	cmd := exec.Command("git", "-C", clonePath, "rev-parse", "--git-dir")
-	if output, err := cmd.CombinedOutput(); err != nil {
-		return fmt.Errorf("worktree at %s is not a valid git repository: %s", clonePath, strings.TrimSpace(string(output)))
-	}
-
-	return nil
+	return polecat.VerifyWorktreeExists(clonePath)
 }
