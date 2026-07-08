@@ -332,6 +332,10 @@ func (e *Engineer) processSingleMR(ctx context.Context, mr *MRInfo, target strin
 		// PR awaiting human approval — leave in queue for retry on next poll.
 		_, _ = fmt.Fprintf(e.output, "[Batch] MR %s: PR awaiting approval, will retry\n", mr.ID)
 		e.HandleMRInfoFailure(mr, processResult)
+	} else if processResult.NeedsCIGreen {
+		// AA-851: PR CI red/pending — leave in queue for retry on next poll.
+		_, _ = fmt.Fprintf(e.output, "[Batch] MR %s: PR CI not green, will retry\n", mr.ID)
+		e.HandleMRInfoFailure(mr, processResult)
 	} else {
 		result.Error = fmt.Errorf("merge failed: %s", processResult.Error)
 	}

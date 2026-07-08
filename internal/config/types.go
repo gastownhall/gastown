@@ -1400,6 +1400,104 @@ type MergeQueueConfig struct {
 	// is enabled. Valid values: "quick", "standard", "deep".
 	// Nil defaults to "standard".
 	ReviewDepth string `json:"review_depth,omitempty"`
+
+	// CIGate configures the hard CI gate (AA-851): a polecat cannot complete
+	// (gt done) and cannot be nuked while its branch's PR has failing or
+	// pending CI checks, and the refinery will not merge such a PR.
+	// Nil = enabled with defaults; the gate only applies when a PR exists
+	// for the branch (no-PR and merged-PR pass through), which makes the
+	// default safe for direct-merge rigs.
+	CIGate *CIGateConfig `json:"ci_gate,omitempty"`
+}
+
+// CIGateConfig configures the hard CI gate (AA-851).
+type CIGateConfig struct {
+	// Enabled controls the gate. Nil defaults to true.
+	// Emergency process-level kill switch (no config edit): GT_CI_GATE=off.
+	Enabled *bool `json:"enabled,omitempty"`
+
+	// PendingTimeout is how long gt done waits for pending checks to settle
+	// before aborting with a human escalation. Default "30m" — sized for
+	// slow Jenkins pipelines (capital green runs take ~18m).
+	PendingTimeout string `json:"pending_timeout,omitempty"`
+
+	// PollInterval is the initial poll interval while waiting on pending
+	// checks; it backs off to 4x. Default "30s".
+	PollInterval string `json:"poll_interval,omitempty"`
+
+	// MayorAlertAfter is how long a polecat nuke can stay CI-blocked before
+	// the gate nudges the mayor. Default "30m".
+	MayorAlertAfter string `json:"mayor_alert_after,omitempty"`
+
+	// EscalationCmd is run via `sh -c` when the gate needs a human: on CI
+	// status errors (fail-open) and pending-timeout aborts. It receives
+	// GT_CIGATE_EVENT, GT_CIGATE_TICKET, GT_CIGATE_DETAIL, GT_CIGATE_PR_URL,
+	// GT_CIGATE_BRANCH and GT_CIGATE_AGENT in the environment. Wire it to
+	// your external tracker — e.g. a script that comments on the ticket and
+	// transitions it to a human-attention status.
+	EscalationCmd string `json:"escalation_cmd,omitempty"`
+}
+
+// IsEnabled returns whether the CI gate is on. Nil-safe, defaults to true.
+func (c *CIGateConfig) IsEnabled() bool {
+	if c == nil || c.Enabled == nil {
+		return true
+	}
+	return *c.Enabled
+}
+
+// ciGateDuration parses s, falling back to def on empty or invalid values.
+func ciGateDuration(s string, def time.Duration) time.Duration {
+	if s == "" {
+		return def
+	}
+	d, err := time.ParseDuration(s)
+	if err != nil || d <= 0 {
+		return def
+	}
+	return d
+}
+
+// PendingTimeoutOrDefault returns the pending-check wait budget (default 30m).
+func (c *CIGateConfig) PendingTimeoutOrDefault() time.Duration {
+	if c == nil {
+		return 30 * time.Minute
+	}
+	return ciGateDuration(c.PendingTimeout, 30*time.Minute)
+}
+
+// PollIntervalOrDefault returns the initial poll interval (default 30s).
+func (c *CIGateConfig) PollIntervalOrDefault() time.Duration {
+	if c == nil {
+		return 30 * time.Second
+	}
+	return ciGateDuration(c.PollInterval, 30*time.Second)
+}
+
+// MayorAlertAfterOrDefault returns the CI-blocked-nuke mayor alert threshold
+// (default 30m).
+func (c *CIGateConfig) MayorAlertAfterOrDefault() time.Duration {
+	if c == nil {
+		return 30 * time.Minute
+	}
+	return ciGateDuration(c.MayorAlertAfter, 30*time.Minute)
+}
+
+// EscalationCmdOrEmpty returns the configured escalation command. Nil-safe.
+func (c *CIGateConfig) EscalationCmdOrEmpty() string {
+	if c == nil {
+		return ""
+	}
+	return c.EscalationCmd
+}
+
+// CIGateSettings returns the rig's CI gate configuration, never nil.
+// A nil receiver or missing ci_gate block yields the enabled defaults.
+func (c *MergeQueueConfig) CIGateSettings() *CIGateConfig {
+	if c == nil || c.CIGate == nil {
+		return &CIGateConfig{}
+	}
+	return c.CIGate
 }
 
 // OnConflict strategy constants.
