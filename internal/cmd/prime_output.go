@@ -73,8 +73,8 @@ func outputPrimeContext(ctx RoleContext) (string, error) {
 		TownName:      townName,
 		WorkDir:       ctx.WorkDir,
 		DefaultBranch: defaultBranch,
-		IsForkRig:    isForkRig,
-		UpstreamURL:  upstreamURL,
+		IsForkRig:     isForkRig,
+		UpstreamURL:   upstreamURL,
 		Polecat:       ctx.Polecat,
 		DogName:       ctx.Polecat, // ctx.Polecat holds the dog name for RoleDog
 		MayorSession:  session.MayorSessionName(),
