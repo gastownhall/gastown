@@ -778,7 +778,7 @@ func (e *Engineer) ciGateGate() *cigate.Gate {
 	if e.ciGate != nil {
 		return e.ciGate
 	}
-	return cigate.New()
+	return cigate.New(e.config.CIGate.HumanGateChecksOrDefault()...)
 }
 
 // ciGateMergeDecision maps a CI gate result to a merge-blocking ProcessResult,

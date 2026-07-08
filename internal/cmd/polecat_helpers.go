@@ -223,7 +223,7 @@ func checkPolecatSafety(target polecatTarget) *SafetyCheckResult {
 	if infoErr == nil && polecatInfo != nil && polecatInfo.Branch != "" {
 		cfg := loadCIGateConfig(target.r.Path)
 		if cfg.IsEnabled() && !cigate.EnvDisabled() {
-			res := cigate.New().CheckBranch(ciGateDirForPolecat(polecatInfo.ClonePath, target.r.Path), polecatInfo.Branch)
+			res := cigate.New(cfg.HumanGateChecksOrDefault()...).CheckBranch(ciGateDirForPolecat(polecatInfo.ClonePath, target.r.Path), polecatInfo.Branch)
 			if res.Verdict.Blocks() {
 				result.Reasons = append(result.Reasons, fmt.Sprintf("PR CI not green: %s", res.Summary()))
 			}

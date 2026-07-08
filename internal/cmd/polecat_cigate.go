@@ -45,7 +45,7 @@ func checkNukeCIGate(polecatName, rigName string, mgr *polecat.Manager, r *rig.R
 		return nil // no branch to check — nothing to gate
 	}
 
-	res := cigate.New().CheckBranch(ciGateDirForPolecat(info.ClonePath, r.Path), info.Branch)
+	res := cigate.New(cfg.HumanGateChecksOrDefault()...).CheckBranch(ciGateDirForPolecat(info.ClonePath, r.Path), info.Branch)
 	agentBd := beads.New(r.Path).ForAgentBead()
 	agentBeadID := polecatBeadIDForRig(r, rigName, polecatName)
 

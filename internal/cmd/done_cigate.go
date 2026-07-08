@@ -159,7 +159,7 @@ func runDoneCIGate(bd *beads.Beads, townRoot, rigName, cwd, branch, issueID, age
 
 	agentBd := beads.New(cwd).ForAgentBead()
 	deps := &doneCIGateDeps{
-		gate:   cigate.New(),
+		gate:   cigate.New(cfg.HumanGateChecksOrDefault()...),
 		cfg:    cfg,
 		dir:    cwd,
 		branch: branch,
