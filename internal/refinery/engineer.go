@@ -1338,6 +1338,10 @@ func (e *Engineer) syncCrewWorkspaces() {
 
 // ProcessMRInfo processes a merge request from MRInfo.
 func (e *Engineer) ProcessMRInfo(ctx context.Context, mr *MRInfo) ProcessResult {
+	if err := e.LoadConfig(); err != nil {
+		return ProcessResult{Success: false, Error: fmt.Sprintf("loading refinery config: %v", err)}
+	}
+
 	// MR fields are directly on the struct
 	_, _ = fmt.Fprintln(e.output, "[Engineer] Processing MR:")
 	_, _ = fmt.Fprintf(e.output, "  Branch: %s\n", mr.Branch)

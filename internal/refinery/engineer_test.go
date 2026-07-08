@@ -515,6 +515,32 @@ func TestEngineer_LoadConfig_LegacyRootMergeQueueRequiresMigration(t *testing.T)
 	}
 }
 
+func TestEngineer_ProcessMRInfo_LoadsConfigAndFailsClosedOnLegacyMergeQueue(t *testing.T) {
+	tmpDir := t.TempDir()
+	writeRigRootConfig(t, tmpDir, map[string]interface{}{
+		"merge_queue": map[string]interface{}{
+			"auto_push": false,
+		},
+	})
+
+	e := NewEngineer(&rig.Rig{Name: "test-rig", Path: tmpDir})
+	e.output = io.Discard
+	result := e.ProcessMRInfo(context.Background(), &MRInfo{
+		ID:     "gt-test",
+		Branch: "polecat/test/gt-test",
+		Target: "main",
+	})
+
+	if result.Success {
+		t.Fatal("expected legacy config to block processing")
+	}
+	for _, want := range []string{"loading refinery config", "merge_queue belongs", "settings/config.json"} {
+		if !strings.Contains(result.Error, want) {
+			t.Errorf("error = %q, want substring %q", result.Error, want)
+		}
+	}
+}
+
 func TestEngineer_LoadConfig_AutoPushDisabled(t *testing.T) {
 	tmpDir, err := os.MkdirTemp("", "engineer-test-*")
 	if err != nil {
