@@ -2,8 +2,10 @@ package daemon
 
 import (
 	"encoding/json"
+	"fmt"
 	"log"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"testing"
@@ -21,6 +23,13 @@ func testHandlerDaemon(t *testing.T, townRoot string) *Daemon {
 	return &Daemon{
 		config: &Config{TownRoot: townRoot},
 		logger: log.New(os.Stderr, "test: ", log.LstdFlags),
+	}
+}
+
+func requireTmux(t *testing.T) {
+	t.Helper()
+	if _, err := exec.LookPath("tmux"); err != nil {
+		t.Skip("tmux not installed")
 	}
 }
 
@@ -86,6 +95,8 @@ func testSetupWorkingDogState(t *testing.T, townRoot, name, work string, lastAct
 }
 
 func TestDetectStaleWorkingDogs_ClearsStaleWorkers(t *testing.T) {
+	requireTmux(t)
+
 	townRoot := t.TempDir()
 	d := testHandlerDaemon(t, townRoot)
 
@@ -108,6 +119,49 @@ func TestDetectStaleWorkingDogs_ClearsStaleWorkers(t *testing.T) {
 	}
 	if dg.Work != "" {
 		t.Errorf("stale dog work = %q, want empty", dg.Work)
+	}
+}
+
+func TestDetectStaleWorkingDogs_KillsSessionBeforeClearing(t *testing.T) {
+	requireTmux(t)
+
+	oldSocket := tmux.GetDefaultSocket()
+	socketName := fmt.Sprintf("gt-test-dog-stale-%d", time.Now().UnixNano())
+	tmux.SetDefaultSocket(socketName)
+	t.Cleanup(func() { tmux.SetDefaultSocket(oldSocket) })
+
+	townRoot := t.TempDir()
+	d := testHandlerDaemon(t, townRoot)
+
+	rigsConfig := &config.RigsConfig{Version: 1, Rigs: map[string]config.RigEntry{}}
+	mgr := dog.NewManager(townRoot, rigsConfig)
+	tm := tmux.NewTmux()
+	sm := dog.NewSessionManager(tm, townRoot, mgr)
+
+	testSetupWorkingDogState(t, townRoot, "stale", constants.MolConvoyFeed, time.Now().Add(-3*time.Hour))
+
+	sessionName := sm.SessionName("stale")
+	if err := tm.NewSession(sessionName, ""); err != nil {
+		t.Fatalf("NewSession(%q): %v", sessionName, err)
+	}
+	t.Cleanup(func() { _ = tm.KillSession(sessionName) })
+
+	d.detectStaleWorkingDogs(mgr, sm, &config.DaemonThresholds{})
+
+	dg, err := mgr.Get("stale")
+	if err != nil {
+		t.Fatalf("Get() error: %v", err)
+	}
+	if dg.State != dog.StateIdle {
+		t.Errorf("stale dog state = %q, want idle", dg.State)
+	}
+	if dg.Work != "" {
+		t.Errorf("stale dog work = %q, want empty", dg.Work)
+	}
+	if has, err := tm.HasSession(sessionName); err != nil {
+		t.Fatalf("HasSession(%q): %v", sessionName, err)
+	} else if has {
+		t.Errorf("stale dog session %q still exists after cleanup", sessionName)
 	}
 }
 
@@ -445,5 +499,96 @@ func TestFindDispatchableDog_PicksFirstIdleWhenNoSessionsLive(t *testing.T) {
 	}
 	if got.Name != "alpha" && got.Name != "bravo" {
 		t.Errorf("findDispatchableDog = %q, want alpha or bravo", got.Name)
+	}
+}
+
+func TestCleanupStuckDogs_ClearsDeadSessionWorker(t *testing.T) {
+	requireTmux(t)
+
+	townRoot := t.TempDir()
+	d := testHandlerDaemon(t, townRoot)
+
+	rigsConfig := &config.RigsConfig{Version: 1, Rigs: map[string]config.RigEntry{}}
+	mgr := dog.NewManager(townRoot, rigsConfig)
+	sm := dog.NewSessionManager(tmux.NewTmux(), townRoot, mgr)
+
+	testSetupWorkingDogState(t, townRoot, "alpha", constants.MolDogReaper, time.Now())
+
+	d.cleanupStuckDogs(mgr, sm)
+
+	dg, err := mgr.Get("alpha")
+	if err != nil {
+		t.Fatalf("Get() error: %v", err)
+	}
+	if dg.State != dog.StateIdle {
+		t.Errorf("stuck dog state = %q, want idle", dg.State)
+	}
+	if dg.Work != "" {
+		t.Errorf("stuck dog work = %q, want empty", dg.Work)
+	}
+}
+
+func TestCleanupStuckDogs_ClearsAgentDeadWorker(t *testing.T) {
+	requireTmux(t)
+
+	oldSocket := tmux.GetDefaultSocket()
+	socketName := fmt.Sprintf("gt-test-dog-cleanup-%d", time.Now().UnixNano())
+	tmux.SetDefaultSocket(socketName)
+	t.Cleanup(func() { tmux.SetDefaultSocket(oldSocket) })
+
+	townRoot := t.TempDir()
+	d := testHandlerDaemon(t, townRoot)
+
+	rigsConfig := &config.RigsConfig{Version: 1, Rigs: map[string]config.RigEntry{}}
+	mgr := dog.NewManager(townRoot, rigsConfig)
+	tm := tmux.NewTmux()
+	sm := dog.NewSessionManager(tm, townRoot, mgr)
+
+	testSetupWorkingDogState(t, townRoot, "alpha", constants.MolDogReaper, time.Now())
+
+	sessionName := sm.SessionName("alpha")
+	if err := tm.NewSession(sessionName, ""); err != nil {
+		t.Fatalf("NewSession(%q): %v", sessionName, err)
+	}
+	t.Cleanup(func() { _ = tm.KillSession(sessionName) })
+	time.Sleep(200 * time.Millisecond)
+
+	d.cleanupStuckDogs(mgr, sm)
+
+	dg, err := mgr.Get("alpha")
+	if err != nil {
+		t.Fatalf("Get() error: %v", err)
+	}
+	if dg.State != dog.StateIdle {
+		t.Errorf("agent-dead dog state = %q, want idle", dg.State)
+	}
+	if dg.Work != "" {
+		t.Errorf("agent-dead dog work = %q, want empty", dg.Work)
+	}
+	if has, err := tm.HasSession(sessionName); err != nil {
+		t.Fatalf("HasSession(%q): %v", sessionName, err)
+	} else if has {
+		t.Errorf("agent-dead session %q still exists after cleanup", sessionName)
+	}
+}
+
+func TestCleanupStuckDogs_SkipsIdleDogs(t *testing.T) {
+	townRoot := t.TempDir()
+	d := testHandlerDaemon(t, townRoot)
+
+	rigsConfig := &config.RigsConfig{Version: 1, Rigs: map[string]config.RigEntry{}}
+	mgr := dog.NewManager(townRoot, rigsConfig)
+	sm := dog.NewSessionManager(tmux.NewTmux(), townRoot, mgr)
+
+	testSetupDogState(t, townRoot, "alpha", dog.StateIdle, time.Now())
+
+	d.cleanupStuckDogs(mgr, sm)
+
+	dg, err := mgr.Get("alpha")
+	if err != nil {
+		t.Fatalf("Get() error: %v", err)
+	}
+	if dg.State != dog.StateIdle {
+		t.Errorf("idle dog state = %q, want idle", dg.State)
 	}
 }
