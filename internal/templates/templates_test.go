@@ -151,7 +151,7 @@ func TestRenderRole_CrewForkRigUsesPRWorkflow(t *testing.T) {
 			t.Fatalf("fork crew output missing %q:\n%s", want, output)
 		}
 	}
-	for _, forbidden := range []string{"Crew workers push directly to main", "git push                    # Direct to main", "Refinery immediately", "origin/main"} {
+	for _, forbidden := range []string{"Crew workers push directly to main", "git push                    # Direct to main", "Refinery immediately", "origin/main", "commit directly to main"} {
 		if strings.Contains(output, forbidden) {
 			t.Fatalf("fork crew output contains stale direct-main guidance %q:\n%s", forbidden, output)
 		}

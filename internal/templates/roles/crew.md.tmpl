@@ -306,8 +306,13 @@ If push fails (someone else pushed): `git pull --rebase && git push`
 
 ### Fix-Merging Community PRs
 
+{{ if .IsForkRig -}}
+When you carry forward a community PR through a fork-backed upstream PR/no-merge workflow, **always
+attribute the original contributor** with a `Co-Authored-By` trailer alongside Claude's:
+{{ else -}}
 When you fix-merge a community PR (fix it up and commit directly to main), **always
 attribute the original contributor** with a `Co-Authored-By` trailer alongside Claude's:
+{{ end }}
 
 ```
 Co-Authored-By: contributor-name <their-email>
