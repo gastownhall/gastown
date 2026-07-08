@@ -50,6 +50,23 @@ func TestDefaultDatabases(t *testing.T) {
 	}
 }
 
+func TestDogReaperFormulaAlertThresholdMatchesDefault(t *testing.T) {
+	data, err := os.ReadFile("../formula/formulas/mol-dog-reaper.formula.toml")
+	if err != nil {
+		t.Fatalf("read mol-dog-reaper formula: %v", err)
+	}
+
+	threshold := fmt.Sprintf("%d", DefaultAlertThreshold)
+	source := string(data)
+	alertThresholdVars := sourceBetween(t, source, "[vars.alert_threshold]", "[vars.dry_run]")
+	if !strings.Contains(alertThresholdVars, fmt.Sprintf("default = %q", threshold)) {
+		t.Fatalf("mol-dog-reaper alert_threshold default should match DefaultAlertThreshold %s", threshold)
+	}
+	if !strings.Contains(source, fmt.Sprintf("default %s", threshold)) {
+		t.Fatalf("mol-dog-reaper alert_threshold prose should document default %s", threshold)
+	}
+}
+
 func TestFormatJSON(t *testing.T) {
 	result := FormatJSON(map[string]int{"count": 42})
 	if result == "" {
