@@ -116,7 +116,7 @@ func TestRenderRole_PolecatForkRigUsesPRWorkflow(t *testing.T) {
 			t.Fatalf("fork polecat output missing %q:\n%s", want, output)
 		}
 	}
-	for _, forbidden := range []string{"Merge Queue Workflow (gastown, beads repos)", "Refinery merges to main"} {
+	for _, forbidden := range []string{"Merge Queue Workflow (gastown, beads repos)", "Refinery merges to main", "Merges your work when complete"} {
 		if strings.Contains(output, forbidden) {
 			t.Fatalf("fork polecat output contains stale MQ guidance %q:\n%s", forbidden, output)
 		}
@@ -151,7 +151,7 @@ func TestRenderRole_CrewForkRigUsesPRWorkflow(t *testing.T) {
 			t.Fatalf("fork crew output missing %q:\n%s", want, output)
 		}
 	}
-	for _, forbidden := range []string{"Crew workers push directly to main", "git push                    # Direct to main"} {
+	for _, forbidden := range []string{"Crew workers push directly to main", "git push                    # Direct to main", "Refinery immediately", "origin/main"} {
 		if strings.Contains(output, forbidden) {
 			t.Fatalf("fork crew output contains stale direct-main guidance %q:\n%s", forbidden, output)
 		}

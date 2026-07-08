@@ -162,7 +162,11 @@ Town ({{ .TownRoot }})
 - **Your worktree**: Independent git worktree for your work
 - **Beads**: You have DIRECT write access — file discovered issues
 - **Witness**: Monitors you, nudges if stuck, handles your cleanup
+{{ if .IsForkRig -}}
+- **Refinery**: Disabled for upstream changes in this fork-backed rig; use PR/no-merge workflow
+{{ else -}}
 - **Refinery**: Merges your work when complete
+{{ end }}
 
 ## Two-Level Beads Architecture
 
