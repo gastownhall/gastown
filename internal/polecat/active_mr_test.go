@@ -2,6 +2,7 @@ package polecat
 
 import (
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/steveyegge/gastown/internal/beads"
@@ -77,5 +78,57 @@ func TestAssessActiveMRLookupErrorsFailClosed(t *testing.T) {
 	reader.issues["mr-closed"] = &beads.Issue{ID: "mr-closed", Status: "closed"}
 	if got := AssessActiveMR(reader, ActiveMRInput{ActiveMR: "mr-closed", SourceIssueHint: "gt-error"}); !got.Pending {
 		t.Fatalf("source lookup error Pending = false, want true")
+	}
+}
+
+func TestActiveMRRemovalBlockerUsesActiveMRPolicy(t *testing.T) {
+	reader := fakeActiveMRReader{issues: map[string]*beads.Issue{
+		"mr-open":     {ID: "mr-open", Status: "open"},
+		"mr-progress": {ID: "mr-progress", Status: "in_progress"},
+		"mr-closed":   {ID: "mr-closed", Status: "closed"},
+		"gt-closed":   {ID: "gt-closed", Status: "closed"},
+		"gt-open":     {ID: "gt-open", Status: "open"},
+	}}
+
+	tests := []struct {
+		name       string
+		fields     *beads.AgentFields
+		wantBlock  bool
+		wantReason string
+	}{
+		{name: "empty fields are safe"},
+		{name: "open MR blocks", fields: &beads.AgentFields{ActiveMR: "mr-open", LastSourceIssue: "gt-closed"}, wantBlock: true, wantReason: "status=open"},
+		{name: "in-progress MR blocks", fields: &beads.AgentFields{ActiveMR: "mr-progress", LastSourceIssue: "gt-closed"}, wantBlock: true, wantReason: "status=in_progress"},
+		{name: "closed MR with terminal source is safe", fields: &beads.AgentFields{ActiveMR: "mr-closed", LastSourceIssue: "gt-closed"}},
+		{name: "closed MR with open source blocks", fields: &beads.AgentFields{ActiveMR: "mr-closed", LastSourceIssue: "gt-open"}, wantBlock: true, wantReason: "source_status=open"},
+		{name: "closed MR uses hook as source hint", fields: &beads.AgentFields{ActiveMR: "mr-closed", HookBead: "gt-closed"}},
+		{name: "missing MR without terminal source blocks", fields: &beads.AgentFields{ActiveMR: "mr-missing"}, wantBlock: true, wantReason: "source_issue=<missing>"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := activeMRRemovalBlocker(reader, tt.fields)
+			if tt.wantBlock && got == "" {
+				t.Fatal("activeMRRemovalBlocker() = empty, want blocker")
+			}
+			if !tt.wantBlock && got != "" {
+				t.Fatalf("activeMRRemovalBlocker() = %q, want empty", got)
+			}
+			if tt.wantReason != "" && !strings.Contains(got, tt.wantReason) {
+				t.Fatalf("blocker = %q, want contains %q", got, tt.wantReason)
+			}
+		})
+	}
+}
+
+func TestActiveMRRemovalBlockerLookupErrorsFailClosed(t *testing.T) {
+	reader := fakeActiveMRReader{
+		issues: map[string]*beads.Issue{"gt-closed": {ID: "gt-closed", Status: "closed"}},
+		errs:   map[string]error{"mr-error": errors.New("bd exploded")},
+	}
+
+	got := activeMRRemovalBlocker(reader, &beads.AgentFields{ActiveMR: "mr-error", LastSourceIssue: "gt-closed"})
+	if got == "" || !strings.Contains(got, "lookup_error") {
+		t.Fatalf("blocker = %q, want lookup_error fail-closed", got)
 	}
 }

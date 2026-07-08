@@ -1174,16 +1174,15 @@ func (m *Manager) removeWithOptionsLocked(name string, force, nuclear, selfNuke 
 		}
 	}
 
-	// Even nuclear mode must not delete worktrees with unmerged MRs.
-	// The nuclear flag bypasses git-status checks (needed for self-nuke)
-	// but MR status is a higher-level concern that should always be checked.
+	// Even nuclear mode must not delete worktrees with pending MRs unless
+	// --force explicitly accepts that risk. Use the shared classifier so removal
+	// fails closed the same way recovery/listing do.
 	if !force {
 		agentID := m.agentBeadID(name)
 		_, fields, aErr := m.agentBeads().GetAgentBead(agentID)
-		if aErr == nil && fields != nil && fields.ActiveMR != "" {
-			mrBead, mrErr := m.beads.Show(fields.ActiveMR)
-			if mrErr == nil && mrBead != nil && beads.IssueStatus(mrBead.Status).BlocksRemoval() {
-				return fmt.Errorf("cannot remove polecat %s: MR %s is still open in merge queue\nRefinery will process the MR and clean up after merge\nUse --force to override (risks data loss)", name, fields.ActiveMR)
+		if aErr == nil {
+			if blocker := activeMRRemovalBlocker(m.agentBeads(), fields); blocker != "" {
+				return fmt.Errorf("cannot remove polecat %s: MR %s is still pending in merge queue (%s)\nRefinery will process the MR and clean up after merge\nUse --force to override (risks data loss)", name, fields.ActiveMR, blocker)
 			}
 		}
 	}
@@ -1307,6 +1306,24 @@ func (m *Manager) removeWithOptionsLocked(name string, force, nuclear, selfNuke 
 	_ = m.namePool.Save()
 
 	return nil
+}
+
+func activeMRRemovalBlocker(reader IssueReader, fields *beads.AgentFields) string {
+	if fields == nil || strings.TrimSpace(fields.ActiveMR) == "" {
+		return ""
+	}
+	sourceHint := strings.TrimSpace(fields.LastSourceIssue)
+	if sourceHint == "" {
+		sourceHint = strings.TrimSpace(fields.HookBead)
+	}
+	assessment := AssessActiveMR(reader, ActiveMRInput{ActiveMR: fields.ActiveMR, SourceIssueHint: sourceHint})
+	if !assessment.Pending {
+		return ""
+	}
+	if assessment.Reason != "" {
+		return assessment.Reason
+	}
+	return fmt.Sprintf("active_mr=%s status=pending", strings.TrimSpace(fields.ActiveMR))
 }
 
 // ReclaimBrokenIdlePolecat removes a structurally broken idle sandbox before any

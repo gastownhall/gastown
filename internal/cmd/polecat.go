@@ -1791,7 +1791,7 @@ func runPolecatNuke(cmd *cobra.Command, args []string) error {
 			fmt.Printf("Nuking %s/%s...\n", p.rigName, p.polecatName)
 		}
 
-		if err := nukePolecatFullWithOptions(p.polecatName, p.rigName, p.mgr, p.r, nukePolecatOptions{PurgeClosedEphemerals: !batchPurge}); err != nil {
+		if err := nukePolecatFullWithOptions(p.polecatName, p.rigName, p.mgr, p.r, nukePolecatOptions{Force: polecatNukeForce, PurgeClosedEphemerals: !batchPurge}); err != nil {
 			nukeErrors = append(nukeErrors, fmt.Sprintf("%s/%s: %v", p.rigName, p.polecatName, err))
 			continue
 		}
@@ -1859,6 +1859,7 @@ func nukePolecatFull(polecatName, rigName string, mgr *polecat.Manager, r *rig.R
 }
 
 type nukePolecatOptions struct {
+	Force                 bool
 	PurgeClosedEphemerals bool
 }
 
@@ -1892,8 +1893,8 @@ func nukePolecatFullWithOptions(polecatName, rigName string, mgr *polecat.Manage
 	}
 
 	// Step 2.75: Best-effort push before nuke (gt-4vr guardrail).
-	// Try to preserve any unpushed commits on the branch. If push fails,
-	// proceed — --force already means "I accept data loss".
+	// Try to preserve any unpushed commits on the branch. Push failures are
+	// non-fatal because this cleanup path already passed its safety gates.
 	if branchToDelete != "" {
 		var pushGit *git.Git
 		// Try worktree first (may still exist), then bare repo fallback.
@@ -1921,7 +1922,7 @@ func nukePolecatFullWithOptions(polecatName, rigName string, mgr *polecat.Manage
 	}
 
 	// Step 3: Delete worktree (nuclear=true to bypass safety checks for stale polecats)
-	if err := mgr.RemoveWithOptions(polecatName, true, true, false); err != nil {
+	if err := mgr.RemoveWithOptions(polecatName, opts.Force, true, false); err != nil {
 		if errors.Is(err, polecat.ErrPolecatNotFound) {
 			fmt.Printf("  %s worktree already gone\n", style.Dim.Render("○"))
 			resetPolecatAgentBeadForReuse(r, rigName, polecatName)
