@@ -121,10 +121,22 @@ func defaultRunner(dir, name string, args ...string) ([]byte, error) {
 type Gate struct {
 	// Run executes external commands (gh). Defaults to a real exec runner.
 	Run Runner
+	// IgnoreChecks lists status-check context names that are human approval
+	// gates rather than CI (e.g. pullapprove) — matched case-insensitively
+	// against the check's display name and excluded from the green/pending
+	// evaluation. A human merge gate pends on every PR until a person acts,
+	// so counting it would burn the full pending timeout on every completion
+	// (AA-859). Approval enforcement stays with the merge layer (branch
+	// protection / refinery require_review), not this gate.
+	IgnoreChecks []string
 }
 
-// New returns a Gate backed by the real gh CLI.
-func New() *Gate { return &Gate{Run: defaultRunner} }
+// New returns a Gate backed by the real gh CLI. ignoreChecks lists
+// human-gate check names to exclude from evaluation (see Gate.IgnoreChecks);
+// callers with a rig config should pass cfg.HumanGateChecksOrDefault().
+func New(ignoreChecks ...string) *Gate {
+	return &Gate{Run: defaultRunner, IgnoreChecks: ignoreChecks}
+}
 
 // prInfo mirrors the fields requested from `gh pr list --json`.
 type prInfo struct {
@@ -193,7 +205,7 @@ func (g *Gate) CheckBranch(dir, branch string) CheckResult {
 	}
 	switch {
 	case open != nil:
-		res := evaluateRollup(open.StatusCheckRollup)
+		res := evaluateRollup(open.StatusCheckRollup, g.IgnoreChecks)
 		res.PRNumber = open.Number
 		res.PRURL = open.URL
 		return res
@@ -207,12 +219,15 @@ func (g *Gate) CheckBranch(dir, branch string) CheckResult {
 
 // evaluateRollup ports determineCIStatus (internal/web/fetcher.go) semantics
 // to a gate verdict, additionally collecting failing/pending check names.
+// Checks whose display name matches ignore (case-insensitive) are human
+// approval gates, not CI — they are excluded from the evaluation entirely,
+// whatever state they report (AA-859).
 //
 // Case note: gh renders the GraphQL rollup enums in UPPERCASE for check runs
 // ("conclusion":"SUCCESS", "status":"COMPLETED" — verified live against
 // gh 2.45), while older code paths compared lowercase. Normalize both ways
 // so the gate works across gh versions.
-func evaluateRollup(checks []rollupEntry) CheckResult {
+func evaluateRollup(checks []rollupEntry, ignore []string) CheckResult {
 	if len(checks) == 0 {
 		// Open PR with no checks reported yet — treat as pending so a
 		// just-pushed PR isn't waved through before CI registers. The
@@ -220,7 +235,12 @@ func evaluateRollup(checks []rollupEntry) CheckResult {
 		return CheckResult{Verdict: VerdictPending, PendingChecks: []string{"checks not yet reported"}}
 	}
 	var failing, pending []string
+	kept := 0
 	for _, check := range checks {
+		if isIgnoredCheck(check.displayName(), ignore) {
+			continue
+		}
+		kept++
 		// Conclusion first (completed check runs).
 		switch strings.ToLower(check.Conclusion) {
 		case "failure", "cancelled", "timed_out", "action_required", "startup_failure": //nolint:misspell // GitHub API returns "cancelled" (British spelling)
@@ -250,8 +270,25 @@ func evaluateRollup(checks []rollupEntry) CheckResult {
 		return CheckResult{Verdict: VerdictRed, FailingChecks: failing, PendingChecks: pending}
 	case len(pending) > 0:
 		return CheckResult{Verdict: VerdictPending, PendingChecks: pending}
+	case kept == 0:
+		// Every reported check was an ignored human gate. Human gates
+		// (e.g. pullapprove) register near-instantly on push, often before
+		// the real CI does — treat this like the empty rollup so a
+		// just-pushed PR isn't waved through before CI registers.
+		return CheckResult{Verdict: VerdictPending, PendingChecks: []string{"CI checks not yet reported (only ignored human gates present)"}}
 	}
 	return CheckResult{Verdict: VerdictGreen}
+}
+
+// isIgnoredCheck reports whether a check's display name matches the ignore
+// list (case-insensitive exact match).
+func isIgnoredCheck(name string, ignore []string) bool {
+	for _, ig := range ignore {
+		if ig != "" && strings.EqualFold(name, ig) {
+			return true
+		}
+	}
+	return false
 }
 
 // WaitOptions configures WaitForGreen.

@@ -1429,6 +1429,15 @@ type CIGateConfig struct {
 	// the gate nudges the mayor. Default "30m".
 	MayorAlertAfter string `json:"mayor_alert_after,omitempty"`
 
+	// HumanGateChecks lists status-check context names that are human
+	// approval gates rather than CI (e.g. pullapprove) — excluded from the
+	// gate's green/pending evaluation, matched case-insensitively (AA-859).
+	// A human merge gate pends on every PR until a person acts; counting it
+	// would burn the full pending timeout on every completion. Approval
+	// enforcement stays with branch protection / require_review.
+	// Nil defaults to ["pullapprove"]; set to [] to exclude nothing.
+	HumanGateChecks []string `json:"human_gate_checks,omitempty"`
+
 	// EscalationCmd is run via `sh -c` when the gate needs a human: on CI
 	// status errors (fail-open) and pending-timeout aborts. It receives
 	// GT_CIGATE_EVENT, GT_CIGATE_TICKET, GT_CIGATE_DETAIL, GT_CIGATE_PR_URL,
@@ -1481,6 +1490,16 @@ func (c *CIGateConfig) MayorAlertAfterOrDefault() time.Duration {
 		return 30 * time.Minute
 	}
 	return ciGateDuration(c.MayorAlertAfter, 30*time.Minute)
+}
+
+// HumanGateChecksOrDefault returns the human-gate check names excluded from
+// CI evaluation. Nil-safe: nil (or missing block) defaults to
+// ["pullapprove"]; an explicitly empty list means exclude nothing.
+func (c *CIGateConfig) HumanGateChecksOrDefault() []string {
+	if c == nil || c.HumanGateChecks == nil {
+		return []string{"pullapprove"}
+	}
+	return c.HumanGateChecks
 }
 
 // EscalationCmdOrEmpty returns the configured escalation command. Nil-safe.

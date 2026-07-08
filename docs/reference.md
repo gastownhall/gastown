@@ -90,6 +90,7 @@ town-level Gas Town beads.
       "pending_timeout": "30m",
       "poll_interval": "30s",
       "mayor_alert_after": "30m",
+      "human_gate_checks": ["pullapprove"],
       "escalation_cmd": ""
     }
   }
@@ -175,6 +176,7 @@ gate FAILS OPEN but runs `escalation_cmd` so a human verifies.
 | `pending_timeout` | `string` | `"30m"` | How long `gt done` waits for pending checks before aborting with a human escalation (sized for slow Jenkins pipelines) |
 | `poll_interval` | `string` | `"30s"` | Initial poll interval while waiting; backs off to 4x |
 | `mayor_alert_after` | `string` | `"30m"` | How long a nuke can stay CI-blocked before the mayor is nudged |
+| `human_gate_checks` | `[]string` | `["pullapprove"]` | Status-check context names that are human approval gates, not CI (matched case-insensitively) — excluded from the gate's green/pending evaluation so a human merge gate doesn't burn the pending timeout on every completion (AA-859). Set to `[]` to exclude nothing; approval enforcement stays with branch protection / `require_review` |
 | `escalation_cmd` | `string` | `""` | Command run via `sh -c` on CI-status errors and pending timeouts. Receives `GT_CIGATE_EVENT`, `GT_CIGATE_TICKET` (from the bead's `Jira:`/`Ticket:` line), `GT_CIGATE_DETAIL`, `GT_CIGATE_PR_URL`, `GT_CIGATE_BRANCH`, `GT_CIGATE_AGENT` in the environment. Wire it to your tracker, e.g. a script that comments on the ticket and transitions it to a human-attention status |
 
 Overrides: `gt polecat nuke --ignore-ci` bypasses the nuke gate for one

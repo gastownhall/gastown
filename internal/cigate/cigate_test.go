@@ -21,6 +21,7 @@ func TestEvaluateRollup(t *testing.T) {
 	tests := []struct {
 		name    string
 		checks  []rollupEntry
+		ignore  []string
 		verdict Verdict
 		failing []string
 		pending []string
@@ -146,11 +147,74 @@ func TestEvaluateRollup(t *testing.T) {
 			failing: []string{"a"},
 			pending: []string{"b"},
 		},
+		{
+			// AA-859: pullapprove is Blair's human merge gate — it pends on
+			// every PR until a human merges, and must not hold the CI gate.
+			name: "pending human gate is excluded: CI green wins",
+			checks: []rollupEntry{
+				{Context: "pullapprove", State: "PENDING"},
+				{Context: "continuous-integration/jenkins/pr-merge", State: "SUCCESS"},
+				{Name: "gha", Status: "COMPLETED", Conclusion: "SUCCESS"},
+			},
+			ignore:  []string{"pullapprove"},
+			verdict: VerdictGreen,
+		},
+		{
+			name: "human gate exclusion is case-insensitive",
+			checks: []rollupEntry{
+				{Context: "PullApprove", State: "PENDING"},
+				{Name: "build", Status: "COMPLETED", Conclusion: "SUCCESS"},
+			},
+			ignore:  []string{"pullapprove"},
+			verdict: VerdictGreen,
+		},
+		{
+			name: "excluded human gate does not mask a red CI check",
+			checks: []rollupEntry{
+				{Context: "pullapprove", State: "PENDING"},
+				{Name: "test", Status: "COMPLETED", Conclusion: "FAILURE"},
+			},
+			ignore:  []string{"pullapprove"},
+			verdict: VerdictRed,
+			failing: []string{"test"},
+		},
+		{
+			// Even a rejected human gate is not CI — approval enforcement
+			// belongs to branch protection / require_review, not this gate.
+			name: "failing human gate is excluded too",
+			checks: []rollupEntry{
+				{Context: "pullapprove", State: "FAILURE"},
+				{Name: "build", Status: "COMPLETED", Conclusion: "SUCCESS"},
+			},
+			ignore:  []string{"pullapprove"},
+			verdict: VerdictGreen,
+		},
+		{
+			// Human gates register near-instantly on push, often before real
+			// CI does — an all-excluded rollup must stay pending, not green.
+			name: "only human gates reported yet is pending",
+			checks: []rollupEntry{
+				{Context: "pullapprove", State: "PENDING"},
+			},
+			ignore:  []string{"pullapprove"},
+			verdict: VerdictPending,
+			pending: []string{"CI checks not yet reported (only ignored human gates present)"},
+		},
+		{
+			name: "non-matching ignore list changes nothing",
+			checks: []rollupEntry{
+				{Context: "pullapprove", State: "PENDING"},
+				{Name: "build", Status: "COMPLETED", Conclusion: "SUCCESS"},
+			},
+			ignore:  []string{"some-other-gate"},
+			verdict: VerdictPending,
+			pending: []string{"pullapprove"},
+		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			res := evaluateRollup(tt.checks)
+			res := evaluateRollup(tt.checks, tt.ignore)
 			if res.Verdict != tt.verdict {
 				t.Fatalf("verdict = %s, want %s", res.Verdict, tt.verdict)
 			}
@@ -161,6 +225,16 @@ func TestEvaluateRollup(t *testing.T) {
 				t.Errorf("pending = %q, want %q", got, want)
 			}
 		})
+	}
+}
+
+func TestNewSetsIgnoreChecks(t *testing.T) {
+	g := New("pullapprove", "some-other-gate")
+	if got := strings.Join(g.IgnoreChecks, ","); got != "pullapprove,some-other-gate" {
+		t.Errorf("IgnoreChecks = %q, want %q", got, "pullapprove,some-other-gate")
+	}
+	if New().IgnoreChecks != nil && len(New().IgnoreChecks) != 0 {
+		t.Errorf("New() should have no ignores")
 	}
 }
 
@@ -186,6 +260,7 @@ func TestCheckBranch(t *testing.T) {
 		name     string
 		ghOutput string
 		ghErr    error
+		ignore   []string
 		verdict  Verdict
 		prNumber int
 	}{
@@ -236,6 +311,18 @@ func TestCheckBranch(t *testing.T) {
 			prNumber: 12,
 		},
 		{
+			// AA-859 live repro (capital #21400): Jenkins green, pullapprove
+			// (Blair's human merge gate) pending — the gate must report GREEN
+			// instead of burning the 30m pending timeout.
+			name: "open PR green when only the ignored human gate pends",
+			ghOutput: `[{"number":21400,"state":"OPEN","url":"u",
+				"statusCheckRollup":[{"context":"pullapprove","state":"PENDING"},
+					{"context":"continuous-integration/jenkins/pr-merge","state":"SUCCESS"}]}]`,
+			ignore:   []string{"pullapprove"},
+			verdict:  VerdictGreen,
+			prNumber: 21400,
+		},
+		{
 			name:    "gh error fails open as ERROR",
 			ghErr:   errors.New("gh: rate limited"),
 			verdict: VerdictError,
@@ -249,7 +336,7 @@ func TestCheckBranch(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			g := &Gate{Run: stubRunner(tt.ghOutput, tt.ghErr)}
+			g := &Gate{Run: stubRunner(tt.ghOutput, tt.ghErr), IgnoreChecks: tt.ignore}
 			res := g.CheckBranch("/tmp", "polecat/test")
 			if res.Verdict != tt.verdict {
 				t.Fatalf("verdict = %s, want %s (err=%v)", res.Verdict, tt.verdict, res.Err)

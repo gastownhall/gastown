@@ -621,3 +621,35 @@ func TestParseDurationOrDefault_AllWebTimeoutDefaults(t *testing.T) {
 		})
 	}
 }
+
+// --- CIGateConfig.HumanGateChecksOrDefault (AA-859) ---
+
+func TestHumanGateChecksOrDefault(t *testing.T) {
+	t.Parallel()
+
+	var nilCfg *CIGateConfig
+	if got := nilCfg.HumanGateChecksOrDefault(); len(got) != 1 || got[0] != "pullapprove" {
+		t.Errorf("nil receiver = %v, want [pullapprove]", got)
+	}
+	if got := (&CIGateConfig{}).HumanGateChecksOrDefault(); len(got) != 1 || got[0] != "pullapprove" {
+		t.Errorf("unset field = %v, want [pullapprove]", got)
+	}
+	// Explicit empty list means "exclude nothing" — it must not be
+	// silently replaced by the default.
+	if got := (&CIGateConfig{HumanGateChecks: []string{}}).HumanGateChecksOrDefault(); len(got) != 0 {
+		t.Errorf("explicit empty list = %v, want []", got)
+	}
+	custom := &CIGateConfig{HumanGateChecks: []string{"pullapprove", "release-signoff"}}
+	if got := custom.HumanGateChecksOrDefault(); len(got) != 2 || got[1] != "release-signoff" {
+		t.Errorf("custom list = %v, want [pullapprove release-signoff]", got)
+	}
+
+	// The JSON wire format preserves the nil-vs-empty distinction.
+	var fromJSON CIGateConfig
+	if err := json.Unmarshal([]byte(`{"human_gate_checks": []}`), &fromJSON); err != nil {
+		t.Fatal(err)
+	}
+	if got := fromJSON.HumanGateChecksOrDefault(); len(got) != 0 {
+		t.Errorf(`{"human_gate_checks": []} = %v, want []`, got)
+	}
+}
