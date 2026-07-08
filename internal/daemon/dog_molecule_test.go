@@ -91,6 +91,16 @@ func TestParseChildrenJSON(t *testing.T) {
 			wantCount: 0,
 		},
 		{
+			name:      "schema version envelope",
+			input:     `{"hq-wisp-root":[{"id":"hq-wisp-a","title":"Probe","status":"open"}],"schema_version":1}`,
+			wantCount: 1,
+		},
+		{
+			name:      "schema version envelope with empty children",
+			input:     `{"hq-wisp-root":[],"schema_version":1}`,
+			wantCount: 0,
+		},
+		{
 			name:      "empty array",
 			input:     `[]`,
 			wantCount: 0,
@@ -98,6 +108,21 @@ func TestParseChildrenJSON(t *testing.T) {
 		{
 			name:    "invalid json",
 			input:   `not json`,
+			wantErr: true,
+		},
+		{
+			name:    "unexpected scalar child payload",
+			input:   `{"hq-wisp-root":1,"schema_version":1}`,
+			wantErr: true,
+		},
+		{
+			name:    "malformed child array",
+			input:   `{"hq-wisp-root":[{"id":1}],"schema_version":1}`,
+			wantErr: true,
+		},
+		{
+			name:    "ambiguous child arrays",
+			input:   `{"hq-wisp-root":[],"other-root":[]}`,
 			wantErr: true,
 		},
 	}

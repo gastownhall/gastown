@@ -262,8 +262,8 @@ type childInfo struct {
 }
 
 // parseChildrenJSON parses the output of `bd show <id> --children --json`.
-// bd returns a map keyed by parent ID: {"hq-wisp-abc": [{...}, ...]}.
-// For forward compatibility, a bare array is also accepted.
+// bd returns a map keyed by parent ID, plus envelope metadata like
+// schema_version. For forward compatibility, a bare array is also accepted.
 func parseChildrenJSON(raw string) ([]childInfo, error) {
 	data := []byte(raw)
 
@@ -272,12 +272,34 @@ func parseChildrenJSON(raw string) ([]childInfo, error) {
 		return arr, nil
 	}
 
-	var wrapped map[string][]childInfo
+	var wrapped map[string]json.RawMessage
 	if err := json.Unmarshal(data, &wrapped); err == nil {
-		for _, children := range wrapped {
-			return children, nil
+		var found []childInfo
+		foundKey := ""
+
+		for key, payload := range wrapped {
+			if key == "schema_version" {
+				continue
+			}
+
+			trimmed := bytes.TrimSpace(payload)
+			if len(trimmed) == 0 || trimmed[0] != '[' {
+				return nil, fmt.Errorf("children for %q are not a JSON array", key)
+			}
+
+			var children []childInfo
+			if err := json.Unmarshal(payload, &children); err != nil {
+				return nil, fmt.Errorf("parse children array for %q: %w", key, err)
+			}
+			if foundKey != "" {
+				return nil, fmt.Errorf("multiple child arrays in children JSON: %q and %q", foundKey, key)
+			}
+
+			foundKey = key
+			found = children
 		}
-		return nil, nil
+
+		return found, nil
 	}
 
 	return nil, fmt.Errorf("unrecognized JSON shape: %.200s", raw)
