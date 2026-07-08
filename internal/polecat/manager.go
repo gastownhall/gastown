@@ -1310,7 +1310,10 @@ func (m *Manager) removeWithOptionsLocked(name string, force, nuclear, selfNuke 
 func (m *Manager) ActiveMRRemovalBlocker(name string) (string, string) {
 	agentID := m.agentBeadID(name)
 	_, fields, err := m.agentBeads().GetAgentBead(agentID)
-	if err != nil || fields == nil {
+	if err != nil {
+		return "<unknown>", fmt.Sprintf("agent_lookup_error: %v", err)
+	}
+	if fields == nil {
 		return "", ""
 	}
 	activeMR := strings.TrimSpace(fields.ActiveMR)

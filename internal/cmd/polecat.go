@@ -1864,10 +1864,8 @@ type nukePolecatOptions struct {
 }
 
 func nukePolecatFullWithOptions(polecatName, rigName string, mgr *polecat.Manager, r *rig.Rig, opts nukePolecatOptions) error {
-	if !opts.Force {
-		if activeMR, blocker := mgr.ActiveMRRemovalBlocker(polecatName); blocker != "" {
-			return fmt.Errorf("cannot nuke %s/%s: MR %s is still pending in merge queue (%s)\nRefinery will process the MR and clean up after merge\nUse --force to override (risks data loss)", rigName, polecatName, activeMR, blocker)
-		}
+	if err := checkNukeActiveMRSafety(mgr, polecatName, rigName, opts.Force); err != nil {
+		return err
 	}
 
 	t := tmux.NewTmux()
@@ -1962,6 +1960,20 @@ func nukePolecatFullWithOptions(polecatName, rigName string, mgr *polecat.Manage
 		purgeClosedEphemeralBeads(beads.New(r.Path))
 	}
 
+	return nil
+}
+
+type activeMRRemovalChecker interface {
+	ActiveMRRemovalBlocker(name string) (activeMR, blocker string)
+}
+
+func checkNukeActiveMRSafety(checker activeMRRemovalChecker, polecatName, rigName string, force bool) error {
+	if force || checker == nil {
+		return nil
+	}
+	if activeMR, blocker := checker.ActiveMRRemovalBlocker(polecatName); blocker != "" {
+		return fmt.Errorf("cannot nuke %s/%s: MR %s is still pending in merge queue (%s)\nRefinery will process the MR and clean up after merge\nUse --force to override (risks data loss)", rigName, polecatName, activeMR, blocker)
+	}
 	return nil
 }
 
