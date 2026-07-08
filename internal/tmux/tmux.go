@@ -1701,6 +1701,14 @@ func canonicalPaneTargetFromDisplay(expectedSession, out string) (string, bool) 
 }
 
 func isTmuxIndex(value string) bool {
+	if value == "" {
+		return false
+	}
+	for _, r := range value {
+		if r < '0' || r > '9' {
+			return false
+		}
+	}
 	n, err := strconv.Atoi(value)
 	return err == nil && n >= 0
 }

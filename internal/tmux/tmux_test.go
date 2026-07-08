@@ -1920,6 +1920,12 @@ func TestCanonicalPaneTargetFromDisplay(t *testing.T) {
 			out:             "gt-alpha\t0\t-1",
 			wantOK:          false,
 		},
+		{
+			name:            "signed index",
+			expectedSession: "gt-alpha",
+			out:             "gt-alpha\t+1\t0",
+			wantOK:          false,
+		},
 	}
 
 	for _, tt := range tests {
