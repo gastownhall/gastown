@@ -1860,6 +1860,177 @@ func TestNudgeSession_WakesAgentWindowNotActiveWindow(t *testing.T) {
 	}
 }
 
+func TestCanonicalPaneTargetFromDisplay(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name            string
+		expectedSession string
+		out             string
+		want            string
+		wantOK          bool
+	}{
+		{
+			name:            "valid target",
+			expectedSession: "gt-alpha",
+			out:             "gt-alpha\t0\t0",
+			want:            "gt-alpha:0.0",
+			wantOK:          true,
+		},
+		{
+			name:            "valid multi window",
+			expectedSession: "gt-alpha",
+			out:             "gt-alpha\t12\t3",
+			want:            "gt-alpha:12.3",
+			wantOK:          true,
+		},
+		{
+			name:            "wrong session",
+			expectedSession: "gt-alpha",
+			out:             "gt-beta\t0\t0",
+			wantOK:          false,
+		},
+		{
+			name:            "malformed combined target",
+			expectedSession: "gt-alpha",
+			out:             "gt-alpha:0.0",
+			wantOK:          false,
+		},
+		{
+			name:            "empty output",
+			expectedSession: "gt-alpha",
+			out:             "",
+			wantOK:          false,
+		},
+		{
+			name:            "non numeric window",
+			expectedSession: "gt-alpha",
+			out:             "gt-alpha\tactive\t0",
+			wantOK:          false,
+		},
+		{
+			name:            "non numeric pane",
+			expectedSession: "gt-alpha",
+			out:             "gt-alpha\t0\tactive",
+			wantOK:          false,
+		},
+		{
+			name:            "negative index",
+			expectedSession: "gt-alpha",
+			out:             "gt-alpha\t0\t-1",
+			wantOK:          false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, ok := canonicalPaneTargetFromDisplay(tt.expectedSession, tt.out)
+			if ok != tt.wantOK {
+				t.Fatalf("ok = %v, want %v", ok, tt.wantOK)
+			}
+			if got != tt.want {
+				t.Errorf("target = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestCanonicalPaneTargetResolvesAndFallsBack(t *testing.T) {
+	tm := newTestTmux(t)
+	sessionName := "gt-test-canonical-pane-" + fmt.Sprintf("%d", time.Now().UnixNano()%100000)
+	otherSession := "gt-test-canonical-other-" + fmt.Sprintf("%d", time.Now().UnixNano()%100000)
+
+	if err := tm.NewSession(sessionName, os.TempDir()); err != nil {
+		t.Fatalf("NewSession target: %v", err)
+	}
+	defer func() { _ = tm.KillSession(sessionName) }()
+	if err := tm.NewSession(otherSession, os.TempDir()); err != nil {
+		t.Fatalf("NewSession other: %v", err)
+	}
+	defer func() { _ = tm.KillSession(otherSession) }()
+
+	time.Sleep(200 * time.Millisecond)
+	fallback := sessionName + ":0.0"
+	if got := tm.canonicalPaneTarget(sessionName, ""); got != fallback {
+		t.Errorf("empty pane target = %q, want %q", got, fallback)
+	}
+	if got := tm.canonicalPaneTarget(sessionName, "%999999"); got != fallback {
+		t.Errorf("missing pane target = %q, want %q", got, fallback)
+	}
+
+	paneID, err := tm.GetPaneID(sessionName)
+	if err != nil {
+		t.Fatalf("GetPaneID target: %v", err)
+	}
+	if got := tm.canonicalPaneTarget(sessionName, paneID); got != fallback {
+		t.Errorf("live pane target = %q, want %q", got, fallback)
+	}
+
+	otherPane, err := tm.GetPaneID(otherSession)
+	if err != nil {
+		t.Fatalf("GetPaneID other: %v", err)
+	}
+	if got := tm.canonicalPaneTarget(sessionName, otherPane); got != fallback {
+		t.Errorf("cross-session pane target = %q, want %q", got, fallback)
+	}
+}
+
+func TestNudgeSession_StalePaneIDFallsBackToFirstPane(t *testing.T) {
+	tm := newTestTmux(t)
+	sessionName := "gt-test-nudge-stale-pane-" + fmt.Sprintf("%d", time.Now().UnixNano()%100000)
+	otherSession := "gt-test-nudge-other-pane-" + fmt.Sprintf("%d", time.Now().UnixNano()%100000)
+
+	if err := tm.NewSession(sessionName, os.TempDir()); err != nil {
+		t.Fatalf("NewSession target: %v", err)
+	}
+	defer func() { _ = tm.KillSession(sessionName) }()
+	if err := tm.NewSession(otherSession, os.TempDir()); err != nil {
+		t.Fatalf("NewSession other: %v", err)
+	}
+	defer func() { _ = tm.KillSession(otherSession) }()
+
+	time.Sleep(200 * time.Millisecond)
+	otherPane, err := tm.GetPaneID(otherSession)
+	if err != nil {
+		t.Fatalf("GetPaneID other: %v", err)
+	}
+	if err := tm.SetEnvironment(sessionName, "GT_PANE_ID", otherPane); err != nil {
+		t.Fatalf("SetEnvironment GT_PANE_ID: %v", err)
+	}
+	if _, err := tm.run("new-window", "-t", sessionName, "-n", "active"); err != nil {
+		t.Fatalf("new-window: %v", err)
+	}
+
+	marker := "GT_NUDGE_STALE_PANE_FALLBACK_" + fmt.Sprintf("%d", time.Now().UnixNano()%100000)
+	if err := tm.NudgeSession(sessionName, "echo "+marker); err != nil {
+		t.Fatalf("NudgeSession: %v", err)
+	}
+	time.Sleep(300 * time.Millisecond)
+
+	firstPane, err := tm.CapturePane(sessionName+":0.0", 80)
+	if err != nil {
+		t.Fatalf("CapturePane first: %v", err)
+	}
+	activePane, err := tm.CapturePane(sessionName+":1.0", 80)
+	if err != nil {
+		t.Fatalf("CapturePane active: %v", err)
+	}
+	otherPaneContent, err := tm.CapturePane(otherSession+":0.0", 80)
+	if err != nil {
+		t.Fatalf("CapturePane other: %v", err)
+	}
+
+	if !strings.Contains(firstPane, marker) {
+		t.Fatalf("first pane did not receive nudge marker %q; content:\n%s", marker, firstPane)
+	}
+	if strings.Contains(activePane, marker) {
+		t.Fatalf("active fallback pane received stale-pane nudge marker %q; content:\n%s", marker, activePane)
+	}
+	if strings.Contains(otherPaneContent, marker) {
+		t.Fatalf("cross-session stale pane received nudge marker %q; content:\n%s", marker, otherPaneContent)
+	}
+}
+
 // TestAdaptiveTextDelay verifies the delay scaling logic for post-text delivery.
 func TestAdaptiveTextDelay(t *testing.T) {
 	t.Parallel()
