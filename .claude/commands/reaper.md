@@ -20,7 +20,7 @@ If `--dry-run` is passed, report counts without making changes.
 | purge_age | 72h | Closed wisps older than this are purged (deleted) |
 | stale_issue_age | 168h | Issues stale longer than this are auto-closed |
 | mail_delete_age | 72h | Closed mail older than this is purged |
-| alert_threshold | 500 | Open wisp count that triggers escalation |
+| alert_threshold | 3000 | Open wisp count that triggers escalation |
 | dolt_port | 3307 | Dolt server port |
 
 ## Execution Steps
@@ -62,7 +62,7 @@ Inspect the JSON output:
 - `open_wisps`: total open wisp count
 - `anomalies`: array of detected problems
 
-If `open_wisps` exceeds 500 across all databases, note for escalation.
+If `open_wisps` exceeds 3000 across all databases, note for escalation.
 If no candidates found across all databases, report "nothing to reap" and stop.
 
 ### Step 4: Reap stale wisps
