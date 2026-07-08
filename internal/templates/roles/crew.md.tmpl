@@ -246,6 +246,29 @@ content, interpret the prose instructions, and execute them.
 
 ## Git Workflow: Work Off Main
 
+{{ if .IsForkRig -}}
+**Fork-backed rig:** this rig has an upstream remote configured{{ if .UpstreamURL }} (`{{ .UpstreamURL }}`){{ end }}.
+The Refinery is disabled by default; use a PR-to-upstream workflow.
+
+### Fork-Backed PR Workflow
+
+- Start branches from `upstream/{{ .DefaultBranch }}`.
+- Push work branches to the fork remote (`origin`).
+- Create or update a GitHub PR against upstream `{{ .DefaultBranch }}`.
+- Do NOT push directly to upstream `{{ .DefaultBranch }}`.
+- Do NOT use the local Refinery/MQ for upstream changes.
+
+### Workflow
+
+```bash
+git fetch upstream {{ .DefaultBranch }}
+git checkout -b <branch> upstream/{{ .DefaultBranch }}
+# ... do work ...
+git add -A && git commit -m "description"
+git push -u origin <branch>
+gh pr create --base {{ .DefaultBranch }} --head <fork-owner>:<branch>
+```
+{{ else -}}
 **Crew workers push directly to main. No feature branches.**
 
 ### No PRs in Maintainer Repos
@@ -279,6 +302,7 @@ git push                    # Direct to main
 ```
 
 If push fails (someone else pushed): `git pull --rebase && git push`
+{{ end }}
 
 ### Fix-Merging Community PRs
 

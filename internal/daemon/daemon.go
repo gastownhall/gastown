@@ -1880,6 +1880,10 @@ func (d *Daemon) ensureRefineryRunning(rigName string) {
 			d.logger.Printf("Skipping refinery auto-start for %s: %v", rigName, err)
 			return
 		}
+		if errors.Is(err, refinery.ErrForkRig) {
+			d.logger.Printf("Skipping refinery auto-start for %s: %v", rigName, err)
+			return
+		}
 		d.logger.Printf("Error starting refinery for %s: %v", rigName, err)
 		return
 	}

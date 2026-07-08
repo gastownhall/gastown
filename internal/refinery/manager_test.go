@@ -195,6 +195,78 @@ func TestManager_StartSafetyStoppedKillsLeftoverSession(t *testing.T) {
 	}
 }
 
+func TestManager_StartForkRigDoesNotCreateSession(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("mock tmux script uses POSIX shell")
+	}
+	setupTestRegistry(t)
+
+	townRoot := t.TempDir()
+	rigPath := filepath.Join(townRoot, "testrig")
+	if err := os.MkdirAll(rigPath, 0o755); err != nil {
+		t.Fatalf("mkdir rig: %v", err)
+	}
+	writeRigConfig(t, rigPath, `{"upstream_url":"https://token@example.com/upstream/repo.git"}`)
+
+	binDir := t.TempDir()
+	logPath := filepath.Join(t.TempDir(), "commands.log")
+	writeSafetyStopMockTmux(t, binDir, logPath)
+	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	mgr := NewManager(&rig.Rig{Name: "testrig", Path: rigPath})
+	err := mgr.Start(false, "")
+	if !errors.Is(err, ErrForkRig) {
+		t.Fatalf("Start error = %v, want ErrForkRig", err)
+	}
+	if strings.Contains(err.Error(), "token") {
+		t.Fatalf("fork error leaked credential: %v", err)
+	}
+	logData, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatalf("read command log: %v", err)
+	}
+	if strings.Contains(string(logData), "new-session") {
+		t.Fatalf("Start created a tmux session for fork rig; log:\n%s", logData)
+	}
+}
+
+func TestManager_StartAllowingForkRigStillHonorsSafetyStop(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("mock bd/tmux scripts use POSIX shell")
+	}
+	setupTestRegistry(t)
+
+	townRoot := t.TempDir()
+	for _, dir := range []string{filepath.Join(townRoot, "mayor"), filepath.Join(townRoot, ".beads"), filepath.Join(townRoot, "testrig")} {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatalf("mkdir %s: %v", dir, err)
+		}
+	}
+	if err := os.WriteFile(filepath.Join(townRoot, "mayor", "town.json"), []byte(`{"name":"test"}`), 0o644); err != nil {
+		t.Fatalf("write town.json: %v", err)
+	}
+	writeRigConfig(t, filepath.Join(townRoot, "testrig"), `{"upstream_url":"https://github.com/upstream/repo"}`)
+
+	binDir := t.TempDir()
+	logPath := filepath.Join(t.TempDir(), "commands.log")
+	writeSafetyStopMockBD(t, binDir)
+	writeSafetyStopMockTmux(t, binDir, logPath)
+	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	mgr := NewManager(&rig.Rig{Name: "testrig", Path: filepath.Join(townRoot, "testrig")})
+	err := mgr.StartAllowingForkRig(false, "")
+	if !errors.Is(err, ErrSafetyStopped) {
+		t.Fatalf("StartAllowingForkRig error = %v, want ErrSafetyStopped", err)
+	}
+}
+
+func writeRigConfig(t *testing.T, rigPath, data string) {
+	t.Helper()
+	if err := os.WriteFile(filepath.Join(rigPath, "config.json"), []byte(data), 0o644); err != nil {
+		t.Fatalf("write rig config: %v", err)
+	}
+}
+
 func writeSafetyStopMockBD(t *testing.T, binDir string) {
 	t.Helper()
 	script := `#!/bin/sh

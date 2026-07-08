@@ -62,6 +62,8 @@ type RoleData struct {
 	TownName       string   // e.g., "ai" - the town identifier for session names
 	WorkDir        string   // current working directory
 	DefaultBranch  string   // default branch for merges (e.g., "main", "develop")
+	IsForkRig      bool     // true when rig config has upstream_url
+	UpstreamURL    string   // redacted upstream URL for display only
 	Polecat        string   // polecat name (for polecat role)
 	Polecats       []string // list of polecats (for witness role)
 	DogName        string   // dog name (for dog role)

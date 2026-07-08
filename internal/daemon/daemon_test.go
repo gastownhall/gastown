@@ -187,6 +187,39 @@ func TestEnsureRefineryRunningSafetyStoppedDoesNotSpawn(t *testing.T) {
 	}
 }
 
+func TestEnsureRefineryRunningForkRigDoesNotSpawn(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("mock tmux script uses POSIX shell")
+	}
+	townRoot := t.TempDir()
+	writeDaemonTownFile(t, townRoot, "events/refinery/pending.event", "{}")
+	writeDaemonTownFile(t, townRoot, "testrig/config.json", `{"upstream_url":"https://github.com/upstream/repo"}`)
+
+	binDir := t.TempDir()
+	logPath := filepath.Join(binDir, "commands.log")
+	writeDaemonSafetyStopMockTmux(t, binDir, logPath)
+	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	var logBuf bytes.Buffer
+	d := &Daemon{
+		config: DefaultConfig(townRoot),
+		logger: log.New(&logBuf, "", 0),
+		tmux:   tmux.NewTmux(),
+	}
+	d.ensureRefineryRunning("testrig")
+
+	logData, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatalf("read command log: %v", err)
+	}
+	if strings.Contains(string(logData), "new-session") {
+		t.Fatalf("daemon spawned refinery for fork rig; log:\n%s", logData)
+	}
+	if !strings.Contains(logBuf.String(), "fork-backed rig") {
+		t.Fatalf("daemon log = %q, want fork-backed skip", logBuf.String())
+	}
+}
+
 func writeDaemonSafetyStopMockBD(t *testing.T, binDir, logPath string) {
 	t.Helper()
 	script := `#!/bin/sh

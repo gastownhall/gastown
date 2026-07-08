@@ -413,6 +413,9 @@ func startRefineryForRig(r *rig.Rig) string {
 		if errors.Is(err, refinery.ErrAlreadyRunning) {
 			return fmt.Sprintf("  %s %s refinery already running\n", style.Dim.Render("○"), r.Name)
 		}
+		if errors.Is(err, refinery.ErrForkRig) {
+			return fmt.Sprintf("  %s %s refinery skipped (fork-backed rig; use PR workflow)\n", style.Dim.Render("○"), r.Name)
+		}
 		return fmt.Sprintf("  %s %s refinery failed: %v\n", style.Dim.Render("○"), r.Name, err)
 	}
 	return fmt.Sprintf("  %s %s refinery started\n", style.Bold.Render("✓"), r.Name)
