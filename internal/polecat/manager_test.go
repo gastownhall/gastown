@@ -2071,7 +2071,7 @@ func TestStalePendingMarkerIsCleanedUp(t *testing.T) {
 	}
 
 	// Backdate the file to simulate a stale marker (older than pendingMaxAge).
-	staleTime := time.Now().Add(-(pendingMaxAge + time.Minute))
+	staleTime := time.Now().Add(-(m.pendingMaxAge() + time.Minute))
 	if err := os.Chtimes(pendingPath, staleTime, staleTime); err != nil {
 		t.Fatal(err)
 	}

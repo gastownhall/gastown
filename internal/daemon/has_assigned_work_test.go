@@ -58,7 +58,11 @@ printf '[{"id":"gt-123"}]\n'
 		bdPath: bdPath,
 	}
 
-	if !d.hasAssignedOpenWork("gastown", "polecats/rust") {
+	hasWork, workErr := d.hasAssignedOpenWork("gastown", "polecats/rust")
+	if workErr != nil {
+		t.Fatalf("expected assigned work lookup to succeed, got error: %v", workErr)
+	}
+	if !hasWork {
 		t.Fatal("expected assigned work lookup to succeed")
 	}
 

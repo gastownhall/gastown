@@ -2228,6 +2228,14 @@ func (d *Daemon) isRigOperational(rigName string) (bool, string) {
 				return false, "rig is parked (global)"
 			}
 		}
+	} else if isRigBeadNotFound(err) {
+		// Not-found is a DEFINITIVE answer, not an outage: the rig has no rig
+		// bead, so nothing has ever docked/parked it globally. Treat it like a
+		// rig bead without status labels and continue. Conflating this with
+		// "Dolt unavailable" excluded rigs with missing rig beads (e.g.
+		// cap-rig-capital, 2026-07-08) from witness/refinery patrol
+		// indefinitely and spammed ~18k warnings/day.
+		d.logger.Printf("Rig bead %s not found — no global docked/parked state, treating rig as not docked", rigBeadID)
 	} else {
 		// Log when rig bead lookup fails - this helps debug transient Dolt issues
 		// FAIL-SAFE: When we can't verify docked status (Dolt down, network issue, etc.),
@@ -2253,6 +2261,21 @@ func (d *Daemon) isRigOperational(rigName string) (bool, string) {
 	}
 
 	return true, ""
+}
+
+// isRigBeadNotFound reports whether a rig-bead lookup error means the bead
+// definitively does not exist (as opposed to a transport/Dolt failure where
+// existence is unknown). Matches beads.ErrNotFound plus the "not found" /
+// "no issue found" strings the bd CLI path surfaces instead of the sentinel.
+func isRigBeadNotFound(err error) bool {
+	if err == nil {
+		return false
+	}
+	if errors.Is(err, beads.ErrNotFound) {
+		return true
+	}
+	msg := err.Error()
+	return strings.Contains(msg, "not found") || strings.Contains(msg, "no issue found") || strings.Contains(msg, "no issues found")
 }
 
 // processLifecycleRequests checks for and processes lifecycle requests.
@@ -2820,9 +2843,17 @@ func (d *Daemon) isBeadClosed(beadID string) bool {
 // assignee on the work bead, but no longer maintains the agent bead's hook_bead
 // field (updateAgentHookBead is a no-op). Without this fallback, the idle reaper
 // kills working polecats whose agent bead hook_bead is stale.
-func (d *Daemon) hasAssignedOpenWork(rigName, assignee string) bool {
+//
+// Returns (true, nil) when open work is found. Returns (false, nil) only when
+// EVERY status query succeeded and none returned work — a verified negative.
+// Returns (false, err) when any status query failed and no work was seen: the
+// work-state is UNKNOWN, and callers MUST NOT treat it as "no work" (2026-07-08
+// incidents: bd failures during Dolt degradation read as idle → healthy
+// mid-work polecats killed).
+func (d *Daemon) hasAssignedOpenWork(rigName, assignee string) (bool, error) {
 	rigDir := beads.GetRigDirForName(d.config.TownRoot, rigName)
 
+	var lookupErr error
 	for _, status := range []string{"hooked", "in_progress", "open"} {
 		args := beads.InjectFlatForListJSON([]string{"list", "--assignee=" + assignee, "--status=" + status, "--json"})
 		cmd := exec.Command(d.bdPath, args...) //nolint:gosec // G204: args are constructed internally
@@ -2834,14 +2865,19 @@ func (d *Daemon) hasAssignedOpenWork(rigName, assignee string) bool {
 		}
 		output, err := cmd.Output()
 		if err != nil {
+			lookupErr = fmt.Errorf("bd list --assignee=%s --status=%s: %w", assignee, status, err)
 			continue
 		}
 		var issues []json.RawMessage
-		if json.Unmarshal(output, &issues) == nil && len(issues) > 0 {
-			return true
+		if err := json.Unmarshal(output, &issues); err != nil {
+			lookupErr = fmt.Errorf("parsing bd list --status=%s output: %w", status, err)
+			continue
+		}
+		if len(issues) > 0 {
+			return true, nil
 		}
 	}
-	return false
+	return false, lookupErr
 }
 
 // notifyWitnessOfCrashedPolecat notifies the witness when a polecat crash is detected.
@@ -2941,14 +2977,28 @@ func (d *Daemon) reapIdlePolecat(rigName, polecatName string, timeout time.Durat
 			// Bead infrastructure failures (Dolt issues, version mismatches) cause
 			// spurious lookup errors while the polecat is actively working (GH#3342).
 			assignee := fmt.Sprintf("%s/polecats/%s", rigName, polecatName)
-			if d.hasAssignedOpenWork(rigName, assignee) {
+			hasWork, verifyErr := d.hasAssignedOpenWork(rigName, assignee)
+			if verifyErr != nil {
+				// FAIL-SAFE (2026-07-08 incidents): both the agent bead lookup AND
+				// the work-bead verification failed — the polecat's work-state is
+				// UNKNOWN. Never kill on an unknown work-state, no matter how stale
+				// the heartbeat; a Dolt outage must not read as "idle". The reap is
+				// merely deferred until beads answer again.
+				d.logger.Printf("Skipping idle-reap for %s/%s: work-state unknown (agent bead: %v; work-bead check: %v) — failing safe",
+					rigName, polecatName, err, verifyErr)
 				return
 			}
-			// No assigned work and agent not running — safe to reap.
-			// Use 3x threshold (not 2x) to avoid killing polecats during transient
-			// infrastructure degradation when the agent process is alive but not
-			// detectable (e.g. long thinking sessions, slow process inspection).
-			if staleDuration >= timeout*3 || !d.tmux.IsAgentAlive(sessionName) && staleDuration >= timeout*2 {
+			if hasWork {
+				return
+			}
+			// Verified no assigned work — but never kill while the agent process is
+			// still running: an alive agent with a failed bead lookup can be a
+			// mid-sling race or bd/Dolt inconsistency, not an idle session.
+			if d.tmux.IsAgentAlive(sessionName) {
+				return
+			}
+			// No assigned work and agent not running — safe to reap at 2x threshold.
+			if staleDuration >= timeout*2 {
 				d.killIdlePolecat(rigName, polecatName, sessionName, staleDuration, timeout, "working-bead-lookup-failed")
 			}
 			return
@@ -2969,7 +3019,14 @@ func (d *Daemon) reapIdlePolecat(rigName, polecatName string, timeout time.Durat
 		// whose agent bead hook_bead points to a closed bead from a previous swarm
 		// while the polecat is actively working on a newly-slung bead.
 		assignee := fmt.Sprintf("%s/polecats/%s", rigName, polecatName)
-		if d.hasAssignedOpenWork(rigName, assignee) {
+		hasWork, verifyErr := d.hasAssignedOpenWork(rigName, assignee)
+		if verifyErr != nil {
+			// FAIL-SAFE: cannot verify the absence of assigned work — do not kill.
+			d.logger.Printf("Skipping idle-reap for %s/%s: work-bead check failed (%v) — failing safe",
+				rigName, polecatName, verifyErr)
+			return
+		}
+		if hasWork {
 			return
 		}
 

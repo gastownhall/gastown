@@ -688,7 +688,7 @@ func (m *Manager) AllocateAndAdd(opts AddOptions) (string, *Polecat, error) {
 
 	m.reconcilePoolInternal()
 
-	name, err := m.namePool.Allocate()
+	name, err := m.allocateNameSkippingLiveSessions()
 	if err != nil {
 		_ = poolLock.Unlock()
 		return "", nil, err
@@ -714,7 +714,9 @@ func (m *Manager) AllocateAndAdd(opts AddOptions) (string, *Polecat, error) {
 		return "", nil, fmt.Errorf("creating polecat dir: %w", err)
 	}
 
-	// Kill any lingering tmux session for this name (gt-pqf9x)
+	// Kill any lingering tmux session for this name (gt-pqf9x).
+	// allocateNameSkippingLiveSessions guarantees no live agent owns this
+	// session — anything still here is a dead shell left by a crashed startup.
 	if m.tmux != nil {
 		sessionName := session.PolecatSessionName(session.PrefixFor(m.rig.Name), name)
 		if alive, _ := m.tmux.HasSession(sessionName); alive {
@@ -1397,7 +1399,7 @@ func (m *Manager) AllocateName() (string, error) {
 	// Reconcile without re-acquiring the pool lock
 	m.reconcilePoolInternal()
 
-	name, err := m.namePool.Allocate()
+	name, err := m.allocateNameSkippingLiveSessions()
 	if err != nil {
 		return "", err
 	}
@@ -1427,6 +1429,8 @@ func (m *Manager) AllocateName() (string, error) {
 	// can be allocated after its directory was cleaned up while the tmux session
 	// lingers (race between cleanup and allocation). This extra check ensures
 	// no stale session blocks the new polecat's session creation.
+	// allocateNameSkippingLiveSessions guarantees no live agent owns this
+	// session — anything still here is a dead shell left by a crashed startup.
 	if m.tmux != nil {
 		sessionName := session.PolecatSessionName(session.PrefixFor(m.rig.Name), name)
 		if alive, _ := m.tmux.HasSession(sessionName); alive {
@@ -1435,6 +1439,33 @@ func (m *Manager) AllocateName() (string, error) {
 	}
 
 	return name, nil
+}
+
+// allocateNameSkippingLiveSessions allocates a name from the pool, refusing any
+// name whose tmux session still hosts a live agent process. Such a session means
+// the pool's view of the name is wrong (bead/fs state diverged, mid-nuke race,
+// Dolt degradation) — reclaiming it would kill a working agent, which is exactly
+// what happened in the 2026-07-08 incidents. The live name is marked in-use and
+// a different name is allocated instead. Caller must hold the pool lock.
+func (m *Manager) allocateNameSkippingLiveSessions() (string, error) {
+	const maxAttempts = 8
+	var skipped []string
+	for attempt := 0; attempt < maxAttempts; attempt++ {
+		name, err := m.namePool.Allocate()
+		if err != nil {
+			return "", err
+		}
+		if m.tmux != nil {
+			sessionName := session.PolecatSessionName(session.PrefixFor(m.rig.Name), name)
+			if alive, _ := m.tmux.HasSession(sessionName); alive && m.tmux.IsAgentAlive(sessionName) {
+				m.namePool.MarkInUse(name)
+				skipped = append(skipped, name)
+				continue
+			}
+		}
+		return name, nil
+	}
+	return "", fmt.Errorf("no allocatable polecat name after %d attempts: names %v have sessions with live agent processes", maxAttempts, skipped)
 }
 
 // ReleaseName releases a name back to the pool.
@@ -1697,6 +1728,16 @@ func (m *Manager) ReuseIdlePolecat(name string, opts AddOptions) (*Polecat, erro
 		}
 	}
 	if current.State == StateIdle {
+		// FAIL-SAFE (2026-07-08 incidents): "Issue == \"\"" can mean the bead
+		// lookup failed or raced, not that the polecat is done. If the session
+		// still hosts a live agent process, its work-state is unverifiable —
+		// refuse destructive reuse and let the allocator pick a different name.
+		if m.tmux != nil {
+			sessionName := session.PolecatSessionName(session.PrefixFor(m.rig.Name), name)
+			if alive, _ := m.tmux.HasSession(sessionName); alive && m.tmux.IsAgentAlive(sessionName) {
+				return nil, fmt.Errorf("%w: session %s has a live agent process but no verifiable work-state — refusing destructive reuse", ErrPolecatNeedsRecovery, sessionName)
+			}
+		}
 		// A live session with no active work is a dead prompt, not preserved work.
 		// Clear it before evaluating reuse so recovery-blocked idle slots don't
 		// continue consuming capacity.
@@ -1908,27 +1949,34 @@ func (m *Manager) ReconcilePool() {
 // reconcilePoolInternal performs pool reconciliation without acquiring the pool lock.
 // Called by ReconcilePool (which holds the lock) and AllocateName (which also holds it).
 func (m *Manager) reconcilePoolInternal() {
-	// Get polecats with existing directories
-	polecats, err := m.List()
-	if err != nil {
+	// Get polecats with existing directories — straight from the filesystem.
+	// Deliberately NOT via m.List(): List() loads each polecat from beads and
+	// silently drops any whose bead lookup fails, so under Dolt degradation a
+	// live mid-work polecat would vanish from namesWithDirs and its session
+	// would be killed below as a directory-less "orphan" (2026-07-08 incidents:
+	// healthy sessions killed seconds before a spawn at full capacity).
+	// Directory existence is the ZFC source of truth for name reservation and
+	// needs no bead lookup.
+	var namesWithDirs []string
+	polecatsDir := filepath.Join(m.rig.Path, "polecats")
+	entries, err := os.ReadDir(polecatsDir)
+	if err != nil && !os.IsNotExist(err) {
+		// Cannot enumerate directories — state unknown. Do NOT reconcile with an
+		// empty list: that would mark every name available and kill every session.
 		return
 	}
-
-	var namesWithDirs []string
-	for _, p := range polecats {
-		namesWithDirs = append(namesWithDirs, p.Name)
-	}
-
-	// Include names with pending reservation markers.
-	// A .pending file means AllocateName has claimed the name but AddWithOptions
-	// hasn't created the directory yet. Without this, Reconcile would see no
-	// directory and treat the name as available, causing a duplicate allocation.
-	polecatsDir := filepath.Join(m.rig.Path, "polecats")
-	if entries, err := os.ReadDir(polecatsDir); err == nil {
-		for _, e := range entries {
-			if !e.IsDir() && strings.HasSuffix(e.Name(), ".pending") {
-				namesWithDirs = append(namesWithDirs, strings.TrimSuffix(e.Name(), ".pending"))
-			}
+	for _, e := range entries {
+		name := e.Name()
+		if e.IsDir() && !strings.HasPrefix(name, ".") {
+			namesWithDirs = append(namesWithDirs, name)
+			continue
+		}
+		// Include names with pending reservation markers.
+		// A .pending file means AllocateName has claimed the name but AddWithOptions
+		// hasn't created the directory yet. Without this, Reconcile would see no
+		// directory and treat the name as available, causing a duplicate allocation.
+		if !e.IsDir() && strings.HasSuffix(name, ".pending") {
+			namesWithDirs = append(namesWithDirs, strings.TrimSuffix(name, ".pending"))
 		}
 	}
 
@@ -1959,8 +2007,11 @@ func (m *Manager) reconcilePoolInternal() {
 // - namesWithDirs: names that have existing worktree directories (in use)
 // - namesWithSessions: names that have tmux sessions
 //
-// Names with sessions but no directories are orphans and their sessions are killed.
-// Only namesWithDirs are marked as in-use for allocation.
+// Names with sessions but no directories are orphans and their sessions are killed —
+// unless the session still has a live agent process, in which case it is skipped and
+// its name kept in-use (fail-safe: never reclaim a session whose work-state can't be
+// verified as dead; the allocator picks a different name instead).
+// Only namesWithDirs (plus protected live sessions) are marked as in-use for allocation.
 func (m *Manager) ReconcilePoolWith(namesWithDirs, namesWithSessions []string) {
 	dirSet := make(map[string]bool)
 	for _, name := range namesWithDirs {
@@ -1969,21 +2020,30 @@ func (m *Manager) ReconcilePoolWith(namesWithDirs, namesWithSessions []string) {
 
 	// Kill orphaned sessions only. Directory-backed sessions are lifecycle-owned by
 	// their polecat/witness paths; allocation must never reap unrelated workers.
-	// - No directory: orphan session, always kill (worktree was removed but tmux lingered)
+	// - No directory: orphan session, kill ONLY if the agent process is verifiably
+	//   not running. A live agent in a directory-less session means our view of
+	//   the polecat state is inconsistent (mid-nuke race, transient fs/bead
+	//   failure) — killing it destroys work, so protect the name instead.
 	// Use KillSessionWithProcesses to ensure all descendant processes are killed.
+	inUse := namesWithDirs
 	if m.tmux != nil {
 		townRoot := filepath.Dir(m.rig.Path)
 		for _, name := range namesWithSessions {
 			sessionName := session.PolecatSessionName(session.PrefixFor(m.rig.Name), name)
 			if !dirSet[name] {
-				// Orphan: session exists but no directory
+				if m.tmux.IsAgentAlive(sessionName) {
+					// Live agent — never reclaim; keep the name out of the pool.
+					inUse = append(inUse, name)
+					continue
+				}
+				// Orphan: session exists but no directory and no live agent
 				_ = m.tmux.KillSessionWithProcesses(sessionName)
 				RemoveSessionHeartbeat(townRoot, sessionName)
 			}
 		}
 	}
 
-	m.namePool.Reconcile(namesWithDirs)
+	m.namePool.Reconcile(inUse)
 	// Note: No Save() needed - InUse is transient state, only OverflowNext is persisted
 
 	// Clean up orphaned polecat state (fixes #698)
@@ -2007,7 +2067,17 @@ func isSessionProcessDead(t *tmux.Tmux, sessionName string, townRoot string) boo
 	if townRoot != "" {
 		stale, exists := IsSessionHeartbeatStale(townRoot, sessionName)
 		if exists {
-			return stale
+			if !stale {
+				return false
+			}
+			// Heartbeat is stale — but heartbeats are only touched by gt commands,
+			// so an agent deep in a long turn goes stale while very much alive
+			// (2026-07-08 incidents: mid-work sessions killed on this verdict).
+			// Confirm with a direct process probe before declaring death.
+			if t != nil && t.IsAgentAlive(sessionName) {
+				return false
+			}
+			return true
 		}
 		// No heartbeat file — fall through to PID-based check for backward compatibility.
 	}
@@ -2039,11 +2109,13 @@ func isSessionProcessDead(t *tmux.Tmux, sessionName string, townRoot string) boo
 	return false
 }
 
-// pendingMaxAge is how long a .pending reservation marker may exist before
-// it is considered stale. gt sling completes in seconds, so 5 minutes is
-// a conservative bound that avoids false positives on slow machines.
+// pendingMaxAge returns how long a .pending reservation marker may exist before
+// it is considered stale. gt sling completes in seconds, so the 5-minute default
+// is a conservative bound that avoids false positives on slow machines.
 // Configurable via operational.polecat.pending_max_age in settings/config.json.
-const pendingMaxAge = 5 * time.Minute
+func (m *Manager) pendingMaxAge() time.Duration {
+	return config.LoadOperationalConfig(filepath.Dir(m.rig.Path)).GetPolecatConfig().PendingMaxAgeD()
+}
 
 // cleanupOrphanPolecatState removes partial/broken polecat state during allocation.
 // This handles the race condition where worktree creation fails mid-way, leaving:
@@ -2066,7 +2138,7 @@ func (m *Manager) cleanupOrphanPolecatState() {
 		// so the name can be reallocated on the next reconcile.
 		if !entry.IsDir() && strings.HasSuffix(entry.Name(), ".pending") {
 			info, err := entry.Info()
-			if err == nil && time.Since(info.ModTime()) > pendingMaxAge {
+			if err == nil && time.Since(info.ModTime()) > m.pendingMaxAge() {
 				_ = os.Remove(filepath.Join(polecatsDir, entry.Name()))
 			}
 			continue
@@ -2712,6 +2784,12 @@ func (m *Manager) loadFromBeads(name string) (*Polecat, error) {
 		if sessionDead {
 			state = StateStalled
 		}
+	} else if sessionRunning && hookedErr != nil {
+		// The hooked-work query failed, so "no active issue" is unverified — the
+		// polecat may be mid-work with its bead unreadable (Dolt degradation).
+		// Never classify a live session as idle (= destructively reusable) on an
+		// unverifiable work-state; keep it out of the reuse pool instead.
+		state = StateReviewNeeded
 	} else if sessionRunning && !sessionStale && !m.getCleanupStatusFromBead(name).IsSafe() {
 		state = StateReviewNeeded
 	}
