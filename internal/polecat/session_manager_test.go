@@ -877,7 +877,7 @@ func TestParseFreshBranchName_RoundTrip(t *testing.T) {
 
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			branch := sm.freshBranchName(c.polecat, c.issue)
+			branch := sm.freshBranchName(nil, c.polecat, c.issue)
 			meta := parseFreshBranchName(branch)
 			if !meta.ok {
 				t.Fatalf("parseFreshBranchName(%q) not ok", branch)
@@ -890,6 +890,47 @@ func TestParseFreshBranchName_RoundTrip(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestFreshBranchName_HonorsRigConfig(t *testing.T) {
+	// Session restarts must produce the same branch shape as polecat creation:
+	// both the configured delimiter and the branch template apply (AA-849).
+	tmpDir := t.TempDir()
+
+	t.Run("configured delimiter", func(t *testing.T) {
+		origDefault := rig.SystemDefaults[BranchDelimiterConfigKey]
+		rig.SystemDefaults[BranchDelimiterConfigKey] = "_"
+		defer func() {
+			rig.SystemDefaults[BranchDelimiterConfigKey] = origDefault
+		}()
+
+		sm := &SessionManager{rig: &rig.Rig{Name: "test-rig", Path: tmpDir}}
+		branch := sm.freshBranchName(nil, "nux", "cap-5gw")
+		if !strings.HasPrefix(branch, "polecat/nux/cap-5gw_") {
+			t.Fatalf("freshBranchName() = %q, want prefix polecat/nux/cap-5gw_", branch)
+		}
+		meta := parseFreshBranchName(branch)
+		if !meta.ok || meta.issue != "cap-5gw" || meta.polecat != "nux" {
+			t.Fatalf("parseFreshBranchName(%q) = %+v, want ok polecat nux issue cap-5gw", branch, meta)
+		}
+	})
+
+	t.Run("configured template", func(t *testing.T) {
+		origDefault := rig.SystemDefaults["polecat_branch_template"]
+		rig.SystemDefaults["polecat_branch_template"] = "polecat/{name}/cap-{issue}_{timestamp}"
+		defer func() {
+			rig.SystemDefaults["polecat_branch_template"] = origDefault
+		}()
+
+		sm := &SessionManager{rig: &rig.Rig{Name: "test-rig", Path: tmpDir}}
+		branch := sm.freshBranchName(nil, "nux", "cap-5gw")
+		if !strings.HasPrefix(branch, "polecat/nux/cap-5gw_") {
+			t.Fatalf("freshBranchName() = %q, want prefix polecat/nux/cap-5gw_ (template ignored?)", branch)
+		}
+		if strings.ContainsAny(branch, "@+") {
+			t.Fatalf("freshBranchName() = %q, must not contain @ or +", branch)
+		}
+	})
 }
 
 func TestParseFreshBranchName_IssueTimestampSeparators(t *testing.T) {

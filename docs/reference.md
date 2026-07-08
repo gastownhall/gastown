@@ -195,6 +195,24 @@ When `polecat_branch_template` is empty or not set:
 - With issue: `polecat/{name}/{issue}+{timestamp}`
 - Without issue: `polecat/{name}-{timestamp}`
 
+**Issue/timestamp delimiter (`polecat_branch_delimiter`):**
+
+Some CI systems constrain the branch-name charset — e.g. docker-compose
+project names derived from branch names allow only `[a-z0-9_-]`, rejecting
+the default `+`. Rigs whose CI needs this can pick a different delimiter for
+the default (non-template) branch format:
+
+```bash
+gt rig config set myrig polecat_branch_delimiter _
+# → polecat/{name}/{issue}_{timestamp}
+```
+
+Valid delimiters are `+` (default), `_`, and `@` (legacy) — characters that
+can never appear in issue IDs or polecat names, so branches always parse
+back to the right issue. Invalid values fall back to `+`. Parsing accepts
+all valid delimiters regardless of configuration, so branches created under
+a previous delimiter keep working after a config change.
+
 **Example Configurations:**
 
 ```bash

@@ -9,7 +9,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"time"
 
@@ -175,14 +174,22 @@ func (m *SessionManager) clonePath(polecat string) string {
 }
 
 // freshBranchName returns a unique branch name for a new polecat session.
-// Mirrors the naming convention in Manager.buildBranchName:
+// It shares Manager.buildBranchName's implementation, so session restarts
+// honor the rig's polecat_branch_template and polecat_branch_delimiter config
+// instead of leaking the default separator. Without any config:
 //   - polecat/<name>/<issue>+<timestamp> when an issue is known
 //   - polecat/<name>-<timestamp> otherwise
 //
-// parseFreshBranchName is the structural inverse.
-func (m *SessionManager) freshBranchName(polecatName, issue string) string {
-	ts := strconv.FormatInt(time.Now().UnixMilli(), 36)
-	return FormatGeneratedBranchName(polecatName, issue, ts)
+// g is the polecat worktree's git handle ({user} template variable); it may
+// be nil. parseFreshBranchName is the structural inverse for the default
+// (non-template) forms.
+func (m *SessionManager) freshBranchName(g *git.Git, polecatName, issue string) string {
+	var b *beads.Beads
+	if m.rig != nil {
+		resolvedBeads := beads.ResolveBeadsDir(m.rig.Path)
+		b = beads.NewWithBeadsDir(filepath.Dir(resolvedBeads), resolvedBeads)
+	}
+	return buildBranchNameFor(m.rig, g, b, polecatName, issue)
 }
 
 // freshBranchMeta holds the identity decoded from a branch produced by
@@ -275,7 +282,7 @@ func (m *SessionManager) ensureCanonicalSessionBranch(g *git.Git, polecat string
 		return currentBranch
 	}
 
-	newBranch := m.freshBranchName(polecat, opts.Issue)
+	newBranch := m.freshBranchName(g, polecat, opts.Issue)
 	if err := g.CheckoutNewBranch(newBranch, startPoint); err != nil {
 		debugSession("auto-checkout fresh branch on canonical base", err)
 		return currentBranch

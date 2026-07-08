@@ -1247,6 +1247,53 @@ func TestBuildBranchName(t *testing.T) {
 	}
 }
 
+func TestBuildBranchName_ConfiguredDelimiter(t *testing.T) {
+	tmpDir := t.TempDir()
+	gitCmd := exec.Command("git", "init")
+	gitCmd.Dir = tmpDir
+	if err := gitCmd.Run(); err != nil {
+		t.Fatalf("git init: %v", err)
+	}
+
+	tests := []struct {
+		name       string
+		delimiter  string
+		issue      string
+		wantPrefix string
+	}{
+		{name: "underscore delimiter", delimiter: "_", issue: "cap-5gw", wantPrefix: "polecat/alpha/cap-5gw_"},
+		{name: "unset delimiter keeps plus", delimiter: "", issue: "cap-5gw", wantPrefix: "polecat/alpha/cap-5gw+"},
+		{name: "invalid delimiter falls back to plus", delimiter: "!", issue: "cap-5gw", wantPrefix: "polecat/alpha/cap-5gw+"},
+		{name: "no issue unaffected", delimiter: "_", issue: "", wantPrefix: "polecat/alpha-"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			origDefault := rig.SystemDefaults[BranchDelimiterConfigKey]
+			rig.SystemDefaults[BranchDelimiterConfigKey] = tt.delimiter
+			defer func() {
+				rig.SystemDefaults[BranchDelimiterConfigKey] = origDefault
+			}()
+
+			r := &rig.Rig{Name: "test-rig", Path: tmpDir}
+			g := git.NewGit(tmpDir)
+			m := NewManager(r, g, nil)
+
+			got := m.buildBranchName("alpha", tt.issue)
+			if !strings.HasPrefix(got, tt.wantPrefix) {
+				t.Errorf("buildBranchName() = %q, want prefix %q", got, tt.wantPrefix)
+			}
+			// A delimited branch must round-trip back to its issue.
+			if tt.issue != "" {
+				meta, ok := ParseBranchName(got)
+				if !ok || meta.Issue != tt.issue {
+					t.Errorf("ParseBranchName(%q) = %+v ok=%v, want issue %q", got, meta, ok, tt.issue)
+				}
+			}
+		})
+	}
+}
+
 func TestBuildBranchName_ClaudeActionCompatible(t *testing.T) {
 	tmpDir := t.TempDir()
 	gitCmd := exec.Command("git", "init")

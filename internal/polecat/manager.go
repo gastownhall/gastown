@@ -555,25 +555,46 @@ type AddOptions struct {
 // - {timestamp}: unique timestamp
 //
 // If no template is configured or template is empty, uses default format:
-// - polecat/{name}/{issue}+{timestamp} when issue is available
-// - polecat/{name}-{timestamp} otherwise
+//   - polecat/{name}/{issue}<delimiter>{timestamp} when issue is available,
+//     where <delimiter> comes from the polecat_branch_delimiter rig config
+//     (default "+")
+//   - polecat/{name}-{timestamp} otherwise
 func (m *Manager) buildBranchName(name, issue string) string {
-	template := m.rig.GetStringConfig("polecat_branch_template")
+	return buildBranchNameFor(m.rig, m.git, m.beads, name, issue)
+}
+
+// buildBranchNameFor is the shared implementation behind Manager.buildBranchName
+// and SessionManager.freshBranchName, so polecat creation and session-restart
+// branch creation always agree on naming. r, g, and b may each be nil: a nil
+// rig means no template/delimiter config, a nil git skips the {user} lookup,
+// and nil beads skips the {description} lookup.
+func buildBranchNameFor(r *rig.Rig, g *git.Git, b *beads.Beads, name, issue string) string {
+	template := ""
+	if r != nil {
+		template = r.GetStringConfig("polecat_branch_template")
+	}
 
 	// No template configured - use default behavior for backward compatibility
 	if template == "" {
+		delimiter := generatedIssueBranchSeparator
+		if r != nil {
+			if d := r.GetStringConfig(BranchDelimiterConfigKey); d != "" {
+				delimiter = d
+			}
+		}
 		timestamp := strconv.FormatInt(time.Now().UnixMilli(), 36)
-		return FormatGeneratedBranchName(name, issue, timestamp)
+		return FormatGeneratedBranchNameWithDelimiter(name, issue, timestamp, delimiter)
 	}
 
 	// Build template variables
 	vars := make(map[string]string)
 
 	// {user} - from git config user.name
-	if userName, err := m.git.ConfigGet("user.name"); err == nil && userName != "" {
-		vars["{user}"] = userName
-	} else {
-		vars["{user}"] = "unknown"
+	vars["{user}"] = "unknown"
+	if g != nil {
+		if userName, err := g.ConfigGet("user.name"); err == nil && userName != "" {
+			vars["{user}"] = userName
+		}
 	}
 
 	// {year} and {month}
@@ -600,8 +621,9 @@ func (m *Manager) buildBranchName(name, issue string) string {
 	}
 
 	// {description} - try to get from beads if issue is set
-	if issue != "" {
-		if issueData, err := m.beads.Show(issue); err == nil && issueData.Title != "" {
+	vars["{description}"] = ""
+	if issue != "" && b != nil {
+		if issueData, err := b.Show(issue); err == nil && issueData.Title != "" {
 			// Sanitize title for branch name: lowercase, replace spaces/special chars with hyphens
 			desc := strings.ToLower(issueData.Title)
 			desc = strings.Map(func(r rune) rune {
@@ -620,11 +642,7 @@ func (m *Manager) buildBranchName(name, issue string) string {
 				desc = desc[:40]
 			}
 			vars["{description}"] = desc
-		} else {
-			vars["{description}"] = ""
 		}
-	} else {
-		vars["{description}"] = ""
 	}
 
 	// Replace all variables in template

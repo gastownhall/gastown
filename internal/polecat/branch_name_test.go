@@ -70,12 +70,44 @@ func TestParseBranchName(t *testing.T) {
 			wantPolecat:   "alpha",
 		},
 		{
+			name:          "generated issue with underscore suffix",
+			branch:        "polecat/alpha/cap-5gw_mrb05j24",
+			wantOk:        true,
+			wantGenerated: true,
+			wantPolecat:   "alpha",
+			wantIssue:     "cap-5gw",
+		},
+		{
+			name:          "generated dashed issue with underscore suffix",
+			branch:        "polecat/alpha/gt-pin-bd-metadata_mk123456",
+			wantOk:        true,
+			wantGenerated: true,
+			wantPolecat:   "alpha",
+			wantIssue:     "gt-pin-bd-metadata",
+		},
+		{
+			name:          "generated dotted subtask with underscore suffix",
+			branch:        "polecat/alpha/gt-4kp9.5.5.1_mk123456",
+			wantOk:        true,
+			wantGenerated: true,
+			wantPolecat:   "alpha",
+			wantIssue:     "gt-4kp9.5.5.1",
+		},
+		{
 			name:   "empty generated suffix is invalid",
 			branch: "polecat/alpha/gt-abc+",
 		},
 		{
+			name:   "empty underscore suffix is invalid",
+			branch: "polecat/alpha/gt-abc_",
+		},
+		{
 			name:   "empty generated issue is invalid",
 			branch: "polecat/alpha/+mk123456",
+		},
+		{
+			name:   "empty underscore issue is invalid",
+			branch: "polecat/alpha/_mk123456",
 		},
 	}
 
@@ -98,6 +130,62 @@ func TestParseBranchName(t *testing.T) {
 				t.Errorf("Issue = %q, want %q", got.Issue, tt.wantIssue)
 			}
 		})
+	}
+}
+
+func TestFormatGeneratedBranchNameWithDelimiter(t *testing.T) {
+	tests := []struct {
+		name      string
+		issue     string
+		delimiter string
+		want      string
+	}{
+		{name: "underscore delimiter", issue: "cap-5gw", delimiter: "_", want: "polecat/alpha/cap-5gw_mk123456"},
+		{name: "plus delimiter", issue: "cap-5gw", delimiter: "+", want: "polecat/alpha/cap-5gw+mk123456"},
+		{name: "invalid delimiter falls back to plus", issue: "cap-5gw", delimiter: "!", want: "polecat/alpha/cap-5gw+mk123456"},
+		{name: "empty delimiter falls back to plus", issue: "cap-5gw", delimiter: "", want: "polecat/alpha/cap-5gw+mk123456"},
+		{name: "multi-char delimiter falls back to plus", issue: "cap-5gw", delimiter: "__", want: "polecat/alpha/cap-5gw+mk123456"},
+		{name: "no issue ignores delimiter", issue: "", delimiter: "_", want: "polecat/alpha-mk123456"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := FormatGeneratedBranchNameWithDelimiter("alpha", tt.issue, "mk123456", tt.delimiter)
+			if got != tt.want {
+				t.Errorf("FormatGeneratedBranchNameWithDelimiter() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestUnderscoreBranchRoundTrip(t *testing.T) {
+	// The docker-compose-safe delimiter must round-trip: format with "_" and
+	// parse back to the same issue (AA-849).
+	branch := FormatGeneratedBranchNameWithDelimiter("nux", "cap-5gw", "mrb05j24", "_")
+	if branch != "polecat/nux/cap-5gw_mrb05j24" {
+		t.Fatalf("format = %q, want polecat/nux/cap-5gw_mrb05j24", branch)
+	}
+	meta, ok := ParseGeneratedBranchName(branch)
+	if !ok {
+		t.Fatalf("ParseGeneratedBranchName(%q) not ok", branch)
+	}
+	if meta.Polecat != "nux" || meta.Issue != "cap-5gw" {
+		t.Fatalf("round-trip = %+v, want polecat nux issue cap-5gw", meta)
+	}
+	if err := exec.Command("git", "check-ref-format", "--branch", branch).Run(); err != nil {
+		t.Fatalf("branch %q rejected by git check-ref-format: %v", branch, err)
+	}
+}
+
+func TestValidBranchDelimiter(t *testing.T) {
+	for _, valid := range []string{"+", "@", "_"} {
+		if !ValidBranchDelimiter(valid) {
+			t.Errorf("ValidBranchDelimiter(%q) = false, want true", valid)
+		}
+	}
+	for _, invalid := range []string{"", "-", ".", "/", "!", "__", "+@", "a"} {
+		if ValidBranchDelimiter(invalid) {
+			t.Errorf("ValidBranchDelimiter(%q) = true, want false", invalid)
+		}
 	}
 }
 
