@@ -1029,7 +1029,7 @@ func runDone(cmd *cobra.Command, args []string) (retErr error) {
 		if convoyInfo != nil && convoyInfo.MergeStrategy == "direct" {
 			fmt.Printf("%s Direct merge strategy: pushing to %s\n", style.Bold.Render("→"), defaultBranch)
 			// Keep crash-recovery WIP checkpoints sandbox-local (gastownhall/gastown#4440).
-			squashWIPCheckpointCommits(cwd, baseRef)
+			squashWIPCheckpointCommits(g.WorkDir(), baseRef)
 			// Push submodule changes before direct push (gt-dzs)
 			pushSubmoduleChanges(g, baseRef)
 			directRefspec := branch + ":" + defaultBranch
@@ -1116,7 +1116,7 @@ func runDone(cmd *cobra.Command, args []string) (retErr error) {
 		// checkpoint_dog's "WIP: checkpoint (auto)" commits are a local crash-safety
 		// net and must never reach the remote. Runs after the resume check above so
 		// an already-pushed branch is never rewritten.
-		squashWIPCheckpointCommits(cwd, baseRef)
+		squashWIPCheckpointCommits(g.WorkDir(), baseRef)
 
 		// Auto-push submodule changes BEFORE parent push (gt-dzs).
 		// If the parent repo's submodule pointer references commits that don't
