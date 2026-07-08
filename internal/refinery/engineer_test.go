@@ -19,6 +19,34 @@ import (
 	"github.com/steveyegge/gastown/internal/testutil"
 )
 
+func writeRigSettings(t *testing.T, rigPath string, settings map[string]interface{}) {
+	t.Helper()
+
+	settingsPath := filepath.Join(rigPath, "settings", "config.json")
+	if err := os.MkdirAll(filepath.Dir(settingsPath), 0755); err != nil {
+		t.Fatalf("mkdir settings dir: %v", err)
+	}
+	data, err := json.MarshalIndent(settings, "", "  ")
+	if err != nil {
+		t.Fatalf("marshal settings: %v", err)
+	}
+	if err := os.WriteFile(settingsPath, data, 0644); err != nil {
+		t.Fatalf("write settings: %v", err)
+	}
+}
+
+func writeRigRootConfig(t *testing.T, rigPath string, cfg map[string]interface{}) {
+	t.Helper()
+
+	data, err := json.MarshalIndent(cfg, "", "  ")
+	if err != nil {
+		t.Fatalf("marshal config: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(rigPath, "config.json"), data, 0644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+}
+
 func TestDefaultMergeQueueConfig(t *testing.T) {
 	cfg := DefaultMergeQueueConfig()
 
@@ -333,7 +361,7 @@ func setupEngineerTerminalCloseTest(t *testing.T, activeMR string) (*Engineer, *
 }
 
 func TestEngineer_LoadConfig_NoFile(t *testing.T) {
-	// Create a temp directory without config.json
+	// Create a temp directory without settings/config.json
 	tmpDir, err := os.MkdirTemp("", "engineer-test-*")
 	if err != nil {
 		t.Fatal(err)
@@ -359,14 +387,14 @@ func TestEngineer_LoadConfig_NoFile(t *testing.T) {
 }
 
 func TestEngineer_LoadConfig_WithMergeQueue(t *testing.T) {
-	// Create a temp directory with config.json
+	// Create a temp directory with settings/config.json
 	tmpDir, err := os.MkdirTemp("", "engineer-test-*")
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer os.RemoveAll(tmpDir)
 
-	// Write config file
+	// Write settings file
 	config := map[string]interface{}{
 		"type":    "rig",
 		"version": 1,
@@ -381,10 +409,7 @@ func TestEngineer_LoadConfig_WithMergeQueue(t *testing.T) {
 		},
 	}
 
-	data, _ := json.MarshalIndent(config, "", "  ")
-	if err := os.WriteFile(filepath.Join(tmpDir, "config.json"), data, 0644); err != nil {
-		t.Fatal(err)
-	}
+	writeRigSettings(t, tmpDir, config)
 
 	r := &rig.Rig{
 		Name: "test-rig",
@@ -424,6 +449,72 @@ func TestEngineer_LoadConfig_WithMergeQueue(t *testing.T) {
 	}
 }
 
+func TestEngineer_LoadConfig_PrefersCanonicalSettingsOverLegacyRoot(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	writeRigRootConfig(t, tmpDir, map[string]interface{}{
+		"merge_queue": map[string]interface{}{
+			"max_concurrent": 99,
+		},
+	})
+	writeRigSettings(t, tmpDir, map[string]interface{}{
+		"merge_queue": map[string]interface{}{
+			"max_concurrent": 3,
+			"on_conflict":    "auto_rebase",
+		},
+	})
+
+	e := NewEngineer(&rig.Rig{Name: "test-rig", Path: tmpDir})
+	if err := e.LoadConfig(); err != nil {
+		t.Fatalf("unexpected error loading config: %v", err)
+	}
+
+	if e.config.MaxConcurrent != 3 {
+		t.Errorf("expected canonical MaxConcurrent 3, got %d", e.config.MaxConcurrent)
+	}
+	if e.config.OnConflict != "auto_rebase" {
+		t.Errorf("expected canonical OnConflict auto_rebase, got %q", e.config.OnConflict)
+	}
+}
+
+func TestEngineer_LoadConfig_LegacyRootMergeQueueRequiresMigration(t *testing.T) {
+	tests := []struct {
+		name          string
+		writeSettings bool
+	}{
+		{name: "missing settings file"},
+		{name: "settings without merge_queue", writeSettings: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tmpDir := t.TempDir()
+			if tt.writeSettings {
+				writeRigSettings(t, tmpDir, map[string]interface{}{"agent": "claude"})
+			}
+			writeRigRootConfig(t, tmpDir, map[string]interface{}{
+				"type":    "rig",
+				"version": 1,
+				"name":    "test-rig",
+				"merge_queue": map[string]interface{}{
+					"max_concurrent": 7,
+				},
+			})
+
+			e := NewEngineer(&rig.Rig{Name: "test-rig", Path: tmpDir})
+			err := e.LoadConfig()
+			if err == nil {
+				t.Fatal("expected legacy merge_queue migration error")
+			}
+			for _, want := range []string{"merge_queue belongs", "settings/config.json", "config.json", "gt rig settings set"} {
+				if !strings.Contains(err.Error(), want) {
+					t.Errorf("error = %q, want substring %q", err.Error(), want)
+				}
+			}
+		})
+	}
+}
+
 func TestEngineer_LoadConfig_AutoPushDisabled(t *testing.T) {
 	tmpDir, err := os.MkdirTemp("", "engineer-test-*")
 	if err != nil {
@@ -440,10 +531,7 @@ func TestEngineer_LoadConfig_AutoPushDisabled(t *testing.T) {
 		},
 	}
 
-	data, _ := json.MarshalIndent(config, "", "  ")
-	if err := os.WriteFile(filepath.Join(tmpDir, "config.json"), data, 0644); err != nil {
-		t.Fatal(err)
-	}
+	writeRigSettings(t, tmpDir, config)
 
 	r := &rig.Rig{
 		Name: "test-rig",
@@ -461,24 +549,21 @@ func TestEngineer_LoadConfig_AutoPushDisabled(t *testing.T) {
 }
 
 func TestEngineer_LoadConfig_NoMergeQueueSection(t *testing.T) {
-	// Create a temp directory with config.json without merge_queue
+	// Create a temp directory with settings/config.json without merge_queue
 	tmpDir, err := os.MkdirTemp("", "engineer-test-*")
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer os.RemoveAll(tmpDir)
 
-	// Write config file without merge_queue
+	// Write settings file without merge_queue
 	config := map[string]interface{}{
 		"type":    "rig",
 		"version": 1,
 		"name":    "test-rig",
 	}
 
-	data, _ := json.MarshalIndent(config, "", "  ")
-	if err := os.WriteFile(filepath.Join(tmpDir, "config.json"), data, 0644); err != nil {
-		t.Fatal(err)
-	}
+	writeRigSettings(t, tmpDir, config)
 
 	r := &rig.Rig{
 		Name: "test-rig",
@@ -510,10 +595,7 @@ func TestEngineer_LoadConfig_InvalidPollInterval(t *testing.T) {
 		},
 	}
 
-	data, _ := json.MarshalIndent(config, "", "  ")
-	if err := os.WriteFile(filepath.Join(tmpDir, "config.json"), data, 0644); err != nil {
-		t.Fatal(err)
-	}
+	writeRigSettings(t, tmpDir, config)
 
 	r := &rig.Rig{
 		Name: "test-rig",
@@ -552,10 +634,7 @@ func TestEngineer_LoadConfig_InvalidStaleClaimTimeout(t *testing.T) {
 				},
 			}
 
-			data, _ := json.MarshalIndent(config, "", "  ")
-			if err := os.WriteFile(filepath.Join(tmpDir, "config.json"), data, 0644); err != nil {
-				t.Fatal(err)
-			}
+			writeRigSettings(t, tmpDir, config)
 
 			r := &rig.Rig{
 				Name: "test-rig",
@@ -620,10 +699,7 @@ func TestEngineer_LoadConfig_WithGates(t *testing.T) {
 		},
 	}
 
-	data, _ := json.MarshalIndent(config, "", "  ")
-	if err := os.WriteFile(filepath.Join(tmpDir, "config.json"), data, 0644); err != nil {
-		t.Fatal(err)
-	}
+	writeRigSettings(t, tmpDir, config)
 
 	r := &rig.Rig{Name: "test-rig", Path: tmpDir}
 	e := NewEngineer(r)
@@ -680,10 +756,7 @@ func TestEngineer_LoadConfig_GateInvalidTimeout(t *testing.T) {
 				},
 			}
 
-			data, _ := json.MarshalIndent(config, "", "  ")
-			if err := os.WriteFile(filepath.Join(tmpDir, "config.json"), data, 0644); err != nil {
-				t.Fatal(err)
-			}
+			writeRigSettings(t, tmpDir, config)
 
 			r := &rig.Rig{Name: "test-rig", Path: tmpDir}
 			e := NewEngineer(r)
@@ -717,10 +790,7 @@ func TestEngineer_LoadConfig_GatePhase(t *testing.T) {
 		},
 	}
 
-	data, _ := json.MarshalIndent(config, "", "  ")
-	if err := os.WriteFile(filepath.Join(tmpDir, "config.json"), data, 0644); err != nil {
-		t.Fatal(err)
-	}
+	writeRigSettings(t, tmpDir, config)
 
 	r := &rig.Rig{Name: "test-rig", Path: tmpDir}
 	e := NewEngineer(r)
@@ -755,10 +825,7 @@ func TestEngineer_LoadConfig_GateInvalidPhase(t *testing.T) {
 		},
 	}
 
-	data, _ := json.MarshalIndent(config, "", "  ")
-	if err := os.WriteFile(filepath.Join(tmpDir, "config.json"), data, 0644); err != nil {
-		t.Fatal(err)
-	}
+	writeRigSettings(t, tmpDir, config)
 
 	r := &rig.Rig{Name: "test-rig", Path: tmpDir}
 	e := NewEngineer(r)

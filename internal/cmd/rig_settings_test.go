@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/steveyegge/gastown/internal/config"
+	"github.com/steveyegge/gastown/internal/refinery"
 )
 
 // setupTestRigForSettings creates a test rig for settings testing.
@@ -27,9 +28,9 @@ func setupTestRigForSettings(t *testing.T) (string, string) {
 	// Create town.json (primary marker for workspace detection)
 	townConfig := &config.TownConfig{
 		Type:      "town",
-		Version:    config.CurrentTownVersion,
-		Name:       "test-town",
-		CreatedAt:  time.Now().Truncate(time.Second),
+		Version:   config.CurrentTownVersion,
+		Name:      "test-town",
+		CreatedAt: time.Now().Truncate(time.Second),
 	}
 	townConfigPath := filepath.Join(mayorDir, "town.json")
 	if err := config.SaveTownConfig(townConfigPath, townConfig); err != nil {
@@ -483,6 +484,34 @@ func TestRigSettingsSet(t *testing.T) {
 			t.Errorf("Agent should be empty, got %q", loaded.Agent)
 		}
 	})
+}
+
+func TestRigSettingsSetMergeQueueReadByRefinery(t *testing.T) {
+	_, rigName := setupTestRigForSettings(t)
+
+	if err := runRigSettingsSet(rigSettingsSetCmd, []string{rigName, "merge_queue.max_concurrent", "3"}); err != nil {
+		t.Fatalf("set max_concurrent: %v", err)
+	}
+	if err := runRigSettingsSet(rigSettingsSetCmd, []string{rigName, "merge_queue.on_conflict", "auto_rebase"}); err != nil {
+		t.Fatalf("set on_conflict: %v", err)
+	}
+
+	_, r, err := getRig(rigName)
+	if err != nil {
+		t.Fatalf("get rig: %v", err)
+	}
+	engineer := refinery.NewEngineer(r)
+	if err := engineer.LoadConfig(); err != nil {
+		t.Fatalf("load refinery config: %v", err)
+	}
+
+	cfg := engineer.Config()
+	if cfg.MaxConcurrent != 3 {
+		t.Errorf("MaxConcurrent = %d, want 3", cfg.MaxConcurrent)
+	}
+	if cfg.OnConflict != "auto_rebase" {
+		t.Errorf("OnConflict = %q, want auto_rebase", cfg.OnConflict)
+	}
 }
 
 func TestRigSettingsUnset(t *testing.T) {

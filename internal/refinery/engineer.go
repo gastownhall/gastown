@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/steveyegge/gastown/internal/beads"
+	"github.com/steveyegge/gastown/internal/config"
 	"github.com/steveyegge/gastown/internal/crew"
 	"github.com/steveyegge/gastown/internal/events"
 	"github.com/steveyegge/gastown/internal/git"
@@ -312,14 +313,13 @@ func (e *Engineer) SetOutput(w io.Writer) {
 	e.output = w
 }
 
-// LoadConfig loads merge queue configuration from the rig's config.json.
+// LoadConfig loads merge queue configuration from the rig's settings/config.json.
 func (e *Engineer) LoadConfig() error {
-	configPath := filepath.Join(e.rig.Path, "config.json")
+	configPath := config.RigSettingsPath(e.rig.Path)
 	data, err := os.ReadFile(configPath)
 	if err != nil {
 		if os.IsNotExist(err) {
-			// Use defaults if no config file
-			return nil
+			return e.rejectLegacyMergeQueueConfig(configPath)
 		}
 		return fmt.Errorf("reading config: %w", err)
 	}
@@ -333,8 +333,7 @@ func (e *Engineer) LoadConfig() error {
 	}
 
 	if rawConfig.MergeQueue == nil {
-		// No merge_queue section, use defaults
-		return nil
+		return e.rejectLegacyMergeQueueConfig(configPath)
 	}
 
 	// Parse merge_queue section into our config struct
@@ -451,6 +450,29 @@ func (e *Engineer) LoadConfig() error {
 	}
 
 	return nil
+}
+
+func (e *Engineer) rejectLegacyMergeQueueConfig(settingsPath string) error {
+	legacyPath := filepath.Join(e.rig.Path, "config.json")
+	data, err := os.ReadFile(legacyPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return fmt.Errorf("checking legacy config: %w", err)
+	}
+
+	var rawConfig struct {
+		MergeQueue json.RawMessage `json:"merge_queue"`
+	}
+	if err := json.Unmarshal(data, &rawConfig); err != nil {
+		return fmt.Errorf("parsing legacy config: %w", err)
+	}
+	if rawConfig.MergeQueue == nil {
+		return nil
+	}
+
+	return fmt.Errorf("merge_queue belongs in %s, not legacy %s; move the merge_queue object to settings/config.json or run gt rig settings set merge_queue.<key> <value>", settingsPath, legacyPath)
 }
 
 // initPRProvider creates the appropriate PRProvider based on vcs_provider config.
@@ -1076,7 +1098,7 @@ func (e *Engineer) acquireMainPushSlot(ctx context.Context) (string, error) {
 }
 
 // ValidateTestCommand validates that a test command is safe to execute.
-// TestCommand comes from the rig's operator-controlled config.json, not from
+// TestCommand comes from the rig's operator-controlled settings/config.json, not from
 // user input or PR branches. This validation provides defense-in-depth for the
 // trusted infrastructure config path.
 func ValidateTestCommand(cmd string) error {
@@ -1107,7 +1129,7 @@ func (e *Engineer) runTests(ctx context.Context) ProcessResult {
 			_, _ = fmt.Fprintf(e.output, "[Engineer] Retrying tests (attempt %d/%d)...\n", attempt, maxRetries)
 		}
 
-		// Trust boundary: TestCommand comes from rig's config.json (operator-controlled
+		// Trust boundary: TestCommand comes from rig's settings/config.json (operator-controlled
 		// infrastructure config), not from PR branches or user input. Shell execution
 		// is intentional for flexibility (pipes, env vars, etc).
 		_, _ = fmt.Fprintf(e.output, "[Engineer] Executing test command: %s\n", e.config.TestCommand)
