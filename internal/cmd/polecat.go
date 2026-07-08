@@ -2247,7 +2247,12 @@ func runPolecatPrune(cmd *cobra.Command, args []string) error {
 
 func pruneRemotePolecatBranches(repoGit *git.Git, dryRun bool) (int, error) {
 	defaultBranch := repoGit.RemoteDefaultBranch()
-	target := "origin/" + defaultBranch
+	target := repoGit.CleanDefaultBranchBaseRef("origin", defaultBranch)
+	if targetRemote := git.RemoteForRef(target); targetRemote != "" && targetRemote != "origin" {
+		if err := repoGit.FetchPrune(targetRemote); err != nil {
+			return 0, fmt.Errorf("refreshing %s before remote prune: %w", targetRemote, err)
+		}
+	}
 	remoteRefs, lsErr := repoGit.ListPushRemoteRefsWithHashes("origin", "refs/heads/polecat/")
 	if lsErr != nil {
 		return 0, fmt.Errorf("listing remote refs: %w", lsErr)
