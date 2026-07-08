@@ -121,17 +121,15 @@ func (d *Daemon) cleanupStuckDogs(mgr *dog.Manager, sm *dog.SessionManager) {
 	}
 }
 
-func (d *Daemon) clearDogWorkIfMatches(mgr *dog.Manager, dg *dog.Dog, reason string) bool {
+func (d *Daemon) clearDogWorkIfMatches(mgr *dog.Manager, dg *dog.Dog, reason string) {
 	cleared, err := mgr.ClearWorkIfMatches(dg.Name, dg.Work, dg.WorkStartedAt)
 	if err != nil {
 		d.logger.Printf("Handler: failed to clear work for dog %s (%s): %v", dg.Name, reason, err)
-		return false
+		return
 	}
 	if !cleared {
 		d.logger.Printf("Handler: skipped clearing dog %s (%s): work assignment changed", dg.Name, reason)
-		return false
 	}
-	return true
 }
 
 // detectStaleWorkingDogs finds dogs in state=working whose last_active exceeds
