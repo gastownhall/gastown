@@ -1082,6 +1082,38 @@ func formulaVarsForBead(formulaName, beadID, title string, extraVars []string) [
 	return ensureFormulaRequiredVars(formulaName, formulaVars)
 }
 
+func formulaVarsForStandaloneWisp(wispRootID string, extraVars []string) []string {
+	formulaVars := append([]string(nil), extraVars...)
+	formulaVars = append(formulaVars, fmt.Sprintf("issue=%s", wispRootID))
+	return dedupeFormulaVarsLast(formulaVars)
+}
+
+func dedupeFormulaVarsLast(vars []string) []string {
+	indexes := make(map[string]int, len(vars))
+	deduped := make([]string, 0, len(vars))
+	for _, variable := range vars {
+		if strings.TrimSpace(variable) == "" {
+			continue
+		}
+		idx := strings.IndexByte(variable, '=')
+		if idx <= 0 {
+			deduped = append(deduped, variable)
+			continue
+		}
+		key := strings.TrimSpace(variable[:idx])
+		if key == "" {
+			continue
+		}
+		if existing, ok := indexes[key]; ok {
+			deduped[existing] = variable
+			continue
+		}
+		indexes[key] = len(deduped)
+		deduped = append(deduped, variable)
+	}
+	return deduped
+}
+
 // bondFormulaDirect attaches a formula to a bead through bd's canonical bond path.
 func bondFormulaDirect(bondTarget, formulaName, beadID, formulaWorkDir, townRoot string, vars []string) (string, error) {
 	bondArgs := []string{"mol", "bond", bondTarget, beadID, "--json", "--ephemeral"}

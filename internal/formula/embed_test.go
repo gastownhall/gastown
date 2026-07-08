@@ -956,6 +956,86 @@ func TestResolveFormulaContent(t *testing.T) {
 	})
 }
 
+func TestResolveFormulaUsesTierPrecedenceForDependencies(t *testing.T) {
+	tmpDir := t.TempDir()
+	townFormulasDir := filepath.Join(tmpDir, ".beads", "formulas")
+	rigFormulasDir := filepath.Join(tmpDir, "testrig", ".beads", "formulas")
+	if err := os.MkdirAll(townFormulasDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(rigFormulasDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	writeFormula := func(dir, name, content string) {
+		t.Helper()
+		if err := os.WriteFile(filepath.Join(dir, name+".formula.toml"), []byte(content), 0644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	writeFormula(townFormulasDir, "tier-child", `formula = "tier-child"
+type = "workflow"
+version = 1
+extends = ["shiny"]
+
+[compose]
+[[compose.expand]]
+target = "implement"
+with = "tdd-cycle"
+`)
+	writeFormula(townFormulasDir, "shiny", `formula = "shiny"
+type = "workflow"
+version = 1
+
+[[steps]]
+id = "implement"
+title = "Town Implement"
+description = "from town"
+`)
+	writeFormula(townFormulasDir, "tdd-cycle", `formula = "tdd-cycle"
+type = "expansion"
+version = 1
+
+[[template]]
+id = "{target}.town"
+title = "Town expansion {target.title}"
+description = "from town"
+`)
+	writeFormula(rigFormulasDir, "shiny", `formula = "shiny"
+type = "workflow"
+version = 1
+
+[[steps]]
+id = "implement"
+title = "Rig Implement"
+description = "from rig"
+`)
+	writeFormula(rigFormulasDir, "tdd-cycle", `formula = "tdd-cycle"
+type = "expansion"
+version = 1
+
+[[template]]
+id = "{target}.rig"
+title = "Rig expansion {target.title}"
+description = "from rig"
+`)
+
+	resolved, err := ResolveFormula("tier-child", tmpDir, "testrig")
+	if err != nil {
+		t.Fatalf("ResolveFormula: %v", err)
+	}
+	if len(resolved.Steps) != 1 {
+		t.Fatalf("got %d steps, want 1: %#v", len(resolved.Steps), resolved.Steps)
+	}
+	if got, want := resolved.Steps[0].ID, "implement.rig"; got != want {
+		t.Fatalf("resolved step ID = %q, want %q", got, want)
+	}
+	if got, want := resolved.Steps[0].Title, "Rig expansion Rig Implement"; got != want {
+		t.Fatalf("resolved step title = %q, want %q", got, want)
+	}
+}
+
 // TestGetEmbeddedFormulaContent verifies extraction of individual embedded formulas.
 func TestGetEmbeddedFormulaContent(t *testing.T) {
 	// Known embedded formula should succeed

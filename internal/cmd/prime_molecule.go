@@ -114,15 +114,9 @@ func showMoleculeExecutionPrompt(workDir, moleculeID string) {
 // extraVars is an optional list of "key=value" overrides that are substituted into
 // step descriptions before rendering, taking precedence over formula defaults.
 func showFormulaSteps(formulaName, label, townRoot, rigName string, extraVars ...[]string) {
-	content, err := formula.ResolveFormulaContent(formulaName, townRoot, rigName)
+	f, err := formula.ResolveFormula(formulaName, townRoot, rigName)
 	if err != nil {
-		style.PrintWarning("could not load formula %s: %v", formulaName, err)
-		return
-	}
-
-	f, err := formula.Parse(content)
-	if err != nil {
-		style.PrintWarning("could not parse formula %s: %v", formulaName, err)
+		style.PrintWarning("could not resolve formula %s: %v", formulaName, err)
 		return
 	}
 
@@ -162,14 +156,9 @@ func showFormulaStepsFull(formulaName, townRoot, rigName string, extraVars ...[]
 }
 
 func renderFormulaStepsFull(formulaName, townRoot, rigName string, extraVars ...[]string) (string, error) {
-	content, err := formula.ResolveFormulaContent(formulaName, townRoot, rigName)
+	f, err := formula.ResolveFormula(formulaName, townRoot, rigName)
 	if err != nil {
-		return "", fmt.Errorf("could not load formula %s: %w", formulaName, err)
-	}
-
-	f, err := formula.Parse(content)
-	if err != nil {
-		return "", fmt.Errorf("could not parse formula %s: %w", formulaName, err)
+		return "", fmt.Errorf("could not resolve formula %s: %w", formulaName, err)
 	}
 
 	if len(f.Steps) == 0 {
