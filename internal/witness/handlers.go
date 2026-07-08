@@ -1722,6 +1722,15 @@ func DetectZombiePolecats(bd *BdCli, workDir, rigName string, router *mail.Route
 	return result
 }
 
+// witnessHeartbeatStale reports whether a heartbeat is stale for this town,
+// honoring operational.polecat.heartbeat_stale_threshold in settings/config.json
+// (falls back to the compiled 3m default). All witness heartbeat verdicts must
+// go through this so the witness and the daemon/allocator judge freshness by
+// the same operator-configured threshold.
+func witnessHeartbeatStale(townRoot string, hb *polecat.SessionHeartbeat) bool {
+	return time.Since(hb.Timestamp) >= polecat.SessionHeartbeatStaleThresholdFor(townRoot)
+}
+
 // detectZombieLiveSession checks a polecat with a live tmux session for zombie indicators:
 // stuck done-intent, dead agent process, or closed bead while still running.
 //
@@ -1740,7 +1749,7 @@ func detectZombieLiveSession(bd *BdCli, workDir, townRoot, rigName, polecatName,
 	// The witness makes exactly ONE inference: is the heartbeat fresh?
 	hb := polecat.ReadSessionHeartbeat(townRoot, sessionName)
 	if hb != nil && hb.IsV2() {
-		stale := time.Since(hb.Timestamp) >= polecat.SessionHeartbeatStaleThreshold
+		stale := witnessHeartbeatStale(townRoot, hb)
 		if !stale {
 			switch hb.EffectiveState() {
 			case polecat.HeartbeatExiting:
@@ -1968,7 +1977,7 @@ func detectZombieDeadSession(bd *BdCli, workDir, townRoot, rigName, polecatName,
 	// the session isn't actually dead (race condition). A stale heartbeat confirms death.
 	// This check is supplementary — dead session detection proceeds normally after.
 	if hb := polecat.ReadSessionHeartbeat(townRoot, sessionName); hb != nil && hb.IsV2() {
-		stale := time.Since(hb.Timestamp) >= polecat.SessionHeartbeatStaleThreshold
+		stale := witnessHeartbeatStale(townRoot, hb)
 		if !stale {
 			// Fresh heartbeat but session appears dead — possible race.
 			// Skip zombie detection; the session may have just restarted.
@@ -2300,7 +2309,7 @@ func DetectStalledPolecats(workDir, rigName string) *DetectStalledPolecatsResult
 		// it's alive and making progress — skip stall detection entirely.
 		// This replaces tmux activity scraping for v2 agents.
 		if hb := polecat.ReadSessionHeartbeat(townRoot, sessionName); hb != nil && hb.IsV2() {
-			if time.Since(hb.Timestamp) < polecat.SessionHeartbeatStaleThreshold {
+			if !witnessHeartbeatStale(townRoot, hb) {
 				continue // Fresh v2 heartbeat — agent is alive, not stalled
 			}
 		}
