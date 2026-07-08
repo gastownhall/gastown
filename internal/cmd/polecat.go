@@ -1864,6 +1864,12 @@ type nukePolecatOptions struct {
 }
 
 func nukePolecatFullWithOptions(polecatName, rigName string, mgr *polecat.Manager, r *rig.Rig, opts nukePolecatOptions) error {
+	if !opts.Force {
+		if activeMR, blocker := mgr.ActiveMRRemovalBlocker(polecatName); blocker != "" {
+			return fmt.Errorf("cannot nuke %s/%s: MR %s is still pending in merge queue (%s)\nRefinery will process the MR and clean up after merge\nUse --force to override (risks data loss)", rigName, polecatName, activeMR, blocker)
+		}
+	}
+
 	t := tmux.NewTmux()
 
 	// Step 1: Kill tmux session unconditionally to prevent ghost sessions

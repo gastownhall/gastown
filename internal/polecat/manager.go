@@ -1178,12 +1178,8 @@ func (m *Manager) removeWithOptionsLocked(name string, force, nuclear, selfNuke 
 	// --force explicitly accepts that risk. Use the shared classifier so removal
 	// fails closed the same way recovery/listing do.
 	if !force {
-		agentID := m.agentBeadID(name)
-		_, fields, aErr := m.agentBeads().GetAgentBead(agentID)
-		if aErr == nil {
-			if blocker := activeMRRemovalBlocker(m.agentBeads(), fields); blocker != "" {
-				return fmt.Errorf("cannot remove polecat %s: MR %s is still pending in merge queue (%s)\nRefinery will process the MR and clean up after merge\nUse --force to override (risks data loss)", name, fields.ActiveMR, blocker)
-			}
+		if activeMR, blocker := m.ActiveMRRemovalBlocker(name); blocker != "" {
+			return fmt.Errorf("cannot remove polecat %s: MR %s is still pending in merge queue (%s)\nRefinery will process the MR and clean up after merge\nUse --force to override (risks data loss)", name, activeMR, blocker)
 		}
 	}
 
@@ -1306,6 +1302,22 @@ func (m *Manager) removeWithOptionsLocked(name string, force, nuclear, selfNuke 
 	_ = m.namePool.Save()
 
 	return nil
+}
+
+// ActiveMRRemovalBlocker returns the pending active-MR reason that should block
+// non-force polecat removal. It reads agent metadata from the town agent-bead
+// store, then classifies the MR/source through the normal rig beads reader.
+func (m *Manager) ActiveMRRemovalBlocker(name string) (string, string) {
+	agentID := m.agentBeadID(name)
+	_, fields, err := m.agentBeads().GetAgentBead(agentID)
+	if err != nil || fields == nil {
+		return "", ""
+	}
+	activeMR := strings.TrimSpace(fields.ActiveMR)
+	if activeMR == "" {
+		return "", ""
+	}
+	return activeMR, activeMRRemovalBlocker(m.beads, fields)
 }
 
 func activeMRRemovalBlocker(reader IssueReader, fields *beads.AgentFields) string {
