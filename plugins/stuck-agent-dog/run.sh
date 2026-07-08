@@ -136,6 +136,33 @@ bead_restartable() {
   return 1
 }
 
+# Blair-gated normal terminal state (2026-07-08, mayor directive lineage
+# hq-wisp-qvyz): in no-self-merge repos, a polecat runs `gt done`, its session
+# exits normally, and its hook bead stays OPEN until the human merge sweep.
+# Detectable by an open gt:merge-request bead linked to the polecat — matches
+# created_by/owner/assignee and the worker:/branch:/agent_bead: description
+# lines, so BOTH sides of a same-PR handoff count. These are NOT deaths: never
+# count them toward mass-death, never request restarts for them.
+polecat_awaiting_merge() {
+  local rig="$1" pcat="$2" dir=""
+
+  if ! dir=$(rig_workdir "$rig"); then
+    return 1
+  fi
+
+  ( cd "$dir" 2>/dev/null && bd list --status=open --json 2>/dev/null ) \
+    | jq -e --arg agent "$rig/polecats/$pcat" --arg pcat "$pcat" '
+        [ .[]? | select((.labels // []) | index("gt:merge-request"))
+               | select(
+                   .created_by == $agent
+                   or .owner == $agent or .assignee == $agent
+                   or ((.description // "") | test("(?m)^worker: \($pcat)$"))
+                   or ((.description // "") | contains("branch: polecat/\($pcat)/"))
+                   or ((.description // "") | test("(?m)^agent_bead: .*-polecat-\($pcat)$"))
+                 ) ] | length > 0
+      ' >/dev/null 2>&1
+}
+
 session_health_status() {
   local session_name="$1"
   local health_json=""
@@ -211,8 +238,13 @@ while IFS='|' read -r RIG PREFIX; do
       session-dead|session_dead)
         HOOK_BEAD=$(rig_hook_bead "$RIG" "$PCAT_NAME")
         if [ -n "$HOOK_BEAD" ] && bead_restartable "$SESSION_NAME" "$RIG" "$HOOK_BEAD"; then
-          CRASHED+=("$SESSION_NAME|$RIG|$PCAT_NAME|$HOOK_BEAD")
-          log "  CRASHED: $SESSION_NAME (hook=$HOOK_BEAD)"
+          if polecat_awaiting_merge "$RIG" "$PCAT_NAME"; then
+            HEALTHY=$((HEALTHY + 1))
+            log "  AWAITING-MERGE: $SESSION_NAME exited via gt done, open MR bead awaits human merge — normal terminal state, not a death"
+          else
+            CRASHED+=("$SESSION_NAME|$RIG|$PCAT_NAME|$HOOK_BEAD")
+            log "  CRASHED: $SESSION_NAME (hook=$HOOK_BEAD)"
+          fi
         fi
         ;;
       *)
@@ -282,15 +314,77 @@ else
 fi
 
 # --- Mass death check ---------------------------------------------------------
+# Guard stack (2026-07-08, after four false CRITICALs: hq-wisp-szdr/-114/-n4qx/-nnjg
+# and directive hq-wisp-qvyz; re-applied after two `make install` deploys clobbered
+# the town-local copy):
+#   1. terminal-bead exclusion at count time (completed exits are not deaths)
+#   2. suppression inside the post-daemon-restart reconciliation window
+#   3. fingerprint ledger — never re-fire an already-fired agent set
+#   4. evidence-mandatory --reason (agent list + bead states + daemon uptime)
+#   5. env kill-switch: GT_STUCK_AGENT_DOG_MASS_DEATH_ENABLED=0 suspends
+# (Guard 0, awaiting-merge exclusion, runs earlier at detection time.)
 
-TOTAL_ISSUES=$(( ${#CRASHED[@]} + ${#STUCK[@]} ))
+# Guard 1: recount, excluding terminal beads at count time. bead_restartable
+# already gates entry, but post-restart state reconciliation can lag.
+COUNTED=()
+for ENTRY in ${CRASHED[@]+"${CRASHED[@]}"}; do
+  IFS='|' read -r SESSION RIG PCAT HOOK _ <<< "$ENTRY"
+  BSTATE=$(rig_bead_status "$RIG" "$HOOK")
+  case "$BSTATE" in
+    closed|merged) log "  EXCLUDE $SESSION: bead $HOOK $BSTATE (completed exit, not a death)" ;;
+    *) COUNTED+=("$SESSION|$RIG|session-dead|$HOOK|${BSTATE:-unknown}") ;;
+  esac
+done
+for ENTRY in ${STUCK[@]+"${STUCK[@]}"}; do
+  IFS='|' read -r SESSION RIG PCAT HOOK REASON <<< "$ENTRY"
+  BSTATE=$(rig_bead_status "$RIG" "$HOOK")
+  case "$BSTATE" in
+    closed|merged) log "  EXCLUDE $SESSION: bead $HOOK $BSTATE (completed exit, not a death)" ;;
+    *) COUNTED+=("$SESSION|$RIG|agent-dead|$HOOK|${BSTATE:-unknown}") ;;
+  esac
+done
+TOTAL_ISSUES=${#COUNTED[@]}
+
+# Guard 2: post-restart reconciliation window.
+RESTART_SUPPRESS=$(integer_or_default "${GT_STUCK_AGENT_DOG_RESTART_SUPPRESS_SECONDS:-}" 900)
+DAEMON_UPTIME_S=""
+DAEMON_PID=$(pgrep -f 'gt daemon' 2>/dev/null | head -1 || true)
+if [ -n "$DAEMON_PID" ]; then
+  DAEMON_UPTIME_S=$(ps -o etimes= -p "$DAEMON_PID" 2>/dev/null | tr -d ' ' || true)
+fi
+
 MASS_DEATH=0
-if [ "$TOTAL_ISSUES" -ge "$MASS_DEATH_THRESHOLD" ]; then
+if [ "${GT_STUCK_AGENT_DOG_MASS_DEATH_ENABLED:-1}" != "1" ]; then
+  if [ "$TOTAL_ISSUES" -ge "$MASS_DEATH_THRESHOLD" ]; then
+    log "MASS-DEATH CHECK SUSPENDED (GT_STUCK_AGENT_DOG_MASS_DEATH_ENABLED!=1): $TOTAL_ISSUES agents would have counted; escalating NOTHING."
+  fi
+elif [ "$TOTAL_ISSUES" -ge "$MASS_DEATH_THRESHOLD" ]; then
   MASS_DEATH=1
-  log ""
-  log "MASS DEATH: $TOTAL_ISSUES agents down — escalating instead of restarting"
-  gt escalate "Mass agent death: $TOTAL_ISSUES agents down" \
-    -s CRITICAL 2>/dev/null || true
+  if [ -n "$DAEMON_UPTIME_S" ] && [ "$DAEMON_UPTIME_S" -lt "$RESTART_SUPPRESS" ]; then
+    log "SUPPRESSED mass-death escalation: daemon restarted ${DAEMON_UPTIME_S}s ago (<${RESTART_SUPPRESS}s); still skipping per-agent actions this cycle"
+  else
+    # Guard 3+4: fingerprint dedupe + evidence-rich escalation.
+    EVIDENCE=$(printf '%s\n' "${COUNTED[@]}" | sort)
+    FP="stuck-agent-dog:mass-death:$(printf '%s' "$EVIDENCE" | cksum | awk '{print $1}')"
+    STATE_DIR="${GT_STUCK_AGENT_DOG_STATE_DIR:-$TOWN_ROOT/deacon/state}"
+    mkdir -p "$STATE_DIR" 2>/dev/null || true
+    FP_FILE="$STATE_DIR/stuck-agent-dog.mass-death.fingerprints"
+    if [ -f "$FP_FILE" ] && grep -qxF "$FP" "$FP_FILE" 2>/dev/null; then
+      log "DEDUPED mass-death escalation: fingerprint $FP already fired for this exact agent set; skipping re-escalation"
+    else
+      log ""
+      log "MASS DEATH: $TOTAL_ISSUES agents down — escalating instead of restarting"
+      gt escalate "Mass agent death: $TOTAL_ISSUES agents down" \
+        -s CRITICAL \
+        --fingerprint "$FP" \
+        --reason "Agents counted (session|rig|health|hook_bead|bead_status):
+$EVIDENCE
+daemon_uptime_s=${DAEMON_UPTIME_S:-unknown} threshold=$MASS_DEATH_THRESHOLD fingerprint=$FP
+Suspected systemic cause - investigate Dolt/OOM/daemon before restarting agents." 2>/dev/null || true
+      echo "$FP" >> "$FP_FILE" 2>/dev/null || true
+      { tail -50 "$FP_FILE" > "$FP_FILE.tmp" 2>/dev/null && mv "$FP_FILE.tmp" "$FP_FILE" 2>/dev/null; } || true
+    fi
+  fi
 fi
 
 # --- Take action --------------------------------------------------------------

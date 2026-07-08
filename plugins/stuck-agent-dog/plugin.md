@@ -19,6 +19,12 @@ severity = "high"
 
 # Stuck Agent Dog
 
+> **EXECUTION NOTE:** the plugin runner executes `run.sh` in this directory,
+> NOT the bash blocks in this file — this doc is reference/AI-facing only.
+> Any behavior change MUST be made in `run.sh` (and mirrored here). A fix
+> applied only to this doc once left the old `run.sh` firing false
+> mass-death CRITICALs for two extra cycles.
+
 Detects stuck or crashed polecats and deacons by inspecting tmux session context
 before taking action. Unlike the daemon's blind kill-and-restart approach, this
 plugin checks whether an agent is truly unresponsive before restarting.
@@ -264,16 +270,35 @@ issue (Dolt outage, OOM, etc.). Escalate instead of blindly restarting all.
 The executable script checks this before per-agent actions and skips all
 restart/kill loops for that cycle.
 
-```bash
-TOTAL_ISSUES=$(( ${#CRASHED[@]} + ${#STUCK[@]} ))
-MASS_DEATH=0
-if [ "$TOTAL_ISSUES" -ge "${GT_STUCK_AGENT_DOG_MASS_DEATH_THRESHOLD:-3}" ]; then
-  MASS_DEATH=1
-  echo "MASS DEATH: $TOTAL_ISSUES agents down in same cycle — escalating"
-  gt escalate "Mass agent death: $TOTAL_ISSUES agents down" -s CRITICAL
-  echo "Skipping per-agent restart/kill actions during mass-death escalation"
-fi
-```
+`run.sh` hardens this check with a five-guard stack (born of four false
+CRITICALs in one day, where normally-completed polecat exits were counted as
+a mass death after a planned daemon restart):
+
+0. **Awaiting-merge exclusion (detection time).** In no-self-merge repos, a
+   polecat's `gt done` exit leaves its session dead and its hook bead OPEN
+   until the human merge sweep — the normal terminal state, not a death.
+   `polecat_awaiting_merge()` detects it via an open `gt:merge-request` bead
+   linked to the polecat (created_by/owner/assignee or the worker:/branch:/
+   agent_bead: description lines — either side of a same-PR handoff counts).
+   Such polecats log AWAITING-MERGE, count healthy, never enter CRASHED[].
+1. **Terminal-bead exclusion (count time).** Agents whose hook bead is
+   closed/merged are dropped from the count even if earlier filters lagged
+   (post-restart state reconciliation can serve stale hook data).
+2. **Post-restart suppression.** If the daemon started within
+   `GT_STUCK_AGENT_DOG_RESTART_SUPPRESS_SECONDS` (default 900), sessions that
+   ended normally pre-restart become visible simultaneously and look like a
+   mass death — suppress (logged, not silent) and re-check next cycle.
+3. **Fingerprint ledger.** The escalation carries a stable `--fingerprint`
+   over the sorted agent set, and a local ledger
+   (`$TOWN_ROOT/deacon/state/stuck-agent-dog.mass-death.fingerprints`)
+   refuses to re-fire an already-fired set even after the escalation closes.
+4. **Evidence-mandatory reason.** The CRITICAL includes every counted agent
+   (session|rig|health|hook_bead|bead_status), daemon uptime, and threshold —
+   an empty-reason CRITICAL is unactionable and forces a manual census.
+
+Kill-switch: `GT_STUCK_AGENT_DOG_MASS_DEATH_ENABLED=0` suspends the check
+(logged skip); all other dog checks continue. See `run.sh` for the
+authoritative implementation.
 
 ## Step 6: Take action
 
