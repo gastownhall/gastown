@@ -191,6 +191,37 @@ esac
 	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
 }
 
+func installEmptyMockBd(t *testing.T) {
+	t.Helper()
+	if runtime.GOOS == "windows" {
+		t.Skip("test uses Unix shell script mock for bd")
+	}
+
+	binDir := t.TempDir()
+	script := `#!/bin/sh
+cmd=""
+for arg in "$@"; do
+  case "$arg" in
+    --*) ;;
+    *) cmd="$arg"; break ;;
+  esac
+done
+case "$cmd" in
+  show|list)
+    printf '[]\n'
+    exit 0
+    ;;
+  *)
+    exit 0
+    ;;
+esac
+`
+	if err := os.WriteFile(filepath.Join(binDir, "bd"), []byte(script), 0755); err != nil {
+		t.Fatalf("write mock bd: %v", err)
+	}
+	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+}
+
 func setupCanonicalBranchManagerTest(t *testing.T) (*Manager, string) {
 	t.Helper()
 	installMockBd(t)
@@ -2054,6 +2085,35 @@ func TestCleanupOrphanPolecatStatePreservesUnverifiedBrokenPolecat(t *testing.T)
 
 	if _, err := os.Stat(polecatDir); err != nil {
 		t.Fatalf("broken named polecat dir was removed without safety proof: %v", err)
+	}
+}
+
+func TestCleanupOrphanPolecatStatePreservesOldLayoutWorktree(t *testing.T) {
+	if _, err := exec.LookPath("tmux"); err != nil {
+		t.Skip("tmux not installed")
+	}
+	installEmptyMockBd(t)
+
+	tmpDir := t.TempDir()
+	r := &rig.Rig{Name: "myrig", Path: tmpDir}
+	m := NewManager(r, nil, tmux.NewTmux())
+
+	polecatDir := filepath.Join(tmpDir, "polecats", "furiosa")
+	if err := os.MkdirAll(polecatDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(polecatDir, ".git"), []byte("gitdir: /tmp/nonexistent-for-layout-test\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	sentinel := filepath.Join(polecatDir, "sentinel.txt")
+	if err := os.WriteFile(sentinel, []byte("old layout worktree\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	m.cleanupOrphanPolecatState()
+
+	if _, err := os.Stat(sentinel); err != nil {
+		t.Fatalf("old-layout worktree was removed by orphan cleanup: %v", err)
 	}
 }
 

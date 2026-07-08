@@ -2128,7 +2128,7 @@ func (m *Manager) cleanupOrphanPolecatState() {
 
 		// Only remove truly partial spawn artifacts here. Named polecats with any
 		// agent/work/session evidence must go through the locked reclaim path.
-		clonePath := filepath.Join(polecatDir, m.rig.Name)
+		clonePath := m.clonePath(name)
 		gitPath := filepath.Join(clonePath, ".git")
 
 		if _, err := os.Stat(clonePath); os.IsNotExist(err) {
