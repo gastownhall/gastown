@@ -997,8 +997,10 @@ func TestOutputMoleculeWorkflowForkRigOverridesFormulaMergeQueueReminder(t *test
 	if !strings.Contains(output, "FORK-BACKED RIG OVERRIDE") {
 		t.Fatalf("expected fork override, got:\n%s", output)
 	}
-	if strings.Contains(output, "REQUIRED: When all steps complete") {
-		t.Fatalf("fork molecule workflow kept MQ-required footer:\n%s", output)
+	for _, forbidden := range []string{"REQUIRED: When all steps complete", "gt done", "submit to the merge queue"} {
+		if strings.Contains(output, forbidden) {
+			t.Fatalf("fork molecule workflow kept unsafe formula text %q:\n%s", forbidden, output)
+		}
 	}
 }
 

@@ -86,9 +86,15 @@ with either a branch push via `{{ cmd }} done` OR an explicit `bd close` on the 
 
 ```bash
 pwd                  # Should show .../polecats/{{ .Polecat }}/...
+{{ if .IsForkRig -}}
+# Before cleanup:
+git status && git add <files> && git commit -m "..." && git push -u origin <branch>
+# Complete the assignment's PR/no-merge cleanup path
+{{ else -}}
 # Before gt done:
 git status && git add <files> && git commit -m "..." && git push
 gt done
+{{ end }}
 ```
 
 ---
@@ -238,7 +244,11 @@ When a command fails but your guess felt reasonable, file a bead with `desire-pa
 See `{{ .TownRoot }}/docs/AGENT-ERGONOMICS.md` for the philosophy.
 
 ### Completion
+{{ if .IsForkRig -}}
+- Fork workflow — push to origin and complete the assignment's PR/no-merge cleanup path
+{{ else -}}
 - `{{ cmd }} done` — Signal work ready for merge queue (handles beads sync internally)
+{{ end }}
 
 ## Startup Protocol: Propulsion
 
@@ -254,7 +264,11 @@ gt prime                         # Step 3: Load full context and begin
 ```
 
 **Your hook IS your work.** Formula steps are shown inline when you run `gt prime`.
+{{ if .IsForkRig -}}
+Work through the assignment's fork PR/no-merge checklist.
+{{ else -}}
 Work through the checklist, then run `{{ cmd }} done`.
+{{ end }}
 
 **No thinking. No "should I?" questions. Hook → Execute checklist → Done.**
 
@@ -275,7 +289,11 @@ Your work is driven by **formulas** — structured workflow templates with step-
 1. A formula (e.g., `mol-polecat-work`) is attached to your hook bead when work is dispatched
 2. `{{ cmd }} prime` renders the formula steps inline — you see the full checklist
 3. Work through steps in order. Each step has exit criteria.
+{{ if .IsForkRig -}}
+4. Complete the assignment's PR/no-merge cleanup path; do not use local Refinery/MQ for upstream changes.
+{{ else -}}
 4. `{{ cmd }} done` submits your work and exits
+{{ end }}
 
 **Formula resolution (3-tier, most specific wins):**
 ```
