@@ -37,7 +37,6 @@ issues that are not P0/P1, not epics, and have no active dependencies.
 ## Anomaly Detection
 
 The Dog should watch for and flag:
-- Dangling parent references (wisps referencing purged parents)
 - Sudden spikes in reap candidates (suggests a wisp lifecycle problem)
 - Open wisp counts exceeding alert_threshold
 - Dolt commit failures (data may not be persisted)
@@ -45,7 +44,14 @@ The Dog should watch for and flag:
 NOT anomalies (do NOT escalate these):
 - Scan/reap count mismatch (scan finds N, reap closes M < N): this is a benign
   race condition — the witness closes wisps for dead sessions concurrently.
-  This is expected behavior, not a bug."""
+  This is expected behavior, not a bug.
+- Dangling parent references (wisps/deps referencing purged parents) in
+  moderate counts: `bd mol burn` does not cascade wisp_dependencies rows
+  (known bug), so every wisp burn leaks a few — a periodic sweep is the
+  standing mitigation. Record per-DB counts in the report instead of
+  escalating. ESCALATE ONLY IF a single scan finds an order-of-magnitude
+  jump (>250), or counts grow monotonically across 3+ consecutive scans
+  (the sweep has stopped holding)."""
 formula = "mol-dog-reaper"
 version = 3
 
@@ -78,15 +84,20 @@ gt reaper scan --db=<name> \\
 **3. Inspect results for anomalies:**
 - Check the `anomalies` array in the JSON output
 - Treat an absent `molecule_step_candidates` field as zero
-- Flag any `dangling_parent_ref` anomalies — these indicate wisps with
-  parent dependency records pointing to purged/missing parents
+- `dangling_parent_ref` anomalies are a KNOWN leak (bd mol burn does not
+  cascade wisp_dependencies; a periodic sweep is the standing mitigation).
+  Do NOT escalate them — record the per-DB count in your report. ESCALATE
+  ONLY IF a single scan finds >250, or counts grow across 3+ consecutive
+  scans.
 - If `open_wisps` exceeds {{alert_threshold}}, escalate
 
 **4. Decide whether to proceed:**
 - If no candidates found across all databases, including `molecule_step_candidates`, skip remaining steps
-- If anomalies are severe, consider escalating before proceeding
+- If anomalies are severe (excluding dangling_parent_ref per above), consider
+  escalating before proceeding
 
-**Exit criteria:** Scan complete, candidates identified, anomalies flagged."""
+**Exit criteria:** Scan complete, candidates identified, anomalies noted in
+report (dangling_parent_ref logged, not escalated)."""
 
 [[steps]]
 id = "reap"
@@ -217,6 +228,11 @@ Generate summary and signal completion.
 ```bash
 gt escalate "Reaper anomalies detected" -s MEDIUM -m "<anomaly details>"
 ```
+
+EXCEPTION — dangling parent references are NOT escalatable in moderate counts
+(known bd-mol-burn cascade gap; periodic sweep is the mitigation). Log their
+counts in the report instead. Escalate them ONLY if a single scan finds >250,
+or counts grow across 3+ consecutive scans.
 
 **Exit criteria:** Report generated, anomalies escalated if any."""
 
