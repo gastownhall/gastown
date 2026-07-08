@@ -1,0 +1,35 @@
+name: Set up beads (bd)
+description: Resolve, cache, install, and expose the bd CLI used by Gastown tests.
+
+inputs:
+  cache-prefix:
+    description: Prefix for the actions/cache key.
+    required: false
+    default: beads
+
+runs:
+  using: composite
+  steps:
+    - name: Resolve beads version
+      id: beads-version
+      shell: bash
+      run: |
+        version="$(go list -mod=readonly -m -f '{{.Version}}' github.com/steveyegge/beads)"
+        test -n "$version"
+        echo "version=$version" >> "$GITHUB_OUTPUT"
+
+    - name: Cache beads (bd)
+      id: cache-beads
+      uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
+      with:
+        path: ~/go/bin/bd
+        key: ${{ inputs.cache-prefix }}-${{ runner.os }}-${{ runner.arch }}-${{ steps.beads-version.outputs.version }}-${{ hashFiles('go.mod', 'go.sum') }}
+
+    - name: Install beads (bd)
+      if: steps.cache-beads.outputs.cache-hit != 'true'
+      shell: bash
+      run: CGO_ENABLED=0 go install "github.com/steveyegge/beads/cmd/bd@${{ steps.beads-version.outputs.version }}"
+
+    - name: Add Go bin to PATH
+      shell: bash
+      run: echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"

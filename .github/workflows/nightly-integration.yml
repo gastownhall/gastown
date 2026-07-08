@@ -27,23 +27,10 @@ jobs:
           git config --global user.name "CI Bot"
           git config --global user.email "ci@gastown.test"
 
-      - name: Resolve beads version
-        id: beads-version
-        run: |
-          version="$(go list -mod=readonly -m -f '{{.Version}}' github.com/steveyegge/beads)"
-          test -n "$version"
-          echo "version=$version" >> "$GITHUB_OUTPUT"
-
-      - name: Cache beads (bd)
-        id: cache-beads
-        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
+      - name: Set up beads (bd)
+        uses: ./.github/actions/setup-bd
         with:
-          path: ~/go/bin/bd
-          key: beads-nightly-${{ runner.os }}-${{ runner.arch }}-${{ steps.beads-version.outputs.version }}-${{ hashFiles('go.mod', 'go.sum') }}
-
-      - name: Install beads (bd)
-        if: steps.cache-beads.outputs.cache-hit != 'true'
-        run: CGO_ENABLED=0 go install "github.com/steveyegge/beads/cmd/bd@${{ steps.beads-version.outputs.version }}"
+          cache-prefix: beads-nightly
 
       - name: Install Dolt
         run: |
@@ -52,9 +39,6 @@ jobs:
 
       - name: Pre-pull Dolt Docker image
         run: docker pull dolthub/dolt-sql-server:2.0.7
-
-      - name: Add to PATH
-        run: echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
 
       - name: Configure Dolt
         run: |
