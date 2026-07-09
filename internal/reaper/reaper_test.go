@@ -66,6 +66,15 @@ func TestParentExcludeJoin(t *testing.T) {
 	if !contains(joinClause, "wisp_dependencies") {
 		t.Error("parentExcludeJoin should query wisp_dependencies")
 	}
+	if !contains(joinClause, "wd.depends_on_wisp_id") {
+		t.Error("parentExcludeJoin should join wisp parents through depends_on_wisp_id")
+	}
+	if !contains(joinClause, "wd.depends_on_issue_id") {
+		t.Error("parentExcludeJoin should join issue parents through depends_on_issue_id")
+	}
+	if contains(joinClause, "wd.depends_on_id") {
+		t.Error("parentExcludeJoin should not use legacy depends_on_id")
+	}
 	if !contains(joinClause, "parent-child") {
 		t.Error("parentExcludeJoin should filter on parent-child type")
 	}
@@ -79,6 +88,53 @@ func TestParentExcludeJoin(t *testing.T) {
 	}
 	if !contains(whereCondition, "IS NULL") {
 		t.Error("parentExcludeJoin whereCondition should use IS NULL for anti-join")
+	}
+}
+
+func TestReaperQueriesUseTypedDependencyColumns(t *testing.T) {
+	sourcePath := "reaper.go"
+	data, err := os.ReadFile(sourcePath)
+	if err != nil {
+		t.Fatalf("read %s: %v", sourcePath, err)
+	}
+	source := string(data)
+	if strings.Contains(source, "depends_on_id") {
+		t.Fatalf("reaper queries should not use legacy depends_on_id")
+	}
+
+	scanBody := sourceBetween(t, source, "func Scan(", "func Reap(")
+	autoCloseBody := sourceBetween(t, source, "func AutoClose(", "// batchDeleteRows")
+	batchDeleteBody := sourceBetween(t, source, "func batchDeleteRows(", "// ClosePluginReceiptResult")
+
+	for _, body := range []struct {
+		name string
+		text string
+	}{
+		{name: "Scan", text: scanBody},
+		{name: "AutoClose", text: autoCloseBody},
+	} {
+		if !strings.Contains(body.text, "d.depends_on_issue_id = dep.id") {
+			t.Fatalf("%s should join dependency blockers through depends_on_issue_id", body.name)
+		}
+		if !strings.Contains(body.text, "SELECT DISTINCT d.depends_on_issue_id") {
+			t.Fatalf("%s should exclude blocked issues through depends_on_issue_id", body.name)
+		}
+		if !strings.Contains(body.text, "d.depends_on_issue_id IS NOT NULL") {
+			t.Fatalf("%s should guard nullable depends_on_issue_id in NOT IN subquery", body.name)
+		}
+	}
+
+	if !strings.Contains(scanBody, "wd.depends_on_wisp_id IS NOT NULL OR wd.depends_on_issue_id IS NOT NULL") {
+		t.Fatal("Scan dangling-parent anomaly should ignore external-only dependency rows")
+	}
+	if !strings.Contains(batchDeleteBody, "DELETE FROM wisp_dependencies WHERE depends_on_wisp_id IN %s") {
+		t.Fatal("batchDeleteRows should clean reverse wisp dependency references")
+	}
+	if !strings.Contains(batchDeleteBody, "DELETE FROM wisp_dependencies WHERE depends_on_issue_id IN %s") {
+		t.Fatal("batchDeleteRows should clean reverse wisp parent references to issues")
+	}
+	if !strings.Contains(batchDeleteBody, "DELETE FROM dependencies WHERE depends_on_issue_id IN %s") {
+		t.Fatal("batchDeleteRows should clean reverse issue dependency references")
 	}
 }
 
@@ -202,6 +258,19 @@ func containsHelper(s, substr string) bool {
 		}
 	}
 	return false
+}
+
+func sourceBetween(t *testing.T, source, startMarker, endMarker string) string {
+	t.Helper()
+	start := strings.Index(source, startMarker)
+	if start == -1 {
+		t.Fatalf("could not find %q", startMarker)
+	}
+	end := strings.Index(source[start:], endMarker)
+	if end == -1 {
+		t.Fatalf("could not find %q after %q", endMarker, startMarker)
+	}
+	return source[start : start+end]
 }
 
 // TestReapExcludesAgentBeads verifies that the Reap function excludes agent beads
