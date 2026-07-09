@@ -75,6 +75,13 @@ type VersionChange struct {
 // versionChanges contains agent-actionable changes for recent versions
 var versionChanges = []VersionChange{
 	{
+		Version: "1.2.2",
+		Date:    "2026-07-08",
+		Changes: []string{
+			"FIX: gt reaper scan no longer fails with \"table wd does not have column depends_on_id\"; reaper scan/auto-close/dangling-parent/reverse-cleanup queries now use the typed dependency columns (depends_on_issue_id, depends_on_wisp_id) matching the beads schema (gt-pr-sheriff-4228).",
+		},
+	},
+	{
 		Version: "1.2.1",
 		Date:    "2026-06-06",
 		Changes: []string{
