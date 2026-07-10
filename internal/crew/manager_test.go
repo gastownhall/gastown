@@ -660,6 +660,19 @@ func TestBuildResumeArgs(t *testing.T) {
 			sessionID: "sess-456",
 			wantArgs:  "--resume sess-456",
 		},
+		// Kiro: has ContinueFlag and flag-style session ID resume
+		{
+			name:      "kiro last uses --resume",
+			agent:     "kiro",
+			sessionID: "last",
+			wantArgs:  "--resume",
+		},
+		{
+			name:      "kiro specific ID uses --resume-id",
+			agent:     "kiro",
+			sessionID: "f2946a26-3735-4b08-8d05-c928010302d5",
+			wantArgs:  "--resume-id f2946a26-3735-4b08-8d05-c928010302d5",
+		},
 		// Codex: subcommand-style resume
 		{
 			name:      "codex rejected as subcommand-style",
