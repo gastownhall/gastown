@@ -305,7 +305,7 @@ func (d *testDAG) BdStubScript() string {
 	sb.WriteString(fmt.Sprintf("    echo '%s'\n", convoyListJSON))
 	sb.WriteString("    exit 0\n")
 	sb.WriteString("    ;;\n")
-	sb.WriteString("  list\\ --json\\ --limit=0|list\\ --json\\ --limit=0\\ --all|list\\ --json\\ --limit=0\\ --status=*)\n")
+	sb.WriteString("  list\\ --json\\ --limit=0*)\n")
 	sb.WriteString("    echo '[]'\n")
 	sb.WriteString("    exit 0\n")
 	sb.WriteString("    ;;\n")
