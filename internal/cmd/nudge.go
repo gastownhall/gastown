@@ -245,7 +245,25 @@ func deliverNudge(t *tmux.Tmux, sessionName, message, sender string) error {
 				Message:  message,
 				Priority: nudgePriorityFlag,
 			}})
-			return t.NudgeSessionWithOpts(sessionName, formatted, tmux.NudgeOpts{TownRoot: townRoot})
+			deliverErr := t.NudgeSessionWithOpts(sessionName, formatted, tmux.NudgeOpts{TownRoot: townRoot})
+			if !errors.Is(deliverErr, tmux.ErrSubmitNotVerified) {
+				return deliverErr
+			}
+			// The payload was typed but submission could not be verified —
+			// the composer swallowed the Enter (op-03ke). Fall back to the
+			// queue so the message is not lost, and watch for a delivery
+			// window (the C-j remedy has already reset the composer, so a
+			// later attempt has a fresh buffer).
+			fmt.Fprintf(os.Stderr, "wait-idle: %v; queueing for %s\n", deliverErr, sessionName)
+			if qErr := nudge.Enqueue(townRoot, sessionName, nudge.QueuedNudge{
+				Sender:   sender,
+				Message:  message,
+				Priority: nudgePriorityFlag,
+			}); qErr != nil {
+				return fmt.Errorf("queue fallback after unverified submit failed: %v (original: %w)", qErr, deliverErr)
+			}
+			watchAndDeliver(t, townRoot, sessionName)
+			return nil
 		}
 		// Terminal errors (session gone, no server) — propagate, don't queue.
 		// Queueing a nudge for a dead session means it will never be delivered.
@@ -339,6 +357,14 @@ func watchAndDeliver(t *tmux.Tmux, townRoot, sessionName string) {
 			formatted := nudge.FormatForInjection(drained)
 			if err := t.NudgeSessionWithOpts(sessionName, formatted, tmux.NudgeOpts{TownRoot: townRoot}); err != nil {
 				fmt.Fprintf(os.Stderr, "idle-watcher: delivery for %s failed: %v\n", sessionName, err)
+				// Drain already removed these from the queue — put them back
+				// so a failed delivery (e.g. unverified submit, op-03ke)
+				// doesn't silently lose them.
+				for _, n := range drained {
+					if qErr := nudge.Enqueue(townRoot, sessionName, n); qErr != nil {
+						fmt.Fprintf(os.Stderr, "idle-watcher: re-enqueue for %s failed: %v\n", sessionName, qErr)
+					}
+				}
 			}
 			return
 		}

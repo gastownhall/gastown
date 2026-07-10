@@ -130,6 +130,14 @@ func runNudgePoller(cmd *cobra.Command, args []string) error {
 			formatted := nudge.FormatForInjection(drained)
 			if err := t.NudgeSessionWithOpts(sessionName, formatted, nudgeOpts); err != nil {
 				fmt.Fprintf(os.Stderr, "nudge-poller: injection error for %s: %v\n", sessionName, err)
+				// Drain already removed these from the queue — put them back
+				// so a failed injection (e.g. unverified submit, op-03ke)
+				// retries on the next poll instead of losing the nudges.
+				for _, n := range drained {
+					if qErr := nudge.Enqueue(townRoot, sessionName, n); qErr != nil {
+						fmt.Fprintf(os.Stderr, "nudge-poller: re-enqueue for %s failed: %v\n", sessionName, qErr)
+					}
+				}
 			}
 		}
 	}
