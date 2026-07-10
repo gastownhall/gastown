@@ -8,6 +8,7 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/steveyegge/gastown/internal/beads"
 	"github.com/steveyegge/gastown/internal/constants"
+	"github.com/steveyegge/gastown/internal/deacon"
 	"github.com/steveyegge/gastown/internal/formula"
 	"github.com/steveyegge/gastown/internal/style"
 )
@@ -122,6 +123,14 @@ func runPatrolReport(cmd *cobra.Command, args []string) error {
 
 	fmt.Printf("%s Closed patrol %s\n", style.Success.Render("✓"), patrolID)
 
+	// A successful patrol report from the Deacon is proof-of-life by
+	// construction: only a live session can close its patrol cycle. Stamp the
+	// heartbeat stores so the daemon doesn't kill a healthy Deacon whose
+	// session skipped the explicit `gt deacon heartbeat` step (hq-eofrg).
+	if roleInfo.Role == RoleDeacon {
+		stampDeaconHeartbeatOnReport(roleInfo.TownRoot, patrolReportSummary)
+	}
+
 	// Start next cycle
 	newPatrolID, err := autoSpawnPatrol(cfg)
 	if err != nil {
@@ -135,6 +144,20 @@ func runPatrolReport(cmd *cobra.Command, args []string) error {
 
 	fmt.Printf("%s Started new patrol: %s\n", style.Success.Render("✓"), newPatrolID)
 	return nil
+}
+
+// stampDeaconHeartbeatOnReport records Deacon proof-of-life after a successful
+// patrol report, using the same store-sync path as `gt deacon heartbeat`.
+// A paused Deacon must not refresh its heartbeat (matching runDeaconHeartbeat).
+// Best-effort: a stamp failure must not fail the report.
+func stampDeaconHeartbeatOnReport(townRoot, summary string) {
+	paused, _, err := deacon.IsPaused(townRoot)
+	if err == nil && paused {
+		return
+	}
+	if err := syncDeaconHeartbeatStores(townRoot, "patrol report: "+summary); err != nil {
+		style.PrintWarning("could not stamp deacon heartbeat: %v", err)
+	}
 }
 
 // buildStepAudit builds a step checklist from the formula's steps and the

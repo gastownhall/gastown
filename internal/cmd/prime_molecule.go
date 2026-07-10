@@ -338,7 +338,11 @@ func outputDeaconPatrolContext(ctx RoleContext) {
 		},
 	}
 	outputPatrolContext(cfg)
-	showFormulaSteps(constants.MolDeaconPatrol, "Patrol Steps", ctx.TownRoot, ctx.Rig)
+	// Full step bodies, not truncated one-liners: the heartbeat step's
+	// mandatory `gt deacon heartbeat` command lives in the body, and the
+	// daemon kills a Deacon whose heartbeat goes stale. Truncated rendering
+	// meant the command never reached the executing session (hq-eofrg).
+	showFormulaStepsFull(constants.MolDeaconPatrol, ctx.TownRoot, ctx.Rig)
 }
 
 // outputWitnessPatrolContext shows patrol molecule status for the Witness.

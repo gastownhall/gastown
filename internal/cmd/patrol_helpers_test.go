@@ -1093,3 +1093,80 @@ func TestBurnPreviousPatrolWisps_IgnoresOtherBeads(t *testing.T) {
 		t.Errorf("non-patrol bead status = %q, want %q (should not be burned)", otherIssue.Status, beads.StatusHooked)
 	}
 }
+
+func TestPatrolRigName(t *testing.T) {
+	tests := []struct {
+		assignee string
+		want     string
+	}{
+		{"deacon", ""},
+		{"openclaw/witness", "openclaw"},
+		{"gastown/refinery", "gastown"},
+		{"/witness", ""},
+		{"", ""},
+	}
+	for _, tt := range tests {
+		got := patrolRigName(PatrolConfig{Assignee: tt.assignee})
+		if got != tt.want {
+			t.Errorf("patrolRigName(%q) = %q, want %q", tt.assignee, got, tt.want)
+		}
+	}
+}
+
+func TestRenderPatrolWispDescription_DeaconInlinesStepBodies(t *testing.T) {
+	cfg := PatrolConfig{
+		RoleName:      "deacon",
+		PatrolMolName: constants.MolDeaconPatrol,
+		BeadsDir:      t.TempDir(), // no town overlays — resolves to embedded formula
+		Assignee:      "deacon",
+	}
+
+	desc := renderPatrolWispDescription(cfg)
+	if desc == "" {
+		t.Fatal("renderPatrolWispDescription returned empty for mol-deacon-patrol")
+	}
+
+	// Formula root description must be preserved.
+	if !strings.Contains(desc, "Idle Town Principle") {
+		t.Error("root formula description missing from wisp description")
+	}
+	// Full step bodies must be inlined — in particular the mandatory
+	// heartbeat command whose omission gets the Deacon killed by the daemon.
+	if !strings.Contains(desc, "gt deacon heartbeat") {
+		t.Error("mandatory heartbeat command missing from wisp description")
+	}
+	if !strings.Contains(desc, "Refresh heartbeat") {
+		t.Error("heartbeat step title missing from wisp description")
+	}
+	// Var placeholders must be substituted with defaults.
+	if strings.Contains(desc, "{{idle_effort_threshold}}") {
+		t.Error("unsubstituted {{idle_effort_threshold}} placeholder in wisp description")
+	}
+}
+
+func TestRenderPatrolWispDescription_ExtraVarsOverrideDefaults(t *testing.T) {
+	cfg := PatrolConfig{
+		RoleName:      "deacon",
+		PatrolMolName: constants.MolDeaconPatrol,
+		BeadsDir:      t.TempDir(),
+		Assignee:      "deacon",
+		ExtraVars:     []string{"idle_effort_threshold=7"},
+	}
+
+	desc := renderPatrolWispDescription(cfg)
+	if !strings.Contains(desc, "idle_cycles >= 7") {
+		t.Error("ExtraVars override not substituted into wisp description")
+	}
+}
+
+func TestRenderPatrolWispDescription_UnknownFormula(t *testing.T) {
+	cfg := PatrolConfig{
+		RoleName:      "deacon",
+		PatrolMolName: "mol-does-not-exist",
+		BeadsDir:      t.TempDir(),
+		Assignee:      "deacon",
+	}
+	if got := renderPatrolWispDescription(cfg); got != "" {
+		t.Errorf("expected empty description for unknown formula, got %d bytes", len(got))
+	}
+}

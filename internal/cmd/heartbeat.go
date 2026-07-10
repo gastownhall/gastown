@@ -93,9 +93,13 @@ func syncDeaconHeartbeatStores(townRoot, action string) error {
 	} else {
 		err = deacon.Touch(townRoot)
 	}
-	syncDeaconAgentBeadHeartbeat(townRoot)
+	deaconAgentBeadHeartbeatSync(townRoot)
 	return err
 }
+
+// deaconAgentBeadHeartbeatSync is swappable in tests: the agent-bead label
+// refresh shells out to bd (Dolt), which unit tests must not touch.
+var deaconAgentBeadHeartbeatSync = syncDeaconAgentBeadHeartbeat
 
 // syncDeaconAgentBeadHeartbeat refreshes the heartbeat:EPOCH label on the
 // Deacon's agent bead — the third heartbeat store, read by Witness

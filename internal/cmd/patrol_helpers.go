@@ -9,6 +9,7 @@ import (
 
 	"github.com/steveyegge/gastown/internal/beads"
 	"github.com/steveyegge/gastown/internal/cli"
+	"github.com/steveyegge/gastown/internal/formula"
 	"github.com/steveyegge/gastown/internal/refinery"
 	"github.com/steveyegge/gastown/internal/style"
 	"golang.org/x/text/cases"
@@ -290,8 +291,16 @@ func autoSpawnPatrol(cfg PatrolConfig) (string, error) {
 		return "", fmt.Errorf("created wisp but could not parse ID from output")
 	}
 
-	// Hook the wisp to the agent so gt mol status sees it
-	if err := BdCmd("update", patrolID, "--status=hooked", "--assignee="+cfg.Assignee).
+	// Hook the wisp to the agent so gt mol status sees it. Root-only wisps
+	// carry no step children, so inline the full step bodies into the root
+	// description in the same update — otherwise per-step instructions
+	// (including the Deacon's mandatory heartbeat command) never reach the
+	// executing session (hq-eofrg).
+	updateArgs := []string{"update", patrolID, "--status=hooked", "--assignee=" + cfg.Assignee}
+	if desc := renderPatrolWispDescription(cfg); desc != "" {
+		updateArgs = append(updateArgs, "--description="+desc)
+	}
+	if err := BdCmd(updateArgs...).
 		WithAutoCommit().
 		WithBeadsDir(resolvedBeadsDir).
 		Dir(cfg.BeadsDir).
@@ -300,6 +309,45 @@ func autoSpawnPatrol(cfg PatrolConfig) (string, error) {
 	}
 
 	return patrolID, nil
+}
+
+// patrolRigName extracts the rig name from a patrol assignee.
+// Rig-scoped assignees look like "<rig>/witness"; town-level assignees
+// (e.g. the Deacon's "deacon") have no rig and return "".
+func patrolRigName(cfg PatrolConfig) string {
+	if i := strings.IndexByte(cfg.Assignee, '/'); i > 0 {
+		return cfg.Assignee[:i]
+	}
+	return ""
+}
+
+// renderPatrolWispDescription builds a self-contained description for a
+// root-only patrol wisp: the formula's root description followed by the full
+// body of every step, with vars substituted. Patrol wisps have no step
+// children, so the root description is the only place the executing session
+// can read per-step instructions from the DB (hq-eofrg).
+// Returns "" on any formula load/parse failure so the caller keeps the
+// default description written at wisp creation.
+func renderPatrolWispDescription(cfg PatrolConfig) string {
+	rig := patrolRigName(cfg)
+	content, err := formula.ResolveFormulaContent(cfg.PatrolMolName, cfg.BeadsDir, rig)
+	if err != nil {
+		return ""
+	}
+	f, err := formula.Parse(content)
+	if err != nil {
+		return ""
+	}
+	steps, err := renderFormulaStepsFull(cfg.PatrolMolName, cfg.BeadsDir, rig, cfg.ExtraVars)
+	if err != nil || steps == "" {
+		return ""
+	}
+	varMap := buildFormulaVarMap(f, cfg.ExtraVars)
+	root := strings.TrimSpace(applyFormulaVars(f.Description, varMap))
+	if root == "" {
+		return strings.TrimSpace(steps)
+	}
+	return root + "\n" + steps
 }
 
 // outputPatrolContext is the main function that handles patrol display logic.
