@@ -27,6 +27,8 @@ const (
 	AgentGemini AgentPreset = "gemini"
 	// AgentCodex is OpenAI Codex.
 	AgentCodex AgentPreset = "codex"
+	// AgentKiro is Kiro CLI.
+	AgentKiro AgentPreset = "kiro"
 	// AgentCursor is Cursor Agent.
 	AgentCursor AgentPreset = "cursor"
 	// AgentAuggie is Auggie CLI.
@@ -295,6 +297,24 @@ var builtinPresets = map[AgentPreset]*AgentPresetInfo{
 		ReadyPromptPrefix: "› ",
 		ReadyDelayMs:      3000,
 		InstructionsFile:  "AGENTS.md",
+	},
+	AgentKiro: {
+		Name:         AgentKiro,
+		Command:      "kiro-cli",
+		Args:         []string{"chat", "--trust-all-tools"},
+		ProcessNames: []string{"kiro-cli"},
+		// Kiro sessions are stored per directory; the CLI resumes by flag, not
+		// by an environment variable that Gas Town needs to manage.
+		SessionIDEnv:        "",
+		ResumeFlag:          "--resume-id",
+		ContinueFlag:        "--resume",
+		ResumeStyle:         "flag",
+		SupportsHooks:       false, // Kiro has hooks, but Gas Town has no Kiro hook adapter yet.
+		SupportsForkSession: false,
+		NonInteractive:      nil, // Kiro's --no-interactive shape is not modeled by NonInteractiveConfig yet.
+		PromptMode:          "arg",
+		ReadyDelayMs:        5000,
+		InstructionsFile:    "AGENTS.md",
 	},
 	AgentCursor: {
 		Name:    AgentCursor,
