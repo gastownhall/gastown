@@ -2294,6 +2294,9 @@ func TestBusyIndicators(t *testing.T) {
 	// Every marker must be matched by hasBusyIndicator (guards against an empty
 	// or whitespace-only entry slipping in).
 	for _, m := range busyIndicators {
+		if strings.TrimSpace(m) == "" {
+			t.Fatal("busyIndicators must not contain empty or whitespace-only markers")
+		}
 		if !hasBusyIndicator("⏵⏵ status · " + m) {
 			t.Errorf("hasBusyIndicator did not match a registered busy indicator %q", m)
 		}

@@ -3040,6 +3040,10 @@ func hasBusyIndicator(line string) bool {
 		return false
 	}
 	for _, marker := range busyIndicators {
+		marker = strings.TrimSpace(marker)
+		if marker == "" {
+			continue
+		}
 		if strings.Contains(trimmed, marker) {
 			return true
 		}
