@@ -195,7 +195,12 @@ func TestParseBdKvListJSON(t *testing.T) {
 	got, err := parseBdKvListJSON([]byte(`{
 		"memory.project.note":"keep me",
 		"memory.project.empty":"",
+		"memory.project.count":12,
+		"memory.project.enabled":true,
+		"memory.project.tags":["one"],
+		"memory.project.config":{"nested":"value"},
 		"schema_version":1,
+		"other":"keep string kvs",
 		"enabled":true,
 		"tags":["one"],
 		"config":{"nested":"value"},
@@ -206,8 +211,13 @@ func TestParseBdKvListJSON(t *testing.T) {
 	}
 
 	want := map[string]string{
-		"memory.project.note":  "keep me",
-		"memory.project.empty": "",
+		"memory.project.note":    "keep me",
+		"memory.project.empty":   "",
+		"memory.project.count":   "12",
+		"memory.project.enabled": "true",
+		"memory.project.tags":    `["one"]`,
+		"memory.project.config":  `{"nested":"value"}`,
+		"other":                  "keep string kvs",
 	}
 	if len(got) != len(want) {
 		t.Fatalf("parseBdKvListJSON() returned %d entries, want %d: %#v", len(got), len(want), got)
@@ -219,6 +229,11 @@ func TestParseBdKvListJSON(t *testing.T) {
 	}
 	if _, ok := got["memory.project.null"]; ok {
 		t.Error("parseBdKvListJSON() kept null memory value")
+	}
+	for _, k := range []string{"schema_version", "enabled", "tags", "config"} {
+		if _, ok := got[k]; ok {
+			t.Errorf("parseBdKvListJSON() kept non-memory non-string value for %q", k)
+		}
 	}
 }
 

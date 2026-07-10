@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -215,7 +216,7 @@ func bdKvClear(key string) error {
 	return cmd.Run()
 }
 
-// parseBdKvListJSON parses bd kv list --json output, keeping only string values.
+// parseBdKvListJSON parses bd kv list --json output into displayable string values.
 func parseBdKvListJSON(data []byte) (map[string]string, error) {
 	var raw map[string]json.RawMessage
 	if err := json.Unmarshal(data, &raw); err != nil {
@@ -225,10 +226,23 @@ func parseBdKvListJSON(data []byte) (map[string]string, error) {
 	kvs := make(map[string]string, len(raw))
 	for k, v := range raw {
 		var s *string
-		if err := json.Unmarshal(v, &s); err != nil || s == nil {
+		if err := json.Unmarshal(v, &s); err == nil {
+			if s != nil {
+				kvs[k] = *s
+			}
 			continue
 		}
-		kvs[k] = *s
+
+		if !strings.HasPrefix(k, memoryKeyPrefix) {
+			continue
+		}
+
+		// Keep non-string memory values visible without promoting bd metadata.
+		var compact bytes.Buffer
+		if err := json.Compact(&compact, v); err != nil {
+			continue
+		}
+		kvs[k] = compact.String()
 	}
 	return kvs, nil
 }
