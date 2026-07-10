@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	gtconfig "github.com/steveyegge/gastown/internal/config"
 	"github.com/steveyegge/gastown/internal/doltserver"
 )
 
@@ -120,10 +121,10 @@ func TestReadBeadsRuntimeConfigIgnoresEmbeddedMetadata(t *testing.T) {
 }
 
 func TestBeadsScopeHint_HQWarnsAgainstGlobal(t *testing.T) {
-	townRoot := filepath.Join(string(filepath.Separator), "custom", "town")
+	townRoot := filepath.Join(string(filepath.Separator), "custom", "town root")
 	hint := beadsScopeHint("hq", townRoot)
 
-	for _, want := range []string{"database hq", "bd -C " + townRoot, "bd --global", "beads_global"} {
+	for _, want := range []string{"database hq", "bd -C " + gtconfig.ShellQuote(townRoot), "bd --global", "beads_global"} {
 		if !strings.Contains(hint, want) {
 			t.Fatalf("beadsScopeHint() missing %q in:\n%s", want, hint)
 		}
