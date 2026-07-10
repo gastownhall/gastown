@@ -187,6 +187,40 @@ func TestEnsureRefineryRunningSafetyStoppedDoesNotSpawn(t *testing.T) {
 	}
 }
 
+func TestEnsureRefineryRunningForkRigDoesNotSpawn(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("mock tmux script uses POSIX shell")
+	}
+	townRoot := t.TempDir()
+	writeDaemonTownFile(t, townRoot, "events/refinery/pending.event", "{}")
+	writeDaemonTownFile(t, townRoot, "testrig/config.json", `{"upstream_url":"https://github.com/upstream/repo","beads":{"prefix":"gt"}}`)
+
+	binDir := t.TempDir()
+	logPath := filepath.Join(binDir, "commands.log")
+	writeDaemonNoSafetyStopMockBD(t, binDir, logPath)
+	writeDaemonSafetyStopMockTmux(t, binDir, logPath)
+	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	var logBuf bytes.Buffer
+	d := &Daemon{
+		config: DefaultConfig(townRoot),
+		logger: log.New(&logBuf, "", 0),
+		tmux:   tmux.NewTmux(),
+	}
+	d.ensureRefineryRunning("testrig")
+
+	logData, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatalf("read command log: %v", err)
+	}
+	if strings.Contains(string(logData), "new-session") {
+		t.Fatalf("daemon spawned refinery for fork rig; log:\n%s", logData)
+	}
+	if !strings.Contains(logBuf.String(), "fork-backed rig") {
+		t.Fatalf("daemon log = %q, want fork-backed skip", logBuf.String())
+	}
+}
+
 func writeDaemonSafetyStopMockBD(t *testing.T, binDir, logPath string) {
 	t.Helper()
 	script := `#!/bin/sh
@@ -204,6 +238,41 @@ case "$cmd" in
     ;;
   show)
     printf '%s\n' '[{"id":"gt-testrig-refinery","title":"Refinery","issue_type":"task","labels":["gt:agent","safety_stop:hq-vmrwr"],"status":"open","description":"role_type: refinery\nrig: testrig\nagent_state: idle"}]'
+    ;;
+  *)
+    exit 0
+    ;;
+esac
+`
+	if err := os.WriteFile(filepath.Join(binDir, "bd"), []byte(script), 0o755); err != nil {
+		t.Fatalf("write fake bd: %v", err)
+	}
+}
+
+func writeDaemonNoSafetyStopMockBD(t *testing.T, binDir, logPath string) {
+	t.Helper()
+	script := `#!/bin/sh
+printf 'bd %s\n' "$*" >> "` + logPath + `"
+cmd=""
+for arg in "$@"; do
+  case "$arg" in
+    --*) ;;
+    *) cmd="$arg"; break ;;
+  esac
+done
+case "$cmd" in
+  version)
+    echo "bd test"
+    ;;
+  show)
+    case "$*" in
+      *gt-rig-testrig*)
+        printf '%s\n' '[{"id":"gt-rig-testrig","title":"Rig","issue_type":"task","labels":[],"status":"open","description":""}]'
+        ;;
+      *)
+        printf '%s\n' '[{"id":"gt-testrig-refinery","title":"Refinery","issue_type":"task","labels":["gt:agent"],"status":"open","description":"role_type: refinery\nrig: testrig\nagent_state: idle"}]'
+        ;;
+    esac
     ;;
   *)
     exit 0

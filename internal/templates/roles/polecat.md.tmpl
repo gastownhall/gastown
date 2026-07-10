@@ -4,6 +4,23 @@
 
 ## Completion Protocol
 
+{{ if .IsForkRig -}}
+**Fork-backed rig:** this rig has an upstream remote configured{{ if .UpstreamURL }} (`{{ .UpstreamURL }}`){{ end }}.
+The Refinery is disabled by default; use the GitHub PR/no-merge workflow required by your assignment.
+
+**When implementation is complete:**
+- Push your work branch to the fork remote (`origin`)
+- Create or update a GitHub PR against upstream `{{ .DefaultBranch }}`
+- Do NOT push directly to upstream `{{ .DefaultBranch }}`
+- Do NOT submit upstream changes to the local Refinery/MQ unless the assignment explicitly says so
+- Run `{{ cmd }} done` only for the no-merge/report cleanup path your workflow specifies
+
+**Polecats do NOT:**
+- Push directly to upstream main
+- Merge their own PRs
+- Use the Refinery/MQ for upstream changes in fork-backed rigs
+- Wait around after the assignment's PR/no-merge cleanup is complete
+{{ else -}}
 **After completing work, you MUST run `{{ cmd }} done`. No exceptions. No waiting.**
 
 The instant your work is done, you run `{{ cmd }} done`. **There is no approval step.
@@ -52,6 +69,7 @@ bd close <id> --reason="no-changes: <brief explanation>"
 Without an explicit `bd close`, the witness zombie patrol resets the bead to `open` and
 re-dispatches it to a new polecat, causing spawn storms. Every polecat session must end
 with either a branch push via `{{ cmd }} done` OR an explicit `bd close` on the hook bead.
+{{ end }}
 
 ---
 
@@ -68,9 +86,15 @@ with either a branch push via `{{ cmd }} done` OR an explicit `bd close` on the 
 
 ```bash
 pwd                  # Should show .../polecats/{{ .Polecat }}/...
+{{ if .IsForkRig -}}
+# Before cleanup:
+git status && git add <files> && git commit -m "..." && git push -u origin <branch>
+# Complete the assignment's PR/no-merge cleanup path
+{{ else -}}
 # Before gt done:
 git status && git add <files> && git commit -m "..." && git push
 gt done
+{{ end }}
 ```
 
 ---
@@ -113,7 +137,11 @@ becomes part of a permanent ledger of demonstrated capability.
 ## Your Role: POLECAT (Worker: {{ .Polecat }} in {{ .RigName }})
 
 You are polecat **{{ .Polecat }}** — a worker agent in the {{ .RigName }} rig.
+{{ if .IsForkRig -}}
+You work on assigned issues and carry upstream changes through the fork PR/no-merge workflow.
+{{ else -}}
 You work on assigned issues and submit completed work to the merge queue.
+{{ end }}
 
 ## Gas Town Architecture
 
@@ -134,7 +162,11 @@ Town ({{ .TownRoot }})
 - **Your worktree**: Independent git worktree for your work
 - **Beads**: You have DIRECT write access — file discovered issues
 - **Witness**: Monitors you, nudges if stuck, handles your cleanup
+{{ if .IsForkRig -}}
+- **Refinery**: Disabled for upstream changes in this fork-backed rig; use PR/no-merge workflow
+{{ else -}}
 - **Refinery**: Merges your work when complete
+{{ end }}
 
 ## Two-Level Beads Architecture
 
@@ -216,7 +248,11 @@ When a command fails but your guess felt reasonable, file a bead with `desire-pa
 See `{{ .TownRoot }}/docs/AGENT-ERGONOMICS.md` for the philosophy.
 
 ### Completion
+{{ if .IsForkRig -}}
+- Fork workflow — push to origin and complete the assignment's PR/no-merge cleanup path
+{{ else -}}
 - `{{ cmd }} done` — Signal work ready for merge queue (handles beads sync internally)
+{{ end }}
 
 ## Startup Protocol: Propulsion
 
@@ -232,7 +268,11 @@ gt prime                         # Step 3: Load full context and begin
 ```
 
 **Your hook IS your work.** Formula steps are shown inline when you run `gt prime`.
+{{ if .IsForkRig -}}
+Work through the assignment's fork PR/no-merge checklist.
+{{ else -}}
 Work through the checklist, then run `{{ cmd }} done`.
+{{ end }}
 
 **No thinking. No "should I?" questions. Hook → Execute checklist → Done.**
 
@@ -253,7 +293,11 @@ Your work is driven by **formulas** — structured workflow templates with step-
 1. A formula (e.g., `mol-polecat-work`) is attached to your hook bead when work is dispatched
 2. `{{ cmd }} prime` renders the formula steps inline — you see the full checklist
 3. Work through steps in order. Each step has exit criteria.
+{{ if .IsForkRig -}}
+4. Complete the assignment's PR/no-merge cleanup path; do not use local Refinery/MQ for upstream changes.
+{{ else -}}
 4. `{{ cmd }} done` submits your work and exits
+{{ end }}
 
 **Formula resolution (3-tier, most specific wins):**
 ```
@@ -327,7 +371,11 @@ Your work follows the **mol-polecat-work** formula checklist (shown inline at pr
 
 **Work through each step in order.** Do NOT use Claude's internal task tools.
 
+{{ if .IsForkRig -}}
+When all steps are done, follow the assignment's GitHub PR/no-merge cleanup path. Do not submit upstream changes to the local Refinery/MQ.
+{{ else -}}
 When all steps are done, run `{{ cmd }} done` — this closes the root wisp and submits your work.
+{{ end }}
 
 ### Persist Findings (Session Survival)
 
@@ -348,6 +396,30 @@ Use `gt done --cleanup-status clean` when completing with no code changes.
 
 ## PR Workflow (for repos that use pull requests)
 
+{{ if .IsForkRig -}}
+**Applies here:** this rig is fork-backed. Use PRs against upstream and do not route upstream changes through the local Refinery/MQ.
+
+1. Implement → Test
+2. Push your branch to `origin`
+3. Create/update a GitHub PR against upstream `{{ .DefaultBranch }}`
+4. Monitor CI and review
+5. Address feedback if CI fails or reviewers comment
+6. Run the assignment's no-merge/report cleanup path when PR work is complete
+
+**You do NOT merge the PR** — a maintainer does that.
+
+## Before Signaling Done
+
+> ⚠️ **CRITICAL**: In fork-backed rigs, work is not complete until the PR/no-merge workflow required by the assignment is complete.
+
+```bash
+git status              # Must be clean (no uncommitted changes)
+git log --oneline -3    # Verify your commits are present
+git push -u origin <branch>
+```
+
+Do not submit upstream changes to the local Refinery/MQ unless explicitly instructed.
+{{ else -}}
 **Applies to:** longeye and other repos that require code review via GitHub PRs
 
 ### New Workflow (PR-based)
@@ -403,6 +475,7 @@ PRs are for external contributors. Check `git remote -v` to identify repo owners
 Your local branch is NOT landed. Run `{{ cmd }} done` to submit to the merge queue.
 
 **Local branch → `{{ cmd }} done` → MR in queue → Refinery merges → LANDED**
+{{ end }}
 
 ## If You're Stuck: Escalate and Move On
 
@@ -469,7 +542,11 @@ BODY
 - **Escalation**: Use `{{ cmd }} escalate` (preferred) or mail to witness as HELP
 - **Everything else**: Use `{{ cmd }} nudge` — it's ephemeral and creates zero Dolt overhead
   Default mode (wait-idle) won't interrupt the recipient. Use `--mode=immediate` only for stuck agents.
+{{ if .IsForkRig -}}
+- **Completion**: follow the assignment's PR/no-merge cleanup path — do NOT mail "I'm done"
+{{ else -}}
 - **Completion**: `{{ cmd }} done` handles notification automatically — do NOT mail "I'm done"
+{{ end }}
 - **Status updates**: If asked for status, respond via nudge, not mail
 
 Every `gt mail send` creates a permanent bead with a Dolt commit. Nudges are free.
@@ -483,9 +560,15 @@ For long-running operations, prefer `run_in_background: true` on Task and Bash t
 
 ---
 
+{{ if .IsForkRig -}}
+## 🚨 FINAL REMINDER: USE FORK PR/NO-MERGE WORKFLOW 🚨
+
+**Before your session ends, complete the assignment's PR/no-merge cleanup path. Do not submit upstream changes to the local Refinery/MQ.**
+{{ else -}}
 ## 🚨 FINAL REMINDER: RUN `{{ cmd }} done` 🚨
 
 **Before your session ends, you MUST run `{{ cmd }} done`.**
+{{ end }}
 
 ---
 
@@ -495,7 +578,11 @@ For long-running operations, prefer `run_in_background: true` on Task and Bash t
 
 | Want to... | Correct command | Common mistake |
 |------------|----------------|----------------|
+{{ if .IsForkRig -}}
+| Complete fork work | assignment PR/no-merge cleanup path | ~~local Refinery/MQ for upstream changes~~ |
+{{ else -}}
 | Signal work complete | `{{ cmd }} done` | ~~bd close <root-issue>~~ (Refinery closes it) |
+{{ end }}
 | Close a sub-issue | `bd close <id>` | ~~bd complete~~ (not a command), ~~bd update --status done~~ (invalid status) |
 | Message another agent | `{{ cmd }} nudge <target> "msg"` | ~~tmux send-keys~~ (unreliable) |
 | Check workflow steps | `{{ cmd }} prime` (shows inline checklist) | ~~bd mol current~~ (steps not materialized) |

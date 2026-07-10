@@ -79,8 +79,8 @@ func (d *Daemon) handleDogsCleanupOnly() {
 	// Skip dispatchPlugins — under pressure
 }
 
-// cleanupStuckDogs finds dogs in state=working whose tmux session is dead and
-// clears their work so they return to idle.
+// cleanupStuckDogs finds dogs in state=working whose tmux session or agent
+// process is dead and clears their work so they return to idle.
 func (d *Daemon) cleanupStuckDogs(mgr *dog.Manager, sm *dog.SessionManager) {
 	dogs, err := mgr.List()
 	if err != nil {
@@ -88,26 +88,47 @@ func (d *Daemon) cleanupStuckDogs(mgr *dog.Manager, sm *dog.SessionManager) {
 		return
 	}
 
+	t := tmux.NewTmux()
 	for _, dg := range dogs {
 		if dg.State != dog.StateWorking {
 			continue
 		}
 
+		sessionID := sm.SessionName(dg.Name)
 		running, err := sm.IsRunning(dg.Name)
 		if err != nil {
 			d.logger.Printf("Handler: error checking session for dog %s: %v", dg.Name, err)
 			continue
 		}
 
-		if running {
+		if !running {
+			d.logger.Printf("Handler: dog %s is working but session is dead, clearing work", dg.Name)
+			d.clearDogWorkIfMatches(mgr, dg, "dead session")
 			continue
 		}
 
-		// Dog is marked working but session is dead — clean it up.
-		d.logger.Printf("Handler: dog %s is working but session is dead, clearing work", dg.Name)
-		if err := mgr.ClearWork(dg.Name); err != nil {
-			d.logger.Printf("Handler: failed to clear work for dog %s: %v", dg.Name, err)
+		status := t.CheckSessionHealth(sessionID, 0)
+		if status != tmux.AgentDead {
+			continue
 		}
+
+		d.logger.Printf("Handler: dog %s (%s) is working but agent is dead, killing session and clearing work", dg.Name, sessionID)
+		if err := t.KillSessionWithProcesses(sessionID); err != nil {
+			d.logger.Printf("Handler: failed to kill agent-dead session for dog %s (%s): %v", dg.Name, sessionID, err)
+			continue
+		}
+		d.clearDogWorkIfMatches(mgr, dg, "dead agent")
+	}
+}
+
+func (d *Daemon) clearDogWorkIfMatches(mgr *dog.Manager, dg *dog.Dog, reason string) {
+	cleared, err := mgr.ClearWorkIfMatches(dg.Name, dg.Work, dg.WorkStartedAt)
+	if err != nil {
+		d.logger.Printf("Handler: failed to clear work for dog %s (%s): %v", dg.Name, reason, err)
+		return
+	}
+	if !cleared {
+		d.logger.Printf("Handler: skipped clearing dog %s (%s): work assignment changed", dg.Name, reason)
 	}
 }
 
@@ -124,6 +145,7 @@ func (d *Daemon) detectStaleWorkingDogs(mgr *dog.Manager, sm *dog.SessionManager
 
 	threshold := daemonCfg.StaleWorkingTimeoutD()
 	now := time.Now()
+	t := tmux.NewTmux()
 	for _, dg := range dogs {
 		if dg.State != dog.StateWorking {
 			continue
@@ -137,22 +159,21 @@ func (d *Daemon) detectStaleWorkingDogs(mgr *dog.Manager, sm *dog.SessionManager
 		d.logger.Printf("Handler: dog %s stuck in working state (inactive %v, work: %s), clearing",
 			dg.Name, staleDuration.Truncate(time.Minute), dg.Work)
 
-		if err := mgr.ClearWork(dg.Name); err != nil {
-			d.logger.Printf("Handler: failed to clear work for stale dog %s: %v", dg.Name, err)
-			continue
-		}
-
-		// Kill the tmux session — it's not doing anything useful.
 		running, err := sm.IsRunning(dg.Name)
 		if err != nil {
 			d.logger.Printf("Handler: error checking session for stale dog %s: %v", dg.Name, err)
 			continue
 		}
 		if running {
-			if err := sm.Stop(dg.Name, true); err != nil {
+			// Kill the tmux session before clearing state so a failed kill does not
+			// return the dog to the idle pool with stale work still running.
+			if err := t.KillSessionWithProcesses(sm.SessionName(dg.Name)); err != nil {
 				d.logger.Printf("Handler: failed to stop session for stale dog %s: %v", dg.Name, err)
+				continue
 			}
 		}
+
+		d.clearDogWorkIfMatches(mgr, dg, "stale working")
 	}
 }
 

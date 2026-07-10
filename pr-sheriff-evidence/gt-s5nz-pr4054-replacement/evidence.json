@@ -1,0 +1,254 @@
+{
+  "schema_version": "pr-sheriff-evidence/v1",
+  "policy_version": "pr-sheriff-policy/v1.1",
+  "generated_at": "2026-07-08T22:11:42Z",
+  "run_id": "gt-s5nz-pr4054-replacement",
+  "subject": {
+    "forge": "github",
+    "repo_id": "Bella-Giraffety/gastown",
+    "default_branch": "main",
+    "change_type": "replacement_pr",
+    "change_id": "gt-s5nz-replacement-for-4054",
+    "url": "https://github.com/gastownhall/gastown/pull/4452",
+    "title": "Current-main replacement for PR #4054 fork-aware refinery/runtime behavior",
+    "author": "esciara / Emmanuel Sciara",
+    "author_tier": "known",
+    "draft": false,
+    "base_ref": "main",
+    "base_sha": "68320ca2298faafe25f27cfcb8f31ecd6eb1873a",
+    "head_ref": "polecat/mirelurk/gt-s5nz+mrcjk3k0",
+    "head_sha": "f35aacae72d24f644ade63f700bd4a7a52d16835",
+    "diff_summary": {
+      "additions": 646,
+      "deletions": 36,
+      "changed_files": 17,
+      "paths": [
+        "internal/cmd/prime.go",
+        "internal/cmd/prime_output.go",
+        "internal/cmd/prime_test.go",
+        "internal/cmd/refinery.go",
+        "internal/cmd/refinery_test.go",
+        "internal/cmd/rig.go",
+        "internal/cmd/start.go",
+        "internal/cmd/up.go",
+        "internal/cmd/up_test.go",
+        "internal/daemon/daemon.go",
+        "internal/daemon/daemon_test.go",
+        "internal/refinery/manager.go",
+        "internal/refinery/manager_test.go",
+        "internal/templates/roles/crew.md.tmpl",
+        "internal/templates/roles/polecat.md.tmpl",
+        "internal/templates/templates.go",
+        "internal/templates/templates_test.go"
+      ]
+    }
+  },
+  "repo_policy": {
+    "label_aliases": [],
+    "feature_kind_values": ["feature", "enhancement"],
+    "merge_ready_status_values": ["review-approved", "merge-ready"],
+    "approver_roles": ["maintainer", "owner", "mayor"],
+    "evidence_locations": ["local_report", "beads_notes", "artifact_store"],
+    "baseline_checks": [],
+    "no_verification_reasons": []
+  },
+  "action_plan": {
+    "id": "action-plan-gt-s5nz",
+    "mode": "replacement_pr",
+    "proposed_action_ref": "action-plan-gt-s5nz",
+    "summary": "Focused current-main replacement for stale/conflicting PR #4054: derive refinery startup blocking from rig upstream_url, add explicit force override for manual refinery start/restart, make auto-start callers skip fork-backed refineries, and render fork PR/no-merge role context without adding persistent refinery_disabled state or unrelated fanout/convoy/sling changes.",
+    "created_at": "2026-07-08T21:10:00Z"
+  },
+  "labels": {
+    "observed": [
+      {"name": "status/merge-ready", "family": "status", "semantic_value": "merge-ready"},
+      {"name": "priority/p2", "family": "priority", "semantic_value": "p2"},
+      {"name": "kind/bug", "family": "kind", "semantic_value": "bug"}
+    ],
+    "status": "merge-ready",
+    "priority": "p2",
+    "kind": "bug",
+    "snapshot_artifact_ref": "label-snapshot-replacement"
+  },
+  "artifacts": [
+    {"id": "label-snapshot-replacement", "kind": "label_snapshot", "uri": "file:pr-sheriff-evidence/gt-s5nz-pr4054-replacement/evidence.json#labels", "actor": "gastown/polecats/mirelurk", "created_at": "2026-07-08T22:11:42Z", "digest": null, "summary": "Replacement target semantics: status=merge-ready, priority=p2, kind=bug. Original PR #4054 remains status/accepted and is not the merge target."},
+    {"id": "original-pr-4054", "kind": "pull_request_snapshot", "uri": "https://github.com/gastownhall/gastown/pull/4054", "actor": "github", "created_at": "2026-07-08T21:00:00Z", "digest": null, "summary": "Original PR #4054 by esciara is open, dirty/conflicting, 429 commits behind current upstream/main, labels kind/bug priority/p2 status/accepted, and bundled with unrelated convoy/fanout/sling changes."},
+    {"id": "verification-focused", "kind": "verification_log", "uri": "file:pr-sheriff-evidence/gt-s5nz-pr4054-replacement/evidence.json#verification", "actor": "gastown/polecats/mirelurk", "created_at": "2026-07-08T22:09:00Z", "digest": null, "summary": "CGO_ENABLED=0 focused tests for internal/refinery, internal/templates, internal/cmd, internal/daemon and CGO_ENABLED=0 go build ./cmd/gt passed on final head f35aacae7."},
+    {"id": "checker-merge-gate", "kind": "checker_output", "uri": "file:pr-sheriff-evidence/gt-s5nz-pr4054-replacement/merge-gate-check.txt", "actor": "gt-pr-sheriff-check", "created_at": "2026-07-08T22:12:00Z", "digest": null, "summary": "Checker output persisted after evidence generation."},
+    {"id": "research-01", "kind": "research_report", "uri": "task:research-01-metadata", "actor": "research-01-metadata", "created_at": "2026-07-08T20:55:00Z", "digest": null, "summary": "PR #4054 metadata: open, non-draft, author esciara, conflicting/DIRTY, stale/diverged, labels accepted/p2/bug, no reviews."},
+    {"id": "research-02", "kind": "research_report", "uri": "task:research-02-diff-scope", "actor": "research-02-diff-scope", "created_at": "2026-07-08T20:55:00Z", "digest": null, "summary": "Diff scope is broad: 19 files and unrelated convoy/fanout/sling changes beyond the fork-aware refinery fix."},
+    {"id": "research-03", "kind": "research_report", "uri": "task:research-03-labels", "actor": "research-03-labels", "created_at": "2026-07-08T20:55:00Z", "digest": null, "summary": "Original PR has exactly one semantic status/priority/kind but status/accepted is not merge-ready."},
+    {"id": "research-04", "kind": "research_report", "uri": "task:research-04-ci", "actor": "research-04-ci", "created_at": "2026-07-08T20:55:00Z", "digest": null, "summary": "Original PR head checks were green/skipped but stale relative to conflicts; current main baseline green."},
+    {"id": "research-05", "kind": "research_report", "uri": "task:research-05-reviews", "actor": "research-05-reviews", "created_at": "2026-07-08T20:55:00Z", "digest": null, "summary": "No formal reviews, approvals, or review comments; collaborator comment says scoped fix should be carried separately."},
+    {"id": "research-06", "kind": "research_report", "uri": "task:research-06-comments", "actor": "research-06-comments", "created_at": "2026-07-08T20:55:00Z", "digest": null, "summary": "Comments/timeline confirm bug labels, prior sheriff work, stacked branch, and no feature approval requirement."},
+    {"id": "research-07", "kind": "research_report", "uri": "task:research-07-correctness", "actor": "research-07-correctness", "created_at": "2026-07-08T20:55:00Z", "digest": null, "summary": "Original PR partially fixes start/restart but leaves auto-start bypasses and invalid guidance; merge-as-is blocked."},
+    {"id": "research-08", "kind": "research_report", "uri": "task:research-08-tests", "actor": "research-08-tests", "created_at": "2026-07-08T20:55:00Z", "digest": null, "summary": "Original PR lacks focused tests for upstream_url fork runtime behavior, prime context, force, and auto-start skip paths."},
+    {"id": "research-09", "kind": "research_report", "uri": "task:research-09-current-main-retry", "actor": "research-09-current-main-retry", "created_at": "2026-07-08T21:05:00Z", "digest": null, "summary": "Bug remains on current upstream/main; conceptual fix should use current safety-stop/fork-push concepts and avoid PR #4054's separate persistent flag."},
+    {"id": "research-10", "kind": "research_report", "uri": "task:research-10-security", "actor": "research-10-security", "created_at": "2026-07-08T20:55:00Z", "digest": null, "summary": "No secrets in PR diff, but raw upstream_url output and auto-start bypasses are operational/security risks to fix."},
+    {"id": "research-11", "kind": "research_report", "uri": "task:research-11-architecture", "actor": "research-11-architecture", "created_at": "2026-07-08T20:55:00Z", "digest": null, "summary": "Architecture favors central guard at refinery.Manager.Start; PR #4054 command-level guard and persistent flag are less convergent."},
+    {"id": "research-12", "kind": "research_report", "uri": "task:research-12-attribution", "actor": "research-12-attribution", "created_at": "2026-07-08T20:55:00Z", "digest": null, "summary": "Attribution requires credit to esciara / Emmanuel Sciara for carried-forward PR #4054 intent/code."},
+    {"id": "research-13", "kind": "research_report", "uri": "task:research-13-blockers", "actor": "research-13-blockers", "created_at": "2026-07-08T20:55:00Z", "digest": null, "summary": "Blocker scan: original PR is dirty, stale, scope-contaminated, accepted not merge-ready, and lacks approvals."},
+    {"id": "research-14", "kind": "research_report", "uri": "task:research-14-policy", "actor": "research-14-policy", "created_at": "2026-07-08T20:55:00Z", "digest": null, "summary": "Repo policy requires status/priority/kind labels; kind/bug means no feature approval, but accepted is not merge-ready."},
+    {"id": "research-15", "kind": "research_report", "uri": "task:research-15-verification", "actor": "research-15-verification", "created_at": "2026-07-08T20:55:00Z", "digest": null, "summary": "Focused verification should use CGO_ENABLED=0 due local missing ICU metadata; touched packages identified."},
+    {"id": "pre-01", "kind": "pre_implementation_review", "uri": "task:pre-review-01-fork-guard", "actor": "pre-review-01-fork-guard", "created_at": "2026-07-08T21:20:00Z", "digest": null, "summary": "Approved central upstream_url guard with no refinery_disabled flag and focused tests."},
+    {"id": "pre-02", "kind": "pre_implementation_review", "uri": "task:pre-review-02-cli-callers", "actor": "pre-review-02-cli-callers", "created_at": "2026-07-08T21:20:00Z", "digest": null, "summary": "Approved caller behavior: skip auto-start paths, force only explicit start/restart, no persistent flag."},
+    {"id": "pre-03", "kind": "pre_implementation_review", "uri": "task:pre-review-03-templates", "actor": "pre-review-03-templates", "created_at": "2026-07-08T21:20:00Z", "digest": null, "summary": "Initial template blocker resolved by covering prime formula/autonomous text and redacting upstream URL."},
+    {"id": "pre-04", "kind": "pre_implementation_review", "uri": "task:pre-review-04-tests", "actor": "pre-review-04-tests", "created_at": "2026-07-08T21:20:00Z", "digest": null, "summary": "Approved test plan for manager, daemon, cmd, templates, and prime output."},
+    {"id": "pre-05", "kind": "pre_implementation_review", "uri": "task:pre-review-05-policy", "actor": "pre-review-05-policy", "created_at": "2026-07-08T21:20:00Z", "digest": null, "summary": "Approved replacement path, cleanup-first scope, and attribution requirements."},
+    {"id": "post-01", "kind": "post_implementation_review", "uri": "task:post-review-f35aacae7-01-cleanup", "actor": "post-review-f35aacae7-01-cleanup", "created_at": "2026-07-08T22:10:00Z", "digest": null, "summary": "Approved final head f35aacae7 for cleanup-first central guard and prompt safety."},
+    {"id": "post-02", "kind": "post_implementation_review", "uri": "task:post-review-f35aacae7-02-correctness", "actor": "post-review-f35aacae7-02-correctness", "created_at": "2026-07-08T22:10:00Z", "digest": null, "summary": "Approved final head correctness: force semantics, caller handling, attach behavior, and prompt completion semantics."},
+    {"id": "post-03", "kind": "post_implementation_review", "uri": "task:post-review-f35aacae7-03-tests", "actor": "post-review-f35aacae7-03-tests", "created_at": "2026-07-08T22:10:00Z", "digest": null, "summary": "Approved final test coverage and verification sufficiency."},
+    {"id": "post-04", "kind": "post_implementation_review", "uri": "task:post-review-f35aacae7-04-security", "actor": "post-review-f35aacae7-04-security", "created_at": "2026-07-08T22:10:00Z", "digest": null, "summary": "Approved final security/operational risk review: no raw upstream_url leak and no fork auto-start path."},
+    {"id": "post-05", "kind": "post_implementation_review", "uri": "task:post-review-f35aacae7-05-policy", "actor": "post-review-f35aacae7-05-policy", "created_at": "2026-07-08T22:10:00Z", "digest": null, "summary": "Approved final policy review: replacement path, attribution, bug labels, and cleanup-first."}
+  ],
+  "implementation": {
+    "code_changed_by_sheriff": true,
+    "mode": "replacement_pr",
+    "first_code_change_at": "2026-07-08T21:30:00Z",
+    "modified_paths": [
+      "internal/cmd/prime.go",
+      "internal/cmd/prime_output.go",
+      "internal/cmd/prime_test.go",
+      "internal/cmd/refinery.go",
+      "internal/cmd/refinery_test.go",
+      "internal/cmd/rig.go",
+      "internal/cmd/start.go",
+      "internal/cmd/up.go",
+      "internal/cmd/up_test.go",
+      "internal/daemon/daemon.go",
+      "internal/daemon/daemon_test.go",
+      "internal/refinery/manager.go",
+      "internal/refinery/manager_test.go",
+      "internal/templates/roles/crew.md.tmpl",
+      "internal/templates/roles/polecat.md.tmpl",
+      "internal/templates/templates.go",
+      "internal/templates/templates_test.go"
+    ],
+    "commits": ["6f94fc682", "459272fa7", "adc82b97f", "356bde530", "5b5145b16", "f35aacae7"]
+  },
+  "evidence": {
+    "research_legs": [
+      {"id": "R01", "independence_key": "research-01-metadata", "artifact_ref": "research-01", "completed_at": "2026-07-08T20:55:00Z", "actor": "researcher-01", "lens": "PR metadata", "summary": "Original PR #4054 is open, stale, dirty/conflicting, and not review-approved."},
+      {"id": "R02", "independence_key": "research-02-diff-scope", "artifact_ref": "research-02", "completed_at": "2026-07-08T20:55:00Z", "actor": "researcher-02", "lens": "diff scope", "summary": "Branch is scope-contaminated with unrelated fanout/convoy/sling changes."},
+      {"id": "R03", "independence_key": "research-03-labels", "artifact_ref": "research-03", "completed_at": "2026-07-08T20:55:00Z", "actor": "researcher-03", "lens": "labels", "summary": "Original label cardinality valid but status/accepted blocks merge-as-is."},
+      {"id": "R04", "independence_key": "research-04-ci", "artifact_ref": "research-04", "completed_at": "2026-07-08T20:55:00Z", "actor": "researcher-04", "lens": "CI", "summary": "Original checks are stale; replacement needs fresh focused verification."},
+      {"id": "R05", "independence_key": "research-05-reviews", "artifact_ref": "research-05", "completed_at": "2026-07-08T20:55:00Z", "actor": "researcher-05", "lens": "reviews", "summary": "No formal approval exists on original PR."},
+      {"id": "R06", "independence_key": "research-06-comments", "artifact_ref": "research-06", "completed_at": "2026-07-08T20:55:00Z", "actor": "researcher-06", "lens": "comments", "summary": "Comments support scoped carry-forward instead of merge-as-is."},
+      {"id": "R07", "independence_key": "research-07-correctness", "artifact_ref": "research-07", "completed_at": "2026-07-08T20:55:00Z", "actor": "researcher-07", "lens": "correctness", "summary": "Original runtime fork defense is incomplete and needs replacement."},
+      {"id": "R08", "independence_key": "research-08-tests", "artifact_ref": "research-08", "completed_at": "2026-07-08T20:55:00Z", "actor": "researcher-08", "lens": "tests", "summary": "Focused upstream_url behavior tests are missing from original PR."},
+      {"id": "R09", "independence_key": "research-09-current-main-retry", "artifact_ref": "research-09", "completed_at": "2026-07-08T21:05:00Z", "actor": "researcher-09", "lens": "current-main applicability", "summary": "Bug remains on current upstream/main and should be fixed as a scoped replacement."},
+      {"id": "R10", "independence_key": "research-10-security", "artifact_ref": "research-10", "completed_at": "2026-07-08T20:55:00Z", "actor": "researcher-10", "lens": "security", "summary": "Replacement must avoid raw upstream_url leaks and auto-start bypasses."},
+      {"id": "R11", "independence_key": "research-11-architecture", "artifact_ref": "research-11", "completed_at": "2026-07-08T20:55:00Z", "actor": "researcher-11", "lens": "architecture", "summary": "Central Manager.Start guard is the convergent design."},
+      {"id": "R12", "independence_key": "research-12-attribution", "artifact_ref": "research-12", "completed_at": "2026-07-08T20:55:00Z", "actor": "researcher-12", "lens": "attribution", "summary": "Replacement must credit esciara / Emmanuel Sciara."},
+      {"id": "R13", "independence_key": "research-13-blockers", "artifact_ref": "research-13", "completed_at": "2026-07-08T20:55:00Z", "actor": "researcher-13", "lens": "blockers", "summary": "Original PR has merge-as-is blockers: conflicts, stale branch, scope contamination, accepted status, no approval."},
+      {"id": "R14", "independence_key": "research-14-policy", "artifact_ref": "research-14", "completed_at": "2026-07-08T20:55:00Z", "actor": "researcher-14", "lens": "repo policy", "summary": "Bug semantics allow fixup; merge path still needs replacement evidence and merge-ready status."},
+      {"id": "R15", "independence_key": "research-15-verification", "artifact_ref": "research-15", "completed_at": "2026-07-08T20:55:00Z", "actor": "researcher-15", "lens": "verification plan", "summary": "Use CGO_ENABLED=0 focused tests and build due local ICU constraint."}
+    ],
+    "pre_implementation_reviews": [
+      {"id": "P01", "independence_key": "pre-review-01-fork-guard", "artifact_ref": "pre-01", "reviewed_action_ref": "action-plan-gt-s5nz", "completed_at": "2026-07-08T21:20:00Z", "actor": "pre-reviewer-01", "verdict": "approve", "summary": "Approved central guard and no refinery_disabled state."},
+      {"id": "P02", "independence_key": "pre-review-02-cli-callers", "artifact_ref": "pre-02", "reviewed_action_ref": "action-plan-gt-s5nz", "completed_at": "2026-07-08T21:20:00Z", "actor": "pre-reviewer-02", "verdict": "approve", "summary": "Approved caller skip behavior and explicit force scope."},
+      {"id": "P03", "independence_key": "pre-review-03-templates", "artifact_ref": "pre-03", "reviewed_action_ref": "action-plan-gt-s5nz", "completed_at": "2026-07-08T21:20:00Z", "actor": "pre-reviewer-03", "verdict": "approve", "summary": "Initial template blocker resolved by final prompt/template changes."},
+      {"id": "P04", "independence_key": "pre-review-04-tests", "artifact_ref": "pre-04", "reviewed_action_ref": "action-plan-gt-s5nz", "completed_at": "2026-07-08T21:20:00Z", "actor": "pre-reviewer-04", "verdict": "approve", "summary": "Approved focused test plan."},
+      {"id": "P05", "independence_key": "pre-review-05-policy", "artifact_ref": "pre-05", "reviewed_action_ref": "action-plan-gt-s5nz", "completed_at": "2026-07-08T21:20:00Z", "actor": "pre-reviewer-05", "verdict": "approve", "summary": "Approved policy and attribution path."}
+    ],
+    "post_implementation_reviews": [
+      {"id": "POST01", "independence_key": "post-review-f35aacae7-01-cleanup", "artifact_ref": "post-01", "reviewed_action_ref": "action-plan-gt-s5nz", "reviewed_head_sha": "f35aacae72d24f644ade63f700bd4a7a52d16835", "completed_at": "2026-07-08T22:10:00Z", "actor": "post-reviewer-01", "verdict": "approve", "summary": "Approved final cleanup-first and prompt safety."},
+      {"id": "POST02", "independence_key": "post-review-f35aacae7-02-correctness", "artifact_ref": "post-02", "reviewed_action_ref": "action-plan-gt-s5nz", "reviewed_head_sha": "f35aacae72d24f644ade63f700bd4a7a52d16835", "completed_at": "2026-07-08T22:10:00Z", "actor": "post-reviewer-02", "verdict": "approve", "summary": "Approved final correctness and prompt semantics."},
+      {"id": "POST03", "independence_key": "post-review-f35aacae7-03-tests", "artifact_ref": "post-03", "reviewed_action_ref": "action-plan-gt-s5nz", "reviewed_head_sha": "f35aacae72d24f644ade63f700bd4a7a52d16835", "completed_at": "2026-07-08T22:10:00Z", "actor": "post-reviewer-03", "verdict": "approve", "summary": "Approved final tests and verification sufficiency."},
+      {"id": "POST04", "independence_key": "post-review-f35aacae7-04-security", "artifact_ref": "post-04", "reviewed_action_ref": "action-plan-gt-s5nz", "reviewed_head_sha": "f35aacae72d24f644ade63f700bd4a7a52d16835", "completed_at": "2026-07-08T22:10:00Z", "actor": "post-reviewer-04", "verdict": "approve", "summary": "Approved final security/operational risk review."},
+      {"id": "POST05", "independence_key": "post-review-f35aacae7-05-policy", "artifact_ref": "post-05", "reviewed_action_ref": "action-plan-gt-s5nz", "reviewed_head_sha": "f35aacae72d24f644ade63f700bd4a7a52d16835", "completed_at": "2026-07-08T22:10:00Z", "actor": "post-reviewer-05", "verdict": "approve", "summary": "Approved final policy review."}
+    ]
+  },
+  "cleanup_first": {
+    "assessment": "convergent",
+    "rationale": "Replacement derives refinery safety from existing upstream_url at the central Manager.Start choke point, suppresses unsafe fork prompts, and avoids PR #4054's separate persistent refinery_disabled state and unrelated broad stack.",
+    "prohibited_patterns": [
+      {"kind": "bandaid", "present": false, "exception_reason": "none", "evidence_ref": "post-01"},
+      {"kind": "workaround_layer", "present": false, "exception_reason": "none", "evidence_ref": "post-01"},
+      {"kind": "compatibility_shim", "present": false, "exception_reason": "none", "evidence_ref": "post-01"},
+      {"kind": "patch_on_patch", "present": false, "exception_reason": "none", "evidence_ref": "post-01"},
+      {"kind": "scope_creep", "present": false, "exception_reason": "none", "evidence_ref": "post-01"}
+    ]
+  },
+  "enhancement_approval": {
+    "required": false,
+    "required_reason": null,
+    "approved": false,
+    "approver": null,
+    "approver_role": null,
+    "approval_ref": null,
+    "approved_at": null
+  },
+  "verification": {
+    "focused_checks": [
+      {"name": "diff-check", "command_or_check": "git diff --check", "outcome": "pass", "artifact_ref": "verification-focused", "reason": "No whitespace or conflict-marker issues."},
+      {"name": "refinery-focused-tests", "command_or_check": "CGO_ENABLED=0 go test ./internal/refinery -run 'TestManager_Start(ForkRigDoesNotCreateSession|AllowingForkRigStillHonorsSafetyStop|SafetyStopped)' -count=1", "outcome": "pass", "artifact_ref": "verification-focused", "reason": "Manager fork guard, no-spawn, and force/safety-stop behavior passed."},
+      {"name": "template-focused-tests", "command_or_check": "CGO_ENABLED=0 go test ./internal/templates -run 'TestRenderRole_(PolecatForkRigUsesPRWorkflow|CrewForkRigUsesPRWorkflow)' -count=1", "outcome": "pass", "artifact_ref": "verification-focused", "reason": "Fork role context and stale direct-main/MQ guidance tests passed."},
+      {"name": "cmd-focused-tests", "command_or_check": "CGO_ENABLED=0 go test ./internal/cmd -run 'Test(Refinery(Start|Restart)ForceFlag|UpStartRefinerySkipsForkRig|OutputAutonomousDirectiveForkRigAvoidsMergeQueueGuidance|OutputMoleculeWorkflowForkRigOverridesFormulaMergeQueueReminder)' -count=1", "outcome": "pass", "artifact_ref": "verification-focused", "reason": "CLI flags, up skip, and prime fork prompt tests passed."},
+      {"name": "daemon-focused-tests", "command_or_check": "CGO_ENABLED=0 go test ./internal/daemon -run 'TestEnsureRefineryRunning(ForkRigDoesNotSpawn|SafetyStoppedDoesNotSpawn)' -count=1", "outcome": "pass", "artifact_ref": "verification-focused", "reason": "Daemon fork/safety no-spawn tests passed."},
+      {"name": "build", "command_or_check": "CGO_ENABLED=0 go build ./cmd/gt", "outcome": "pass", "artifact_ref": "verification-focused", "reason": "CLI builds with CGO disabled in local environment."}
+    ],
+    "ci_checks": []
+  },
+  "baseline_red_waiver": {
+    "requested": false,
+    "approved": false,
+    "approved_by": null,
+    "approver_role": null,
+    "approved_at": null,
+    "approval_ref": null,
+    "failing_checks": [],
+    "unrelated_rationale": "",
+    "evidence_refs": []
+  },
+  "replacement_flow": {
+    "required": true,
+    "mode": "replacement_pr",
+    "state": "ready",
+    "original_change_url": "https://github.com/gastownhall/gastown/pull/4054",
+    "replacement_change_url": "https://github.com/gastownhall/gastown/pull/4452",
+    "replacement_branch": "polecat/mirelurk/gt-s5nz+mrcjk3k0",
+    "replacement_commit_refs": ["6f94fc682", "459272fa7", "adc82b97f", "356bde530", "5b5145b16", "f35aacae7", "f35aacae72d24f644ade63f700bd4a7a52d16835"],
+    "original_author": "esciara / Emmanuel Sciara",
+    "evidence_reuse": {
+      "reused_artifact_refs": ["original-pr-4054", "research-07", "research-12"],
+      "fresh_artifact_refs": ["verification-focused", "post-01", "post-02", "post-03", "post-04", "post-05"],
+      "rationale": "Only the fork-aware refinery/runtime intent from PR #4054 was carried forward; final implementation and tests are fresh on current upstream/main."
+    },
+    "attribution": {
+      "required": true,
+      "required_reason": "Replacement preserves valid bug intent from PR #4054 by esciara / Emmanuel Sciara.",
+      "preserved": true,
+      "method": "co_authored_by",
+      "artifact_refs": ["original-pr-4054", "research-12"]
+    },
+    "superseded_closure": {
+      "required": true,
+      "state": "deferred_until_replacement_merge",
+      "closure_intent_ref": "original-pr-4054",
+      "replacement_merge_ref": null,
+      "closure_ref": null
+    }
+  },
+  "blocker_scan": {
+    "scanned_sources": ["labels", "pr_comments", "review_comments", "ci_checks", "beads_notes", "local_reviews", "verification"],
+    "unresolved_blockers_found": false,
+    "blocker_refs": [],
+    "resolution_refs": ["post-01", "post-02", "post-03", "post-04", "post-05", "verification-focused"],
+    "scanned_at": "2026-07-08T22:11:42Z",
+    "summary": "Original PR #4054 remains blocked for merge-as-is; replacement branch f35aacae7 has no unresolved blockers after final post-review and focused verification."
+  },
+  "gates": [],
+  "final": {
+    "verdict": "merge_replacement",
+    "decision_valid": true,
+    "merge_path_allowed": true,
+    "blocking_gates": [],
+    "target_change_url": "https://github.com/gastownhall/gastown/pull/4452",
+    "target_head_sha": "f35aacae72d24f644ade63f700bd4a7a52d16835",
+    "decided_by": "gastown/polecats/mirelurk",
+    "decided_at": "2026-07-08T22:11:42Z",
+    "reason": "Original PR #4054 is not mergeable as-is. The current-main replacement passes research, pre-review, post-review, cleanup-first, attribution, blocker scan, focused verification, and build gates.",
+    "required_actions": ["Do not close PR #4054 as superseded until this replacement lands with attribution evidence."]
+  }
+}

@@ -87,6 +87,7 @@ func (c *RigConfigSyncCheck) Run(ctx *CheckContext) *CheckResult {
 	c.dbNameMismatches = nil
 	c.dbCheckErrors = nil
 	var details []string
+	townDB := readDoltDatabase(filepath.Join(ctx.TownRoot, ".beads"))
 
 	for rigName, entry := range rigsConfig.Rigs {
 		rigPath := filepath.Join(ctx.TownRoot, rigName)
@@ -188,11 +189,16 @@ func (c *RigConfigSyncCheck) Run(ctx *CheckContext) *CheckResult {
 
 		// Check if Dolt database exists (only for server mode)
 		if metadata.DoltMode == "server" {
-			// Database name should match the rig directory name (rigName), not the beads
-			// prefix. This is the convention established by doltserver.EnsureMetadata:
-			// the Dolt database identifier is the rig's directory name so that rigs
-			// with short prefixes (e.g. "ts" for trading_scripts) don't collide and
-			// bd can always locate the right database without extra config.
+			// Database name should normally match the rig directory name (rigName),
+			// not the beads prefix. This is the convention established by
+			// doltserver.EnsureMetadata: the Dolt database identifier is the rig's
+			// directory name so that rigs with short prefixes (e.g. "ts" for
+			// trading_scripts) don't collide and bd can always locate the right
+			// database without extra config.
+			//
+			// Exception: deacon shares the town-wide beads DB after the HQ storage
+			// migration. Keep that invariant aligned with UnregisteredBeadsDirsCheck
+			// instead of rewriting deacon back to a separate database.
 			//
 			// Exception: some rigs' Dolt data physically lives in a PREFIX-named
 			// directory (e.g. .dolt-data/bd, .dolt-data/gt) from a directory rename
@@ -203,11 +209,15 @@ func (c *RigConfigSyncCheck) Run(ctx *CheckContext) *CheckResult {
 			// a false mismatch and --fix reverts metadata to the non-existent rig-name
 			// DB. (gt-5hd2)
 			expectedDBName := rigName
-			doltDataDir := filepath.Join(ctx.TownRoot, ".dolt-data")
-			if _, err := os.Stat(filepath.Join(doltDataDir, rigName)); os.IsNotExist(err) {
-				if prefix := config.GetRigPrefix(ctx.TownRoot, rigName); prefix != "" {
-					if _, err := os.Stat(filepath.Join(doltDataDir, prefix)); err == nil {
-						expectedDBName = prefix
+			if rigName == "deacon" && townDB != "" {
+				expectedDBName = townDB
+			} else {
+				doltDataDir := filepath.Join(ctx.TownRoot, ".dolt-data")
+				if _, err := os.Stat(filepath.Join(doltDataDir, rigName)); os.IsNotExist(err) {
+					if prefix := config.GetRigPrefix(ctx.TownRoot, rigName); prefix != "" {
+						if _, err := os.Stat(filepath.Join(doltDataDir, prefix)); err == nil {
+							expectedDBName = prefix
+						}
 					}
 				}
 			}

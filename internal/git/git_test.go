@@ -3024,6 +3024,206 @@ func TestListPushRemoteRefsWithHashesUsesPushURLHash(t *testing.T) {
 	}
 }
 
+func TestPushRemoteRefTargetStatusPreservesRebasedRemoteBranch(t *testing.T) {
+	localDir, _, mainBranch := initTestRepoWithRemote(t)
+	g := NewGit(localDir)
+	branch := "polecat/rebased-preserved"
+
+	if err := g.CreateBranch(branch); err != nil {
+		t.Fatalf("CreateBranch: %v", err)
+	}
+	if err := g.Checkout(branch); err != nil {
+		t.Fatalf("Checkout branch: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(localDir, "rebased.txt"), []byte("rebased\n"), 0644); err != nil {
+		t.Fatalf("write feature: %v", err)
+	}
+	if err := g.Add("rebased.txt"); err != nil {
+		t.Fatalf("Add feature: %v", err)
+	}
+	if err := g.Commit("rebased work"); err != nil {
+		t.Fatalf("Commit feature: %v", err)
+	}
+	branchSHA, err := g.Rev("HEAD")
+	if err != nil {
+		t.Fatalf("Rev branch: %v", err)
+	}
+	runGit(t, localDir, "push", "origin", branch)
+
+	if err := g.Checkout(mainBranch); err != nil {
+		t.Fatalf("Checkout main: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(localDir, "advance.txt"), []byte("target advanced\n"), 0644); err != nil {
+		t.Fatalf("write advance: %v", err)
+	}
+	if err := g.Add("advance.txt"); err != nil {
+		t.Fatalf("Add advance: %v", err)
+	}
+	if err := g.Commit("advance target"); err != nil {
+		t.Fatalf("Commit advance: %v", err)
+	}
+	runGit(t, localDir, "cherry-pick", strings.TrimSpace(branchSHA))
+	runGit(t, localDir, "push", "origin", mainBranch)
+	if err := g.Fetch("origin"); err != nil {
+		t.Fatalf("Fetch origin: %v", err)
+	}
+
+	ref := mustPushRemoteRef(t, g, branch)
+	ancestor, err := g.IsAncestor(ref.Hash, "origin/"+mainBranch)
+	if err != nil {
+		t.Fatalf("IsAncestor remote hash: %v", err)
+	}
+	if ancestor {
+		t.Fatal("test setup invalid: remote hash should not be an ancestor of target")
+	}
+
+	status, err := g.PushRemoteRefTargetStatus("origin", ref, "origin/"+mainBranch)
+	if err != nil {
+		t.Fatalf("PushRemoteRefTargetStatus: %v", err)
+	}
+	if !status.Preserved || status.UnpreservedPatchCount != 0 {
+		t.Fatalf("PushRemoteRefTargetStatus = %+v, want preserved", status)
+	}
+	if status.Evidence == "" {
+		t.Fatalf("PushRemoteRefTargetStatus evidence should be set: %+v", status)
+	}
+}
+
+func TestPushRemoteRefTargetStatusPreservesMultiCommitSquashRemoteBranch(t *testing.T) {
+	localDir, _, mainBranch := initTestRepoWithRemote(t)
+	if err := exec.Command("git", "-C", localDir, "merge-tree", "--write-tree", "HEAD", "HEAD").Run(); err != nil {
+		t.Skipf("git merge-tree --write-tree unsupported: %v", err)
+	}
+	g := NewGit(localDir)
+	branch := "polecat/squash-remote-preserved"
+
+	if err := g.CreateBranch(branch); err != nil {
+		t.Fatalf("CreateBranch: %v", err)
+	}
+	if err := g.Checkout(branch); err != nil {
+		t.Fatalf("Checkout branch: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(localDir, "squash.txt"), []byte("one\n"), 0644); err != nil {
+		t.Fatalf("write one: %v", err)
+	}
+	if err := g.Add("squash.txt"); err != nil {
+		t.Fatalf("Add one: %v", err)
+	}
+	if err := g.Commit("checkpoint one"); err != nil {
+		t.Fatalf("Commit one: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(localDir, "squash.txt"), []byte("one\ntwo\n"), 0644); err != nil {
+		t.Fatalf("write two: %v", err)
+	}
+	if err := g.Add("squash.txt"); err != nil {
+		t.Fatalf("Add two: %v", err)
+	}
+	if err := g.Commit("checkpoint two"); err != nil {
+		t.Fatalf("Commit two: %v", err)
+	}
+	runGit(t, localDir, "push", "origin", branch)
+
+	if err := g.Checkout(mainBranch); err != nil {
+		t.Fatalf("Checkout main: %v", err)
+	}
+	runGit(t, localDir, "merge", "--squash", branch)
+	runGit(t, localDir, "commit", "-m", "squash polecat work")
+	if err := os.WriteFile(filepath.Join(localDir, "advance.txt"), []byte("target advanced\n"), 0644); err != nil {
+		t.Fatalf("write advance: %v", err)
+	}
+	if err := g.Add("advance.txt"); err != nil {
+		t.Fatalf("Add advance: %v", err)
+	}
+	if err := g.Commit("advance target"); err != nil {
+		t.Fatalf("Commit advance: %v", err)
+	}
+	runGit(t, localDir, "push", "origin", mainBranch)
+	if err := g.Fetch("origin"); err != nil {
+		t.Fatalf("Fetch origin: %v", err)
+	}
+
+	ref := mustPushRemoteRef(t, g, branch)
+	status, err := g.PushRemoteRefTargetStatus("origin", ref, "origin/"+mainBranch)
+	if err != nil {
+		t.Fatalf("PushRemoteRefTargetStatus: %v", err)
+	}
+	if !status.Preserved || status.UnpreservedPatchCount != 0 {
+		t.Fatalf("PushRemoteRefTargetStatus = %+v, want squash-preserved", status)
+	}
+	if status.Evidence != "merge_tree_noop" {
+		t.Fatalf("Evidence = %q, want merge_tree_noop", status.Evidence)
+	}
+}
+
+func TestPushRemoteRefTargetStatusKeepsUnmergedSplitPushRemoteBranch(t *testing.T) {
+	localDir, upstream, _, mainBranch := initTestRepoWithSplitRemote(t)
+	g := NewGit(localDir)
+	branch := "polecat/split-unmerged"
+
+	if err := g.CreateBranch(branch); err != nil {
+		t.Fatalf("CreateBranch upstream branch: %v", err)
+	}
+	if err := g.Checkout(branch); err != nil {
+		t.Fatalf("Checkout upstream branch: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(localDir, "upstream-split.txt"), []byte("upstream\n"), 0644); err != nil {
+		t.Fatalf("write upstream: %v", err)
+	}
+	if err := g.Add("upstream-split.txt"); err != nil {
+		t.Fatalf("Add upstream: %v", err)
+	}
+	if err := g.Commit("upstream split work"); err != nil {
+		t.Fatalf("Commit upstream: %v", err)
+	}
+	runGit(t, localDir, "push", upstream, branch)
+	if err := g.Checkout(mainBranch); err != nil {
+		t.Fatalf("Checkout main: %v", err)
+	}
+	if err := g.Merge(branch); err != nil {
+		t.Fatalf("Merge upstream branch: %v", err)
+	}
+	runGit(t, localDir, "push", upstream, mainBranch)
+	if err := g.Fetch("origin"); err != nil {
+		t.Fatalf("Fetch origin: %v", err)
+	}
+
+	runGit(t, localDir, "checkout", "-B", branch, "origin/"+mainBranch)
+	if err := os.WriteFile(filepath.Join(localDir, "fork-split.txt"), []byte("fork-only\n"), 0644); err != nil {
+		t.Fatalf("write fork: %v", err)
+	}
+	if err := g.Add("fork-split.txt"); err != nil {
+		t.Fatalf("Add fork: %v", err)
+	}
+	if err := g.Commit("fork-only split work"); err != nil {
+		t.Fatalf("Commit fork: %v", err)
+	}
+	runGit(t, localDir, "push", "origin", branch)
+
+	ref := mustPushRemoteRef(t, g, branch)
+	status, err := g.PushRemoteRefTargetStatus("origin", ref, "origin/"+mainBranch)
+	if err != nil {
+		t.Fatalf("PushRemoteRefTargetStatus: %v", err)
+	}
+	if status.Preserved || status.UnpreservedPatchCount == 0 {
+		t.Fatalf("PushRemoteRefTargetStatus = %+v, want unpreserved split push branch", status)
+	}
+}
+
+func mustPushRemoteRef(t *testing.T, g *Git, branch string) RemoteRef {
+	t.Helper()
+	refs, err := g.ListPushRemoteRefsWithHashes("origin", "refs/heads/polecat/")
+	if err != nil {
+		t.Fatalf("ListPushRemoteRefsWithHashes: %v", err)
+	}
+	for _, ref := range refs {
+		if ref.Name == "refs/heads/"+branch {
+			return ref
+		}
+	}
+	t.Fatalf("remote ref %q not found in %#v", branch, refs)
+	return RemoteRef{}
+}
+
 func TestDeleteRemoteBranchIfAtRejectsChangedBranch(t *testing.T) {
 	localDir, _, mainBranch := initTestRepoWithRemote(t)
 	g := NewGit(localDir)

@@ -5,6 +5,8 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"runtime"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -30,6 +32,35 @@ func TestAgentStartResult_Fields(t *testing.T) {
 	}
 	if result.detail != "gt-gastown-witness" {
 		t.Errorf("detail = %q, want %q", result.detail, "gt-gastown-witness")
+	}
+}
+
+func TestUpStartRefinerySkipsForkRig(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("mock tmux script uses POSIX shell")
+	}
+	townRoot := t.TempDir()
+	rigPath := filepath.Join(townRoot, "testrig")
+	if err := os.MkdirAll(rigPath, 0o755); err != nil {
+		t.Fatalf("mkdir rig: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(rigPath, "config.json"), []byte(`{"upstream_url":"https://github.com/upstream/repo"}`), 0o644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+	binDir := t.TempDir()
+	logPath := filepath.Join(binDir, "tmux.log")
+	script := "#!/bin/sh\nprintf '%s\\n' \"$*\" >> \"" + logPath + "\"\ncase \"$1\" in has-session) exit 1 ;; *) exit 0 ;; esac\n"
+	if err := os.WriteFile(filepath.Join(binDir, "tmux"), []byte(script), 0o755); err != nil {
+		t.Fatalf("write fake tmux: %v", err)
+	}
+	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	result := upStartRefinery("testrig", &rig.Rig{Name: "testrig", Path: rigPath})
+	if !result.ok {
+		t.Fatalf("upStartRefinery ok = false, detail=%s", result.detail)
+	}
+	if !strings.Contains(result.detail, "fork-backed rig") {
+		t.Fatalf("detail = %q, want fork-backed skip", result.detail)
 	}
 }
 

@@ -1641,8 +1641,10 @@ func runRigBoot(cmd *cobra.Command, args []string) error {
 	// 2. Start the refinery
 	refMgr := refinery.NewManager(r)
 	if err := refMgr.Start(false, ""); err != nil { // false = background mode
-		if err == refinery.ErrAlreadyRunning {
+		if errors.Is(err, refinery.ErrAlreadyRunning) {
 			skipped = append(skipped, "refinery (already running)")
+		} else if errors.Is(err, refinery.ErrForkRig) {
+			skipped = append(skipped, "refinery (fork-backed rig; use PR workflow)")
 		} else {
 			return fmt.Errorf("starting refinery: %w", err)
 		}
@@ -1720,8 +1722,10 @@ func runRigStart(cmd *cobra.Command, args []string) error {
 		// 2. Start the refinery
 		refMgr := refinery.NewManager(r)
 		if err := refMgr.Start(false, ""); err != nil {
-			if err == refinery.ErrAlreadyRunning {
+			if errors.Is(err, refinery.ErrAlreadyRunning) {
 				skipped = append(skipped, "refinery")
+			} else if errors.Is(err, refinery.ErrForkRig) {
+				skipped = append(skipped, "refinery (fork-backed rig; use PR workflow)")
 			} else {
 				fmt.Printf("  %s Failed to start refinery: %v\n", style.Warning.Render("⚠"), err)
 				hasError = true
@@ -1735,7 +1739,7 @@ func runRigStart(cmd *cobra.Command, args []string) error {
 			fmt.Printf("  %s Started: %s\n", style.Success.Render("✓"), strings.Join(started, ", "))
 		}
 		if len(skipped) > 0 {
-			fmt.Printf("  %s Skipped: %s (already running)\n", style.Dim.Render("•"), strings.Join(skipped, ", "))
+			fmt.Printf("  %s Skipped: %s\n", style.Dim.Render("•"), strings.Join(skipped, ", "))
 		}
 
 		if hasError {
@@ -2288,8 +2292,10 @@ func runRigRestart(cmd *cobra.Command, args []string) error {
 
 		// 2. Start the refinery
 		if err := refMgr.Start(false, ""); err != nil {
-			if err == refinery.ErrAlreadyRunning {
+			if errors.Is(err, refinery.ErrAlreadyRunning) {
 				skipped = append(skipped, "refinery")
+			} else if errors.Is(err, refinery.ErrForkRig) {
+				skipped = append(skipped, "refinery (fork-backed rig; use PR workflow)")
 			} else {
 				fmt.Printf("    %s Failed to start refinery: %v\n", style.Warning.Render("⚠"), err)
 				startErrors = append(startErrors, fmt.Sprintf("refinery: %v", err))
@@ -2303,7 +2309,7 @@ func runRigRestart(cmd *cobra.Command, args []string) error {
 			fmt.Printf("  %s Started: %s\n", style.Success.Render("✓"), strings.Join(started, ", "))
 		}
 		if len(skipped) > 0 {
-			fmt.Printf("  %s Skipped: %s (already running)\n", style.Dim.Render("•"), strings.Join(skipped, ", "))
+			fmt.Printf("  %s Skipped: %s\n", style.Dim.Render("•"), strings.Join(skipped, ", "))
 		}
 
 		if len(startErrors) > 0 {

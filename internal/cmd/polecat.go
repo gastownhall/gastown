@@ -1791,7 +1791,7 @@ func runPolecatNuke(cmd *cobra.Command, args []string) error {
 			fmt.Printf("Nuking %s/%s...\n", p.rigName, p.polecatName)
 		}
 
-		if err := nukePolecatFullWithOptions(p.polecatName, p.rigName, p.mgr, p.r, nukePolecatOptions{PurgeClosedEphemerals: !batchPurge}); err != nil {
+		if err := nukePolecatFullWithOptions(p.polecatName, p.rigName, p.mgr, p.r, nukePolecatOptions{Force: polecatNukeForce, PurgeClosedEphemerals: !batchPurge}); err != nil {
 			nukeErrors = append(nukeErrors, fmt.Sprintf("%s/%s: %v", p.rigName, p.polecatName, err))
 			continue
 		}
@@ -1859,10 +1859,15 @@ func nukePolecatFull(polecatName, rigName string, mgr *polecat.Manager, r *rig.R
 }
 
 type nukePolecatOptions struct {
+	Force                 bool
 	PurgeClosedEphemerals bool
 }
 
 func nukePolecatFullWithOptions(polecatName, rigName string, mgr *polecat.Manager, r *rig.Rig, opts nukePolecatOptions) error {
+	if err := checkNukeActiveMRSafety(mgr, polecatName, rigName, opts.Force); err != nil {
+		return err
+	}
+
 	t := tmux.NewTmux()
 
 	// Step 1: Kill tmux session unconditionally to prevent ghost sessions
@@ -1892,8 +1897,8 @@ func nukePolecatFullWithOptions(polecatName, rigName string, mgr *polecat.Manage
 	}
 
 	// Step 2.75: Best-effort push before nuke (gt-4vr guardrail).
-	// Try to preserve any unpushed commits on the branch. If push fails,
-	// proceed — --force already means "I accept data loss".
+	// Try to preserve any unpushed commits on the branch. Push failures are
+	// non-fatal because this cleanup path already passed its safety gates.
 	if branchToDelete != "" {
 		var pushGit *git.Git
 		// Try worktree first (may still exist), then bare repo fallback.
@@ -1921,7 +1926,7 @@ func nukePolecatFullWithOptions(polecatName, rigName string, mgr *polecat.Manage
 	}
 
 	// Step 3: Delete worktree (nuclear=true to bypass safety checks for stale polecats)
-	if err := mgr.RemoveWithOptions(polecatName, true, true, false); err != nil {
+	if err := mgr.RemoveWithOptions(polecatName, opts.Force, true, false); err != nil {
 		if errors.Is(err, polecat.ErrPolecatNotFound) {
 			fmt.Printf("  %s worktree already gone\n", style.Dim.Render("○"))
 			resetPolecatAgentBeadForReuse(r, rigName, polecatName)
@@ -1955,6 +1960,20 @@ func nukePolecatFullWithOptions(polecatName, rigName string, mgr *polecat.Manage
 		purgeClosedEphemeralBeads(beads.New(r.Path))
 	}
 
+	return nil
+}
+
+type activeMRRemovalChecker interface {
+	ActiveMRRemovalBlocker(name string) (activeMR, blocker string)
+}
+
+func checkNukeActiveMRSafety(checker activeMRRemovalChecker, polecatName, rigName string, force bool) error {
+	if force || checker == nil {
+		return nil
+	}
+	if activeMR, blocker := checker.ActiveMRRemovalBlocker(polecatName); blocker != "" {
+		return fmt.Errorf("cannot nuke %s/%s: MR %s is still pending in merge queue (%s)\nRefinery will process the MR and clean up after merge\nUse --force to override (risks data loss)", rigName, polecatName, activeMR, blocker)
+	}
 	return nil
 }
 
@@ -2196,6 +2215,9 @@ func runPolecatPrune(cmd *cobra.Command, args []string) error {
 
 	// First, prune stale remote-tracking refs so we detect deleted remote branches
 	if err := repoGit.FetchPrune("origin"); err != nil {
+		if polecatPruneRemote {
+			return fmt.Errorf("refreshing origin before remote prune: %w", err)
+		}
 		fmt.Printf("  %s fetch --prune: %v (continuing anyway)\n", style.Warning.Render("⚠"), err)
 	}
 
@@ -2223,38 +2245,9 @@ func runPolecatPrune(cmd *cobra.Command, args []string) error {
 		fmt.Println()
 		fmt.Println("Pruning remote polecat branches...")
 
-		defaultBranch := repoGit.RemoteDefaultBranch()
-		remoteRefs, lsErr := repoGit.ListPushRemoteRefsWithHashes("origin", "refs/heads/polecat/")
-		if lsErr != nil {
-			return fmt.Errorf("listing remote refs: %w", lsErr)
-		}
-
-		remotePruned := 0
-		for _, ref := range remoteRefs {
-			if !strings.HasPrefix(ref.Name, "refs/heads/") {
-				continue
-			}
-			branch := strings.TrimPrefix(ref.Name, "refs/heads/")
-			// Use the listed remote tip, not the short branch name, so remote-only
-			// branches can be classified without a local branch.
-			merged, mergeErr := repoGit.IsAncestor(ref.Hash, "origin/"+defaultBranch)
-			if mergeErr != nil {
-				continue
-			}
-			if !merged {
-				continue
-			}
-
-			if polecatPruneDryRun {
-				fmt.Printf("  Would delete remote: %s\n", style.Dim.Render(branch))
-			} else {
-				if delErr := repoGit.DeleteRemoteBranchIfAt("origin", branch, ref.Hash); delErr != nil {
-					fmt.Printf("  %s remote %s: %v\n", style.Warning.Render("⚠"), branch, delErr)
-				} else {
-					fmt.Printf("  %s deleted remote %s\n", style.Success.Render("✓"), branch)
-				}
-			}
-			remotePruned++
+		remotePruned, remoteErr := pruneRemotePolecatBranches(repoGit, polecatPruneDryRun)
+		if remoteErr != nil {
+			return remoteErr
 		}
 
 		if remotePruned == 0 {
@@ -2269,6 +2262,46 @@ func runPolecatPrune(cmd *cobra.Command, args []string) error {
 	}
 
 	return nil
+}
+
+func pruneRemotePolecatBranches(repoGit *git.Git, dryRun bool) (int, error) {
+	defaultBranch := repoGit.RemoteDefaultBranch()
+	target := repoGit.CleanDefaultBranchBaseRef("origin", defaultBranch)
+	if targetRemote := git.RemoteForRef(target); targetRemote != "" && targetRemote != "origin" {
+		if err := repoGit.FetchPrune(targetRemote); err != nil {
+			return 0, fmt.Errorf("refreshing %s before remote prune: %w", targetRemote, err)
+		}
+	}
+	remoteRefs, lsErr := repoGit.ListPushRemoteRefsWithHashes("origin", "refs/heads/polecat/")
+	if lsErr != nil {
+		return 0, fmt.Errorf("listing remote refs: %w", lsErr)
+	}
+
+	remotePruned := 0
+	for _, ref := range remoteRefs {
+		if !strings.HasPrefix(ref.Name, "refs/heads/") {
+			continue
+		}
+		branch := strings.TrimPrefix(ref.Name, "refs/heads/")
+		status, statusErr := repoGit.PushRemoteRefTargetStatus("origin", ref, target)
+		if statusErr != nil || !status.Preserved {
+			continue
+		}
+
+		if dryRun {
+			fmt.Printf("  Would delete remote: %s\n", style.Dim.Render(branch))
+			remotePruned++
+			continue
+		}
+		if delErr := repoGit.DeleteRemoteBranchIfAt("origin", branch, ref.Hash); delErr != nil {
+			fmt.Printf("  %s remote %s: %v\n", style.Warning.Render("⚠"), branch, delErr)
+			continue
+		}
+		fmt.Printf("  %s deleted remote %s\n", style.Success.Render("✓"), branch)
+		remotePruned++
+	}
+
+	return remotePruned, nil
 }
 
 // runPolecatPoolInit creates a persistent polecat pool for a rig.

@@ -32,7 +32,34 @@ var (
 	ErrNotRunning     = errors.New("refinery not running")
 	ErrAlreadyRunning = errors.New("refinery already running")
 	ErrNoQueue        = errors.New("no items in queue")
+	ErrForkRig        = errors.New("refinery disabled for fork-backed rig")
 )
+
+// ForkRigError reports that refinery startup is disabled because the rig has
+// an upstream_url and must use the fork/PR workflow instead of local MQ merge.
+type ForkRigError struct {
+	RigName     string
+	UpstreamURL string
+}
+
+func (e *ForkRigError) Error() string {
+	if e == nil {
+		return ErrForkRig.Error()
+	}
+	if e.UpstreamURL == "" {
+		return fmt.Sprintf("%s %s", ErrForkRig, e.RigName)
+	}
+	return fmt.Sprintf("%s %s (upstream %s)", ErrForkRig, e.RigName, util.RedactURL(e.UpstreamURL))
+}
+
+func (e *ForkRigError) Unwrap() error {
+	return ErrForkRig
+}
+
+// NewForkRigError returns a typed startup-blocking fork-rig error.
+func NewForkRigError(rigName, upstreamURL string) error {
+	return &ForkRigError{RigName: rigName, UpstreamURL: upstreamURL}
+}
 
 // Manager handles refinery lifecycle and queue operations.
 type Manager struct {
@@ -111,12 +138,28 @@ func (m *Manager) Status() (*tmux.SessionInfo, error) {
 // The agentOverride parameter allows specifying an agent alias to use instead of the town default.
 // ZFC-compliant: no state file, tmux session is source of truth.
 func (m *Manager) Start(foreground bool, agentOverride string) error {
+	return m.start(foreground, agentOverride, false)
+}
+
+// StartAllowingForkRig starts the refinery even when the rig has upstream_url.
+// It bypasses only the fork guard; safety stops and all other gates still apply.
+func (m *Manager) StartAllowingForkRig(foreground bool, agentOverride string) error {
+	return m.start(foreground, agentOverride, true)
+}
+
+func (m *Manager) start(foreground bool, agentOverride string, allowForkRig bool) error {
 	t := tmux.NewTmux()
 	sessionID := m.SessionName()
 
 	if foreground {
 		// Foreground mode is deprecated - the Refinery agent handles merge processing
 		return fmt.Errorf("foreground mode is deprecated; use background mode (remove --foreground flag)")
+	}
+
+	if !allowForkRig {
+		if err := m.blockForkRigStart(t); err != nil {
+			return err
+		}
 	}
 
 	townRoot := filepath.Dir(m.rig.Path)
@@ -289,6 +332,37 @@ func (m *Manager) Start(foreground bool, agentOverride string) error {
 		"refinery", "refinery", sessionID, m.rig.Name, townRoot, "", refineryRigDir)
 
 	return nil
+}
+
+// ForkRigStartError returns ErrForkRig when the rig config has upstream_url.
+// The derived config guard is the single runtime policy for fork-backed rigs.
+func (m *Manager) ForkRigStartError() error {
+	cfg, err := rig.LoadRigConfig(m.rig.Path)
+	if err != nil || cfg == nil || strings.TrimSpace(cfg.UpstreamURL) == "" {
+		return nil
+	}
+	return NewForkRigError(m.rig.Name, cfg.UpstreamURL)
+}
+
+// BlockForkRigStart applies the fork-rig startup guard and kills any leftover
+// refinery session that would otherwise keep processing a fork-backed rig.
+func (m *Manager) BlockForkRigStart() error {
+	return m.blockForkRigStart(tmux.NewTmux())
+}
+
+func (m *Manager) blockForkRigStart(t *tmux.Tmux) error {
+	err := m.ForkRigStartError()
+	if err == nil {
+		return nil
+	}
+	sessionID := m.SessionName()
+	if running, _ := t.HasSession(sessionID); running {
+		_, _ = fmt.Fprintf(m.output, "Refinery %s is disabled for fork-backed rig; killing leftover session %s.\n", m.rig.Name, sessionID)
+		if killErr := t.KillSessionWithProcesses(sessionID); killErr != nil {
+			return fmt.Errorf("%w: killing leftover refinery session: %v", err, killErr)
+		}
+	}
+	return err
 }
 
 // repairRefineryWorktree recreates a missing refinery/rig worktree from the

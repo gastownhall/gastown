@@ -246,6 +246,29 @@ content, interpret the prose instructions, and execute them.
 
 ## Git Workflow: Work Off Main
 
+{{ if .IsForkRig -}}
+**Fork-backed rig:** this rig has an upstream remote configured{{ if .UpstreamURL }} (`{{ .UpstreamURL }}`){{ end }}.
+The Refinery is disabled by default; use a PR-to-upstream workflow.
+
+### Fork-Backed PR Workflow
+
+- Start branches from `upstream/{{ .DefaultBranch }}`.
+- Push work branches to the fork remote (`origin`).
+- Create or update a GitHub PR against upstream `{{ .DefaultBranch }}`.
+- Do NOT push directly to upstream `{{ .DefaultBranch }}`.
+- Do NOT use the local Refinery/MQ for upstream changes.
+
+### Workflow
+
+```bash
+git fetch upstream {{ .DefaultBranch }}
+git checkout -b <branch> upstream/{{ .DefaultBranch }}
+# ... do work ...
+git add -A && git commit -m "description"
+git push -u origin <branch>
+gh pr create --base {{ .DefaultBranch }} --head <fork-owner>:<branch>
+```
+{{ else -}}
 **Crew workers push directly to main. No feature branches.**
 
 ### No PRs in Maintainer Repos
@@ -279,11 +302,17 @@ git push                    # Direct to main
 ```
 
 If push fails (someone else pushed): `git pull --rebase && git push`
+{{ end }}
 
 ### Fix-Merging Community PRs
 
+{{ if .IsForkRig -}}
+When you carry forward a community PR through a fork-backed upstream PR/no-merge workflow, **always
+attribute the original contributor** with a `Co-Authored-By` trailer alongside Claude's:
+{{ else -}}
 When you fix-merge a community PR (fix it up and commit directly to main), **always
 attribute the original contributor** with a `Co-Authored-By` trailer alongside Claude's:
+{{ end }}
 
 ```
 Co-Authored-By: contributor-name <their-email>
@@ -297,7 +326,11 @@ in git history — only a closed PR comment links them to the work.
 ### Cross-Rig Work (gt worktree)
 
 `{{ cmd }} worktree` creates a branch for working in another rig's codebase. Complete
+{{ if .IsForkRig -}}
+the work in one session if possible and complete that rig's PR/no-merge workflow; do not route upstream changes through a local Refinery/MQ.
+{{ else -}}
 the work in one session if possible and submit to that rig's Refinery immediately.
+{{ end }}
 
 ## Key Commands
 
@@ -431,6 +464,25 @@ or the human asks.
 When ending a session, complete ALL steps. The plane is NOT landed until `git push`
 succeeds. **YOU must push — NEVER say "ready to push when you are!"**
 
+{{ if .IsForkRig -}}
+**MANDATORY FORK WORKFLOW:**
+
+1. **File beads** for remaining follow-up work
+2. **Run quality gates** (if code changed): `go test ./...` / `golangci-lint run ./...`
+3. **Update beads** — close finished work only when appropriate
+4. **PUSH TO FORK REMOTE — NON-NEGOTIABLE:**
+   ```bash
+   git fetch upstream {{ .DefaultBranch }}
+   git add <files> && git commit -m "description"
+   git push -u origin <branch>     # DO NOT STOP BEFORE THIS COMPLETES
+   ```
+5. **Create/update the upstream PR** against `{{ .DefaultBranch }}`
+6. **Clean up**: prune only after confirming no needed local branch state remains
+7. **Handoff or close**: `{{ cmd }} handoff` or verify clean `git status`
+8. **Session summary**: What completed, PR URL/status, beads filed, quality gate status, push confirmation
+
+**Landing means the branch is pushed to the fork and the upstream PR path is complete. Do not use local Refinery/MQ for upstream changes.**
+{{ else -}}
 **MANDATORY WORKFLOW:**
 
 1. **File beads** for remaining follow-up work
@@ -449,6 +501,7 @@ succeeds. **YOU must push — NEVER say "ready to push when you are!"**
 7. **Session summary**: What completed, beads filed, quality gate status, push confirmation
 
 **Landing means EVERYTHING is pushed to remote. No exceptions.**
+{{ end }}
 
 ## Desire Paths: Improving the Tooling
 

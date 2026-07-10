@@ -85,6 +85,9 @@ jobs:
         run: |
           curl -L https://github.com/dolthub/dolt/releases/download/v2.0.7/install.sh | sudo bash
 
+      - name: Set up beads (bd)
+        uses: ./.github/actions/setup-bd
+
       - name: Install gotestsum
         run: go install gotest.tools/gotestsum@latest
 
@@ -169,23 +172,8 @@ jobs:
       - name: Pre-pull Dolt Docker image
         run: docker pull dolthub/dolt-sql-server:2.0.7
 
-      - name: Resolve beads version
-        id: beads-version
-        run: |
-          version="$(go list -mod=readonly -m -f '{{.Version}}' github.com/steveyegge/beads)"
-          test -n "$version"
-          echo "version=$version" >> "$GITHUB_OUTPUT"
-
-      - name: Cache beads (bd)
-        id: cache-beads-int
-        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
-        with:
-          path: ~/go/bin/bd
-          key: beads-${{ runner.os }}-${{ runner.arch }}-${{ steps.beads-version.outputs.version }}-${{ hashFiles('go.mod', 'go.sum') }}
-
-      - name: Install beads (bd)
-        if: steps.cache-beads-int.outputs.cache-hit != 'true'
-        run: CGO_ENABLED=0 go install "github.com/steveyegge/beads/cmd/bd@${{ steps.beads-version.outputs.version }}"
+      - name: Set up beads (bd)
+        uses: ./.github/actions/setup-bd
 
       - name: Install gotestsum
         run: go install gotest.tools/gotestsum@latest
@@ -194,9 +182,6 @@ jobs:
         run: |
           make build
           cp gt "$(go env GOPATH)/bin/"
-
-      - name: Add to PATH
-        run: echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
 
       - name: Integration Tests
         run: |

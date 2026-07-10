@@ -758,8 +758,11 @@ func upStartRefinery(rigName string, r *rig.Rig) agentStartResult {
 
 	mgr := refinery.NewManager(r)
 	if err := mgr.Start(false, ""); err != nil {
-		if err == refinery.ErrAlreadyRunning {
+		if errors.Is(err, refinery.ErrAlreadyRunning) {
 			return agentStartResult{name: name, ok: true, detail: mgr.SessionName()}
+		}
+		if errors.Is(err, refinery.ErrForkRig) {
+			return agentStartResult{name: name, ok: true, detail: "skipped (fork-backed rig; use PR workflow)"}
 		}
 		return agentStartResult{name: name, ok: false, detail: err.Error()}
 	}

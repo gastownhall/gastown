@@ -46,6 +46,19 @@ func (f *fakeCleanupUpdater) UpdateAgentCleanupStatus(id string, cleanupStatus s
 	return f.err
 }
 
+type fakeActiveMRRemovalChecker struct {
+	activeMR string
+	blocker  string
+	calls    int
+	name     string
+}
+
+func (f *fakeActiveMRRemovalChecker) ActiveMRRemovalBlocker(name string) (string, string) {
+	f.calls++
+	f.name = name
+	return f.activeMR, f.blocker
+}
+
 type fakeIssueMapShower struct {
 	issues map[string]*beads.Issue
 	errs   map[string]error
@@ -60,6 +73,36 @@ func (f fakeIssueMapShower) Show(issueID string) (*beads.Issue, error) {
 		return nil, beads.ErrNotFound
 	}
 	return issue, nil
+}
+
+func TestCheckNukeActiveMRSafety(t *testing.T) {
+	checker := &fakeActiveMRRemovalChecker{activeMR: "gt-mr", blocker: "active_mr=gt-mr status=in_progress"}
+	err := checkNukeActiveMRSafety(checker, "toast", "gastown", false)
+	if err == nil {
+		t.Fatal("checkNukeActiveMRSafety() error = nil, want pending MR blocker")
+	}
+	if checker.calls != 1 || checker.name != "toast" {
+		t.Fatalf("checker calls = %d name = %q, want one call for toast", checker.calls, checker.name)
+	}
+	for _, want := range []string{"gastown/toast", "gt-mr", "status=in_progress", "--force"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("error %q missing %q", err, want)
+		}
+	}
+
+	checker.calls = 0
+	if err := checkNukeActiveMRSafety(checker, "toast", "gastown", true); err != nil {
+		t.Fatalf("forced checkNukeActiveMRSafety() error = %v, want nil", err)
+	}
+	if checker.calls != 0 {
+		t.Fatalf("forced check called blocker %d times, want 0", checker.calls)
+	}
+
+	lookupErrorChecker := &fakeActiveMRRemovalChecker{activeMR: "<unknown>", blocker: "agent_lookup_error: bd exploded"}
+	err = checkNukeActiveMRSafety(lookupErrorChecker, "toast", "gastown", false)
+	if err == nil || !strings.Contains(err.Error(), "agent_lookup_error") {
+		t.Fatalf("lookup-error check = %v, want fail-closed agent_lookup_error", err)
+	}
 }
 
 func TestApplyMQCheck(t *testing.T) {

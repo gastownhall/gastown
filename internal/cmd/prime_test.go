@@ -958,6 +958,52 @@ func TestCheckSlungWork_StandaloneFormulaUsesWorkflowOutput(t *testing.T) {
 	}
 }
 
+func TestOutputAutonomousDirectiveForkRigAvoidsMergeQueueGuidance(t *testing.T) {
+	townRoot := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(townRoot, "myrig"), 0o755); err != nil {
+		t.Fatalf("mkdir rig: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(townRoot, "myrig", "config.json"), []byte(`{"upstream_url":"https://token@example.com/upstream/repo.git"}`), 0o644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+
+	output := captureStdout(t, func() {
+		outputAutonomousDirective(RoleContext{Role: RolePolecat, Rig: "myrig", TownRoot: townRoot, Polecat: "scout"}, &beads.Issue{ID: "gt-test", Title: "test"}, false)
+	})
+	if !strings.Contains(output, "FORK-BACKED RIG") {
+		t.Fatalf("expected fork-backed directive, got:\n%s", output)
+	}
+	for _, forbidden := range []string{"submit to the merge queue", "use the merge queue", "token"} {
+		if strings.Contains(output, forbidden) {
+			t.Fatalf("fork autonomous output contains forbidden %q:\n%s", forbidden, output)
+		}
+	}
+}
+
+func TestOutputMoleculeWorkflowForkRigOverridesFormulaMergeQueueReminder(t *testing.T) {
+	townRoot := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(townRoot, "myrig"), 0o755); err != nil {
+		t.Fatalf("mkdir rig: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(townRoot, "myrig", "config.json"), []byte(`{"upstream_url":"https://github.com/upstream/repo"}`), 0o644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+
+	output := captureStdout(t, func() {
+		if err := outputMoleculeWorkflow(RoleContext{Role: RolePolecat, Rig: "myrig", TownRoot: townRoot}, &beads.AttachmentFields{AttachedFormula: "mol-polecat-work"}); err != nil {
+			t.Fatalf("outputMoleculeWorkflow: %v", err)
+		}
+	})
+	if !strings.Contains(output, "FORK-BACKED RIG OVERRIDE") {
+		t.Fatalf("expected fork override, got:\n%s", output)
+	}
+	for _, forbidden := range []string{"REQUIRED: When all steps complete", "gt done", "submit to the merge queue"} {
+		if strings.Contains(output, forbidden) {
+			t.Fatalf("fork molecule workflow kept unsafe formula text %q:\n%s", forbidden, output)
+		}
+	}
+}
+
 func TestCheckSlungWork_RefinerySafetyStoppedSkipsWorkflowOutput(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("mock bd script uses POSIX shell")
