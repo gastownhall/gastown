@@ -2086,7 +2086,20 @@ func isSessionProcessDead(t *tmux.Tmux, sessionName string, townRoot string) boo
 	if townRoot != "" {
 		stale, exists := IsSessionHeartbeatStale(townRoot, sessionName)
 		if exists {
-			return stale
+			if !stale {
+				return false
+			}
+			// Stale heartbeat alone is not proof of death (hq-rzrdv). Heartbeats
+			// only advance when the agent runs gt/bd commands, so a polecat deep
+			// in a single long tool call (builds, API polls, big file sweeps) goes
+			// stale within SessionHeartbeatStaleThreshold while working normally.
+			// Killing on staleness alone reaped healthy mid-work polecats whenever
+			// a reconcile ran (spawn/nuke). Require the agent process itself to be
+			// gone before declaring the session dead.
+			if t != nil && t.IsAgentAlive(sessionName) {
+				return false
+			}
+			return true
 		}
 		// No heartbeat file — fall through to PID-based check for backward compatibility.
 	}
