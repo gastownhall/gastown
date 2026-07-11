@@ -59,6 +59,10 @@ type doneCIGateDeps struct {
 	nudgeMayor        func(msg string)
 	// wait overrides gate.WaitForGreen in tests; nil = real wait.
 	wait func(timeout, poll time.Duration) (cigate.CheckResult, bool)
+	// settleWait overrides gate.WaitForMacroscopeSettle in tests; nil = real.
+	settleWait func(opts cigate.MacroscopeOptions, timeout, poll time.Duration) (cigate.MacroscopeSettleResult, bool)
+	// fetchComments overrides gate.FetchUnaddressedComments in tests; nil = real.
+	fetchComments func(prNumber int, opts cigate.MacroscopeOptions) ([]cigate.UnaddressedComment, error)
 }
 
 // enforce runs the gate. A nil return means gt done may proceed; a non-nil
@@ -119,6 +123,9 @@ func (d *doneCIGateDeps) enforce() error {
 		return nil
 	case cigate.VerdictGreen:
 		fmt.Fprintf(d.out, "%s CI gate: %s\n", style.Bold.Render("✓"), res.Summary())
+		if err := d.enforceMacroscopeSettle(res); err != nil {
+			return err
+		}
 		d.clearNeedsCIGreen()
 		return nil
 	case cigate.VerdictError:
@@ -146,6 +153,109 @@ func (d *doneCIGateDeps) enforce() error {
 	// Unknown verdict — treat like fail-open but warn.
 	fmt.Fprintf(d.out, "%s CI gate: unexpected verdict %s — failing open\n",
 		style.Warning.Render("⚠"), res.Verdict)
+	return nil
+}
+
+// enforceMacroscopeSettle runs the Macroscope comment-settle phase of the
+// gate (op-sr9u / hq-owe9c) after the CI verdict is GREEN. Macroscope posts
+// its inline review comments asynchronously AFTER its checks turn green, so
+// a green-checks-only gate races the review: capital #21457/#21459/#21461
+// each went gt done clean and grew substantive Mediums minutes later with
+// their authors' sessions already dead.
+//
+// Phases: (a) wait for Macroscope check contexts to reach a terminal state
+// on the final head; (b) ONE review-comment fetch; (c) unaddressed comments
+// abort gt done like CI red — plus a ticket comment + human-attention hold
+// via escalation_cmd; (d) if Macroscope never settles or the fetch fails,
+// FAIL OPEN with an escalation, per the gate's existing 30m rule.
+func (d *doneCIGateDeps) enforceMacroscopeSettle(res cigate.CheckResult) error {
+	mcfg := d.cfg.MacroscopeSettings()
+	if !mcfg.IsEnabled() || cigate.MacroscopeEnvDisabled() {
+		return nil
+	}
+	opts := cigate.MacroscopeOptions{
+		CheckPatterns: mcfg.CheckPatternsOrDefault(),
+		BotLogins:     mcfg.BotLoginsOrDefault(),
+	}
+	timeout := mcfg.SettleTimeoutOrDefault(d.cfg.PendingTimeoutOrDefault())
+	poll := d.cfg.PollIntervalOrDefault()
+
+	var settle cigate.MacroscopeSettleResult
+	var timedOut bool
+	if d.settleWait != nil {
+		settle, timedOut = d.settleWait(opts, timeout, poll)
+	} else {
+		settle, timedOut = d.gate.WaitForMacroscopeSettle(d.dir, d.branch, opts, cigate.WaitOptions{
+			Timeout:      timeout,
+			PollInterval: poll,
+			Progress:     d.out,
+		})
+	}
+	if settle.Err != nil {
+		return d.macroscopeFailOpen(cigate.EventMacroscopeError, res,
+			fmt.Sprintf("could not determine Macroscope settle state (%v)", settle.Err))
+	}
+	if timedOut {
+		return d.macroscopeFailOpen(cigate.EventMacroscopeTimeout, res,
+			fmt.Sprintf("Macroscope checks [%s] never reached a terminal state within %s",
+				strings.Join(settle.PendingChecks, ", "), timeout))
+	}
+
+	var comments []cigate.UnaddressedComment
+	var err error
+	if d.fetchComments != nil {
+		comments, err = d.fetchComments(res.PRNumber, opts)
+	} else {
+		comments, err = d.gate.FetchUnaddressedComments(d.dir, res.PRNumber, opts)
+	}
+	if err != nil {
+		return d.macroscopeFailOpen(cigate.EventMacroscopeError, res,
+			fmt.Sprintf("post-settle comment fetch failed (%v)", err))
+	}
+	if len(comments) == 0 {
+		fmt.Fprintf(d.out, "%s CI gate: Macroscope settled, no unaddressed review comments\n",
+			style.Bold.Render("✓"))
+		return nil
+	}
+
+	var lines []string
+	for _, c := range comments {
+		lines = append(lines, fmt.Sprintf("  - %s (%s): %s", c.URL, c.Path, c.Excerpt))
+	}
+	list := strings.Join(lines, "\n")
+	d.setNeedsCIGreen(res.PRNumber)
+	d.clearDoneIntent()
+	d.escalate(cigate.Escalation{
+		Event: cigate.EventMacroscopeUnaddressed,
+		Detail: fmt.Sprintf("CI gate (op-sr9u): gt done aborted — PR #%d is CI-green but has %d unaddressed "+
+			"Macroscope comment(s) after settle. Agent %s on branch %s stays assigned and must address "+
+			"each (fix, or refute with evidence, replying on the thread) before re-running gt done.\n%s",
+			res.PRNumber, len(comments), d.agent, d.branch, list),
+		PRURL:  res.PRURL,
+		Branch: d.branch,
+		Agent:  d.agent,
+	})
+	return fmt.Errorf("NEEDS_MACROSCOPE_ADDRESSED: PR #%d has %d unaddressed Macroscope comment(s):\n%s\n"+
+		"Address each — fix it (with a regression test where applicable) or refute it with runtime "+
+		"evidence — reply on the thread, then re-run `gt done`. You stay assigned to this work.\n"+
+		"(Override: GT_MACROSCOPE_SETTLE=off)",
+		res.PRNumber, len(comments), list)
+}
+
+// macroscopeFailOpen logs and escalates a Macroscope settle failure, then
+// lets gt done proceed — a Macroscope outage must not brick completions,
+// but a human must check the PR for late review comments.
+func (d *doneCIGateDeps) macroscopeFailOpen(event cigate.EscalationEvent, res cigate.CheckResult, why string) error {
+	fmt.Fprintf(d.out, "%s CI gate: %s — FAILING OPEN (op-sr9u)\n", style.Warning.Render("⚠"), why)
+	d.escalate(cigate.Escalation{
+		Event: event,
+		Detail: fmt.Sprintf("CI gate (op-sr9u): %s. gt done by %s on branch %s (PR #%d) proceeded "+
+			"FAIL-OPEN — a human must check the PR for unaddressed Macroscope review comments.",
+			why, d.agent, d.branch, res.PRNumber),
+		PRURL:  res.PRURL,
+		Branch: d.branch,
+		Agent:  d.agent,
+	})
 	return nil
 }
 

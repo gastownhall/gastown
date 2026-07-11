@@ -91,7 +91,13 @@ town-level Gas Town beads.
       "poll_interval": "30s",
       "mayor_alert_after": "30m",
       "human_gate_checks": ["pullapprove"],
-      "escalation_cmd": ""
+      "escalation_cmd": "",
+      "macroscope_settle": {
+        "enabled": true,
+        "check_patterns": ["macroscope"],
+        "bot_logins": ["macroscopeapp"],
+        "settle_timeout": "30m"
+      }
     }
   }
 }
@@ -178,9 +184,33 @@ gate FAILS OPEN but runs `escalation_cmd` so a human verifies.
 | `mayor_alert_after` | `string` | `"30m"` | How long a nuke can stay CI-blocked before the mayor is nudged |
 | `human_gate_checks` | `[]string` | `["pullapprove"]` | Status-check context names that are human approval gates, not CI (matched case-insensitively) — excluded from the gate's green/pending evaluation so a human merge gate doesn't burn the pending timeout on every completion (AA-859). Set to `[]` to exclude nothing; approval enforcement stays with branch protection / `require_review` |
 | `escalation_cmd` | `string` | `""` | Command run via `sh -c` on CI-status errors and pending timeouts. Receives `GT_CIGATE_EVENT`, `GT_CIGATE_TICKET` (from the bead's `Jira:`/`Ticket:` line), `GT_CIGATE_DETAIL`, `GT_CIGATE_PR_URL`, `GT_CIGATE_BRANCH`, `GT_CIGATE_AGENT` in the environment. Wire it to your tracker, e.g. a script that comments on the ticket and transitions it to a human-attention status |
+| `macroscope_settle` | `object` | enabled | Macroscope comment-settle phase of `gt done`'s gate — see below |
+
+**Macroscope settle fields (`merge_queue.ci_gate.macroscope_settle`):**
+
+Macroscope posts its inline review comments asynchronously AFTER its check
+runs turn green, so a gate that only looks at check state can race the
+review: the PR goes green, `gt done` passes, and substantive comments arrive
+minutes later with the author's session already dead. Once the CI verdict is
+GREEN, `gt done` additionally (a) waits for every Macroscope check context
+to reach a terminal state on the final head, (b) performs ONE review-comment
+fetch, and (c) aborts like CI red — plus a ticket comment + human-attention
+hold via `escalation_cmd` — if any Macroscope thread is unaddressed (not
+resolved and no reply from anyone but the bot). If Macroscope never settles
+or the fetch fails, the gate FAILS OPEN with an escalation. PRs with no
+Macroscope checks or comments pass straight through, so the default is safe
+for rigs without Macroscope.
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `enabled` | `*bool` | `true` | Enable the settle phase. Process-level kill switch: `GT_MACROSCOPE_SETTLE=off` |
+| `check_patterns` | `[]string` | `["macroscope"]` | Case-insensitive substrings identifying Macroscope check contexts by display name. `[]` matches nothing |
+| `bot_logins` | `[]string` | `["macroscopeapp"]` | Review-comment author logins that count as Macroscope (`[bot]` suffix ignored) |
+| `settle_timeout` | `string` | `pending_timeout` | How long to wait for Macroscope contexts to reach a terminal state before failing open with an escalation |
 
 Overrides: `gt polecat nuke --ignore-ci` bypasses the nuke gate for one
-invocation; `GT_CI_GATE=off` disables the gate process-wide (emergencies only).
+invocation; `GT_CI_GATE=off` disables the gate process-wide (emergencies only);
+`GT_MACROSCOPE_SETTLE=off` disables only the Macroscope settle phase.
 
 ### Runtime (`.runtime/` - gitignored)
 

@@ -20,6 +20,20 @@ const (
 	// EventPendingTimeout: checks were still pending when the configured
 	// pending_timeout elapsed and the completion was aborted.
 	EventPendingTimeout EscalationEvent = "pending_timeout"
+	// EventMacroscopeTimeout: Macroscope check contexts never reached a
+	// terminal state within the settle timeout (likely a Macroscope outage);
+	// the completion proceeded FAIL-OPEN. A human must check the PR for
+	// review comments that post late.
+	EventMacroscopeTimeout EscalationEvent = "macroscope_settle_timeout"
+	// EventMacroscopeError: the post-settle review-comment fetch failed;
+	// the completion proceeded FAIL-OPEN. A human must check the PR for
+	// unaddressed review comments.
+	EventMacroscopeError EscalationEvent = "macroscope_comments_error"
+	// EventMacroscopeUnaddressed: unaddressed Macroscope review comments
+	// were found after its checks settled — the completion was aborted
+	// (ticket comment + human-attention hold, like CI red) and the author
+	// stays assigned to address them.
+	EventMacroscopeUnaddressed EscalationEvent = "macroscope_unaddressed_comments"
 )
 
 // Escalation carries the context handed to the configured escalation command.

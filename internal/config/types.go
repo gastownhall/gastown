@@ -1445,6 +1445,39 @@ type CIGateConfig struct {
 	// your external tracker — e.g. a script that comments on the ticket and
 	// transitions it to a human-attention status.
 	EscalationCmd string `json:"escalation_cmd,omitempty"`
+
+	// MacroscopeSettle configures the Macroscope comment-settle phase of
+	// gt done's gate (op-sr9u): Macroscope posts inline review comments
+	// asynchronously AFTER its checks turn green, so once CI is green the
+	// gate additionally waits for Macroscope check contexts to reach a
+	// terminal state on the final head, then performs one review-comment
+	// fetch; unaddressed Macroscope threads block completion like CI red.
+	// Nil = enabled with defaults (a no-op on PRs with no Macroscope checks
+	// or comments, so the default is safe for rigs without Macroscope).
+	MacroscopeSettle *MacroscopeSettleConfig `json:"macroscope_settle,omitempty"`
+}
+
+// MacroscopeSettleConfig configures the Macroscope comment-settle phase of
+// the CI gate (op-sr9u).
+type MacroscopeSettleConfig struct {
+	// Enabled controls the settle phase. Nil defaults to true.
+	// Emergency process-level kill switch: GT_MACROSCOPE_SETTLE=off.
+	Enabled *bool `json:"enabled,omitempty"`
+
+	// CheckPatterns are case-insensitive substrings identifying Macroscope
+	// check contexts by display name. Nil defaults to ["macroscope"]
+	// (matches "Macroscope - Correctness Check" / "- Approvability Check").
+	CheckPatterns []string `json:"check_patterns,omitempty"`
+
+	// BotLogins are review-comment author logins that count as Macroscope
+	// ("[bot]" suffix ignored). Nil defaults to ["macroscopeapp"].
+	BotLogins []string `json:"bot_logins,omitempty"`
+
+	// SettleTimeout is how long gt done waits for Macroscope contexts to
+	// reach a terminal state before FAILING OPEN with a human escalation
+	// (a broken review bot must not brick completions). Empty defaults to
+	// the gate's pending_timeout (30m).
+	SettleTimeout string `json:"settle_timeout,omitempty"`
 }
 
 // IsEnabled returns whether the CI gate is on. Nil-safe, defaults to true.
@@ -1508,6 +1541,54 @@ func (c *CIGateConfig) EscalationCmdOrEmpty() string {
 		return ""
 	}
 	return c.EscalationCmd
+}
+
+// MacroscopeSettings returns the gate's Macroscope settle configuration,
+// never nil. A nil receiver or missing macroscope_settle block yields the
+// enabled defaults.
+func (c *CIGateConfig) MacroscopeSettings() *MacroscopeSettleConfig {
+	if c == nil || c.MacroscopeSettle == nil {
+		return &MacroscopeSettleConfig{}
+	}
+	return c.MacroscopeSettle
+}
+
+// IsEnabled returns whether the Macroscope settle phase is on. Nil-safe,
+// defaults to true.
+func (c *MacroscopeSettleConfig) IsEnabled() bool {
+	if c == nil || c.Enabled == nil {
+		return true
+	}
+	return *c.Enabled
+}
+
+// CheckPatternsOrDefault returns the check-name patterns identifying
+// Macroscope contexts. Nil-safe: nil (or missing block) defaults to
+// ["macroscope"]; an explicitly empty list matches nothing.
+func (c *MacroscopeSettleConfig) CheckPatternsOrDefault() []string {
+	if c == nil || c.CheckPatterns == nil {
+		return []string{"macroscope"}
+	}
+	return c.CheckPatterns
+}
+
+// BotLoginsOrDefault returns the comment-author logins that count as
+// Macroscope. Nil-safe: nil (or missing block) defaults to
+// ["macroscopeapp"]; an explicitly empty list matches nothing.
+func (c *MacroscopeSettleConfig) BotLoginsOrDefault() []string {
+	if c == nil || c.BotLogins == nil {
+		return []string{"macroscopeapp"}
+	}
+	return c.BotLogins
+}
+
+// SettleTimeoutOrDefault returns the Macroscope settle wait budget, falling
+// back to the given duration (the gate's pending timeout) when unset.
+func (c *MacroscopeSettleConfig) SettleTimeoutOrDefault(fallback time.Duration) time.Duration {
+	if c == nil {
+		return fallback
+	}
+	return ciGateDuration(c.SettleTimeout, fallback)
 }
 
 // CIGateSettings returns the rig's CI gate configuration, never nil.
