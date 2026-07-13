@@ -700,8 +700,10 @@ func TestManager_PostMerge_ClosesWorkBeadFromAgentFallbackBeforeActiveMRClear(t 
 	if err != nil {
 		t.Fatalf("create MR issue: %v", err)
 	}
-	if err := b.UpdateAgentCompletion(agentIssue.ID, &beads.CompletionMetadata{MRID: mrIssue.ID, Branch: "polecat/test/gt-xyz", HookBead: srcIssue.ID}); err != nil {
-		t.Fatalf("set completion metadata: %v", err)
+	branch := "polecat/test/gt-xyz"
+	lastSourceIssue := srcIssue.ID
+	if err := b.UpdateAgentDescriptionFields(agentIssue.ID, beads.AgentFieldUpdates{Branch: &branch, LastSourceIssue: &lastSourceIssue}); err != nil {
+		t.Fatalf("set fallback metadata: %v", err)
 	}
 	if err := b.UpdateAgentActiveMR(agentIssue.ID, mrIssue.ID); err != nil {
 		t.Fatalf("set active_mr: %v", err)
