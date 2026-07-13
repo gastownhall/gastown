@@ -16,14 +16,19 @@ func TestIsBeadID(t *testing.T) {
 		{"dolt-qux", true},
 		{"sky-abc", true},
 		{"wy-def", true},
-		// Multi-segment prefixes
+		// IDs may contain hyphens after the routing prefix.
 		{"hq-cv-foo", true},
+		// Rig-derived prefixes may contain underscores.
+		{"japanese_reader-id3a", true},
+		{"mcp_fit-92f", true},
 		// Invalid inputs
 		{"", false},
 		{"-abc", false},
 		{"abc", false},
 		{"ABC-123", false},
+		{"my_Rig-abc", false},
 		{"123-abc", false},
+		{"_rig-abc", false},
 		{"gt-", false},
 		{"-", false},
 	}

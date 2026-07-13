@@ -61,17 +61,22 @@ func runCat(cmd *cobra.Command, args []string) error {
 }
 
 // isBeadID checks if a string looks like a bead ID.
-// Bead IDs have the format <prefix>-<id> where prefix is lowercase letters
-// (e.g. gt-abc123, bd-xyz, hq-cv-foo, wisp-bar, mol-baz).
+// Bead IDs have the format <prefix>-<id> where prefix starts with a
+// lowercase letter and may contain underscores (e.g. gt-abc123,
+// japanese_reader-id3a).
 func isBeadID(s string) bool {
-	// Must contain a dash and start with lowercase letters
 	dashIdx := strings.Index(s, "-")
 	if dashIdx <= 0 || dashIdx >= len(s)-1 {
 		return false
 	}
-	// Prefix must be all lowercase letters
-	for _, c := range s[:dashIdx] {
-		if c < 'a' || c > 'z' {
+	for i, c := range s[:dashIdx] {
+		if i == 0 {
+			if c < 'a' || c > 'z' {
+				return false
+			}
+			continue
+		}
+		if !((c >= 'a' && c <= 'z') || c == '_') {
 			return false
 		}
 	}
