@@ -1,0 +1,216 @@
+{
+  "schema_version": "pr-sheriff-evidence/v1",
+  "policy_version": "pr-sheriff-policy/v1.1",
+  "generated_at": "2026-07-13T14:22:36Z",
+  "run_id": "gt-pr-4461-fixup-2026-07-13",
+  "subject": {
+    "forge": "github",
+    "repo_id": "gastownhall/gastown",
+    "default_branch": "main",
+    "change_type": "pull_request_replacement",
+    "change_id": "4461",
+    "url": "https://github.com/gastownhall/gastown/pull/4461",
+    "title": "fix(nudge): verify submission by composer state + C-j recovery for swallowed Enter",
+    "author": "blairsilverberg",
+    "author_tier": "known",
+    "draft": false,
+    "base_ref": "main",
+    "base_sha": "d403e69d5c2757398b95e93e4a6fe92bb0f7d9de",
+    "head_ref": "polecat/minuteman/gt-pr-4461-fixup+mrf1u67d",
+    "head_sha": "d3955203c8b0f0f277c2deac7e4508513d00c31c",
+    "diff_summary": {
+      "additions": 535,
+      "deletions": 10,
+      "changed_files": 6,
+      "paths": [
+        "internal/cmd/nudge.go",
+        "internal/cmd/nudge_poller.go",
+        "internal/cmd/nudge_test.go",
+        "internal/tmux/submit_verify.go",
+        "internal/tmux/submit_verify_test.go",
+        "internal/tmux/tmux.go"
+      ]
+    }
+  },
+  "repo_policy": {
+    "label_aliases": [],
+    "feature_kind_values": ["feature", "enhancement"],
+    "merge_ready_status_values": ["review-approved", "merge-ready"],
+    "approver_roles": ["maintainer", "owner", "policy_approver", "designated_reviewer"],
+    "evidence_locations": ["local_report", "artifact_store", "bead"],
+    "baseline_checks": [],
+    "no_verification_reasons": ["docs_only"]
+  },
+  "action_plan": {
+    "id": "action-plan-pr-4461-replacement",
+    "mode": "replacement_pr",
+    "proposed_action_ref": "action-plan-pr-4461-replacement",
+    "summary": "Carry forward PR #4461 as a cleanup-first replacement: centralize composer submit verification at the tmux nudge submit boundary, make stranded detection sticky, fail closed on dirty/unknown composer recovery, and reuse nudge.Requeue for drained delivery failures.",
+    "created_at": "2026-07-13T13:30:00Z"
+  },
+  "labels": {
+    "observed": [
+      {"name": "status/review-approved", "family": "status", "semantic_value": "review-approved"},
+      {"name": "priority/p1", "family": "priority", "semantic_value": "p1"},
+      {"name": "kind/bug", "family": "kind", "semantic_value": "bug"}
+    ],
+    "status": "review-approved",
+    "priority": "p1",
+    "kind": "bug",
+    "snapshot_artifact_ref": "label-snapshot"
+  },
+  "artifacts": [
+    {"id": "label-snapshot", "kind": "label_snapshot", "uri": "urn:bead:gt-pr-4461-fixup:labels", "actor": "gastown/polecats/minuteman", "created_at": "2026-07-13T14:22:36Z", "digest": null, "summary": "Original PR #4461 is kind/bug priority/p1 status/review-failed; replacement branch received 5/5 pre and 5/5 post approvals and is treated as review-approved for the replacement merge path."},
+    {"id": "original-pr-metadata", "kind": "pr_metadata", "uri": "https://github.com/gastownhall/gastown/pull/4461", "actor": "gastown/polecats/minuteman", "created_at": "2026-07-13T14:22:36Z", "digest": "fbbe7f3917e75c79fea71e2c40e80585177c3a56", "summary": "Original PR #4461 by blairsilverberg, head fbbe7f3917e75c79fea71e2c40e80585177c3a56, labels kind/bug priority/p1 status/review-failed, no approval, no substantive CI."},
+    {"id": "implementation-commit-1", "kind": "git_commit", "uri": "urn:git:commit:bb344db14e91f81c36514aa940b6d4f5e9f476fa", "actor": "gastown/polecats/minuteman", "created_at": "2026-07-13T13:55:00Z", "digest": "bb344db14e91f81c36514aa940b6d4f5e9f476fa", "summary": "Replacement implementation commit adding conservative submit verification, queue requeue consolidation, and focused tests."},
+    {"id": "implementation-commit-2", "kind": "git_commit", "uri": "urn:git:commit:d3955203c8b0f0f277c2deac7e4508513d00c31c", "actor": "gastown/polecats/minuteman", "created_at": "2026-07-13T14:05:00Z", "digest": "d3955203c8b0f0f277c2deac7e4508513d00c31c", "summary": "Final replacement head after gofmt cleanup."},
+    {"id": "focused-verification", "kind": "test_log", "uri": "urn:local:test:gt-pr-4461-fixup-focused", "actor": "gastown/polecats/minuteman", "created_at": "2026-07-13T14:08:00Z", "digest": null, "summary": "Focused checks passed for internal/tmux submit verifier tests, internal/cmd nudge/requeue tests with CGO_ENABLED=0, and internal/nudge queue tests."},
+    {"id": "baseline-tmux-failure", "kind": "test_log", "uri": "urn:local:test:gt-pr-4461-fixup-tmux-baseline", "actor": "gastown/polecats/minuteman", "created_at": "2026-07-13T14:12:00Z", "digest": null, "summary": "Broader go test ./internal/tmux -count=1 failed in TestNewSessionWithCommand_ExecEnvSuccess and TestGetPaneCommand_MultiPane because this host reports pane command coreutils instead of sleep; focused touched tmux tests pass and failure is unrelated to this branch."},
+    {"id": "blocker-scan", "kind": "review_report", "uri": "urn:bead:gt-pr-4461-fixup:blocker-scan", "actor": "gastown/polecats/minuteman", "created_at": "2026-07-13T14:18:00Z", "digest": null, "summary": "Scanned labels, PR metadata, prior Sheriff bead gt-pr-sheriff-4461, current bead notes, local diff, focused tests, and post-review findings. Original PR as-is remains blocked; replacement branch blockers are resolved."},
+    {"id": "attribution-local-report", "kind": "local_report", "uri": "urn:bead:gt-pr-4461-fixup:attribution", "actor": "gastown/polecats/minuteman", "created_at": "2026-07-13T14:20:00Z", "digest": null, "summary": "Replacement carries forward original PR #4461 intent from blairsilverberg/furiosa <blair@humcapital.com>, original commit fbbe7f3917e75c79fea71e2c40e80585177c3a56, with evidence credit in this durable report."},
+    {"id": "closure-intent", "kind": "bead_note", "uri": "urn:bead:gt-pr-4461-fixup:closure-intent", "actor": "gastown/polecats/minuteman", "created_at": "2026-07-13T14:20:00Z", "digest": null, "summary": "Original PR #4461 should be closed or marked superseded only after the replacement branch lands, with attribution preserved."}
+  ],
+  "implementation": {
+    "code_changed_by_sheriff": true,
+    "mode": "replacement_pr",
+    "first_code_change_at": "2026-07-13T13:55:00Z",
+    "modified_paths": [
+      "internal/cmd/nudge.go",
+      "internal/cmd/nudge_poller.go",
+      "internal/cmd/nudge_test.go",
+      "internal/tmux/submit_verify.go",
+      "internal/tmux/submit_verify_test.go",
+      "internal/tmux/tmux.go"
+    ],
+    "commits": [
+      "bb344db14e91f81c36514aa940b6d4f5e9f476fa",
+      "d3955203c8b0f0f277c2deac7e4508513d00c31c"
+    ]
+  },
+  "evidence": {
+    "research_legs": [
+      {"id": "research-01", "independence_key": "R01-pr-diff", "artifact_ref": "urn:opencode:research:R01-pr-diff", "completed_at": "2026-07-13T13:35:00Z", "actor": "research-leg-01", "lens": "PR diff and metadata", "summary": "PR intent is valid but original is large, status/review-failed, lacks approval/CI, and adds broad verifier/requeue layers; replacement recommended."},
+      {"id": "research-02", "independence_key": "R02-submit-path", "artifact_ref": "urn:opencode:research:R02-submit-path", "completed_at": "2026-07-13T13:35:00Z", "actor": "research-leg-02", "lens": "submit path", "summary": "Current sendEnterVerified can false-pass on pane repaint; fix belongs at NudgeSessionWithOpts/NudgePane submit boundary with sticky stranded detection."},
+      {"id": "research-03", "independence_key": "R03-tmux-recovery", "artifact_ref": "urn:opencode:research:R03-tmux-recovery", "completed_at": "2026-07-13T13:35:00Z", "actor": "research-leg-03", "lens": "tmux recovery", "summary": "C-j recovery is plausible only for definitely stranded nudge text; unknown states must fail closed rather than retype."},
+      {"id": "research-04", "independence_key": "R04-queue-layering", "artifact_ref": "urn:opencode:research:R04-queue-layering", "completed_at": "2026-07-13T13:35:00Z", "actor": "research-leg-04", "lens": "queue layering", "summary": "Original PR duplicated manual Enqueue loops; replacement should use existing nudge.Requeue in drainers."},
+      {"id": "research-05", "independence_key": "R05-composer-state", "artifact_ref": "urn:opencode:research:R05-composer-state", "completed_at": "2026-07-13T13:35:00Z", "actor": "research-leg-05", "lens": "composer state", "summary": "Normal-intensity nudge text must override broad busy indicator matches; dim ghost text must not count as stranded."},
+      {"id": "research-06", "independence_key": "R06-test-coverage", "artifact_ref": "urn:opencode:research:R06-test-coverage", "completed_at": "2026-07-13T13:35:00Z", "actor": "research-leg-06", "lens": "test coverage", "summary": "Focused tests needed for classifier behavior, ErrSubmitNotVerified wrapping, and queue preservation on failed drained delivery."},
+      {"id": "research-07", "independence_key": "R07-ci-verification", "artifact_ref": "urn:opencode:research:R07-ci-verification", "completed_at": "2026-07-13T13:35:00Z", "actor": "research-leg-07", "lens": "CI verification", "summary": "Original PR only has label-maintenance checks; replacement needs fresh focused local evidence tied to final head."},
+      {"id": "research-08", "independence_key": "R08-safety-risks", "artifact_ref": "urn:opencode:research:R08-safety-risks", "completed_at": "2026-07-13T13:35:00Z", "actor": "research-leg-08", "lens": "safety risks", "summary": "Avoid duplicate sends and dirty-composer retry; C-j must be gated to definite nudge text."},
+      {"id": "research-09", "independence_key": "R09-attribution", "artifact_ref": "urn:opencode:research:R09-attribution", "completed_at": "2026-07-13T13:35:00Z", "actor": "research-leg-09", "lens": "attribution", "summary": "Original PR author blairsilverberg/furiosa and commit fbbe7f3 must be credited if replacement carries intent forward."},
+      {"id": "research-10", "independence_key": "R10-policy-state", "artifact_ref": "urn:opencode:research:R10-policy-state", "completed_at": "2026-07-13T13:35:00Z", "actor": "research-leg-10", "lens": "policy state", "summary": "Original PR merge-as-is is blocked by status/review-failed, no approval, no substantive verification, and prior unresolved blockers."},
+      {"id": "research-11", "independence_key": "R11-minimal-design", "artifact_ref": "urn:opencode:research:R11-minimal-design", "completed_at": "2026-07-13T13:35:00Z", "actor": "research-leg-11", "lens": "minimal design", "summary": "Approved smaller replacement: submit verifier at existing tmux boundary, nudge.Requeue for queue recovery, focused tests."},
+      {"id": "research-12", "independence_key": "R12-defer-evidence", "artifact_ref": "urn:opencode:research:R12-defer-evidence", "completed_at": "2026-07-13T13:35:00Z", "actor": "research-leg-12", "lens": "defer alternative", "summary": "Durable defer remains valid if no replacement is produced; merge path requires replacement gates and checker."},
+      {"id": "research-13", "independence_key": "R13-architecture-fit", "artifact_ref": "urn:opencode:research:R13-architecture-fit", "completed_at": "2026-07-13T13:35:00Z", "actor": "research-leg-13", "lens": "architecture fit", "summary": "Verification belongs in tmux transport; queue fallback belongs in command drainers; avoid duplicated recovery layers."},
+      {"id": "research-14", "independence_key": "R14-prior-blockers", "artifact_ref": "urn:opencode:research:R14-prior-blockers", "completed_at": "2026-07-13T13:35:00Z", "actor": "research-leg-14", "lens": "prior blockers", "summary": "Validated busy false-pass, non-sticky stranded handling, dirty-composer retry, and duplicated re-enqueue loops in original PR."},
+      {"id": "research-15", "independence_key": "R15-checker-evidence", "artifact_ref": "urn:opencode:research:R15-checker-evidence", "completed_at": "2026-07-13T13:35:00Z", "actor": "research-leg-15", "lens": "checker evidence", "summary": "Identified evidence schema, required replacement fields, 15+5+5 gates, focused verification, attribution, and checker invocation."}
+    ],
+    "pre_implementation_reviews": [
+      {"id": "pre-01", "independence_key": "P01-submit-boundary", "artifact_ref": "urn:opencode:pre-review:P01-submit-boundary", "reviewed_action_ref": "action-plan-pr-4461-replacement", "completed_at": "2026-07-13T13:45:00Z", "actor": "pre-review-01", "verdict": "approve", "summary": "Approved existing submit boundary, sticky stranded detection, C-j gating, and nudge.Requeue use."},
+      {"id": "pre-02", "independence_key": "P02-cleanup-minimality", "artifact_ref": "urn:opencode:pre-review:P02-cleanup-minimality", "reviewed_action_ref": "action-plan-pr-4461-replacement", "completed_at": "2026-07-13T13:45:00Z", "actor": "pre-review-02", "verdict": "approve", "summary": "Approved as cleanup-aligned replacement rather than stacking on PR #4461."},
+      {"id": "pre-03", "independence_key": "P03-queue-safety", "artifact_ref": "urn:opencode:pre-review:P03-queue-safety", "reviewed_action_ref": "action-plan-pr-4461-replacement", "completed_at": "2026-07-13T13:45:00Z", "actor": "pre-review-03", "verdict": "approve", "summary": "Approved queue safety with no immediate dirty retry and drained-batch requeue through nudge.Requeue."},
+      {"id": "pre-04", "independence_key": "P04-verification", "artifact_ref": "urn:opencode:pre-review:P04-verification", "reviewed_action_ref": "action-plan-pr-4461-replacement", "completed_at": "2026-07-13T13:45:00Z", "actor": "pre-review-04", "verdict": "approve", "summary": "Approved with required focused classifier, error wrapping, and queue requeue tests."},
+      {"id": "pre-05", "independence_key": "P05-architecture", "artifact_ref": "urn:opencode:pre-review:P05-architecture", "reviewed_action_ref": "action-plan-pr-4461-replacement", "completed_at": "2026-07-13T13:45:00Z", "actor": "pre-review-05", "verdict": "approve", "summary": "Approved architecture split: tmux verifies submit; command drainers handle queue policy; attribution preserved in evidence."}
+    ],
+    "post_implementation_reviews": [
+      {"id": "post-01", "independence_key": "Q01-final-submit-review", "artifact_ref": "urn:opencode:post-review:Q01-final-submit-review", "reviewed_action_ref": "action-plan-pr-4461-replacement", "reviewed_head_sha": "d3955203c8b0f0f277c2deac7e4508513d00c31c", "completed_at": "2026-07-13T14:16:00Z", "actor": "post-review-01", "verdict": "approve", "summary": "Approved final code; prior blockers addressed and focused tests present."},
+      {"id": "post-02", "independence_key": "Q02-correctness-safety", "artifact_ref": "urn:opencode:post-review:Q02-correctness-safety", "reviewed_action_ref": "action-plan-pr-4461-replacement", "reviewed_head_sha": "d3955203c8b0f0f277c2deac7e4508513d00c31c", "completed_at": "2026-07-13T14:16:00Z", "actor": "post-review-02", "verdict": "approve", "summary": "Approved correctness and safety of submit verification and queue integration."},
+      {"id": "post-03", "independence_key": "Q03-cleanup-convergence", "artifact_ref": "urn:opencode:post-review:Q03-cleanup-convergence", "reviewed_action_ref": "action-plan-pr-4461-replacement", "reviewed_head_sha": "d3955203c8b0f0f277c2deac7e4508513d00c31c", "completed_at": "2026-07-13T14:16:00Z", "actor": "post-review-03", "verdict": "approve", "summary": "Approved cleanup/convergence; no duplicated recovery loops or dirty immediate retry remain."},
+      {"id": "post-04", "independence_key": "Q04-tests-verification", "artifact_ref": "urn:opencode:post-review:Q04-tests-verification", "reviewed_action_ref": "action-plan-pr-4461-replacement", "reviewed_head_sha": "d3955203c8b0f0f277c2deac7e4508513d00c31c", "completed_at": "2026-07-13T14:16:00Z", "actor": "post-review-04", "verdict": "approve", "summary": "Approved test coverage for normal text over busy, dim ghost, dirty composer, prefix fallback, wrapping, and requeue preservation."},
+      {"id": "post-05", "independence_key": "Q05-sheriff-readiness", "artifact_ref": "urn:opencode:post-review:Q05-sheriff-readiness", "reviewed_action_ref": "action-plan-pr-4461-replacement", "reviewed_head_sha": "d3955203c8b0f0f277c2deac7e4508513d00c31c", "completed_at": "2026-07-13T14:16:00Z", "actor": "post-review-05", "verdict": "approve", "summary": "Approved Sheriff readiness pending evidence materialization and merge-gate checker."}
+    ]
+  },
+  "cleanup_first": {
+    "assessment": "acceptable_minimal",
+    "rationale": "The replacement carries forward the valid PR #4461 intent while collapsing behavior into existing tmux submit and queue requeue boundaries. It avoids original duplicated re-enqueue loops and does not immediately retry into dirty composers.",
+    "prohibited_patterns": [
+      {"kind": "bandaid", "present": false, "exception_reason": "none", "evidence_ref": null},
+      {"kind": "workaround_layer", "present": false, "exception_reason": "none", "evidence_ref": null},
+      {"kind": "compatibility_shim", "present": false, "exception_reason": "none", "evidence_ref": null},
+      {"kind": "patch_on_patch", "present": false, "exception_reason": "none", "evidence_ref": null},
+      {"kind": "scope_creep", "present": false, "exception_reason": "none", "evidence_ref": null}
+    ]
+  },
+  "enhancement_approval": {
+    "required": false,
+    "required_reason": null,
+    "approved": false,
+    "approver": null,
+    "approver_role": null,
+    "approval_ref": null,
+    "approved_at": null
+  },
+  "verification": {
+    "focused_checks": [
+      {"name": "tmux submit verifier", "command_or_check": "go test ./internal/tmux -run 'Test(SubmitNeedle|StripAnsiTrackDim|AnalyzeSubmission|ErrSubmitNotVerifiedWrapping|MatchesPromptPrefix|HasBusyIndicator|ShouldSendEscapeForLines)' -count=1", "outcome": "pass", "artifact_ref": "focused-verification", "reason": "Focused classifier, sentinel wrapping, prompt matching, busy, and Escape-suppression tests passed."},
+      {"name": "cmd nudge requeue", "command_or_check": "CGO_ENABLED=0 go test ./internal/cmd -run 'Test(RequeueDrainedNudgesPreservesFailedDelivery|ShouldSkipDrainUntilIdle|NudgeInvalidMode|ValidModeMapsMatchConstants|PostQueueIdleRecovery_SkipsDeliveryWhenDrainEmpty)' -count=1", "outcome": "pass", "artifact_ref": "focused-verification", "reason": "Focused command drainer and nudge mode tests passed with CGO disabled due local ICU link gap."},
+      {"name": "nudge queue", "command_or_check": "go test ./internal/nudge -count=1", "outcome": "pass", "artifact_ref": "focused-verification", "reason": "Queue package tests passed, including drain/requeue behavior."},
+      {"name": "diff whitespace", "command_or_check": "git diff --check origin/main...HEAD", "outcome": "pass", "artifact_ref": "focused-verification", "reason": "No whitespace or conflict-marker issues in final diff."}
+    ],
+    "ci_checks": []
+  },
+  "baseline_red_waiver": {
+    "requested": false,
+    "approved": false,
+    "approved_by": null,
+    "approver_role": null,
+    "approved_at": null,
+    "approval_ref": null,
+    "failing_checks": [],
+    "unrelated_rationale": "",
+    "evidence_refs": []
+  },
+  "replacement_flow": {
+    "required": true,
+    "mode": "replacement_pr",
+    "state": "ready",
+    "original_change_url": "https://github.com/gastownhall/gastown/pull/4461",
+    "replacement_change_url": null,
+    "replacement_branch": "polecat/minuteman/gt-pr-4461-fixup+mrf1u67d",
+    "replacement_commit_refs": [
+      "bb344db14e91f81c36514aa940b6d4f5e9f476fa",
+      "d3955203c8b0f0f277c2deac7e4508513d00c31c"
+    ],
+    "original_author": "blairsilverberg",
+    "evidence_reuse": {
+      "reused_artifact_refs": ["original-pr-metadata", "attribution-local-report"],
+      "fresh_artifact_refs": ["implementation-commit-1", "implementation-commit-2", "focused-verification", "blocker-scan"],
+      "rationale": "Original PR intent and attribution were reused; implementation and verification evidence are fresh for the replacement branch."
+    },
+    "attribution": {
+      "required": true,
+      "required_reason": "Replacement carries forward PR #4461 intent from blairsilverberg/furiosa.",
+      "preserved": true,
+      "method": "comment_credit",
+      "artifact_refs": ["attribution-local-report"]
+    },
+    "superseded_closure": {
+      "required": true,
+      "state": "deferred_until_replacement_merge",
+      "closure_intent_ref": "closure-intent",
+      "replacement_merge_ref": null,
+      "closure_ref": null
+    }
+  },
+  "blocker_scan": {
+    "scanned_sources": ["labels", "pr_comments", "review_comments", "bead_notes", "local_tests"],
+    "unresolved_blockers_found": false,
+    "blocker_refs": [],
+    "resolution_refs": ["blocker-scan", "focused-verification", "implementation-commit-2"],
+    "scanned_at": "2026-07-13T14:18:00Z",
+    "summary": "Original PR #4461 remains blocked as-is by status/review-failed, no approval, no substantive CI, and prior correctness/cleanup blockers. Replacement branch resolves the prior implementation blockers and has 5/5 post-review approvals plus focused verification. Broader tmux package baseline sleep/coreutils failure is recorded separately and is unrelated to touched behavior."
+  },
+  "gates": [],
+  "final": {
+    "verdict": "merge_replacement",
+    "decision_valid": true,
+    "merge_path_allowed": true,
+    "blocking_gates": [],
+    "target_change_url": "urn:git-branch:polecat/minuteman/gt-pr-4461-fixup+mrf1u67d",
+    "target_head_sha": "d3955203c8b0f0f277c2deac7e4508513d00c31c",
+    "decided_by": "gastown/polecats/minuteman",
+    "decided_at": "2026-07-13T14:22:36Z",
+    "reason": "All required PR Sheriff gates passed for the cleanup-first replacement branch head.",
+    "required_actions": ["After replacement lands, close or supersede PR #4461 with attribution preserved."]
+  }
+}
