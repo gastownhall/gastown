@@ -551,6 +551,118 @@ func TestSchedulerBlockedStatusReporting(t *testing.T) {
 	}
 }
 
+func TestSchedulerQueuedContextOpenSourceIsReady(t *testing.T) {
+	hqPath, rigPath, gtBinary, env := setupSchedulerIntegrationTown(t)
+
+	beadID := createTestBead(t, rigPath, "Queued open source readiness")
+	slingToScheduler(t, gtBinary, hqPath, env, beadID, "testrig")
+
+	listed := getSchedulerList(t, gtBinary, hqPath, env)
+	found := false
+	for _, item := range listed {
+		id, _ := item["id"].(string)
+		blocked, _ := item["blocked"].(bool)
+		if id == beadID {
+			found = true
+			if blocked {
+				t.Fatalf("queued open source %s should be ready, list item: %#v", beadID, item)
+			}
+		}
+	}
+	if !found {
+		t.Fatalf("queued source %s not found in scheduler list: %#v", beadID, listed)
+	}
+
+	status := getSchedulerStatus(t, gtBinary, hqPath, env)
+	if ready := int(status["queued_ready"].(float64)); ready != 1 {
+		t.Fatalf("queued_ready = %d, want 1 (status: %#v)", ready, status)
+	}
+	out := runGTCmdOutput(t, gtBinary, hqPath, env, "scheduler", "run", "--dry-run")
+	if strings.Contains(out, "No ready beads") || !strings.Contains(out, beadID) {
+		t.Fatalf("dry-run should include ready queued source %s, got:\n%s", beadID, out)
+	}
+}
+
+func TestSchedulerMissingSourceDoesNotHideReadyContext(t *testing.T) {
+	hqPath, rigPath, gtBinary, env := setupSchedulerIntegrationTown(t)
+
+	readyID := createTestBead(t, rigPath, "Ready beside missing source")
+	slingToScheduler(t, gtBinary, hqPath, env, readyID, "testrig")
+
+	missingID := beads.ExtractPrefix(readyID) + "missing-source"
+	rigBeads := beads.NewWithBeadsDir(rigPath, filepath.Join(rigPath, ".beads"))
+	if _, err := rigBeads.CreateSlingContext("missing source", missingID, &capacity.SlingContextFields{
+		Version:    1,
+		WorkBeadID: missingID,
+		TargetRig:  "testrig",
+		EnqueuedAt: "2026-01-01T00:00:01Z",
+	}); err != nil {
+		t.Fatalf("CreateSlingContext for missing source: %v", err)
+	}
+
+	listed := getSchedulerList(t, gtBinary, hqPath, env)
+	foundReady := false
+	foundMissing := false
+	for _, item := range listed {
+		id, _ := item["id"].(string)
+		blocked, _ := item["blocked"].(bool)
+		switch id {
+		case readyID:
+			foundReady = true
+			if blocked {
+				t.Fatalf("valid source %s should remain ready when another source is missing", readyID)
+			}
+		case missingID:
+			foundMissing = true
+			if !blocked {
+				t.Fatalf("missing source %s should fail closed/not-ready", missingID)
+			}
+		}
+	}
+	if !foundReady || !foundMissing {
+		t.Fatalf("scheduler list found ready=%v missing=%v; list=%#v", foundReady, foundMissing, listed)
+	}
+
+	status := getSchedulerStatus(t, gtBinary, hqPath, env)
+	if total := int(status["queued_total"].(float64)); total != 2 {
+		t.Fatalf("queued_total = %d, want 2 (status: %#v)", total, status)
+	}
+	if ready := int(status["queued_ready"].(float64)); ready != 1 {
+		t.Fatalf("queued_ready = %d, want 1 (status: %#v)", ready, status)
+	}
+	out := runGTCmdOutput(t, gtBinary, hqPath, env, "scheduler", "run", "--dry-run")
+	if !strings.Contains(out, readyID) {
+		t.Fatalf("dry-run should include valid ready source %s, got:\n%s", readyID, out)
+	}
+	if strings.Contains(out, missingID) {
+		t.Fatalf("dry-run should not include missing source %s, got:\n%s", missingID, out)
+	}
+}
+
+func TestSchedulerClosedSourceContextCleansUpFailClosed(t *testing.T) {
+	hqPath, rigPath, gtBinary, env := setupSchedulerIntegrationTown(t)
+
+	beadID := createTestBead(t, rigPath, "Closed queued source")
+	slingToScheduler(t, gtBinary, hqPath, env, beadID, "testrig")
+
+	closeCmd := exec.Command("bd", "close", beadID)
+	closeCmd.Dir = rigPath
+	closeCmd.Env = env
+	if out, err := closeCmd.CombinedOutput(); err != nil {
+		t.Fatalf("bd close %s failed: %v\n%s", beadID, err, out)
+	}
+
+	out := runGTCmdOutput(t, gtBinary, hqPath, env, "scheduler", "run", "--dry-run")
+	if strings.Contains(out, beadID) {
+		t.Fatalf("dry-run should not dispatch closed source %s, got:\n%s", beadID, out)
+	}
+
+	runGTCmdOutput(t, gtBinary, hqPath, env, "scheduler", "run")
+	if hasSlingContext(t, hqPath, beadID) {
+		t.Fatalf("closed source context for %s should be cleaned up", beadID)
+	}
+}
+
 // TestSchedulerSlingDryRun verifies that gt sling deferred dispatch (max_polecats > 0) --dry-run
 // has no side effects: no sling context created, no convoy created.
 func TestSchedulerSlingDryRun(t *testing.T) {
@@ -825,6 +937,46 @@ func TestSchedulerMultiRigDispatch(t *testing.T) {
 	}
 	if !strings.Contains(out, bead2) {
 		t.Errorf("dry-run should mention rig2 bead %s", bead2)
+	}
+}
+
+func TestSchedulerQueuedContextUsesRoutedCrossRigSourceLookup(t *testing.T) {
+	hqPath, _, rig2Path, gtBinary, env := setupMultiRigSchedulerTown(t)
+
+	beadID := createTestBead(t, rig2Path, "Routed cross-rig source")
+	createSlingContext(t, hqPath, &capacity.SlingContextFields{
+		Version:    1,
+		WorkBeadID: beadID,
+		TargetRig:  "rig2",
+		EnqueuedAt: "2026-01-01T00:00:00Z",
+	})
+
+	listed := getSchedulerList(t, gtBinary, hqPath, env)
+	found := false
+	for _, item := range listed {
+		id, _ := item["id"].(string)
+		if id != beadID {
+			continue
+		}
+		found = true
+		if blocked, _ := item["blocked"].(bool); blocked {
+			t.Fatalf("routed cross-rig source %s should be ready, list item: %#v", beadID, item)
+		}
+		if target, _ := item["target_rig"].(string); target != "rig2" {
+			t.Fatalf("target_rig = %q, want rig2", target)
+		}
+	}
+	if !found {
+		t.Fatalf("routed source %s not found in scheduler list: %#v", beadID, listed)
+	}
+
+	status := getSchedulerStatus(t, gtBinary, hqPath, env)
+	if ready := int(status["queued_ready"].(float64)); ready != 1 {
+		t.Fatalf("queued_ready = %d, want 1 (status: %#v)", ready, status)
+	}
+	out := runGTCmdOutput(t, gtBinary, hqPath, env, "scheduler", "run", "--dry-run")
+	if !strings.Contains(out, beadID) || strings.Contains(out, "No ready beads") {
+		t.Fatalf("dry-run should include routed cross-rig source %s, got:\n%s", beadID, out)
 	}
 }
 

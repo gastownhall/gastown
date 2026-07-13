@@ -319,20 +319,11 @@ func resolveFormula(explicit string, hookRawBead bool, townRoot, rigName string)
 	return "mol-polecat-work"
 }
 
-// slingContextTTL is the maximum age of a sling context before it's considered
-// stale and ignored by areScheduled(). This prevents orphaned sling contexts
-// (from failed spawns or throttled dispatches) from permanently blocking tasks.
-// See GH#2279.
-const slingContextTTL = 30 * time.Minute
-
 // areScheduled returns a set of bead IDs that have open sling contexts.
 // Scans all rig beads dirs since sling contexts are created in the target
 // rig's beads dir (GH#3468). On error, fails closed: treats ALL requested
 // beads as scheduled to prevent false stranded detection and duplicate
 // scheduling attempts.
-//
-// Sling contexts older than slingContextTTL are ignored — they are likely
-// orphans from failed spawn attempts (GH#2279).
 func areScheduled(beadIDs []string) map[string]bool {
 	result := make(map[string]bool)
 	if len(beadIDs) == 0 {
@@ -351,20 +342,10 @@ func areScheduled(beadIDs []string) map[string]bool {
 	// Scan all rig beads dirs (sling contexts live in target rig's DB). (GH#3468)
 	contexts := listAllSlingContexts(townRoot)
 
-	// Build lookup of work bead IDs from open contexts, skipping stale ones.
+	// Build lookup of work bead IDs from open contexts. Cleanup owns stale-state
+	// closure; idempotency must not use a different definition of scheduled.
 	scheduledWorkBeads := make(map[string]bool)
-	now := time.Now()
 	for _, ctx := range contexts {
-		// Skip stale sling contexts (GH#2279): contexts older than the TTL
-		// are likely orphans from failed spawn attempts. Ignoring them allows
-		// the task to appear as "ready" again for re-dispatch.
-		if ctx.CreatedAt != "" {
-			if created, err := time.Parse(time.RFC3339, ctx.CreatedAt); err == nil {
-				if now.Sub(created) > slingContextTTL {
-					continue
-				}
-			}
-		}
 		fields := beads.ParseSlingContextFields(ctx.Description)
 		if fields != nil {
 			scheduledWorkBeads[fields.WorkBeadID] = true
