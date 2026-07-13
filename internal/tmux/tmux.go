@@ -1809,9 +1809,10 @@ func (t *Tmux) NudgeSessionWithOpts(session, message string, opts NudgeOpts) err
 		}
 	}
 
-	// 7. Send Enter with verification — polls pane content to confirm Enter
-	// was processed, retrying with exponential backoff under load. (GH#gt-0b5)
-	if err := t.sendEnterVerified(target); err != nil {
+	// 7. Submit with verification — confirms Enter was processed and the
+	// message actually left the composer instead of being stranded by a
+	// swallowed carriage return. (GH#gt-0b5, PR #4461 replacement)
+	if err := t.submitComposer(target, sanitized, readyPromptPrefixForSession(t, session)); err != nil {
 		return fmt.Errorf("nudge to session %q: %w", session, err)
 	}
 
@@ -1881,9 +1882,10 @@ func (t *Tmux) NudgePane(pane, message string) error {
 		}
 	}
 
-	// 7. Send Enter with verification — polls pane content to confirm Enter
-	// was processed, retrying with exponential backoff under load. (GH#gt-0b5)
-	if err := t.sendEnterVerified(pane); err != nil {
+	// 7. Submit with verification — confirms Enter was processed and the
+	// message actually left the composer instead of being stranded by a
+	// swallowed carriage return. (GH#gt-0b5, PR #4461 replacement)
+	if err := t.submitComposer(pane, sanitized, DefaultReadyPromptPrefix); err != nil {
 		return fmt.Errorf("nudge to pane %q: %w", pane, err)
 	}
 

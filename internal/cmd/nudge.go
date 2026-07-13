@@ -245,7 +245,19 @@ func deliverNudge(t *tmux.Tmux, sessionName, message, sender string) error {
 				Message:  message,
 				Priority: nudgePriorityFlag,
 			}})
-			return t.NudgeSessionWithOpts(sessionName, formatted, tmux.NudgeOpts{TownRoot: townRoot})
+			deliverErr := t.NudgeSessionWithOpts(sessionName, formatted, tmux.NudgeOpts{TownRoot: townRoot})
+			if !errors.Is(deliverErr, tmux.ErrSubmitNotVerified) {
+				return deliverErr
+			}
+			fmt.Fprintf(os.Stderr, "wait-idle: %v; queueing for %s\n", deliverErr, sessionName)
+			if qErr := nudge.Enqueue(townRoot, sessionName, nudge.QueuedNudge{
+				Sender:   sender,
+				Message:  message,
+				Priority: nudgePriorityFlag,
+			}); qErr != nil {
+				return fmt.Errorf("queue fallback after unverified submit failed: %v (original: %w)", qErr, deliverErr)
+			}
+			return nil
 		}
 		// Terminal errors (session gone, no server) — propagate, don't queue.
 		// Queueing a nudge for a dead session means it will never be delivered.
@@ -339,11 +351,18 @@ func watchAndDeliver(t *tmux.Tmux, townRoot, sessionName string) {
 			formatted := nudge.FormatForInjection(drained)
 			if err := t.NudgeSessionWithOpts(sessionName, formatted, tmux.NudgeOpts{TownRoot: townRoot}); err != nil {
 				fmt.Fprintf(os.Stderr, "idle-watcher: delivery for %s failed: %v\n", sessionName, err)
+				requeueDrainedNudges(townRoot, sessionName, "idle-watcher", drained)
 			}
 			return
 		}
 	}
 	// Timeout — nudge stays in queue for next watcher or manual drain.
+}
+
+func requeueDrainedNudges(townRoot, sessionName, source string, drained []nudge.QueuedNudge) {
+	if err := nudge.Requeue(townRoot, sessionName, drained); err != nil {
+		fmt.Fprintf(os.Stderr, "%s: requeue for %s failed: %v\n", source, sessionName, err)
+	}
 }
 
 // validNudgeModes is the set of allowed --mode values.

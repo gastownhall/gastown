@@ -423,6 +423,30 @@ func TestPostQueueIdleRecovery_SkipsDeliveryWhenDrainEmpty(t *testing.T) {
 	}
 }
 
+func TestRequeueDrainedNudgesPreservesFailedDelivery(t *testing.T) {
+	townRoot := t.TempDir()
+	session := "gt-crew-test"
+	drained := []nudge.QueuedNudge{
+		{Sender: "test", Message: "first", Timestamp: time.Now().Add(-time.Second)},
+		{Sender: "test", Message: "second", Timestamp: time.Now()},
+	}
+
+	requeueDrainedNudges(townRoot, session, "test", drained)
+
+	got, err := nudge.Drain(townRoot, session)
+	if err != nil {
+		t.Fatalf("Drain: %v", err)
+	}
+	if len(got) != len(drained) {
+		t.Fatalf("Drain got %d nudges, want %d", len(got), len(drained))
+	}
+	for i := range drained {
+		if got[i].Message != drained[i].Message || got[i].Sender != drained[i].Sender {
+			t.Fatalf("requeued[%d] = %#v, want %#v", i, got[i], drained[i])
+		}
+	}
+}
+
 func TestValidModeMapsMatchConstants(t *testing.T) {
 	// Ensure the validation maps cover all defined mode constants.
 	modes := []string{NudgeModeImmediate, NudgeModeQueue, NudgeModeWaitIdle}
