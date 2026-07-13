@@ -38,9 +38,9 @@ func (p submitProbe) String() string {
 }
 
 const (
-	submitProbeAttempts   = 3
-	submitProbeInterval   = 700 * time.Millisecond
-	submitNeedleMaxRunes  = 32
+	submitProbeAttempts  = 3
+	submitProbeInterval  = 700 * time.Millisecond
+	submitNeedleMaxRunes = 32
 	minStrandPrefixRunes = 8
 )
 
