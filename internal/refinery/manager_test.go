@@ -671,6 +671,58 @@ func TestManager_PostMerge_ClearsMatchingActiveMRAndClosesSource(t *testing.T) {
 	assertMRCloseReason(t, b, mrIssue.ID, string(CloseReasonMerged))
 }
 
+func TestManager_PostMerge_ClosesWorkBeadFromAgentFallbackBeforeActiveMRClear(t *testing.T) {
+	mgr, rigPath := setupTestManager(t)
+	testutil.RequireDoltContainer(t)
+	port, _ := strconv.Atoi(testutil.DoltContainerPort())
+	b := beads.NewIsolatedWithPort(rigPath, port)
+	if err := b.Init("gt"); err != nil {
+		t.Skipf("bd init unavailable: %v", err)
+	}
+
+	srcIssue, err := b.Create(beads.CreateOptions{Title: "Implement feature X", Labels: []string{"gt:task"}})
+	if err != nil {
+		t.Fatalf("create source issue: %v", err)
+	}
+	agentIssue, err := b.Create(beads.CreateOptions{
+		Title:       "Polecat nux",
+		Labels:      []string{"gt:agent"},
+		Description: "role_type: polecat\nrig: testrig\nagent_state: working\nactive_mr: null",
+	})
+	if err != nil {
+		t.Fatalf("create agent issue: %v", err)
+	}
+	mrIssue, err := b.Create(beads.CreateOptions{
+		Title:       "MR for feature X",
+		Labels:      []string{"gt:merge-request"},
+		Description: "branch: polecat/test/gt-xyz\nworker: test\ntarget: main\nagent_bead: " + agentIssue.ID + "\nmerge_commit: abc123",
+	})
+	if err != nil {
+		t.Fatalf("create MR issue: %v", err)
+	}
+	if err := b.UpdateAgentCompletion(agentIssue.ID, &beads.CompletionMetadata{MRID: mrIssue.ID, Branch: "polecat/test/gt-xyz", HookBead: srcIssue.ID}); err != nil {
+		t.Fatalf("set completion metadata: %v", err)
+	}
+	if err := b.UpdateAgentActiveMR(agentIssue.ID, mrIssue.ID); err != nil {
+		t.Fatalf("set active_mr: %v", err)
+	}
+
+	result, err := mgr.PostMerge(mrIssue.ID)
+	if err != nil {
+		t.Fatalf("PostMerge() error: %v", err)
+	}
+	if !result.MRClosed || !result.SourceIssueClosed {
+		t.Fatalf("PostMerge() result = %+v, want MR/source closed", result)
+	}
+	if result.SourceIssueID != srcIssue.ID {
+		t.Fatalf("SourceIssueID = %q, want %q", result.SourceIssueID, srcIssue.ID)
+	}
+
+	assertAgentActiveMR(t, b, agentIssue.ID, "")
+	assertIssueStatus(t, b, srcIssue.ID, string(beads.StatusClosed))
+	assertMRCloseReason(t, b, mrIssue.ID, string(CloseReasonMerged))
+}
+
 func TestManager_PostMerge_AlreadyClosedMRRetriesActiveMRCleanup(t *testing.T) {
 	mgr, rigPath := setupTestManager(t)
 	testutil.RequireDoltContainer(t)

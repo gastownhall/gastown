@@ -739,10 +739,16 @@ func (m *Manager) PostMerge(idOrBranch string) (*PostMergeResult, error) {
 	if err != nil {
 		return nil, err
 	}
+	workBeadID := resolveMergedWorkBead(b.ForAgentBead(), mergedWorkBeadCloseRequest{
+		MRID:        mr.ID,
+		Branch:      mr.Branch,
+		SourceIssue: mr.IssueID,
+		AgentBead:   mr.AgentBead,
+	})
 
 	result := &PostMergeResult{
 		MR:            mr,
-		SourceIssueID: mr.IssueID,
+		SourceIssueID: workBeadID,
 	}
 
 	// Close the MR bead
@@ -779,27 +785,18 @@ func (m *Manager) PostMerge(idOrBranch string) (*PostMergeResult, error) {
 	}
 
 	// Close the source issue with reason and --force to bypass dependency checks.
-	// The source issue may have an attached molecule (wisp) whose open steps
-	// would block a normal bd close. ForceCloseWithReason bypasses this,
-	// matching how gt done handles closures for the no-MR path.
-	if mr.IssueID != "" {
-		closeReason := fmt.Sprintf("Merged in %s", mr.ID)
-		if mr.MergeCommit != "" {
-			closeReason = fmt.Sprintf("%s\ntarget_branch: %s\ncommit_sha: %s", closeReason, mr.TargetBranch, mr.MergeCommit)
-		}
-		if err := b.ForceCloseWithReason(closeReason, mr.IssueID); err != nil {
-			// Check if already closed (by polecat's gt done) — that's fine
-			if issue, showErr := b.Show(mr.IssueID); showErr == nil && beads.IssueStatus(issue.Status).IsTerminal() {
-				_, _ = fmt.Fprintf(m.output, "  %s source issue already closed: %s\n", style.Dim.Render("○"), mr.IssueID)
-				result.SourceIssueClosed = true
-			} else {
-				_, _ = fmt.Fprintf(m.output, "  %s source issue close: %v\n", style.Dim.Render("○"), err)
-				result.SourceIssueNotFound = true
-			}
-		} else {
-			result.SourceIssueClosed = true
-		}
-	}
+	// The source issue may have an attached molecule whose open steps would
+	// block a normal close. Resolve before MR close clears active_mr, then close
+	// only from this post-merge success path.
+	sourceResult := closeMergedWorkBead(b, nil, m.output, mergedWorkBeadCloseRequest{
+		MRID:        mr.ID,
+		Target:      mr.TargetBranch,
+		SourceIssue: workBeadID,
+		MergeCommit: mr.MergeCommit,
+	})
+	result.SourceIssueID = sourceResult.WorkBeadID
+	result.SourceIssueClosed = sourceResult.Closed
+	result.SourceIssueNotFound = sourceResult.NotFound
 
 	return result, nil
 }
