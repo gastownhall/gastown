@@ -57,6 +57,63 @@ func TestDispatchCycle_Plan_QueryError(t *testing.T) {
 	}
 }
 
+func TestDispatchCycle_RunPlan_DoesNotRequery(t *testing.T) {
+	dispatched := []string{}
+	cycle := &DispatchCycle{
+		AvailableCapacity: func() (int, error) {
+			t.Fatal("RunPlan should not re-check capacity")
+			return 0, nil
+		},
+		QueryPending: func() ([]PendingBead, error) {
+			t.Fatal("RunPlan should not re-query pending work")
+			return nil, nil
+		},
+		Execute: func(b PendingBead) error {
+			dispatched = append(dispatched, b.ID)
+			return nil
+		},
+		OnSuccess: func(b PendingBead) error { return nil },
+	}
+
+	report, err := cycle.RunPlan(DispatchPlan{
+		ToDispatch: []PendingBead{{ID: "a", WorkBeadID: "wa"}},
+		Reason:     "ready",
+	})
+	if err != nil {
+		t.Fatalf("RunPlan() error: %v", err)
+	}
+	if report.Dispatched != 1 || report.Failed != 0 || len(dispatched) != 1 || dispatched[0] != "a" {
+		t.Fatalf("RunPlan report=%+v dispatched=%v, want one successful dispatch", report, dispatched)
+	}
+}
+
+func TestDispatchCycle_RunPlan_StillValidates(t *testing.T) {
+	failureCalled := false
+	cycle := &DispatchCycle{
+		Validate: func(b PendingBead) error {
+			return errors.New("refused")
+		},
+		Execute: func(b PendingBead) error {
+			t.Fatal("RunPlan should not execute invalid work")
+			return nil
+		},
+		OnFailure: func(b PendingBead, err error) {
+			failureCalled = true
+		},
+	}
+
+	report, err := cycle.RunPlan(DispatchPlan{
+		ToDispatch: []PendingBead{{ID: "a", WorkBeadID: "wa"}},
+		Reason:     "ready",
+	})
+	if err != nil {
+		t.Fatalf("RunPlan() error: %v", err)
+	}
+	if report.Dispatched != 0 || report.Failed != 1 || !failureCalled {
+		t.Fatalf("RunPlan report=%+v failureCalled=%v, want validation failure", report, failureCalled)
+	}
+}
+
 func TestDispatchCycle_Run_AllSuccess(t *testing.T) {
 	dispatched := []string{}
 	successCalled := []string{}

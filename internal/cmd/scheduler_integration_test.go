@@ -24,6 +24,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/gofrs/flock"
 	"github.com/steveyegge/gastown/internal/beads"
 	"github.com/steveyegge/gastown/internal/config"
 	"github.com/steveyegge/gastown/internal/scheduler/capacity"
@@ -1396,6 +1397,130 @@ func TestSchedulerInvalidJSONContextCleanup(t *testing.T) {
 		if ctx.ID == ctxID {
 			t.Errorf("Invalid context %s should have been closed, but is still open", ctxID)
 		}
+	}
+}
+
+// TestSchedulerDogfoodReadyContextDryRunAndDispatch covers the post-#4490 trace:
+// Dogfood on installed gt main@232f7d6d after merged PR #4490: gt sling gt-cdec
+// gastown created context gt-wisp-h7f; gt scheduler status reported Scheduled 1
+// total, 1 ready with capacity 21+ free; gt scheduler list showed gt-cdec ready;
+// gt scheduler run --dry-run and gt scheduler run --batch 1 exited 0 with no
+// output, did not update Last dispatch, did not assign/spawn a polecat, and left
+// the context 1 ready.
+func TestSchedulerDogfoodReadyContextDryRunAndDispatch(t *testing.T) {
+	hqPath, rigPath, gtBinary, env := setupSchedulerIntegrationTown(t)
+
+	beadID := createTestBead(t, rigPath, "Dogfood scheduler ready context dispatch")
+	slingToScheduler(t, gtBinary, hqPath, env, beadID, "testrig")
+	if !hasSlingContext(t, hqPath, beadID) {
+		t.Fatalf("gt sling did not create an open scheduler context for %s", beadID)
+	}
+
+	status := getSchedulerStatus(t, gtBinary, hqPath, env)
+	if got := int(status["queued_total"].(float64)); got != 1 {
+		t.Fatalf("queued_total = %d, want 1", got)
+	}
+	if got := int(status["queued_ready"].(float64)); got != 1 {
+		t.Fatalf("queued_ready = %d, want 1", got)
+	}
+	capacityInfo := status["capacity"].(map[string]interface{})
+	if got := int(capacityInfo["free"].(float64)); got <= 0 {
+		t.Fatalf("capacity.free = %d, want > 0", got)
+	}
+
+	listed := getSchedulerList(t, gtBinary, hqPath, env)
+	if len(listed) != 1 || listed[0]["id"] != beadID || listed[0]["blocked"] == true {
+		t.Fatalf("scheduler list = %+v, want one ready row for %s", listed, beadID)
+	}
+
+	dryRun := runGTCmdOutput(t, gtBinary, hqPath, env, "scheduler", "run", "--dry-run")
+	if !strings.Contains(dryRun, "Would dispatch") || !strings.Contains(dryRun, beadID) {
+		t.Fatalf("dry-run output missing planned dispatch for %s:\n%s", beadID, dryRun)
+	}
+
+	prevSpawn := spawnPolecatForSling
+	t.Cleanup(func() { spawnPolecatForSling = prevSpawn })
+	spawnPolecatForSling = func(rigName string, opts SlingSpawnOptions) (*SpawnedPolecatInfo, error) {
+		if rigName != "testrig" {
+			t.Fatalf("spawn rig = %q, want testrig", rigName)
+		}
+		return &SpawnedPolecatInfo{
+			RigName:     rigName,
+			PolecatName: "dogfood",
+			ClonePath:   rigPath,
+			Pane:        "test-pane",
+		}, nil
+	}
+
+	dispatched, err := dispatchScheduledWork(hqPath, "test", 1, false)
+	if err != nil {
+		t.Fatalf("dispatchScheduledWork: %v", err)
+	}
+	if dispatched != 1 {
+		t.Fatalf("dispatched = %d, want 1", dispatched)
+	}
+	if hasSlingContext(t, hqPath, beadID) {
+		t.Fatalf("sling context for %s still open after dispatch", beadID)
+	}
+	statusValue, assignee := getBeadStatusAndAssignee(t, beadID, rigPath)
+	if statusValue != "hooked" || assignee != "testrig/polecats/dogfood" {
+		t.Fatalf("bead state = status:%q assignee:%q, want hooked testrig/polecats/dogfood", statusValue, assignee)
+	}
+	state, err := capacity.LoadState(hqPath)
+	if err != nil {
+		t.Fatalf("LoadState: %v", err)
+	}
+	if state.LastDispatchAt == "" || state.LastDispatchCount != 1 {
+		t.Fatalf("LastDispatchAt=%q LastDispatchCount=%d, want one recorded dispatch", state.LastDispatchAt, state.LastDispatchCount)
+	}
+}
+
+func TestSchedulerRunLockContentionReportsReason(t *testing.T) {
+	hqPath, rigPath, gtBinary, env := setupSchedulerIntegrationTown(t)
+
+	beadID := createTestBead(t, rigPath, "Lock contention scheduler context")
+	slingToScheduler(t, gtBinary, hqPath, env, beadID, "testrig")
+
+	runtimeDir := filepath.Join(hqPath, ".runtime")
+	if err := os.MkdirAll(runtimeDir, 0755); err != nil {
+		t.Fatalf("mkdir runtime: %v", err)
+	}
+	lockFile := filepath.Join(runtimeDir, "scheduler-dispatch.lock")
+	lock := flock.New(lockFile)
+	locked, err := lock.TryLock()
+	if err != nil {
+		t.Fatalf("TryLock: %v", err)
+	}
+	if !locked {
+		t.Fatal("test could not acquire scheduler dispatch lock")
+	}
+	t.Cleanup(func() { _ = lock.Unlock() })
+
+	dryRun := runGTCmdOutput(t, gtBinary, hqPath, env, "scheduler", "run", "--dry-run")
+	if !strings.Contains(dryRun, "Would dispatch") || !strings.Contains(dryRun, beadID) {
+		t.Fatalf("dry-run should preview despite held execution lock; output:\n%s", dryRun)
+	}
+
+	out, err := runGTCmdMayFail(t, gtBinary, hqPath, env, "scheduler", "run", "--batch", "1")
+	if err == nil {
+		t.Fatalf("scheduler run succeeded with held lock; output:\n%s", out)
+	}
+	if !strings.Contains(out, "scheduler dispatch already in progress") || !strings.Contains(out, lockFile) {
+		t.Fatalf("scheduler run output %q missing explicit held-lock reason %q", out, lockFile)
+	}
+	if !hasSlingContext(t, hqPath, beadID) {
+		t.Fatalf("held-lock run should leave context for %s queued", beadID)
+	}
+	statusValue, _ := getBeadStatusAndAssignee(t, beadID, rigPath)
+	if statusValue == "hooked" {
+		t.Fatalf("held-lock run unexpectedly hooked %s", beadID)
+	}
+	state, err := capacity.LoadState(hqPath)
+	if err != nil {
+		t.Fatalf("LoadState: %v", err)
+	}
+	if state.LastDispatchAt != "" {
+		t.Fatalf("held-lock run should not update LastDispatchAt, got %q", state.LastDispatchAt)
 	}
 }
 
