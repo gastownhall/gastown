@@ -1,0 +1,8 @@
+Command: gt-pr-sheriff-check --evidence pr-sheriff-evidence/gt-pr-4322-fixup/evidence.json --merge-gate
+Exit code: 0
+Target code SHA: dd3f125992be6063c9d99f447cceed9b794bf2d7
+
+PR Sheriff: PASS
+merge_path_allowed: true
+verdict: merge_replacement
+gates: 12 pass, 2 not_applicable, 0 waived, 0 fail

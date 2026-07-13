@@ -1,0 +1,243 @@
+{
+  "schema_version": "pr-sheriff-evidence/v1",
+  "policy_version": "pr-sheriff-policy/v1.1",
+  "generated_at": "2026-07-13T19:18:34Z",
+  "run_id": "gt-pr-4322-fixup-clean-2026-07-13",
+  "subject": {
+    "forge": "github",
+    "repo_id": "gastownhall/gastown",
+    "default_branch": "main",
+    "change_type": "pull_request_replacement",
+    "change_id": "4322",
+    "url": "https://github.com/gastownhall/gastown/pull/4322",
+    "title": "fix(refinery): close work bead on real merge success (stop re-dispatch churn)",
+    "author": "Ben-Williams-Founder",
+    "author_tier": "known",
+    "draft": false,
+    "base_ref": "main",
+    "base_sha": "f97ed211bdcf7d8ad686f4d5f62233961aaa71a3",
+    "head_ref": "polecat/atom/gt-pr-4322-fixup+780508",
+    "head_sha": "dd3f125992be6063c9d99f447cceed9b794bf2d7",
+    "diff_summary": {
+      "additions": 507,
+      "deletions": 42,
+      "changed_files": 5,
+      "paths": [
+        "internal/refinery/engineer.go",
+        "internal/refinery/manager.go",
+        "internal/refinery/manager_test.go",
+        "internal/refinery/work_bead_close.go",
+        "internal/refinery/work_bead_close_test.go"
+      ]
+    }
+  },
+  "repo_policy": {
+    "label_aliases": [],
+    "feature_kind_values": ["feature", "enhancement"],
+    "merge_ready_status_values": ["review-approved", "merge-ready"],
+    "approver_roles": ["maintainer", "owner", "policy_approver", "designated_reviewer"],
+    "evidence_locations": ["local_report", "artifact_store", "bead", "pr_thread"],
+    "baseline_checks": [],
+    "no_verification_reasons": ["docs_only"]
+  },
+  "action_plan": {
+    "id": "action-plan-4322-replacement",
+    "mode": "replacement_pr",
+    "proposed_action_ref": "action-plan-4322-replacement",
+    "summary": "Carry forward PR #4322 as a clean upstream/main replacement: centralize merged work-bead closure in a shared success-only helper used by Engineer.HandleMRInfoSuccess and Manager.PostMerge, keep source_issue authoritative, and allow agent-bead fallback only when MR identity and branch metadata exactly verify the source work bead.",
+    "created_at": "2026-07-13T18:59:00Z"
+  },
+  "labels": {
+    "observed": [
+      {"name": "status/review-approved", "family": "status", "semantic_value": "review-approved"},
+      {"name": "priority/p2", "family": "priority", "semantic_value": "p2"},
+      {"name": "kind/bug", "family": "kind", "semantic_value": "bug"}
+    ],
+    "status": "review-approved",
+    "priority": "p2",
+    "kind": "bug",
+    "snapshot_artifact_ref": "label-snapshot"
+  },
+  "artifacts": [
+    {"id": "label-snapshot", "kind": "label_snapshot", "uri": "urn:bead:gt-pr-4322-fixup:labels", "actor": "atom", "created_at": "2026-07-13T19:18:34Z", "digest": null, "summary": "Replacement evidence is review-approved for the clean branch; original PR #4322 remains status/review-failed and is not mergeable as-is."},
+    {"id": "original-pr", "kind": "pull_request", "uri": "https://github.com/gastownhall/gastown/pull/4322", "actor": "Ben-Williams-Founder", "created_at": "2026-06-22T22:54:04Z", "digest": "93c5312b4219b3084382203d74d037103ad9260f", "summary": "Original PR #4322 is OPEN, mergeable=CONFLICTING, mergeStateStatus=DIRTY, labels kind/bug priority/p2 status/review-failed, with failing Test, Lint, and Integration Tests."},
+    {"id": "clean-branch", "kind": "git_ref", "uri": "urn:git:branch:polecat/atom/gt-pr-4322-fixup+780508", "actor": "atom", "created_at": "2026-07-13T19:18:34Z", "digest": "dd3f125992be6063c9d99f447cceed9b794bf2d7", "summary": "Clean branch is 0 behind and 3 ahead of upstream/main f97ed211bdcf7d8ad686f4d5f62233961aaa71a3."},
+    {"id": "implementation-commit", "kind": "git_commit", "uri": "urn:git:commit:dd3f125992be6063c9d99f447cceed9b794bf2d7", "actor": "atom", "created_at": "2026-07-13T19:05:44Z", "digest": "dd3f125992be6063c9d99f447cceed9b794bf2d7", "summary": "Final replacement head with strict branch-verified agent fallback and focused tests."},
+    {"id": "attribution-evidence", "kind": "review_report", "uri": "urn:pr-sheriff:attribution:4322", "actor": "atom", "created_at": "2026-07-13T19:18:34Z", "digest": null, "summary": "Commit a993902dd preserves PR #4322 attribution with Original-PR, Original-PR-Author Ben-Williams-Founder, Original-Commit 93c5312b4219b3084382203d74d037103ad9260f, prior replacement commit, and Co-authored-by trailers."},
+    {"id": "verification-focused", "kind": "test_log", "uri": "urn:local:test:refinery-focused-2026-07-13T19:10:00Z", "actor": "atom", "created_at": "2026-07-13T19:10:00Z", "digest": null, "summary": "PASS: CGO_ENABLED=0 go test ./internal/refinery -run '^(TestCloseMergedWorkBead_.*|TestManagerIssueToMRIncludesAgentBead|TestManager_PostMerge_ClosesWorkBeadFromAgentFallbackBeforeActiveMRClear)$' -count=1."},
+    {"id": "verification-refinery", "kind": "test_log", "uri": "urn:local:test:refinery-package-2026-07-13T19:11:00Z", "actor": "atom", "created_at": "2026-07-13T19:11:00Z", "digest": null, "summary": "PASS: CGO_ENABLED=0 go test ./internal/refinery -count=1."},
+    {"id": "verification-compile", "kind": "test_log", "uri": "urn:local:test:compile-2026-07-13T19:11:30Z", "actor": "atom", "created_at": "2026-07-13T19:11:30Z", "digest": null, "summary": "PASS: CGO_ENABLED=0 go test -run '^$' ./cmd/gt ./internal/refinery -count=1."},
+    {"id": "verification-style", "kind": "test_log", "uri": "urn:local:style:2026-07-13T19:11:45Z", "actor": "atom", "created_at": "2026-07-13T19:11:45Z", "digest": null, "summary": "PASS: git diff --check upstream/main...HEAD and gofmt -l on changed refinery files produced no output."},
+    {"id": "closure-intent", "kind": "bead_note", "uri": "urn:bead:gt-pr-4322-fixup:notes:closure-intent", "actor": "atom", "created_at": "2026-07-13T19:18:34Z", "digest": null, "summary": "Original PR #4322 should be closed or marked superseded only after the replacement branch lands."},
+    {"id": "blocker-scan", "kind": "review_report", "uri": "urn:pr-sheriff:blocker-scan:4322-clean", "actor": "atom", "created_at": "2026-07-13T19:18:34Z", "digest": null, "summary": "Scanned labels, PR comments/reviews, bead notes, Mayor rejection note, final branch diff, verification, and fresh post-reviews. Original PR merge-as-is remains blocked; replacement has no unresolved blockers."},
+    {"id": "research-01-artifact", "kind": "research_report", "uri": "urn:opencode:research:R01-clean-success", "actor": "research-leg-R01", "created_at": "2026-07-13T18:48:00Z", "digest": null, "summary": "Engineer success handling reaches work-bead close only after actual merge success and pushed commit verification; branch is native to upstream/main."},
+    {"id": "research-02-artifact", "kind": "research_report", "uri": "urn:opencode:research:R02-clean-metadata", "actor": "research-leg-R02", "created_at": "2026-07-13T18:48:30Z", "digest": null, "summary": "source_issue remains canonical; agent fallback uses agent_bead, active_mr or mr_id, branch metadata, and last_source_issue."},
+    {"id": "research-03-artifact", "kind": "research_report", "uri": "urn:opencode:research:R03-clean-failure-path", "actor": "research-leg-R03", "created_at": "2026-07-13T18:49:00Z", "digest": null, "summary": "Reject, conflict, and failure paths do not close source/work beads; closure remains success-only."},
+    {"id": "research-04-artifact", "kind": "research_report", "uri": "urn:opencode:research:R04-clean-tests", "actor": "research-leg-R04", "created_at": "2026-07-13T18:49:30Z", "digest": null, "summary": "Identified missing direct tests for review_only and merge_strategy:local closure blockers; final commit added this coverage."},
+    {"id": "research-05-artifact", "kind": "research_report", "uri": "urn:opencode:research:R05-clean-postmerge", "actor": "research-leg-R05", "created_at": "2026-07-13T18:50:00Z", "digest": null, "summary": "Manager.PostMerge resolves fallback before active_mr clear and uses the shared helper after MR close."},
+    {"id": "research-06-artifact", "kind": "research_report", "uri": "urn:opencode:research:R06-clean-beads-api", "actor": "research-leg-R06", "created_at": "2026-07-13T18:50:30Z", "digest": null, "summary": "ForceCloseWithReason is used only after validation; terminal idempotency and close-race-to-terminal success are handled."},
+    {"id": "research-07-artifact", "kind": "research_report", "uri": "urn:opencode:research:R07-clean-attribution", "actor": "research-leg-R07", "created_at": "2026-07-13T18:51:00Z", "digest": null, "summary": "Original PR author Ben-Williams-Founder, head ref upstream-bead-close-on-merge, and head SHA 93c5312b4219b3084382203d74d037103ad9260f were captured for attribution."},
+    {"id": "research-08-artifact", "kind": "research_report", "uri": "urn:opencode:research:R08-clean-conflict", "actor": "research-leg-R08", "created_at": "2026-07-13T18:51:30Z", "digest": null, "summary": "Original PR #4322 is conflicting/dirty and not mergeable as-is; rejected prior branch was fork-main polluted while this branch is clean upstream/main plus 3 commits."},
+    {"id": "research-09-artifact", "kind": "research_report", "uri": "urn:opencode:research:R09-cleanup", "actor": "research-leg-R09", "created_at": "2026-07-13T18:52:00Z", "digest": null, "summary": "Shared helper collapses duplicate Manager/Engineer source close paths and avoids broad refinery rewrites or compatibility shims."},
+    {"id": "research-10-artifact", "kind": "research_report", "uri": "urn:opencode:research:R10-verification", "actor": "research-leg-R10", "created_at": "2026-07-13T18:52:30Z", "digest": null, "summary": "Recommended CGO_ENABLED=0 focused refinery tests and compile checks due local ICU header constraints."},
+    {"id": "research-11-artifact", "kind": "research_report", "uri": "urn:opencode:research:R11-labels", "actor": "research-leg-R11", "created_at": "2026-07-13T18:53:00Z", "digest": null, "summary": "Original PR labels are kind/bug priority/p2 status/review-failed, blocking merge-as-is while the bug fixup replacement can proceed with current-head evidence."},
+    {"id": "research-12-artifact", "kind": "research_report", "uri": "urn:opencode:research:R12-security", "actor": "research-leg-R12", "created_at": "2026-07-13T18:53:30Z", "digest": null, "summary": "Identified fail-open branch fallback risk; final commit now requires exact non-empty branch match before agent fallback closure."},
+    {"id": "research-13-artifact", "kind": "research_report", "uri": "urn:opencode:research:R13-workflow", "actor": "research-leg-R13", "created_at": "2026-07-13T18:54:00Z", "digest": null, "summary": "Workflow semantics confirm work beads should become terminal only after real merge success to prevent redispatch churn."},
+    {"id": "research-14-artifact", "kind": "research_report", "uri": "urn:opencode:research:R14-current-main", "actor": "research-leg-R14", "created_at": "2026-07-13T18:54:30Z", "digest": null, "summary": "upstream/main does not already contain verified fallback work-bead close behavior; replacement remains warranted."},
+    {"id": "research-15-artifact", "kind": "research_report", "uri": "urn:opencode:research:R15-evidence", "actor": "research-leg-R15", "created_at": "2026-07-13T18:55:00Z", "digest": null, "summary": "Identified stale prior evidence and required current-head evidence, five fresh post reviews, verification logs, and checker output."},
+    {"id": "pre-01-artifact", "kind": "review_report", "uri": "urn:opencode:pre-review:P01-branch-hardening", "actor": "pre-review-P01", "created_at": "2026-07-13T19:01:00Z", "digest": null, "summary": "Approved strict non-empty exact branch match for agent fallback and focused missing-branch/non-mergeable tests."},
+    {"id": "pre-02-artifact", "kind": "review_report", "uri": "urn:opencode:pre-review:P02-security", "actor": "pre-review-P02", "created_at": "2026-07-13T19:01:30Z", "digest": null, "summary": "Approved fail-closed branch hardening for destructive-close safety; source_issue path remains unaffected."},
+    {"id": "pre-03-artifact", "kind": "review_report", "uri": "urn:opencode:pre-review:P03-compat", "actor": "pre-review-P03", "created_at": "2026-07-13T19:02:00Z", "digest": null, "summary": "Approved compatibility with Manager.PostMerge and Engineer.HandleMRInfoSuccess provided fallback-only branch requirement is used."},
+    {"id": "pre-04-artifact", "kind": "review_report", "uri": "urn:opencode:pre-review:P04-cleanup", "actor": "pre-review-P04", "created_at": "2026-07-13T19:02:30Z", "digest": null, "summary": "Approved as cleanup-first narrowing, not a bandaid or scope expansion."},
+    {"id": "pre-05-artifact", "kind": "review_report", "uri": "urn:opencode:pre-review:P05-tests", "actor": "pre-review-P05", "created_at": "2026-07-13T19:03:00Z", "digest": null, "summary": "Approved focused implementation shape and required tests for missing branches, positive fallback, and non-concrete target preservation."},
+    {"id": "post-01-artifact", "kind": "review_report", "uri": "urn:opencode:post-review:Q01-final-correctness", "actor": "post-review-Q01", "created_at": "2026-07-13T19:13:00Z", "digest": "dd3f125992be6063c9d99f447cceed9b794bf2d7", "summary": "Approved final head correctness and success-only closure; failure/reject paths still leave work open."},
+    {"id": "post-02-artifact", "kind": "review_report", "uri": "urn:opencode:post-review:Q02-final-security", "actor": "post-review-Q02", "created_at": "2026-07-13T19:13:30Z", "digest": "dd3f125992be6063c9d99f447cceed9b794bf2d7", "summary": "Approved destructive-close safety: agent fallback requires MR match, exact branch match, concrete target, and no no_merge/review_only/local guard."},
+    {"id": "post-03-artifact", "kind": "review_report", "uri": "urn:opencode:post-review:Q03-final-cleanup", "actor": "post-review-Q03", "created_at": "2026-07-13T19:14:00Z", "digest": "dd3f125992be6063c9d99f447cceed9b794bf2d7", "summary": "Approved cleanup-first convergence and scope control; changes are limited to refinery closure helper and targeted tests."},
+    {"id": "post-04-artifact", "kind": "review_report", "uri": "urn:opencode:post-review:Q04-final-tests", "actor": "post-review-Q04", "created_at": "2026-07-13T19:14:30Z", "digest": "dd3f125992be6063c9d99f447cceed9b794bf2d7", "summary": "Approved test coverage and verification adequacy for source precedence, strict fallback, non-mergeable guards, idempotency, errors, and active_mr ordering."},
+    {"id": "post-05-artifact", "kind": "review_report", "uri": "urn:opencode:post-review:Q05-final-api", "actor": "post-review-Q05", "created_at": "2026-07-13T19:15:00Z", "digest": "dd3f125992be6063c9d99f447cceed9b794bf2d7", "summary": "Approved API/compile compatibility; new helpers are package-private and use existing beads/refinery APIs."}
+  ],
+  "implementation": {
+    "code_changed_by_sheriff": true,
+    "mode": "replacement_pr",
+    "first_code_change_at": "2026-07-13T19:05:00Z",
+    "modified_paths": [
+      "internal/refinery/engineer.go",
+      "internal/refinery/manager.go",
+      "internal/refinery/manager_test.go",
+      "internal/refinery/work_bead_close.go",
+      "internal/refinery/work_bead_close_test.go"
+    ],
+    "commits": [
+      "a993902dd065637786bc39c13927c8bd4743d97c",
+      "a23b2a8a8e36323ee3b87f4032cd075ee5f8ef5c",
+      "dd3f125992be6063c9d99f447cceed9b794bf2d7"
+    ]
+  },
+  "evidence": {
+    "research_legs": [
+      {"id": "research-01", "independence_key": "R01-success-closure-clean", "artifact_ref": "research-01-artifact", "completed_at": "2026-07-13T18:48:00Z", "actor": "research-leg-R01", "lens": "success closure", "summary": "Engineer success path closes work beads only after real merge success."},
+      {"id": "research-02", "independence_key": "R02-metadata-clean", "artifact_ref": "research-02-artifact", "completed_at": "2026-07-13T18:48:30Z", "actor": "research-leg-R02", "lens": "MR metadata", "summary": "source_issue is canonical; agent fallback is constrained metadata recovery."},
+      {"id": "research-03", "independence_key": "R03-failure-path-clean", "artifact_ref": "research-03-artifact", "completed_at": "2026-07-13T18:49:00Z", "actor": "research-leg-R03", "lens": "failure paths", "summary": "Failure, reject, and conflict paths leave work beads open."},
+      {"id": "research-04", "independence_key": "R04-tests-clean", "artifact_ref": "research-04-artifact", "completed_at": "2026-07-13T18:49:30Z", "actor": "research-leg-R04", "lens": "tests", "summary": "Missing non-mergeable guard tests were identified and resolved."},
+      {"id": "research-05", "independence_key": "R05-postmerge-clean", "artifact_ref": "research-05-artifact", "completed_at": "2026-07-13T18:50:00Z", "actor": "research-leg-R05", "lens": "PostMerge", "summary": "Manual PostMerge uses the same helper and resolves before active_mr clear."},
+      {"id": "research-06", "independence_key": "R06-beads-api-clean", "artifact_ref": "research-06-artifact", "completed_at": "2026-07-13T18:50:30Z", "actor": "research-leg-R06", "lens": "beads APIs", "summary": "ForceCloseWithReason use, terminal idempotency, and close-race handling are appropriate."},
+      {"id": "research-07", "independence_key": "R07-attribution-clean", "artifact_ref": "research-07-artifact", "completed_at": "2026-07-13T18:51:00Z", "actor": "research-leg-R07", "lens": "attribution", "summary": "Original PR author/head/intent were captured."},
+      {"id": "research-08", "independence_key": "R08-conflict-clean", "artifact_ref": "research-08-artifact", "completed_at": "2026-07-13T18:51:30Z", "actor": "research-leg-R08", "lens": "conflict delta", "summary": "Original PR is dirty/conflicting; current branch is clean upstream/main replacement."},
+      {"id": "research-09", "independence_key": "R09-cleanup-clean", "artifact_ref": "research-09-artifact", "completed_at": "2026-07-13T18:52:00Z", "actor": "research-leg-R09", "lens": "cleanup-first", "summary": "Shared helper is convergent and avoids broad rewrites."},
+      {"id": "research-10", "independence_key": "R10-verification-clean", "artifact_ref": "research-10-artifact", "completed_at": "2026-07-13T18:52:30Z", "actor": "research-leg-R10", "lens": "verification", "summary": "Focused CGO-disabled refinery verification is appropriate for this host."},
+      {"id": "research-11", "independence_key": "R11-label-policy-clean", "artifact_ref": "research-11-artifact", "completed_at": "2026-07-13T18:53:00Z", "actor": "research-leg-R11", "lens": "label policy", "summary": "Original PR merge-as-is is blocked; replacement can proceed as bug fixup."},
+      {"id": "research-12", "independence_key": "R12-security-clean", "artifact_ref": "research-12-artifact", "completed_at": "2026-07-13T18:53:30Z", "actor": "research-leg-R12", "lens": "security", "summary": "Branch fallback safety risk was identified and fixed fail-closed."},
+      {"id": "research-13", "independence_key": "R13-workflow-clean", "artifact_ref": "research-13-artifact", "completed_at": "2026-07-13T18:54:00Z", "actor": "research-leg-R13", "lens": "workflow", "summary": "Work beads should become terminal only after real merge success."},
+      {"id": "research-14", "independence_key": "R14-current-main-clean", "artifact_ref": "research-14-artifact", "completed_at": "2026-07-13T18:54:30Z", "actor": "research-leg-R14", "lens": "current main", "summary": "upstream/main lacks the replacement behavior."},
+      {"id": "research-15", "independence_key": "R15-evidence-clean", "artifact_ref": "research-15-artifact", "completed_at": "2026-07-13T18:55:00Z", "actor": "research-leg-R15", "lens": "checker evidence", "summary": "Current-head evidence and checker artifacts are required."}
+    ],
+    "pre_implementation_reviews": [
+      {"id": "pre-01", "independence_key": "P01-branch-hardening", "artifact_ref": "pre-01-artifact", "reviewed_action_ref": "action-plan-4322-replacement", "completed_at": "2026-07-13T19:01:00Z", "actor": "pre-review-P01", "verdict": "approve", "summary": "Strict branch fallback and missing guard tests are correct and minimal."},
+      {"id": "pre-02", "independence_key": "P02-security", "artifact_ref": "pre-02-artifact", "reviewed_action_ref": "action-plan-4322-replacement", "completed_at": "2026-07-13T19:01:30Z", "actor": "pre-review-P02", "verdict": "approve", "summary": "Fail-closed branch requirement is needed for destructive-close safety."},
+      {"id": "pre-03", "independence_key": "P03-compat", "artifact_ref": "pre-03-artifact", "reviewed_action_ref": "action-plan-4322-replacement", "completed_at": "2026-07-13T19:02:00Z", "actor": "pre-review-P03", "verdict": "approve", "summary": "Manager and Engineer integration remains compatible when source_issue precedence is unchanged."},
+      {"id": "pre-04", "independence_key": "P04-cleanup", "artifact_ref": "pre-04-artifact", "reviewed_action_ref": "action-plan-4322-replacement", "completed_at": "2026-07-13T19:02:30Z", "actor": "pre-review-P04", "verdict": "approve", "summary": "The stricter fallback is cleanup-first narrowing, not a bandaid."},
+      {"id": "pre-05", "independence_key": "P05-tests", "artifact_ref": "pre-05-artifact", "reviewed_action_ref": "action-plan-4322-replacement", "completed_at": "2026-07-13T19:03:00Z", "actor": "pre-review-P05", "verdict": "approve", "summary": "Focused missing-branch and non-mergeable target tests are adequate."}
+    ],
+    "post_implementation_reviews": [
+      {"id": "post-01", "independence_key": "Q01-final-correctness", "artifact_ref": "post-01-artifact", "reviewed_action_ref": "action-plan-4322-replacement", "reviewed_head_sha": "dd3f125992be6063c9d99f447cceed9b794bf2d7", "completed_at": "2026-07-13T19:13:00Z", "actor": "post-review-Q01", "verdict": "approve", "summary": "Final head correctly implements success-only merged work-bead closure."},
+      {"id": "post-02", "independence_key": "Q02-final-security", "artifact_ref": "post-02-artifact", "reviewed_action_ref": "action-plan-4322-replacement", "reviewed_head_sha": "dd3f125992be6063c9d99f447cceed9b794bf2d7", "completed_at": "2026-07-13T19:13:30Z", "actor": "post-review-Q02", "verdict": "approve", "summary": "Final head safely validates destructive close targets and strict fallback metadata."},
+      {"id": "post-03", "independence_key": "Q03-final-cleanup", "artifact_ref": "post-03-artifact", "reviewed_action_ref": "action-plan-4322-replacement", "reviewed_head_sha": "dd3f125992be6063c9d99f447cceed9b794bf2d7", "completed_at": "2026-07-13T19:14:00Z", "actor": "post-review-Q03", "verdict": "approve", "summary": "Final head is cleanup-first and scope-controlled."},
+      {"id": "post-04", "independence_key": "Q04-final-tests", "artifact_ref": "post-04-artifact", "reviewed_action_ref": "action-plan-4322-replacement", "reviewed_head_sha": "dd3f125992be6063c9d99f447cceed9b794bf2d7", "completed_at": "2026-07-13T19:14:30Z", "actor": "post-review-Q04", "verdict": "approve", "summary": "Final head has adequate tests and focused verification."},
+      {"id": "post-05", "independence_key": "Q05-final-api", "artifact_ref": "post-05-artifact", "reviewed_action_ref": "action-plan-4322-replacement", "reviewed_head_sha": "dd3f125992be6063c9d99f447cceed9b794bf2d7", "completed_at": "2026-07-13T19:15:00Z", "actor": "post-review-Q05", "verdict": "approve", "summary": "Final head has no blocking API or compile compatibility risk."}
+    ]
+  },
+  "cleanup_first": {
+    "assessment": "convergent",
+    "rationale": "The replacement collapses duplicate Manager and Engineer work-bead closure behavior into one unexported success-only helper and narrows agent fallback instead of adding a workaround path.",
+    "prohibited_patterns": [
+      {"kind": "bandaid", "present": false, "exception_reason": "none", "evidence_ref": null},
+      {"kind": "workaround_layer", "present": false, "exception_reason": "none", "evidence_ref": null},
+      {"kind": "compatibility_shim", "present": false, "exception_reason": "none", "evidence_ref": null},
+      {"kind": "patch_on_patch", "present": false, "exception_reason": "none", "evidence_ref": null},
+      {"kind": "scope_creep", "present": false, "exception_reason": "none", "evidence_ref": null}
+    ]
+  },
+  "enhancement_approval": {
+    "required": false,
+    "required_reason": null,
+    "approved": false,
+    "approver": null,
+    "approver_role": null,
+    "approval_ref": null,
+    "approved_at": null
+  },
+  "verification": {
+    "focused_checks": [
+      {"name": "refinery focused work-bead closure tests", "command_or_check": "CGO_ENABLED=0 go test ./internal/refinery -run '^(TestCloseMergedWorkBead_.*|TestManagerIssueToMRIncludesAgentBead|TestManager_PostMerge_ClosesWorkBeadFromAgentFallbackBeforeActiveMRClear)$' -count=1", "outcome": "pass", "artifact_ref": "verification-focused", "reason": "Focused helper, strict fallback, non-mergeable guard, Manager parsing, and active_mr ordering tests passed."},
+      {"name": "refinery package tests", "command_or_check": "CGO_ENABLED=0 go test ./internal/refinery -count=1", "outcome": "pass", "artifact_ref": "verification-refinery", "reason": "Refinery package tests passed with CGO disabled for local ICU constraint."},
+      {"name": "compile changed packages", "command_or_check": "CGO_ENABLED=0 go test -run '^$' ./cmd/gt ./internal/refinery -count=1", "outcome": "pass", "artifact_ref": "verification-compile", "reason": "Changed packages compile with no test execution."},
+      {"name": "diff whitespace and formatting", "command_or_check": "git diff --check upstream/main...HEAD && gofmt -l changed refinery files", "outcome": "pass", "artifact_ref": "verification-style", "reason": "Whitespace and formatting checks passed."}
+    ],
+    "ci_checks": []
+  },
+  "baseline_red_waiver": {
+    "requested": false,
+    "approved": false,
+    "approved_by": null,
+    "approver_role": null,
+    "approved_at": null,
+    "approval_ref": null,
+    "failing_checks": [],
+    "unrelated_rationale": "",
+    "evidence_refs": []
+  },
+  "replacement_flow": {
+    "required": true,
+    "mode": "replacement_pr",
+    "state": "ready",
+    "original_change_url": "https://github.com/gastownhall/gastown/pull/4322",
+    "replacement_change_url": null,
+    "replacement_branch": "polecat/atom/gt-pr-4322-fixup+780508",
+    "replacement_commit_refs": [
+      "a993902dd065637786bc39c13927c8bd4743d97c",
+      "a23b2a8a8e36323ee3b87f4032cd075ee5f8ef5c",
+      "dd3f125992be6063c9d99f447cceed9b794bf2d7"
+    ],
+    "original_author": "Ben-Williams-Founder",
+    "evidence_reuse": {
+      "reused_artifact_refs": ["original-pr", "research-07-artifact"],
+      "fresh_artifact_refs": ["clean-branch", "implementation-commit", "verification-focused", "verification-refinery", "verification-compile", "verification-style", "post-01-artifact", "post-02-artifact", "post-03-artifact", "post-04-artifact", "post-05-artifact"],
+      "rationale": "Original PR intent and attribution were reused; implementation, verification, blocker scan, and post-review evidence are fresh for the clean upstream/main replacement branch."
+    },
+    "attribution": {
+      "required": true,
+      "required_reason": "Replacement carries forward PR #4322 intent from Ben-Williams-Founder.",
+      "preserved": true,
+      "method": "co_authored_by",
+      "artifact_refs": ["attribution-evidence"]
+    },
+    "superseded_closure": {
+      "required": true,
+      "state": "deferred_until_replacement_merge",
+      "closure_intent_ref": "closure-intent",
+      "replacement_merge_ref": null,
+      "closure_ref": null
+    }
+  },
+  "blocker_scan": {
+    "scanned_sources": ["labels", "pr_comments", "review_comments", "bead_notes"],
+    "unresolved_blockers_found": false,
+    "blocker_refs": ["original-pr", "research-04-artifact", "research-12-artifact", "research-15-artifact"],
+    "resolution_refs": ["pre-01-artifact", "pre-02-artifact", "implementation-commit", "verification-focused", "post-02-artifact", "post-04-artifact", "blocker-scan"],
+    "scanned_at": "2026-07-13T19:18:34Z",
+    "summary": "Original PR #4322 remains blocked for merge-as-is by review-failed/conflicting/failing checks. Clean replacement blockers found during research were resolved by strict branch fallback, non-mergeable target tests, focused verification, and five final post reviews."
+  },
+  "gates": [],
+  "final": {
+    "verdict": "merge_replacement",
+    "decision_valid": true,
+    "merge_path_allowed": true,
+    "blocking_gates": [],
+    "target_change_url": "urn:git-branch:polecat/atom/gt-pr-4322-fixup+780508",
+    "target_head_sha": "dd3f125992be6063c9d99f447cceed9b794bf2d7",
+    "decided_by": "atom",
+    "decided_at": "2026-07-13T19:18:34Z",
+    "reason": "All PR Sheriff merge-gate evidence is current for the clean upstream/main replacement branch and final head dd3f125992be6063c9d99f447cceed9b794bf2d7.",
+    "required_actions": ["After replacement lands, close or supersede PR #4322 while preserving attribution."]
+  }
+}
