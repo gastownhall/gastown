@@ -124,7 +124,10 @@ func buildSchedulerDispatchPlan(townRoot string, batchOverride int, cleanup bool
 		return nil, err
 	}
 
-	snapshot, err := polecatCapacitySnapshotForTown(townRoot)
+	snapshot, err := polecatCapacitySnapshotForTownNoCleanup(townRoot)
+	if cleanup {
+		snapshot, err = polecatCapacitySnapshotForTown(townRoot)
+	}
 	if err != nil {
 		return nil, fmt.Errorf("loading polecat capacity: %w", err)
 	}
@@ -853,8 +856,8 @@ func listBlockedWorkBeadIDsWithError(townRoot string, workBeadIDs []string) (map
 			}
 		}
 	}
-	if failCount == len(idsByBeadsDir) && failCount > 0 {
-		return nil, fmt.Errorf("all %d bd blocked queries failed (last: %w)", failCount, lastErr)
+	if failCount > 0 {
+		return nil, fmt.Errorf("%d bd blocked querie(s) failed; refusing to mark scheduled work ready (last: %w)", failCount, lastErr)
 	}
 	return blockedIDs, nil
 }
