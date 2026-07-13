@@ -829,7 +829,8 @@ func listAllSlingContextRecords(townRoot string) []slingContextRecord {
 }
 
 // listBlockedWorkBeadIDsWithError returns a set of work bead IDs that have active blockers.
-// Returns an error only when ALL dirs fail (partial success is acceptable).
+// Any blocked-query failure is fail-closed: incomplete blocker data must not
+// make scheduled work appear ready.
 func listBlockedWorkBeadIDsWithError(townRoot string, workBeadIDs []string) (map[string]bool, error) {
 	blockedIDs := make(map[string]bool)
 	idsByBeadsDir := groupBeadIDsByResolvedBeadsDir(townRoot, workBeadIDs)
@@ -850,10 +851,15 @@ func listBlockedWorkBeadIDsWithError(townRoot string, workBeadIDs []string) (map
 		var blockedBeads []struct {
 			ID string `json:"id"`
 		}
-		if err := json.Unmarshal(blockedOut, &blockedBeads); err == nil {
-			for _, b := range blockedBeads {
-				blockedIDs[b.ID] = true
-			}
+		if err := json.Unmarshal(blockedOut, &blockedBeads); err != nil {
+			failCount++
+			lastErr = err
+			fmt.Fprintf(os.Stderr, "%s Warning: parsing bd blocked output failed for %s: %v\n",
+				style.Dim.Render("⚠"), filepath.Dir(beadsDir), err)
+			continue
+		}
+		for _, b := range blockedBeads {
+			blockedIDs[b.ID] = true
 		}
 	}
 	if failCount > 0 {

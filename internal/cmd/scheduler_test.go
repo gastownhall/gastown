@@ -131,6 +131,38 @@ esac
 	}
 }
 
+func TestListBlockedWorkBeadIDsFailsClosedOnMalformedJSON(t *testing.T) {
+	townRoot := t.TempDir()
+	townBeadsDir := filepath.Join(townRoot, ".beads")
+	if err := os.MkdirAll(townBeadsDir, 0755); err != nil {
+		t.Fatalf("mkdir town beads dir: %v", err)
+	}
+	if err := beads.WriteRoutes(townBeadsDir, []beads.Route{{Prefix: "hq-", Path: "."}}); err != nil {
+		t.Fatalf("write routes: %v", err)
+	}
+
+	binDir := filepath.Join(t.TempDir(), "bin")
+	if err := os.MkdirAll(binDir, 0755); err != nil {
+		t.Fatalf("mkdir fake bd bin: %v", err)
+	}
+	fakeBD := filepath.Join(binDir, "bd")
+	if err := os.WriteFile(fakeBD, []byte(`#!/bin/sh
+printf 'not-json\n'
+exit 0
+`), 0755); err != nil {
+		t.Fatalf("write fake bd: %v", err)
+	}
+	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	_, err := listBlockedWorkBeadIDsWithError(townRoot, []string{"hq-one"})
+	if err == nil {
+		t.Fatal("malformed bd blocked JSON should fail closed")
+	}
+	if !strings.Contains(err.Error(), "refusing to mark scheduled work ready") {
+		t.Fatalf("error = %q, want fail-closed blocked-query reason", err.Error())
+	}
+}
+
 func TestScheduledBeadInfoFromWorkSkipsNonConcreteWork(t *testing.T) {
 	fields := &capacity.SlingContextFields{WorkBeadID: "gt-wisp-abc", TargetRig: "gastown"}
 	info := beadStatusInfo{Status: "open", IssueType: "task", Labels: []string{"gt:sling-context"}}
