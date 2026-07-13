@@ -1,0 +1,230 @@
+{
+  "schema_version": "pr-sheriff-evidence/v1",
+  "policy_version": "pr-sheriff-policy/v1.1",
+  "generated_at": "2026-07-13T20:25:00Z",
+  "run_id": "gt-4468fx-pr4468-stale-heartbeat",
+  "subject": {
+    "forge": "github",
+    "repo_id": "Bella-Giraffety/gastown",
+    "default_branch": "main",
+    "change_type": "replacement_pr",
+    "change_id": "gt-4468fx-replacement-for-4468",
+    "url": "https://github.com/Bella-Giraffety/gastown/tree/polecat/mirelurk/gt-4468fx-pr4468-stale-heartbeat",
+    "title": "Current-main replacement for PR #4468 stale-heartbeat live-agent safety",
+    "author": "marvincris / Marvin Cris Andrade",
+    "author_tier": "known",
+    "draft": false,
+    "base_ref": "main",
+    "base_sha": "62fc77c7ecd262461802cd55fcadcd69f5393209",
+    "head_ref": "polecat/mirelurk/gt-4468fx-pr4468-stale-heartbeat",
+    "head_sha": "d3858c3c91c3bee3252b1095551af5579bc07f34",
+    "diff_summary": {
+      "additions": 317,
+      "deletions": 53,
+      "changed_files": 4,
+      "paths": [
+        "internal/polecat/heartbeat_test.go",
+        "internal/polecat/manager.go",
+        "internal/tmux/tmux.go",
+        "internal/tmux/tmux_test.go"
+      ]
+    }
+  },
+  "repo_policy": {
+    "label_aliases": [],
+    "feature_kind_values": ["feature", "enhancement"],
+    "merge_ready_status_values": ["review-approved", "merge-ready"],
+    "approver_roles": ["maintainer", "owner", "mayor"],
+    "evidence_locations": ["local_report", "beads_notes", "artifact_store"],
+    "baseline_checks": [],
+    "no_verification_reasons": []
+  },
+  "action_plan": {
+    "id": "action-plan-gt-4468fx",
+    "mode": "replacement_pr",
+    "proposed_action_ref": "action-plan-gt-4468fx",
+    "summary": "Carry PR #4468's stale-heartbeat live-agent safety forward on current main while preserving marvincris attribution. Tighten only the existing tmux liveness/polecat kill predicate seam by adding checked liveness errors, fail closed on query errors or nil tmux, and add focused stale-heartbeat live/not-live/query-error regressions. No retries, no longer timeouts, and no second liveness layer.",
+    "created_at": "2026-07-13T19:42:00Z"
+  },
+  "labels": {
+    "observed": [
+      {"name": "status/merge-ready", "family": "status", "semantic_value": "merge-ready"},
+      {"name": "priority/p1", "family": "priority", "semantic_value": "p1"},
+      {"name": "kind/bug", "family": "kind", "semantic_value": "bug"}
+    ],
+    "status": "merge-ready",
+    "priority": "p1",
+    "kind": "bug",
+    "snapshot_artifact_ref": "label-snapshot-replacement"
+  },
+  "artifacts": [
+    {"id": "label-snapshot-replacement", "kind": "label_snapshot", "uri": "file:pr-sheriff-evidence/gt-4468fx-pr4468-stale-heartbeat/evidence.json#labels", "actor": "gastown/polecats/mirelurk", "created_at": "2026-07-13T20:25:00Z", "digest": null, "summary": "Replacement target semantics: status=merge-ready, priority=p1, kind=bug. Original PR #4468 remains status/needs-review and is not the merge target."},
+    {"id": "original-pr-4468", "kind": "pull_request_snapshot", "uri": "https://github.com/gastownhall/gastown/pull/4468", "actor": "github", "created_at": "2026-07-13T19:28:00Z", "digest": null, "summary": "Original PR #4468 by marvincris is open, kind/bug priority/p1 status/needs-review, no reviews/approval, head 4fabb623753677b514e125c846f0bd7c0781aa17, and base f8e6d072 is stale versus current main."},
+    {"id": "final-head", "kind": "git_commit", "uri": "urn:git:commit:d3858c3c91c3bee3252b1095551af5579bc07f34", "actor": "gastown/polecats/mirelurk", "created_at": "2026-07-13T20:17:00Z", "digest": null, "summary": "Current-main replacement commit d3858c3c91c3bee3252b1095551af5579bc07f34 on upstream/main 62fc77c7; trailers reference PR #4468, original commit 4fabb623, mayor <marvincris@outlook.com>, and Claude Fable 5."},
+    {"id": "verification-focused", "kind": "verification_log", "uri": "file:pr-sheriff-evidence/gt-4468fx-pr4468-stale-heartbeat/evidence.json#verification", "actor": "gastown/polecats/mirelurk", "created_at": "2026-07-13T20:22:00Z", "digest": null, "summary": "Focused polecat stale-heartbeat tests, focused tmux checked-runtime tests, full internal/polecat with CGO_ENABLED=0, CGO_ENABLED=0 go build ./cmd/gt, and git diff --check passed on d3858c3c."},
+    {"id": "local-baseline-proof", "kind": "verification_log", "uri": "file:/tmp/opencode/gastown-upstream-main-gt4468fx", "actor": "gastown/polecats/mirelurk", "created_at": "2026-07-13T20:20:00Z", "digest": null, "summary": "The two broad internal/tmux local failures (sleep reported as coreutils) reproduce on clean upstream/main 62fc77c7, proving unrelated local baseline behavior."},
+    {"id": "checker-merge-gate", "kind": "checker_output", "uri": "file:pr-sheriff-evidence/gt-4468fx-pr4468-stale-heartbeat/merge-gate-check.txt", "actor": "gt-pr-sheriff-check", "created_at": "2026-07-13T20:26:00Z", "digest": null, "summary": "Checker output persisted after evidence generation."},
+    {"id": "research-01", "kind": "research_report", "uri": "task:ses_0a30c5a4cffeGVapsutmMsTDe1#R01", "actor": "researcher-R01", "created_at": "2026-07-13T19:35:00Z", "digest": null, "summary": "Problem validity: stale heartbeat alone is not proof of death, but PR #4468 as-is still treats IsAgentAlive false/query-error as dead."},
+    {"id": "research-02", "kind": "research_report", "uri": "task:ses_0a30c59b7ffeBcUYiYXXtE35aL#R02", "actor": "researcher-R02", "created_at": "2026-07-13T19:35:00Z", "digest": null, "summary": "Existing tests lacked stale heartbeat plus live agent, not-live agent, and query-error regressions; a narrow liveness seam is sufficient."},
+    {"id": "research-03", "kind": "research_report", "uri": "task:ses_0a30c593effemAK5t81PT34e0T#R03", "actor": "researcher-R03", "created_at": "2026-07-13T19:35:00Z", "digest": null, "summary": "tmux.IsAgentAlive returns bool only and collapses tmux/pane/process query failures to false; checked semantics are needed for destructive cleanup."},
+    {"id": "research-04", "kind": "research_report", "uri": "task:ses_0a30c58f1ffeC3Rmk2FtIqh0xX#R04", "actor": "researcher-R04", "created_at": "2026-07-13T19:35:00Z", "digest": null, "summary": "Original PR base was stale but the touched hunk did not conflict with then-current main; final replacement was later rebased to 62fc77c7."},
+    {"id": "research-05", "kind": "research_report", "uri": "task:ses_0a30c5826ffew344oQiR1eAz4r#R05", "actor": "researcher-R05", "created_at": "2026-07-13T19:35:00Z", "digest": null, "summary": "Cleanup-first review favored tightening the existing predicate and checked liveness errors, not retries/timeouts or another liveness layer."},
+    {"id": "research-06", "kind": "research_report", "uri": "task:ses_0a30c57afffeInz9jzs28LtBXK#R06", "actor": "researcher-R06", "created_at": "2026-07-13T19:35:00Z", "digest": null, "summary": "Attribution evidence: PR #4468 author marvincris / Marvin Cris Andrade; original commit author mayor <marvincris@outlook.com> with Claude co-author."},
+    {"id": "research-07", "kind": "research_report", "uri": "task:ses_0a30c574bffeVcD5C0JFbj7hjR#R07", "actor": "researcher-R07", "created_at": "2026-07-13T19:35:00Z", "digest": null, "summary": "Original labels have valid cardinality but status/needs-review and no review approval block merge-as-is."},
+    {"id": "research-08", "kind": "research_report", "uri": "task:ses_0a30c56f1ffeQT1nVuYiUkI65b#R08", "actor": "researcher-R08", "created_at": "2026-07-13T19:35:00Z", "digest": null, "summary": "CI was green on stale original head but missing focused regressions; local environment needs CGO_ENABLED=0 because ICU headers are absent."},
+    {"id": "research-09", "kind": "research_report", "uri": "task:ses_0a30c5686ffeRyhQdb8rFAlLpl#R09", "actor": "researcher-R09", "created_at": "2026-07-13T19:35:00Z", "digest": null, "summary": "Blocker scan confirmed missing approval, stale current-main verification, missing focused tests, and unresolved false-on-query-error semantics."},
+    {"id": "research-10", "kind": "research_report", "uri": "task:ses_0a30c5616ffemfucg1SUe0D0XG#R10", "actor": "researcher-R10", "created_at": "2026-07-13T19:35:00Z", "digest": null, "summary": "Testability review recommended a narrow package-level liveness seam plus checked tmux helper, not a broad Manager abstraction."},
+    {"id": "research-11", "kind": "research_report", "uri": "task:ses_0a30c55aaffe4O6Qhf3TIa5GJO#R11", "actor": "researcher-R11", "created_at": "2026-07-13T19:35:00Z", "digest": null, "summary": "No-heartbeat sessions should retain legacy PID fallback; stale heartbeat with liveness-query uncertainty should return not-dead."},
+    {"id": "research-12", "kind": "research_report", "uri": "task:ses_0a30c5557ffewmFMdkN5gMX99v#R12", "actor": "researcher-R12", "created_at": "2026-07-13T19:35:00Z", "digest": null, "summary": "Operational safety favors preserving uncertain live sessions over false-positive kills; false negatives are less destructive than killing active work."},
+    {"id": "research-13", "kind": "research_report", "uri": "task:ses_0a30c54ffffemJzISyCV63jq0Q#R13", "actor": "researcher-R13", "created_at": "2026-07-13T19:35:00Z", "digest": null, "summary": "Historical context from GH#3342 and daemon idle-reap protections supports stale-heartbeat plus live-agent preservation but requires fail-closed query semantics."},
+    {"id": "research-14", "kind": "research_report", "uri": "task:ses_0a30c5497ffe8FBpMKpY5Xm6Qj#R14", "actor": "researcher-R14", "created_at": "2026-07-13T19:35:00Z", "digest": null, "summary": "Evidence schema review identified required 15+5+5 records, merge-ready labels, replacement flow, attribution, blocker scan, verification, and checker output."},
+    {"id": "research-15", "kind": "research_report", "uri": "task:ses_0a30c5430ffePLP0kn9QvukpIk#R15", "actor": "researcher-R15", "created_at": "2026-07-13T19:35:00Z", "digest": null, "summary": "Final disposition review recommended sheriff replacement/fixup rather than merge-as-is, with current-main rebase, tests, attribution, and checker evidence."},
+    {"id": "pre-01", "kind": "pre_implementation_review", "uri": "task:ses_0a3040029ffePSxQAecIWOCltw#P01", "actor": "pre-reviewer-P01", "created_at": "2026-07-13T19:42:00Z", "digest": null, "summary": "Approved cleanup-first plan: checked liveness, stale heartbeat fail-closed, focused tests, no retries/timeouts/layers."},
+    {"id": "pre-02", "kind": "pre_implementation_review", "uri": "task:ses_0a303ff5affeWXZSy1REVKj69C#P02", "actor": "pre-reviewer-P02", "created_at": "2026-07-13T19:42:00Z", "digest": null, "summary": "Approved correctness and operational safety plan for isSessionProcessDead and reuse/state behavior."},
+    {"id": "pre-03", "kind": "pre_implementation_review", "uri": "task:ses_0a303fe3fffemGh2iDT6XIptMO#P03", "actor": "pre-reviewer-P03", "created_at": "2026-07-13T19:42:00Z", "digest": null, "summary": "Approved unit-level liveness seam and explicit query-error fail-closed regression."},
+    {"id": "pre-04", "kind": "pre_implementation_review", "uri": "task:ses_0a303fd5dffe4KcQ2bPTzDN4BD#P04", "actor": "pre-reviewer-P04", "created_at": "2026-07-13T19:42:00Z", "digest": null, "summary": "Approved API-compatible checked tmux method while preserving bool IsAgentAlive callers."},
+    {"id": "pre-05", "kind": "pre_implementation_review", "uri": "task:ses_0a303fc3fffeBVL54jpK1WGpfl#P05", "actor": "pre-reviewer-P05", "created_at": "2026-07-13T19:42:00Z", "digest": null, "summary": "Approved policy path for kind/bug replacement with marvincris attribution and post-review/checker gates."},
+    {"id": "post-01", "kind": "post_implementation_review", "uri": "task:ses_0a2de3f3cffeeqEYdBS0NjylUe#POST01", "actor": "post-reviewer-POST01", "created_at": "2026-07-13T20:18:00Z", "digest": null, "summary": "Approved cleanup-first final head d3858c3c: tightens predicate, no retries/timeouts/layers, attribution preserved."},
+    {"id": "post-02", "kind": "post_implementation_review", "uri": "task:ses_0a2de3ee0ffeZCJ41yIUinVcG2#POST02", "actor": "post-reviewer-POST02", "created_at": "2026-07-13T20:18:00Z", "digest": null, "summary": "Approved correctness final head d3858c3c: stale live/not-live/query-error, nil tmux, PID fallback, and descendant fallback behavior are safe."},
+    {"id": "post-03", "kind": "post_implementation_review", "uri": "task:ses_0a2de3e74ffe2zH4O7uYqpBbTw#POST03", "actor": "post-reviewer-POST03", "created_at": "2026-07-13T20:18:00Z", "digest": null, "summary": "Approved verification sufficiency; local tmux full-test failures are baseline/unrelated and focused checks pass."},
+    {"id": "post-04", "kind": "post_implementation_review", "uri": "task:ses_0a2de3dbcffe3ElxIOugqdMXYj#POST04", "actor": "post-reviewer-POST04", "created_at": "2026-07-13T20:18:00Z", "digest": null, "summary": "Approved API compatibility: checked helpers preserve errors, bool wrappers remain compatible, and process-match errors still allow descendant fallback."},
+    {"id": "post-05", "kind": "post_implementation_review", "uri": "task:ses_0a2de3d4fffezeaZb4NP3Tubdn#POST05", "actor": "post-reviewer-POST05", "created_at": "2026-07-13T20:18:00Z", "digest": null, "summary": "Approved policy/attribution final head; merge promotion still requires durable evidence and checker pass."}
+  ],
+  "implementation": {
+    "code_changed_by_sheriff": true,
+    "mode": "replacement_pr",
+    "first_code_change_at": "2026-07-13T19:47:00Z",
+    "modified_paths": [
+      "internal/polecat/heartbeat_test.go",
+      "internal/polecat/manager.go",
+      "internal/tmux/tmux.go",
+      "internal/tmux/tmux_test.go"
+    ],
+    "commits": ["d3858c3c91c3bee3252b1095551af5579bc07f34"]
+  },
+  "evidence": {
+    "research_legs": [
+      {"id": "R01", "independence_key": "R01-problem-validity", "artifact_ref": "research-01", "completed_at": "2026-07-13T19:35:00Z", "actor": "researcher-R01", "lens": "problem validity and exact kill predicate", "summary": "Stale heartbeat alone is not proof of death; PR #4468 intent is valid but bool IsAgentAlive query-error semantics block merge-as-is."},
+      {"id": "R02", "independence_key": "R02-test-coverage", "artifact_ref": "research-02", "completed_at": "2026-07-13T19:35:00Z", "actor": "researcher-R02", "lens": "test coverage gaps", "summary": "Focused live/not-live/query-error regressions are missing and needed."},
+      {"id": "R03", "independence_key": "R03-tmux-liveness", "artifact_ref": "research-03", "completed_at": "2026-07-13T19:35:00Z", "actor": "researcher-R03", "lens": "tmux IsAgentAlive error semantics", "summary": "IsAgentAlive false conflates absence and query failure; checked liveness is needed."},
+      {"id": "R04", "independence_key": "R04-current-main", "artifact_ref": "research-04", "completed_at": "2026-07-13T19:35:00Z", "actor": "researcher-R04", "lens": "current-main drift", "summary": "Original branch was stale but conflict risk low; final branch must rebase onto current main."},
+      {"id": "R05", "independence_key": "R05-cleanup-first", "artifact_ref": "research-05", "completed_at": "2026-07-13T19:35:00Z", "actor": "researcher-R05", "lens": "cleanup-first", "summary": "Minimal fix should tighten existing predicate and checked liveness, not add timeout/retry layers."},
+      {"id": "R06", "independence_key": "R06-attribution", "artifact_ref": "research-06", "completed_at": "2026-07-13T19:35:00Z", "actor": "researcher-R06", "lens": "attribution", "summary": "Preserve marvincris/mayor attribution and original Claude co-author when carrying forward."},
+      {"id": "R07", "independence_key": "R07-label-gate", "artifact_ref": "research-07", "completed_at": "2026-07-13T19:35:00Z", "actor": "researcher-R07", "lens": "labels and merge gate", "summary": "Original status/needs-review and no approval block merge-as-is."},
+      {"id": "R08", "independence_key": "R08-ci-verification", "artifact_ref": "research-08", "completed_at": "2026-07-13T19:35:00Z", "actor": "researcher-R08", "lens": "CI and local verification", "summary": "Original CI is stale and tests missing; final needs focused tests and CGO_ENABLED=0 local verification."},
+      {"id": "R09", "independence_key": "R09-blocker-scan", "artifact_ref": "research-09", "completed_at": "2026-07-13T19:35:00Z", "actor": "researcher-R09", "lens": "blocker scan", "summary": "Approval, stale base, tests, and query-error semantics are unresolved on original PR."},
+      {"id": "R10", "independence_key": "R10-testability", "artifact_ref": "research-10", "completed_at": "2026-07-13T19:35:00Z", "actor": "researcher-R10", "lens": "testability", "summary": "Use narrow liveness seam and checked tmux helper, not broad abstractions."},
+      {"id": "R11", "independence_key": "R11-pid-fallback", "artifact_ref": "research-11", "completed_at": "2026-07-13T19:35:00Z", "actor": "researcher-R11", "lens": "PID fallback", "summary": "Keep no-heartbeat PID fallback; stale query uncertainty should fail closed to not-dead."},
+      {"id": "R12", "independence_key": "R12-operational-safety", "artifact_ref": "research-12", "completed_at": "2026-07-13T19:35:00Z", "actor": "researcher-R12", "lens": "operational safety", "summary": "False-positive kills are higher blast radius than retaining uncertain stale sessions."},
+      {"id": "R13", "independence_key": "R13-related-history", "artifact_ref": "research-13", "completed_at": "2026-07-13T19:35:00Z", "actor": "researcher-R13", "lens": "historical context", "summary": "GH#3342/daemon idle-reap history supports live-agent preservation and fail-closed uncertainty."},
+      {"id": "R14", "independence_key": "R14-evidence-schema", "artifact_ref": "research-14", "completed_at": "2026-07-13T19:35:00Z", "actor": "researcher-R14", "lens": "evidence schema", "summary": "Final evidence requires 15+5+5, replacement flow, attribution, verification, blocker scan, and checker."},
+      {"id": "R15", "independence_key": "R15-disposition", "artifact_ref": "research-15", "completed_at": "2026-07-13T19:35:00Z", "actor": "researcher-R15", "lens": "final disposition", "summary": "Recommend current-main sheriff replacement/fixup instead of merge-as-is."}
+    ],
+    "pre_implementation_reviews": [
+      {"id": "P01", "independence_key": "P01-cleanup", "artifact_ref": "pre-01", "reviewed_action_ref": "action-plan-gt-4468fx", "completed_at": "2026-07-13T19:42:00Z", "actor": "pre-reviewer-P01", "verdict": "approve", "summary": "Approved cleanup-first minimality."},
+      {"id": "P02", "independence_key": "P02-correctness", "artifact_ref": "pre-02", "reviewed_action_ref": "action-plan-gt-4468fx", "completed_at": "2026-07-13T19:42:00Z", "actor": "pre-reviewer-P02", "verdict": "approve", "summary": "Approved correctness and safety."},
+      {"id": "P03", "independence_key": "P03-tests", "artifact_ref": "pre-03", "reviewed_action_ref": "action-plan-gt-4468fx", "completed_at": "2026-07-13T19:42:00Z", "actor": "pre-reviewer-P03", "verdict": "approve", "summary": "Approved focused test plan and query-error regression."},
+      {"id": "P04", "independence_key": "P04-api", "artifact_ref": "pre-04", "reviewed_action_ref": "action-plan-gt-4468fx", "completed_at": "2026-07-13T19:42:00Z", "actor": "pre-reviewer-P04", "verdict": "approve", "summary": "Approved API-compatible checked helper."},
+      {"id": "P05", "independence_key": "P05-policy", "artifact_ref": "pre-05", "reviewed_action_ref": "action-plan-gt-4468fx", "completed_at": "2026-07-13T19:42:00Z", "actor": "pre-reviewer-P05", "verdict": "approve", "summary": "Approved policy and attribution path."}
+    ],
+    "post_implementation_reviews": [
+      {"id": "POST01", "independence_key": "POST01-cleanup-d3858c3c", "artifact_ref": "post-01", "reviewed_action_ref": "action-plan-gt-4468fx", "reviewed_head_sha": "d3858c3c91c3bee3252b1095551af5579bc07f34", "completed_at": "2026-07-13T20:18:00Z", "actor": "post-reviewer-POST01", "verdict": "approve", "summary": "Approved cleanup-first final head."},
+      {"id": "POST02", "independence_key": "POST02-correctness-d3858c3c", "artifact_ref": "post-02", "reviewed_action_ref": "action-plan-gt-4468fx", "reviewed_head_sha": "d3858c3c91c3bee3252b1095551af5579bc07f34", "completed_at": "2026-07-13T20:18:00Z", "actor": "post-reviewer-POST02", "verdict": "approve", "summary": "Approved final correctness and safety."},
+      {"id": "POST03", "independence_key": "POST03-tests-d3858c3c", "artifact_ref": "post-03", "reviewed_action_ref": "action-plan-gt-4468fx", "reviewed_head_sha": "d3858c3c91c3bee3252b1095551af5579bc07f34", "completed_at": "2026-07-13T20:18:00Z", "actor": "post-reviewer-POST03", "verdict": "approve", "summary": "Approved final tests and verification sufficiency."},
+      {"id": "POST04", "independence_key": "POST04-api-d3858c3c", "artifact_ref": "post-04", "reviewed_action_ref": "action-plan-gt-4468fx", "reviewed_head_sha": "d3858c3c91c3bee3252b1095551af5579bc07f34", "completed_at": "2026-07-13T20:18:00Z", "actor": "post-reviewer-POST04", "verdict": "approve", "summary": "Approved final API compatibility."},
+      {"id": "POST05", "independence_key": "POST05-policy-d3858c3c", "artifact_ref": "post-05", "reviewed_action_ref": "action-plan-gt-4468fx", "reviewed_head_sha": "d3858c3c91c3bee3252b1095551af5579bc07f34", "completed_at": "2026-07-13T20:18:00Z", "actor": "post-reviewer-POST05", "verdict": "approve", "summary": "Approved final policy and attribution, pending checker evidence."}
+    ]
+  },
+  "cleanup_first": {
+    "assessment": "acceptable_minimal",
+    "rationale": "The replacement tightens the existing stale-heartbeat dead-session predicate and existing tmux runtime matcher with checked errors. It does not add retry loops, longer timeouts, or a second liveness layer.",
+    "prohibited_patterns": [
+      {"kind": "bandaid", "present": false, "exception_reason": "none", "evidence_ref": "post-01"},
+      {"kind": "workaround_layer", "present": false, "exception_reason": "none", "evidence_ref": "post-01"},
+      {"kind": "compatibility_shim", "present": false, "exception_reason": "none", "evidence_ref": "post-01"},
+      {"kind": "patch_on_patch", "present": false, "exception_reason": "none", "evidence_ref": "post-01"},
+      {"kind": "scope_creep", "present": false, "exception_reason": "none", "evidence_ref": "post-01"}
+    ]
+  },
+  "enhancement_approval": {
+    "required": false,
+    "required_reason": null,
+    "approved": false,
+    "approver": null,
+    "approver_role": null,
+    "approval_ref": null,
+    "approved_at": null
+  },
+  "verification": {
+    "focused_checks": [
+      {"name": "diff-check", "command_or_check": "git diff --check upstream/main..HEAD", "outcome": "pass", "artifact_ref": "verification-focused", "reason": "No whitespace or conflict-marker issues."},
+      {"name": "polecat-focused-stale-heartbeat", "command_or_check": "CGO_ENABLED=0 go test -count=1 -v ./internal/polecat -run 'TestIsSessionProcessDead_Heartbeat(Fresh|StaleUsesAgentLiveness|StaleWithoutTmuxFailsClosed)'", "outcome": "pass", "artifact_ref": "verification-focused", "reason": "Fresh, stale/live, stale/not-live, stale/query-error, and stale/no-tmux fail-closed regressions passed."},
+      {"name": "tmux-focused-checked-liveness", "command_or_check": "CGO_ENABLED=0 go test -count=1 -v ./internal/tmux -run '^(TestIsRuntimeRunning|TestIsRuntimeRunningChecked_NonexistentSessionErrors|TestIsRuntimeRunning_AgentNameRequiresCursorSession|TestIsRuntimeRunning_ShellWithNodeChild|TestIsAgentRunning_NonexistentSession)$'", "outcome": "pass", "artifact_ref": "verification-focused", "reason": "Checked liveness, bool wrapper compatibility, and runtime detection regressions passed."},
+      {"name": "polecat-package", "command_or_check": "CGO_ENABLED=0 go test -count=1 ./internal/polecat", "outcome": "pass", "artifact_ref": "verification-focused", "reason": "Full touched polecat package passed with CGO disabled for local ICU constraint."},
+      {"name": "build", "command_or_check": "CGO_ENABLED=0 go build ./cmd/gt", "outcome": "pass", "artifact_ref": "verification-focused", "reason": "CLI builds with CGO disabled in local environment."},
+      {"name": "local-baseline-tmux", "command_or_check": "CGO_ENABLED=0 go test -count=1 -v ./internal/tmux -run '^(TestNewSessionWithCommand_ExecEnvSuccess|TestGetPaneCommand_MultiPane)$' on upstream/main 62fc77c7", "outcome": "pass", "artifact_ref": "local-baseline-proof", "reason": "Baseline proof passed as unrelatedness evidence: the same two local failures reproduce on clean upstream/main."}
+    ],
+    "ci_checks": []
+  },
+  "baseline_red_waiver": {
+    "requested": false,
+    "approved": false,
+    "approved_by": null,
+    "approver_role": null,
+    "approved_at": null,
+    "approval_ref": null,
+    "failing_checks": [],
+    "unrelated_rationale": "",
+    "evidence_refs": []
+  },
+  "replacement_flow": {
+    "required": true,
+    "mode": "replacement_pr",
+    "state": "ready",
+    "original_change_url": "https://github.com/gastownhall/gastown/pull/4468",
+    "replacement_change_url": "https://github.com/Bella-Giraffety/gastown/tree/polecat/mirelurk/gt-4468fx-pr4468-stale-heartbeat",
+    "replacement_branch": "polecat/mirelurk/gt-4468fx-pr4468-stale-heartbeat",
+    "replacement_commit_refs": ["d3858c3c91c3bee3252b1095551af5579bc07f34"],
+    "original_author": "marvincris / Marvin Cris Andrade",
+    "evidence_reuse": {
+      "reused_artifact_refs": ["original-pr-4468", "research-01", "research-06"],
+      "fresh_artifact_refs": ["final-head", "verification-focused", "post-01", "post-02", "post-03", "post-04", "post-05"],
+      "rationale": "The valid bug intent from PR #4468 was carried forward, but final checked liveness semantics, tests, and current-main verification are fresh on upstream/main 62fc77c7."
+    },
+    "attribution": {
+      "required": true,
+      "required_reason": "Replacement preserves the accepted stale-heartbeat live-agent safety intent from PR #4468 by marvincris.",
+      "preserved": true,
+      "method": "co_authored_by",
+      "artifact_refs": ["original-pr-4468", "final-head", "research-06"]
+    },
+    "superseded_closure": {
+      "required": true,
+      "state": "deferred_until_replacement_merge",
+      "closure_intent_ref": "original-pr-4468",
+      "replacement_merge_ref": null,
+      "closure_ref": null
+    }
+  },
+  "blocker_scan": {
+    "scanned_sources": ["labels", "pr_comments", "review_comments", "ci_checks", "beads_notes", "local_reviews", "verification"],
+    "unresolved_blockers_found": false,
+    "blocker_refs": [],
+    "resolution_refs": ["post-01", "post-02", "post-03", "post-04", "post-05", "verification-focused", "final-head"],
+    "scanned_at": "2026-07-13T20:25:00Z",
+    "summary": "Original PR #4468 remains blocked for merge-as-is by status/needs-review, no approval, stale original head, missing tests, and bool query-error semantics. Replacement head d3858c3c resolves the implementation/test/query-error blockers, is current-main based, and has no unresolved blockers after final post-review and verification."
+  },
+  "gates": [],
+  "final": {
+    "verdict": "merge_replacement",
+    "decision_valid": true,
+    "merge_path_allowed": true,
+    "blocking_gates": [],
+    "target_change_url": "https://github.com/Bella-Giraffety/gastown/tree/polecat/mirelurk/gt-4468fx-pr4468-stale-heartbeat",
+    "target_head_sha": "d3858c3c91c3bee3252b1095551af5579bc07f34",
+    "decided_by": "gastown/polecats/mirelurk",
+    "decided_at": "2026-07-13T20:25:00Z",
+    "reason": "Original PR #4468 is not mergeable as-is. The current-main replacement passes 15 research legs, 5 pre-implementation reviews, 5 final-head post-implementation reviews, cleanup-first, attribution, blocker scan, focused verification, and build gates.",
+    "required_actions": ["Do not close PR #4468 as superseded until the replacement lands with attribution evidence."]
+  }
+}
