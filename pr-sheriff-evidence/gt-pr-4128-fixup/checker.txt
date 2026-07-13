@@ -1,0 +1,8 @@
+command: gt-pr-sheriff-check --evidence pr-sheriff-evidence/gt-pr-4128-fixup/evidence.json --merge-gate
+exit_code: 0
+stdout: |
+  PR Sheriff: PASS
+  merge_path_allowed: true
+  verdict: merge_replacement
+  gates: 12 pass, 2 not_applicable, 0 waived, 0 fail
+stderr: ""

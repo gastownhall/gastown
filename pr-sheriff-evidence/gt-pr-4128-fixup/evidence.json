@@ -1,0 +1,260 @@
+{
+  "schema_version": "pr-sheriff-evidence/v1",
+  "policy_version": "pr-sheriff-policy/v1.1",
+  "generated_at": "2026-07-13T16:50:00Z",
+  "run_id": "gt-pr-4128-fixup-clean-replacement-20260713",
+  "subject": {
+    "forge": "github",
+    "repo_id": "gastownhall/gastown",
+    "default_branch": "main",
+    "change_type": "pull_request",
+    "change_id": "4128",
+    "url": "https://github.com/gastownhall/gastown/pull/4128",
+    "title": "fix: auto-save uncommitted implementation work (gt-ini3q, gt-pvx safety net)",
+    "author": "athosmartins",
+    "author_tier": "known",
+    "draft": false,
+    "base_ref": "main",
+    "base_sha": "f97ed211bdcf7d8ad686f4d5f62233961aaa71a3",
+    "head_ref": "polecat/crater/gt-pr-4128-fixup+dcf3fa",
+    "head_sha": "2d861fc7bb42a0878c1c0ba72745f63ac446486a",
+    "diff_summary": {
+      "additions": 96,
+      "deletions": 12,
+      "changed_files": 4,
+      "paths": [
+        "internal/cmd/convoy.go",
+        "internal/cmd/convoy_notification_test.go",
+        "internal/refinery/engineer.go",
+        "internal/refinery/engineer_test.go"
+      ]
+    }
+  },
+  "repo_policy": {
+    "label_aliases": [],
+    "feature_kind_values": ["feature", "enhancement"],
+    "merge_ready_status_values": ["review-approved", "merge-ready"],
+    "approver_roles": ["maintainer", "owner", "policy_approver", "designated_reviewer"],
+    "evidence_locations": ["bead", "local_report"],
+    "baseline_checks": [],
+    "no_verification_reasons": ["docs_only"]
+  },
+  "action_plan": {
+    "id": "action-plan-gt-pr-4128-clean-replacement",
+    "mode": "replacement_pr",
+    "proposed_action_ref": "action-plan-gt-pr-4128-clean-replacement",
+    "summary": "Reject PR #4128's stale router subject-filter bandaid and publish a clean upstream/main-based replacement branch that fixes convoy/refinery notification attribution at producer call sites.",
+    "created_at": "2026-07-13T16:20:00Z"
+  },
+  "labels": {
+    "observed": [
+      {"name": "status/merge-ready", "family": "status", "semantic_value": "merge-ready"},
+      {"name": "priority/p2", "family": "priority", "semantic_value": "p2"},
+      {"name": "kind/bug", "family": "kind", "semantic_value": "bug"}
+    ],
+    "status": "merge-ready",
+    "priority": "p2",
+    "kind": "bug",
+    "snapshot_artifact_ref": "label-snapshot"
+  },
+  "artifacts": [
+    {
+      "id": "label-snapshot",
+      "kind": "label_snapshot",
+      "uri": "urn:bead:gt-pr-4128-fixup:labels:2026-07-13T16:50:00Z",
+      "actor": "gastown/polecats/crater",
+      "created_at": "2026-07-13T16:50:00Z",
+      "summary": "Replacement evidence classifies the clean branch as status/merge-ready, priority/p2, kind/bug while original PR #4128 remains review-failed and superseded."
+    },
+    {
+      "id": "verification-cmd-focused",
+      "kind": "test_log",
+      "uri": "urn:local-command:CGO_ENABLED=0-go-test-internal-cmd-convoy-notifications",
+      "actor": "gastown/polecats/crater",
+      "created_at": "2026-07-13T16:38:00Z",
+      "summary": "CGO_ENABLED=0 go test -count=1 ./internal/cmd -run 'TestNotifyConvoyCompletion_StampsAndSkipsDuplicate|TestSendCloseNotification_MailUsesConvoyFromAndNoNotify' passed."
+    },
+    {
+      "id": "verification-refinery-focused",
+      "kind": "test_log",
+      "uri": "urn:local-command:CGO_ENABLED=0-go-test-internal-refinery-convoy-notifications",
+      "actor": "gastown/polecats/crater",
+      "created_at": "2026-07-13T16:38:00Z",
+      "summary": "CGO_ENABLED=0 go test -count=1 ./internal/refinery -run 'TestEngineerNotifyConvoyCompletion_StampsAndSkipsDuplicate|TestNotifyConvoyCompletionParsing|TestCheckAndCloseCompletedConvoys_UsesHardenedBDEnvs' passed."
+    },
+    {
+      "id": "verification-beads-focused",
+      "kind": "test_log",
+      "uri": "urn:local-command:CGO_ENABLED=0-go-test-internal-beads-convoy-watchers",
+      "actor": "gastown/polecats/crater",
+      "created_at": "2026-07-13T16:38:00Z",
+      "summary": "CGO_ENABLED=0 go test -count=1 ./internal/beads -run 'TestNotificationAddressesIncludesWatchers|TestNudgeNotificationAddresses|TestSetConvoyFieldsPreservesWatchers' passed."
+    },
+    {
+      "id": "branch-hygiene",
+      "kind": "git_report",
+      "uri": "urn:git:branch:polecat/crater/gt-pr-4128-fixup+dcf3fa",
+      "actor": "gastown/polecats/crater",
+      "created_at": "2026-07-13T16:42:00Z",
+      "summary": "Branch is based on upstream/main f97ed211bdcf7d8ad686f4d5f62233961aaa71a3 with one commit 2d861fc7bb42a0878c1c0ba72745f63ac446486a; final diff is four files, no deletes."
+    },
+    {
+      "id": "attribution-trailers",
+      "kind": "commit_metadata",
+      "uri": "urn:git:commit:2d861fc7bb42a0878c1c0ba72745f63ac446486a:trailers",
+      "actor": "gastown/polecats/crater",
+      "created_at": "2026-07-13T16:35:00Z",
+      "summary": "Commit includes Refs trailers for PR #4128 and PR #3887 plus Co-authored-by trailers for furiosa <athosmartins@gmail.com> and digo <athosmartins@gmail.com>."
+    },
+    {
+      "id": "blocker-scan",
+      "kind": "blocker_scan",
+      "uri": "urn:bead:gt-pr-4128-fixup:blocker-scan:2026-07-13T16:50:00Z",
+      "actor": "gastown/polecats/crater",
+      "created_at": "2026-07-13T16:50:00Z",
+      "summary": "Original PR #4128 is conflicting, stale, review-failed, and CI-red; those block merge-as-is and are resolved by replacement branch evidence. No unresolved blockers remain for the clean replacement branch."
+    },
+    {
+      "id": "closure-intent",
+      "kind": "superseded_closure_intent",
+      "uri": "urn:bead:gt-pr-4128-fixup:closure-intent:2026-07-13T16:50:00Z",
+      "actor": "gastown/polecats/crater",
+      "created_at": "2026-07-13T16:50:00Z",
+      "summary": "After the clean replacement branch is published and merged, PR #4128 should be closed as superseded/obsolete. It should not be merged as-is."
+    }
+  ],
+  "implementation": {
+    "code_changed_by_sheriff": true,
+    "mode": "replacement_pr",
+    "first_code_change_at": "2026-07-13T16:28:00Z",
+    "modified_paths": [
+      "internal/cmd/convoy.go",
+      "internal/cmd/convoy_notification_test.go",
+      "internal/refinery/engineer.go",
+      "internal/refinery/engineer_test.go"
+    ],
+    "commits": ["2d861fc7bb42a0878c1c0ba72745f63ac446486a"]
+  },
+  "evidence": {
+    "research_legs": [
+      {"id": "research-01", "independence_key": "pr-4128-facts", "artifact_ref": "urn:opencode-task:ses_0a3c53f27ffeFqUrrpN8jtfRId", "completed_at": "2026-07-13T16:10:00Z", "actor": "research-leg-1", "lens": "PR #4128 facts and mergeability", "summary": "PR #4128 is open, conflicting/dirty, 417 commits behind, status/review-failed, CI red, and changes only internal/mail/router.go with a subject filter; do not merge as-is."},
+      {"id": "research-02", "independence_key": "pr-3887-source", "artifact_ref": "urn:opencode-task:ses_0a3c53ebcffeLFn5rw3QoEP4Ec", "completed_at": "2026-07-13T16:10:30Z", "actor": "research-leg-2", "lens": "PR #3887 source material", "summary": "PR #3887 final commit contains the root-cause producer attribution fix: convoy mail --from convoy/<id>, convoy nudges GT_ROLE=convoy/<id>. Carry intent narrowly with attribution, not whole PR."},
+      {"id": "research-03", "independence_key": "convoy-mail-callsites", "artifact_ref": "urn:opencode-task:ses_0a3c53e64ffe2ZiVqGp2xnh11f", "completed_at": "2026-07-13T16:11:00Z", "actor": "research-leg-3", "lens": "convoy mail call sites", "summary": "Upstream convoy/refinery completion mail omitted explicit --from and --no-notify; local replacement call-site fix was narrow and correct."},
+      {"id": "research-04", "independence_key": "convoy-nudge-env", "artifact_ref": "urn:opencode-task:ses_0a3c53e09ffegtmAej10Lh5S4T", "completed_at": "2026-07-13T16:11:30Z", "actor": "research-leg-4", "lens": "convoy nudge sender environment", "summary": "gt nudge derives sender from GT_ROLE; setting child GT_ROLE=convoy/<id> gives correct convoy attribution without global env mutation."},
+      {"id": "research-05", "independence_key": "existing-patch-diff", "artifact_ref": "urn:opencode-task:ses_0a3c53db7ffe0DQ7kJLiP482T3", "completed_at": "2026-07-13T16:12:00Z", "actor": "research-leg-5", "lens": "existing replacement diff", "summary": "Prior commit was narrow and avoided router rewrites/deletes, but its test patch needed manual adaptation to upstream/main."},
+      {"id": "research-06", "independence_key": "branch-base-strategy", "artifact_ref": "urn:opencode-task:ses_0a3c53d60ffebvsnwgt4JFhe30", "completed_at": "2026-07-13T16:12:30Z", "actor": "research-leg-6", "lens": "branch base strategy", "summary": "origin/main and upstream/main diverge; rebuild from upstream/main and push branch for Mayor fork PR publication rather than direct refinery merge."},
+      {"id": "research-07", "independence_key": "evidence-file-audit", "artifact_ref": "urn:opencode-task:ses_0a3c53d27ffeuzmJreLDhCZXJI", "completed_at": "2026-07-13T16:13:00Z", "actor": "research-leg-7", "lens": "existing evidence audit", "summary": "Previous evidence.json was missing locally; prior checker pass tied to stale/polluted 3a63 head could not be reused as final evidence."},
+      {"id": "research-08", "independence_key": "test-scope-audit", "artifact_ref": "urn:opencode-task:ses_0a3c53cd7ffe430dqXPjQSHo8J", "completed_at": "2026-07-13T16:13:30Z", "actor": "research-leg-8", "lens": "targeted verification scope", "summary": "Relevant tests are internal/cmd convoy notification tests, internal/refinery engineer tests, and beads watcher field tests."},
+      {"id": "research-09", "independence_key": "autosave-bandaid-risk", "artifact_ref": "urn:opencode-task:ses_0a3c53c75ffeWEQWFFbE6bzX0I", "completed_at": "2026-07-13T16:14:00Z", "actor": "research-leg-9", "lens": "PR #4128 bandaid risk", "summary": "PR #4128 routes overseer subject strings in the mail router, risking false positives/misses; reject/close as superseded after root-cause replacement."},
+      {"id": "research-10", "independence_key": "blocker-scan", "artifact_ref": "urn:opencode-task:ses_0a3c53c0cffeHjrhKC6tutO4q0", "completed_at": "2026-07-13T16:14:30Z", "actor": "research-leg-10", "lens": "PR Sheriff blocker scan", "summary": "Merge-as-is is blocked by dirty merge state, review-failed status, red CI, and mail-router risk; replacement was blocked until clean recut and fresh evidence."},
+      {"id": "research-11", "independence_key": "attribution-plan", "artifact_ref": "urn:opencode-task:ses_0a3c53ba2ffelawmjt1OBXBepI", "completed_at": "2026-07-13T16:15:00Z", "actor": "research-leg-11", "lens": "contributor attribution", "summary": "Carry Refs for PR #4128/#3887 and Co-authored-by trailers for furiosa and digo at athosmartins@gmail.com."},
+      {"id": "research-12", "independence_key": "security-review", "artifact_ref": "urn:opencode-task:ses_0a3c53b44ffebd6BN2gaIb3ePw", "completed_at": "2026-07-13T16:15:30Z", "actor": "research-leg-12", "lens": "security and spoofing risk", "summary": "Using existing local --from and GT_ROLE mechanisms for synthetic convoy attribution adds no new external trust boundary; no secrets exposure found."},
+      {"id": "research-13", "independence_key": "upstream-state", "artifact_ref": "urn:opencode-task:ses_0a3c53ae6ffexsDEuPRpD3RbY3", "completed_at": "2026-07-13T16:16:00Z", "actor": "research-leg-13", "lens": "current upstream compatibility", "summary": "Upstream/main lacks the replacement helpers; implementation and refinery patches apply, but convoy notification test requires manual merge with upstream JSONL tests."},
+      {"id": "research-14", "independence_key": "checker-requirements", "artifact_ref": "urn:opencode-task:ses_0a3c53a41ffe3r5rhVCwj6PQvv", "completed_at": "2026-07-13T16:16:30Z", "actor": "research-leg-14", "lens": "checker requirements", "summary": "merge_replacement requires fresh final-head evidence, replacement commit refs, attribution, superseded closure intent, and gt-pr-sheriff-check --merge-gate."},
+      {"id": "research-15", "independence_key": "minimal-solution", "artifact_ref": "urn:opencode-task:ses_0a3c539deffeMZI2MR04ObBYB7", "completed_at": "2026-07-13T16:17:00Z", "actor": "research-leg-15", "lens": "minimal cleanup-first solution", "summary": "Best action is a narrow replacement from PR #3887/local source material and close #4128 as superseded after replacement; no router bandaid."}
+    ],
+    "pre_implementation_reviews": [
+      {"id": "pre-01", "independence_key": "pre-review-1", "artifact_ref": "urn:opencode-task:ses_0a3b51e9dffeA42H2H9NRj5o1C", "reviewed_action_ref": "action-plan-gt-pr-4128-clean-replacement", "completed_at": "2026-07-13T16:21:00Z", "actor": "pre-review-1", "verdict": "approve", "summary": "Approved clean upstream/main replacement; branch must not reuse fork-polluted MR and must regenerate final evidence."},
+      {"id": "pre-02", "independence_key": "pre-review-2", "artifact_ref": "urn:opencode-task:ses_0a3b51d7effeAuR7nWdB5LXGda", "reviewed_action_ref": "action-plan-gt-pr-4128-clean-replacement", "completed_at": "2026-07-13T16:22:00Z", "actor": "pre-review-2", "verdict": "approve", "summary": "Approved minimal producer attribution fix, with explicit justification for --no-notify and attribution trailers."},
+      {"id": "pre-03", "independence_key": "pre-review-3", "artifact_ref": "urn:opencode-task:ses_0a3b51c0fffetUL2F5sDpUhxKk", "reviewed_action_ref": "action-plan-gt-pr-4128-clean-replacement", "completed_at": "2026-07-13T16:23:00Z", "actor": "pre-review-3", "verdict": "approve", "summary": "Approved after required adjustment to reuse existing filterEnvKey/beads env filtering instead of adding duplicate subprocessEnvWith; final implementation incorporates that adjustment."},
+      {"id": "pre-04", "independence_key": "pre-review-4", "artifact_ref": "urn:opencode-task:ses_0a3b51ba7ffexJ6g2NRit1QB9y", "reviewed_action_ref": "action-plan-gt-pr-4128-clean-replacement", "completed_at": "2026-07-13T16:24:00Z", "actor": "pre-review-4", "verdict": "approve", "summary": "Approved evidence/submission plan requiring fresh head SHA, post reviews, checker output, and branch push for Mayor publication."},
+      {"id": "pre-05", "independence_key": "pre-review-5", "artifact_ref": "urn:opencode-task:ses_0a3b51b34ffe0IUrduWtVB7vb6", "reviewed_action_ref": "action-plan-gt-pr-4128-clean-replacement", "completed_at": "2026-07-13T16:25:00Z", "actor": "pre-review-5", "verdict": "approve", "summary": "Approved security/regression posture for --from convoy/<id>, --no-notify, and child GT_ROLE=convoy/<id>; specified focused test expectations."}
+    ],
+    "post_implementation_reviews": [
+      {"id": "post-01", "independence_key": "post-review-1", "artifact_ref": "urn:opencode-task:ses_0a3a99bd4ffemzAgs7VweW7Hwz", "reviewed_action_ref": "action-plan-gt-pr-4128-clean-replacement", "reviewed_head_sha": "2d861fc7bb42a0878c1c0ba72745f63ac446486a", "completed_at": "2026-07-13T16:41:00Z", "actor": "post-review-1", "verdict": "approve", "summary": "Approved final commit for correctness, minimality, cleanup-first scope, attribution, and focused tests."},
+      {"id": "post-02", "independence_key": "post-review-2", "artifact_ref": "urn:opencode-task:ses_0a3a99b09ffeUOTqV5Q1yod3jG", "reviewed_action_ref": "action-plan-gt-pr-4128-clean-replacement", "reviewed_head_sha": "2d861fc7bb42a0878c1c0ba72745f63ac446486a", "completed_at": "2026-07-13T16:42:00Z", "actor": "post-review-2", "verdict": "approve", "summary": "Approved production code: helper centralizes convoy attribution, no global env mutation, no internal/mail router rewrite."},
+      {"id": "post-03", "independence_key": "post-review-3", "artifact_ref": "urn:opencode-task:ses_0a3a99a61ffeb26WPQI7K9JLZG", "reviewed_action_ref": "action-plan-gt-pr-4128-clean-replacement", "reviewed_head_sha": "2d861fc7bb42a0878c1c0ba72745f63ac446486a", "completed_at": "2026-07-13T16:43:00Z", "actor": "post-review-3", "verdict": "approve", "summary": "Approved tests: new sender/no-notify assertions added while preserving upstream JSONL export safety tests."},
+      {"id": "post-04", "independence_key": "post-review-4", "artifact_ref": "urn:opencode-task:ses_0a3a999eaffezQhLs8MUDBCRm5", "reviewed_action_ref": "action-plan-gt-pr-4128-clean-replacement", "reviewed_head_sha": "2d861fc7bb42a0878c1c0ba72745f63ac446486a", "completed_at": "2026-07-13T16:44:00Z", "actor": "post-review-4", "verdict": "approve", "summary": "Approved branch hygiene: upstream/main-based, narrow four-file diff, no deletes. Handoff was blocked only until this final evidence/checker artifact was added."},
+      {"id": "post-05", "independence_key": "post-review-5", "artifact_ref": "urn:opencode-task:ses_0a3a99977ffeXPbhAFqY0INvFT", "reviewed_action_ref": "action-plan-gt-pr-4128-clean-replacement", "reviewed_head_sha": "2d861fc7bb42a0878c1c0ba72745f63ac446486a", "completed_at": "2026-07-13T16:45:00Z", "actor": "post-review-5", "verdict": "approve", "summary": "Approved security/regression review; residual duplicate stamp timing is pre-existing and not introduced by the attribution fix."}
+    ]
+  },
+  "cleanup_first": {
+    "assessment": "acceptable_minimal",
+    "rationale": "The change removes the need for PR #4128's mail-router subject heuristic by fixing convoy/refinery notification producers with existing --from, --no-notify, and GT_ROLE mechanisms. It touches no router code and adds no workaround layer.",
+    "prohibited_patterns": [
+      {"kind": "bandaid", "present": false, "exception_reason": "none", "evidence_ref": null},
+      {"kind": "workaround_layer", "present": false, "exception_reason": "none", "evidence_ref": null},
+      {"kind": "compatibility_shim", "present": false, "exception_reason": "none", "evidence_ref": null},
+      {"kind": "patch_on_patch", "present": false, "exception_reason": "none", "evidence_ref": null},
+      {"kind": "scope_creep", "present": false, "exception_reason": "none", "evidence_ref": null}
+    ]
+  },
+  "enhancement_approval": {
+    "required": false,
+    "required_reason": null,
+    "approved": false,
+    "approver": null,
+    "approver_role": null,
+    "approval_ref": null,
+    "approved_at": null
+  },
+  "verification": {
+    "focused_checks": [
+      {"name": "internal/cmd convoy notification focused tests", "command_or_check": "CGO_ENABLED=0 go test -count=1 ./internal/cmd -run 'TestNotifyConvoyCompletion_StampsAndSkipsDuplicate|TestSendCloseNotification_MailUsesConvoyFromAndNoNotify'", "outcome": "pass", "artifact_ref": "verification-cmd-focused", "reason": "Covers convoy mail sender/no-notify, nudge GT_ROLE attribution, close notification mail, duplicate guard, and JSONL export target preservation."},
+      {"name": "internal/refinery convoy notification focused tests", "command_or_check": "CGO_ENABLED=0 go test -count=1 ./internal/refinery -run 'TestEngineerNotifyConvoyCompletion_StampsAndSkipsDuplicate|TestNotifyConvoyCompletionParsing|TestCheckAndCloseCompletedConvoys_UsesHardenedBDEnvs'", "outcome": "pass", "artifact_ref": "verification-refinery-focused", "reason": "Covers refinery convoy completion mail sender/no-notify and adjacent convoy parsing/BD environment behavior."},
+      {"name": "internal/beads convoy watcher focused tests", "command_or_check": "CGO_ENABLED=0 go test -count=1 ./internal/beads -run 'TestNotificationAddressesIncludesWatchers|TestNudgeNotificationAddresses|TestSetConvoyFieldsPreservesWatchers'", "outcome": "pass", "artifact_ref": "verification-beads-focused", "reason": "Covers owner/notify/nudge watcher field parsing and preservation used by convoy notifications."}
+    ],
+    "ci_checks": []
+  },
+  "baseline_red_waiver": {
+    "requested": false,
+    "approved": false,
+    "approved_by": null,
+    "approver_role": null,
+    "approved_at": null,
+    "approval_ref": null,
+    "failing_checks": [],
+    "unrelated_rationale": "",
+    "evidence_refs": []
+  },
+  "replacement_flow": {
+    "required": true,
+    "mode": "replacement_pr",
+    "state": "ready",
+    "original_change_url": "https://github.com/gastownhall/gastown/pull/4128",
+    "replacement_change_url": "https://github.com/Bella-Giraffety/gastown/tree/polecat/crater/gt-pr-4128-fixup+dcf3fa",
+    "replacement_branch": "polecat/crater/gt-pr-4128-fixup+dcf3fa",
+    "replacement_commit_refs": ["2d861fc7bb42a0878c1c0ba72745f63ac446486a"],
+    "original_author": "athosmartins",
+    "evidence_reuse": {
+      "reused_artifact_refs": ["urn:github:pr:3887", "urn:github:pr:4128"],
+      "fresh_artifact_refs": ["branch-hygiene", "verification-cmd-focused", "verification-refinery-focused", "verification-beads-focused"],
+      "rationale": "PR #4128 supplies the bug/disposition context and PR #3887 supplies narrow root-cause intent; final merge evidence is fresh for upstream/main head 2d861fc7bb42a0878c1c0ba72745f63ac446486a."
+    },
+    "attribution": {
+      "required": true,
+      "required_reason": "Replacement carries bug intent from PR #4128 and implementation intent from PR #3887 by athosmartins.",
+      "preserved": true,
+      "method": "co_authored_by",
+      "artifact_refs": ["attribution-trailers"]
+    },
+    "superseded_closure": {
+      "required": true,
+      "state": "deferred_until_replacement_merge",
+      "closure_intent_ref": "closure-intent",
+      "replacement_merge_ref": null,
+      "closure_ref": null
+    }
+  },
+  "blocker_scan": {
+    "scanned_sources": ["labels", "pr_comments", "review_comments", "bead_notes"],
+    "unresolved_blockers_found": false,
+    "blocker_refs": [],
+    "resolution_refs": ["blocker-scan", "branch-hygiene", "verification-cmd-focused", "verification-refinery-focused", "verification-beads-focused"],
+    "scanned_at": "2026-07-13T16:50:00Z",
+    "summary": "Original PR #4128 blockers are resolved by replacing it rather than merging it. The final clean replacement branch has no unresolved merge blockers in scanned sources."
+  },
+  "gates": [],
+  "final": {
+    "verdict": "merge_replacement",
+    "decision_valid": true,
+    "merge_path_allowed": true,
+    "blocking_gates": [],
+    "target_change_url": "https://github.com/Bella-Giraffety/gastown/tree/polecat/crater/gt-pr-4128-fixup+dcf3fa",
+    "target_head_sha": "2d861fc7bb42a0878c1c0ba72745f63ac446486a",
+    "decided_by": "gastown/polecats/crater",
+    "decided_at": "2026-07-13T16:50:00Z",
+    "reason": "Clean upstream/main-based replacement is ready: PR #4128 is rejected as stale/conflicting router bandaid; replacement fixes convoy/refinery notification attribution at producer call sites with focused verification, attribution, and final-head reviews.",
+    "required_actions": ["Mayor should publish the clean fork branch as a PR against upstream/main, then close PR #4128 as superseded after replacement lands."]
+  }
+}
