@@ -116,7 +116,12 @@ func resolveMergedWorkBead(agent issueReader, req mergedWorkBeadCloseRequest) st
 	if fields.ActiveMR != req.MRID && fields.MRID != req.MRID {
 		return ""
 	}
-	if fields.Branch != "" && req.Branch != "" && fields.Branch != req.Branch {
+	agentBranch := strings.TrimSpace(fields.Branch)
+	requestBranch := strings.TrimSpace(req.Branch)
+	if agentBranch == "" || strings.EqualFold(agentBranch, "null") {
+		return ""
+	}
+	if requestBranch == "" || strings.EqualFold(requestBranch, "null") || agentBranch != requestBranch {
 		return ""
 	}
 	return cleanWorkBeadID(fields.LastSourceIssue)

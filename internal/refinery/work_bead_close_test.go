@@ -128,16 +128,19 @@ func TestCloseMergedWorkBead_FallsBackToCompletionMRID(t *testing.T) {
 
 func TestCloseMergedWorkBead_RejectsUnverifiedAgentFallbacks(t *testing.T) {
 	tests := []struct {
-		name      string
-		agentDesc string
-		agentType string
-		agentLabs []string
+		name          string
+		agentDesc     string
+		agentType     string
+		agentLabs     []string
+		requestBranch string
 	}{
-		{name: "wrong active mr", agentDesc: "active_mr: gt-other\nlast_source_issue: gt-source\n", agentType: "agent", agentLabs: []string{"gt:agent"}},
-		{name: "wrong completion mr", agentDesc: "mr_id: gt-other\nlast_source_issue: gt-source\n", agentType: "agent", agentLabs: []string{"gt:agent"}},
-		{name: "branch mismatch", agentDesc: "active_mr: gt-mr\nbranch: polecat/other/gt-source+abc123\nlast_source_issue: gt-source\n", agentType: "agent", agentLabs: []string{"gt:agent"}},
-		{name: "missing source", agentDesc: "active_mr: gt-mr\n", agentType: "agent", agentLabs: []string{"gt:agent"}},
-		{name: "not agent bead", agentDesc: "active_mr: gt-mr\nlast_source_issue: gt-source\n", agentType: "task", agentLabs: nil},
+		{name: "wrong active mr", agentDesc: "active_mr: gt-other\nlast_source_issue: gt-source\n", agentType: "agent", agentLabs: []string{"gt:agent"}, requestBranch: "polecat/atom/gt-source+abc123"},
+		{name: "wrong completion mr", agentDesc: "mr_id: gt-other\nlast_source_issue: gt-source\n", agentType: "agent", agentLabs: []string{"gt:agent"}, requestBranch: "polecat/atom/gt-source+abc123"},
+		{name: "branch mismatch", agentDesc: "active_mr: gt-mr\nbranch: polecat/other/gt-source+abc123\nlast_source_issue: gt-source\n", agentType: "agent", agentLabs: []string{"gt:agent"}, requestBranch: "polecat/atom/gt-source+abc123"},
+		{name: "missing agent branch", agentDesc: "active_mr: gt-mr\nlast_source_issue: gt-source\n", agentType: "agent", agentLabs: []string{"gt:agent"}, requestBranch: "polecat/atom/gt-source+abc123"},
+		{name: "missing request branch", agentDesc: "active_mr: gt-mr\nbranch: polecat/atom/gt-source+abc123\nlast_source_issue: gt-source\n", agentType: "agent", agentLabs: []string{"gt:agent"}},
+		{name: "missing source", agentDesc: "active_mr: gt-mr\nbranch: polecat/atom/gt-source+abc123\n", agentType: "agent", agentLabs: []string{"gt:agent"}, requestBranch: "polecat/atom/gt-source+abc123"},
+		{name: "not agent bead", agentDesc: "active_mr: gt-mr\nlast_source_issue: gt-source\n", agentType: "task", agentLabs: nil, requestBranch: "polecat/atom/gt-source+abc123"},
 	}
 
 	for _, tt := range tests {
@@ -149,7 +152,7 @@ func TestCloseMergedWorkBead_RejectsUnverifiedAgentFallbacks(t *testing.T) {
 
 			result := closeMergedWorkBead(work, agent, nil, mergedWorkBeadCloseRequest{
 				MRID:      "gt-mr",
-				Branch:    "polecat/atom/gt-source+abc123",
+				Branch:    tt.requestBranch,
 				AgentBead: "gt-agent",
 			})
 
@@ -167,9 +170,9 @@ func TestCloseMergedWorkBead_RejectsNonConcreteTarget(t *testing.T) {
 	work := newFakeWorkBeadStore()
 	work.add(&beads.Issue{ID: "gt-mr-target", Title: "MR target", Type: "merge-request", Labels: []string{"gt:merge-request"}, Status: string(beads.StatusOpen)})
 	agent := newFakeWorkBeadStore()
-	agent.add(agentIssue("gt-agent", "active_mr: gt-mr\nlast_source_issue: gt-mr-target\n"))
+	agent.add(agentIssue("gt-agent", "active_mr: gt-mr\nbranch: polecat/atom/gt-source+abc123\nlast_source_issue: gt-mr-target\n"))
 
-	result := closeMergedWorkBead(work, agent, nil, mergedWorkBeadCloseRequest{MRID: "gt-mr", AgentBead: "gt-agent"})
+	result := closeMergedWorkBead(work, agent, nil, mergedWorkBeadCloseRequest{MRID: "gt-mr", Branch: "polecat/atom/gt-source+abc123", AgentBead: "gt-agent"})
 
 	if result.Closed || !result.NotFound || result.WorkBeadID != "gt-mr-target" {
 		t.Fatalf("result = %+v, want rejected non-concrete target", result)
@@ -179,19 +182,32 @@ func TestCloseMergedWorkBead_RejectsNonConcreteTarget(t *testing.T) {
 	}
 }
 
-func TestCloseMergedWorkBead_RejectsNoMergeTarget(t *testing.T) {
-	work := newFakeWorkBeadStore()
-	issue := workIssue("gt-source", string(beads.StatusOpen))
-	issue.Description = "no_merge: true\n"
-	work.add(issue)
-
-	result := closeMergedWorkBead(work, nil, nil, mergedWorkBeadCloseRequest{MRID: "gt-mr", SourceIssue: "gt-source"})
-
-	if result.Closed || !result.NotFound || result.WorkBeadID != "gt-source" {
-		t.Fatalf("result = %+v, want rejected no_merge target", result)
+func TestCloseMergedWorkBead_RejectsNonMergeableTargets(t *testing.T) {
+	tests := []struct {
+		name        string
+		description string
+	}{
+		{name: "no_merge", description: "no_merge: true\n"},
+		{name: "review_only", description: "review_only: true\n"},
+		{name: "local merge strategy", description: "merge_strategy: local\n"},
 	}
-	if len(work.closeCalls) != 0 {
-		t.Fatalf("close calls = %v, want none", work.closeCalls)
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			work := newFakeWorkBeadStore()
+			issue := workIssue("gt-source", string(beads.StatusOpen))
+			issue.Description = tt.description
+			work.add(issue)
+
+			result := closeMergedWorkBead(work, nil, nil, mergedWorkBeadCloseRequest{MRID: "gt-mr", SourceIssue: "gt-source"})
+
+			if result.Closed || !result.NotFound || result.WorkBeadID != "gt-source" {
+				t.Fatalf("result = %+v, want rejected target", result)
+			}
+			if len(work.closeCalls) != 0 {
+				t.Fatalf("close calls = %v, want none", work.closeCalls)
+			}
+		})
 	}
 }
 
