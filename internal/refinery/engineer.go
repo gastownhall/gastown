@@ -211,6 +211,9 @@ type MRInfo struct {
 	Title           string     // MR title
 	Priority        int        // Priority (lower = higher priority)
 	AgentBead       string     // Agent bead ID that created this MR
+	CommitSHA       string     // Source branch tip submitted to the queue
+	PRURL           string     // Recorded pull request URL, if available
+	PRNumber        int        // Recorded pull request number, if available
 	RetryCount      int        // Conflict retry count
 	ConflictTaskID  string     // Open conflict-resolution task for this MR (if any)
 	ConvoyID        string     // Parent convoy ID if part of a convoy
@@ -785,40 +788,40 @@ func (e *Engineer) doMergePR(ctx context.Context, mr *MRInfo) ProcessResult {
 	}
 
 	// Step PR.1: Find the PR for this branch
-	prNumber, err := e.prProvider.FindPRNumber(branch)
+	pr, err := e.prProvider.FindPullRequest(branch, mr.PRURL, mr.PRNumber, mr.CommitSHA)
 	if err != nil {
 		return ProcessResult{
 			Success: false,
 			Error:   fmt.Sprintf("failed to find PR for branch %s: %v", branch, err),
 		}
 	}
-	if prNumber == 0 {
+	if pr == nil {
 		return ProcessResult{
 			Success: false,
 			Error:   fmt.Sprintf("no open PR found for branch %s — merge_strategy=pr requires a PR", branch),
 		}
 	}
-	_, _ = fmt.Fprintf(e.output, "[Engineer] Found PR #%d for branch %s\n", prNumber, branch)
+	_, _ = fmt.Fprintf(e.output, "[Engineer] Found PR #%d for branch %s\n", pr.Number, branch)
 
 	// Step PR.2: Check approval status if require_review is enabled
 	requireReview := e.config.RequireReview != nil && *e.config.RequireReview
 	if requireReview {
-		approved, err := e.prProvider.IsPRApproved(prNumber)
+		approved, err := e.prProvider.IsPRApproved(pr)
 		if err != nil {
 			return ProcessResult{
 				Success: false,
-				Error:   fmt.Sprintf("failed to check PR #%d approval status: %v", prNumber, err),
+				Error:   fmt.Sprintf("failed to check PR #%d approval status: %v", pr.Number, err),
 			}
 		}
 		if !approved {
-			_, _ = fmt.Fprintf(e.output, "[Engineer] PR #%d awaiting human approval — deferring merge\n", prNumber)
+			_, _ = fmt.Fprintf(e.output, "[Engineer] PR #%d awaiting human approval — deferring merge\n", pr.Number)
 			return ProcessResult{
 				Success:       false,
 				NeedsApproval: true,
-				Error:         fmt.Sprintf("PR #%d requires approving review before merge", prNumber),
+				Error:         fmt.Sprintf("PR #%d requires approving review before merge", pr.Number),
 			}
 		}
-		_, _ = fmt.Fprintf(e.output, "[Engineer] PR #%d has approving review\n", prNumber)
+		_, _ = fmt.Fprintf(e.output, "[Engineer] PR #%d has approving review\n", pr.Number)
 	}
 
 	if eligibility := e.recheckMRStillMergeable(mr, target); !eligibility.Success {
@@ -826,12 +829,12 @@ func (e *Engineer) doMergePR(ctx context.Context, mr *MRInfo) ProcessResult {
 	}
 
 	// Step PR.3: Merge via VCS provider API using squash merge
-	_, _ = fmt.Fprintf(e.output, "[Engineer] Merging PR #%d via %s API (squash)...\n", prNumber, provider)
-	mergeCommit, err := e.prProvider.MergePR(prNumber, "squash")
+	_, _ = fmt.Fprintf(e.output, "[Engineer] Merging PR #%d via %s API (squash)...\n", pr.Number, provider)
+	mergeCommit, err := e.prProvider.MergePR(pr, "squash")
 	if err != nil {
 		return ProcessResult{
 			Success: false,
-			Error:   fmt.Sprintf("PR merge failed for PR #%d: %v", prNumber, err),
+			Error:   fmt.Sprintf("PR merge failed for PR #%d: %v", pr.Number, err),
 		}
 	}
 
@@ -854,7 +857,7 @@ func (e *Engineer) doMergePR(ctx context.Context, mr *MRInfo) ProcessResult {
 		}
 	}
 
-	_, _ = fmt.Fprintf(e.output, "[Engineer] Successfully merged PR #%d: %s\n", prNumber, shortSHA(mergeCommit))
+	_, _ = fmt.Fprintf(e.output, "[Engineer] Successfully merged PR #%d: %s\n", pr.Number, shortSHA(mergeCommit))
 	return ProcessResult{
 		Success:     true,
 		MergeCommit: mergeCommit,
@@ -1406,7 +1409,7 @@ func (e *Engineer) HandleMRInfoSuccess(mr *MRInfo, result ProcessResult) {
 		// be closed via gh pr merge (showing "merged"), not via branch deletion
 		// (which shows "closed" and destroys the PR audit trail).
 		if isPolecat {
-			if e.git.HasOpenPR(mr.Branch) {
+			if e.git.HasOpenPullRequest(git.PullRequestRef{URL: mr.PRURL, Number: mr.PRNumber, Branch: mr.Branch, HeadSHA: mr.CommitSHA}) {
 				_, _ = fmt.Fprintf(e.output, "[Engineer] Skipping remote branch delete for %s: open PR exists (gas-fk4)\n", mr.Branch)
 			} else if err := e.git.DeleteRemoteBranch("origin", mr.Branch); err != nil {
 				_, _ = fmt.Fprintf(e.output, "[Engineer] Warning: failed to delete remote branch %s: %v\n", mr.Branch, err)
@@ -1895,6 +1898,9 @@ func issueToMRInfo(issue *beads.Issue, fields *beads.MRFields) *MRInfo {
 		Title:           issue.Title,
 		Priority:        issue.Priority,
 		AgentBead:       fields.AgentBead,
+		CommitSHA:       fields.CommitSHA,
+		PRURL:           fields.PRURL,
+		PRNumber:        fields.PRNumber,
 		RetryCount:      fields.RetryCount,
 		ConflictTaskID:  fields.ConflictTaskID,
 		ConvoyID:        fields.ConvoyID,

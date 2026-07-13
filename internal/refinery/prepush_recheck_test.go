@@ -25,18 +25,18 @@ type prepushPRProvider struct {
 	mergeCalled bool
 }
 
-func (p *prepushPRProvider) FindPRNumber(string) (int, error) {
-	return 42, nil
+func (p *prepushPRProvider) FindPullRequest(string, string, int, string) (*gitpkg.PullRequestInfo, error) {
+	return &gitpkg.PullRequestInfo{Number: 42, State: "OPEN"}, nil
 }
 
-func (p *prepushPRProvider) IsPRApproved(int) (bool, error) {
+func (p *prepushPRProvider) IsPRApproved(*gitpkg.PullRequestInfo) (bool, error) {
 	if p.beforeMerge != nil {
 		p.beforeMerge()
 	}
 	return true, nil
 }
 
-func (p *prepushPRProvider) MergePR(int, string) (string, error) {
+func (p *prepushPRProvider) MergePR(*gitpkg.PullRequestInfo, string) (string, error) {
 	p.mergeCalled = true
 	return "deadbeef", nil
 }

@@ -187,6 +187,7 @@ type Issue struct {
 	UpdatedAt   string   `json:"updated_at"`
 	ClosedAt    string   `json:"closed_at,omitempty"`
 	Parent      string   `json:"parent,omitempty"`
+	ExternalRef string   `json:"external_ref,omitempty"`
 	Assignee    string   `json:"assignee,omitempty"`
 	Children    []string `json:"children,omitempty"`
 	DependsOn   []string `json:"depends_on,omitempty"`

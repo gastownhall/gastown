@@ -96,7 +96,8 @@ This happens when idle_cycles >= {{idle_effort_threshold}} (no events on channel
 Abbreviated patrol rules:
 - **inbox-check**: Run `gt mail drain` and quick inbox check. Skip individual message processing unless new MERGE_READY found.
 - **queue-scan**: Quick `gt mq list` check. If queue is empty, skip directly to check-integration-branches.
-- **process-branch through merge-push**: Only run if queue-scan found work. Otherwise SKIP all.
+- **merged-pr-sweep**: Run even in reduced mode when queue-scan found queued MRs.
+- **process-branch through merge-push**: Only run if queue-scan found remaining actionable work. Otherwise SKIP all.
 - **loop-check through generate-summary**: SKIP if no merges were processed.
 - **check-integration-branches**: Quick check only.
 - **context-check**: Quick self-assessment (one sentence).
@@ -107,7 +108,7 @@ When `await-event` outputs `EFFORT: full`, run all steps thoroughly (normal mode
 
 The goal: idle cycles should burn ~10% of the tokens a full patrol uses."""
 formula = "mol-refinery-patrol"
-version = 15
+version = 16
 
 [vars]
 [vars.wisp_type]
@@ -270,15 +271,62 @@ git branch -r | grep <branch>
 ```
 
 If branch doesn't exist for a queued MR:
-- Close the MR bead: `bd close <mr-id> --reason "Branch no longer exists"`
-- Remove from processing queue
+- First resolve PR state with the authoritative queue lookup:
+  ```bash
+  PR_JSON=$(gt mq pr-status <rig> <mr-id> --json)
+  PR_STATE=$(echo "$PR_JSON" | jq -r '.pr.state // "NOT_FOUND"')
+  PR_URL=$(echo "$PR_JSON" | jq -r '.pr.url // empty')
+  ```
+- If lookup errors or reports ambiguity: leave the MR open, do NOT close it as missing.
+- If `PR_STATE=MERGED`: handle it in merged-pr-sweep below; do NOT close as missing.
+- If `PR_STATE=OPEN`: leave the MR open; the branch may be a fork/head PR.
+- If `PR_STATE=CLOSED`: do NOT send MERGED; leave the MR for manual rejection/supersede review.
+- If `PR_STATE=NOT_FOUND`: fail closed; leave the MR open rather than risking owner-merged/deleted-head misclassification.
 
 Track verified MR list for this cycle."""
 
 [[steps]]
+id = "merged-pr-sweep"
+title = "Drain already-merged PRs"
+needs = ["queue-scan"]
+description = """
+Sweep queued MRs for PRs that were merged outside the refinery flow.
+
+This step prevents owner-merged PRs from rotting in the queue, including fork-head
+and deleted-head PRs. Use exactly one authoritative lookup path:
+
+```bash
+PR_JSON=$(gt mq pr-status <rig> <mr-id> --json)
+PR_STATE=$(echo "$PR_JSON" | jq -r '.pr.state // "NOT_FOUND"')
+PR_URL=$(echo "$PR_JSON" | jq -r '.pr.url // empty')
+```
+
+`gt mq pr-status` prefers recorded PR URL/number metadata from the MR/source bead.
+Only when no recorded PR identity exists does it perform a target-repo head lookup,
+and ambiguous head matches fail closed. Do NOT replace it with `gh pr view <branch>`,
+branch-only `gh pr list --limit 1`, retries, or broad fallback searches.
+
+For each queued MR:
+- If lookup errors or reports ambiguity: leave the MR open and continue to the next MR.
+- If `PR_STATE=MERGED`: send MERGED to Witness, then run post-merge cleanup with branch deletion skipped:
+  ```bash
+  gt mail send <rig>/witness -s "MERGED <polecat-name>" -m "Branch: <branch>
+  Issue: <issue-id>
+  PR: ${PR_URL}
+  MR: <mr-id>"
+  gt mq post-merge <rig> <mr-id> --skip-branch-delete
+  gt mail archive <merge-ready-message-id>
+  ```
+- If `PR_STATE=OPEN`: leave it for the normal process-branch/merge-push path.
+- If `PR_STATE=CLOSED`: do NOT send MERGED; leave it for manual rejection/supersede review.
+- If `PR_STATE=NOT_FOUND`: leave it open; do not close as "Branch no longer exists".
+
+After sweeping merged PRs, process only MRs still actionable in process-branch."""
+
+[[steps]]
 id = "process-branch"
 title = "Mechanical rebase"
-needs = ["queue-scan"]
+needs = ["merged-pr-sweep"]
 description = """
 Pick next branch from queue. Attempt mechanical rebase on the MR's effective target branch.
 
@@ -299,9 +347,9 @@ git ls-remote --exit-code origin refs/heads/<polecat-branch>
 ```
 
 If the branch no longer exists (exit code non-zero):
-- Close the MR bead: `bd close <mr-id> --reason "Branch no longer exists"`
-- Archive the MERGE_READY mail: `gt mail archive <message-id>`
-- Skip to loop-check — do NOT treat as a merge failure, do NOT nudge the polecat
+- Resolve PR state with `gt mq pr-status <rig> <mr-id> --json`.
+- If `PR_STATE=MERGED`: return to merged-pr-sweep behavior for this MR.
+- If lookup errors, ambiguity, `OPEN`, `CLOSED`, or `NOT_FOUND`: leave the MR open and skip to loop-check; do NOT close it as missing, do NOT nudge the polecat.
 
 **Step 1: Checkout and attempt rebase**
 ```bash
@@ -604,8 +652,12 @@ cause GitHub to auto-close the PR as "closed" (not "merged"), destroying
 the PR audit trail and making it appear that work was rejected.
 
 ```bash
-OPEN_PR=$(gh pr list --head <polecat-branch> --state open --json number --limit 1 2>/dev/null || echo "[]")
-if [ "$OPEN_PR" != "[]" ] && [ "$OPEN_PR" != "" ]; then
+if PR_JSON=$(gt mq pr-status <rig> <mr-bead-id> --json); then
+  PR_STATE=$(echo "$PR_JSON" | jq -r '.pr.state // "NOT_FOUND"')
+else
+  PR_STATE="LOOKUP_ERROR"
+fi
+if [ "$PR_STATE" = "OPEN" ] || [ "$PR_STATE" = "LOOKUP_ERROR" ]; then
   echo "Open PR found on branch — will use --skip-branch-delete in post-merge"
   # Set flag for Step 3 (post-merge cleanup) to skip branch deletion
   SKIP_BRANCH_DELETE=true
@@ -655,13 +707,14 @@ echo "PR created: $PR_URL"
 If the PR already exists for this branch, `gh pr create` will fail. In that case,
 find the existing PR:
 ```bash
-PR_URL=$(gh pr view <polecat-branch> --json url -q '.url')
+PR_JSON=$(gt mq pr-status <rig> <mr-bead-id> --json)
+PR_URL=$(echo "$PR_JSON" | jq -r '.pr.url // empty')
 ```
 
 **Step 1.5 (pr only): VERIFY PR CREATED**
 
 ```bash
-gh pr view <polecat-branch> --json url,state -q '.url + " " + .state'
+gh pr view "$PR_URL" --json url,state -q '.url + " " + .state'
 ```
 
 If the PR was not created or is in an unexpected state, debug and retry.
@@ -675,13 +728,13 @@ If the PR was not created or is in an unexpected state, debug and retry.
 REPO_URL=$(git remote get-url origin | sed 's/.*github.com[:/]\\(.*\\)\\.git/\\1/')
 
 # Wait for CI checks (timeout 15 minutes)
-gh pr checks <polecat-branch> --repo "$REPO_URL" --watch --fail-fast
+gh pr checks "$PR_URL" --repo "$REPO_URL" --watch --fail-fast
 ```
 
 **If CI checks FAIL:**
 Do NOT merge. Send FIX_NEEDED back to the polecat:
 ```bash
-FAILURE_OUTPUT=$(gh pr checks <polecat-branch> --repo "$REPO_URL" 2>&1)
+FAILURE_OUTPUT=$(gh pr checks "$PR_URL" --repo "$REPO_URL" 2>&1)
 gt mail send <rig>/polecats/<polecat-name> -s "FIX_NEEDED <polecat-name>" --stdin <<'BODY'
 Branch: <branch>
 Issue: <issue-id>
@@ -702,7 +755,7 @@ Plain review comments (COMMENTED) are NOT approval. Only an explicit
 "APPROVED" reviewDecision allows the merge to proceed.
 
 ```bash
-REVIEW_DECISION=$(gh pr view <polecat-branch> --repo "$REPO_URL" --json reviewDecision -q '.reviewDecision')
+REVIEW_DECISION=$(gh pr view "$PR_URL" --repo "$REPO_URL" --json reviewDecision -q '.reviewDecision')
 echo "Review decision: $REVIEW_DECISION"
 ```
 
@@ -734,7 +787,7 @@ Clean up temp branch and skip to loop-check.
 **If APPROVED:**
 Merge the PR:
 ```bash
-gh pr merge <polecat-branch> --repo "$REPO_URL" --merge --delete-branch
+gh pr merge "$PR_URL" --repo "$REPO_URL" --merge --delete-branch
 ```
 
 If merge fails (conflict, branch protection), debug and retry.

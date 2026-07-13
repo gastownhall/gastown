@@ -1532,50 +1532,49 @@ func (g *Git) DeleteRemoteBranchIfAt(remote, branch, expectedHash string) error 
 }
 
 // HasOpenPR checks whether the given branch has an open pull request on GitHub.
-// Uses the gh CLI to query for open PRs with the branch as head ref.
-// Returns false on any error (fail-open: branch deletion proceeds if gh is unavailable).
+// Errors and ambiguous branch lookups protect the branch from deletion.
 func (g *Git) HasOpenPR(branch string) bool {
-	cmd := exec.Command("gh", "pr", "list", "--head", branch, "--state", "open", "--json", "number", "--limit", "1")
-	cmd.Dir = g.workDir
-	out, err := cmd.Output()
-	if err != nil {
-		return false // fail-open: can't determine PR state, allow deletion
-	}
-	out = bytes.TrimSpace(out)
-	// Empty array "[]" means no open PRs
-	return len(out) > 2
+	return g.HasOpenPullRequest(PullRequestRef{Branch: branch})
 }
 
 // FindPRNumber returns the GitHub PR number for the given branch, or 0 if none exists.
-// Uses the gh CLI to query for open PRs with the branch as head ref.
 func (g *Git) FindPRNumber(branch string) (int, error) {
-	cmd := exec.Command("gh", "pr", "list", "--head", branch, "--state", "open", "--json", "number", "--limit", "1")
-	cmd.Dir = g.workDir
-	out, err := cmd.Output()
+	return g.FindPRNumberForRef(PullRequestRef{Branch: branch})
+}
+
+// FindPRNumberForRef returns an open GitHub PR number using recorded PR identity
+// before falling back to an unambiguous target-repo branch lookup.
+func (g *Git) FindPRNumberForRef(ref PullRequestRef) (int, error) {
+	pr, err := g.LookupPullRequest(ref)
 	if err != nil {
-		return 0, fmt.Errorf("gh pr list failed: %w", err)
+		if errors.Is(err, ErrPullRequestNotFound) {
+			return 0, nil
+		}
+		return 0, err
 	}
-	out = bytes.TrimSpace(out)
-	if len(out) <= 2 {
-		return 0, nil // No open PR
-	}
-	var prs []struct {
-		Number int `json:"number"`
-	}
-	if err := json.Unmarshal(out, &prs); err != nil {
-		return 0, fmt.Errorf("failed to parse gh pr list output: %w", err)
-	}
-	if len(prs) == 0 {
+	if !pr.Open() {
 		return 0, nil
 	}
-	return prs[0].Number, nil
+	return pr.Number, nil
 }
 
 // IsPRApproved checks whether a GitHub PR has at least one approving review.
 // Returns true if approved, false if not (or on error).
 func (g *Git) IsPRApproved(prNumber int) (bool, error) {
+	return g.IsPullRequestApproved(&PullRequestInfo{Number: prNumber})
+}
+
+// IsPullRequestApproved checks whether a resolved GitHub PR has at least one approving review.
+func (g *Git) IsPullRequestApproved(pr *PullRequestInfo) (bool, error) {
+	if pr == nil || (pr.Number == 0 && pr.URL == "") {
+		return false, fmt.Errorf("pull request identity is missing")
+	}
 	// Use gh pr view which includes review decision
-	cmd := exec.Command("gh", "pr", "view", fmt.Sprintf("%d", prNumber), "--json", "reviewDecision")
+	args := []string{"pr", "view", pullRequestSelector(pr), "--json", "reviewDecision"}
+	if pr.BaseRepo != "" {
+		args = append(args, "--repo", pr.BaseRepo)
+	}
+	cmd := exec.Command("gh", args...)
 	cmd.Dir = g.workDir
 	out, err := cmd.Output()
 	if err != nil {
@@ -1595,7 +1594,18 @@ func (g *Git) IsPRApproved(prNumber int) (bool, error) {
 // The method parameter should be "merge", "squash", or "rebase".
 // Returns the merge commit SHA on success.
 func (g *Git) GhPrMerge(prNumber int, method string) (string, error) {
-	args := []string{"pr", "merge", fmt.Sprintf("%d", prNumber), "--" + method, "--delete-branch"}
+	return g.GhPrMergePullRequest(&PullRequestInfo{Number: prNumber}, method)
+}
+
+// GhPrMergePullRequest merges a resolved GitHub PR using its URL when available.
+func (g *Git) GhPrMergePullRequest(pr *PullRequestInfo, method string) (string, error) {
+	if pr == nil || (pr.Number == 0 && pr.URL == "") {
+		return "", fmt.Errorf("pull request identity is missing")
+	}
+	args := []string{"pr", "merge", pullRequestSelector(pr), "--" + method, "--delete-branch"}
+	if pr.BaseRepo != "" {
+		args = append(args, "--repo", pr.BaseRepo)
+	}
 	cmd := exec.Command("gh", args...)
 	cmd.Dir = g.workDir
 	out, err := cmd.CombinedOutput()
@@ -1614,6 +1624,16 @@ func (g *Git) GhPrMerge(prNumber int, method string) (string, error) {
 		return "", nil // Merge succeeded, just can't determine SHA
 	}
 	return sha, nil
+}
+
+func pullRequestSelector(pr *PullRequestInfo) string {
+	if pr != nil && pr.URL != "" {
+		return pr.URL
+	}
+	if pr != nil {
+		return fmt.Sprintf("%d", pr.Number)
+	}
+	return ""
 }
 
 // FindBitbucketPRNumber returns the Bitbucket PR ID for the given branch, or 0 if none exists.

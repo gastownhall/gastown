@@ -33,6 +33,13 @@ type MergeRequest struct {
 	// TargetBranch is where this should merge (usually integration or main).
 	TargetBranch string `json:"target_branch"`
 
+	// CommitSHA is the source branch tip submitted to the queue.
+	CommitSHA string `json:"commit_sha,omitempty"`
+
+	// PRURL/PRNumber record the authoritative PR identity when available.
+	PRURL    string `json:"pr_url,omitempty"`
+	PRNumber int    `json:"pr_number,omitempty"`
+
 	// MergeCommit is the SHA that was pushed to the target branch after merge.
 	MergeCommit string `json:"merge_commit,omitempty"`
 

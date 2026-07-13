@@ -1905,6 +1905,23 @@ commit_sha: a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2`,
 			},
 		},
 		{
+			name: "pr identity fields",
+			issue: &Issue{
+				Description: `branch: polecat/furiosa/gt-pr
+target: main
+source_issue: gt-pr
+pr_url: https://github.com/gastownhall/gastown/pull/4474
+pr_number: 4474`,
+			},
+			wantFields: &MRFields{
+				Branch:      "polecat/furiosa/gt-pr",
+				Target:      "main",
+				SourceIssue: "gt-pr",
+				PRURL:       "https://github.com/gastownhall/gastown/pull/4474",
+				PRNumber:    4474,
+			},
+		},
+		{
 			name: "null optional fields are empty",
 			issue: &Issue{
 				Description: `branch: polecat/Nux/gt-null
@@ -1953,6 +1970,12 @@ conflict_task_id: null`,
 			}
 			if fields.CommitSHA != tt.wantFields.CommitSHA {
 				t.Errorf("CommitSHA = %q, want %q", fields.CommitSHA, tt.wantFields.CommitSHA)
+			}
+			if fields.PRURL != tt.wantFields.PRURL {
+				t.Errorf("PRURL = %q, want %q", fields.PRURL, tt.wantFields.PRURL)
+			}
+			if fields.PRNumber != tt.wantFields.PRNumber {
+				t.Errorf("PRNumber = %d, want %d", fields.PRNumber, tt.wantFields.PRNumber)
 			}
 			if fields.MergeCommit != tt.wantFields.MergeCommit {
 				t.Errorf("MergeCommit = %q, want %q", fields.MergeCommit, tt.wantFields.MergeCommit)
@@ -2042,6 +2065,19 @@ target: main
 source_issue: es-ixjt
 rig: gastown
 commit_sha: a1b2c3d4`,
+		},
+		{
+			name: "with PR identity",
+			fields: &MRFields{
+				Branch:   "polecat/furiosa/gt-pr",
+				Target:   "main",
+				PRURL:    "https://github.com/gastownhall/gastown/pull/4474",
+				PRNumber: 4474,
+			},
+			want: `branch: polecat/furiosa/gt-pr
+target: main
+pr_url: https://github.com/gastownhall/gastown/pull/4474
+pr_number: 4474`,
 		},
 	}
 
