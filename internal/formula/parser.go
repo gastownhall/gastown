@@ -501,8 +501,8 @@ func (f *Formula) GetAspect(id string) *Aspect {
 // Resolve processes the extends and compose rules of a formula, returning a new
 // formula with all inherited steps merged and expansion rules applied.
 //
-// Parent formulas named in extends are loaded from the embedded formula FS first,
-// then from any additional searchPaths (in order). searchPaths may be nil.
+// Parent formulas named in extends are loaded from searchPaths in order, then
+// from the embedded formula FS. searchPaths may be nil.
 //
 // Cycles in extends chains are detected and reported as errors.
 func Resolve(formula *Formula, searchPaths []string) (*Formula, error) {
@@ -598,23 +598,25 @@ func resolveChain(formula *Formula, searchPaths []string, chain []string) (*Form
 	return merged, nil
 }
 
-// loadFormulaByName loads a formula by name: embedded FS first, then searchPaths.
+// loadFormulaByName loads a formula by name: searchPaths first, then embedded FS.
 func loadFormulaByName(name string, searchPaths []string) (*Formula, error) {
-	// Try the embedded formula filesystem first.
-	data, err := GetEmbeddedFormulaContent(name)
-	if err == nil {
-		return Parse(data)
+	filename := name
+	if !hasFormulaSuffix(filename) {
+		filename = filename + ".formula.toml"
 	}
-
-	// Fall back to on-disk search paths.
 	for _, dir := range searchPaths {
-		path := filepath.Join(dir, name+".formula.toml")
+		path := filepath.Join(dir, filename)
 		if data, err2 := os.ReadFile(path); err2 == nil { //nolint:gosec // G304: path from controlled search paths
 			return Parse(data)
 		}
 	}
 
-	return nil, fmt.Errorf("formula %q not found in embedded FS or search paths", name)
+	data, err := GetEmbeddedFormulaContent(name)
+	if err == nil {
+		return Parse(data)
+	}
+
+	return nil, fmt.Errorf("formula %q not found in search paths or embedded FS", name)
 }
 
 // applyExpandRule replaces a target step in steps with the template steps from an

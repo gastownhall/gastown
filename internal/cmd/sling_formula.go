@@ -522,13 +522,14 @@ func runSlingFormula(ctx context.Context, args []string) (err error) {
 	// attached_molecule as a self-reference (the wisp's own ID pointing to itself
 	// is meaningless). attached_molecule is only meaningful when a formula-on-bead
 	// creates a wisp that's bonded to a separate base bead.
+	storedVars := formulaVarsForStandaloneWisp(wispRootID, slingVars)
 	fieldUpdates := beadFieldUpdates{
 		Dispatcher:      actor,
 		Args:            slingArgs,
-		Vars:            append([]string(nil), slingVars...),
+		Vars:            storedVars,
 		AttachedFormula: formulaName,
 		Mode:            &mode,
-		FormulaVars:     strings.Join(slingVars, "\n"),
+		FormulaVars:     strings.Join(storedVars, "\n"),
 	}
 	if err := storeFieldsInBeadFromTownRoot(townRoot, wispRootID, fieldUpdates); err != nil {
 		fmt.Printf("%s Could not store fields in bead: %v\n", style.Dim.Render("Warning:"), err)

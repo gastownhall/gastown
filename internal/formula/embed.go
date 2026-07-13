@@ -78,6 +78,37 @@ func ResolveFormulaContent(name, townRoot, rigName string) ([]byte, error) {
 	return GetEmbeddedFormulaContent(name)
 }
 
+// ResolveFormula loads and resolves a formula using the same tier precedence
+// for the root formula and all extends/compose dependencies.
+func ResolveFormula(name, townRoot, rigName string) (*Formula, error) {
+	content, err := ResolveFormulaContent(name, townRoot, rigName)
+	if err != nil {
+		return nil, err
+	}
+
+	f, err := Parse(content)
+	if err != nil {
+		return nil, fmt.Errorf("parse formula %q: %w", name, err)
+	}
+
+	resolved, err := Resolve(f, formulaSearchPaths(townRoot, rigName))
+	if err != nil {
+		return nil, fmt.Errorf("resolve formula %q: %w", name, err)
+	}
+	return resolved, nil
+}
+
+func formulaSearchPaths(townRoot, rigName string) []string {
+	var paths []string
+	if townRoot != "" && rigName != "" {
+		paths = append(paths, filepath.Join(townRoot, rigName, ".beads", "formulas"))
+	}
+	if townRoot != "" {
+		paths = append(paths, filepath.Join(townRoot, ".beads", "formulas"))
+	}
+	return paths
+}
+
 // GetEmbeddedFormulaContent returns the raw content of an embedded formula by name.
 // The name can be with or without the .formula.toml suffix.
 // Returns the content bytes, or an error if the formula is not found.

@@ -2202,7 +2202,7 @@ exit /b 0
 		slingRalph = prevRalph
 	})
 
-	slingVars = []string{"version=1.2.3", "channel=stable"}
+	slingVars = []string{"version=1.2.3", "issue=fake", "channel=stable"}
 	slingDryRun = false
 	slingNoBoot = true
 	slingRalph = true
@@ -2222,6 +2222,25 @@ exit /b 0
 	}
 	if !strings.Contains(attachment, "version=1.2.3") || !strings.Contains(attachment, "channel=stable") {
 		t.Fatalf("formula vars missing from persisted description:\n%s", attachment)
+	}
+	if strings.Contains(attachment, "issue=fake") {
+		t.Fatalf("standalone formula should persist the real wisp issue, not caller issue override:\n%s", attachment)
+	}
+	fields := beads.ParseAttachmentFields(&beads.Issue{Description: attachment})
+	if fields == nil {
+		t.Fatalf("parse attachment fields returned nil:\n%s", attachment)
+	}
+	if !strings.Contains(fields.FormulaVars, "issue=gt-wisp-xyz") {
+		t.Fatalf("formula_vars missing wisp issue: %#v", fields.FormulaVars)
+	}
+	foundIssue := false
+	for _, variable := range fields.AttachedVars {
+		if variable == "issue=gt-wisp-xyz" {
+			foundIssue = true
+		}
+	}
+	if !foundIssue {
+		t.Fatalf("attached_vars missing wisp issue: %#v", fields.AttachedVars)
 	}
 	if !strings.Contains(attachment, "mode: ralph") {
 		t.Fatalf("ralph mode missing from persisted standalone formula description:\n%s", attachment)

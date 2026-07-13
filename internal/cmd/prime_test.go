@@ -1101,6 +1101,26 @@ func TestCheckSlungWork_RalphModeUsesLoopDirective(t *testing.T) {
 	}
 }
 
+func TestRenderFormulaStepsFullResolvesExtendsCompose(t *testing.T) {
+	rendered, err := renderFormulaStepsFull("mol-polecat-work-monorepo-tdd", "", "", []string{
+		"feature=Formula resolution",
+		"issue=gt-test",
+	})
+	if err != nil {
+		t.Fatalf("renderFormulaStepsFull: %v", err)
+	}
+	for _, want := range []string{
+		"Formula Checklist",
+		"Write failing tests for:",
+		"Verify tests fail (red)",
+		"Implement to green:",
+	} {
+		if !strings.Contains(rendered, want) {
+			t.Fatalf("rendered checklist missing %q:\n%s", want, rendered)
+		}
+	}
+}
+
 // TestCompactResumeReminder_PolecatGetsGtDone verifies that polecats get a
 // gt done reminder after context compaction. This is the regression test for
 // the polecats-no-gt-done bug: after long work sessions, compaction drops the
