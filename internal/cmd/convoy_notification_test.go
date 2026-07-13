@@ -6,6 +6,8 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+
+	"github.com/steveyegge/gastown/internal/config"
 )
 
 func TestNotifyConvoyCompletion_StampsAndSkipsDuplicate(t *testing.T) {
@@ -22,6 +24,7 @@ func TestNotifyConvoyCompletion_StampsAndSkipsDuplicate(t *testing.T) {
 	statePath := filepath.Join(binDir, "notified.state")
 	mailLogPath := filepath.Join(binDir, "mail.log")
 	exportLogPath := filepath.Join(binDir, "export.log")
+	nudgeLogPath := filepath.Join(binDir, "nudge.log")
 	bdPath := filepath.Join(binDir, "bd")
 	gtPath := filepath.Join(binDir, "gt")
 
@@ -37,9 +40,9 @@ case "$1" in
     ;;
   show)
     if [ -f "$STATE" ]; then
-      printf '%s\n' '[{"id":"hq-cv-dup","description":"Owner: mayor/\ncompletion_notified_at: 2026-05-25T02:30:00Z","created_at":"2026-05-25T02:00:00Z"}]'
+      printf '%s\n' '[{"id":"hq-cv-dup","description":"Owner: gastown/crew/alice\nnudge_watchers: gastown/crew/bob\ncompletion_notified_at: 2026-05-25T02:30:00Z","created_at":"2026-05-25T02:00:00Z"}]'
     else
-      printf '%s\n' '[{"id":"hq-cv-dup","description":"Owner: mayor/","created_at":"2026-05-25T02:00:00Z"}]'
+      printf '%s\n' '[{"id":"hq-cv-dup","description":"Owner: gastown/crew/alice\nnudge_watchers: gastown/crew/bob","created_at":"2026-05-25T02:00:00Z"}]'
     fi
     exit 0
     ;;
@@ -66,12 +69,21 @@ exit 0
 if [ "$1" = "mail" ] && [ "$2" = "send" ]; then
   echo "$@" >> "` + mailLogPath + `"
 fi
+if [ "$1" = "nudge" ]; then
+  printf '%s GT_ROLE=%s\n' "$*" "$GT_ROLE" >> "` + nudgeLogPath + `"
+fi
 exit 0
 `
 	if err := os.WriteFile(gtPath, []byte(gtScript), 0755); err != nil {
 		t.Fatalf("write gt stub: %v", err)
 	}
 	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	t.Setenv("GT_ROLE", "overseer")
+	settings := config.NewTownSettings()
+	settings.Convoy = &config.ConvoyConfig{NotifyOnComplete: true}
+	if err := config.SaveTownSettings(config.TownSettingsPath(townRoot), settings); err != nil {
+		t.Fatalf("save town settings: %v", err)
+	}
 
 	notifyConvoyCompletion(townRoot, "hq-cv-dup", "Duplicate Guard")
 	notifyConvoyCompletion(townRoot, "hq-cv-dup", "Duplicate Guard")
@@ -80,8 +92,23 @@ exit 0
 	if err != nil {
 		t.Fatalf("read mail log: %v", err)
 	}
-	if got := strings.Count(string(data), "mail send"); got != 1 {
-		t.Fatalf("mail sends = %d, want 1; log:\n%s", got, string(data))
+	log := string(data)
+	if got := strings.Count(log, "mail send"); got != 2 {
+		t.Fatalf("mail sends = %d, want 2; log:\n%s", got, string(data))
+	}
+	if got := strings.Count(log, "--from convoy/hq-cv-dup"); got != 2 {
+		t.Fatalf("mail sends with convoy sender = %d, want 2; log:\n%s", got, log)
+	}
+	if got := strings.Count(log, "--no-notify"); got != 2 {
+		t.Fatalf("mail sends with --no-notify = %d, want 2; log:\n%s", got, log)
+	}
+	nudgeData, err := os.ReadFile(nudgeLogPath)
+	if err != nil {
+		t.Fatalf("read nudge log: %v", err)
+	}
+	nudgeLog := string(nudgeData)
+	if got := strings.Count(nudgeLog, "GT_ROLE=convoy/hq-cv-dup"); got != 2 {
+		t.Fatalf("nudges with convoy sender env = %d, want 2; log:\n%s", got, nudgeLog)
 	}
 	if _, err := os.Stat(statePath); err != nil {
 		t.Fatalf("completion notification state was not recorded: %v", err)
@@ -358,5 +385,39 @@ exit 0
 	}, "\n")
 	if got != want {
 		t.Fatalf("operation order mismatch:\n got:\n%s\nwant:\n%s", got, want)
+	}
+}
+
+func TestSendCloseNotification_MailUsesConvoyFromAndNoNotify(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("skipping on windows - shell stubs")
+	}
+
+	binDir := t.TempDir()
+	mailLogPath := filepath.Join(binDir, "mail.log")
+	gtPath := filepath.Join(binDir, "gt")
+	gtScript := `#!/bin/sh
+if [ "$1" = "mail" ] && [ "$2" = "send" ]; then
+  echo "$@" >> "` + mailLogPath + `"
+fi
+exit 0
+`
+	if err := os.WriteFile(gtPath, []byte(gtScript), 0755); err != nil {
+		t.Fatalf("write gt stub: %v", err)
+	}
+	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	sendCloseNotification("gastown/crew/alice", "hq-cv-close", "Close Guard", "done")
+
+	data, err := os.ReadFile(mailLogPath)
+	if err != nil {
+		t.Fatalf("read mail log: %v", err)
+	}
+	log := string(data)
+	if !strings.Contains(log, "--from convoy/hq-cv-close") {
+		t.Fatalf("mail send missing convoy sender; log:\n%s", log)
+	}
+	if !strings.Contains(log, "--no-notify") {
+		t.Fatalf("mail send missing --no-notify; log:\n%s", log)
 	}
 }

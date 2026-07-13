@@ -1387,6 +1387,13 @@ exit 0
 	if got := strings.Count(string(data), "mail send"); got != 1 {
 		t.Fatalf("mail sends = %d, want 1; log:\n%s", got, string(data))
 	}
+	log := string(data)
+	if !strings.Contains(log, "--from convoy/hq-cv-ref") {
+		t.Fatalf("mail send missing convoy sender; log:\n%s", log)
+	}
+	if !strings.Contains(log, "--no-notify") {
+		t.Fatalf("mail send missing --no-notify; log:\n%s", log)
+	}
 	if _, err := os.Stat(statePath); err != nil {
 		t.Fatalf("completion notification state was not recorded: %v", err)
 	}
