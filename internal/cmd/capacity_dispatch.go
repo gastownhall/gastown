@@ -76,9 +76,94 @@ const maxDispatchFailures = 3
 
 var errNonConcreteWorkBead = errors.New("non-concrete-work-bead")
 
+type schedulerDispatchPlan struct {
+	State       *capacity.SchedulerState
+	MaxPolecats int
+	BatchSize   int
+	SpawnDelay  time.Duration
+	Capacity    polecatCapacitySnapshot
+	Scheduled   []scheduledBeadInfo
+	Ready       []capacity.PendingBead
+	Plan        capacity.DispatchPlan
+}
+
+type scheduledBeadAssessment struct {
+	Scheduled []scheduledBeadInfo
+	Ready     []capacity.PendingBead
+}
+
+func buildSchedulerDispatchPlan(townRoot string, batchOverride int, cleanup bool) (*schedulerDispatchPlan, error) {
+	state, err := capacity.LoadState(townRoot)
+	if err != nil {
+		return nil, fmt.Errorf("loading scheduler state: %w", err)
+	}
+
+	settingsPath := config.TownSettingsPath(townRoot)
+	settings, err := config.LoadOrCreateTownSettings(settingsPath)
+	if err != nil {
+		return nil, fmt.Errorf("loading town settings: %w", err)
+	}
+
+	schedulerCfg := settings.Scheduler
+	if schedulerCfg == nil {
+		schedulerCfg = capacity.DefaultSchedulerConfig()
+	}
+
+	maxPolecats := schedulerCfg.GetMaxPolecats()
+	batchSize := schedulerCfg.GetBatchSize()
+	if batchOverride > 0 {
+		batchSize = batchOverride
+	}
+
+	if cleanup && !state.Paused && maxPolecats > 0 {
+		cleanupStaleContexts(townRoot)
+	}
+
+	assessment, err := assessScheduledBeads(townRoot)
+	if err != nil {
+		return nil, err
+	}
+
+	snapshot, err := polecatCapacitySnapshotForTown(townRoot)
+	if err != nil {
+		return nil, fmt.Errorf("loading polecat capacity: %w", err)
+	}
+
+	dispatchPlan := capacity.PlanDispatch(snapshot.Free, batchSize, assessment.Ready)
+	if len(assessment.Ready) > 0 {
+		switch {
+		case state.Paused:
+			dispatchPlan = capacity.DispatchPlan{Skipped: len(assessment.Ready), Reason: "paused"}
+		case maxPolecats <= 0:
+			dispatchPlan = capacity.DispatchPlan{Skipped: len(assessment.Ready), Reason: "direct-mode"}
+		}
+	}
+
+	return &schedulerDispatchPlan{
+		State:       state,
+		MaxPolecats: maxPolecats,
+		BatchSize:   batchSize,
+		SpawnDelay:  schedulerCfg.GetSpawnDelay(),
+		Capacity:    snapshot,
+		Scheduled:   assessment.Scheduled,
+		Ready:       assessment.Ready,
+		Plan:        dispatchPlan,
+	}, nil
+}
+
 // dispatchScheduledWork is the main dispatch loop for the capacity scheduler.
 // Called by both `gt scheduler run` and the daemon heartbeat.
 func dispatchScheduledWork(townRoot, actor string, batchOverride int, dryRun bool) (int, error) {
+	if dryRun {
+		dispatchPlan, err := buildSchedulerDispatchPlan(townRoot, batchOverride, false)
+		if err != nil {
+			return 0, fmt.Errorf("planning dispatch: %w", err)
+		}
+		dispatchPlan.Plan = validateDryRunDispatchPlan(townRoot, dispatchPlan.Plan)
+		printSchedulerDryRunPlan(dispatchPlan)
+		return 0, nil
+	}
+
 	// Acquire exclusive lock to prevent concurrent dispatch
 	runtimeDir := filepath.Join(townRoot, ".runtime")
 	_ = os.MkdirAll(runtimeDir, 0755)
@@ -89,82 +174,46 @@ func dispatchScheduledWork(townRoot, actor string, batchOverride int, dryRun boo
 		return 0, fmt.Errorf("acquiring dispatch lock: %w", err)
 	}
 	if !locked {
-		return 0, nil
+		return 0, fmt.Errorf("scheduler dispatch already in progress (lock held: %s)", lockFile)
 	}
 	defer func() { _ = fileLock.Unlock() }()
 
-	// Load scheduler state
-	state, err := capacity.LoadState(townRoot)
+	dispatchPlan, err := buildSchedulerDispatchPlan(townRoot, batchOverride, true)
 	if err != nil {
-		return 0, fmt.Errorf("loading scheduler state: %w", err)
+		return 0, fmt.Errorf("planning dispatch: %w", err)
 	}
 
-	if state.Paused {
-		if !dryRun {
-			fmt.Printf("%s Scheduler is paused (by %s), skipping dispatch\n", style.Dim.Render("⏸"), state.PausedBy)
-		}
+	if dispatchPlan.State.Paused {
+		fmt.Printf("%s Scheduler is paused (by %s), skipping %d ready bead(s)\n",
+			style.Dim.Render("⏸"), dispatchPlan.State.PausedBy, len(dispatchPlan.Ready))
 		return 0, nil
 	}
 
-	// Load town settings for scheduler config
-	settingsPath := config.TownSettingsPath(townRoot)
-	settings, err := config.LoadOrCreateTownSettings(settingsPath)
-	if err != nil {
-		return 0, fmt.Errorf("loading town settings: %w", err)
-	}
-
-	schedulerCfg := settings.Scheduler
-	if schedulerCfg == nil {
-		schedulerCfg = capacity.DefaultSchedulerConfig()
-	}
-
-	// Nothing to dispatch when scheduler is in direct dispatch or disabled mode.
-	maxPolecats := schedulerCfg.GetMaxPolecats()
-	if maxPolecats <= 0 {
-		if !dryRun && !isDaemonDispatch() {
-			staleBeads, _ := getReadySlingContexts(townRoot)
-			if len(staleBeads) > 0 {
-				fmt.Printf("%s %d context bead(s) still open from a previous deferred mode\n",
-					style.Warning.Render("⚠"), len(staleBeads))
-				fmt.Printf("  Use: gt scheduler clear  (close all sling context beads)\n")
-				fmt.Printf("  Or:  gt config set scheduler.max_polecats N  (re-enable deferred dispatch)\n")
-			}
+	if dispatchPlan.MaxPolecats <= 0 {
+		if len(dispatchPlan.Scheduled) > 0 {
+			fmt.Printf("%s Scheduler is in direct dispatch mode (scheduler.max_polecats=%d); %d open context bead(s) will not dispatch\n",
+				style.Warning.Render("⚠"), dispatchPlan.MaxPolecats, len(dispatchPlan.Scheduled))
+			fmt.Printf("  Use: gt scheduler clear  (close all sling context beads)\n")
+			fmt.Printf("  Or:  gt config set scheduler.max_polecats N  (re-enable deferred dispatch)\n")
+		} else if !isDaemonDispatch() {
+			fmt.Println("No ready beads scheduled for dispatch")
 		}
 		return 0, nil
-	}
-
-	// Determine limits
-	batchSize := schedulerCfg.GetBatchSize()
-	if batchOverride > 0 {
-		batchSize = batchOverride
-	}
-	spawnDelay := schedulerCfg.GetSpawnDelay()
-
-	// Clean up invalid/stale contexts before querying for ready beads.
-	// Skip during dry-run to avoid mutating state.
-	if !dryRun {
-		cleanupStaleContexts(townRoot)
 	}
 
 	// Wire up the DispatchCycle
 	successfulRigs := make(map[string]bool)
 	// Track polecat names from dispatch results, keyed by context bead ID.
 	polecatNames := make(map[string]string)
-	lastCapacitySnapshot := polecatCapacitySnapshot{Max: maxPolecats}
 	cycle := &capacity.DispatchCycle{
 		AvailableCapacity: func() (int, error) {
-			snapshot, err := polecatCapacitySnapshotForTown(townRoot)
-			if err != nil {
-				return 0, err
-			}
-			lastCapacitySnapshot = snapshot
-			if snapshot.Free <= 0 {
+			if dispatchPlan.Capacity.Free <= 0 {
 				return 0, nil // No free slots — PlanDispatch treats <= 0 as no capacity
 			}
-			return snapshot.Free, nil
+			return dispatchPlan.Capacity.Free, nil
 		},
 		QueryPending: func() ([]capacity.PendingBead, error) {
-			return getReadySlingContexts(townRoot)
+			return dispatchPlan.Ready, nil
 		},
 		Validate: func(b capacity.PendingBead) error {
 			return validatePendingBeadForDispatch(townRoot, b, true)
@@ -230,23 +279,16 @@ func dispatchScheduledWork(townRoot, actor string, batchOverride int, dryRun boo
 			}
 			recordDispatchFailure(beadsForPendingContext(townRoot, b), b, err)
 		},
-		BatchSize:  batchSize,
-		SpawnDelay: spawnDelay,
+		BatchSize:  dispatchPlan.BatchSize,
+		SpawnDelay: dispatchPlan.SpawnDelay,
 	}
 
-	if dryRun {
-		plan, planErr := cycle.Plan()
-		if planErr != nil {
-			return 0, fmt.Errorf("planning dispatch: %w", planErr)
-		}
-		plan = validateDryRunDispatchPlan(townRoot, plan)
-		printDryRunPlan(plan, lastCapacitySnapshot, batchSize)
-		return 0, nil
-	}
-
-	report, err := cycle.Run()
+	report, err := cycle.RunPlan(dispatchPlan.Plan)
 	if err != nil {
 		return 0, fmt.Errorf("dispatch cycle failed: %w", err)
+	}
+	if len(dispatchPlan.Plan.ToDispatch) > 0 && report.Dispatched == 0 && report.Failed == 0 {
+		return 0, fmt.Errorf("scheduler dispatch invariant violation: plan had %d dispatchable bead(s) but no dispatch result", len(dispatchPlan.Plan.ToDispatch))
 	}
 
 	// Wake rig agents for each unique rig that had successful dispatches.
@@ -270,16 +312,42 @@ func dispatchScheduledWork(townRoot, actor string, batchOverride int, dryRun boo
 	if report.Dispatched > 0 || report.Failed > 0 {
 		fmt.Printf("\n%s Dispatched %d, failed %d (reason: %s)\n",
 			style.Bold.Render("✓"), report.Dispatched, report.Failed, report.Reason)
-	} else if report.Skipped > 0 {
-		snapshot, err := polecatCapacitySnapshotForTown(townRoot)
-		if err != nil {
-			snapshot = lastCapacitySnapshot
-		}
-		fmt.Printf("\n%s Skipped %d bead(s) — zero capacity (working: %d recovery_blocked: %d reservations: %d reusable_idle: %d pending_mr: %d)\n",
-			style.Dim.Render("○"), report.Skipped, snapshot.Working, snapshot.RecoveryBlocked, snapshot.Reservations, snapshot.ReusableIdle, snapshot.PendingMR)
+	} else if !isDaemonDispatch() || len(dispatchPlan.Scheduled) > 0 {
+		printDispatchNoOp(report, dispatchPlan.Capacity)
 	}
 
 	return report.Dispatched, nil
+}
+
+func printSchedulerDryRunPlan(dispatchPlan *schedulerDispatchPlan) {
+	if dispatchPlan.State.Paused {
+		fmt.Printf("Scheduler is paused (by %s); %d ready bead(s) not dispatched\n",
+			dispatchPlan.State.PausedBy, len(dispatchPlan.Ready))
+		return
+	}
+	if dispatchPlan.MaxPolecats <= 0 {
+		if len(dispatchPlan.Scheduled) == 0 {
+			fmt.Println("No ready beads scheduled for dispatch")
+			return
+		}
+		fmt.Printf("Scheduler is in direct dispatch mode (scheduler.max_polecats=%d); %d open context bead(s) will not dispatch\n",
+			dispatchPlan.MaxPolecats, len(dispatchPlan.Scheduled))
+		return
+	}
+	printDryRunPlan(dispatchPlan.Plan, dispatchPlan.Capacity, dispatchPlan.BatchSize)
+}
+
+func printDispatchNoOp(report capacity.DispatchReport, snapshot polecatCapacitySnapshot) {
+	switch report.Reason {
+	case "none":
+		fmt.Println("No ready beads scheduled for dispatch")
+	case "capacity":
+		fmt.Printf("\n%s No capacity: %d ready bead(s) waiting (working: %d recovery_blocked: %d reservations: %d reusable_idle: %d pending_mr: %d)\n",
+			style.Dim.Render("○"), report.Skipped, snapshot.Working, snapshot.RecoveryBlocked, snapshot.Reservations, snapshot.ReusableIdle, snapshot.PendingMR)
+	default:
+		fmt.Printf("\n%s No dispatchable beads (reason: %s, skipped: %d)\n",
+			style.Dim.Render("○"), report.Reason, report.Skipped)
+	}
 }
 
 // printDryRunPlan displays a dry-run dispatch plan.
@@ -297,7 +365,14 @@ func printDryRunPlan(plan capacity.DispatchPlan, snapshot polecatCapacitySnapsho
 
 	totalReady := len(plan.ToDispatch) + plan.Skipped
 	if len(plan.ToDispatch) == 0 {
-		fmt.Printf("No capacity: %s, %d ready bead(s) waiting\n", capStr, totalReady)
+		switch plan.Reason {
+		case "capacity":
+			fmt.Printf("No capacity: %s, %d ready bead(s) waiting\n", capStr, totalReady)
+		case "validation":
+			fmt.Printf("No dispatchable beads: validation failed for %d candidate(s)\n", totalReady)
+		default:
+			fmt.Printf("No dispatchable beads: reason=%s, %d candidate(s) skipped\n", plan.Reason, totalReady)
+		}
 		return
 	}
 
@@ -482,20 +557,27 @@ func groupBeadIDsByResolvedBeadsDir(townRoot string, ids []string) map[string][]
 // Sling contexts are queried from HQ only (authoritative). Work bead readiness
 // is checked across all rig dirs since work beads live in rig-local DBs.
 func getReadySlingContexts(townRoot string) ([]capacity.PendingBead, error) {
-	// 1. List all open sling context beads from HQ (authoritative)
+	assessment, err := assessScheduledBeads(townRoot)
+	if err != nil {
+		return nil, err
+	}
+	return assessment.Ready, nil
+}
+
+func assessScheduledBeads(townRoot string) (scheduledBeadAssessment, error) {
 	allContexts := listAllSlingContextRecords(townRoot)
 
 	if len(allContexts) == 0 {
-		return nil, nil
+		return scheduledBeadAssessment{}, nil
 	}
 
-	// 2. Batch-fetch work bead labels/status so we can defensively filter messaging
+	// Batch-fetch work bead labels/status so we can defensively filter messaging
 	// beads (gt:message / gt:handoff / gt:merge-request) that should never be
 	// handed to a polecat. See gt-el4 / gastownhall/gastown#3800.
 	workBeadIDs := make([]string, 0, len(allContexts))
 	for _, ctx := range allContexts {
 		fields := beads.ParseSlingContextFields(ctx.issue.Description)
-		if fields == nil {
+		if fields == nil || fields.WorkBeadID == "" {
 			continue
 		}
 		workBeadIDs = append(workBeadIDs, fields.WorkBeadID)
@@ -503,10 +585,10 @@ func getReadySlingContexts(townRoot string) ([]capacity.PendingBead, error) {
 	workBeadInfo := batchFetchBeadInfoByIDs(townRoot, workBeadIDs)
 	blockedWorkIDs, blockedErr := listBlockedWorkBeadIDsWithError(townRoot, workBeadIDs)
 	if blockedErr != nil {
-		return nil, blockedErr
+		return scheduledBeadAssessment{}, blockedErr
 	}
 
-	// 3. Build PendingBead list — pure filtering, no mutations.
+	// Build scheduled display rows and ready PendingBeads from one ordered scan.
 	// Sort by EnqueuedAt for deterministic deduplication: when concurrent
 	// scheduleBead calls create multiple contexts for the same work bead,
 	// the oldest context always wins.
@@ -523,7 +605,7 @@ func getReadySlingContexts(townRoot string) ([]capacity.PendingBead, error) {
 	})
 
 	seenWork := make(map[string]bool)
-	var result []capacity.PendingBead
+	var result scheduledBeadAssessment
 	for _, ctx := range allContexts {
 		fields := beads.ParseSlingContextFields(ctx.issue.Description)
 		if fields == nil {
@@ -542,24 +624,23 @@ func getReadySlingContexts(townRoot string) ([]capacity.PendingBead, error) {
 		// cache plus targeted show output instead of shelling out to bd ready for
 		// every rig, which is prohibitively expensive in large towns.
 		info, found := workBeadInfo[fields.WorkBeadID]
-		if !isScheduledWorkBeadReady(fields.WorkBeadID, info, found, blockedWorkIDs) {
+		bead, ok := scheduledBeadInfoFromWork(ctx.issue.Title, fields, info, found, blockedWorkIDs)
+		if !ok {
 			continue
 		}
 
-		// Deduplicate: one dispatch per work bead (oldest context wins)
+		// Deduplicate: one display/dispatch row per work bead (oldest context wins)
 		if seenWork[fields.WorkBeadID] {
 			continue
 		}
 		seenWork[fields.WorkBeadID] = true
+		result.Scheduled = append(result.Scheduled, bead)
 
-		assessment := concreteWorkAssessment(fields.WorkBeadID, info)
-		if !assessment.Concrete {
-			fmt.Fprintf(os.Stderr, "%s dispatch_skip reason=non_concrete_work bead=%s detail=%s labels=%v\n",
-				style.Dim.Render("○"), fields.WorkBeadID, assessment.Reason, info.Labels)
+		if bead.Blocked {
 			continue
 		}
 
-		result = append(result, capacity.PendingBead{
+		result.Ready = append(result.Ready, capacity.PendingBead{
 			ID:              ctx.issue.ID,
 			WorkBeadID:      fields.WorkBeadID,
 			Title:           info.Title,

@@ -132,17 +132,13 @@ func runSchedulerStatus(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	state, err := capacity.LoadState(townRoot)
+	dispatchPlan, err := buildSchedulerDispatchPlan(townRoot, 0, false)
 	if err != nil {
-		return fmt.Errorf("loading scheduler state: %w", err)
+		return err
 	}
-
-	scheduled := listScheduledBeads(townRoot)
-
-	capacitySnapshot, err := polecatCapacitySnapshotForTown(townRoot)
-	if err != nil {
-		return fmt.Errorf("loading polecat capacity: %w", err)
-	}
+	scheduled := dispatchPlan.Scheduled
+	state := dispatchPlan.State
+	capacitySnapshot := dispatchPlan.Capacity
 
 	if schedulerStatusJSON {
 		out := struct {
@@ -214,7 +210,11 @@ func runSchedulerList(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	scheduled := listScheduledBeads(townRoot)
+	dispatchPlan, err := buildSchedulerDispatchPlan(townRoot, 0, false)
+	if err != nil {
+		return err
+	}
+	scheduled := dispatchPlan.Scheduled
 
 	if schedulerListJSON {
 		enc := json.NewEncoder(os.Stdout)
@@ -368,55 +368,11 @@ func runSchedulerRun(cmd *cobra.Command, args []string) error {
 // Reconciles sling context beads with work bead readiness to mark blocked status.
 // Uses batch fetch for work bead info to avoid N+1 subprocess spawns.
 func listScheduledBeads(townRoot string) []scheduledBeadInfo {
-	allContexts := listAllSlingContexts(townRoot)
-
-	if len(allContexts) == 0 {
+	assessment, err := assessScheduledBeads(townRoot)
+	if err != nil {
 		return nil
 	}
-
-	// Collect work bead IDs from contexts for targeted fetch
-	var workBeadIDs []string
-	for _, ctx := range allContexts {
-		fields := beads.ParseSlingContextFields(ctx.Description)
-		if fields != nil && fields.WorkBeadID != "" {
-			workBeadIDs = append(workBeadIDs, fields.WorkBeadID)
-		}
-	}
-
-	// Build blockedIDs set and batch-fetch work bead info for specific IDs.
-	// bd blocked is fast because it reads the cached blocked set; bd ready walks
-	// the full ready graph and is too slow for scheduler display paths.
-	blockedWorkIDs, _ := listBlockedWorkBeadIDsWithError(townRoot, workBeadIDs)
-	workBeadInfo := batchFetchBeadInfoByIDs(townRoot, workBeadIDs)
-
-	seenWork := make(map[string]bool)
-	var result []scheduledBeadInfo
-	for _, ctx := range allContexts {
-		fields := beads.ParseSlingContextFields(ctx.Description)
-		if fields == nil {
-			continue
-		}
-
-		// Exclude circuit-broken
-		if fields.DispatchFailures >= maxDispatchFailures {
-			continue
-		}
-
-		// Dedup by WorkBeadID (mirrors getReadySlingContexts logic)
-		if seenWork[fields.WorkBeadID] {
-			continue
-		}
-		seenWork[fields.WorkBeadID] = true
-
-		info, found := workBeadInfo[fields.WorkBeadID]
-		bead, ok := scheduledBeadInfoFromWork(ctx.Title, fields, info, found, blockedWorkIDs)
-		if !ok {
-			continue
-		}
-		result = append(result, bead)
-	}
-
-	return result
+	return assessment.Scheduled
 }
 
 func scheduledBeadInfoFromWork(ctxTitle string, fields *capacity.SlingContextFields, info beadStatusInfo, found bool, blockedWorkIDs map[string]bool) (scheduledBeadInfo, bool) {

@@ -111,7 +111,12 @@ func (c *DispatchCycle) Run() (DispatchReport, error) {
 	if err != nil {
 		return DispatchReport{}, err
 	}
+	return c.RunPlan(plan)
+}
 
+// RunPlan executes a precomputed dispatch plan. Used when callers need to
+// render, validate, and execute one authoritative plan without re-querying.
+func (c *DispatchCycle) RunPlan(plan DispatchPlan) (DispatchReport, error) {
 	report := DispatchReport{
 		Skipped: plan.Skipped,
 		Reason:  plan.Reason,
