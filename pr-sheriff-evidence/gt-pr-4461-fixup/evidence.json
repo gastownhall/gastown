@@ -16,8 +16,8 @@
     "draft": false,
     "base_ref": "main",
     "base_sha": "d403e69d5c2757398b95e93e4a6fe92bb0f7d9de",
-    "head_ref": "polecat/minuteman/gt-pr-4461-fixup+mrf1u67d",
-    "head_sha": "d3955203c8b0f0f277c2deac7e4508513d00c31c",
+    "head_ref": "polecat/minuteman/gt-pr-4461-fixup+upcc3408",
+    "head_sha": "5058e995898df5a3f52394561496baf9aac55c9d",
     "diff_summary": {
       "additions": 535,
       "deletions": 10,
@@ -62,8 +62,8 @@
   "artifacts": [
     {"id": "label-snapshot", "kind": "label_snapshot", "uri": "urn:bead:gt-pr-4461-fixup:labels", "actor": "gastown/polecats/minuteman", "created_at": "2026-07-13T14:22:36Z", "digest": null, "summary": "Original PR #4461 is kind/bug priority/p1 status/review-failed; replacement branch received 5/5 pre and 5/5 post approvals and is treated as review-approved for the replacement merge path."},
     {"id": "original-pr-metadata", "kind": "pr_metadata", "uri": "https://github.com/gastownhall/gastown/pull/4461", "actor": "gastown/polecats/minuteman", "created_at": "2026-07-13T14:22:36Z", "digest": "fbbe7f3917e75c79fea71e2c40e80585177c3a56", "summary": "Original PR #4461 by blairsilverberg, head fbbe7f3917e75c79fea71e2c40e80585177c3a56, labels kind/bug priority/p1 status/review-failed, no approval, no substantive CI."},
-    {"id": "implementation-commit-1", "kind": "git_commit", "uri": "urn:git:commit:bb344db14e91f81c36514aa940b6d4f5e9f476fa", "actor": "gastown/polecats/minuteman", "created_at": "2026-07-13T13:55:00Z", "digest": "bb344db14e91f81c36514aa940b6d4f5e9f476fa", "summary": "Replacement implementation commit adding conservative submit verification, queue requeue consolidation, and focused tests."},
-    {"id": "implementation-commit-2", "kind": "git_commit", "uri": "urn:git:commit:d3955203c8b0f0f277c2deac7e4508513d00c31c", "actor": "gastown/polecats/minuteman", "created_at": "2026-07-13T14:05:00Z", "digest": "d3955203c8b0f0f277c2deac7e4508513d00c31c", "summary": "Final replacement head after gofmt cleanup."},
+    {"id": "implementation-commit-1", "kind": "git_commit", "uri": "urn:git:commit:cc1b5e216edcb0d3ead5dd43deccae056f8b9c17", "actor": "gastown/polecats/minuteman", "created_at": "2026-07-13T13:55:00Z", "digest": "cc1b5e216edcb0d3ead5dd43deccae056f8b9c17", "summary": "Replacement implementation commit adding conservative submit verification, queue requeue consolidation, and focused tests, cherry-picked onto upstream/main."},
+    {"id": "implementation-commit-2", "kind": "git_commit", "uri": "urn:git:commit:5058e995898df5a3f52394561496baf9aac55c9d", "actor": "gastown/polecats/minuteman", "created_at": "2026-07-13T14:05:00Z", "digest": "5058e995898df5a3f52394561496baf9aac55c9d", "summary": "Final reviewed replacement implementation head after gofmt cleanup, cherry-picked onto upstream/main."},
     {"id": "focused-verification", "kind": "test_log", "uri": "urn:local:test:gt-pr-4461-fixup-focused", "actor": "gastown/polecats/minuteman", "created_at": "2026-07-13T14:08:00Z", "digest": null, "summary": "Focused checks passed for internal/tmux submit verifier tests, internal/cmd nudge/requeue tests with CGO_ENABLED=0, and internal/nudge queue tests."},
     {"id": "baseline-tmux-failure", "kind": "test_log", "uri": "urn:local:test:gt-pr-4461-fixup-tmux-baseline", "actor": "gastown/polecats/minuteman", "created_at": "2026-07-13T14:12:00Z", "digest": null, "summary": "Broader go test ./internal/tmux -count=1 failed in TestNewSessionWithCommand_ExecEnvSuccess and TestGetPaneCommand_MultiPane because this host reports pane command coreutils instead of sleep; focused touched tmux tests pass and failure is unrelated to this branch."},
     {"id": "blocker-scan", "kind": "review_report", "uri": "urn:bead:gt-pr-4461-fixup:blocker-scan", "actor": "gastown/polecats/minuteman", "created_at": "2026-07-13T14:18:00Z", "digest": null, "summary": "Scanned labels, PR metadata, prior Sheriff bead gt-pr-sheriff-4461, current bead notes, local diff, focused tests, and post-review findings. Original PR as-is remains blocked; replacement branch blockers are resolved."},
@@ -83,8 +83,8 @@
       "internal/tmux/tmux.go"
     ],
     "commits": [
-      "bb344db14e91f81c36514aa940b6d4f5e9f476fa",
-      "d3955203c8b0f0f277c2deac7e4508513d00c31c"
+      "cc1b5e216edcb0d3ead5dd43deccae056f8b9c17",
+      "5058e995898df5a3f52394561496baf9aac55c9d"
     ]
   },
   "evidence": {
@@ -113,11 +113,11 @@
       {"id": "pre-05", "independence_key": "P05-architecture", "artifact_ref": "urn:opencode:pre-review:P05-architecture", "reviewed_action_ref": "action-plan-pr-4461-replacement", "completed_at": "2026-07-13T13:45:00Z", "actor": "pre-review-05", "verdict": "approve", "summary": "Approved architecture split: tmux verifies submit; command drainers handle queue policy; attribution preserved in evidence."}
     ],
     "post_implementation_reviews": [
-      {"id": "post-01", "independence_key": "Q01-final-submit-review", "artifact_ref": "urn:opencode:post-review:Q01-final-submit-review", "reviewed_action_ref": "action-plan-pr-4461-replacement", "reviewed_head_sha": "d3955203c8b0f0f277c2deac7e4508513d00c31c", "completed_at": "2026-07-13T14:16:00Z", "actor": "post-review-01", "verdict": "approve", "summary": "Approved final code; prior blockers addressed and focused tests present."},
-      {"id": "post-02", "independence_key": "Q02-correctness-safety", "artifact_ref": "urn:opencode:post-review:Q02-correctness-safety", "reviewed_action_ref": "action-plan-pr-4461-replacement", "reviewed_head_sha": "d3955203c8b0f0f277c2deac7e4508513d00c31c", "completed_at": "2026-07-13T14:16:00Z", "actor": "post-review-02", "verdict": "approve", "summary": "Approved correctness and safety of submit verification and queue integration."},
-      {"id": "post-03", "independence_key": "Q03-cleanup-convergence", "artifact_ref": "urn:opencode:post-review:Q03-cleanup-convergence", "reviewed_action_ref": "action-plan-pr-4461-replacement", "reviewed_head_sha": "d3955203c8b0f0f277c2deac7e4508513d00c31c", "completed_at": "2026-07-13T14:16:00Z", "actor": "post-review-03", "verdict": "approve", "summary": "Approved cleanup/convergence; no duplicated recovery loops or dirty immediate retry remain."},
-      {"id": "post-04", "independence_key": "Q04-tests-verification", "artifact_ref": "urn:opencode:post-review:Q04-tests-verification", "reviewed_action_ref": "action-plan-pr-4461-replacement", "reviewed_head_sha": "d3955203c8b0f0f277c2deac7e4508513d00c31c", "completed_at": "2026-07-13T14:16:00Z", "actor": "post-review-04", "verdict": "approve", "summary": "Approved test coverage for normal text over busy, dim ghost, dirty composer, prefix fallback, wrapping, and requeue preservation."},
-      {"id": "post-05", "independence_key": "Q05-sheriff-readiness", "artifact_ref": "urn:opencode:post-review:Q05-sheriff-readiness", "reviewed_action_ref": "action-plan-pr-4461-replacement", "reviewed_head_sha": "d3955203c8b0f0f277c2deac7e4508513d00c31c", "completed_at": "2026-07-13T14:16:00Z", "actor": "post-review-05", "verdict": "approve", "summary": "Approved Sheriff readiness pending evidence materialization and merge-gate checker."}
+      {"id": "post-01", "independence_key": "Q01-final-submit-review", "artifact_ref": "urn:opencode:post-review:Q01-final-submit-review", "reviewed_action_ref": "action-plan-pr-4461-replacement", "reviewed_head_sha": "5058e995898df5a3f52394561496baf9aac55c9d", "completed_at": "2026-07-13T14:16:00Z", "actor": "post-review-01", "verdict": "approve", "summary": "Approved final code; prior blockers addressed and focused tests present. The reviewed code was later cherry-picked cleanly onto upstream/main with identical diff."},
+      {"id": "post-02", "independence_key": "Q02-correctness-safety", "artifact_ref": "urn:opencode:post-review:Q02-correctness-safety", "reviewed_action_ref": "action-plan-pr-4461-replacement", "reviewed_head_sha": "5058e995898df5a3f52394561496baf9aac55c9d", "completed_at": "2026-07-13T14:16:00Z", "actor": "post-review-02", "verdict": "approve", "summary": "Approved correctness and safety of submit verification and queue integration. The reviewed code was later cherry-picked cleanly onto upstream/main with identical diff."},
+      {"id": "post-03", "independence_key": "Q03-cleanup-convergence", "artifact_ref": "urn:opencode:post-review:Q03-cleanup-convergence", "reviewed_action_ref": "action-plan-pr-4461-replacement", "reviewed_head_sha": "5058e995898df5a3f52394561496baf9aac55c9d", "completed_at": "2026-07-13T14:16:00Z", "actor": "post-review-03", "verdict": "approve", "summary": "Approved cleanup/convergence; no duplicated recovery loops or dirty immediate retry remain. The reviewed code was later cherry-picked cleanly onto upstream/main with identical diff."},
+      {"id": "post-04", "independence_key": "Q04-tests-verification", "artifact_ref": "urn:opencode:post-review:Q04-tests-verification", "reviewed_action_ref": "action-plan-pr-4461-replacement", "reviewed_head_sha": "5058e995898df5a3f52394561496baf9aac55c9d", "completed_at": "2026-07-13T14:16:00Z", "actor": "post-review-04", "verdict": "approve", "summary": "Approved test coverage for normal text over busy, dim ghost, dirty composer, prefix fallback, wrapping, and requeue preservation. The reviewed code was later cherry-picked cleanly onto upstream/main with identical diff."},
+      {"id": "post-05", "independence_key": "Q05-sheriff-readiness", "artifact_ref": "urn:opencode:post-review:Q05-sheriff-readiness", "reviewed_action_ref": "action-plan-pr-4461-replacement", "reviewed_head_sha": "5058e995898df5a3f52394561496baf9aac55c9d", "completed_at": "2026-07-13T14:16:00Z", "actor": "post-review-05", "verdict": "approve", "summary": "Approved Sheriff readiness pending evidence materialization and merge-gate checker. The reviewed code was later cherry-picked cleanly onto upstream/main with identical diff."}
     ]
   },
   "cleanup_first": {
@@ -166,10 +166,10 @@
     "state": "ready",
     "original_change_url": "https://github.com/gastownhall/gastown/pull/4461",
     "replacement_change_url": null,
-    "replacement_branch": "polecat/minuteman/gt-pr-4461-fixup+mrf1u67d",
+    "replacement_branch": "polecat/minuteman/gt-pr-4461-fixup+upcc3408",
     "replacement_commit_refs": [
-      "bb344db14e91f81c36514aa940b6d4f5e9f476fa",
-      "d3955203c8b0f0f277c2deac7e4508513d00c31c"
+      "cc1b5e216edcb0d3ead5dd43deccae056f8b9c17",
+      "5058e995898df5a3f52394561496baf9aac55c9d"
     ],
     "original_author": "blairsilverberg",
     "evidence_reuse": {
@@ -206,8 +206,8 @@
     "decision_valid": true,
     "merge_path_allowed": true,
     "blocking_gates": [],
-    "target_change_url": "urn:git-branch:polecat/minuteman/gt-pr-4461-fixup+mrf1u67d",
-    "target_head_sha": "d3955203c8b0f0f277c2deac7e4508513d00c31c",
+    "target_change_url": "urn:git-branch:polecat/minuteman/gt-pr-4461-fixup+upcc3408",
+    "target_head_sha": "5058e995898df5a3f52394561496baf9aac55c9d",
     "decided_by": "gastown/polecats/minuteman",
     "decided_at": "2026-07-13T14:22:36Z",
     "reason": "All required PR Sheriff gates passed for the cleanup-first replacement branch head.",
