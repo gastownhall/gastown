@@ -96,6 +96,8 @@ This happens when idle_cycles >= {{idle_effort_threshold}} (no events on channel
 Abbreviated patrol rules:
 - **inbox-check**: Run `gt mail drain` and quick inbox check. Skip individual message processing unless new MERGE_READY found.
 - **queue-scan**: Quick `gt mq list` check. If queue is empty, skip directly to check-integration-branches.
+- **merged-pr-sweep**: ALWAYS run when any open MRs exist (one `gh pr view` per MR — cheap).
+  This is the only signal for owner-initiated GitHub merges; skipping it strands polecats in PENDING_MR.
 - **process-branch through merge-push**: Only run if queue-scan found work. Otherwise SKIP all.
 - **loop-check through generate-summary**: SKIP if no merges were processed.
 - **check-integration-branches**: Quick check only.
@@ -107,7 +109,7 @@ When `await-event` outputs `EFFORT: full`, run all steps thoroughly (normal mode
 
 The goal: idle cycles should burn ~10% of the tokens a full patrol uses."""
 formula = "mol-refinery-patrol"
-version = 15
+version = 16
 
 [vars]
 [vars.wisp_type]
@@ -270,15 +272,87 @@ git branch -r | grep <branch>
 ```
 
 If branch doesn't exist for a queued MR:
-- Close the MR bead: `bd close <mr-id> --reason "Branch no longer exists"`
-- Remove from processing queue
+- **First check for an owner-merged PR** (the branch may be gone because GitHub
+  deleted it when a human merged the PR):
+  ```bash
+  gh pr view <branch> --json state -q '.state' 2>/dev/null
+  ```
+  If this prints `MERGED`, do NOT close the MR here — keep it in the list for
+  the merged-pr-sweep step (next), which runs the full post-merge drain
+  (MERGED mail to witness + `gt mq post-merge`). Closing it here would skip
+  the drain: the source issue stays open and the witness never learns the
+  polecat's work landed.
+- Otherwise (no PR, or PR not merged): close the MR bead:
+  `bd close <mr-id> --reason "Branch no longer exists"` and remove from
+  processing queue.
 
 Track verified MR list for this cycle."""
 
 [[steps]]
+id = "merged-pr-sweep"
+title = "Sweep for externally-merged PRs"
+needs = ["queue-scan"]
+description = """
+Detect MRs whose PR was merged OUTSIDE the refinery flow and drain them.
+
+**Why this step exists (op-3d5o):** In repos with a no-self-merge rule, the
+repo owner merges every PR by hand on GitHub. An owner-initiated merge fires
+NO refinery gate event — nothing wakes the refinery, and no later step
+re-checks PR state. Without this sweep the MR bead stays open and the polecat
+sits PENDING_MR indefinitely (PR 788 sat 2h+ until a manual witness nudge).
+This sweep is the refinery's ONLY signal for owner-initiated merges, so it
+runs EVERY patrol cycle — including abbreviated (EFFORT: reduced) cycles.
+It is cheap: one `gh pr view` per open MR.
+
+**For each open MR from queue-scan** (skip this step only if the queue is empty):
+
+```bash
+gh pr view <polecat-branch> --json state,mergedAt,number,url -q '.state + " " + (.mergedAt // "none") + " #" + (.number|tostring) + " " + .url' 2>/dev/null
+```
+
+Interpret the result:
+
+- **Command fails (no PR for this branch)**: nothing to sweep — leave the MR
+  for normal processing (process-branch onward).
+- **State `OPEN`**: PR still pending — leave the MR for normal processing.
+- **State `CLOSED`** (closed without merging): the work did NOT land. Do NOT
+  drain. Leave the MR bead open, note it in the patrol summary — normal
+  processing will handle resubmission.
+- **State `MERGED`**: the work already landed. Run the post-merge drain NOW:
+
+**Post-merge drain (all four required, in order):**
+
+1. **Send MERGED mail to witness** (releases the polecat — without this the
+   worktree is never cleaned up):
+   ```bash
+   gt mail send <rig>/witness -s "MERGED <polecat-name>" -m "Branch: <branch>
+   Issue: <issue-id>
+   PR: <pr-url>
+   Merged-At: <mergedAt from gh output>
+   Merged-By: external (owner-initiated GitHub merge, detected by merged-pr-sweep)"
+   ```
+
+2. **Post-merge cleanup** (closes MR bead + source issue):
+   ```bash
+   gt mq post-merge <rig> <mr-bead-id> --skip-branch-delete
+   ```
+   Always pass `--skip-branch-delete`: in PR mode GitHub owns branch cleanup,
+   and the branch may already be gone.
+
+3. **Archive any MERGE_READY mail** for this branch (if still in inbox):
+   ```bash
+   gt mail archive <merge-ready-message-id>
+   ```
+
+4. **Remove the MR from this cycle's processing queue** — do NOT rebase or
+   re-process it in process-branch.
+
+Track for the patrol summary: MRs swept (count, branches, PR numbers)."""
+
+[[steps]]
 id = "process-branch"
 title = "Mechanical rebase"
-needs = ["queue-scan"]
+needs = ["merged-pr-sweep"]
 description = """
 Pick next branch from queue. Attempt mechanical rebase on the MR's effective target branch.
 
@@ -1193,6 +1267,7 @@ After await-event returns, check the EFFORT directive in the output:
 **If `EFFORT: reduced`** — Run ABBREVIATED patrol:
 - inbox-check: Quick drain + check for MERGE_READY only
 - queue-scan: Quick `gt mq list`. If empty, skip to check-integration-branches
+- merged-pr-sweep: ALWAYS run when any open MRs exist (cheap; only signal for owner-initiated merges)
 - process-branch through merge-push: SKIP if queue empty
 - loop-check through generate-summary: SKIP if no merges processed
 - check-integration-branches: Quick check only

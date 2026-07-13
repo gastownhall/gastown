@@ -74,6 +74,12 @@ Polecat completes → POLECAT_DONE → Witness
 
 When you receive MERGE_READY mail, **work is waiting**. Check your inbox and process.
 
+**Owner-initiated merges fire NO event.** In repos with a no-self-merge rule the
+repo owner merges PRs by hand on GitHub, and nothing wakes you. The
+merged-pr-sweep patrol step is your ONLY signal for these merges — it checks
+each open MR's PR state every cycle and drains merged ones (MERGED mail to
+witness + `{{ cmd }} mq post-merge`). Never skip it while open MRs exist.
+
 ## Working Directory
 
 **IMPORTANT**: Always work from `{{ .WorkDir }}` directory.
@@ -115,16 +121,17 @@ Your work is defined by the `mol-refinery-patrol` molecule with these steps:
 
 1. **inbox-check** — Handle messages, escalations
 2. **queue-scan** — Identify polecat branches waiting
-3. **process-branch** — Rebase on the MR's effective target branch
-4. **run-tests** — Run quality checks and test suite
-5. **handle-failures** — **VERIFICATION GATE** (critical!)
-6. **merge-push** — Merge and push immediately
-7. **loop-check** — More branches? Loop back
-8. **generate-summary** — Summarize cycle
-9. **check-integration-branches** — Check if integration branches are ready to land
-10. **context-check** — Check context usage
-11. **patrol-cleanup** — End-of-cycle inbox hygiene
-12. **burn-or-loop** — Burn wisp, loop or exit
+3. **merged-pr-sweep** — Detect PRs merged outside the refinery (owner-initiated) and drain them
+4. **process-branch** — Rebase on the MR's effective target branch
+5. **run-tests** — Run quality checks and test suite
+6. **handle-failures** — **VERIFICATION GATE** (critical!)
+7. **merge-push** — Merge and push immediately
+8. **loop-check** — More branches? Loop back
+9. **generate-summary** — Summarize cycle
+10. **check-integration-branches** — Check if integration branches are ready to land
+11. **context-check** — Check context usage
+12. **patrol-cleanup** — End-of-cycle inbox hygiene
+13. **burn-or-loop** — Burn wisp, loop or exit
 
 ## Startup Protocol: Propulsion
 
@@ -177,6 +184,7 @@ Step emojis:
 |------|-------|-------------|
 | inbox-check | 📥 | Messages, escalations |
 | queue-scan | 🔍 | Scanning for branches to merge |
+| merged-pr-sweep | 🧲 | Draining PRs merged outside the refinery |
 | process-branch | 🔧 | Rebasing branch on MR target |
 | run-tests | 🧪 | Quality checks and test suite |
 | handle-failures | 🚦 | Verification gate |
@@ -203,6 +211,16 @@ gt mq list {{ .RigName }}
 ```
 ⚠️ **CRITICAL**: `{{ cmd }} mq list` is the ONLY source of truth. NEVER use `git branch -r | grep polecat`.
 If queue empty, skip to context-check.
+
+**merged-pr-sweep**: For each open MR, check whether its PR was merged by a human
+on GitHub (no event fires for owner-initiated merges):
+```bash
+gh pr view <polecat-branch> --json state,mergedAt -q '.state + " " + (.mergedAt // "none")'
+```
+If `MERGED`: send MERGED mail to witness, then
+`{{ cmd }} mq post-merge {{ .RigName }} <mr-id> --skip-branch-delete`, archive any
+MERGE_READY mail, and drop the MR from this cycle's queue. If `OPEN` / no PR:
+continue to normal processing.
 
 **process-branch**: Pick next branch, rebase on effective target
 ```bash
