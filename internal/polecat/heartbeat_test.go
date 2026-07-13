@@ -2,10 +2,13 @@ package polecat
 
 import (
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
 	"time"
+
+	"github.com/steveyegge/gastown/internal/tmux"
 )
 
 func TestTouchAndReadSessionHeartbeat(t *testing.T) {
@@ -184,24 +187,73 @@ func TestIsSessionProcessDead_HeartbeatFresh(t *testing.T) {
 	}
 }
 
-func TestIsSessionProcessDead_HeartbeatStale(t *testing.T) {
-	townRoot := t.TempDir()
-	sessionName := "gt-test-hb-dead"
-
-	// Write a stale heartbeat
+func writeStaleSessionHeartbeat(t *testing.T, townRoot, sessionName string) {
+	t.Helper()
 	dir := filepath.Join(townRoot, ".runtime", "heartbeats")
 	if err := os.MkdirAll(dir, 0755); err != nil {
 		t.Fatal(err)
 	}
-	oldTime := time.Now().Add(-10 * time.Minute).UTC()
-	data := []byte(`{"timestamp":"` + oldTime.Format(time.RFC3339Nano) + `"}`)
+	data, err := json.Marshal(SessionHeartbeat{
+		Timestamp: time.Now().Add(-10 * time.Minute).UTC(),
+		State:     HeartbeatWorking,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
 	if err := os.WriteFile(filepath.Join(dir, sessionName+".json"), data, 0644); err != nil {
 		t.Fatal(err)
 	}
+}
+
+func TestIsSessionProcessDead_HeartbeatStaleUsesAgentLiveness(t *testing.T) {
+	townRoot := t.TempDir()
+	oldSessionAgentAlive := sessionAgentAlive
+	t.Cleanup(func() { sessionAgentAlive = oldSessionAgentAlive })
+
+	tests := []struct {
+		name     string
+		alive    bool
+		aliveErr error
+		wantDead bool
+	}{
+		{name: "live_agent", alive: true, wantDead: false},
+		{name: "not_live_agent", alive: false, wantDead: true},
+		{name: "query_error", alive: false, aliveErr: errors.New("tmux query failed"), wantDead: false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			sessionName := "gt-test-hb-stale-" + tt.name
+			writeStaleSessionHeartbeat(t, townRoot, sessionName)
+
+			called := false
+			sessionAgentAlive = func(_ *tmux.Tmux, gotSession string) (bool, error) {
+				called = true
+				if gotSession != sessionName {
+					t.Fatalf("liveness checked session %q, want %q", gotSession, sessionName)
+				}
+				return tt.alive, tt.aliveErr
+			}
+
+			dead := isSessionProcessDead(tmux.NewTmuxWithSocket("gt-unused-test-socket"), sessionName, townRoot)
+			if dead != tt.wantDead {
+				t.Fatalf("isSessionProcessDead() = %v, want %v", dead, tt.wantDead)
+			}
+			if !called {
+				t.Fatal("expected stale heartbeat to check agent liveness")
+			}
+		})
+	}
+}
+
+func TestIsSessionProcessDead_HeartbeatStaleWithoutTmuxFailsClosed(t *testing.T) {
+	townRoot := t.TempDir()
+	sessionName := "gt-test-hb-stale-no-tmux"
+	writeStaleSessionHeartbeat(t, townRoot, sessionName)
 
 	dead := isSessionProcessDead(nil, sessionName, townRoot)
-	if !dead {
-		t.Error("expected dead=true for session with stale heartbeat")
+	if dead {
+		t.Error("expected dead=false for stale heartbeat without tmux liveness evidence")
 	}
 }
 

@@ -2074,7 +2074,8 @@ func (m *Manager) ReconcilePoolWith(namesWithDirs, namesWithSessions []string) {
 // Uses heartbeat-based liveness detection (gt-qjtq): checks whether the session's
 // heartbeat file has been updated recently. Polecat sessions touch their heartbeat
 // via gt commands (gt prime, gt hook, bd show, etc.) which run frequently during
-// normal operation. A stale heartbeat indicates the agent is no longer active.
+// normal operation. A stale heartbeat is only suspect because long-running tool
+// calls can keep a live agent from touching gt/bd for several minutes.
 //
 // Falls back to PID signal probing when no heartbeat file exists (backward
 // compatibility for sessions started before heartbeat support was added).
@@ -2086,9 +2087,22 @@ func isSessionProcessDead(t *tmux.Tmux, sessionName string, townRoot string) boo
 	if townRoot != "" {
 		stale, exists := IsSessionHeartbeatStale(townRoot, sessionName)
 		if exists {
-			return stale
+			if !stale {
+				return false
+			}
+			if t == nil {
+				return false
+			}
+			alive, err := sessionAgentAlive(t, sessionName)
+			if err != nil {
+				return false
+			}
+			return !alive
 		}
 		// No heartbeat file — fall through to PID-based check for backward compatibility.
+	}
+	if t == nil {
+		return false
 	}
 
 	// Fallback: PID signal probing (legacy, for sessions without heartbeat support).
@@ -2116,6 +2130,10 @@ func isSessionProcessDead(t *tmux.Tmux, sessionName string, townRoot string) boo
 		return true
 	}
 	return false
+}
+
+var sessionAgentAlive = func(t *tmux.Tmux, sessionName string) (bool, error) {
+	return t.IsAgentAliveChecked(sessionName)
 }
 
 // pendingMaxAge is how long a .pending reservation marker may exist before

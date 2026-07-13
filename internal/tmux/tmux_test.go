@@ -481,6 +481,23 @@ func TestIsAgentRunning_NonexistentSession(t *testing.T) {
 	}
 }
 
+func TestIsRuntimeRunningChecked_NonexistentSessionErrors(t *testing.T) {
+	tm := newTestTmux(t)
+	sessionName := "gt-test-runtime-missing-" + t.Name()
+	_ = tm.KillSession(sessionName)
+
+	running, err := tm.IsRuntimeRunningChecked(sessionName, []string{"sleep"})
+	if err == nil {
+		t.Fatal("expected checked runtime query to return an error for missing session")
+	}
+	if running {
+		t.Fatal("expected missing session to report not running")
+	}
+	if tm.IsRuntimeRunning(sessionName, []string{"sleep"}) {
+		t.Fatal("legacy bool wrapper should collapse query errors to false")
+	}
+}
+
 func TestIsRuntimeRunning_AgentNameRequiresCursorSession(t *testing.T) {
 	tm := newTestTmux(t)
 	sessionName := "gt-test-runtime-agent-filter-" + t.Name()

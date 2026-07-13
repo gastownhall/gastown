@@ -2389,14 +2389,22 @@ func (t *Tmux) CheckSessionHealth(session string, maxInactivity time.Duration) Z
 // Uses ps to get the actual command name from the process's executable path.
 // This handles cases where argv[0] is modified (e.g., Claude showing version "2.1.30").
 func processMatchesNames(pid string, names []string) bool {
+	matches, _ := processMatchesNamesChecked(pid, names)
+	return matches
+}
+
+func processMatchesNamesChecked(pid string, names []string) (bool, error) {
 	if len(names) == 0 {
-		return false
+		return false, nil
 	}
 	// Use ps to get the command name (COMM column gives the executable name)
 	cmd := exec.Command("ps", "-p", pid, "-o", "comm=")
 	out, err := cmd.Output()
 	if err != nil {
-		return false
+		if isNoMatchExit(err) {
+			return false, nil
+		}
+		return false, err
 	}
 	// Get just the base name (in case it's a full path like /Users/.../claude)
 	commPath := strings.TrimSpace(string(out))
@@ -2405,37 +2413,50 @@ func processMatchesNames(pid string, names []string) bool {
 	// Check if any name matches
 	for _, name := range names {
 		if comm == name {
-			return true
+			return true, nil
 		}
 	}
-	return false
+	return false, nil
 }
 
 // hasDescendantWithNames checks if a process has any descendant (child, grandchild, etc.)
 // matching any of the given names. Recursively traverses the process tree up to maxDepth.
 // Used when the pane command is a shell (bash, zsh, pwsh) that launched an agent.
 func hasDescendantWithNames(pid string, names []string, depth int) bool {
+	found, _ := hasDescendantWithNamesChecked(pid, names, depth)
+	return found
+}
+
+func hasDescendantWithNamesChecked(pid string, names []string, depth int) (bool, error) {
 	const maxDepth = 10 // Prevent infinite loops in case of circular references
 	if len(names) == 0 || depth > maxDepth {
-		return false
+		return false, nil
 	}
 	if runtime.GOOS == "windows" {
-		return hasDescendantWithNamesWindows(pid, names, depth)
+		return hasDescendantWithNamesWindows(pid, names, depth), nil
 	}
-	return hasDescendantWithNamesPosix(pid, names, depth)
+	return hasDescendantWithNamesPosixChecked(pid, names, depth)
 }
 
 // hasDescendantWithNamesPosix uses pgrep to find child processes on Unix systems.
 func hasDescendantWithNamesPosix(pid string, names []string, depth int) bool {
+	found, _ := hasDescendantWithNamesPosixChecked(pid, names, depth)
+	return found
+}
+
+func hasDescendantWithNamesPosixChecked(pid string, names []string, depth int) (bool, error) {
 	const maxDepth = 10
 	if depth > maxDepth {
-		return false
+		return false, nil
 	}
 	// Use pgrep to find child processes
 	cmd := exec.Command("pgrep", "-P", pid, "-l")
 	out, err := cmd.Output()
 	if err != nil {
-		return false
+		if isNoMatchExit(err) {
+			return false, nil
+		}
+		return false, err
 	}
 	// Build a set of names for fast lookup
 	nameSet := make(map[string]bool, len(names))
@@ -2456,15 +2477,24 @@ func hasDescendantWithNamesPosix(pid string, names []string, depth int) bool {
 			childName := parts[1]
 			// Direct match
 			if nameSet[childName] {
-				return true
+				return true, nil
 			}
 			// Recursive check of descendants
-			if hasDescendantWithNames(childPid, names, depth+1) {
-				return true
+			found, err := hasDescendantWithNamesChecked(childPid, names, depth+1)
+			if err != nil {
+				return false, err
+			}
+			if found {
+				return true, nil
 			}
 		}
 	}
-	return false
+	return false, nil
+}
+
+func isNoMatchExit(err error) bool {
+	var exitErr *exec.ExitError
+	return errors.As(err, &exitErr) && exitErr.ExitCode() == 1
 }
 
 // FindSessionByWorkDir finds tmux sessions where the pane's current working directory
@@ -2761,29 +2791,48 @@ func (t *Tmux) IsAgentRunning(session string, expectedPaneCommands ...string) bo
 // then checks only that pane. Falls back to scanning all panes for legacy
 // sessions without GT_PANE_ID.
 func (t *Tmux) IsRuntimeRunning(session string, processNames []string) bool {
+	running, _ := t.IsRuntimeRunningChecked(session, processNames)
+	return running
+}
+
+// IsRuntimeRunningChecked is like IsRuntimeRunning, but preserves tmux/process
+// query errors so destructive cleanup callers can fail closed instead of
+// treating unknown liveness as confirmed absence.
+func (t *Tmux) IsRuntimeRunningChecked(session string, processNames []string) (bool, error) {
 	if len(processNames) == 0 {
-		return false
+		return false, nil
 	}
 
 	// ZFC: check declared pane identity set at session startup (gt-qmsx).
-	if declaredPane, err := t.GetEnvironment(session, "GT_PANE_ID"); err == nil && declaredPane != "" {
-		if t.checkTargetPaneForRuntime(session, declaredPane, processNames) {
-			return true
+	if declaredPane, ok, err := t.getEnvironmentOptional(session, "GT_PANE_ID"); err != nil {
+		return false, err
+	} else if ok && declaredPane != "" {
+		running, err := t.checkTargetPaneForRuntimeChecked(session, declaredPane, processNames)
+		if err != nil {
+			if runtime.GOOS != "windows" {
+				return false, err
+			}
+		} else if running {
+			return true, nil
 		}
 		// On Windows (psmux), pane IDs like %1 may not be supported by
 		// display-message. Fall through to legacy path instead of returning false.
 		if runtime.GOOS != "windows" {
-			return false
+			return false, nil
 		}
 	}
 
 	// Legacy fallback: check first window, then scan all panes.
-	if t.checkPaneForRuntime(session, processNames) {
-		return true
+	running, err := t.checkPaneForRuntimeChecked(session, processNames)
+	if err != nil {
+		return false, err
+	}
+	if running {
+		return true, nil
 	}
 	out, err := t.run("list-panes", "-s", "-t", session, "-F", "#{pane_current_command}\t#{pane_pid}")
 	if err != nil {
-		return false
+		return false, err
 	}
 	for _, line := range strings.Split(strings.TrimSpace(out), "\n") {
 		parts := strings.SplitN(line, "\t", 2)
@@ -2791,32 +2840,81 @@ func (t *Tmux) IsRuntimeRunning(session string, processNames []string) bool {
 			continue
 		}
 		cmd, pid := parts[0], parts[1]
-		if t.matchesPaneRuntime(session, cmd, pid, processNames) {
-			return true
+		running, err := t.matchesPaneRuntimeChecked(session, cmd, pid, processNames)
+		if err != nil {
+			return false, err
+		}
+		if running {
+			return true, nil
 		}
 	}
-	return false
+	return false, nil
 }
 
 // checkTargetPaneForRuntime checks if a specific pane (by ID, e.g., "%5") is
 // running a matching process. Used by the ZFC path when GT_PANE_ID is declared.
 func (t *Tmux) checkTargetPaneForRuntime(session, paneID string, processNames []string) bool {
+	running, _ := t.checkTargetPaneForRuntimeChecked(session, paneID, processNames)
+	return running
+}
+
+func (t *Tmux) checkTargetPaneForRuntimeChecked(session, paneID string, processNames []string) (bool, error) {
 	cmd, err := t.run("display-message", "-t", paneID, "-p", "#{pane_current_command}")
 	if err != nil {
-		return false // pane doesn't exist
+		return false, err
 	}
-	pid, _ := t.run("display-message", "-t", paneID, "-p", "#{pane_pid}")
-	return t.matchesPaneRuntime(session, strings.TrimSpace(cmd), strings.TrimSpace(pid), processNames)
+	if running, err := t.matchesPaneRuntimeChecked(session, strings.TrimSpace(cmd), "", processNames); err != nil {
+		return false, err
+	} else if running {
+		return true, nil
+	}
+	pid, err := t.run("display-message", "-t", paneID, "-p", "#{pane_pid}")
+	if err != nil {
+		return false, err
+	}
+	return t.matchesPaneRuntimeChecked(session, strings.TrimSpace(cmd), strings.TrimSpace(pid), processNames)
 }
 
 // checkPaneForRuntime checks if the first window's pane is running a matching process.
 func (t *Tmux) checkPaneForRuntime(session string, processNames []string) bool {
+	running, _ := t.checkPaneForRuntimeChecked(session, processNames)
+	return running
+}
+
+func (t *Tmux) checkPaneForRuntimeChecked(session string, processNames []string) (bool, error) {
 	cmd, err := t.GetPaneCommand(session)
 	if err != nil {
+		return false, err
+	}
+	if running, err := t.matchesPaneRuntimeChecked(session, cmd, "", processNames); err != nil {
+		return false, err
+	} else if running {
+		return true, nil
+	}
+	pid, err := t.GetPanePID(session)
+	if err != nil {
+		return false, err
+	}
+	return t.matchesPaneRuntimeChecked(session, cmd, pid, processNames)
+}
+
+func (t *Tmux) getEnvironmentOptional(session, key string) (string, bool, error) {
+	value, err := t.GetEnvironment(session, key)
+	if err == nil {
+		return value, value != "", nil
+	}
+	if isMissingEnvironmentError(err, key) {
+		return "", false, nil
+	}
+	return "", false, err
+}
+
+func isMissingEnvironmentError(err error, key string) bool {
+	if err == nil {
 		return false
 	}
-	pid, _ := t.GetPanePID(session)
-	return t.matchesPaneRuntime(session, cmd, pid, processNames)
+	msg := err.Error()
+	return strings.Contains(msg, "unknown variable") || strings.Contains(msg, fmt.Sprintf("environment variable %s not found", key))
 }
 
 // cursorAgentSessionDeclaresCursor reports whether tmux session env identifies the Cursor
@@ -2864,33 +2962,91 @@ func processNamesForSession(t *Tmux, session string, processNames []string) []st
 	return withoutProcessName(processNames, "agent")
 }
 
+func processNamesForSessionChecked(t *Tmux, session string, processNames []string) ([]string, error) {
+	if len(processNames) == 0 {
+		return processNames, nil
+	}
+	declaresCursor, err := cursorAgentSessionDeclaresCursorChecked(t, session)
+	if err != nil {
+		return nil, err
+	}
+	if declaresCursor {
+		return processNames, nil
+	}
+	return withoutProcessName(processNames, "agent"), nil
+}
+
+func cursorAgentSessionDeclaresCursorChecked(t *Tmux, session string) (bool, error) {
+	if t == nil || session == "" {
+		return false, nil
+	}
+	agent, ok, err := t.getEnvironmentOptional(session, "GT_AGENT")
+	if err != nil {
+		return false, err
+	}
+	if ok && agent == string(config.AgentCursor) {
+		return true, nil
+	}
+	names, ok, err := t.getEnvironmentOptional(session, "GT_PROCESS_NAMES")
+	if err != nil {
+		return false, err
+	}
+	if ok && names != "" {
+		for _, n := range strings.Split(names, ",") {
+			if strings.TrimSpace(n) == "cursor-agent" {
+				return true, nil
+			}
+		}
+	}
+	return false, nil
+}
+
 // matchesPaneRuntime checks if a pane with the given command and PID is running a matching process.
 func (t *Tmux) matchesPaneRuntime(session, cmd, pid string, processNames []string) bool {
-	names := processNamesForSession(t, session, processNames)
+	running, _ := t.matchesPaneRuntimeChecked(session, cmd, pid, processNames)
+	return running
+}
+
+func (t *Tmux) matchesPaneRuntimeChecked(session, cmd, pid string, processNames []string) (bool, error) {
+	names, err := processNamesForSessionChecked(t, session, processNames)
+	if err != nil {
+		return false, err
+	}
 	if len(names) == 0 {
-		return false
+		return false, nil
 	}
 	// Direct command match
 	for _, name := range names {
 		if cmd == name {
-			return true
+			return true, nil
 		}
 	}
 	if pid == "" {
-		return false
+		return false, nil
 	}
 	// If pane command is a shell, check descendants
 	for _, shell := range constants.SupportedShells {
 		if cmd == shell {
-			return hasDescendantWithNames(pid, names, 0)
+			return hasDescendantWithNamesChecked(pid, names, 0)
 		}
 	}
 	// Unrecognized command: check if process itself matches (version-as-argv[0])
-	if processMatchesNames(pid, names) {
-		return true
+	running, err := processMatchesNamesChecked(pid, names)
+	if err == nil && running {
+		return true, nil
 	}
 	// Finally check descendants as fallback
-	return hasDescendantWithNames(pid, names, 0)
+	descendantRunning, descendantErr := hasDescendantWithNamesChecked(pid, names, 0)
+	if descendantErr != nil {
+		return false, descendantErr
+	}
+	if descendantRunning {
+		return true, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	return false, nil
 }
 
 // IsAgentAlive checks if an agent is running in the session using agent-agnostic detection.
@@ -2898,20 +3054,41 @@ func (t *Tmux) matchesPaneRuntime(session, cmd, pid string, processNames []strin
 // falling back to GT_AGENT-based lookup for legacy sessions.
 // This is the preferred method for zombie detection across all agent types.
 func (t *Tmux) IsAgentAlive(session string) bool {
-	return t.IsRuntimeRunning(session, t.resolveSessionProcessNames(session))
+	alive, _ := t.IsAgentAliveChecked(session)
+	return alive
+}
+
+// IsAgentAliveChecked is like IsAgentAlive, but preserves liveness-query errors
+// for callers that must not treat unknown state as confirmed death.
+func (t *Tmux) IsAgentAliveChecked(session string) (bool, error) {
+	processNames, err := t.resolveSessionProcessNamesChecked(session)
+	if err != nil {
+		return false, err
+	}
+	return t.IsRuntimeRunningChecked(session, processNames)
 }
 
 // resolveSessionProcessNames returns the process names to check for a session.
 // Prefers GT_PROCESS_NAMES (set at startup, handles custom agents that shadow
 // built-in presets). Falls back to GT_AGENT-based lookup for legacy sessions.
 func (t *Tmux) resolveSessionProcessNames(session string) []string {
+	processNames, _ := t.resolveSessionProcessNamesChecked(session)
+	return processNames
+}
+
+func (t *Tmux) resolveSessionProcessNamesChecked(session string) ([]string, error) {
 	// Prefer explicit process names set at startup (handles custom agents correctly)
-	if names, err := t.GetEnvironment(session, "GT_PROCESS_NAMES"); err == nil && names != "" {
-		return strings.Split(names, ",")
+	if names, ok, err := t.getEnvironmentOptional(session, "GT_PROCESS_NAMES"); err != nil {
+		return nil, err
+	} else if ok && names != "" {
+		return strings.Split(names, ","), nil
 	}
 	// Fallback: resolve from agent name (built-in presets only)
-	agentName, _ := t.GetEnvironment(session, "GT_AGENT")
-	return config.GetProcessNames(agentName) // Returns Claude defaults if empty
+	agentName, _, err := t.getEnvironmentOptional(session, "GT_AGENT")
+	if err != nil {
+		return nil, err
+	}
+	return config.GetProcessNames(agentName), nil // Returns Claude defaults if empty
 }
 
 // WaitForCommand polls until the pane is NOT running one of the excluded commands.
