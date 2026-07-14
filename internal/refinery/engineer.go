@@ -969,8 +969,11 @@ func (e *Engineer) recheckMRSourceStillMergeable(mr *MRInfo, sourceIssue string)
 	if beads.IssueStatus(issue.Status).IsTerminal() {
 		return e.rejectMRBeforeMerge(mr, fmt.Sprintf("source_issue %s status is %s", sourceIssue, issue.Status))
 	}
-	if reason := refinerySourceIssueConcreteReason(issue); reason != "" {
+	if reason := beads.ConcreteWorkIssueRejectReason(issue); reason != "" {
 		return e.rejectMRBeforeMerge(mr, fmt.Sprintf("source_issue %s is not concrete (%s)", sourceIssue, reason))
+	}
+	if unchecked := beads.HasUncheckedCriteria(issue); unchecked > 0 {
+		return e.rejectMRBeforeMerge(mr, fmt.Sprintf("source_issue %s has %d unchecked acceptance criteria", sourceIssue, unchecked))
 	}
 	if af := beads.ParseAttachmentFields(issue); af != nil {
 		switch {
@@ -983,48 +986,6 @@ func (e *Engineer) recheckMRSourceStillMergeable(mr *MRInfo, sourceIssue string)
 		}
 	}
 	return ProcessResult{Success: true}
-}
-
-func refinerySourceIssueConcreteReason(issue *beads.Issue) string {
-	if issue == nil || strings.TrimSpace(issue.ID) == "" {
-		return "source-missing"
-	}
-	if issue.Ephemeral {
-		return "ephemeral"
-	}
-	if strings.Contains(strings.ToLower(issue.ID), "-wisp-") {
-		return "wisp-id"
-	}
-	if strings.HasPrefix(strings.ToLower(strings.TrimSpace(issue.ID)), "mol-") {
-		return "formula-id"
-	}
-	if refineryInternalIssueType(issue.Type) {
-		return "internal-type:" + strings.ToLower(strings.TrimSpace(issue.Type))
-	}
-	for _, label := range issue.Labels {
-		if refineryInternalIssueLabel(label) {
-			return "internal-label:" + strings.ToLower(strings.TrimSpace(label))
-		}
-	}
-	return ""
-}
-
-func refineryInternalIssueType(issueType string) bool {
-	switch strings.ToLower(strings.TrimSpace(issueType)) {
-	case "wisp", "message", "handoff", "merge-request", "agent", "queue", "convoy", "formula":
-		return true
-	default:
-		return false
-	}
-}
-
-func refineryInternalIssueLabel(label string) bool {
-	switch strings.ToLower(strings.TrimSpace(label)) {
-	case "gt:wisp", "gt:message", "gt:handoff", "gt:merge-request", "gt:agent", "gt:queue", "gt:convoy", "gt:formula":
-		return true
-	default:
-		return false
-	}
 }
 
 func (e *Engineer) acquireMainPushSlot(ctx context.Context) (string, error) {

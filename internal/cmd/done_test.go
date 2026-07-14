@@ -314,6 +314,143 @@ func TestNonReviewOnlyReviewGateDoesNotChangeCriteriaHandling(t *testing.T) {
 	}
 }
 
+func TestSourceCloseRejectsNonConcreteIssue(t *testing.T) {
+	issue := &beads.Issue{
+		ID:     "gt-mr",
+		Labels: []string{"gt:merge-request"},
+	}
+
+	reason, fatal := doneSourceCloseSkipReason(nil, issue.ID, issue)
+	if reason == "" || !fatal {
+		t.Fatalf("source close gate = %q, %v; want fatal non-concrete rejection", reason, fatal)
+	}
+	if !strings.Contains(reason, "not concrete") {
+		t.Fatalf("reason = %q, want non-concrete reason", reason)
+	}
+}
+
+func TestSourceCloseRejectsLocalMergeStrategy(t *testing.T) {
+	issue := &beads.Issue{
+		ID:          "gt-work",
+		Type:        "task",
+		Description: "merge_strategy: local\n",
+	}
+
+	reason, fatal := doneSourceCloseSkipReason(nil, issue.ID, issue)
+	if reason == "" || fatal {
+		t.Fatalf("local source close gate = %q, %v; want non-fatal skip", reason, fatal)
+	}
+	if !strings.Contains(reason, "merge_strategy=local") {
+		t.Fatalf("reason = %q, want local merge strategy reason", reason)
+	}
+}
+
+func TestDirectMergeRejectsUnsafeSourceBeforePush(t *testing.T) {
+	freshEvidenceReviewOnly := &beads.Issue{
+		ID:          "gt-review",
+		Type:        "task",
+		Description: "review_only: true\nattached_at: 2026-07-01T12:00:00Z\n",
+		Assignee:    "gastown/polecats/toast",
+		Comments: []beads.Comment{{
+			Author:    "gastown/polecats/toast",
+			CreatedAt: "2026-07-01T12:05:00Z",
+			Text:      "PR-SHERIFF-EVIDENCE: pass\nhead_sha: abc123",
+		}},
+	}
+	tests := []struct {
+		name        string
+		issueID     string
+		issue       *beads.Issue
+		wantReason  string
+		wantFatal   bool
+		wantAllowed bool
+	}{
+		{
+			name:       "missing source id",
+			issue:      &beads.Issue{ID: "gt-work", Type: "task"},
+			wantReason: "source issue is required",
+			wantFatal:  true,
+		},
+		{
+			name:       "non concrete source",
+			issueID:    "gt-mr",
+			issue:      &beads.Issue{ID: "gt-mr", Labels: []string{"gt:merge-request"}},
+			wantReason: "not concrete",
+			wantFatal:  true,
+		},
+		{
+			name:       "review only source",
+			issueID:    "gt-review",
+			issue:      freshEvidenceReviewOnly,
+			wantReason: "review-only issue gt-review cannot be direct-merged",
+			wantFatal:  true,
+		},
+		{
+			name:       "no merge source",
+			issueID:    "gt-work",
+			issue:      &beads.Issue{ID: "gt-work", Type: "task", Description: "no_merge: true\n"},
+			wantReason: "no_merge=true",
+			wantFatal:  true,
+		},
+		{
+			name:       "local merge strategy source",
+			issueID:    "gt-work",
+			issue:      &beads.Issue{ID: "gt-work", Type: "task", Description: "merge_strategy: local\n"},
+			wantReason: "merge_strategy=local",
+			wantFatal:  true,
+		},
+		{
+			name:       "unchecked criteria",
+			issueID:    "gt-work",
+			issue:      &beads.Issue{ID: "gt-work", Type: "task", AcceptanceCriteria: "- [ ] still open\n"},
+			wantReason: "unchecked acceptance criteria",
+			wantFatal:  false,
+		},
+		{
+			name:        "eligible source",
+			issueID:     "gt-work",
+			issue:       &beads.Issue{ID: "gt-work", Type: "task"},
+			wantAllowed: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			reason, fatal := doneDirectMergeSkipReason(nil, tt.issueID, tt.issue, "main")
+			if tt.wantAllowed {
+				if reason != "" || fatal {
+					t.Fatalf("direct merge gate = %q, %v; want allowed", reason, fatal)
+				}
+				return
+			}
+			if reason == "" || !strings.Contains(reason, tt.wantReason) || fatal != tt.wantFatal {
+				t.Fatalf("direct merge gate = %q, %v; want reason containing %q fatal=%v", reason, fatal, tt.wantReason, tt.wantFatal)
+			}
+		})
+	}
+}
+
+func TestSourceValidationRejectsInternalIssues(t *testing.T) {
+	if err := validateConcreteSourceIssue("gt-work", &beads.Issue{ID: "gt-work", Type: "task"}); err != nil {
+		t.Fatalf("concrete source rejected: %v", err)
+	}
+	if err := validateConcreteSourceIssue("gt-mr", &beads.Issue{ID: "gt-mr", Labels: []string{"gt:merge-request"}}); err == nil {
+		t.Fatal("internal source accepted; want rejection")
+	}
+}
+
+func TestValidateMergeRequestSourceRejectsMissingAndMismatchedSource(t *testing.T) {
+	missing := &beads.Issue{ID: "gt-mr", Description: "branch: polecat/test/gt-work\n"}
+	if err := validateMergeRequestSource(nil, missing, "gt-work"); err == nil || !strings.Contains(err.Error(), "missing source_issue") {
+		t.Fatalf("missing source validation error = %v, want missing source_issue", err)
+	}
+
+	mismatched := &beads.Issue{ID: "gt-mr", Description: "source_issue: gt-other\n"}
+	if err := validateMergeRequestSource(nil, mismatched, "gt-work"); err == nil || !strings.Contains(err.Error(), "does not match expected") {
+		t.Fatalf("mismatched source validation error = %v, want mismatch", err)
+	}
+}
+
 // TestDoneBeadsInitWithoutRedirect verifies that beads initialization works
 // normally when no redirect file exists.
 func TestDoneBeadsInitWithoutRedirect(t *testing.T) {
@@ -935,6 +1072,66 @@ func TestCleanupStatusAfterSuccessfulPush(t *testing.T) {
 		t.Run(tt.status, func(t *testing.T) {
 			if got := cleanupStatusAfterSuccessfulPush(tt.status); got != tt.want {
 				t.Errorf("cleanupStatusAfterSuccessfulPush(%q) = %q, want %q", tt.status, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestCleanupStatusFromWorkState(t *testing.T) {
+	pushErr := errors.New("remote unavailable")
+	tests := []struct {
+		name          string
+		status        *gitpkg.UncommittedWorkStatus
+		branchPushed  bool
+		unpushedCount int
+		pushErr       error
+		want          string
+	}{
+		{name: "nil", status: nil, branchPushed: true, want: "unknown"},
+		{
+			name:         "runtime only pushed",
+			status:       &gitpkg.UncommittedWorkStatus{HasUncommittedChanges: true, ModifiedFiles: []string{".opencode/plugins/gastown.js"}},
+			branchPushed: true,
+			want:         "clean",
+		},
+		{
+			name:         "runtime plus source",
+			status:       &gitpkg.UncommittedWorkStatus{HasUncommittedChanges: true, ModifiedFiles: []string{".opencode/plugins/gastown.js", "internal/cmd/done.go"}},
+			branchPushed: true,
+			want:         "uncommitted",
+		},
+		{
+			name:         "runtime plus stash",
+			status:       &gitpkg.UncommittedWorkStatus{HasUncommittedChanges: true, ModifiedFiles: []string{".opencode/plugins/gastown.js"}, StashCount: 1},
+			branchPushed: true,
+			want:         "stash",
+		},
+		{
+			name:          "runtime plus unpushed",
+			status:        &gitpkg.UncommittedWorkStatus{HasUncommittedChanges: true, ModifiedFiles: []string{".opencode/plugins/gastown.js"}},
+			branchPushed:  true,
+			unpushedCount: 1,
+			want:          "unpushed",
+		},
+		{
+			name:         "runtime plus push error",
+			status:       &gitpkg.UncommittedWorkStatus{HasUncommittedChanges: true, ModifiedFiles: []string{".opencode/plugins/gastown.js"}},
+			branchPushed: true,
+			pushErr:      pushErr,
+			want:         "unpushed",
+		},
+		{
+			name:         "runtime conflict",
+			status:       &gitpkg.UncommittedWorkStatus{HasUncommittedChanges: true, UnmergedFiles: []string{".opencode/plugins/gastown.js"}},
+			branchPushed: true,
+			want:         "uncommitted",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := cleanupStatusFromWorkState(tt.status, tt.branchPushed, tt.unpushedCount, tt.pushErr); got != tt.want {
+				t.Fatalf("cleanupStatusFromWorkState() = %q, want %q", got, tt.want)
 			}
 		})
 	}

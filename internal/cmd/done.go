@@ -2,7 +2,6 @@ package cmd
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -141,6 +140,22 @@ func cleanupStatusAfterSuccessfulPush(status string) string {
 	return status
 }
 
+func cleanupStatusFromWorkState(workStatus *git.UncommittedWorkStatus, branchPushed bool, unpushedCount int, branchPushedErr error) string {
+	if workStatus == nil {
+		return "unknown"
+	}
+	if workStatus.HasUncommittedChanges && !workStatus.CleanExcludingRuntime() {
+		return "uncommitted"
+	}
+	if workStatus.StashCount > 0 {
+		return "stash"
+	}
+	if branchPushedErr != nil || !branchPushed || unpushedCount > 0 {
+		return "unpushed"
+	}
+	return "clean"
+}
+
 var reviewEvidencePrefixes = []string{
 	"report:",
 	"findings:",
@@ -162,10 +177,43 @@ func doneSourceCloseSkipReason(bd *beads.Beads, issueID string, issue *beads.Iss
 	return doneSourceCloseSkipReasonForHead(bd, issueID, issue, currentHead)
 }
 
+func doneDirectMergeSkipReason(bd *beads.Beads, issueID string, issue *beads.Issue, targetBranch string) (string, bool) {
+	if strings.TrimSpace(issueID) == "" {
+		return "source issue is required for direct merge", true
+	}
+	issue, skipReason, fatal := loadDoneSourceIssue(bd, issueID, issue)
+	if skipReason != "" {
+		return skipReason, fatal
+	}
+	if err := validateConcreteSourceIssue(issueID, issue); err != nil {
+		return err.Error(), true
+	}
+	if attachment := beads.ParseAttachmentFields(issue); attachment != nil {
+		switch {
+		case attachment.NoMerge:
+			return fmt.Sprintf("source_issue %s has no_merge=true", issueID), true
+		case attachment.ReviewOnly:
+			return fmt.Sprintf("review-only issue %s cannot be direct-merged to %s", issueID, targetBranch), true
+		case strings.EqualFold(strings.TrimSpace(attachment.MergeStrategy), "local"):
+			return fmt.Sprintf("source_issue %s has merge_strategy=local", issueID), true
+		}
+	}
+	if unchecked := beads.HasUncheckedCriteria(issue); unchecked > 0 {
+		return fmt.Sprintf("issue %s has %d unchecked acceptance criteria — skipping direct merge", issueID, unchecked), false
+	}
+	return "", false
+}
+
 func doneSourceCloseSkipReasonForHead(bd *beads.Beads, issueID string, issue *beads.Issue, currentHead string) (string, bool) {
 	issue, skipReason, fatal := loadDoneSourceIssue(bd, issueID, issue)
 	if skipReason != "" {
 		return skipReason, fatal
+	}
+	if err := validateConcreteSourceIssue(issueID, issue); err != nil {
+		return err.Error(), true
+	}
+	if attachment := beads.ParseAttachmentFields(issue); attachment != nil && strings.EqualFold(strings.TrimSpace(attachment.MergeStrategy), "local") {
+		return fmt.Sprintf("issue %s has merge_strategy=local — skipping close", issueID), false
 	}
 	if skipReason, fatal := doneReviewOnlyCloseSkipReasonForHead(bd, issueID, issue, currentHead); skipReason != "" {
 		return skipReason, fatal
@@ -257,33 +305,9 @@ func hasFreshReviewReportEvidence(bd *beads.Beads, issueID string, issue *beads.
 	if bd == nil || issueID == "" {
 		return false, nil
 	}
-	if store := bd.Store(); store != nil {
-		comments, err := store.GetIssueComments(context.Background(), issueID)
-		if err != nil {
-			return false, err
-		}
-		for _, comment := range comments {
-			if comment == nil {
-				continue
-			}
-			candidate := beads.Comment{
-				Author:    comment.Author,
-				Text:      comment.Text,
-				CreatedAt: comment.CreatedAt.Format(time.RFC3339Nano),
-			}
-			if hasFreshReviewEvidenceComment([]beads.Comment{candidate}, assignmentAt, assignee, currentHead) {
-				return true, nil
-			}
-		}
-		return false, nil
-	}
-	out, err := bd.Run("comments", issueID, "--json")
+	comments, err := bd.Comments(issueID)
 	if err != nil {
 		return false, err
-	}
-	var comments []beads.Comment
-	if err := json.Unmarshal(out, &comments); err != nil {
-		return false, fmt.Errorf("parsing comments: %w", err)
 	}
 	if hasFreshReviewEvidenceComment(comments, assignmentAt, assignee, currentHead) {
 		return true, nil
@@ -545,25 +569,14 @@ func runDone(cmd *cobra.Command, args []string) (retErr error) {
 			if err != nil {
 				style.PrintWarning("could not auto-detect cleanup status: %v", err)
 			} else {
-				switch {
-				case workStatus.HasUncommittedChanges:
-					doneCleanupStatus = "uncommitted"
-				case workStatus.StashCount > 0:
-					doneCleanupStatus = "stash"
-				default:
-					// CheckUncommittedWork.UnpushedCommits doesn't work for branches
-					// without upstream tracking (common for polecats). Use the more
-					// robust BranchPushedToRemote which compares against origin/main.
-					pushed, unpushedCount, err := g.BranchPushedToRemote(branch, "origin")
-					if err != nil {
-						style.PrintWarning("could not check if branch is pushed: %v", err)
-						doneCleanupStatus = "unpushed" // err on side of caution
-					} else if !pushed || unpushedCount > 0 {
-						doneCleanupStatus = "unpushed"
-					} else {
-						doneCleanupStatus = "clean"
-					}
+				// CheckUncommittedWork.UnpushedCommits doesn't work for branches
+				// without upstream tracking (common for polecats). Use the more
+				// robust BranchPushedToRemote which compares against origin/main.
+				pushed, unpushedCount, pushErr := g.BranchPushedToRemote(branch, "origin")
+				if pushErr != nil {
+					style.PrintWarning("could not check if branch is pushed: %v", pushErr)
 				}
+				doneCleanupStatus = cleanupStatusFromWorkState(workStatus, pushed, unpushedCount, pushErr)
 			}
 		}
 	}
@@ -1063,6 +1076,12 @@ func runDone(cmd *cobra.Command, args []string) (retErr error) {
 		// Handle "direct" strategy: push to target branch, skip MR
 		if convoyInfo != nil && convoyInfo.MergeStrategy == "direct" {
 			fmt.Printf("%s Direct merge strategy: pushing to %s\n", style.Bold.Render("→"), defaultBranch)
+			directBd := beads.New(cwd)
+			if skipReason, _ := doneDirectMergeSkipReason(directBd, issueID, nil, defaultBranch); skipReason != "" {
+				style.PrintWarning("%s", skipReason)
+				notifyDoneCloseSkipped(townRoot, rigName, sender, issueID, skipReason)
+				return fmt.Errorf("cannot complete direct-merge work: %s", skipReason)
+			}
 			// Push submodule changes before direct push (gt-dzs)
 			pushSubmoduleChanges(g, baseRef)
 			directRefspec := branch + ":" + defaultBranch
@@ -1090,12 +1109,11 @@ func runDone(cmd *cobra.Command, args []string) (retErr error) {
 
 			// Close the base issue — no MR/refinery will close it
 			if issueID != "" {
-				directBd := beads.New(cwd)
-				if skipReason, fatal := doneReviewOnlyCloseSkipReason(directBd, issueID, nil); skipReason != "" {
+				if skipReason, fatal := doneSourceCloseSkipReason(directBd, issueID, nil); skipReason != "" {
 					style.PrintWarning("%s", skipReason)
 					notifyDoneCloseSkipped(townRoot, rigName, sender, issueID, skipReason)
 					if fatal {
-						return fmt.Errorf("cannot complete review-only work: %s", skipReason)
+						return fmt.Errorf("cannot complete direct-merge work: %s", skipReason)
 					}
 				} else {
 					closeReason := fmt.Sprintf("Direct merge to %s (convoy strategy)", defaultBranch)
@@ -1121,6 +1139,113 @@ func runDone(cmd *cobra.Command, args []string) (retErr error) {
 		}
 
 		// Default: "mr" strategy (or no convoy) — push branch, create MR bead
+
+		if issueID == "" {
+			return fmt.Errorf("cannot determine source issue from branch '%s'; use --issue to specify", branch)
+		}
+
+		// Initialize beads and validate the source before any remote mutation.
+		// Without a redirect, MR beads are invisible to the Refinery.
+		resolvedBeads := beads.ResolveBeadsDir(cwd)
+		if beads.IsLocalBeadsDir(cwd, resolvedBeads) {
+			fmt.Fprintf(os.Stderr, "WARNING: beads resolved to local dir %s (no shared-beads redirect)\n", resolvedBeads)
+			fmt.Fprintf(os.Stderr, "  MR beads written here will be invisible to the Refinery — run 'gt polecat repair' to fix\n")
+		}
+		bd := beads.NewWithBeadsDir(cwd, resolvedBeads)
+
+		sourceIssueForNoMerge, err := bd.Show(issueID)
+		if err != nil {
+			mrFailed = true
+			errMsg := fmt.Sprintf("source issue validation failed: source_issue %s could not be resolved: %v", issueID, err)
+			doneErrors = append(doneErrors, errMsg)
+			style.PrintWarning("%s\nBranch is not pushed and MR bead not created. Witness will be notified.", errMsg)
+			goto notifyWitness
+		}
+		if err := validateConcreteSourceIssue(issueID, sourceIssueForNoMerge); err != nil {
+			mrFailed = true
+			errMsg := fmt.Sprintf("source issue validation failed: %v", err)
+			doneErrors = append(doneErrors, errMsg)
+			style.PrintWarning("%s\nBranch is not pushed and MR bead not created. Witness will be notified.", errMsg)
+			goto notifyWitness
+		}
+		if attachmentFields := beads.ParseAttachmentFields(sourceIssueForNoMerge); attachmentFields != nil && strings.EqualFold(strings.TrimSpace(attachmentFields.MergeStrategy), "local") {
+			fmt.Printf("%s Local merge strategy: skipping push and merge queue\n", style.Bold.Render("→"))
+			fmt.Printf("  Branch: %s\n", branch)
+			fmt.Printf("  Issue: %s\n", issueID)
+			fmt.Println()
+			fmt.Printf("%s\n", style.Dim.Render("Work stays on local feature branch."))
+			goto notifyWitness
+		}
+
+		// Fallback: check if issue belongs to a direct-merge convoy that the
+		// primary check missed — e.g., issues dispatched before the attachment-field
+		// fix, or where dep-based lookup failed at that point. This must happen
+		// before the generic branch/submodule push because direct mode has no MR or
+		// refinery recheck.
+		convoyInfo = getConvoyInfoFromIssue(issueID, cwd)
+		if convoyInfo == nil {
+			convoyInfo = getConvoyInfoForIssue(issueID)
+		}
+		if convoyInfo != nil && convoyInfo.MergeStrategy == "direct" {
+			fmt.Printf("%s Late-detected direct merge strategy: pushing to %s\n", style.Bold.Render("→"), defaultBranch)
+			fmt.Printf("  Convoy: %s\n", convoyInfo.ID)
+			if skipReason, _ := doneDirectMergeSkipReason(bd, issueID, sourceIssueForNoMerge, defaultBranch); skipReason != "" {
+				style.PrintWarning("%s", skipReason)
+				notifyDoneCloseSkipped(townRoot, rigName, sender, issueID, skipReason)
+				return fmt.Errorf("cannot complete direct-merge work: %s", skipReason)
+			}
+
+			pushSubmoduleChanges(g, baseRef)
+			directRefspec := branch + ":" + defaultBranch
+			directPushErr := g.Push("origin", directRefspec, false)
+			if directPushErr != nil {
+				pushFailed = true
+				errMsg := fmt.Sprintf("direct push to %s failed: %v", defaultBranch, directPushErr)
+				doneErrors = append(doneErrors, errMsg)
+				style.PrintWarning("%s", errMsg)
+				goto notifyWitness
+			}
+			directCommitSHA, _ := g.Rev("HEAD")
+			if doneSkipVerify {
+				noteVerifiedPushSkipped(cwd, issueID, defaultBranch, directCommitSHA, "--skip-verify on late direct merge")
+			} else if verifyErr := g.VerifyPushedCommitReachableFromPushTarget("origin", defaultBranch, directCommitSHA); verifyErr != nil {
+				pushFailed = true
+				errMsg := verifyErr.Error()
+				doneErrors = append(doneErrors, errMsg)
+				noteVerifiedPushFailure(cwd, issueID, defaultBranch, directCommitSHA, verifyErr)
+				style.PrintWarning("%s\nLate direct merge pushed but remote verification failed. Source bead will remain in progress.", errMsg)
+				goto notifyWitness
+			}
+			fmt.Printf("%s Branch pushed directly to %s\n", style.Bold.Render("✓"), defaultBranch)
+			doneCleanupStatus = cleanupStatusAfterSuccessfulPush(doneCleanupStatus)
+
+			if skipReason, fatal := doneSourceCloseSkipReason(bd, issueID, sourceIssueForNoMerge); skipReason != "" {
+				style.PrintWarning("%s", skipReason)
+				notifyDoneCloseSkipped(townRoot, rigName, sender, issueID, skipReason)
+				if fatal {
+					return fmt.Errorf("cannot complete direct-merge work: %s", skipReason)
+				}
+			} else {
+				var closeErr error
+				for attempt := 1; attempt <= 3; attempt++ {
+					closeErr = bd.ForceCloseWithReason(
+						fmt.Sprintf("Direct merge to %s (convoy strategy, late detection)", defaultBranch), issueID)
+					if closeErr == nil {
+						fmt.Printf("%s Issue %s closed (direct merge)\n", style.Bold.Render("✓"), issueID)
+						break
+					}
+					if attempt < 3 {
+						style.PrintWarning("close attempt %d/3 failed: %v (retrying in %ds)", attempt, closeErr, attempt*2)
+						time.Sleep(time.Duration(attempt*2) * time.Second)
+					}
+				}
+				if closeErr != nil {
+					style.PrintWarning("could not close issue %s after 3 attempts: %v", issueID, closeErr)
+				}
+			}
+
+			goto notifyWitness
+		}
 
 		// Pre-declare push variables for checkpoint goto (gt-aufru)
 		var refspec string
@@ -1230,22 +1355,8 @@ func runDone(cmd *cobra.Command, args []string) (retErr error) {
 
 	afterPush:
 
-		if issueID == "" {
-			return fmt.Errorf("cannot determine source issue from branch '%s'; use --issue to specify", branch)
-		}
-
-		// Initialize beads — warn if resolved to a local .beads/ (no redirect).
-		// Without a redirect, MR beads are invisible to the Refinery.
-		resolvedBeads := beads.ResolveBeadsDir(cwd)
-		if beads.IsLocalBeadsDir(cwd, resolvedBeads) {
-			fmt.Fprintf(os.Stderr, "WARNING: beads resolved to local dir %s (no shared-beads redirect)\n", resolvedBeads)
-			fmt.Fprintf(os.Stderr, "  MR beads written here will be invisible to the Refinery — run 'gt polecat repair' to fix\n")
-		}
-		bd := beads.NewWithBeadsDir(cwd, resolvedBeads)
-
 		// Check for no_merge flag - if set, skip merge queue and notify for review
-		sourceIssueForNoMerge, err := bd.Show(issueID)
-		if err == nil {
+		{
 			attachmentFields := beads.ParseAttachmentFields(sourceIssueForNoMerge)
 			if attachmentFields != nil && attachmentFields.NoMerge {
 				fmt.Printf("%s No-merge mode: skipping merge queue\n", style.Bold.Render("→"))
@@ -1336,7 +1447,7 @@ func runDone(cmd *cobra.Command, args []string) (retErr error) {
 				// here after notifying the dispatcher. Otherwise hooked work remains open.
 				if issueID != "" {
 					canCloseIssue := true
-					if skipReason, fatal := doneReviewOnlyCloseSkipReason(bd, issueID, sourceIssueForNoMerge); skipReason != "" {
+					if skipReason, fatal := doneSourceCloseSkipReason(bd, issueID, sourceIssueForNoMerge); skipReason != "" {
 						style.PrintWarning("%s", skipReason)
 						notifyDoneCloseSkipped(townRoot, rigName, sender, issueID, skipReason)
 						if fatal {
@@ -1380,72 +1491,6 @@ func runDone(cmd *cobra.Command, args []string) (retErr error) {
 			}
 		}
 
-		// Fallback: check if issue belongs to a direct-merge convoy that the
-		// primary check (line ~483) missed — e.g., issues dispatched before the
-		// attachment-field fix, or where dep-based lookup failed at that point.
-		// At this stage the branch was pushed to origin/<branch> (feature branch),
-		// NOT to main. So we must push to main now before skipping MR creation.
-		convoyInfo = getConvoyInfoFromIssue(issueID, cwd)
-		if convoyInfo == nil {
-			convoyInfo = getConvoyInfoForIssue(issueID)
-		}
-		if convoyInfo != nil && convoyInfo.MergeStrategy == "direct" {
-			fmt.Printf("%s Late-detected direct merge strategy: pushing to %s\n", style.Bold.Render("→"), defaultBranch)
-			fmt.Printf("  Convoy: %s\n", convoyInfo.ID)
-
-			// Push branch directly to main (the earlier push went to origin/<branch>)
-			directRefspec := branch + ":" + defaultBranch
-			directPushErr := g.Push("origin", directRefspec, false)
-			if directPushErr != nil {
-				// Direct push failed — fall through to normal MR creation
-				style.PrintWarning("late direct push to %s failed: %v — falling through to MR", defaultBranch, directPushErr)
-			} else {
-				lateDirectCommitSHA, _ := g.Rev("HEAD")
-				if doneSkipVerify {
-					noteVerifiedPushSkipped(cwd, issueID, defaultBranch, lateDirectCommitSHA, "--skip-verify on late direct merge")
-				} else if verifyErr := g.VerifyPushedCommitReachableFromPushTarget("origin", defaultBranch, lateDirectCommitSHA); verifyErr != nil {
-					pushFailed = true
-					errMsg := verifyErr.Error()
-					doneErrors = append(doneErrors, errMsg)
-					noteVerifiedPushFailure(cwd, issueID, defaultBranch, lateDirectCommitSHA, verifyErr)
-					style.PrintWarning("%s\nLate direct merge pushed but remote verification failed. Source bead will remain in progress.", errMsg)
-					goto notifyWitness
-				}
-				fmt.Printf("%s Branch pushed directly to %s\n", style.Bold.Render("✓"), defaultBranch)
-				doneCleanupStatus = cleanupStatusAfterSuccessfulPush(doneCleanupStatus)
-
-				// Close the issue directly — refinery won't process it.
-				if issueID != "" {
-					if skipReason, fatal := doneReviewOnlyCloseSkipReason(bd, issueID, nil); skipReason != "" {
-						style.PrintWarning("%s", skipReason)
-						notifyDoneCloseSkipped(townRoot, rigName, sender, issueID, skipReason)
-						if fatal {
-							return fmt.Errorf("cannot complete review-only work: %s", skipReason)
-						}
-					} else {
-						var closeErr error
-						for attempt := 1; attempt <= 3; attempt++ {
-							closeErr = bd.ForceCloseWithReason(
-								fmt.Sprintf("Direct merge to %s (convoy strategy, late detection)", defaultBranch), issueID)
-							if closeErr == nil {
-								fmt.Printf("%s Issue %s closed (direct merge)\n", style.Bold.Render("✓"), issueID)
-								break
-							}
-							if attempt < 3 {
-								style.PrintWarning("close attempt %d/3 failed: %v (retrying in %ds)", attempt, closeErr, attempt*2)
-								time.Sleep(time.Duration(attempt*2) * time.Second)
-							}
-						}
-						if closeErr != nil {
-							style.PrintWarning("could not close issue %s after 3 attempts: %v", issueID, closeErr)
-						}
-					}
-				}
-
-				goto notifyWitness
-			}
-		}
-
 		// Determine target branch for the MR.
 		// Priority: explicit --target flag > formula_vars base_branch > integration branch auto-detect > rig default.
 		target := defaultBranch
@@ -1470,11 +1515,6 @@ func runDone(cmd *cobra.Command, args []string) (retErr error) {
 					fmt.Printf("  Target branch override: %s (from formula_vars)\n", target)
 				}
 			}
-		} else if !explicitTarget && target == defaultBranch && sourceIssueForNoMerge == nil && issueID != "" {
-			// sourceIssueForNoMerge is nil — bd.Show(issueID) failed earlier.
-			// This is the silent failure path that caused 150+ procedure beads to
-			// target main instead of feat/contract-review-procedure.
-			style.PrintWarning("could not load source issue %s for target branch detection (Dolt/beads lookup failed) — using default branch %s", issueID, defaultBranch)
 		}
 
 		// 3. Auto-detect integration branch from epic hierarchy (if enabled).
@@ -1498,12 +1538,7 @@ func runDone(cmd *cobra.Command, args []string) (retErr error) {
 		if donePriority >= 0 {
 			priority = donePriority
 		} else {
-			sourceIssue, err := bd.Show(issueID)
-			if err != nil {
-				priority = 2 // Default
-			} else {
-				priority = sourceIssue.Priority
-			}
+			priority = sourceIssueForNoMerge.Priority
 		}
 
 		// Pre-declare for checkpoint goto (gt-aufru)
@@ -1526,6 +1561,13 @@ func runDone(cmd *cobra.Command, args []string) (retErr error) {
 			if cpMR, cpErr := bd.Show(cpMRID); cpErr == nil && cpMR != nil {
 				branchPrefix := "branch: " + branch + "\n"
 				if strings.HasPrefix(cpMR.Description, branchPrefix) {
+					if err := validateMergeRequestSource(bd, cpMR, issueID); err != nil {
+						mrFailed = true
+						errMsg := fmt.Sprintf("checkpoint MR validation failed: %v", err)
+						doneErrors = append(doneErrors, errMsg)
+						style.PrintWarning("%s\nBranch is pushed but MR bead not trusted. Witness will be notified.", errMsg)
+						goto notifyWitness
+					}
 					mrID = cpMRID
 					fmt.Printf("%s MR already created (resumed from checkpoint: %s)\n", style.Bold.Render("✓"), mrID)
 					goto afterMR
@@ -1549,6 +1591,13 @@ func runDone(cmd *cobra.Command, args []string) (retErr error) {
 
 		if existingMR != nil {
 			// MR already exists with same branch AND commit — true idempotent retry
+			if err := validateMergeRequestSource(bd, existingMR, issueID); err != nil {
+				mrFailed = true
+				errMsg := fmt.Sprintf("existing MR validation failed: %v", err)
+				doneErrors = append(doneErrors, errMsg)
+				style.PrintWarning("%s\nBranch is pushed but existing MR bead not trusted. Witness will be notified.", errMsg)
+				goto notifyWitness
+			}
 			mrID = existingMR.ID
 			fmt.Printf("%s MR already exists (idempotent)\n", style.Bold.Render("✓"))
 			fmt.Printf("  MR ID: %s\n", style.Bold.Render(mrID))
@@ -1673,7 +1722,7 @@ func runDone(cmd *cobra.Command, args []string) (retErr error) {
 			// GH#2599: Back-link source issue to MR bead for discoverability.
 			if issueID != "" {
 				comment := fmt.Sprintf("MR created: %s", mrID)
-				if _, err := bd.Run("comments", "add", issueID, comment); err != nil {
+				if err := bd.AddComment(issueID, comment); err != nil {
 					style.PrintWarning("could not back-link source issue %s to MR %s: %v", issueID, mrID, err)
 				}
 			}
@@ -1896,7 +1945,7 @@ func noteVerifiedPushFailure(cwd, issueID, branch, commit string, verifyErr erro
 	inProgress := "in_progress"
 	_ = bd.Update(issueID, beads.UpdateOptions{Status: &inProgress})
 	msg := fmt.Sprintf("verified_push_failed: commit %s not verified on origin/%s: %v", commit, branch, verifyErr)
-	_, _ = bd.Run("comments", "add", issueID, msg)
+	_ = bd.AddComment(issueID, msg)
 }
 
 func noteVerifiedPushSkipped(cwd, issueID, branch, commit, reason string) {
@@ -1904,7 +1953,7 @@ func noteVerifiedPushSkipped(cwd, issueID, branch, commit, reason string) {
 		return
 	}
 	msg := fmt.Sprintf("verified_push_skipped: commit %s branch origin/%s reason=%s", commit, branch, reason)
-	_, _ = beads.New(cwd).Run("comments", "add", issueID, msg)
+	_ = beads.New(cwd).AddComment(issueID, msg)
 }
 
 func verifyPushedCommitWithBareFallback(g *git.Git, townRoot, rigName, branch, commit string) error {
@@ -2169,12 +2218,12 @@ func updateAgentStateOnDone(cwd, townRoot, exitType, issueID string) error {
 				goto doneStateUpdate
 			}
 
-			if skipReason, fatal := doneReviewOnlyCloseSkipReason(bd, hookedBeadID, hookedBead); skipReason != "" {
+			if skipReason, fatal := doneSourceCloseSkipReason(bd, hookedBeadID, hookedBead); skipReason != "" {
 				style.PrintWarning("%s", skipReason)
 				fmt.Fprintf(os.Stderr, "  The bead will remain open for witness/mayor review.\n")
 				notifyDoneCloseSkipped(townRoot, ctx.Rig, detectSender(), hookedBeadID, skipReason)
 				if fatal {
-					return fmt.Errorf("cannot complete review-only work: %s", skipReason)
+					return fmt.Errorf("cannot complete hooked work: %s", skipReason)
 				}
 				goto doneStateUpdate
 			}

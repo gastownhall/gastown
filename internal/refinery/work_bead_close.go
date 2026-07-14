@@ -58,7 +58,7 @@ func closeMergedWorkBead(work workBeadCloser, agent issueReader, out io.Writer, 
 		result.NotFound = true
 		return result
 	}
-	if reason := refinerySourceIssueConcreteReason(issue); reason != "" {
+	if reason := beads.ConcreteWorkIssueRejectReason(issue); reason != "" {
 		logf("[Refinery] Warning: refusing to close non-concrete work bead %s (%s)\n", workBeadID, reason)
 		result.NotFound = true
 		return result
@@ -81,7 +81,7 @@ func closeMergedWorkBead(work workBeadCloser, agent issueReader, out io.Writer, 
 
 	if err := work.ForceCloseWithReason(closeReason, workBeadID); err != nil {
 		if issue, showErr := work.Show(workBeadID); showErr == nil && issue != nil &&
-			refinerySourceIssueConcreteReason(issue) == "" &&
+			beads.ConcreteWorkIssueRejectReason(issue) == "" &&
 			beads.IssueStatus(strings.TrimSpace(issue.Status)).IsTerminal() {
 			logf("[Refinery] Work bead already closed: %s\n", workBeadID)
 			result.Closed = true

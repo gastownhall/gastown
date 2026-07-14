@@ -951,6 +951,112 @@ exit 0
 	}
 }
 
+func TestMutationsRouteIDsByResolvedBeadsDir(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("test uses Unix shell script mock for bd")
+	}
+
+	townRoot := t.TempDir()
+	for _, dir := range []string{
+		filepath.Join(townRoot, "mayor"),
+		filepath.Join(townRoot, ".beads"),
+		filepath.Join(townRoot, "gastown", ".beads"),
+	} {
+		if err := os.MkdirAll(dir, 0755); err != nil {
+			t.Fatalf("mkdir %s: %v", dir, err)
+		}
+	}
+	if err := os.WriteFile(filepath.Join(townRoot, "mayor", "town.json"), []byte(`{"name":"test"}`), 0644); err != nil {
+		t.Fatalf("write town.json: %v", err)
+	}
+	if err := WriteRoutes(filepath.Join(townRoot, ".beads"), []Route{
+		{Prefix: "hq-", Path: "."},
+		{Prefix: "gt-", Path: "gastown"},
+	}); err != nil {
+		t.Fatalf("write routes: %v", err)
+	}
+
+	stubDir := t.TempDir()
+	logPath := filepath.Join(stubDir, "bd.log")
+	stubPath := filepath.Join(stubDir, "bd")
+	script := `#!/bin/sh
+if [ "$1" = "--allow-stale" ] && [ "$2" = "version" ]; then
+  exit 1
+fi
+printf '%s|%s\n' "${BEADS_DIR:-}" "$*" >> "$MOCK_BD_LOG"
+if [ "$1" = "comments" ] && [ "$3" = "--json" ]; then
+  printf '[]\n'
+fi
+exit 0
+`
+	if err := os.WriteFile(stubPath, []byte(script), 0755); err != nil {
+		t.Fatalf("write bd stub: %v", err)
+	}
+	t.Setenv("PATH", stubDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	t.Setenv("MOCK_BD_LOG", logPath)
+	ResetBdAllowStaleCacheForTest()
+
+	bd := NewWithBeadsDir(filepath.Join(townRoot, "gastown"), filepath.Join(townRoot, "gastown", ".beads"))
+	status := "in_progress"
+	if err := bd.Update("hq-source", UpdateOptions{Status: &status}); err != nil {
+		t.Fatalf("Update: %v", err)
+	}
+	if err := bd.AddComment("hq-source", "MR created: gt-mr"); err != nil {
+		t.Fatalf("AddComment: %v", err)
+	}
+	if _, err := bd.Comments("hq-source"); err != nil {
+		t.Fatalf("Comments: %v", err)
+	}
+	if err := bd.CloseWithReason("done", "hq-source", "gt-work"); err != nil {
+		t.Fatalf("CloseWithReason: %v", err)
+	}
+
+	data, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatalf("read bd log: %v", err)
+	}
+	log := string(data)
+	townBeadsDir := filepath.Join(townRoot, ".beads")
+	rigBeadsDir := filepath.Join(townRoot, "gastown", ".beads")
+	for _, want := range []string{
+		townBeadsDir + "|update hq-source --status=in_progress",
+		townBeadsDir + "|comments add hq-source MR created: gt-mr",
+		townBeadsDir + "|comments hq-source --json",
+		townBeadsDir + "|close hq-source --reason=done",
+		rigBeadsDir + "|close gt-work --reason=done",
+	} {
+		if !strings.Contains(log, want) {
+			t.Fatalf("bd log missing %q:\n%s", want, log)
+		}
+	}
+}
+
+func TestConcreteWorkIssueRejectReason(t *testing.T) {
+	tests := []struct {
+		name  string
+		issue *Issue
+		want  string
+	}{
+		{name: "nil", issue: nil, want: "source-missing"},
+		{name: "empty id", issue: &Issue{}, want: "source-missing"},
+		{name: "ephemeral", issue: &Issue{ID: "gt-work", Ephemeral: true}, want: "ephemeral"},
+		{name: "wisp id", issue: &Issue{ID: "gt-wisp-123"}, want: "wisp-id"},
+		{name: "formula id", issue: &Issue{ID: "mol-polecat-work"}, want: "formula-id"},
+		{name: "internal type", issue: &Issue{ID: "gt-mr", Type: "merge-request"}, want: "internal-type:merge-request"},
+		{name: "internal label", issue: &Issue{ID: "gt-mr", Labels: []string{"gt:merge-request"}}, want: "internal-label:gt:merge-request"},
+		{name: "protected label", issue: &Issue{ID: "gt-rig", Labels: []string{"gt:rig"}}, want: "protected-label:gt:rig"},
+		{name: "concrete", issue: &Issue{ID: "gt-work", Type: "task"}, want: ""},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := ConcreteWorkIssueRejectReason(tt.issue); got != tt.want {
+				t.Fatalf("ConcreteWorkIssueRejectReason() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
 func TestCreateWithRigRepairsTargetConfigPrefix(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("test uses Unix shell script mock for bd")

@@ -247,6 +247,24 @@ func TestRecheckMRStillMergeable_RejectsClosedSource(t *testing.T) {
 	}
 }
 
+func TestRecheckMRStillMergeable_RejectsUncheckedSourceCriteria(t *testing.T) {
+	workDir, _, cleanup := testGitRepo(t)
+	defer cleanup()
+	source := prepushIssue("gt-src", "")
+	source.AcceptanceCriteria = "- [ ] still open\n"
+	store := newPrepushStore(source, prepushMRIssue("gt-mr", "feature", "main", "gt-src"))
+	e := newPrepushEngineer(t, workDir, store)
+
+	mr := &MRInfo{ID: "gt-mr", Branch: "feature", Target: "main", SourceIssue: "gt-src"}
+	result := e.recheckMRStillMergeable(mr, "main")
+	if result.Success || !result.NoMerge {
+		t.Fatalf("unchecked source criteria should be rejected, got: %+v", result)
+	}
+	if got := store.closeReasons["gt-mr"]; got != "rejected: source_issue gt-src has 1 unchecked acceptance criteria" {
+		t.Fatalf("MR close reason = %q, want unchecked criteria rejection", got)
+	}
+}
+
 func TestDoMerge_RechecksSourceFlagsBeforeDirectPush(t *testing.T) {
 	tests := []struct {
 		name        string

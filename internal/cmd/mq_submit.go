@@ -141,6 +141,13 @@ func runMqSubmit(cmd *cobra.Command, args []string) error {
 
 	// Initialize beads for looking up source issue
 	bd := beads.New(cwd)
+	sourceIssue, err := bd.Show(issueID)
+	if err != nil {
+		return fmt.Errorf("source issue validation failed: source_issue %s could not be resolved: %w", issueID, err)
+	}
+	if err := validateConcreteSourceIssue(issueID, sourceIssue); err != nil {
+		return fmt.Errorf("source issue validation failed: %w", err)
+	}
 
 	// Determine target branch
 	// Priority: explicit --epic > formula_vars base_branch > integration branch auto-detect > rig default.
@@ -155,12 +162,10 @@ func runMqSubmit(cmd *cobra.Command, args []string) error {
 		// the bead's formula_vars field. Without this check, MRs created via
 		// gt mq submit always target the rig's default branch (usually main),
 		// even when the polecat was working against a feature branch.
-		if sourceIssue, showErr := bd.Show(issueID); showErr == nil {
-			if af := beads.ParseAttachmentFields(sourceIssue); af != nil {
-				if bb := extractFormulaVar(af.FormulaVars, "base_branch"); bb != "" && bb != defaultBranch {
-					target = bb
-					fmt.Printf("  Target branch override: %s (from formula_vars)\n", target)
-				}
+		if af := beads.ParseAttachmentFields(sourceIssue); af != nil {
+			if bb := extractFormulaVar(af.FormulaVars, "base_branch"); bb != "" && bb != defaultBranch {
+				target = bb
+				fmt.Printf("  Target branch override: %s (from formula_vars)\n", target)
 			}
 		}
 
@@ -187,20 +192,10 @@ func runMqSubmit(cmd *cobra.Command, args []string) error {
 
 	// Get source issue for priority inheritance and dependency check
 	var priority int
-	var sourceIssue *beads.Issue
 	if mqSubmitPriority >= 0 {
 		priority = mqSubmitPriority
-	}
-	// Always try to fetch source issue (needed for both priority and dep check)
-	sourceIssue, err = bd.Show(issueID)
-	if err != nil {
-		if mqSubmitPriority < 0 {
-			priority = 2
-		}
 	} else {
-		if mqSubmitPriority < 0 {
-			priority = sourceIssue.Priority
-		}
+		priority = sourceIssue.Priority
 	}
 
 	// Enforce molecule step dependencies before allowing submit.
@@ -252,6 +247,9 @@ func runMqSubmit(cmd *cobra.Command, args []string) error {
 	}
 
 	if existingMR != nil {
+		if err := validateMergeRequestSource(bd, existingMR, issueID); err != nil {
+			return fmt.Errorf("existing merge request validation failed: %w", err)
+		}
 		mrIssue = existingMR
 		fmt.Printf("%s MR already exists (idempotent)\n", style.Bold.Render("✓"))
 	} else {
@@ -279,7 +277,7 @@ func runMqSubmit(cmd *cobra.Command, args []string) error {
 		// GH#2599: Back-link source issue to MR bead for discoverability.
 		if issueID != "" {
 			comment := fmt.Sprintf("MR created: %s", mrIssue.ID)
-			if _, err := bd.Run("comments", "add", issueID, comment); err != nil {
+			if err := bd.AddComment(issueID, comment); err != nil {
 				style.PrintWarning("could not back-link source issue %s to MR %s: %v", issueID, mrIssue.ID, err)
 			}
 		}

@@ -239,6 +239,68 @@ func HasLabel(issue *Issue, label string) bool {
 	return false
 }
 
+// ConcreteWorkIssueRejectReason returns why issue is not a concrete source/work
+// issue suitable for completion or merge-request source tracking. Empty means OK.
+func ConcreteWorkIssueRejectReason(issue *Issue) string {
+	if issue == nil || strings.TrimSpace(issue.ID) == "" {
+		return "source-missing"
+	}
+	if issue.Ephemeral {
+		return "ephemeral"
+	}
+	issueID := strings.ToLower(strings.TrimSpace(issue.ID))
+	if strings.Contains(issueID, "-wisp-") {
+		return "wisp-id"
+	}
+	if strings.HasPrefix(issueID, "mol-") {
+		return "formula-id"
+	}
+	if InternalIssueType(issue.Type) {
+		return "internal-type:" + strings.ToLower(strings.TrimSpace(issue.Type))
+	}
+	for _, label := range issue.Labels {
+		if InternalIssueLabel(label) {
+			return "internal-label:" + strings.ToLower(strings.TrimSpace(label))
+		}
+		if ProtectedIssueLabel(label) {
+			return "protected-label:" + strings.ToLower(strings.TrimSpace(label))
+		}
+	}
+	return ""
+}
+
+// InternalIssueType reports whether an issue type represents Gas Town runtime
+// state rather than user/code work.
+func InternalIssueType(issueType string) bool {
+	switch strings.ToLower(strings.TrimSpace(issueType)) {
+	case "wisp", "message", "handoff", "merge-request", "agent", "queue", "convoy", "formula":
+		return true
+	default:
+		return false
+	}
+}
+
+// InternalIssueLabel reports whether a label marks Gas Town runtime state.
+func InternalIssueLabel(label string) bool {
+	switch strings.ToLower(strings.TrimSpace(label)) {
+	case "gt:wisp", "gt:message", "gt:handoff", "gt:merge-request", "gt:agent", "gt:queue", "gt:convoy", "gt:formula":
+		return true
+	default:
+		return false
+	}
+}
+
+// ProtectedIssueLabel reports whether a label marks a bead that automated
+// completion paths must not close as ordinary work.
+func ProtectedIssueLabel(label string) bool {
+	switch strings.ToLower(strings.TrimSpace(label)) {
+	case "gt:standing-orders", "gt:keep", "gt:role", "gt:rig":
+		return true
+	default:
+		return false
+	}
+}
+
 // HasUncheckedCriteria checks if an issue has acceptance criteria with unchecked items.
 // Returns the count of unchecked items (0 means all checked or no criteria).
 func HasUncheckedCriteria(issue *Issue) int {
@@ -278,8 +340,7 @@ func IsProtectedBead(issue *Issue) bool {
 		return false
 	}
 	for _, l := range issue.Labels {
-		switch l {
-		case "gt:standing-orders", "gt:keep", "gt:role", "gt:rig":
+		if ProtectedIssueLabel(l) {
 			return true
 		}
 	}
@@ -646,12 +707,12 @@ func (b *Beads) forIssueID(id string) *Beads {
 		return b
 	}
 	return &Beads{
-		workDir:    b.workDir,
+		workDir:    filepath.Dir(resolved),
 		beadsDir:   resolved,
 		isolated:   b.isolated,
 		serverPort: b.serverPort,
-		store:      b.store,
 		townRoot:   b.townRoot,
+		noRoute:    true,
 	}
 }
 
@@ -1493,13 +1554,8 @@ func (b *Beads) ReadyWithType(issueType string) ([]*Issue, error) {
 
 // Show returns detailed information about an issue.
 func (b *Beads) Show(id string) (*Issue, error) {
-	// Route cross-rig queries via routes.jsonl so that rig-level bead IDs
-	// (e.g., "gt-abc123") resolve to the correct rig database.
-	// noRoute (see ForAgentBead) bypasses this for agent-bead lookups.
 	if !b.noRoute {
-		targetDir := ResolveRoutingTarget(b.getTownRoot(), id, b.getResolvedBeadsDir())
-		if targetDir != b.getResolvedBeadsDir() {
-			target := NewWithBeadsDir(filepath.Dir(targetDir), targetDir)
+		if target := b.forIssueID(id); target != b {
 			return target.Show(id)
 		}
 	}
@@ -1907,6 +1963,12 @@ func normalizeBugTitle(title string) string {
 
 // Update updates an existing issue.
 func (b *Beads) Update(id string, opts UpdateOptions) error {
+	if !b.noRoute {
+		if target := b.forIssueID(id); target != b {
+			return target.Update(id, opts)
+		}
+	}
+
 	if b.store != nil {
 		return b.storeUpdate(id, opts)
 	}
@@ -1952,77 +2014,129 @@ func (b *Beads) Update(id string, opts UpdateOptions) error {
 	return err
 }
 
+// AddComment appends a comment to an issue, routing by issue ID when needed.
+func (b *Beads) AddComment(id, comment string) error {
+	if !b.noRoute {
+		if target := b.forIssueID(id); target != b {
+			return target.AddComment(id, comment)
+		}
+	}
+
+	_, err := b.run("comments", "add", id, comment)
+	return err
+}
+
+// Comments returns comments for an issue, routing by issue ID when needed.
+func (b *Beads) Comments(id string) ([]Comment, error) {
+	if !b.noRoute {
+		if target := b.forIssueID(id); target != b {
+			return target.Comments(id)
+		}
+	}
+
+	if b.store != nil {
+		comments, err := b.store.GetIssueComments(context.Background(), id)
+		if err != nil {
+			return nil, err
+		}
+		out := make([]Comment, 0, len(comments))
+		for _, comment := range comments {
+			converted, ok := sdkCommentToComment(comment)
+			if ok {
+				out = append(out, converted)
+			}
+		}
+		return out, nil
+	}
+
+	out, err := b.run("comments", id, "--json")
+	if err != nil {
+		return nil, err
+	}
+	var comments []Comment
+	if err := json.Unmarshal(out, &comments); err != nil {
+		return nil, fmt.Errorf("parsing comments: %w", err)
+	}
+	return comments, nil
+}
+
 func (b *Beads) deleteBead(id string) error {
 	_, err := b.run("delete", id, "--force")
 	return err
+}
+
+type closeOptions struct {
+	reason     string
+	withReason bool
+	force      bool
 }
 
 // Close closes one or more issues.
 // If a runtime session ID is set in the environment, it is passed to bd close
 // for work attribution tracking (see decision 009-session-events-architecture.md).
 func (b *Beads) Close(ids ...string) error {
-	if len(ids) == 0 {
-		return nil
-	}
-
-	if b.store != nil {
-		return b.storeClose("", runtime.SessionIDFromEnv(), ids...)
-	}
-
-	args := append([]string{"close"}, ids...)
-
-	// Pass session ID for work attribution if available
-	if sessionID := runtime.SessionIDFromEnv(); sessionID != "" {
-		args = append(args, "--session="+sessionID)
-	}
-
-	_, err := b.run(args...)
-	return err
+	return b.closeWithOptions(closeOptions{}, ids...)
 }
 
 // CloseWithReason closes one or more issues with a reason.
 // If a runtime session ID is set in the environment, it is passed to bd close
 // for work attribution tracking (see decision 009-session-events-architecture.md).
 func (b *Beads) CloseWithReason(reason string, ids ...string) error {
-	if len(ids) == 0 {
-		return nil
-	}
-
-	if b.store != nil {
-		return b.storeClose(reason, runtime.SessionIDFromEnv(), ids...)
-	}
-
-	args := append([]string{"close"}, ids...)
-	args = append(args, "--reason="+reason)
-
-	// Pass session ID for work attribution if available
-	if sessionID := runtime.SessionIDFromEnv(); sessionID != "" {
-		args = append(args, "--session="+sessionID)
-	}
-
-	_, err := b.run(args...)
-	return err
+	return b.closeWithOptions(closeOptions{reason: reason, withReason: true}, ids...)
 }
 
 // ForceCloseWithReason closes one or more issues with --force, bypassing
 // dependency checks. Used by gt done where the polecat is about to be nuked
 // and open molecule wisps should not block issue closure.
 func (b *Beads) ForceCloseWithReason(reason string, ids ...string) error {
+	return b.closeWithOptions(closeOptions{reason: reason, withReason: true, force: true}, ids...)
+}
+
+func (b *Beads) closeWithOptions(opts closeOptions, ids ...string) error {
 	if len(ids) == 0 {
 		return nil
 	}
 
+	if !b.noRoute {
+		groups := make(map[string][]string)
+		targets := make(map[string]*Beads)
+		currentDir := b.getResolvedBeadsDir()
+		for _, id := range ids {
+			target := b.forIssueID(id)
+			targetDir := target.getResolvedBeadsDir()
+			groups[targetDir] = append(groups[targetDir], id)
+			targets[targetDir] = target
+		}
+		if len(groups) > 1 || groups[currentDir] == nil {
+			for targetDir, groupIDs := range groups {
+				if err := targets[targetDir].closeInCurrentDB(opts, groupIDs...); err != nil {
+					return err
+				}
+			}
+			return nil
+		}
+	}
+
+	return b.closeInCurrentDB(opts, ids...)
+}
+
+func (b *Beads) closeInCurrentDB(opts closeOptions, ids ...string) error {
 	// In-process store close doesn't enforce dependency checks (no --force
 	// needed). Note: this means the store path bypasses the dependency
 	// validation that the CLI's --force flag overrides. Callers relying on
 	// ForceCloseWithReason (e.g., gt done nuking polecat wisps) are already
 	// accepting that deps may remain dangling, so this is intentional.
 	if b.store != nil {
-		return b.storeClose(reason, runtime.SessionIDFromEnv(), ids...)
+		return b.storeClose(opts.reason, runtime.SessionIDFromEnv(), ids...)
 	}
 
 	args := append([]string{"close"}, ids...)
-	args = append(args, "--reason="+reason, "--force")
+	if opts.withReason {
+		args = append(args, "--reason="+opts.reason)
+	}
+	if opts.force {
+		args = append(args, "--force")
+	}
 
 	// Pass session ID for work attribution if available
 	if sessionID := runtime.SessionIDFromEnv(); sessionID != "" {
