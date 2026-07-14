@@ -123,6 +123,34 @@ func TestBdCmd_Stderr(t *testing.T) {
 	}
 }
 
+func TestBdCmd_Stdin(t *testing.T) {
+	binDir := t.TempDir()
+	writeBDStub(t, binDir, `#!/usr/bin/env sh
+printf 'args:%s\n' "$*"
+printf 'stdin:'
+cat
+`, `@echo off
+echo args:%*
+set /p stdin=
+echo stdin:%stdin%
+`)
+	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	out, err := BdCmd("update", "gt-wisp-test", "--body-file=-").
+		Stdin(strings.NewReader("line one\nline two")).
+		Output()
+	if err != nil {
+		t.Fatalf("Output: %v", err)
+	}
+	text := string(out)
+	if !strings.Contains(text, "args:update gt-wisp-test --body-file=-") {
+		t.Fatalf("missing args in output: %q", text)
+	}
+	if !strings.Contains(text, "stdin:line one\nline two") {
+		t.Fatalf("stdin was not passed through: %q", text)
+	}
+}
+
 func TestBdCmd_DefaultStderr(t *testing.T) {
 	bdc := BdCmd("list")
 	cmd := bdc.Build()
@@ -241,6 +269,9 @@ func TestBdCmd_Chaining(t *testing.T) {
 	}
 	if bdc.Stderr(os.Stdout) != bdc {
 		t.Error("Stderr() should return receiver for chaining")
+	}
+	if bdc.Stdin(strings.NewReader("")) != bdc {
+		t.Error("Stdin() should return receiver for chaining")
 	}
 }
 

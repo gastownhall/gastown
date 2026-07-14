@@ -8,6 +8,7 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/steveyegge/gastown/internal/beads"
 	"github.com/steveyegge/gastown/internal/constants"
+	"github.com/steveyegge/gastown/internal/deacon"
 	"github.com/steveyegge/gastown/internal/formula"
 	"github.com/steveyegge/gastown/internal/style"
 )
@@ -91,7 +92,10 @@ func runPatrolReport(cmd *cobra.Command, args []string) error {
 	}
 
 	// Close the current patrol root with the summary
-	b := beads.New(cfg.BeadsDir)
+	b := cfg.Beads
+	if b == nil {
+		b = beads.New(cfg.BeadsDir)
+	}
 
 	// Build step audit checklist
 	stepAudit := buildStepAudit(cfg.PatrolMolName, patrolReportSteps)
@@ -134,7 +138,29 @@ func runPatrolReport(cmd *cobra.Command, args []string) error {
 	}
 
 	fmt.Printf("%s Started new patrol: %s\n", style.Success.Render("✓"), newPatrolID)
+	if cfg.RoleName == "deacon" {
+		stampDeaconHeartbeatOnReport(cfg.BeadsDir, patrolReportSummary)
+	}
 	return nil
+}
+
+func stampDeaconHeartbeatOnReport(townRoot, summary string) {
+	paused, _, err := deacon.IsPaused(townRoot)
+	if err != nil {
+		style.PrintWarning("not stamping deacon heartbeat: pause state unreadable: %v", err)
+		return
+	}
+	if paused {
+		return
+	}
+
+	action := "patrol report"
+	if summary = strings.TrimSpace(summary); summary != "" {
+		action += ": " + summary
+	}
+	if err := syncDeaconHeartbeatStores(townRoot, action); err != nil {
+		style.PrintWarning("could not stamp deacon heartbeat: %v", err)
+	}
 }
 
 // buildStepAudit builds a step checklist from the formula's steps and the

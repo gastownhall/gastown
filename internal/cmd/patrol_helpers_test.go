@@ -81,9 +81,9 @@ func TestBuildRefineryPatrolVars_MissingSettings(t *testing.T) {
 		Rig:      "testrig",
 	}
 	vars := buildRefineryPatrolVars(ctx)
-	// target_branch should always be present (falls back to "main" without rig config)
-	if len(vars) != 1 {
-		t.Errorf("expected 1 var (target_branch) when settings file missing, got %v", vars)
+	// rig and target_branch should always be present.
+	if len(vars) != 2 {
+		t.Errorf("expected 2 vars (rig, target_branch) when settings file missing, got %v", vars)
 	}
 	varMap := make(map[string]string)
 	for _, v := range vars {
@@ -91,6 +91,9 @@ func TestBuildRefineryPatrolVars_MissingSettings(t *testing.T) {
 		if len(parts) == 2 {
 			varMap[parts[0]] = parts[1]
 		}
+	}
+	if got := varMap["rig"]; got != "testrig" {
+		t.Errorf("rig = %q, want %q", got, "testrig")
 	}
 	if got := varMap["target_branch"]; got != "main" {
 		t.Errorf("target_branch = %q, want %q", got, "main")
@@ -192,9 +195,9 @@ func TestBuildRefineryPatrolVars_NilMergeQueue(t *testing.T) {
 		Rig:      "testrig",
 	}
 	vars := buildRefineryPatrolVars(ctx)
-	// target_branch should always be present (falls back to "main" without rig config)
-	if len(vars) != 1 {
-		t.Errorf("expected 1 var (target_branch) when merge_queue is nil, got %v", vars)
+	// rig and target_branch should always be present.
+	if len(vars) != 2 {
+		t.Errorf("expected 2 vars (rig, target_branch) when merge_queue is nil, got %v", vars)
 	}
 	varMap := make(map[string]string)
 	for _, v := range vars {
@@ -202,6 +205,9 @@ func TestBuildRefineryPatrolVars_NilMergeQueue(t *testing.T) {
 		if len(parts) == 2 {
 			varMap[parts[0]] = parts[1]
 		}
+	}
+	if got := varMap["rig"]; got != "testrig" {
+		t.Errorf("rig = %q, want %q", got, "testrig")
 	}
 	if got := varMap["target_branch"]; got != "main" {
 		t.Errorf("target_branch = %q, want %q", got, "main")
@@ -247,6 +253,7 @@ func TestBuildRefineryPatrolVars_FullConfig(t *testing.T) {
 	// New commands (setup, typecheck, lint, build) default to empty = omitted
 	// judgment_enabled defaults to false, review_depth defaults to "standard"
 	expected := map[string]string{
+		"rig":                                 "testrig",
 		"integration_branch_refinery_enabled": "true",
 		"integration_branch_auto_land":        "false",
 		"run_tests":                           "true",
@@ -505,9 +512,9 @@ func TestBuildRefineryPatrolVars_DefaultBranchWithoutMQ(t *testing.T) {
 	}
 	vars := buildRefineryPatrolVars(ctx)
 
-	// target_branch must be "gastown" even without merge_queue settings
-	if len(vars) != 1 {
-		t.Errorf("expected 1 var (target_branch), got %d: %v", len(vars), vars)
+	// rig and target_branch must be present even without merge_queue settings.
+	if len(vars) != 2 {
+		t.Errorf("expected 2 vars (rig, target_branch), got %d: %v", len(vars), vars)
 	}
 	varMap := make(map[string]string)
 	for _, v := range vars {
@@ -515,6 +522,9 @@ func TestBuildRefineryPatrolVars_DefaultBranchWithoutMQ(t *testing.T) {
 		if len(parts) == 2 {
 			varMap[parts[0]] = parts[1]
 		}
+	}
+	if got := varMap["rig"]; got != "testrig" {
+		t.Errorf("rig = %q, want %q", got, "testrig")
 	}
 	if got := varMap["target_branch"]; got != "gastown" {
 		t.Errorf("target_branch = %q, want %q (should read rig config even without MQ settings)", got, "gastown")
@@ -657,6 +667,137 @@ func splitFirstEquals(s string) []string {
 		return []string{s}
 	}
 	return []string{s[:idx], s[idx+1:]}
+}
+
+func TestPatrolRigName(t *testing.T) {
+	if got := patrolRigName(PatrolConfig{Assignee: "gastown/refinery"}); got != "gastown" {
+		t.Fatalf("patrolRigName = %q, want gastown", got)
+	}
+	if got := patrolRigName(PatrolConfig{Assignee: "deacon"}); got != "" {
+		t.Fatalf("patrolRigName without rig = %q, want empty", got)
+	}
+}
+
+func TestRenderPatrolWispDescription_DeaconInlinesStepsAndVars(t *testing.T) {
+	desc, err := renderPatrolWispDescription(PatrolConfig{
+		PatrolMolName: "mol-deacon-patrol",
+		BeadsDir:      t.TempDir(),
+		Assignee:      "deacon",
+		ExtraVars:     []string{"idle_effort_threshold=7"},
+	})
+	if err != nil {
+		t.Fatalf("renderPatrolWispDescription: %v", err)
+	}
+	for _, want := range []string{
+		"Mayor's daemon patrol loop.",
+		"**Formula Checklist**",
+		"gt deacon heartbeat \"starting patrol cycle\"",
+		"idle_cycles >= 7",
+	} {
+		if !strings.Contains(desc, want) {
+			t.Fatalf("description missing %q:\n%s", want, desc)
+		}
+	}
+}
+
+func TestRenderPatrolWispDescription_AppliesOverlay(t *testing.T) {
+	townRoot := t.TempDir()
+	overlayDir := filepath.Join(townRoot, "formula-overlays")
+	if err := os.MkdirAll(overlayDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(overlayDir, "mol-deacon-patrol.toml"), []byte(`[[step-overrides]]
+step_id = "heartbeat"
+mode = "append"
+description = "overlay heartbeat note"
+`), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	desc, err := renderPatrolWispDescription(PatrolConfig{
+		PatrolMolName: "mol-deacon-patrol",
+		BeadsDir:      townRoot,
+		Assignee:      "deacon",
+	})
+	if err != nil {
+		t.Fatalf("renderPatrolWispDescription: %v", err)
+	}
+	if !strings.Contains(desc, "overlay heartbeat note") {
+		t.Fatalf("description did not include overlay text:\n%s", desc)
+	}
+}
+
+func TestRenderPatrolWispDescription_RefinerySubstitutesRigAndEmptyDefaults(t *testing.T) {
+	desc, err := renderPatrolWispDescription(PatrolConfig{
+		PatrolMolName: "mol-refinery-patrol",
+		BeadsDir:      t.TempDir(),
+		Assignee:      "gastown/refinery",
+	})
+	if err != nil {
+		t.Fatalf("renderPatrolWispDescription: %v", err)
+	}
+	if strings.Contains(desc, "{{") {
+		t.Fatalf("description contains unresolved placeholder:\n%s", desc)
+	}
+	if !strings.Contains(desc, "gt agents resolve --role refinery --rig gastown") {
+		t.Fatalf("description did not substitute refinery rig:\n%s", desc)
+	}
+}
+
+func TestRenderPatrolWispDescription_ExtraVarsOverrideRoleVars(t *testing.T) {
+	desc, err := renderPatrolWispDescription(PatrolConfig{
+		PatrolMolName: constants.MolRefineryPatrol,
+		BeadsDir:      t.TempDir(),
+		Assignee:      "gastown/refinery",
+		ExtraVars:     []string{"rig=override"},
+	})
+	if err != nil {
+		t.Fatalf("renderPatrolWispDescription: %v", err)
+	}
+	if !strings.Contains(desc, "gt agents resolve --role refinery --rig override") {
+		t.Fatalf("description did not use ExtraVars override:\n%s", desc)
+	}
+	if strings.Contains(desc, "gt agents resolve --role refinery --rig gastown") {
+		t.Fatalf("description used role var instead of ExtraVars override:\n%s", desc)
+	}
+}
+
+func TestUpdatePatrolWispDescriptionUsesBodyFileStdin(t *testing.T) {
+	binDir := t.TempDir()
+	logFile := filepath.Join(t.TempDir(), "bd.log")
+	writeBDStub(t, binDir, `#!/usr/bin/env sh
+{
+  printf 'args:%s\n' "$*"
+  printf 'stdin:'
+  cat
+  printf '\n'
+} >> "$BD_STUB_LOG"
+`, `@echo off
+echo args:%* >> %BD_STUB_LOG%
+set /p stdin=
+echo stdin:%stdin% >> %BD_STUB_LOG%
+`)
+	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	t.Setenv("BD_STUB_LOG", logFile)
+
+	err := updatePatrolWispDescription(PatrolConfig{BeadsDir: t.TempDir()}, filepath.Join(t.TempDir(), ".beads"), "gt-wisp-test", "line one\nline two")
+	if err != nil {
+		t.Fatalf("updatePatrolWispDescription: %v", err)
+	}
+	data, err := os.ReadFile(logFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	log := string(data)
+	if !strings.Contains(log, "args:update gt-wisp-test --body-file=-") {
+		t.Fatalf("expected body-file update args, got:\n%s", log)
+	}
+	if strings.Contains(log, "--description=") {
+		t.Fatalf("description must not be passed through argv:\n%s", log)
+	}
+	if !strings.Contains(log, "stdin:line one\nline two") {
+		t.Fatalf("expected multiline description on stdin, got:\n%s", log)
+	}
 }
 
 // --- Patrol discovery tests (findActivePatrol) ---

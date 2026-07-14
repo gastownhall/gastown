@@ -86,6 +86,8 @@ func runHeartbeat(cmd *cobra.Command, args []string) error {
 // stale enough to matter to watchers.
 const deaconBeadHeartbeatSyncThreshold = deacon.HeartbeatStaleThreshold / 2
 
+var deaconAgentBeadHeartbeatSync = syncDeaconAgentBeadHeartbeat
+
 func syncDeaconHeartbeatStores(townRoot, action string) error {
 	var err error
 	if action != "" {
@@ -93,7 +95,7 @@ func syncDeaconHeartbeatStores(townRoot, action string) error {
 	} else {
 		err = deacon.Touch(townRoot)
 	}
-	syncDeaconAgentBeadHeartbeat(townRoot)
+	deaconAgentBeadHeartbeatSync(townRoot)
 	return err
 }
 

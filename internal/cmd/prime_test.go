@@ -58,6 +58,22 @@ func writeTestRoutes(t *testing.T, townRoot string, routes []beads.Route) {
 	}
 }
 
+func TestRenderFormulaStepsFull_DeaconIncludesHeartbeatCommand(t *testing.T) {
+	out, err := renderFormulaStepsFull(constants.MolDeaconPatrol, t.TempDir(), "")
+	if err != nil {
+		t.Fatalf("renderFormulaStepsFull: %v", err)
+	}
+	for _, want := range []string{
+		"### Step 1: Refresh heartbeat",
+		"gt deacon heartbeat \"starting patrol cycle\"",
+		"This MUST run before any other step.",
+	} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("rendered deacon patrol missing %q:\n%s", want, out)
+		}
+	}
+}
+
 func TestGetAgentBeadID_UsesRigPrefix(t *testing.T) {
 	townRoot := t.TempDir()
 	writeTestRoutes(t, townRoot, []beads.Route{

@@ -9,6 +9,7 @@ import (
 
 	"github.com/steveyegge/gastown/internal/beads"
 	"github.com/steveyegge/gastown/internal/cli"
+	"github.com/steveyegge/gastown/internal/constants"
 	"github.com/steveyegge/gastown/internal/refinery"
 	"github.com/steveyegge/gastown/internal/style"
 	"golang.org/x/text/cases"
@@ -299,7 +300,49 @@ func autoSpawnPatrol(cfg PatrolConfig) (string, error) {
 		return patrolID, fmt.Errorf("created wisp %s but failed to hook", patrolID)
 	}
 
+	desc, err := renderPatrolWispDescription(cfg)
+	if err != nil {
+		style.PrintWarning("could not render patrol description for %s: %v", patrolID, err)
+	} else if err := updatePatrolWispDescription(cfg, resolvedBeadsDir, patrolID, desc); err != nil {
+		style.PrintWarning("could not write patrol description for %s: %v", patrolID, err)
+	}
+
 	return patrolID, nil
+}
+
+func renderPatrolWispDescription(cfg PatrolConfig) (string, error) {
+	rigName := patrolRigName(cfg)
+	ctx := RoleContext{TownRoot: cfg.BeadsDir, Rig: rigName}
+	var vars []string
+	switch cfg.PatrolMolName {
+	case constants.MolWitnessPatrol:
+		vars = buildWitnessPatrolVars(ctx)
+	case constants.MolRefineryPatrol:
+		vars = buildRefineryPatrolVars(ctx)
+	}
+	vars = append(vars, cfg.ExtraVars...)
+	return renderFormulaRootAndStepsFull(cfg.PatrolMolName, cfg.BeadsDir, rigName, vars)
+}
+
+func patrolRigName(cfg PatrolConfig) string {
+	rigName, _, ok := strings.Cut(cfg.Assignee, "/")
+	if !ok {
+		return ""
+	}
+	return rigName
+}
+
+func updatePatrolWispDescription(cfg PatrolConfig, resolvedBeadsDir, patrolID, desc string) error {
+	desc = strings.TrimSpace(desc)
+	if desc == "" {
+		return nil
+	}
+	return BdCmd("update", patrolID, "--body-file=-").
+		Stdin(strings.NewReader(desc)).
+		WithAutoCommit().
+		WithBeadsDir(resolvedBeadsDir).
+		Dir(cfg.BeadsDir).
+		Run()
 }
 
 // outputPatrolContext is the main function that handles patrol display logic.

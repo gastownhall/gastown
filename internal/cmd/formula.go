@@ -791,13 +791,12 @@ func executeWorkflowFormula(f *formula.Formula, formulaName, targetRig string) e
 			stepArgs = append(stepArgs, "--force")
 		}
 
-		createCmd := BdCmd(stepArgs...).
+		if err := BdCmd(stepArgs...).
+			Stdin(strings.NewReader(stepDescription)).
 			WithAutoCommit().
 			Dir(rigBeadsDir).
 			Stderr(os.Stderr).
-			Build()
-		createCmd.Stdin = strings.NewReader(stepDescription)
-		if err := createCmd.Run(); err != nil {
+			Run(); err != nil {
 			fmt.Printf("%s Failed to create step bead for %s: %v\n",
 				style.Dim.Render("Warning:"), step.ID, err)
 			continue

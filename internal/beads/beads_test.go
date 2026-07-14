@@ -1578,6 +1578,153 @@ func TestUpdateOptions(t *testing.T) {
 	}
 }
 
+func TestUpdateDescriptionUsesBodyFileStdin(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("test uses Unix shell script bd stub")
+	}
+
+	ResetBdAllowStaleCacheForTest()
+	stubDir := t.TempDir()
+	argsPath := filepath.Join(stubDir, "args.txt")
+	stdinPath := filepath.Join(stubDir, "stdin.txt")
+	stubPath := filepath.Join(stubDir, "bd")
+	script := fmt.Sprintf(`#!/bin/sh
+if [ "$1" = "--allow-stale" ]; then
+  echo "Error: unknown flag: --allow-stale" >&2
+  exit 0
+fi
+for a in "$@"; do
+  printf '%%s\n' "$a" >> %q
+done
+cat > %q
+exit 0
+`, argsPath, stdinPath)
+	if err := os.WriteFile(stubPath, []byte(script), 0755); err != nil {
+		t.Fatalf("write bd stub: %v", err)
+	}
+	t.Setenv("PATH", stubDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	desc := "line one\nline two"
+	status := "hooked"
+	if err := New(t.TempDir()).Update("gt-test", UpdateOptions{Status: &status, Description: &desc}); err != nil {
+		t.Fatalf("Update: %v", err)
+	}
+
+	argsData, err := os.ReadFile(argsPath)
+	if err != nil {
+		t.Fatalf("read args: %v", err)
+	}
+	args := string(argsData)
+	for _, want := range []string{"update", "gt-test", "--status=hooked", "--body-file=-"} {
+		if !strings.Contains(args, want) {
+			t.Fatalf("args missing %q:\n%s", want, args)
+		}
+	}
+	for _, line := range strings.Split(args, "\n") {
+		if strings.HasPrefix(line, "--description=") {
+			t.Fatalf("description must not be passed through argv, got %q", line)
+		}
+	}
+	stdinData, err := os.ReadFile(stdinPath)
+	if err != nil {
+		t.Fatalf("read stdin: %v", err)
+	}
+	if got := string(stdinData); got != desc {
+		t.Fatalf("stdin = %q, want %q", got, desc)
+	}
+}
+
+func TestUpdateEmptyDescriptionAllowsEmptyBodyFile(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("test uses Unix shell script bd stub")
+	}
+
+	ResetBdAllowStaleCacheForTest()
+	stubDir := t.TempDir()
+	argsPath := filepath.Join(stubDir, "args.txt")
+	stdinPath := filepath.Join(stubDir, "stdin.txt")
+	stubPath := filepath.Join(stubDir, "bd")
+	script := fmt.Sprintf(`#!/bin/sh
+if [ "$1" = "--allow-stale" ]; then
+  echo "Error: unknown flag: --allow-stale" >&2
+  exit 0
+fi
+for a in "$@"; do
+  printf '%%s\n' "$a" >> %q
+done
+cat > %q
+exit 0
+`, argsPath, stdinPath)
+	if err := os.WriteFile(stubPath, []byte(script), 0755); err != nil {
+		t.Fatalf("write bd stub: %v", err)
+	}
+	t.Setenv("PATH", stubDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	desc := ""
+	if err := New(t.TempDir()).Update("gt-test", UpdateOptions{Description: &desc}); err != nil {
+		t.Fatalf("Update: %v", err)
+	}
+
+	argsData, err := os.ReadFile(argsPath)
+	if err != nil {
+		t.Fatalf("read args: %v", err)
+	}
+	args := string(argsData)
+	for _, want := range []string{"--body-file=-", "--allow-empty-description"} {
+		if !strings.Contains(args, want) {
+			t.Fatalf("args missing %q:\n%s", want, args)
+		}
+	}
+	stdinData, err := os.ReadFile(stdinPath)
+	if err != nil {
+		t.Fatalf("read stdin: %v", err)
+	}
+	if len(stdinData) != 0 {
+		t.Fatalf("stdin = %q, want empty", string(stdinData))
+	}
+}
+
+func TestUpdateNilDescriptionDoesNotUseBodyFile(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("test uses Unix shell script bd stub")
+	}
+
+	ResetBdAllowStaleCacheForTest()
+	stubDir := t.TempDir()
+	argsPath := filepath.Join(stubDir, "args.txt")
+	stubPath := filepath.Join(stubDir, "bd")
+	script := fmt.Sprintf(`#!/bin/sh
+if [ "$1" = "--allow-stale" ]; then
+  echo "Error: unknown flag: --allow-stale" >&2
+  exit 0
+fi
+for a in "$@"; do
+  printf '%%s\n' "$a" >> %q
+done
+exit 0
+`, argsPath)
+	if err := os.WriteFile(stubPath, []byte(script), 0755); err != nil {
+		t.Fatalf("write bd stub: %v", err)
+	}
+	t.Setenv("PATH", stubDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	status := "hooked"
+	if err := New(t.TempDir()).Update("gt-test", UpdateOptions{Status: &status}); err != nil {
+		t.Fatalf("Update: %v", err)
+	}
+
+	argsData, err := os.ReadFile(argsPath)
+	if err != nil {
+		t.Fatalf("read args: %v", err)
+	}
+	args := string(argsData)
+	for _, forbidden := range []string{"--body-file=-", "--allow-empty-description", "--description="} {
+		if strings.Contains(args, forbidden) {
+			t.Fatalf("args contained %q:\n%s", forbidden, args)
+		}
+	}
+}
+
 // TestIsBeadsRepo tests repository detection.
 func TestIsBeadsRepo(t *testing.T) {
 	// Test with a non-beads directory

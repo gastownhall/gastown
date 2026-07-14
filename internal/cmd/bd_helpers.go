@@ -22,6 +22,7 @@ type bdCmd struct {
 	args       []string
 	dir        string
 	env        []string
+	stdin      io.Reader
 	stderr     io.Writer
 	autoCommit bool
 	allowStale bool
@@ -111,6 +112,12 @@ func (b *bdCmd) Stderr(w io.Writer) *bdCmd {
 	return b
 }
 
+// Stdin sets the stdin reader for the command.
+func (b *bdCmd) Stdin(r io.Reader) *bdCmd {
+	b.stdin = r
+	return b
+}
+
 // filterEnvKey removes all entries matching the given key from the env slice.
 // This ensures appended values aren't shadowed by existing entries, since
 // glibc getenv() returns the first match in the environment array.
@@ -163,6 +170,7 @@ func (b *bdCmd) Build() *exec.Cmd {
 	cmd := exec.Command("bd", args...)
 	cmd.Dir = b.dir
 	cmd.Env = b.buildEnv()
+	cmd.Stdin = b.stdin
 	cmd.Stderr = b.stderr
 	return cmd
 }
@@ -182,6 +190,7 @@ func (b *bdCmd) buildContextCommand(ctx context.Context) *exec.Cmd {
 	util.SetProcessGroup(cmd)
 	cmd.Dir = b.dir
 	cmd.Env = b.buildEnv()
+	cmd.Stdin = b.stdin
 	cmd.Stderr = b.stderr
 	return cmd
 }
@@ -277,6 +286,7 @@ func (b *bdCmd) CombinedOutput() ([]byte, error) {
 	util.SetProcessGroup(cmd)
 	cmd.Dir = b.dir
 	cmd.Env = b.buildEnv()
+	cmd.Stdin = b.stdin
 	out, err := cmd.CombinedOutput()
 	return out, b.wrapCommandError(ctx, err, deadline)
 }
