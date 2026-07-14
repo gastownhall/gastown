@@ -21,6 +21,7 @@ import (
 	"github.com/steveyegge/gastown/internal/crew"
 	"github.com/steveyegge/gastown/internal/events"
 	"github.com/steveyegge/gastown/internal/git"
+	"github.com/steveyegge/gastown/internal/gitlab"
 	"github.com/steveyegge/gastown/internal/mail"
 	"github.com/steveyegge/gastown/internal/rig"
 	"github.com/steveyegge/gastown/internal/util"
@@ -226,7 +227,6 @@ type MRAnomaly struct {
 	Detail   string        `json:"detail"`
 }
 
-
 // errMergeSlotTimeout is returned by acquireMainPushSlot when retries are
 // exhausted due to slot contention. Infrastructure errors (beads down,
 // permission errors) return a different error so callers can distinguish
@@ -324,18 +324,18 @@ func (e *Engineer) LoadConfig() error {
 	// Parse merge_queue section into our config struct
 	// We need special handling for poll_interval (string -> Duration)
 	var mqRaw struct {
-		Enabled              *bool                      `json:"enabled"`
-		OnConflict           *string                    `json:"on_conflict"`
-		RunTests             *bool                      `json:"run_tests"`
-		TestCommand          *string                    `json:"test_command"`
-		DeleteMergedBranches *bool                      `json:"delete_merged_branches"`
-		RetryFlakyTests      *int                       `json:"retry_flaky_tests"`
-		PollInterval         *string                    `json:"poll_interval"`
-		MaxConcurrent        *int                       `json:"max_concurrent"`
-		StaleClaimTimeout    *string                    `json:"stale_claim_timeout"`
-		Gates                map[string]*gateConfigRaw  `json:"gates"`
-		GatesParallel        *bool                      `json:"gates_parallel"`
-		AutoPush             *bool                      `json:"auto_push"`
+		Enabled              *bool                     `json:"enabled"`
+		OnConflict           *string                   `json:"on_conflict"`
+		RunTests             *bool                     `json:"run_tests"`
+		TestCommand          *string                   `json:"test_command"`
+		DeleteMergedBranches *bool                     `json:"delete_merged_branches"`
+		RetryFlakyTests      *int                      `json:"retry_flaky_tests"`
+		PollInterval         *string                   `json:"poll_interval"`
+		MaxConcurrent        *int                      `json:"max_concurrent"`
+		StaleClaimTimeout    *string                   `json:"stale_claim_timeout"`
+		Gates                map[string]*gateConfigRaw `json:"gates"`
+		GatesParallel        *bool                     `json:"gates_parallel"`
+		AutoPush             *bool                     `json:"auto_push"`
 	}
 
 	if err := json.Unmarshal(rawConfig.MergeQueue, &mqRaw); err != nil {
@@ -655,16 +655,35 @@ func (e *Engineer) doMerge(ctx context.Context, branch, target, sourceIssue stri
 			}()
 		}
 
-		_, _ = fmt.Fprintf(e.output, "[Engineer] Pushing to origin/%s...\n", target)
-		if err := e.git.Push("origin", target, false); err != nil {
-			// Reset the checked-out target branch to undo the local squash commit.
-			// Without this, the next retry could see stale local state from the failed push.
-			if resetErr := e.git.ResetHard("origin/" + target); resetErr != nil {
-				_, _ = fmt.Fprintf(e.output, "[Engineer] Warning: failed to reset %s after push failure: %v\n", target, resetErr)
+		// A GitLab project with a protected default branch (push_access=No one)
+		// rejects a direct push; the only way to advance target is to merge the
+		// MR server-side via the API (merge_access=Maintainer). Route those to
+		// the MR-merge path; every other remote keeps the direct-push path.
+		originURL, _ := e.git.RemoteURL("origin")
+		if gitlab.IsGitLabRemote(originURL) {
+			glSHA, glErr := e.mergeViaGitLabMR(ctx, originURL, branch, target, originalMsg)
+			if glErr != nil {
+				if resetErr := e.git.ResetHard("origin/" + target); resetErr != nil {
+					_, _ = fmt.Fprintf(e.output, "[Engineer] Warning: failed to reset %s after GitLab merge failure: %v\n", target, resetErr)
+				}
+				return ProcessResult{
+					Success: false,
+					Error:   fmt.Sprintf("failed to merge GitLab MR into %s: %v", target, glErr),
+				}
 			}
-			return ProcessResult{
-				Success: false,
-				Error:   fmt.Sprintf("failed to push to origin: %v", err),
+			mergeCommit = glSHA
+		} else {
+			_, _ = fmt.Fprintf(e.output, "[Engineer] Pushing to origin/%s...\n", target)
+			if err := e.git.Push("origin", target, false); err != nil {
+				// Reset the checked-out target branch to undo the local squash commit.
+				// Without this, the next retry could see stale local state from the failed push.
+				if resetErr := e.git.ResetHard("origin/" + target); resetErr != nil {
+					_, _ = fmt.Fprintf(e.output, "[Engineer] Warning: failed to reset %s after push failure: %v\n", target, resetErr)
+				}
+				return ProcessResult{
+					Success: false,
+					Error:   fmt.Sprintf("failed to push to origin: %v", err),
+				}
 			}
 		}
 	} else {
@@ -676,6 +695,51 @@ func (e *Engineer) doMerge(ctx context.Context, branch, target, sourceIssue stri
 		Success:     true,
 		MergeCommit: mergeCommit,
 	}
+}
+
+// mergeViaGitLabMR lands the source branch on a GitLab project by merging its
+// open MR server-side via the API, then syncs the local target to the resulting
+// commit. doMerge selects it when origin is a GitLab remote, because a protected
+// default branch (push=No one, merge=Maintainer) forbids the direct push the
+// other forges use. Requires GITLAB_TOKEN with the Maintainer role on the project.
+func (e *Engineer) mergeViaGitLabMR(ctx context.Context, originURL, branch, target, squashMsg string) (string, error) {
+	host, projectPath, err := gitlab.ParseRemote(originURL)
+	if err != nil {
+		return "", err
+	}
+	client, err := gitlab.NewClient(gitlab.WithRESTBase(gitlab.APIBaseFromHost(host)))
+	if err != nil {
+		return "", err
+	}
+	mr, err := client.FindOpenMR(ctx, projectPath, branch, target)
+	if err != nil {
+		return "", err
+	}
+	_, _ = fmt.Fprintf(e.output, "[Engineer] Merging GitLab MR !%d (%s -> %s) via API...\n", mr.IID, branch, target)
+	merged, err := client.MergeMR(ctx, projectPath, mr.IID, gitlab.MergeOptions{
+		Squash:              true,
+		SquashCommitMessage: strings.TrimSpace(squashMsg),
+	})
+	if err != nil {
+		return "", err
+	}
+	// The server-side merge advanced origin/target with its own commit. Adopt it
+	// locally (dropping the local squash from step 5) so later steps and the next
+	// MR see the real target state.
+	if fetchErr := e.git.FetchBranch("origin", target); fetchErr != nil {
+		_, _ = fmt.Fprintf(e.output, "[Engineer] Warning: fetch origin/%s after GitLab merge: %v\n", target, fetchErr)
+	}
+	if resetErr := e.git.ResetHard("origin/" + target); resetErr != nil {
+		_, _ = fmt.Fprintf(e.output, "[Engineer] Warning: reset to origin/%s after GitLab merge: %v\n", target, resetErr)
+	}
+	sha := merged.MergedSHA()
+	if sha == "" {
+		// GitLab may report the merge asynchronously; fall back to the synced tip.
+		if headSHA, revErr := e.git.Rev("HEAD"); revErr == nil {
+			sha = headSHA
+		}
+	}
+	return sha, nil
 }
 
 func (e *Engineer) acquireMainPushSlot(ctx context.Context) (string, error) {
