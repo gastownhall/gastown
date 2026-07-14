@@ -91,6 +91,31 @@ Benefits:
 - Plugin failures don't stall patrol
 - Consistent with Dogs' purpose (infrastructure work)
 
+### Execution Model: run.sh Script Contract (op-omcx)
+
+When a plugin directory contains a `run.sh` alongside `plugin.md`, the daemon
+executes the script DIRECTLY (background goroutine; working directory = the
+plugin directory; `GT_TOWN_ROOT` set; `execution.timeout` enforced, default
+5m). The AI dog dispatch above becomes conditional on the script's exit code:
+
+| exit code | meaning | agent step |
+|-----------|---------|------------|
+| `0` | script completed the plugin run | NOT dispatched |
+| `10` | pre-checks passed; plugin requests AI judgment | dispatched with plugin.md instructions + script output tail |
+| other / timeout | failure (recorded as `result:failure`) | NOT dispatched (fail-safe) |
+
+**Why**: instruction placement must match the execution layer. A correct code
+guard in `run.sh` protected nothing for two days because the dispatch path
+only ever fed `plugin.md` to a dog as a prompt — the dog "ran" the plugin by
+reading about it, and six RESTART_POLECAT false fires resulted (op-omcx).
+Deterministic logic and guards belong in `run.sh`, which code executes;
+`plugin.md` is the AI-facing layer and is only authoritative for plugins with
+no script.
+
+Overlap protection: the daemon keeps an in-flight set per plugin name, so a
+slow script is never re-launched by the next heartbeat; the dispatch receipt
+is recorded at launch so the cooldown gate holds while the script runs.
+
 ### State Tracking: Wisps on the Ledger
 
 Each plugin run creates a wisp:
@@ -138,7 +163,8 @@ This keeps the ledger clean while preserving audit history.
 
 ```
 rebuild-gt/
-└── plugin.md      # Definition with TOML frontmatter
+├── plugin.md      # Definition with TOML frontmatter
+└── run.sh         # Optional: deterministic script, executed directly by the daemon
 ```
 
 ### plugin.md Format

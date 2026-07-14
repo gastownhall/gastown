@@ -71,6 +71,14 @@ type Daemon struct {
 	deathsMu     sync.Mutex
 	recentDeaths []sessionDeath
 
+	// Script-plugin execution tracking (op-omcx): plugins with a run.sh are
+	// executed directly by the daemon in background goroutines. The in-flight
+	// set prevents overlapping runs of the same plugin across heartbeats; the
+	// WaitGroup lets shutdown (and tests) wait for completions.
+	scriptPluginMu      sync.Mutex
+	scriptPluginRunning map[string]bool
+	scriptPluginWG      sync.WaitGroup
+
 	// Deacon startup tracking: prevents race condition where newly started
 	// sessions are immediately killed by the heartbeat check.
 	// See: https://github.com/steveyegge/gastown/issues/567

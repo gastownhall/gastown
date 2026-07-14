@@ -121,13 +121,35 @@ rig_bead_status() {
     | jq -r '.[0].status // empty' 2>/dev/null || true
 }
 
+# DEFERRED-TRACKER convention (2026-07-12, capital/witness request hq-wisp-l4zal):
+# some polecats are deliberately stopped while their hook bead stays OPEN as a
+# long-lived tracker (e.g. awaiting an epic close or a human gate sign-off).
+# The witness marks such beads with a comment containing "DEFERRED-TRACKER".
+# The marker is visible in plain `bd show` output (comments section), NOT in
+# the --json issue object. Such beads are never restartable.
+bead_deferred_tracker() {
+  local rig="$1" bead="$2" dir=""
+
+  if ! dir=$(rig_workdir "$rig"); then
+    return 1
+  fi
+
+  ( cd "$dir" 2>/dev/null && bd show "$bead" 2>/dev/null ) \
+    | grep -q "DEFERRED-TRACKER"
+}
+
 bead_restartable() {
   local session="$1" rig="$2" bead="$3" status=""
 
   status=$(rig_bead_status "$rig" "$bead")
 
   case "$status" in
-    open|hooked|in_progress) return 0 ;;
+    open|hooked|in_progress)
+      if bead_deferred_tracker "$rig" "$bead"; then
+        log "  DEFERRED-TRACKER: $session hook=$bead deliberately stopped, bead open as tracker — not restartable"
+        return 1
+      fi
+      return 0 ;;
     closed) log "  SKIP $session: bead closed (completed normally)" ;;
     "") log "  SKIP $session: hook=$bead status unavailable" ;;
     *) log "  SKIP $session: hook=$bead status=$status not actionable" ;;
@@ -304,6 +326,13 @@ else
   # `${arr[@]+"${arr[@]}"}` form expands to nothing when the array is empty.
   for ENTRY in ${CRASHED[@]+"${CRASHED[@]}"}; do
     IFS='|' read -r SESSION RIG PCAT HOOK <<< "$ENTRY"
+    # Mailer-time re-check (op-omcx, defense-in-depth): the marker can land
+    # between detection and action, and this mailer is where every historical
+    # bypass actually fired. Refuse DEFERRED-TRACKER beads here too.
+    if bead_deferred_tracker "$RIG" "$HOOK"; then
+      log "  MAILER-GATE: $SESSION hook=$HOOK carries DEFERRED-TRACKER — refusing RESTART_POLECAT mail"
+      continue
+    fi
     log "Requesting restart for $RIG/polecats/$PCAT (hook=$HOOK)"
     gt mail send "$RIG/witness" -s "RESTART_POLECAT: $RIG/$PCAT" --stdin <<BODY || log "  WARN: restart mail failed for $RIG/$PCAT"
 Polecat $PCAT crash confirmed by stuck-agent-dog plugin.
@@ -315,6 +344,11 @@ BODY
   # Zombie polecats: kill zombie session, then request restart
   for ENTRY in ${STUCK[@]+"${STUCK[@]}"}; do
     IFS='|' read -r SESSION RIG PCAT HOOK REASON <<< "$ENTRY"
+    # Mailer-time re-check (op-omcx): see the CRASHED loop above.
+    if bead_deferred_tracker "$RIG" "$HOOK"; then
+      log "  MAILER-GATE: $SESSION hook=$HOOK carries DEFERRED-TRACKER — refusing RESTART_POLECAT mail (zombie session left untouched)"
+      continue
+    fi
     log "Killing zombie session $SESSION and requesting restart"
     tmux kill-session -t "$SESSION" 2>/dev/null || true
     gt mail send "$RIG/witness" -s "RESTART_POLECAT: $RIG/$PCAT (zombie cleared)" --stdin <<BODY || log "  WARN: restart mail failed for $RIG/$PCAT"

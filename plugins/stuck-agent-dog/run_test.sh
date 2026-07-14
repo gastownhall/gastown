@@ -196,7 +196,33 @@ case "${1:-}" in
     if [ -f "$TEST_STATE/status/$bead" ]; then
       status=$(tr -d '\n' < "$TEST_STATE/status/$bead")
     fi
-    printf '[{"status":"%s"}]\n' "$status"
+    json=false
+    for arg in "$@"; do
+      [ "$arg" = "--json" ] && json=true
+    done
+    if [ "$json" = true ]; then
+      printf '[{"status":"%s"}]\n' "$status"
+    else
+      # Plain `bd show` renders comments; that's where the DEFERRED-TRACKER
+      # marker lives. Track plain-show call counts per bead so tests can
+      # make the marker appear only from the Nth call (mailer-gate race).
+      count_file="$TEST_STATE/plainshow/$bead"
+      count=0
+      [ -f "$count_file" ] && count=$(tr -d '\n' < "$count_file")
+      count=$((count + 1))
+      printf '%s\n' "$count" > "$count_file"
+      printf 'status: %s\n' "$status"
+      emit_marker=false
+      if [ -f "$TEST_STATE/deferred/$bead" ]; then
+        emit_marker=true
+      elif [ -f "$TEST_STATE/deferred_after/$bead" ]; then
+        after=$(tr -d '\n' < "$TEST_STATE/deferred_after/$bead")
+        [ "$count" -gt "$after" ] && emit_marker=true
+      fi
+      if [ "$emit_marker" = true ]; then
+        printf 'comment: DEFERRED-TRACKER — deliberately stopped, bead stays open as tracker\n'
+      fi
+    fi
     ;;
   list)
     printf '[]\n'
@@ -235,6 +261,7 @@ setup_case() {
   local bin_dir="$TEST_TMP/bin"
 
   mkdir -p "$TEST_STATE/health" "$TEST_STATE/nohook" "$TEST_STATE/sessions" "$TEST_STATE/status" "$bin_dir"
+  mkdir -p "$TEST_STATE/plainshow" "$TEST_STATE/deferred" "$TEST_STATE/deferred_after"
   mkdir -p "$GT_TOWN_ROOT/gastown/polecats" "$GT_TOWN_ROOT/deacon"
   printf '{"rigs":{"gastown":{"beads":{"prefix":"gt"}}}}\n' > "$GT_TOWN_ROOT/rigs.json"
   : > "$TEST_STATE/mail.log"
@@ -337,6 +364,53 @@ test_mass_death_skips_actions() {
   assert_file_contains "$TEST_STATE/output.log" "Skipping per-agent restart/kill actions" "mass death: action loops skipped"
 }
 
+test_deferred_tracker_skips_crashed_restart() {
+  setup_case
+  add_polecat delta session-dead
+  touch "$TEST_STATE/deferred/gt-hook-delta"
+  run_script
+
+  assert_file_empty "$TEST_STATE/kill.log" "deferred tracker (crashed): no session kill"
+  assert_file_empty "$TEST_STATE/mail.log" "deferred tracker (crashed): no restart mail"
+  assert_file_empty "$TEST_STATE/escalate.log" "deferred tracker (crashed): no escalation"
+  assert_file_contains "$TEST_STATE/output.log" "DEFERRED-TRACKER: gt-delta" "deferred tracker (crashed): detection-time guard logged"
+}
+
+test_deferred_tracker_skips_zombie_restart() {
+  setup_case
+  add_polecat epsilon agent-dead
+  touch "$TEST_STATE/deferred/gt-hook-epsilon"
+  run_script
+
+  assert_file_empty "$TEST_STATE/kill.log" "deferred tracker (zombie): no session kill"
+  assert_file_empty "$TEST_STATE/mail.log" "deferred tracker (zombie): no restart mail"
+  assert_file_contains "$TEST_STATE/output.log" "DEFERRED-TRACKER: gt-epsilon" "deferred tracker (zombie): detection-time guard logged"
+}
+
+test_deferred_tracker_mailer_gate_crashed() {
+  # Marker lands AFTER detection (plain-show call 1) but BEFORE the mailer
+  # re-check (plain-show call 2) — the exact window where every historical
+  # bypass fired. The mailer must refuse the RESTART_POLECAT mail.
+  setup_case
+  add_polecat zeta session-dead
+  printf '1\n' > "$TEST_STATE/deferred_after/gt-hook-zeta"
+  run_script
+
+  assert_file_empty "$TEST_STATE/mail.log" "mailer gate (crashed): no restart mail"
+  assert_file_contains "$TEST_STATE/output.log" "MAILER-GATE: gt-zeta" "mailer gate (crashed): refusal logged"
+}
+
+test_deferred_tracker_mailer_gate_zombie() {
+  setup_case
+  add_polecat eta agent-dead
+  printf '1\n' > "$TEST_STATE/deferred_after/gt-hook-eta"
+  run_script
+
+  assert_file_empty "$TEST_STATE/kill.log" "mailer gate (zombie): zombie session left untouched"
+  assert_file_empty "$TEST_STATE/mail.log" "mailer gate (zombie): no restart mail"
+  assert_file_contains "$TEST_STATE/output.log" "MAILER-GATE: gt-eta" "mailer gate (zombie): refusal logged"
+}
+
 test_healthy_runtime opencode
 test_healthy_runtime bun
 test_healthy_runtime node
@@ -346,6 +420,10 @@ test_dead_agent_restarts_one
 test_dead_session_restarts_one
 test_closed_hook_skips_restart
 test_mass_death_skips_actions
+test_deferred_tracker_skips_crashed_restart
+test_deferred_tracker_skips_zombie_restart
+test_deferred_tracker_mailer_gate_crashed
+test_deferred_tracker_mailer_gate_zombie
 
 printf '\n%s passed, %s failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

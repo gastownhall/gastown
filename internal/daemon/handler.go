@@ -1,6 +1,7 @@
 package daemon
 
 import (
+	"context"
 	"fmt"
 	"log"
 	"path/filepath"
@@ -284,6 +285,17 @@ func (d *Daemon) dispatchPlugins(mgr *dog.Manager, sm *dog.SessionManager, rigsC
 			}
 		}
 
+		// Plugins that ship a run.sh get the script executed by the daemon
+		// itself — code guards must run in code, not depend on an AI dog
+		// following prompt instructions (op-omcx: six RESTART_POLECAT false
+		// fires because the dog dispatch path only ever fed plugin.md to the
+		// dog as a prompt, so the run.sh guard never executed). The script's
+		// exit code gates whether the AI agent step dispatches at all.
+		if p.HasRunScript {
+			d.startScriptPlugin(p, recorder, mgr, sm, router)
+			continue
+		}
+
 		// Find an idle dog that doesn't already have a live tmux session.
 		// A leaked session (dog marked idle before its tmux terminated) would
 		// cause sm.Start to fail with "session already running", and since
@@ -297,44 +309,10 @@ func (d *Daemon) dispatchPlugins(mgr *dog.Manager, sm *dog.SessionManager, rigsC
 			return
 		}
 
-		// Assign work and start session.
-		workDesc := fmt.Sprintf("plugin:%s", p.Name)
-		if err := mgr.AssignWork(idleDog.Name, workDesc); err != nil {
-			d.logger.Printf("Handler: failed to assign work to dog %s: %v", idleDog.Name, err)
+		if err := d.dispatchPluginToDog(p, idleDog, p.FormatMailBody(), mgr, sm, router); err != nil {
+			d.logger.Printf("Handler: %v", err)
 			continue
 		}
-
-		// Send mail with plugin instructions BEFORE starting the session
-		// so the dog finds work in its inbox on first check.
-		msg := mail.NewMessage(
-			"daemon",
-			fmt.Sprintf("deacon/dogs/%s", idleDog.Name),
-			fmt.Sprintf("Plugin: %s", p.Name),
-			p.FormatMailBody(),
-		)
-		msg.Type = mail.TypeTask
-		msg.Timestamp = time.Now()
-		if err := router.Send(msg); err != nil {
-			d.logger.Printf("Handler: failed to send mail to dog %s: %v", idleDog.Name, err)
-			// Roll back assignment — no point starting a session without instructions.
-			if clearErr := mgr.ClearWork(idleDog.Name); clearErr != nil {
-				d.logger.Printf("Handler: failed to clear work after mail failure for dog %s: %v", idleDog.Name, clearErr)
-			}
-			continue
-		}
-
-		if err := sm.Start(idleDog.Name, dog.SessionStartOptions{
-			WorkDesc: workDesc,
-		}); err != nil {
-			d.logger.Printf("Handler: failed to start session for dog %s: %v", idleDog.Name, err)
-			// Roll back assignment on session start failure.
-			if clearErr := mgr.ClearWork(idleDog.Name); clearErr != nil {
-				d.logger.Printf("Handler: failed to clear work after start failure for dog %s: %v", idleDog.Name, clearErr)
-			}
-			continue
-		}
-
-		d.logger.Printf("Handler: dispatched plugin %s to dog %s", p.Name, idleDog.Name)
 
 		// Record the dispatch immediately so the cooldown gate is satisfied
 		// for the next 1h regardless of what the dog does. Dogs create their
@@ -347,6 +325,136 @@ func (d *Daemon) dispatchPlugins(mgr *dog.Manager, sm *dog.SessionManager, rigsC
 		}); err != nil {
 			d.logger.Printf("Handler: failed to record dispatch for plugin %s: %v", p.Name, err)
 		}
+	}
+}
+
+// dispatchPluginToDog assigns plugin work to the given dog, mails it the
+// instruction body, and starts its session. On mail or session failure the
+// work assignment is rolled back so the dog returns to idle.
+func (d *Daemon) dispatchPluginToDog(p *plugin.Plugin, idleDog *dog.Dog, body string, mgr *dog.Manager, sm *dog.SessionManager, router *mail.Router) error {
+	workDesc := fmt.Sprintf("plugin:%s", p.Name)
+	if err := mgr.AssignWork(idleDog.Name, workDesc); err != nil {
+		return fmt.Errorf("failed to assign work to dog %s: %w", idleDog.Name, err)
+	}
+
+	// Send mail with plugin instructions BEFORE starting the session
+	// so the dog finds work in its inbox on first check.
+	msg := mail.NewMessage(
+		"daemon",
+		fmt.Sprintf("deacon/dogs/%s", idleDog.Name),
+		fmt.Sprintf("Plugin: %s", p.Name),
+		body,
+	)
+	msg.Type = mail.TypeTask
+	msg.Timestamp = time.Now()
+	if err := router.Send(msg); err != nil {
+		// Roll back assignment — no point starting a session without instructions.
+		if clearErr := mgr.ClearWork(idleDog.Name); clearErr != nil {
+			d.logger.Printf("Handler: failed to clear work after mail failure for dog %s: %v", idleDog.Name, clearErr)
+		}
+		return fmt.Errorf("failed to send mail to dog %s: %w", idleDog.Name, err)
+	}
+
+	if err := sm.Start(idleDog.Name, dog.SessionStartOptions{
+		WorkDesc: workDesc,
+	}); err != nil {
+		// Roll back assignment on session start failure.
+		if clearErr := mgr.ClearWork(idleDog.Name); clearErr != nil {
+			d.logger.Printf("Handler: failed to clear work after start failure for dog %s: %v", idleDog.Name, clearErr)
+		}
+		return fmt.Errorf("failed to start session for dog %s: %w", idleDog.Name, err)
+	}
+
+	d.logger.Printf("Handler: dispatched plugin %s to dog %s", p.Name, idleDog.Name)
+	return nil
+}
+
+// startScriptPlugin executes a plugin's run.sh asynchronously (the patrol
+// loop must not block behind a script's multi-minute timeout). Overlapping
+// runs of the same plugin are prevented with an in-flight set, and the
+// dispatch receipt is recorded up front — same as the dog path — so the
+// cooldown gate holds while the script runs.
+func (d *Daemon) startScriptPlugin(p *plugin.Plugin, recorder *plugin.Recorder, mgr *dog.Manager, sm *dog.SessionManager, router *mail.Router) {
+	d.scriptPluginMu.Lock()
+	if d.scriptPluginRunning == nil {
+		d.scriptPluginRunning = make(map[string]bool)
+	}
+	if d.scriptPluginRunning[p.Name] {
+		d.scriptPluginMu.Unlock()
+		d.logger.Printf("Handler: plugin %s run.sh still in flight, skipping", p.Name)
+		return
+	}
+	d.scriptPluginRunning[p.Name] = true
+	d.scriptPluginMu.Unlock()
+
+	if _, err := recorder.RecordRun(plugin.PluginRunRecord{
+		PluginName: p.Name,
+		RigName:    p.RigName,
+		Result:     plugin.ResultSuccess,
+		Body:       "run.sh executed directly by daemon (script contract, op-omcx)",
+	}); err != nil {
+		d.logger.Printf("Handler: failed to record script dispatch for plugin %s: %v", p.Name, err)
+	}
+
+	d.scriptPluginWG.Add(1)
+	go func() {
+		defer d.scriptPluginWG.Done()
+		defer func() {
+			d.scriptPluginMu.Lock()
+			delete(d.scriptPluginRunning, p.Name)
+			d.scriptPluginMu.Unlock()
+		}()
+		d.runScriptPlugin(p, recorder, mgr, sm, router)
+	}()
+}
+
+// runScriptPlugin runs a plugin's run.sh synchronously and acts on the exit
+// code per the script contract (see internal/plugin/runner.go): 0 completes
+// the run, ScriptExitNeedsAgent dispatches the AI agent step, anything else
+// (including timeout) fails safe with NO agent dispatch.
+func (d *Daemon) runScriptPlugin(p *plugin.Plugin, recorder *plugin.Recorder, mgr *dog.Manager, sm *dog.SessionManager, router *mail.Router) {
+	ctx := d.ctx
+	if ctx == nil {
+		ctx = context.Background()
+	}
+
+	result, err := plugin.RunScript(ctx, p, d.config.TownRoot)
+	switch {
+	case err != nil:
+		d.logger.Printf("Handler: plugin %s run.sh could not execute: %v", p.Name, err)
+		d.recordScriptFailure(p, recorder, fmt.Sprintf("run.sh could not execute: %v", err))
+	case result.TimedOut:
+		d.logger.Printf("Handler: plugin %s run.sh timed out after %v; agent step NOT dispatched (fail-safe)\n--- output tail ---\n%s", p.Name, p.ScriptTimeout(), result.Output)
+		d.recordScriptFailure(p, recorder, fmt.Sprintf("run.sh timed out after %v", p.ScriptTimeout()))
+	case result.Success():
+		d.logger.Printf("Handler: plugin %s run.sh completed (exit 0); no agent step needed", p.Name)
+	case result.NeedsAgent():
+		d.logger.Printf("Handler: plugin %s run.sh requested agent step (exit %d)", p.Name, result.ExitCode)
+		idleDog := findDispatchableDog(mgr, sm, d.logger)
+		if idleDog == nil {
+			d.logger.Printf("Handler: no dispatchable idle dog for agent step of plugin %s; will retry after cooldown", p.Name)
+			return
+		}
+		if dispatchErr := d.dispatchPluginToDog(p, idleDog, p.FormatAgentStepMailBody(result.Output), mgr, sm, router); dispatchErr != nil {
+			d.logger.Printf("Handler: agent step for plugin %s: %v", p.Name, dispatchErr)
+		}
+	default:
+		d.logger.Printf("Handler: plugin %s run.sh FAILED (exit %d); agent step NOT dispatched (fail-safe)\n--- output tail ---\n%s", p.Name, result.ExitCode, result.Output)
+		d.recordScriptFailure(p, recorder, fmt.Sprintf("run.sh failed with exit %d", result.ExitCode))
+	}
+}
+
+// recordScriptFailure writes a failure receipt for a script run. Best-effort:
+// the dispatch receipt already satisfied the cooldown gate, this one exists
+// for plugin history/audit.
+func (d *Daemon) recordScriptFailure(p *plugin.Plugin, recorder *plugin.Recorder, body string) {
+	if _, err := recorder.RecordRun(plugin.PluginRunRecord{
+		PluginName: p.Name,
+		RigName:    p.RigName,
+		Result:     plugin.ResultFailure,
+		Body:       body,
+	}); err != nil {
+		d.logger.Printf("Handler: failed to record script failure for plugin %s: %v", p.Name, err)
 	}
 }
 

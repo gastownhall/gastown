@@ -1945,6 +1945,21 @@ This directory contains town-level plugins that run during Deacon patrol cycles.
 
 Each plugin is a directory containing:
 - plugin.md - Plugin definition with TOML frontmatter
+- run.sh (optional) - Deterministic script executed DIRECTLY by the daemon
+
+## run.sh Contract
+
+When run.sh exists, the daemon executes it itself (working dir = plugin dir,
+GT_TOWN_ROOT set, execution.timeout enforced). plugin.md is NOT sent to an AI
+dog unless the script asks for it. The exit code gates the AI agent step:
+
+- 0:  script completed the plugin run; no agent step
+- 10: pre-checks passed, dispatch an AI dog with the plugin.md instructions
+- anything else / timeout: failure; recorded; agent step NOT dispatched
+
+Put guards and anything that must run deterministically in run.sh — prompt
+instructions in plugin.md are advisory to the AI and MUST NOT be the only
+enforcement layer.
 
 ## Gate Types
 

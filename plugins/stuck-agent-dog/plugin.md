@@ -19,6 +19,15 @@ severity = "high"
 
 # Stuck Agent Dog
 
+> **EXECUTION NOTE:** the daemon executes `run.sh` in this directory DIRECTLY
+> (script contract, op-omcx) — NOT the bash blocks in this file. This doc is
+> reference/AI-facing only; an AI dog only sees it if `run.sh` exits with the
+> needs-agent code (10), which this plugin never does. Any behavior change
+> MUST be made in `run.sh` (and mirrored here). A fix applied only to this
+> doc once left the old `run.sh` firing false mass-death CRITICALs for two
+> extra cycles, and six RESTART_POLECAT false fires happened while the code
+> guard lived only in a script no execution layer ever ran.
+
 Detects stuck or crashed polecats and deacons by inspecting tmux session context
 before taking action. Unlike the daemon's blind kill-and-restart approach, this
 plugin checks whether an agent is truly unresponsive before restarting.
@@ -101,6 +110,16 @@ For each rig, enumerate polecats and check their session status.
 A polecat is a concern if:
 - It has hooked work (hook_bead is set)
 - Its central runtime-aware health is `session-dead` OR `agent-dead`
+
+**DEFERRED-TRACKER exclusion** (2026-07-12, capital/witness hq-wisp-l4zal): a
+hook bead whose comments contain the marker `DEFERRED-TRACKER` belongs to a
+polecat that was deliberately stopped while its bead stays OPEN as a long-lived
+tracker (e.g. awaiting an epic close or a human gate sign-off). `bead_restartable`
+in `run.sh` checks plain `bd show` output for the marker (comments are not in
+the `--json` issue object) and treats such beads as not restartable — they never
+enter `CRASHED[]`/`STUCK[]` and never count toward mass death. The
+RESTART_POLECAT mailer loops re-check the marker immediately before sending
+mail (defense-in-depth, op-omcx) — the mailer is where every past bypass fired.
 
 Polecat liveness must use `gt session health`, which wraps the central
 `tmux.CheckSessionHealth` path. That path reads `GT_PROCESS_NAMES`, `GT_AGENT`,
@@ -252,6 +271,14 @@ For DEACON stuck (stale heartbeat):
   for stale-heartbeat events; do not include the age seconds in the fingerprint.
 
 **Decision framework:**
+0. **MANDATORY FIRST CHECK — DEFERRED-TRACKER.** Before requesting ANY restart,
+   run `bd show <hook_bead> | grep DEFERRED-TRACKER` (plain output — the marker
+   is in comments, NOT in `--json`). If it matches, the polecat was STOPPED
+   DELIBERATELY and its bead stays open as a tracker: do NOT request restart,
+   do NOT mail the witness, count it healthy, and move on. This is not
+   optional and overrides every rule below. If `bd show` errors, treat as
+   NON-restartable (fail safe). (6 false fires on cap-hhu/cap-kgp happened
+   because dogs skipped this — hq-wisp-l4zal, hq-wisp-ctor5, hq-wisp-0flh3.)
 1. If central health is `session-dead` and hook status is actionable → request restart
 2. If central health is `agent-dead` and hook status is actionable → clear zombie, request restart
 3. If central health is `agent-hung` → observe/report only; do not restart polecat research sessions
@@ -276,6 +303,12 @@ fi
 ```
 
 ## Step 6: Take action
+
+**GATE (repeat of framework rule 0): before sending ANY RESTART_POLECAT mail
+below, re-check `bd show <hook_bead> | grep DEFERRED-TRACKER`. Marker present
+→ SKIP that agent entirely, no mail.** Duplicate on purpose: this mailer step
+is where every past bypass actually fired. `run.sh` enforces this in code in
+both RESTART_POLECAT loops.
 
 For each agent requiring restart:
 
