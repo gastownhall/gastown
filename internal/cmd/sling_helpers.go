@@ -1088,8 +1088,17 @@ func bondFormulaDirect(bondTarget, formulaName, beadID, formulaWorkDir, townRoot
 	for _, variable := range vars {
 		bondArgs = append(bondArgs, "--var", variable)
 	}
+	// FIX (hq-t9v): route bd to the TARGET BEAD's beads database. Running the bond
+	// only in the polecat worktree (formulaWorkDir) does not give bd the rig's
+	// beads routing, so native rig-prefixed beads (e.g. vo-*) cannot be
+	// resolved/written and the bond exits 1 ("no polecat work can dispatch in any
+	// rig"). Resolve the beads dir from the bead's prefix — the town .beads for
+	// hq-*, the rig's own .beads for rig-prefixed beads — mirroring how the town
+	// beads dir already keeps hq-* working.
+	bondBeadsDir := beads.ResolveBeadsDirForID(filepath.Join(townRoot, ".beads"), beadID)
 	bondOut, err := BdCmd(bondArgs...).
 		Dir(formulaWorkDir).
+		WithBeadsDir(bondBeadsDir).
 		WithAutoCommit().
 		WithGTRoot(townRoot).
 		Output()
