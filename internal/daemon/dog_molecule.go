@@ -272,12 +272,25 @@ func parseChildrenJSON(raw string) ([]childInfo, error) {
 		return arr, nil
 	}
 
-	var wrapped map[string][]childInfo
-	if err := json.Unmarshal(data, &wrapped); err == nil {
-		for _, children := range wrapped {
-			return children, nil
+	// Map form keyed by parent ID: {"hq-wisp-abc": [{...}, ...]}. bd may also
+	// include non-array metadata keys (e.g. "schema_version": 1), so decode into
+	// RawMessage and skip any value that is not a JSON array — otherwise the typed
+	// unmarshal into map[string][]childInfo fails on the metadata key and the whole
+	// parse is lost, pouring a 0-step molecule (gt-dep3).
+	var rawMap map[string]json.RawMessage
+	if err := json.Unmarshal(data, &rawMap); err == nil {
+		var children []childInfo
+		for _, v := range rawMap {
+			if trimmed := bytes.TrimSpace(v); len(trimmed) == 0 || trimmed[0] != '[' {
+				continue // skip metadata keys (schema_version, future fields)
+			}
+			var group []childInfo
+			if err := json.Unmarshal(v, &group); err != nil {
+				return nil, fmt.Errorf("parse children group: %w", err)
+			}
+			children = append(children, group...)
 		}
-		return nil, nil
+		return children, nil
 	}
 
 	return nil, fmt.Errorf("unrecognized JSON shape: %.200s", raw)

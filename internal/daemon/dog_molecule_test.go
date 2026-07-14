@@ -96,6 +96,19 @@ func TestParseChildrenJSON(t *testing.T) {
 			wantCount: 0,
 		},
 		{
+			// gt-dep3: bd added a non-array "schema_version" metadata key to the
+			// children output; the strict map[string][]childInfo unmarshal used to
+			// fail on it and pour a 0-step molecule. The metadata key must be skipped.
+			name:      "map wrapper with schema_version metadata and children",
+			input:     `{"hq-wisp-root":[{"id":"hq-wisp-a","title":"Probe","status":"open"},{"id":"hq-wisp-b","title":"Report","status":"open"}],"schema_version":1}`,
+			wantCount: 2,
+		},
+		{
+			name:      "map wrapper with schema_version metadata, no children",
+			input:     `{"hq-yfdpy8":[],"schema_version":1}`,
+			wantCount: 0,
+		},
+		{
 			name:    "invalid json",
 			input:   `not json`,
 			wantErr: true,
