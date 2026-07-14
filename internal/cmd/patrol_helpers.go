@@ -319,6 +319,8 @@ func renderPatrolWispDescription(cfg PatrolConfig) (string, error) {
 		vars = buildWitnessPatrolVars(ctx)
 	case constants.MolRefineryPatrol:
 		vars = buildRefineryPatrolVars(ctx)
+	case constants.MolDeaconPatrol:
+		vars = buildDeaconPatrolVars(ctx)
 	}
 	vars = append(vars, cfg.ExtraVars...)
 	return renderFormulaRootAndStepsFull(cfg.PatrolMolName, cfg.BeadsDir, rigName, vars)
