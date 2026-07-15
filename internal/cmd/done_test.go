@@ -362,49 +362,42 @@ func TestDirectMergeRejectsUnsafeSourceBeforePush(t *testing.T) {
 		issueID     string
 		issue       *beads.Issue
 		wantReason  string
-		wantFatal   bool
 		wantAllowed bool
 	}{
 		{
 			name:       "missing source id",
 			issue:      &beads.Issue{ID: "gt-work", Type: "task"},
 			wantReason: "source issue is required",
-			wantFatal:  true,
 		},
 		{
 			name:       "non concrete source",
 			issueID:    "gt-mr",
 			issue:      &beads.Issue{ID: "gt-mr", Labels: []string{"gt:merge-request"}},
 			wantReason: "not concrete",
-			wantFatal:  true,
 		},
 		{
 			name:       "review only source",
 			issueID:    "gt-review",
 			issue:      freshEvidenceReviewOnly,
 			wantReason: "review-only issue gt-review cannot be direct-merged",
-			wantFatal:  true,
 		},
 		{
 			name:       "no merge source",
 			issueID:    "gt-work",
 			issue:      &beads.Issue{ID: "gt-work", Type: "task", Description: "no_merge: true\n"},
 			wantReason: "no_merge=true",
-			wantFatal:  true,
 		},
 		{
 			name:       "local merge strategy source",
 			issueID:    "gt-work",
 			issue:      &beads.Issue{ID: "gt-work", Type: "task", Description: "merge_strategy: local\n"},
 			wantReason: "merge_strategy=local",
-			wantFatal:  true,
 		},
 		{
 			name:       "unchecked criteria",
 			issueID:    "gt-work",
 			issue:      &beads.Issue{ID: "gt-work", Type: "task", AcceptanceCriteria: "- [ ] still open\n"},
 			wantReason: "unchecked acceptance criteria",
-			wantFatal:  false,
 		},
 		{
 			name:        "eligible source",
@@ -416,15 +409,15 @@ func TestDirectMergeRejectsUnsafeSourceBeforePush(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			reason, fatal := doneDirectMergeSkipReason(nil, tt.issueID, tt.issue, "main")
+			reason := doneDirectMergeSkipReason(nil, tt.issueID, tt.issue, "main")
 			if tt.wantAllowed {
-				if reason != "" || fatal {
-					t.Fatalf("direct merge gate = %q, %v; want allowed", reason, fatal)
+				if reason != "" {
+					t.Fatalf("direct merge gate = %q; want allowed", reason)
 				}
 				return
 			}
-			if reason == "" || !strings.Contains(reason, tt.wantReason) || fatal != tt.wantFatal {
-				t.Fatalf("direct merge gate = %q, %v; want reason containing %q fatal=%v", reason, fatal, tt.wantReason, tt.wantFatal)
+			if reason == "" || !strings.Contains(reason, tt.wantReason) {
+				t.Fatalf("direct merge gate = %q; want reason containing %q", reason, tt.wantReason)
 			}
 		})
 	}

@@ -177,31 +177,31 @@ func doneSourceCloseSkipReason(bd *beads.Beads, issueID string, issue *beads.Iss
 	return doneSourceCloseSkipReasonForHead(bd, issueID, issue, currentHead)
 }
 
-func doneDirectMergeSkipReason(bd *beads.Beads, issueID string, issue *beads.Issue, targetBranch string) (string, bool) {
+func doneDirectMergeSkipReason(bd *beads.Beads, issueID string, issue *beads.Issue, targetBranch string) string {
 	if strings.TrimSpace(issueID) == "" {
-		return "source issue is required for direct merge", true
+		return "source issue is required for direct merge"
 	}
-	issue, skipReason, fatal := loadDoneSourceIssue(bd, issueID, issue)
+	issue, skipReason, _ := loadDoneSourceIssue(bd, issueID, issue)
 	if skipReason != "" {
-		return skipReason, fatal
+		return skipReason
 	}
 	if err := validateConcreteSourceIssue(issueID, issue); err != nil {
-		return err.Error(), true
+		return err.Error()
 	}
 	if attachment := beads.ParseAttachmentFields(issue); attachment != nil {
 		switch {
 		case attachment.NoMerge:
-			return fmt.Sprintf("source_issue %s has no_merge=true", issueID), true
+			return fmt.Sprintf("source_issue %s has no_merge=true", issueID)
 		case attachment.ReviewOnly:
-			return fmt.Sprintf("review-only issue %s cannot be direct-merged to %s", issueID, targetBranch), true
+			return fmt.Sprintf("review-only issue %s cannot be direct-merged to %s", issueID, targetBranch)
 		case strings.EqualFold(strings.TrimSpace(attachment.MergeStrategy), "local"):
-			return fmt.Sprintf("source_issue %s has merge_strategy=local", issueID), true
+			return fmt.Sprintf("source_issue %s has merge_strategy=local", issueID)
 		}
 	}
 	if unchecked := beads.HasUncheckedCriteria(issue); unchecked > 0 {
-		return fmt.Sprintf("issue %s has %d unchecked acceptance criteria — skipping direct merge", issueID, unchecked), false
+		return fmt.Sprintf("issue %s has %d unchecked acceptance criteria — skipping direct merge", issueID, unchecked)
 	}
-	return "", false
+	return ""
 }
 
 func doneSourceCloseSkipReasonForHead(bd *beads.Beads, issueID string, issue *beads.Issue, currentHead string) (string, bool) {
@@ -1077,7 +1077,7 @@ func runDone(cmd *cobra.Command, args []string) (retErr error) {
 		if convoyInfo != nil && convoyInfo.MergeStrategy == "direct" {
 			fmt.Printf("%s Direct merge strategy: pushing to %s\n", style.Bold.Render("→"), defaultBranch)
 			directBd := beads.New(cwd)
-			if skipReason, _ := doneDirectMergeSkipReason(directBd, issueID, nil, defaultBranch); skipReason != "" {
+			if skipReason := doneDirectMergeSkipReason(directBd, issueID, nil, defaultBranch); skipReason != "" {
 				style.PrintWarning("%s", skipReason)
 				notifyDoneCloseSkipped(townRoot, rigName, sender, issueID, skipReason)
 				return fmt.Errorf("cannot complete direct-merge work: %s", skipReason)
@@ -1189,7 +1189,7 @@ func runDone(cmd *cobra.Command, args []string) (retErr error) {
 		if convoyInfo != nil && convoyInfo.MergeStrategy == "direct" {
 			fmt.Printf("%s Late-detected direct merge strategy: pushing to %s\n", style.Bold.Render("→"), defaultBranch)
 			fmt.Printf("  Convoy: %s\n", convoyInfo.ID)
-			if skipReason, _ := doneDirectMergeSkipReason(bd, issueID, sourceIssueForNoMerge, defaultBranch); skipReason != "" {
+			if skipReason := doneDirectMergeSkipReason(bd, issueID, sourceIssueForNoMerge, defaultBranch); skipReason != "" {
 				style.PrintWarning("%s", skipReason)
 				notifyDoneCloseSkipped(townRoot, rigName, sender, issueID, skipReason)
 				return fmt.Errorf("cannot complete direct-merge work: %s", skipReason)
