@@ -2,6 +2,7 @@ package formula
 
 import (
 	"os"
+	"os/exec"
 	"strings"
 	"testing"
 )
@@ -65,5 +66,49 @@ func TestPolecatFormulaGuardsStableLocalBranchReplay(t *testing.T) {
 	}
 	if guardStart > rejectedMRRework {
 		t.Fatal("stable-local-base guard must appear before rejected-MR rework instructions")
+	}
+}
+
+func TestPolecatFormulaMatchesPolecatIssueIDsLiterally(t *testing.T) {
+	data, err := os.ReadFile("formulas/mol-polecat-work.formula.toml")
+	if err != nil {
+		t.Fatalf("read mol-polecat-work formula: %v", err)
+	}
+	text := string(data)
+
+	const branchCase = `case "$current_branch" in
+      polecat/*/"{{issue}}"+*|polecat/*/"{{issue}}"@*)
+        exit 0
+        ;;
+      *)
+        exit 1
+        ;;
+    esac`
+	if !strings.Contains(text, `case "$current_branch" in
+      polecat/*/"{{issue}}"+*|polecat/*/"{{issue}}"@*)`) {
+		t.Fatal("formula does not match the issue segment literally with a shell case")
+	}
+	if strings.Contains(text, `[[ "$current_branch" =~`) {
+		t.Fatal("formula still matches the issue segment with an ERE")
+	}
+
+	for _, tc := range []struct {
+		name    string
+		branch  string
+		matches bool
+	}{
+		{"dotted ID plus suffix", "polecat/alpha/gt-4kp9.5.5.1+mk123456", true},
+		{"dotted ID legacy at suffix", "polecat/alpha/gt-4kp9.5.5.1@mk123456", true},
+		{"dot lookalike does not match", "polecat/alpha/gt-4kp9x5.5.1+mk123456", false},
+		{"different issue does not match", "polecat/alpha/gt-other.5.5.1+mk123456", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			script := `current_branch="$1"
+` + strings.ReplaceAll(branchCase, "{{issue}}", "gt-4kp9.5.5.1")
+			err := exec.Command("sh", "-c", script, "sh", tc.branch).Run()
+			if got := err == nil; got != tc.matches {
+				t.Fatalf("branch %q matches = %t, want %t", tc.branch, got, tc.matches)
+			}
+		})
 	}
 }

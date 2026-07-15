@@ -148,16 +148,18 @@ valid polecat branch for this issue:
 current_branch="$(git branch --show-current)"
 case "{{base_ref}}" in
   refs/heads/*)
-    if [[ "$current_branch" =~ ^polecat/[^/]+/{{issue}}[+@][^/]+$ ]]; then
-      if git merge-base --is-ancestor "{{base_ref}}" HEAD; then
-        echo "Preserve the current branch: it is a valid polecat branch for {{issue}}."
-        echo "Do not checkout, rebase, reset, or switch branches."
-      else
-        echo "STOP: this polecat branch for {{issue}} does not contain {{base_ref}}."
-        echo "Notify Witness and preserve the worktree."
-        echo "Do not checkout, rebase, reset, or switch branches."
-      fi
-    fi
+    case "$current_branch" in
+      polecat/*/"{{issue}}"+*|polecat/*/"{{issue}}"@*)
+        if git merge-base --is-ancestor "{{base_ref}}" HEAD; then
+          echo "Preserve the current branch: it is a valid polecat branch for {{issue}}."
+          echo "Do not checkout, rebase, reset, or switch branches."
+        else
+          echo "STOP: this polecat branch for {{issue}} does not contain {{base_ref}}."
+          echo "Notify Witness and preserve the worktree."
+          echo "Do not checkout, rebase, reset, or switch branches."
+        fi
+        ;;
+    esac
     ;;
 esac
 ```
