@@ -187,6 +187,13 @@ func PlanDispatch(availableCapacity, batchSize int, ready []PendingBead) Dispatc
 		}
 	}
 
+	if batchSize <= 0 {
+		return DispatchPlan{
+			Skipped: len(ready) + nonWorkSkipped,
+			Reason:  "invalid-batch-size",
+		}
+	}
+
 	// Dispatch up to the smallest of capacity, batchSize, and readyBeads count
 	toDispatch := batchSize
 	if availableCapacity < toDispatch {

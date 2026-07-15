@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -111,12 +112,20 @@ func buildSchedulerDispatchPlan(townRoot string, batchOverride int, cleanup bool
 
 	maxPolecats := schedulerCfg.GetMaxPolecats()
 	batchSize := schedulerCfg.GetBatchSize()
+	if batchOverride < 0 {
+		return nil, fmt.Errorf("invalid scheduler batch override %d: must be >= 0", batchOverride)
+	}
 	if batchOverride > 0 {
 		batchSize = batchOverride
 	}
+	if batchSize <= 0 {
+		return nil, fmt.Errorf("invalid scheduler batch_size %d: must be > 0", batchSize)
+	}
 
 	if cleanup && !state.Paused && maxPolecats > 0 {
-		cleanupStaleContexts(townRoot)
+		if err := cleanupStaleContexts(townRoot); err != nil {
+			return nil, fmt.Errorf("cleaning stale scheduler contexts: %w", err)
+		}
 	}
 
 	assessment, err := assessScheduledBeads(townRoot)
@@ -424,8 +433,11 @@ func beadsForContextRecord(rec slingContextRecord) *beads.Beads {
 
 // cleanupStaleContexts closes invalid and stale sling context beads.
 // Called explicitly before the dispatch cycle to separate cleanup from querying.
-func cleanupStaleContexts(townRoot string) {
-	contexts := listAllSlingContextRecords(townRoot)
+func cleanupStaleContexts(townRoot string) error {
+	contexts, err := listAllSlingContextRecords(townRoot)
+	if err != nil {
+		return err
+	}
 
 	// First pass: close invalid and circuit-broken contexts, collect work bead IDs
 	// that need status checks for stale detection.
@@ -450,7 +462,7 @@ func cleanupStaleContexts(townRoot string) {
 	}
 
 	if len(staleCheckContexts) == 0 {
-		return
+		return nil
 	}
 
 	// Collect work bead IDs to fetch
@@ -460,7 +472,10 @@ func cleanupStaleContexts(townRoot string) {
 	}
 
 	// Batch-fetch work bead info for only the specific IDs we need
-	workBeadInfo := batchFetchBeadInfoByIDs(townRoot, workBeadIDs)
+	workBeadInfo, err := batchFetchBeadInfoByIDs(townRoot, workBeadIDs)
+	if err != nil {
+		return err
+	}
 
 	// Second pass: close contexts whose work beads are stale.
 	// Note: in_progress is intentionally excluded — the work bead is being
@@ -478,6 +493,7 @@ func cleanupStaleContexts(townRoot string) {
 			_ = beadsForContextRecord(ctx).CloseSlingContext(ctx.issue.ID, "invalid-work-bead")
 		}
 	}
+	return nil
 }
 
 // beadStatusInfo holds batch-fetched bead status, title, labels, and identity.
@@ -492,10 +508,10 @@ type beadStatusInfo struct {
 // batchFetchBeadInfoByIDs returns a map of bead ID → status+title+labels for specific beads.
 // Uses `bd show` with multiple IDs per rig directory instead of fetching all beads.
 // This avoids the O(minutes) latency of `bd list --all --json --limit=0` on large repos.
-func batchFetchBeadInfoByIDs(townRoot string, ids []string) map[string]beadStatusInfo {
+func batchFetchBeadInfoByIDs(townRoot string, ids []string) (map[string]beadStatusInfo, error) {
 	result := make(map[string]beadStatusInfo)
 	if len(ids) == 0 {
-		return result
+		return result, nil
 	}
 
 	idsByBeadsDir := groupBeadIDsByResolvedBeadsDir(townRoot, ids)
@@ -509,7 +525,7 @@ func batchFetchBeadInfoByIDs(townRoot string, ids []string) map[string]beadStatu
 		args := append([]string{"show", "--json"}, groupedIDs...)
 		out, err := b.Run(args...)
 		if err != nil {
-			continue
+			return nil, fmt.Errorf("bd show failed for %s: %w", beadsDir, err)
 		}
 		var items []struct {
 			ID        string   `json:"id"`
@@ -519,19 +535,23 @@ func batchFetchBeadInfoByIDs(townRoot string, ids []string) map[string]beadStatu
 			Labels    []string `json:"labels"`
 			Ephemeral bool     `json:"ephemeral"`
 		}
-		if err := json.Unmarshal(out, &items); err == nil {
-			for _, item := range items {
-				result[item.ID] = beadStatusInfo{
-					Status:    item.Status,
-					Title:     item.Title,
-					IssueType: item.IssueType,
-					Labels:    item.Labels,
-					Ephemeral: item.Ephemeral,
-				}
+		if err := json.Unmarshal(out, &items); err != nil {
+			return nil, fmt.Errorf("parsing bd show output for %s: %w", beadsDir, err)
+		}
+		for _, item := range items {
+			if item.ID == "" {
+				continue
+			}
+			result[item.ID] = beadStatusInfo{
+				Status:    item.Status,
+				Title:     item.Title,
+				IssueType: item.IssueType,
+				Labels:    item.Labels,
+				Ephemeral: item.Ephemeral,
 			}
 		}
 	}
-	return result
+	return result, nil
 }
 
 func groupBeadIDsByResolvedBeadsDir(townRoot string, ids []string) map[string][]string {
@@ -568,7 +588,10 @@ func getReadySlingContexts(townRoot string) ([]capacity.PendingBead, error) {
 }
 
 func assessScheduledBeads(townRoot string) (scheduledBeadAssessment, error) {
-	allContexts := listAllSlingContextRecords(townRoot)
+	allContexts, err := listAllSlingContextRecords(townRoot)
+	if err != nil {
+		return scheduledBeadAssessment{}, err
+	}
 
 	if len(allContexts) == 0 {
 		return scheduledBeadAssessment{}, nil
@@ -585,7 +608,10 @@ func assessScheduledBeads(townRoot string) (scheduledBeadAssessment, error) {
 		}
 		workBeadIDs = append(workBeadIDs, fields.WorkBeadID)
 	}
-	workBeadInfo := batchFetchBeadInfoByIDs(townRoot, workBeadIDs)
+	workBeadInfo, err := batchFetchBeadInfoByIDs(townRoot, workBeadIDs)
+	if err != nil {
+		return scheduledBeadAssessment{}, err
+	}
 	blockedWorkIDs, blockedErr := listBlockedWorkBeadIDsWithError(townRoot, workBeadIDs)
 	if blockedErr != nil {
 		return scheduledBeadAssessment{}, blockedErr
@@ -797,24 +823,31 @@ func recordDispatchFailure(townBeads *beads.Beads, b capacity.PendingBead, dispa
 // Deduplicates by context ID: different search dirs can resolve to the same
 // underlying beads DB (e.g., when a rig's top-level .beads is a redirect to
 // mayor/rig/.beads), and both paths would otherwise return the same contexts.
-func listAllSlingContexts(townRoot string) []*beads.Issue {
-	records := listAllSlingContextRecords(townRoot)
+func listAllSlingContexts(townRoot string) ([]*beads.Issue, error) {
+	records, err := listAllSlingContextRecords(townRoot)
+	if err != nil {
+		return nil, err
+	}
 	all := make([]*beads.Issue, 0, len(records))
 	for _, rec := range records {
 		all = append(all, rec.issue)
 	}
-	return all
+	return all, nil
 }
 
-func listAllSlingContextRecords(townRoot string) []slingContextRecord {
+func listAllSlingContextRecords(townRoot string) ([]slingContextRecord, error) {
 	var records []slingContextRecord
 	seen := make(map[string]bool)
-	for _, dir := range beadsSearchDirs(townRoot) {
+	dirs, err := beadsSearchDirs(townRoot)
+	if err != nil {
+		return nil, err
+	}
+	for _, dir := range dirs {
 		beadsDir := beads.ResolveBeadsDir(dir)
 		b := beads.NewWithBeadsDir(dir, beadsDir)
 		contexts, err := b.ListOpenSlingContexts()
 		if err != nil {
-			continue // Partial failure is acceptable — skip unavailable dirs
+			return nil, fmt.Errorf("listing sling contexts in %s: %w", beadsDir, err)
 		}
 		for _, ctx := range contexts {
 			key := beadsDir + "\x00" + ctx.ID
@@ -825,7 +858,7 @@ func listAllSlingContextRecords(townRoot string) []slingContextRecord {
 			records = append(records, slingContextRecord{issue: ctx, workDir: dir, beadsDir: beadsDir})
 		}
 	}
-	return records
+	return records, nil
 }
 
 // listBlockedWorkBeadIDsWithError returns a set of work bead IDs that have active blockers.
@@ -858,8 +891,16 @@ func listBlockedWorkBeadIDsWithError(townRoot string, workBeadIDs []string) (map
 				style.Dim.Render("⚠"), filepath.Dir(beadsDir), err)
 			continue
 		}
-		for _, b := range blockedBeads {
-			blockedIDs[b.ID] = true
+		for i, b := range blockedBeads {
+			id := strings.TrimSpace(b.ID)
+			if id == "" {
+				failCount++
+				lastErr = fmt.Errorf("blocked row %d missing id", i)
+				fmt.Fprintf(os.Stderr, "%s Warning: malformed bd blocked output for %s: %v\n",
+					style.Dim.Render("⚠"), filepath.Dir(beadsDir), lastErr)
+				continue
+			}
+			blockedIDs[id] = true
 		}
 	}
 	if failCount > 0 {

@@ -310,7 +310,10 @@ func runSchedulerClear(cmd *cobra.Command, args []string) error {
 		// Close ALL sling contexts for this specific work bead (there may be
 		// duplicates if concurrent scheduleBead calls raced past idempotency).
 		// Scan all rig dirs since contexts live in target rig beads. (GH#3468)
-		contexts := listAllSlingContextRecords(townRoot)
+		contexts, err := listAllSlingContextRecords(townRoot)
+		if err != nil {
+			return fmt.Errorf("listing sling contexts: %w", err)
+		}
 
 		closed := 0
 		for _, ctx := range contexts {
@@ -334,7 +337,10 @@ func runSchedulerClear(cmd *cobra.Command, args []string) error {
 	}
 
 	// Close all open sling contexts across all dirs
-	allContexts := listAllSlingContextRecords(townRoot)
+	allContexts, err := listAllSlingContextRecords(townRoot)
+	if err != nil {
+		return fmt.Errorf("listing sling contexts: %w", err)
+	}
 
 	if len(allContexts) == 0 {
 		fmt.Println("Scheduler is already empty.")
@@ -399,7 +405,10 @@ func scheduledBeadInfoFromWork(ctxTitle string, fields *capacity.SlingContextFie
 
 // listAllScheduledBeadIDs returns the work bead IDs of all scheduled beads.
 func listAllScheduledBeadIDs(townRoot string) []string {
-	allContexts := listAllSlingContexts(townRoot)
+	allContexts, err := listAllSlingContexts(townRoot)
+	if err != nil {
+		return nil
+	}
 
 	var ids []string
 	seen := make(map[string]bool)
@@ -419,12 +428,12 @@ func listAllScheduledBeadIDs(townRoot string) []string {
 
 // beadsSearchDirs returns directories to scan for scheduled beads:
 // the town root plus any rig directories that have a .beads/ subdirectory.
-func beadsSearchDirs(townRoot string) []string {
+func beadsSearchDirs(townRoot string) ([]string, error) {
 	dirs := []string{townRoot}
 	seen := map[string]bool{townRoot: true}
 	entries, err := os.ReadDir(townRoot)
 	if err != nil {
-		return dirs
+		return nil, fmt.Errorf("discovering scheduler beads search dirs: %w", err)
 	}
 	for _, e := range entries {
 		if !e.IsDir() || strings.HasPrefix(e.Name(), ".") || e.Name() == "mayor" || e.Name() == "settings" {
@@ -443,7 +452,7 @@ func beadsSearchDirs(townRoot string) []string {
 			seen[mayorRigDir] = true
 		}
 	}
-	return dirs
+	return dirs, nil
 }
 
 // countActivePolecats counts all running polecat tmux sessions across all rigs.
