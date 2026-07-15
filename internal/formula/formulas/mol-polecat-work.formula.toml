@@ -86,19 +86,15 @@ gt mail inbox
 **4. Check for prior merge failure context:**
 
 If the bead notes contain "MERGE REJECTION", a previous polecat's work was
-rejected by the refinery. Read the failure details carefully:
+rejected by the refinery. Read and record the failure details carefully:
 - **Failure-Type**: what broke (tests, build, lint, typecheck)
 - **Error**: the actual error output
-- **Branch**: the previous branch may still exist with the original work
+- **Branch**: the prior branch name; it may still contain the original work
 
-If a prior branch exists, check it out instead of creating a new one:
-```bash
-git fetch origin
-git branch -a | grep <branch-from-notes>
-# If it exists: git checkout <branch> && git rebase {{base_ref}}
-```
-
-This lets you make a targeted fix rather than starting from scratch.
+Do not checkout or rebase the prior branch during load-context. Branch-setup
+owns any replay only after validating the current stable local branch. This
+lets you make a targeted fix without mutating the current worktree before that
+validation.
 
 **5. Understand the requirements:**
 - What exactly needs to be done?

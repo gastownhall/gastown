@@ -39,6 +39,12 @@ func TestPolecatFormulaGuardsStableLocalBranchReplay(t *testing.T) {
 		t.Fatal("formula does not scope the branch-preservation guard to base_ref")
 	}
 
+	for _, instruction := range []string{"git checkout", "git rebase"} {
+		if mutationStart := strings.Index(text, instruction); mutationStart != -1 && mutationStart < guardStart {
+			t.Fatalf("%q must not appear before the stable-local-base guard", instruction)
+		}
+	}
+
 	localBaseScope := strings.Index(text[guardStart:], "refs/heads/*)")
 	if localBaseScope == -1 {
 		t.Fatal("formula does not limit the branch-preservation guard to refs/heads/*")
