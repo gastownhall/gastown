@@ -142,9 +142,43 @@ git branch --show-current
 
 If the current branch name embeds a bead-id that is not {{issue}}, it is
 leftover from a previous assignment. Do NOT work on it — create a fresh
-branch in step 3.
+branch in step 4.
 
-**2. Exception — rejected-MR rework for THIS bead only:**
+**2. Stable local-base guard:**
+
+For a stable local base only, check whether the current branch is already a
+valid polecat branch for this issue:
+```bash
+current_branch="$(git branch --show-current)"
+case "{{base_ref}}" in
+  refs/heads/*)
+    if [[ "$current_branch" =~ ^polecat/[^/]+/{{issue}}[+@][^/]+$ ]]; then
+      if git merge-base --is-ancestor "{{base_ref}}" HEAD; then
+        echo "Preserve the current branch: it is a valid polecat branch for {{issue}}."
+        echo "Do not checkout, rebase, reset, or switch branches."
+      else
+        echo "STOP: this polecat branch for {{issue}} does not contain {{base_ref}}."
+        echo "Notify Witness and preserve the worktree."
+        echo "Do not checkout, rebase, reset, or switch branches."
+      fi
+    fi
+    ;;
+esac
+```
+
+If the current branch matches `polecat/<name>/{{issue}}+<suffix>` or the legacy
+`polecat/<name>/{{issue}}@<suffix>` format and contains `{{base_ref}}`, preserve
+the current branch. Do not checkout, rebase, reset, or switch branches. Skip the
+rejected-MR replay, fresh-branch, and initial-rebase instructions below, then
+proceed directly to project setup.
+
+If that same-issue branch does not contain `{{base_ref}}`, STOP. Notify Witness
+and preserve the worktree. Do not checkout, rebase, reset, or switch branches.
+
+For remote-backed bases, including `origin/*` and `upstream/*`, this guard does
+not apply; follow the existing setup and rebase instructions below.
+
+**3. Exception — rejected-MR rework for THIS bead only:**
 
 If the bead notes contain "MERGE REJECTION" with a branch name, that branch
 holds previous work on {{issue}} itself. Reusing it preserves all previous work:
@@ -160,7 +194,7 @@ git rebase {{base_ref}}
 This exception applies ONLY when the prior branch is for {{issue}}. A branch
 from a different bead is never reusable.
 
-**3. Otherwise, create a fresh branch NAMED FOR THE HOOKED BEAD:**
+**4. Otherwise, create a fresh branch NAMED FOR THE HOOKED BEAD:**
 ```bash
 git fetch origin
 git checkout -b "polecat/<name>/{{issue}}+$(openssl rand -hex 3)" {{base_ref}}
@@ -170,7 +204,7 @@ The format is `polecat/<your-name>/<bead-id>+<short-unique-suffix>`. The
 embedded bead-id is what makes MR attribution work; the suffix keeps the
 name unique across re-dispatches of the same bead.
 
-**4. Ensure clean working state:**
+**5. Ensure clean working state:**
 ```bash
 git status                  # Should show "working tree clean"
 git stash list              # Should be empty
@@ -187,7 +221,7 @@ git stash push -m "unrelated changes before {{issue}}"
 git checkout -- .
 ```
 
-**5. Sync with {{base_branch}}:**
+**6. Sync with {{base_branch}}:**
 ```bash
 git fetch origin
 git rebase {{base_ref}}      # Rebase onto the resolved dispatch base
@@ -197,7 +231,7 @@ If rebase conflicts:
 - Resolve them carefully
 - If stuck, mail Witness
 
-**6. Run project setup (if configured):**
+**7. Run project setup (if configured):**
 
 If setup_command is set, run it to install dependencies:
 ```bash
