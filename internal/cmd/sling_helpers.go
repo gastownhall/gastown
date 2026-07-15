@@ -1007,6 +1007,11 @@ type FormulaOnBeadResult struct {
 	FormulaVars []string // Vars used to instantiate/render the formula
 }
 
+func formulaBeadBdCmd(beadID, formulaWorkDir, townRoot string, args ...string) *bdCmd {
+	targetBeadsDir := beads.ResolveBeadsDirForID(filepath.Join(townRoot, ".beads"), beadID)
+	return BdCmd(args...).Dir(formulaWorkDir).WithBeadsDir(targetBeadsDir).WithGTRoot(townRoot)
+}
+
 // InstantiateFormulaOnBead bonds a formula directly to a bead.
 // This is the formula-on-bead pattern used by issue #288 for auto-applying mol-polecat-work.
 //
@@ -1032,10 +1037,8 @@ func InstantiateFormulaOnBead(ctx context.Context, formulaName, beadID, title, h
 	resolvedFormula := formulaName
 	var formulaCleanup func()
 	if !skipCook {
-		if err := BdCmd("cook", formulaName).
-			Dir(formulaWorkDir).
+		if err := formulaBeadBdCmd(beadID, formulaWorkDir, townRoot, "cook", formulaName).
 			WithAutoCommit().
-			WithGTRoot(townRoot).
 			Run(); err != nil {
 			// Retry with embedded formula
 			resolvedFormula, formulaCleanup = resolveFormulaToTempFile(formulaName)
@@ -1043,10 +1046,8 @@ func InstantiateFormulaOnBead(ctx context.Context, formulaName, beadID, title, h
 				defer formulaCleanup()
 			}
 			if resolvedFormula != formulaName {
-				if retryErr := BdCmd("cook", resolvedFormula).
-					Dir(formulaWorkDir).
+				if retryErr := formulaBeadBdCmd(beadID, formulaWorkDir, townRoot, "cook", resolvedFormula).
 					WithAutoCommit().
-					WithGTRoot(townRoot).
 					Run(); retryErr != nil {
 					telemetry.RecordMolCook(ctx, formulaName, retryErr)
 					return nil, fmt.Errorf("cooking formula %s: %w (embedded retry: %v)", formulaName, err, retryErr)
@@ -1088,10 +1089,8 @@ func bondFormulaDirect(bondTarget, formulaName, beadID, formulaWorkDir, townRoot
 	for _, variable := range vars {
 		bondArgs = append(bondArgs, "--var", variable)
 	}
-	bondOut, err := BdCmd(bondArgs...).
-		Dir(formulaWorkDir).
+	bondOut, err := formulaBeadBdCmd(beadID, formulaWorkDir, townRoot, bondArgs...).
 		WithAutoCommit().
-		WithGTRoot(townRoot).
 		Output()
 	if err != nil {
 		return "", fmt.Errorf("%w (args: %s)", err, strings.Join(bondArgs, " "))

@@ -578,6 +578,125 @@ exit /b 0
 	}
 }
 
+func TestBondFormulaDirectPinsTargetBeadsDir(t *testing.T) {
+	for _, tc := range []struct {
+		name         string
+		beadID       string
+		wantBeadsDir func(string) string
+	}{
+		{
+			name:   "rig-prefixed bead",
+			beadID: "gt-abc123",
+			wantBeadsDir: func(townRoot string) string {
+				return filepath.Join(townRoot, "gastown", "mayor", "rig", ".beads")
+			},
+		},
+		{
+			name:   "hq bead",
+			beadID: "hq-abc123",
+			wantBeadsDir: func(townRoot string) string {
+				return filepath.Join(townRoot, ".beads")
+			},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			townRoot := t.TempDir()
+			townBeadsDir := filepath.Join(townRoot, ".beads")
+			rigBeadsDir := filepath.Join(townRoot, "gastown", "mayor", "rig", ".beads")
+			formulaWorkDir := filepath.Join(townRoot, "polecats", "radrat", "gastown")
+
+			for _, dir := range []string{townBeadsDir, rigBeadsDir, filepath.Join(formulaWorkDir, ".beads")} {
+				if err := os.MkdirAll(dir, 0755); err != nil {
+					t.Fatalf("mkdir %s: %v", dir, err)
+				}
+			}
+			routes := strings.Join([]string{
+				`{"prefix":"gt-","path":"gastown/mayor/rig"}`,
+				`{"prefix":"hq-","path":"."}`,
+				"",
+			}, "\n")
+			if err := os.WriteFile(filepath.Join(townBeadsDir, "routes.jsonl"), []byte(routes), 0644); err != nil {
+				t.Fatalf("write routes: %v", err)
+			}
+
+			binDir := filepath.Join(townRoot, "bin")
+			if err := os.MkdirAll(binDir, 0755); err != nil {
+				t.Fatalf("mkdir binDir: %v", err)
+			}
+			logPath := filepath.Join(townRoot, "bd.log")
+			bdScript := `#!/bin/sh
+set -e
+printf 'ENV:%s|%s|%s|%s|%s\n' "$(pwd)" "${BEADS_DIR:-}" "${BEADS_DOLT_SERVER_DATABASE:-}" "${BEADS_DOLT_DATA_DIR:-}" "$*" >> "${BD_LOG}"
+cmd="$1"; shift || true
+case "$cmd" in
+  mol)
+    sub="$1"; shift || true
+    case "$sub" in
+      bond)
+        echo '{"result_id":"'"$2"'","id_mapping":{"mol-polecat-work":"gt-mol-direct"}}'
+        exit 0
+        ;;
+    esac
+    ;;
+esac
+exit 1
+`
+			bdScriptWindows := `@echo off
+setlocal enableextensions
+echo ENV:%CD%^|%BEADS_DIR%^|%BEADS_DOLT_SERVER_DATABASE%^|%BEADS_DOLT_DATA_DIR%^|%*>>"%BD_LOG%"
+if "%1"=="mol" (
+  if "%2"=="bond" (
+    echo {^"result_id^":^"%4^",^"id_mapping^":{^"mol-polecat-work^":^"gt-mol-direct^"}}
+    exit /b 0
+  )
+)
+exit /b 1
+`
+			_ = writeBDStub(t, binDir, bdScript, bdScriptWindows)
+
+			t.Setenv("BD_LOG", logPath)
+			t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+			t.Setenv("BEADS_DIR", filepath.Join(formulaWorkDir, ".beads"))
+			t.Setenv("BEADS_DOLT_SERVER_DATABASE", "stale")
+			wrongDataDir := filepath.Join(townRoot, "wrong-data")
+			t.Setenv("BEADS_DOLT_DATA_DIR", wrongDataDir)
+			t.Setenv("BEADS_DB", "stale")
+			t.Setenv("BD_DB", "stale")
+
+			rootID, err := bondFormulaDirect("mol-polecat-work", "mol-polecat-work", tc.beadID, formulaWorkDir, townRoot, formulaVarsForBead("mol-polecat-work", tc.beadID, "Test", nil))
+			if err != nil {
+				t.Fatalf("bondFormulaDirect: %v", err)
+			}
+			if rootID != "gt-mol-direct" {
+				t.Fatalf("rootID = %q, want gt-mol-direct", rootID)
+			}
+
+			logBytes, err := os.ReadFile(logPath)
+			if err != nil {
+				t.Fatalf("read log: %v", err)
+			}
+			line := strings.TrimSpace(string(logBytes))
+			parts := strings.SplitN(line, "|", 5)
+			if len(parts) != 5 || !strings.HasPrefix(parts[0], "ENV:") {
+				t.Fatalf("malformed bd log %q", line)
+			}
+			gotCWD := strings.TrimPrefix(parts[0], "ENV:")
+			if gotCWD != formulaWorkDir {
+				t.Fatalf("bd cwd = %q, want formula work dir %q (log %q)", gotCWD, formulaWorkDir, line)
+			}
+			if got, want := parts[1], tc.wantBeadsDir(townRoot); got != want {
+				t.Fatalf("BEADS_DIR = %q, want %q (log %q)", got, want, line)
+			}
+			if parts[2] != "" {
+				t.Fatalf("BEADS_DOLT_SERVER_DATABASE leaked as %q (log %q)", parts[2], line)
+			}
+			if parts[3] == wrongDataDir {
+				t.Fatalf("stale BEADS_DOLT_DATA_DIR leaked as %q (log %q)", parts[3], line)
+			}
+		})
+	}
+}
+
 func TestInstantiateFormulaOnBead_DirectBondHandlesNonGTIDs(t *testing.T) {
 	townRoot := t.TempDir()
 
