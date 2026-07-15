@@ -3,9 +3,12 @@ package cmd
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/spf13/cobra"
+	"github.com/steveyegge/gastown/internal/atomicfile"
 	"github.com/steveyegge/gastown/internal/beads"
 	"github.com/steveyegge/gastown/internal/constants"
 	"github.com/steveyegge/gastown/internal/deacon"
@@ -34,13 +37,13 @@ making shortcutting visible in the ledger.
 
 Examples:
   gt patrol report --summary "All clear, no issues" --steps "heartbeat:OK,inbox-check:OK,health-scan:OK"
-  gt patrol report --summary "Dolt latency elevated, filed escalation"`,
+  gt patrol report --summary "Dolt latency elevated, filed escalation" --steps "heartbeat:OK,inbox-check:OK,health-scan:BLOCKED"`,
 	RunE: runPatrolReport,
 }
 
 func init() {
 	patrolReportCmd.Flags().StringVar(&patrolReportSummary, "summary", "", "Brief summary of patrol observations (required)")
-	patrolReportCmd.Flags().StringVar(&patrolReportSteps, "steps", "", "Step audit: comma-separated step:STATUS pairs (e.g., heartbeat:OK,inbox-check:OK)")
+	patrolReportCmd.Flags().StringVar(&patrolReportSteps, "steps", "", "Required complete step audit: comma-separated step:STATUS pairs (OK, SKIP, FAIL, or BLOCKED)")
 	_ = patrolReportCmd.MarkFlagRequired("summary")
 }
 
@@ -80,6 +83,14 @@ func runPatrolReport(cmd *cobra.Command, args []string) error {
 		}
 	default:
 		return fmt.Errorf("unsupported role for patrol report: %q", roleName)
+	}
+
+	// Validate the audit before looking up or mutating the active patrol. Role
+	// formulas have always required every step to be reported explicitly; fail
+	// closed here so an incomplete report cannot close the cycle while claiming
+	// success in the ledger.
+	if err := validateStepAudit(cfg.PatrolMolName, patrolReportSteps); err != nil {
+		return err
 	}
 
 	// Find the active patrol
@@ -125,6 +136,9 @@ func runPatrolReport(cmd *cobra.Command, args []string) error {
 	}
 
 	fmt.Printf("%s Closed patrol %s\n", style.Success.Render("✓"), patrolID)
+	if _, err := writePatrolReceipt(roleInfo, cfg.PatrolMolName, patrolID, patrolReportSteps, time.Now().UTC()); err != nil {
+		style.PrintWarning("could not write patrol receipt: %v", err)
+	}
 
 	// Start next cycle
 	newPatrolID, err := autoSpawnPatrol(cfg)
@@ -140,6 +154,125 @@ func runPatrolReport(cmd *cobra.Command, args []string) error {
 	fmt.Printf("%s Started new patrol: %s\n", style.Success.Render("✓"), newPatrolID)
 	if cfg.RoleName == "deacon" {
 		stampDeaconHeartbeatOnReport(cfg.BeadsDir, patrolReportSummary)
+	}
+	return nil
+}
+
+// PatrolReceipt is the machine-readable evidence emitted only after a patrol
+// and all of its descendants have closed successfully.
+type PatrolReceipt struct {
+	SchemaVersion int               `json:"schema_version"`
+	Role          string            `json:"role"`
+	Rig           string            `json:"rig,omitempty"`
+	PatrolID      string            `json:"patrol_id"`
+	Formula       string            `json:"formula"`
+	CheckedAt     string            `json:"checked_at"`
+	Complete      bool              `json:"complete"`
+	Steps         map[string]string `json:"steps"`
+}
+
+func patrolReceiptPath(info RoleInfo) (string, error) {
+	if info.TownRoot == "" {
+		return "", fmt.Errorf("town root is required for patrol receipt")
+	}
+	name := ""
+	switch info.Role {
+	case RoleDeacon:
+		name = "deacon.json"
+	case RoleWitness, RoleRefinery:
+		if info.Rig == "" || filepath.Base(info.Rig) != info.Rig || info.Rig == "." || info.Rig == ".." {
+			return "", fmt.Errorf("invalid rig %q for patrol receipt", info.Rig)
+		}
+		name = info.Rig + "-" + string(info.Role) + ".json"
+	default:
+		return "", fmt.Errorf("unsupported role %q for patrol receipt", info.Role)
+	}
+	return filepath.Join(info.TownRoot, ".gastown", "patrol-receipts", name), nil
+}
+
+func writePatrolReceipt(info RoleInfo, formulaName, patrolID, stepsFlag string, checkedAt time.Time) (string, error) {
+	path, err := patrolReceiptPath(info)
+	if err != nil {
+		return "", err
+	}
+	role := string(info.Role)
+	if info.Rig != "" {
+		role = info.Rig + "/" + role
+	}
+	receipt := PatrolReceipt{
+		SchemaVersion: 1,
+		Role:          role,
+		Rig:           info.Rig,
+		PatrolID:      patrolID,
+		Formula:       formulaName,
+		CheckedAt:     checkedAt.Format(time.RFC3339),
+		Complete:      true,
+		Steps:         parseStepResults(stepsFlag),
+	}
+	if err := atomicfile.EnsureDirAndWriteJSON(path, receipt); err != nil {
+		return "", fmt.Errorf("writing %s: %w", path, err)
+	}
+	return path, nil
+}
+
+// validateStepAudit requires an explicit, formula-complete patrol receipt.
+// SKIP, FAIL, and BLOCKED remain valid evidence; omission does not, because an
+// omitted step is indistinguishable from a patrol shortcut.
+func validateStepAudit(formulaName, stepsFlag string) error {
+	if strings.TrimSpace(stepsFlag) == "" {
+		return fmt.Errorf("patrol step audit is required; report every formula step with --steps")
+	}
+
+	content, err := formula.GetEmbeddedFormulaContent(formulaName)
+	if err != nil {
+		return fmt.Errorf("loading patrol formula %s: %w", formulaName, err)
+	}
+	f, err := formula.Parse(content)
+	if err != nil {
+		return fmt.Errorf("parsing patrol formula %s: %w", formulaName, err)
+	}
+
+	allStepIDs := f.GetAllIDs()
+	known := make(map[string]struct{}, len(allStepIDs))
+	for _, stepID := range allStepIDs {
+		known[stepID] = struct{}{}
+	}
+
+	reported := make(map[string]string, len(allStepIDs))
+	validStatuses := map[string]struct{}{
+		"OK":      {},
+		"SKIP":    {},
+		"FAIL":    {},
+		"BLOCKED": {},
+	}
+	for _, raw := range strings.Split(stepsFlag, ",") {
+		entry := strings.TrimSpace(raw)
+		parts := strings.SplitN(entry, ":", 2)
+		if len(parts) != 2 || strings.TrimSpace(parts[0]) == "" || strings.TrimSpace(parts[1]) == "" {
+			return fmt.Errorf("invalid patrol step entry %q; expected step:STATUS", entry)
+		}
+		stepID := strings.TrimSpace(parts[0])
+		status := strings.ToUpper(strings.TrimSpace(parts[1]))
+		if _, ok := known[stepID]; !ok {
+			return fmt.Errorf("unknown patrol step %q for formula %s", stepID, formulaName)
+		}
+		if _, ok := validStatuses[status]; !ok {
+			return fmt.Errorf("invalid patrol step status %q for %s; use OK, SKIP, FAIL, or BLOCKED", status, stepID)
+		}
+		if _, duplicate := reported[stepID]; duplicate {
+			return fmt.Errorf("duplicate patrol step %q", stepID)
+		}
+		reported[stepID] = status
+	}
+
+	missing := make([]string, 0)
+	for _, stepID := range allStepIDs {
+		if _, ok := reported[stepID]; !ok {
+			missing = append(missing, stepID)
+		}
+	}
+	if len(missing) > 0 {
+		return fmt.Errorf("missing patrol steps: %s", strings.Join(missing, ", "))
 	}
 	return nil
 }

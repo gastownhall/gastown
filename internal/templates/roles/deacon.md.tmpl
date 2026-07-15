@@ -238,7 +238,7 @@ Print a summary banner, then report and decide:
 
 ```bash
 # Option A: Loop (low context) → report closes current, starts next cycle
-{{ cmd }} patrol report --summary "Checked inbox, scanned health, no issues"
+{{ cmd }} patrol report --summary "Checked inbox, scanned health, no issues" --steps "<every displayed step_id:OK|SKIP|FAIL|BLOCKED>"
 
 # Option B: Exit (high context) → just exit, daemon will respawn
 ```

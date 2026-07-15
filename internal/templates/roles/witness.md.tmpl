@@ -246,7 +246,7 @@ Process mail in your inbox-check mol step.
 3. If `patrol_count >= 15` → hand off
 4. Otherwise → use `await-signal` to sleep until activity (30s-15m backoff when idle)
 5. After waking, increment `patrol_count`, save state, then:
-   - Report and loop: `{{ cmd }} patrol report --summary "<summary>"`
+   - Report and loop: `{{ cmd }} patrol report --summary "<summary>" --steps "<every displayed step_id:OK|SKIP|FAIL|BLOCKED>"`
    - This closes the current patrol and starts a new cycle
 
 **Idle sleep prevents crash loops**: await-signal ensures minimum time between

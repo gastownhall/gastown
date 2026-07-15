@@ -1,8 +1,12 @@
 package cmd
 
 import (
+	"encoding/json"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestExtractPatrolRole(t *testing.T) {
@@ -234,5 +238,80 @@ func TestBuildStepAudit(t *testing.T) {
 				t.Errorf("buildStepAudit() = %q, want to contain %q", got, tt.wantContain)
 			}
 		})
+	}
+}
+
+func TestValidateStepAudit(t *testing.T) {
+	allDeaconSteps := "heartbeat:OK,inbox-check:OK,orphan-process-cleanup:SKIP,test-pollution-cleanup:OK,gate-evaluation:OK,dispatch-gated-molecules:OK,check-convoy-completion:OK,resolve-external-deps:OK,fire-notifications:OK,heartbeat-mid:OK,health-scan:OK,dolt-health:OK,zombie-scan:OK,plugin-run:OK,dog-pool-maintenance:OK,dog-health-check:OK,orphan-check:OK,session-gc:OK,wisp-compact:OK,compact-report:OK,costs-digest:OK,patrol-digest:OK,log-maintenance:OK,patrol-cleanup:OK,context-check:OK,loop-or-exit:OK"
+
+	tests := []struct {
+		name      string
+		formula   string
+		steps     string
+		wantError string
+	}{
+		{name: "complete audit accepted", formula: "mol-deacon-patrol", steps: allDeaconSteps},
+		{name: "empty audit rejected", formula: "mol-deacon-patrol", wantError: "required"},
+		{name: "partial audit rejected", formula: "mol-deacon-patrol", steps: "heartbeat:OK", wantError: "missing patrol steps"},
+		{name: "unknown step rejected", formula: "mol-deacon-patrol", steps: allDeaconSteps + ",invented:OK", wantError: "unknown patrol step"},
+		{name: "malformed entry rejected", formula: "mol-deacon-patrol", steps: "heartbeat", wantError: "step:STATUS"},
+		{name: "invalid status rejected", formula: "mol-deacon-patrol", steps: strings.Replace(allDeaconSteps, "heartbeat:OK", "heartbeat:MAYBE", 1), wantError: "invalid patrol step status"},
+		{name: "formula lookup failure rejected", formula: "mol-nonexistent", steps: "heartbeat:OK", wantError: "loading patrol formula"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := validateStepAudit(tt.formula, tt.steps)
+			if tt.wantError == "" {
+				if err != nil {
+					t.Fatalf("validateStepAudit() error = %v", err)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), tt.wantError) {
+				t.Fatalf("validateStepAudit() error = %v, want substring %q", err, tt.wantError)
+			}
+		})
+	}
+}
+
+func TestWritePatrolReceipt(t *testing.T) {
+	townRoot := t.TempDir()
+	info := RoleInfo{Role: RoleWitness, Rig: "sizer", TownRoot: townRoot}
+	checkedAt := time.Date(2026, time.July, 15, 2, 15, 0, 0, time.UTC)
+	steps := "heartbeat:OK,inbox-check:SKIP"
+
+	path, err := writePatrolReceipt(info, "mol-witness-patrol", "sz-wisp-123", steps, checkedAt)
+	if err != nil {
+		t.Fatalf("writePatrolReceipt() error = %v", err)
+	}
+	wantPath := filepath.Join(townRoot, ".gastown", "patrol-receipts", "sizer-witness.json")
+	if path != wantPath {
+		t.Fatalf("writePatrolReceipt() path = %q, want %q", path, wantPath)
+	}
+
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("reading receipt: %v", err)
+	}
+	var receipt PatrolReceipt
+	if err := json.Unmarshal(data, &receipt); err != nil {
+		t.Fatalf("decoding receipt: %v", err)
+	}
+	if !receipt.Complete || receipt.Role != "sizer/witness" || receipt.PatrolID != "sz-wisp-123" {
+		t.Fatalf("receipt = %+v", receipt)
+	}
+	if receipt.CheckedAt != checkedAt.Format(time.RFC3339) {
+		t.Fatalf("receipt checked_at = %q", receipt.CheckedAt)
+	}
+	if receipt.Steps["heartbeat"] != "OK" || receipt.Steps["inbox-check"] != "SKIP" {
+		t.Fatalf("receipt steps = %#v", receipt.Steps)
+	}
+}
+
+func TestPatrolReceiptPathRejectsUnsafeRig(t *testing.T) {
+	_, err := patrolReceiptPath(RoleInfo{Role: RoleWitness, Rig: "../other", TownRoot: t.TempDir()})
+	if err == nil || !strings.Contains(err.Error(), "invalid rig") {
+		t.Fatalf("patrolReceiptPath() error = %v, want invalid rig", err)
 	}
 }

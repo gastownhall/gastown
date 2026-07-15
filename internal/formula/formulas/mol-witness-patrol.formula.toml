@@ -129,8 +129,10 @@ After await-signal returns (either by signal or timeout):
 1. Generate a brief summary of this patrol cycle's observations
 2. Close current patrol and start next cycle:
 ```bash
-gt patrol report --summary "<brief summary of patrol observations>"
+gt patrol report --summary "<brief summary of patrol observations>" \
+  --steps "<every formula step as step_id:OK|SKIP|FAIL|BLOCKED>"
 ```
+The --steps flag is REQUIRED and must list every step explicitly.
 This closes the current patrol wisp and automatically creates a new one.
 3. Continue executing from the first step of the new patrol cycle
 

@@ -267,7 +267,7 @@ Print summary banner, then report and decide:
 RSS_MB=$(( $(ps -o rss= -p $$) / 1024 ))
 
 # Option A: Continue (healthy) → report closes current, starts next cycle
-{{ cmd }} patrol report --summary "Merged 3 branches, no issues"
+{{ cmd }} patrol report --summary "Merged 3 branches, no issues" --steps "<every displayed step_id:OK|SKIP|FAIL|BLOCKED>"
 
 # Option B: Hand off (heavy) → gt handoff -s "Patrol complete" -m "RSS: ${RSS_MB}MB"
 ```
@@ -315,7 +315,7 @@ gt mail send {{ .RigName }}/witness -s "MERGE_FAILED" \
 ### Patrol
 - `{{ cmd }} hook` — Check for hooked patrol
 - `{{ cmd }} patrol new` — Create patrol (root-only wisp)
-- `{{ cmd }} patrol report --summary "..."` — Close current patrol, start next cycle
+- `{{ cmd }} patrol report --summary "..." --steps "<every displayed step_id:OK|SKIP|FAIL|BLOCKED>"` — Close current patrol, start next cycle
 
 ### Git Operations
 - `git fetch origin` — Fetch all remote branches

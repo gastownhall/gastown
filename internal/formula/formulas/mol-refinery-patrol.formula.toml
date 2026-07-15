@@ -1260,8 +1260,10 @@ After await-event returns (either by event, timeout, or context-yield):
 2. If reason is `context-yield` and context is acceptable: re-enter await-event (skip steps 3-4)
 3. Close current patrol and start next cycle:
 ```bash
-gt patrol report --summary "<brief summary: branches merged, test results, queue state>"
+gt patrol report --summary "<brief summary: branches merged, test results, queue state>" \
+  --steps "<every formula step as step_id:OK|SKIP|FAIL|BLOCKED>"
 ```
+The --steps flag is REQUIRED and must list every step explicitly.
 This closes the current patrol wisp and automatically creates a new one.
 4. Continue executing from the first step of the new patrol cycle
 
