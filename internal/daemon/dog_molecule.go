@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
@@ -262,25 +263,66 @@ type childInfo struct {
 }
 
 // parseChildrenJSON parses the output of `bd show <id> --children --json`.
-// bd returns a map keyed by parent ID: {"hq-wisp-abc": [{...}, ...]}.
-// For forward compatibility, a bare array is also accepted.
+// bd returns a map keyed by parent ID plus envelope metadata:
+// {"hq-wisp-abc": [{...}, ...], "schema_version": 1}.
+// For legacy compatibility, a bare array is also accepted.
 func parseChildrenJSON(raw string) ([]childInfo, error) {
-	data := []byte(raw)
+	data := bytes.TrimSpace([]byte(raw))
+	if len(data) == 0 {
+		return nil, fmt.Errorf("empty children JSON")
+	}
 
 	var arr []childInfo
-	if err := json.Unmarshal(data, &arr); err == nil {
+	if data[0] == '[' {
+		if err := json.Unmarshal(data, &arr); err != nil {
+			return nil, err
+		}
 		return arr, nil
 	}
 
-	var wrapped map[string][]childInfo
-	if err := json.Unmarshal(data, &wrapped); err == nil {
-		for _, children := range wrapped {
-			return children, nil
-		}
-		return nil, nil
+	if data[0] != '{' {
+		return nil, fmt.Errorf("unrecognized JSON shape: %.200s", raw)
 	}
 
-	return nil, fmt.Errorf("unrecognized JSON shape: %.200s", raw)
+	var wrapped map[string]json.RawMessage
+	if err := json.Unmarshal(data, &wrapped); err != nil {
+		return nil, err
+	}
+
+	keys := make([]string, 0, len(wrapped))
+	for key := range wrapped {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+
+	var children []childInfo
+	sawChildArray := false
+	for _, key := range keys {
+		if key == "schema_version" {
+			continue
+		}
+
+		value := bytes.TrimSpace(wrapped[key])
+		if len(value) == 0 {
+			return nil, fmt.Errorf("empty child payload for key %q", key)
+		}
+		if value[0] != '[' {
+			return nil, fmt.Errorf("non-array child payload for key %q", key)
+		}
+
+		var group []childInfo
+		if err := json.Unmarshal(value, &group); err != nil {
+			return nil, fmt.Errorf("parse child array for key %q: %w", key, err)
+		}
+		children = append(children, group...)
+		sawChildArray = true
+	}
+
+	if !sawChildArray {
+		return nil, fmt.Errorf("children JSON object has no child arrays")
+	}
+
+	return children, nil
 }
 
 // knownSteps returns the list of known step slugs for debugging.

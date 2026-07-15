@@ -1,6 +1,9 @@
 package daemon
 
-import "testing"
+import (
+	"reflect"
+	"testing"
+)
 
 func TestParseWispID(t *testing.T) {
 	tests := []struct {
@@ -70,34 +73,74 @@ func TestStripANSI(t *testing.T) {
 
 func TestParseChildrenJSON(t *testing.T) {
 	tests := []struct {
-		name      string
-		input     string
-		wantCount int
-		wantErr   bool
+		name    string
+		input   string
+		wantIDs []string
+		wantErr bool
 	}{
 		{
-			name:      "bare array",
-			input:     `[{"id":"a","title":"Probe","status":"open"}]`,
-			wantCount: 1,
+			name:    "bare array",
+			input:   `[{"id":"a","title":"Probe","status":"open"}]`,
+			wantIDs: []string{"a"},
 		},
 		{
-			name:      "map wrapper from bd show",
-			input:     `{"hq-wisp-root":[{"id":"hq-wisp-a","title":"Probe","status":"open"},{"id":"hq-wisp-b","title":"Report","status":"open"}]}`,
-			wantCount: 2,
+			name:    "map wrapper from bd show",
+			input:   `{"hq-wisp-root":[{"id":"hq-wisp-a","title":"Probe","status":"open"},{"id":"hq-wisp-b","title":"Report","status":"open"}]}`,
+			wantIDs: []string{"hq-wisp-a", "hq-wisp-b"},
 		},
 		{
-			name:      "empty map wrapper",
-			input:     `{"hq-wisp-root":[]}`,
-			wantCount: 0,
+			name:    "empty map wrapper",
+			input:   `{"hq-wisp-root":[]}`,
+			wantIDs: []string{},
 		},
 		{
-			name:      "empty array",
-			input:     `[]`,
-			wantCount: 0,
+			name:    "schema metadata with children",
+			input:   `{"hq-wisp-root":[{"id":"hq-wisp-a","title":"Probe","status":"open"}],"schema_version":1}`,
+			wantIDs: []string{"hq-wisp-a"},
+		},
+		{
+			name:    "schema metadata with empty children",
+			input:   `{"hq-wisp-root":[],"schema_version":1}`,
+			wantIDs: []string{},
+		},
+		{
+			name:    "multiple child arrays are deterministic",
+			input:   `{"hq-wisp-b":[{"id":"b-step","title":"Report","status":"open"}],"schema_version":1,"hq-wisp-a":[{"id":"a-step","title":"Probe","status":"open"}]}`,
+			wantIDs: []string{"a-step", "b-step"},
+		},
+		{
+			name:    "schema key is metadata even if array-valued",
+			input:   `{"schema_version":[{"id":"metadata","title":"Ignore","status":"open"}],"hq-wisp-root":[{"id":"hq-wisp-a","title":"Probe","status":"open"}]}`,
+			wantIDs: []string{"hq-wisp-a"},
+		},
+		{
+			name:    "empty array",
+			input:   `[]`,
+			wantIDs: []string{},
 		},
 		{
 			name:    "invalid json",
 			input:   `not json`,
+			wantErr: true,
+		},
+		{
+			name:    "malformed child array",
+			input:   `{"hq-wisp-root":[{"id":1}],"schema_version":1}`,
+			wantErr: true,
+		},
+		{
+			name:    "non-array child payload",
+			input:   `{"hq-wisp-root":1,"schema_version":1}`,
+			wantErr: true,
+		},
+		{
+			name:    "metadata only is not silent skip-all",
+			input:   `{"schema_version":1}`,
+			wantErr: true,
+		},
+		{
+			name:    "empty object is not silent skip-all",
+			input:   `{}`,
 			wantErr: true,
 		},
 	}
@@ -115,8 +158,13 @@ func TestParseChildrenJSON(t *testing.T) {
 				t.Errorf("unexpected error: %v", err)
 				return
 			}
-			if len(got) != tt.wantCount {
-				t.Errorf("got %d children, want %d", len(got), tt.wantCount)
+
+			gotIDs := make([]string, 0, len(got))
+			for _, child := range got {
+				gotIDs = append(gotIDs, child.ID)
+			}
+			if !reflect.DeepEqual(gotIDs, tt.wantIDs) {
+				t.Errorf("got child IDs %v, want %v", gotIDs, tt.wantIDs)
 			}
 		})
 	}
