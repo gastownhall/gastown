@@ -4522,14 +4522,58 @@ func TestWriteServerConfig_Defaults(t *testing.T) {
 	if parsed.Behavior.EventScheduler == nil || *parsed.Behavior.EventScheduler != "OFF" {
 		t.Fatalf("behavior.event_scheduler = %v, want OFF", parsed.Behavior.EventScheduler)
 	}
-	if parsed.Behavior.AutoGCBehavior.Enable {
-		t.Error("behavior.auto_gc_behavior.enable = true, want false")
+	if !parsed.Behavior.AutoGCBehavior.Enable {
+		t.Error("behavior.auto_gc_behavior.enable = false, want true (non-blocking auto_gc re-enabled, hq-excy9g)")
 	}
-	if parsed.Behavior.AutoGCBehavior.ArchiveLevel != 0 {
-		t.Errorf("behavior.auto_gc_behavior.archive_level = %d, want 0", parsed.Behavior.AutoGCBehavior.ArchiveLevel)
+	if parsed.Behavior.AutoGCBehavior.ArchiveLevel != 1 {
+		t.Errorf("behavior.auto_gc_behavior.archive_level = %d, want 1", parsed.Behavior.AutoGCBehavior.ArchiveLevel)
 	}
 	if parsed.SystemVariables.DoltStatsEnabled == nil || *parsed.SystemVariables.DoltStatsEnabled != 0 {
 		t.Fatalf("system_variables.dolt_stats_enabled = %v, want 0", parsed.SystemVariables.DoltStatsEnabled)
+	}
+}
+
+// TestWriteServerConfig_AutoGCDisabled verifies the GT_DOLT_AUTO_GC kill-switch:
+// AutoGC="off" emits auto_gc_behavior {enable:false, archive_level:0} so auto_gc can
+// be disabled at runtime without a source revert+rebuild (hq-excy9g escape hatch).
+func TestWriteServerConfig_AutoGCDisabled(t *testing.T) {
+	dir := t.TempDir()
+	configPath := filepath.Join(dir, "config.yaml")
+
+	config := &Config{
+		Port:           3307,
+		DataDir:        dir,
+		MaxConnections: 1000,
+		ReadTimeoutMs:  DefaultReadTimeoutMs,
+		WriteTimeoutMs: DefaultWriteTimeoutMs,
+		LogLevel:       "warning",
+		AutoGC:         "off",
+	}
+
+	if err := writeServerConfig(config, configPath); err != nil {
+		t.Fatalf("writeServerConfig: %v", err)
+	}
+	data, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatalf("reading config: %v", err)
+	}
+
+	var parsed struct {
+		Behavior struct {
+			AutoGCBehavior struct {
+				Enable       bool `yaml:"enable"`
+				ArchiveLevel int  `yaml:"archive_level"`
+			} `yaml:"auto_gc_behavior"`
+		} `yaml:"behavior"`
+	}
+	if err := yaml.Unmarshal(data, &parsed); err != nil {
+		t.Fatalf("generated config is invalid YAML: %v\n%s", err, data)
+	}
+	if parsed.Behavior.AutoGCBehavior.Enable {
+		t.Error("AutoGC=off: auto_gc_behavior.enable = true, want false")
+	}
+	if parsed.Behavior.AutoGCBehavior.ArchiveLevel != 0 {
+		t.Errorf("AutoGC=off: archive_level = %d, want 0", parsed.Behavior.AutoGCBehavior.ArchiveLevel)
 	}
 }
 

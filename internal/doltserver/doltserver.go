@@ -266,6 +266,12 @@ type Config struct {
 	// config. Default is "0" to avoid background stats workers during high-churn
 	// agent workloads. Set to "omit" to leave the variable out of config.yaml.
 	DoltStatsEnabled string
+
+	// AutoGC controls Dolt's non-blocking storage GC (auto_gc_behavior) in managed
+	// config. Default "on" keeps the sql-server's RSS bounded (hq-excy9g). Set to
+	// "off" (or false/0/disabled), typically via GT_DOLT_AUTO_GC, to disable it
+	// without a source revert+rebuild — a runtime escape hatch.
+	AutoGC string
 }
 
 // DefaultConfig returns the default Dolt server configuration.
@@ -296,6 +302,7 @@ func DefaultConfig(townRoot string) *Config {
 		LogLevel:         "warning",
 		EventScheduler:   "OFF",
 		DoltStatsEnabled: "0",
+		AutoGC:           "on",
 	}
 
 	// Optional override for the idle-session timeout. Negative values disable
@@ -328,6 +335,9 @@ func DefaultConfig(townRoot string) *Config {
 	}
 	if stats, ok := os.LookupEnv("GT_DOLT_STATS_ENABLED"); ok {
 		config.DoltStatsEnabled = stats
+	}
+	if autoGc, ok := os.LookupEnv("GT_DOLT_AUTO_GC"); ok {
+		config.AutoGC = autoGc
 	}
 
 	if u := os.Getenv("GT_DOLT_USER"); u != "" {
@@ -1627,11 +1637,22 @@ func writeServerConfig(config *Config, configPath string) error {
 		systemVariablesBlock = fmt.Sprintf("\nsystem_variables:\n  dolt_stats_enabled: %s\n", strings.TrimSpace(config.DoltStatsEnabled))
 	}
 
+	// Non-blocking storage GC keeps the managed sql-server's RSS bounded (hq-excy9g);
+	// enabled by default. GT_DOLT_AUTO_GC=off (or false/0/disabled) turns it off at
+	// runtime (next Dolt restart) without a source revert+rebuild — the escape hatch
+	// given the old blocking-GC lockup history. Dolt's non-blocking auto-GC is
+	// default-on since 1.75.
+	autoGcBlock := "  auto_gc_behavior:\n    enable: true\n    archive_level: 1\n"
+	if v := strings.ToLower(strings.TrimSpace(config.AutoGC)); v == "off" || v == "false" || v == "0" || v == "disabled" {
+		autoGcBlock = "  auto_gc_behavior:\n    enable: false\n    archive_level: 0\n"
+	}
+
 	content := fmt.Sprintf(`# Dolt SQL server configuration — managed by Gas Town (gt dolt start)
 # Do not edit manually; changes are overwritten on each server start.
 # To customize, set Gas Town environment variables:
 #   GT_DOLT_PORT, GT_DOLT_HOST, GT_DOLT_USER, GT_DOLT_PASSWORD, GT_DOLT_LOGLEVEL
 #   GT_DOLT_EVENT_SCHEDULER (OFF, ON, omit), GT_DOLT_STATS_ENABLED (0, 1, omit)
+#   GT_DOLT_AUTO_GC (on, off)
 
 log_level: %s
 
@@ -1642,10 +1663,7 @@ data_dir: "%s"
 
 behavior:
   dolt_transaction_commit: false
-%s  auto_gc_behavior:
-    enable: false
-    archive_level: 0
-%s`,
+%s%s%s`,
 		config.LogLevel,
 		config.Port,
 		hostLine,
@@ -1654,6 +1672,7 @@ behavior:
 		writeTimeoutLine,
 		filepath.ToSlash(config.DataDir),
 		eventSchedulerLine,
+		autoGcBlock,
 		systemVariablesBlock,
 	)
 

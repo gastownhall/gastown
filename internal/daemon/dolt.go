@@ -868,6 +868,15 @@ func writeDaemonDoltConfig(cfg *DoltServerConfig, configPath string) error {
 			systemVariablesBlock = fmt.Sprintf("\nsystem_variables:\n  dolt_stats_enabled: %s\n", strings.TrimSpace(stats))
 		}
 	}
+	// Non-blocking storage GC bounds the sql-server's RSS (hq-excy9g); on by
+	// default. GT_DOLT_AUTO_GC=off (or false/0/disabled) disables it at the next
+	// Dolt restart without a source revert+rebuild — the runtime escape hatch.
+	autoGcBlock := "  auto_gc_behavior:\n    enable: true\n    archive_level: 1\n"
+	if v, ok := os.LookupEnv("GT_DOLT_AUTO_GC"); ok {
+		if vv := strings.ToLower(strings.TrimSpace(v)); vv == "off" || vv == "false" || vv == "0" || vv == "disabled" {
+			autoGcBlock = "  auto_gc_behavior:\n    enable: false\n    archive_level: 0\n"
+		}
+	}
 	content := fmt.Sprintf(`# Dolt SQL server configuration — managed by Gas Town daemon
 # Do not edit manually; overwritten on each daemon-managed server start.
 
@@ -883,14 +892,12 @@ data_dir: %q
 
 behavior:
   dolt_transaction_commit: false
-%s  auto_gc_behavior:
-    enable: false
-    archive_level: 0
-%s`,
+%s%s%s`,
 		cfg.Port,
 		hostLine,
 		cfg.DataDir,
 		eventSchedulerLine,
+		autoGcBlock,
 		systemVariablesBlock,
 	)
 	return os.WriteFile(configPath, []byte(content), 0600)
