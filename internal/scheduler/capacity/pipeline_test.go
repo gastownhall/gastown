@@ -26,6 +26,8 @@ func TestPlanDispatch(t *testing.T) {
 		{"no ready beads", 5, 3, 0, 0, 0, "none"},
 		{"no capacity (negative)", -1, 3, 10, 0, 10, "capacity"},
 		{"no capacity (zero)", 0, 3, 10, 0, 10, "capacity"},
+		{"invalid batch zero", 10, 0, 10, 0, 10, "invalid-batch-size"},
+		{"invalid batch negative", 10, -1, 10, 0, 10, "invalid-batch-size"},
 		{"capacity constrains", 2, 3, 10, 2, 8, "capacity"},
 		{"batch constrains", 10, 3, 10, 3, 7, "batch"},
 		{"ready constrains", 10, 5, 2, 2, 0, "ready"},
