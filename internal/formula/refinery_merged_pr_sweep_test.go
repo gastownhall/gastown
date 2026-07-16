@@ -68,6 +68,21 @@ func TestRefineryPatrolDoesNotUseBranchFormPRLookup(t *testing.T) {
 	}
 }
 
+func TestRefineryRootOnlyPatrolUsesInlineStepInstructions(t *testing.T) {
+	contentBytes, err := formulasFS.ReadFile("formulas/mol-refinery-patrol.formula.toml")
+	if err != nil {
+		t.Fatalf("reading refinery formula: %v", err)
+	}
+	content := string(contentBytes)
+
+	if strings.Contains(content, "MUST run `bd show <step-id>`") {
+		t.Fatal("root-only refinery patrol must not require nonexistent child step beads")
+	}
+	if !strings.Contains(content, "inline checklist rendered by `gt prime`") {
+		t.Fatal("root-only refinery patrol must identify the rendered inline checklist as authoritative")
+	}
+}
+
 func loadRefineryPatrolFormula(t *testing.T) *Formula {
 	t.Helper()
 	content, err := formulasFS.ReadFile("formulas/mol-refinery-patrol.formula.toml")

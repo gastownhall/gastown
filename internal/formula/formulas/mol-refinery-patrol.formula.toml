@@ -40,14 +40,15 @@ complete cleanup (nuke the polecat worktree).
 On failure, Refinery sends FIX_NEEDED directly to the Polecat. The polecat
 fixes the code in-place and resubmits the MR without losing context.
 
-## CRITICAL: Read Step Instructions Before Acting
+## CRITICAL: Read Inline Step Instructions Before Acting
 
-Before executing ANY step, you MUST run `bd show <step-id>` and read the full
-description. Steps contain **Config:** values that override default behavior.
-If a config says to skip, you skip. If it specifies a command, you use that
-exact command — not your own assumption. Do NOT guess what a step requires
-based on the step title or your role knowledge. The step description is the
-source of truth.
+Patrols are created as root-only wisps, so they do not have child step beads.
+Before executing ANY step, read its full description in the inline checklist rendered by `gt prime`.
+Steps contain **Config:** values that override default
+behavior. If a config says to skip, you skip. If it specifies a command, you
+use that exact command — not your own assumption. Do NOT run `bd show
+<step-id>` for a root-only patrol or guess from the step title; the rendered
+inline step description is the source of truth.
 
 ## Variables
 

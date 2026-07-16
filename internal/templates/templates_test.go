@@ -244,6 +244,12 @@ func TestRenderRole_Refinery_DefaultBranch(t *testing.T) {
 	if !strings.Contains(output, "git push origin <merge-target>") {
 		t.Error("output missing placeholder push command")
 	}
+	if strings.Contains(output, "Read `bd show <step-id>` for exact commands") {
+		t.Error("root-only patrol guidance must not require nonexistent child step beads")
+	}
+	if !strings.Contains(output, "inline checklist rendered by `gt prime`") {
+		t.Error("output missing authoritative inline patrol checklist guidance")
+	}
 
 	// Verify it does NOT contain hardcoded "main" in git commands
 	// (main may appear in other contexts like "main branch" descriptions, so we check specific patterns)
