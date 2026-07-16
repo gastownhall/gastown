@@ -171,37 +171,37 @@ func TestPatrolFormulasHaveWispGC(t *testing.T) {
 	}
 }
 
-// TestDeaconPatrolDoesNotRunAgeBasedWispGC verifies that the Deacon patrol
-// does not reap open step wisps from its own active patrol molecule.
+// TestPatrolsDoNotRunAgeBasedWispGC verifies that patrol roles never reap open
+// wisps by age. Open merge-request wisps can legitimately wait for human review
+// longer than an hour and must remain authoritative queue records.
 //
-// Regression test for hq-3pp.
-func TestDeaconPatrolDoesNotRunAgeBasedWispGC(t *testing.T) {
-	content, err := formulasFS.ReadFile("formulas/mol-deacon-patrol.formula.toml")
-	if err != nil {
-		t.Fatalf("reading deacon patrol formula: %v", err)
-	}
+// Regression tests for hq-3pp and the active-MR deletion found by the Sizer
+// role hardening audit on 2026-07-16.
+func TestPatrolsDoNotRunAgeBasedWispGC(t *testing.T) {
+	for _, name := range []string{
+		"mol-deacon-patrol.formula.toml",
+		"mol-witness-patrol.formula.toml",
+		"mol-refinery-patrol.formula.toml",
+	} {
+		t.Run(name, func(t *testing.T) {
+			content, err := formulasFS.ReadFile("formulas/" + name)
+			if err != nil {
+				t.Fatalf("reading patrol formula: %v", err)
+			}
 
-	f, err := Parse(content)
-	if err != nil {
-		t.Fatalf("parsing deacon patrol formula: %v", err)
-	}
+			f, err := Parse(content)
+			if err != nil {
+				t.Fatalf("parsing patrol formula: %v", err)
+			}
 
-	var inboxDesc string
-	for _, step := range f.Steps {
-		if step.ID == "inbox-check" {
-			inboxDesc = step.Description
-			break
-		}
-	}
-	if inboxDesc == "" {
-		t.Fatal("deacon patrol formula: inbox-check step not found or has empty description")
-	}
-
-	if !strings.Contains(inboxDesc, "bd mol wisp gc --closed --force") {
-		t.Fatal("deacon inbox-check must keep closed-wisp cleanup")
-	}
-	if strings.Contains(inboxDesc, "bd mol wisp gc --age") {
-		t.Fatal("deacon inbox-check must not run age-based wisp GC inside the active patrol")
+			step := requireFormulaStep(t, f, "inbox-check")
+			if !strings.Contains(step.Description, "bd mol wisp gc --closed --force") {
+				t.Fatal("inbox-check must keep closed-wisp cleanup")
+			}
+			if strings.Contains(step.Description, "bd mol wisp gc --age") {
+				t.Fatal("inbox-check must not run age-based wisp GC on open patrol or merge-request records")
+			}
+		})
 	}
 }
 

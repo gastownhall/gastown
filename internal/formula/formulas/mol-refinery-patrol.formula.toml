@@ -188,11 +188,14 @@ default = "gt"
 id = "inbox-check"
 title = "Check refinery mail"
 description = """
-First, clean up wisps from previous cycles (closed wisps + abandoned wisps):
+First, clean up CLOSED wisps from previous cycles:
 ```bash
 bd mol wisp gc --closed --force
-bd mol wisp gc --age 1h --force
 ```
+
+Do not run age-based wisp GC from patrol roles. Open merge-request and patrol
+wisps may legitimately be older than one hour; age-based GC can delete
+authoritative active work while its PR waits for human review.
 
 Then check mail for MERGE_READY submissions, escalations, and messages.
 
