@@ -127,7 +127,7 @@ git log origin/main..HEAD                # Check for unpushed commits
 
 ### Beads CLI Reference
 ```bash
-bd show <id>                             # Issue details (e.g., bd show gt-abc)
+bd -C {{ .TownRoot }} show <id>          # Routed issue details
 bd list --status=in_progress             # Active work in rig
 bd list --status=open                    # Unassigned work
 bd update <id> --status=in_progress      # Claim work
@@ -140,7 +140,7 @@ bd create --title="..." --type=bug       # File discovered work
 **Valid statuses:** `open`, `in_progress`, `blocked`, `deferred`, `closed`, `pinned`, `hooked`
 (there is NO `done` or `complete` status — use `bd close`)
 
-**Prefix-based routing:** `bd show gt-xyz` works from anywhere — routes via `{{ .TownRoot }}/.beads/routes.jsonl`.
+**Prefix-based routing:** use `bd -C {{ .TownRoot }} show <id>` so cross-prefix lookups always load the town routes.
 
 ### Dolt Connectivity
 

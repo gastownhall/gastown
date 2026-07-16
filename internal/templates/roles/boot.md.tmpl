@@ -63,7 +63,7 @@ tmux has-session -t {{ .DeaconSession }} 2>/dev/null && echo "alive" || echo "de
 gt peek deacon --lines 20
 
 # Agent bead state
-bd show hq-deacon 2>/dev/null
+bd -C {{ .TownRoot }} show hq-deacon 2>/dev/null
 
 # Recent activity
 gt feed --since 10m --plain | head -20

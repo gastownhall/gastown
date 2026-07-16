@@ -327,7 +327,7 @@ gt mail send {{ .RigName }}/witness -s "MERGE_FAILED" \
 
 ### Beads CLI Reference
 ```bash
-bd show <id>                             # Issue details (e.g., bd show gt-abc)
+bd -C {{ .TownRoot }} show <id>          # Routed issue details
 bd update <id> --status=open             # Reopen source issue
 bd update <id> --notes "..."             # Persist findings
 bd close <id>                            # Close issue
