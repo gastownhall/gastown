@@ -258,6 +258,85 @@ func TestScanStranded_FeedsReadyIssues(t *testing.T) {
 	}
 }
 
+func TestScanStranded_SuppressedIssueDoesNotDispatchOrCheck(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("skipping on Windows")
+	}
+
+	paths := mockGtForScanTest(t, scanTestOpts{
+		strandedJSON: `[{"id":"hq-cv1","title":"Test","tracked_count":1,"ready_count":0,"ready_issues":[],"suppressed_count":1,"suppressed_issues":[{"id":"gt-failed","reason":"respawn_limit","reset_command":"gt sling respawn-reset gt-failed"}]}]`,
+		routes:       `{"prefix":"gt-","path":"gt/.beads"}` + "\n",
+	})
+
+	var logged []string
+	logger := func(format string, args ...interface{}) {
+		logged = append(logged, fmt.Sprintf(format, args...))
+	}
+	m := NewConvoyManager(paths.townRoot, logger, "gt", 10*time.Minute, nil, nil, nil)
+	m.scan()
+	m.scan()
+
+	if _, err := os.Stat(paths.slingLogPath); err == nil {
+		data, _ := os.ReadFile(paths.slingLogPath)
+		t.Fatalf("sling called for suppressed issue: %s", data)
+	}
+	if _, err := os.Stat(paths.checkLogPath); err == nil {
+		data, _ := os.ReadFile(paths.checkLogPath)
+		t.Fatalf("convoy check called for suppressed issue: %s", data)
+	}
+
+	suppressionLogs := 0
+	for _, line := range logged {
+		if strings.Contains(line, "dispatch suppressed") && strings.Contains(line, "gt-failed") {
+			suppressionLogs++
+		}
+	}
+	if suppressionLogs != 1 {
+		t.Fatalf("got %d suppression logs, want 1: %v", suppressionLogs, logged)
+	}
+}
+
+func TestScanStranded_DefenseInDepthBlocksLegacyReadyIssue(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("skipping on Windows")
+	}
+
+	paths := mockGtForScanTest(t, scanTestOpts{
+		strandedJSON: `[{"id":"hq-cv1","title":"Test","tracked_count":1,"ready_count":1,"ready_issues":["gt-failed"]}]`,
+		routes:       `{"prefix":"gt-","path":"gt/.beads"}` + "\n",
+	})
+	stateDir := filepath.Join(paths.townRoot, "witness")
+	if err := os.MkdirAll(stateDir, 0755); err != nil {
+		t.Fatalf("mkdir witness: %v", err)
+	}
+	state := `{"beads":{"gt-failed":{"bead_id":"gt-failed","count":3,"last_respawn":"2026-07-13T12:19:43Z"}}}`
+	if err := os.WriteFile(filepath.Join(stateDir, "bead-respawn-counts.json"), []byte(state), 0600); err != nil {
+		t.Fatalf("write respawn state: %v", err)
+	}
+
+	var logged []string
+	logger := func(format string, args ...interface{}) {
+		logged = append(logged, fmt.Sprintf(format, args...))
+	}
+	m := NewConvoyManager(paths.townRoot, logger, "gt", 10*time.Minute, nil, nil, nil)
+	m.scan()
+	m.scan()
+
+	if _, err := os.Stat(paths.slingLogPath); err == nil {
+		data, _ := os.ReadFile(paths.slingLogPath)
+		t.Fatalf("sling called despite respawn circuit breaker: %s", data)
+	}
+	suppressionLogs := 0
+	for _, line := range logged {
+		if strings.Contains(line, "dispatch suppressed") && strings.Contains(line, "gt-failed") {
+			suppressionLogs++
+		}
+	}
+	if suppressionLogs != 1 {
+		t.Fatalf("got %d suppression logs, want 1: %v", suppressionLogs, logged)
+	}
+}
+
 func TestScanStranded_ClosesEmptyConvoys(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("skipping on Windows")

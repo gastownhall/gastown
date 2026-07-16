@@ -15,6 +15,7 @@ import (
 	"github.com/steveyegge/gastown/internal/beads"
 	"github.com/steveyegge/gastown/internal/convoy"
 	"github.com/steveyegge/gastown/internal/util"
+	"github.com/steveyegge/gastown/internal/witness"
 )
 
 const (
@@ -34,13 +35,21 @@ const (
 
 // strandedConvoyInfo matches the JSON output of `gt convoy stranded --json`.
 type strandedConvoyInfo struct {
-	ID           string    `json:"id"`
-	Title        string    `json:"title"`
-	TrackedCount int       `json:"tracked_count"`
-	ReadyCount   int       `json:"ready_count"`
-	ReadyIssues  []string  `json:"ready_issues"`
-	CreatedAt    time.Time `json:"created_at"`
-	BaseBranch   string    `json:"base_branch,omitempty"`
+	ID               string                `json:"id"`
+	Title            string                `json:"title"`
+	TrackedCount     int                   `json:"tracked_count"`
+	ReadyCount       int                   `json:"ready_count"`
+	ReadyIssues      []string              `json:"ready_issues"`
+	SuppressedCount  int                   `json:"suppressed_count,omitempty"`
+	SuppressedIssues []suppressedIssueInfo `json:"suppressed_issues,omitempty"`
+	CreatedAt        time.Time             `json:"created_at"`
+	BaseBranch       string                `json:"base_branch,omitempty"`
+}
+
+type suppressedIssueInfo struct {
+	ID           string `json:"id"`
+	Reason       string `json:"reason"`
+	ResetCommand string `json:"reset_command"`
 }
 
 // ConvoyManager monitors beads events for issue closes and periodically scans for stranded convoys.
@@ -112,6 +121,10 @@ type ConvoyManager struct {
 	// been handled. This allows the 1s overlap window above without replaying
 	// the same lifecycle events on every poll.
 	processedLifecycleEvents sync.Map // map[string]bool
+
+	// reportedSuppressions deduplicates respawn-limit messages across the
+	// frequent stranded scan. Entries are removed when suppression disappears.
+	reportedSuppressions sync.Map // map["convoy/issue"]bool
 }
 
 // NewConvoyManager creates a new convoy manager.
@@ -485,8 +498,16 @@ func (m *ConvoyManager) scan() {
 		default:
 		}
 
+		for _, suppressed := range c.SuppressedIssues {
+			m.logSuppressionOnce(c.ID, suppressed)
+		}
+
 		if c.ReadyCount > 0 {
 			m.feedFirstReady(c)
+		} else if c.SuppressedCount > 0 || len(c.SuppressedIssues) > 0 {
+			// Suppressed work is intentionally held for operator review. Do not
+			// run convoy check on every scan or invoke sling until it is reset.
+			continue
 		} else if c.TrackedCount == 0 {
 			// Empty convoy — but skip if it was just created (GH#2303).
 			// The sling's bd dep add may not be visible in Dolt yet.
@@ -504,6 +525,19 @@ func (m *ConvoyManager) scan() {
 			m.checkConvoyCompletion(c.ID)
 		}
 	}
+}
+
+func (m *ConvoyManager) logSuppressionOnce(convoyID string, suppressed suppressedIssueInfo) {
+	key := convoyID + "/" + suppressed.ID
+	if _, loaded := m.reportedSuppressions.LoadOrStore(key, true); loaded {
+		return
+	}
+	resetCommand := suppressed.ResetCommand
+	if resetCommand == "" {
+		resetCommand = "gt sling respawn-reset " + suppressed.ID
+	}
+	m.logger("Convoy %s: dispatch suppressed for %s (%s); review, then run %s",
+		convoyID, suppressed.ID, suppressed.Reason, resetCommand)
 }
 
 // findStranded runs `gt convoy stranded --json` and parses the output.
@@ -541,6 +575,16 @@ func (m *ConvoyManager) feedFirstReady(c strandedConvoyInfo) {
 	}
 
 	for _, issueID := range c.ReadyIssues {
+		if witness.ShouldBlockRespawn(m.townRoot, issueID) {
+			m.logSuppressionOnce(c.ID, suppressedIssueInfo{
+				ID:           issueID,
+				Reason:       "respawn_limit",
+				ResetCommand: "gt sling respawn-reset " + issueID,
+			})
+			continue
+		}
+		m.reportedSuppressions.Delete(c.ID + "/" + issueID)
+
 		prefix := beads.ExtractPrefix(issueID)
 		if prefix == "" {
 			m.logger("Convoy %s: no prefix for %s, skipping", c.ID, issueID)

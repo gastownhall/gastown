@@ -27,6 +27,7 @@ import (
 	"github.com/steveyegge/gastown/internal/style"
 	"github.com/steveyegge/gastown/internal/tmux"
 	"github.com/steveyegge/gastown/internal/tui/convoy"
+	"github.com/steveyegge/gastown/internal/witness"
 	"github.com/steveyegge/gastown/internal/workspace"
 )
 
@@ -1502,13 +1503,24 @@ func removePolecatWorktree(wt convoyWorktreeInfo) error {
 
 // strandedConvoyInfo holds info about a stranded convoy.
 type strandedConvoyInfo struct {
-	ID           string   `json:"id"`
-	Title        string   `json:"title"`
-	TrackedCount int      `json:"tracked_count"`
-	ReadyCount   int      `json:"ready_count"`
-	ReadyIssues  []string `json:"ready_issues"`
-	CreatedAt    string   `json:"created_at,omitempty"`
-	BaseBranch   string   `json:"base_branch,omitempty"`
+	ID               string                `json:"id"`
+	Title            string                `json:"title"`
+	TrackedCount     int                   `json:"tracked_count"`
+	ReadyCount       int                   `json:"ready_count"`
+	ReadyIssues      []string              `json:"ready_issues"`
+	SuppressedCount  int                   `json:"suppressed_count,omitempty"`
+	SuppressedIssues []suppressedIssueInfo `json:"suppressed_issues,omitempty"`
+	CreatedAt        string                `json:"created_at,omitempty"`
+	BaseBranch       string                `json:"base_branch,omitempty"`
+}
+
+// suppressedIssueInfo describes ready work that is intentionally excluded from
+// automatic dispatch. The reset command is explicit so operators can restore
+// eligibility only after investigating the repeated failure.
+type suppressedIssueInfo struct {
+	ID           string `json:"id"`
+	Reason       string `json:"reason"`
+	ResetCommand string `json:"reset_command"`
 }
 
 // readyIssueInfo holds info about a ready (stranded) issue.
@@ -1543,6 +1555,10 @@ func runConvoyStranded(cmd *cobra.Command, args []string) error {
 	fmt.Printf("%s Found %d stranded convoy(s):\n\n", style.Warning.Render("⚠"), len(stranded))
 	for _, s := range stranded {
 		fmt.Printf("  🚚 %s: %s\n", s.ID, s.Title)
+		for _, suppressed := range s.SuppressedIssues {
+			fmt.Printf("     Dispatch suppressed: %s (%s)\n", suppressed.ID, suppressed.Reason)
+			fmt.Printf("       Review, then reset with: %s\n", suppressed.ResetCommand)
+		}
 		if s.ReadyCount == 0 && s.TrackedCount == 0 {
 			fmt.Printf("     Empty convoy (0 tracked issues) — needs cleanup\n")
 		} else if s.ReadyCount == 0 && s.TrackedCount > 0 {
@@ -1651,6 +1667,7 @@ func findStrandedConvoys(townBeads string) ([]strandedConvoyInfo, error) {
 		scheduledSet := areScheduled(trackedIDs)
 
 		var readyIssues []string
+		var suppressedIssues []suppressedIssueInfo
 		for _, t := range tracked {
 			if isReadyIssue(t, scheduledSet) {
 				if !isSlingableBead(townBeads, t.ID) {
@@ -1659,31 +1676,43 @@ func findStrandedConvoys(townBeads string) ([]strandedConvoyInfo, error) {
 				if !convoyops.IsSlingableType(t.IssueType) {
 					continue
 				}
+				if witness.ShouldBlockRespawn(townBeads, t.ID) {
+					suppressedIssues = append(suppressedIssues, suppressedIssueInfo{
+						ID:           t.ID,
+						Reason:       "respawn_limit",
+						ResetCommand: "gt sling respawn-reset " + t.ID,
+					})
+					continue
+				}
 				readyIssues = append(readyIssues, t.ID)
 			}
 		}
 
 		if len(readyIssues) > 0 {
 			stranded = append(stranded, strandedConvoyInfo{
-				ID:           convoy.ID,
-				Title:        convoy.Title,
-				TrackedCount: len(tracked),
-				ReadyCount:   len(readyIssues),
-				ReadyIssues:  readyIssues,
-				CreatedAt:    convoy.CreatedAt,
-				BaseBranch:   baseBranch,
+				ID:               convoy.ID,
+				Title:            convoy.Title,
+				TrackedCount:     len(tracked),
+				ReadyCount:       len(readyIssues),
+				ReadyIssues:      readyIssues,
+				SuppressedCount:  len(suppressedIssues),
+				SuppressedIssues: suppressedIssues,
+				CreatedAt:        convoy.CreatedAt,
+				BaseBranch:       baseBranch,
 			})
 		} else {
 			// Has tracked issues but none are ready — include in stranded
 			// list so callers can distinguish from truly empty convoys.
 			stranded = append(stranded, strandedConvoyInfo{
-				ID:           convoy.ID,
-				Title:        convoy.Title,
-				TrackedCount: len(tracked),
-				ReadyCount:   0,
-				ReadyIssues:  []string{},
-				CreatedAt:    convoy.CreatedAt,
-				BaseBranch:   baseBranch,
+				ID:               convoy.ID,
+				Title:            convoy.Title,
+				TrackedCount:     len(tracked),
+				ReadyCount:       0,
+				ReadyIssues:      []string{},
+				SuppressedCount:  len(suppressedIssues),
+				SuppressedIssues: suppressedIssues,
+				CreatedAt:        convoy.CreatedAt,
+				BaseBranch:       baseBranch,
 			})
 		}
 	}
