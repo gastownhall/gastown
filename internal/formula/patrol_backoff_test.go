@@ -364,3 +364,17 @@ func TestDeaconPatrolHasHeartbeatSteps(t *testing.T) {
 		t.Error("deacon patrol formula must require gt handoff after patrol report")
 	}
 }
+
+func TestDeaconPatrolContextCheckUsesAvailableSignals(t *testing.T) {
+	content, err := formulasFS.ReadFile("formulas/mol-deacon-patrol.formula.toml")
+	if err != nil {
+		t.Fatalf("reading deacon patrol formula: %v", err)
+	}
+
+	if strings.Contains(string(content), "gt context --usage") {
+		t.Fatal("deacon context-check must not invoke the nonexistent gt context command")
+	}
+	if !strings.Contains(string(content), "ps -o rss= -p $$") {
+		t.Fatal("deacon context-check must include an available process-memory signal")
+	}
+}

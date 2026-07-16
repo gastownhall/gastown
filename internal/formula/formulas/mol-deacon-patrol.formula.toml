@@ -1166,13 +1166,19 @@ needs = ["patrol-cleanup"]
 description = """
 Check own context limit.
 
-The Deacon runs in a Claude session with finite context. Check if approaching the limit:
+The Deacon runs in an agent session with finite context. Gather available signals:
 
 ```bash
-gt context --usage
+ps -o rss= -p $$   # KB — divide by 1024 for MB
+CREATED=$(tmux display-message -t "$(tmux display-message -p '#S')" -p '#{session_created}')
+echo "Session age: $(( ($(date +%s) - CREATED) / 3600 ))h"
 ```
 
-If context is high (>80%), prepare for handoff:
+Also use your internal assessment: are you losing track of earlier work,
+repeating yourself, or approaching the model's context limit?
+
+If multiple signals are high (RSS >= 1 GB, session >= 8h, or context near its
+limit), prepare for handoff:
 - Summarize current state
 - Note any pending work
 - Write handoff to molecule state
