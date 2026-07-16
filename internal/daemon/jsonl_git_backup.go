@@ -102,9 +102,11 @@ func (d *Daemon) syncJsonlGitBackup() {
 		gitRepo = filepath.Join(homeDir, ".dolt-archive", "git")
 	}
 
-	// Verify git repo exists.
-	if _, err := os.Stat(filepath.Join(gitRepo, ".git")); os.IsNotExist(err) {
-		d.logger.Printf("jsonl_git_backup: git repo %s does not exist, skipping", gitRepo)
+	// Provision a missing backup repository on first use. A configured backup
+	// must not silently remain disabled forever because its destination was not
+	// manually initialized.
+	if err := d.ensureJsonlGitRepo(gitRepo); err != nil {
+		d.logger.Printf("jsonl_git_backup: backup repo unavailable at %s: %v", gitRepo, err)
 		return
 	}
 
@@ -205,6 +207,39 @@ func (d *Daemon) syncJsonlGitBackup() {
 
 	d.logger.Printf("jsonl_git_backup: exported %d/%d database(s), push=%s", exported, len(databases), pushStatus)
 	mol.closeStep("report")
+}
+
+// ensureJsonlGitRepo creates and initializes the configured JSONL archive when
+// it does not exist. Existing non-empty directories are left untouched so a
+// typo cannot turn unrelated files into a git repository.
+func (d *Daemon) ensureJsonlGitRepo(gitRepo string) error {
+	if info, err := os.Stat(filepath.Join(gitRepo, ".git")); err == nil && info.IsDir() {
+		return nil
+	}
+
+	entries, err := os.ReadDir(gitRepo)
+	switch {
+	case os.IsNotExist(err):
+		if err := os.MkdirAll(gitRepo, 0755); err != nil {
+			return fmt.Errorf("creating directory: %w", err)
+		}
+	case err != nil:
+		return fmt.Errorf("reading directory: %w", err)
+	case len(entries) > 0:
+		return fmt.Errorf("directory exists and is not an empty git repository")
+	}
+
+	if err := d.runGitCmd(gitRepo, gitCmdTimeout, "init"); err != nil {
+		return fmt.Errorf("git init: %w", err)
+	}
+	if err := d.runGitCmd(gitRepo, gitCmdTimeout, "config", "user.name", "Gas Town Daemon"); err != nil {
+		return fmt.Errorf("configuring git user.name: %w", err)
+	}
+	if err := d.runGitCmd(gitRepo, gitCmdTimeout, "config", "user.email", "daemon@gastown.local"); err != nil {
+		return fmt.Errorf("configuring git user.email: %w", err)
+	}
+	d.logger.Printf("jsonl_git_backup: initialized backup repository at %s", gitRepo)
+	return nil
 }
 
 // supplementalTables lists non-issues tables to include in JSONL backup.

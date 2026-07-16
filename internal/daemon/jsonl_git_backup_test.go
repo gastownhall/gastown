@@ -289,6 +289,38 @@ func TestVerifyExportCounts_FirstExport(t *testing.T) {
 	}
 }
 
+func TestEnsureJsonlGitRepo_InitializesMissingRepository(t *testing.T) {
+	gitRepo := filepath.Join(t.TempDir(), "archive", "git")
+	d := &Daemon{logger: log.New(io.Discard, "", 0)}
+
+	if err := d.ensureJsonlGitRepo(gitRepo); err != nil {
+		t.Fatalf("ensureJsonlGitRepo: %v", err)
+	}
+	if info, err := os.Stat(filepath.Join(gitRepo, ".git")); err != nil || !info.IsDir() {
+		t.Fatalf("git repository was not initialized: info=%v err=%v", info, err)
+	}
+
+	// Existing initialized repositories are accepted without modification.
+	if err := d.ensureJsonlGitRepo(gitRepo); err != nil {
+		t.Fatalf("second ensureJsonlGitRepo: %v", err)
+	}
+}
+
+func TestEnsureJsonlGitRepo_RejectsNonEmptyDirectory(t *testing.T) {
+	gitRepo := t.TempDir()
+	if err := os.WriteFile(filepath.Join(gitRepo, "unrelated.txt"), []byte("preserve me"), 0644); err != nil {
+		t.Fatalf("write unrelated file: %v", err)
+	}
+	d := &Daemon{logger: log.New(io.Discard, "", 0)}
+
+	if err := d.ensureJsonlGitRepo(gitRepo); err == nil {
+		t.Fatal("expected non-empty non-repository directory to be rejected")
+	}
+	if _, err := os.Stat(filepath.Join(gitRepo, ".git")); !os.IsNotExist(err) {
+		t.Fatalf("unexpected .git created in non-empty directory: %v", err)
+	}
+}
+
 func TestVerifyExportCounts_WithinThreshold(t *testing.T) {
 	gitRepo := t.TempDir()
 	initGitRepo(t, gitRepo)

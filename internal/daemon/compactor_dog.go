@@ -46,8 +46,8 @@ const (
 
 // CompactorDogConfig holds configuration for the compactor_dog patrol.
 type CompactorDogConfig struct {
-	Enabled     bool     `json:"enabled"`
-	IntervalStr string   `json:"interval,omitempty"`
+	Enabled     bool   `json:"enabled"`
+	IntervalStr string `json:"interval,omitempty"`
 	// Threshold is the minimum commit count before compaction triggers.
 	// Defaults to 2000 if not set.
 	Threshold int `json:"threshold,omitempty"`
@@ -133,7 +133,20 @@ func (d *Daemon) runCompactorDog() {
 	mode := compactorDogMode(d.patrolConfig)
 	d.logger.Printf("compactor_dog: starting compaction cycle (threshold=%d, mode=%s)", threshold, mode)
 	if mode == "surgical" {
-		d.logger.Printf("compactor_dog: WARNING: surgical mode uses DOLT_REBASE which is not safe with concurrent writes — will retry on graph-change errors")
+		if d.tmux == nil {
+			d.logger.Printf("compactor_dog: surgical mode cannot verify agent quiescence without a session inspector (skipping)")
+			return
+		}
+		sessions, err := d.tmux.ListSessions()
+		if err != nil {
+			d.logger.Printf("compactor_dog: surgical mode cannot verify agent quiescence: %v (skipping)", err)
+			return
+		}
+		if len(sessions) > 0 {
+			d.logger.Printf("compactor_dog: surgical mode requires an idle maintenance window; %d session(s) active (skipping)", len(sessions))
+			return
+		}
+		d.logger.Printf("compactor_dog: surgical mode verified no active agent sessions")
 	}
 
 	mol := d.pourDogMolecule(constants.MolDogCompactor, nil)
@@ -544,6 +557,7 @@ func (d *Daemon) surgicalRebaseOnce(dbName string, keepRecent int) error {
 }
 
 // surgicalCleanup switches back to main and removes rebase branches.
+//
 //nolint:unparam // baseBranch always "compact-base" — API kept flexible for future callers
 func (d *Daemon) surgicalCleanup(db *sql.DB, baseBranch, workBranch string) {
 	ctx, cancel := context.WithTimeout(context.Background(), compactorQueryTimeout)
