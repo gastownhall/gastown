@@ -285,7 +285,7 @@ func TestWritePatrolReceipt(t *testing.T) {
 	if err != nil {
 		t.Fatalf("writePatrolReceipt() error = %v", err)
 	}
-	wantPath := filepath.Join(townRoot, ".gastown", "patrol-receipts", "sizer-witness.json")
+	wantPath := filepath.Join(townRoot, ".runtime", "patrol-receipts", "sizer-witness.json")
 	if path != wantPath {
 		t.Fatalf("writePatrolReceipt() path = %q, want %q", path, wantPath)
 	}

@@ -187,7 +187,7 @@ func patrolReceiptPath(info RoleInfo) (string, error) {
 	default:
 		return "", fmt.Errorf("unsupported role %q for patrol receipt", info.Role)
 	}
-	return filepath.Join(info.TownRoot, ".gastown", "patrol-receipts", name), nil
+	return filepath.Join(info.TownRoot, ".runtime", "patrol-receipts", name), nil
 }
 
 func writePatrolReceipt(info RoleInfo, formulaName, patrolID, stepsFlag string, checkedAt time.Time) (string, error) {
