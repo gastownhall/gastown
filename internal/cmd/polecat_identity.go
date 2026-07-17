@@ -17,6 +17,7 @@ import (
 	"github.com/steveyegge/gastown/internal/constants"
 	"github.com/steveyegge/gastown/internal/git"
 	"github.com/steveyegge/gastown/internal/polecat"
+	"github.com/steveyegge/gastown/internal/rig"
 	"github.com/steveyegge/gastown/internal/style"
 	"github.com/steveyegge/gastown/internal/tmux"
 )
@@ -281,9 +282,9 @@ func runPolecatIdentityList(cmd *cobra.Command, args []string) error {
 	polecatMgr := polecat.NewSessionManager(t, r)
 
 	for id, issue := range agentBeads {
-		// Parse the bead ID to check if it's a polecat for this rig
-		beadRig, role, name, ok := beads.ParseAgentBeadID(id)
-		if !ok || role != constants.RolePolecat || beadRig != rigName {
+		fields := beads.ParseAgentFields(issue.Description)
+		name, ok := polecatIdentityName(r, rigName, id, fields)
+		if !ok {
 			continue
 		}
 
@@ -291,8 +292,6 @@ func runPolecatIdentityList(cmd *cobra.Command, args []string) error {
 		if issue.Status == "closed" {
 			continue
 		}
-
-		fields := beads.ParseAgentFields(issue.Description)
 
 		// Check if worktree exists
 		worktreeExists := false
@@ -372,6 +371,22 @@ func runPolecatIdentityList(cmd *cobra.Command, args []string) error {
 
 	fmt.Printf("\n%d identity bead(s)\n", len(identities))
 	return nil
+}
+
+// polecatIdentityName verifies that an agent bead is a polecat identity in the
+// given rig and extracts its name. Identity fields establish the role and rig;
+// the configured rig prefix establishes the ID shape without relying on the
+// legacy fixed-width agent ID parser.
+func polecatIdentityName(r *rig.Rig, rigName, id string, fields *beads.AgentFields) (string, bool) {
+	if fields.RoleType != constants.RolePolecat || fields.Rig != rigName {
+		return "", false
+	}
+
+	name, ok := strings.CutPrefix(id, polecatBeadIDForRig(r, rigName, "")+"-")
+	if !ok || name == "" {
+		return "", false
+	}
+	return name, true
 }
 
 func runPolecatIdentityShow(cmd *cobra.Command, args []string) error {

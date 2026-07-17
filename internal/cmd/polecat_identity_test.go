@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -8,7 +9,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/spf13/cobra"
 	"github.com/steveyegge/gastown/internal/beads"
+	"github.com/steveyegge/gastown/internal/config"
 	"github.com/steveyegge/gastown/internal/rig"
 	"github.com/steveyegge/gastown/internal/style"
 )
@@ -235,6 +238,86 @@ func TestPolecatIdentityUsesRigDatabaseAndPrimeFindsHookedWork(t *testing.T) {
 			t.Fatalf("mkdir %s: %v", dir, err)
 		}
 	}
+
+	t.Run("identity list includes long hyphenated prefix", func(t *testing.T) {
+		if runtime.GOOS == "windows" {
+			t.Skip("test uses a Unix shell mock for bd")
+		}
+
+		townRoot := t.TempDir()
+		rigName := "gastown"
+		rigPath := filepath.Join(townRoot, rigName)
+		for _, dir := range []string{
+			filepath.Join(townRoot, "mayor"),
+			filepath.Join(townRoot, ".beads"),
+			filepath.Join(rigPath, ".beads"),
+		} {
+			if err := os.MkdirAll(dir, 0755); err != nil {
+				t.Fatalf("mkdir %s: %v", dir, err)
+			}
+		}
+		if err := config.SaveTownConfig(filepath.Join(townRoot, "mayor", "town.json"), &config.TownConfig{
+			Type:      "town",
+			Version:   config.CurrentTownVersion,
+			Name:      "test-town",
+			CreatedAt: time.Now(),
+		}); err != nil {
+			t.Fatalf("save town config: %v", err)
+		}
+		if err := config.SaveRigsConfig(filepath.Join(townRoot, "mayor", "rigs.json"), &config.RigsConfig{
+			Version: config.CurrentRigsVersion,
+			Rigs: map[string]config.RigEntry{
+				rigName: {GitURL: "https://example.com/gastown.git", AddedAt: time.Now()},
+			},
+		}); err != nil {
+			t.Fatalf("save rigs config: %v", err)
+		}
+		writeTestRoutes(t, townRoot, []beads.Route{
+			{Prefix: "long-hyphenated-prefix-", Path: rigName},
+			{Prefix: "hq-", Path: "."},
+		})
+
+		binDir := t.TempDir()
+		script := `#!/bin/sh
+	case "$*" in
+	  *list*)
+	    printf '%s\n' '[{"id":"long-hyphenated-prefix-gastown-polecat-furiosa","title":"Polecat furiosa","issue_type":"agent","labels":["gt:agent"],"status":"open","description":"role_type: polecat\nrig: gastown\nagent_state: idle"},{"id":"hq-polecat-furiosa","title":"HQ polecat","issue_type":"agent","labels":["gt:agent"],"status":"open","description":"role_type: polecat\nrig: gastown\nagent_state: idle"},{"id":"long-hyphenated-prefix-gastown-crew-furiosa","title":"Crew furiosa","issue_type":"agent","labels":["gt:agent"],"status":"open","description":"role_type: crew\nrig: gastown\nagent_state: idle"},{"id":"long-hyphenated-prefix-other-rig-polecat-furiosa","title":"Other rig polecat","issue_type":"agent","labels":["gt:agent"],"status":"open","description":"role_type: polecat\nrig: other-rig\nagent_state: idle"},{"id":"long-hyphenated-prefix-gastown-polecat-closed","title":"Closed polecat","issue_type":"agent","labels":["gt:agent"],"status":"closed","description":"role_type: polecat\nrig: gastown\nagent_state: idle"}]'
+	    ;;
+	esac
+	`
+		if err := os.WriteFile(filepath.Join(binDir, "bd"), []byte(script), 0755); err != nil {
+			t.Fatalf("write mock bd: %v", err)
+		}
+		t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+		oldWD, err := os.Getwd()
+		if err != nil {
+			t.Fatalf("get working directory: %v", err)
+		}
+		if err := os.Chdir(townRoot); err != nil {
+			t.Fatalf("change to town root: %v", err)
+		}
+		t.Cleanup(func() { _ = os.Chdir(oldWD) })
+
+		polecatIdentityListJSON = true
+		t.Cleanup(func() { polecatIdentityListJSON = false })
+		output := captureStdout(t, func() {
+			if err := runPolecatIdentityList(&cobra.Command{}, []string{rigName}); err != nil {
+				t.Fatalf("run polecat identity list: %v", err)
+			}
+		})
+
+		var identities []IdentityInfo
+		if err := json.Unmarshal([]byte(output), &identities); err != nil {
+			t.Fatalf("decode identity list: %v\noutput: %s", err, output)
+		}
+		if len(identities) != 1 {
+			t.Fatalf("identity list returned %d records, want 1: %#v", len(identities), identities)
+		}
+		if identities[0].Name != "furiosa" || identities[0].BeadID != "long-hyphenated-prefix-gastown-polecat-furiosa" {
+			t.Fatalf("identity list record = %#v, want long-prefix polecat identity", identities[0])
+		}
+	})
 	if err := os.WriteFile(filepath.Join(townRoot, "mayor", "town.json"), []byte(`{"name":"test"}`), 0644); err != nil {
 		t.Fatalf("write town config: %v", err)
 	}
