@@ -12,10 +12,24 @@ import (
 	"fmt"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	beadsdk "github.com/steveyegge/beads"
 )
+
+type storeOwnership struct {
+	close func() error
+	once  sync.Once
+	err   error
+}
+
+func (o *storeOwnership) Close() error {
+	o.once.Do(func() {
+		o.err = o.close()
+	})
+	return o.err
+}
 
 // SetStore configures an in-process beadsdk.Storage for this Beads instance.
 // When set, methods that have in-process implementations will use the store
@@ -35,6 +49,19 @@ func (b *Beads) SetStore(store beadsdk.Storage) {
 // Store returns the in-process beadsdk.Storage, or nil if not set.
 func (b *Beads) Store() beadsdk.Storage {
 	return b.store
+}
+
+// CloseStore releases a store opened for a routed Beads wrapper.
+//
+// It is a no-op for caller-provided stores, including stores supplied through
+// NewWithStore and SetStore. Call it when done with a wrapper returned by
+// ForAgentBead, ForRoutedAgentBead, or ForAgentBeadID; repeated calls close
+// an owned store only once and return the original close error.
+func (b *Beads) CloseStore() error {
+	if b.storeOwner == nil {
+		return nil
+	}
+	return b.storeOwner.Close()
 }
 
 // NewWithStore creates a new Beads wrapper backed by an in-process store.
@@ -95,19 +122,20 @@ func (b *Beads) OpenStore(ctx context.Context) (beadsdk.Storage, func(), error) 
 // rebindStore returns the source store only when its directory is known to be
 // the requested target. A routed wrapper otherwise opens a distinct target
 // store, so in-process operations cannot write through the source database.
-func (b *Beads) rebindStore(beadsDir string) (beadsdk.Storage, error) {
+// The caller owns a newly opened store and must release it with CloseStore.
+func (b *Beads) rebindStore(beadsDir string) (beadsdk.Storage, *storeOwnership, error) {
 	if b.store == nil {
-		return nil, nil
+		return nil, nil, nil
 	}
 	if sameBeadsDir(b.storeBeadsDir, beadsDir) {
-		return b.store, nil
+		return b.store, nil, nil
 	}
 
 	store, err := b.openStore(context.Background(), beadsDir)
 	if err != nil {
-		return nil, fmt.Errorf("opening routed beads store for %s: %w", beadsDir, err)
+		return nil, nil, fmt.Errorf("opening routed beads store for %s: %w", beadsDir, err)
 	}
-	return store, nil
+	return store, &storeOwnership{close: store.Close}, nil
 }
 
 func (b *Beads) openStore(ctx context.Context, beadsDir string) (beadsdk.Storage, error) {

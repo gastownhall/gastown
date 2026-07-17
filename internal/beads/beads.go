@@ -555,6 +555,7 @@ type Beads struct {
 	storeBeadsDir string // Resolved directory for store; required before sharing it with a routed wrapper.
 	storeErr      error  // Failed routed-store binding; prevents an incorrect CLI fallback.
 	storeOpener   func(context.Context, string) (beadsdk.Storage, error)
+	storeOwner    *storeOwnership
 
 	// Lazy-cached town root for routing resolution.
 	// Populated on first call to getTownRoot() to avoid filesystem walk on every operation.
@@ -645,12 +646,13 @@ func (b *Beads) forAgentBeadsDir(workDir, beadsDir string) *Beads {
 		noRoute:     true,
 	}
 
-	store, err := b.rebindStore(beadsDir)
+	store, storeOwner, err := b.rebindStore(beadsDir)
 	if err != nil {
 		target.storeErr = err
 		return target
 	}
 	target.store = store
+	target.storeOwner = storeOwner
 	if store != nil {
 		target.storeBeadsDir = target.getResolvedBeadsDir()
 	}

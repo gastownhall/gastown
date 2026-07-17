@@ -3,6 +3,7 @@ package beads
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -437,7 +438,64 @@ func TestForAgentBeadIDRebindsStoreToRoutedPolecatRig(t *testing.T) {
 			if hqStore.issues[polecatID].Title != "town polecat" {
 				t.Fatalf("town store was modified: %q", hqStore.issues[polecatID].Title)
 			}
+			if err := routed.CloseStore(); err != nil {
+				t.Fatalf("CloseStore: %v", err)
+			}
+			if err := routed.CloseStore(); err != nil {
+				t.Fatalf("second CloseStore: %v", err)
+			}
+			if rigStore.storeCloseCalls != 1 {
+				t.Fatalf("rig store close calls = %d, want 1", rigStore.storeCloseCalls)
+			}
+			if hqStore.storeCloseCalls != 0 {
+				t.Fatalf("caller-provided store close calls = %d, want 0", hqStore.storeCloseCalls)
+			}
 		})
+	}
+}
+
+func TestRoutedStoreCloseSurfacesError(t *testing.T) {
+	source := newMockStorage()
+	target := newMockStorage()
+	target.storeCloseErr = errors.New("close target store")
+
+	b := NewWithStore(t.TempDir(), source)
+	b.storeOpener = func(_ context.Context, _ string) (beadsdk.Storage, error) {
+		return target, nil
+	}
+	routed := b.forAgentBeadsDir(t.TempDir(), t.TempDir())
+
+	if err := routed.CloseStore(); !errors.Is(err, target.storeCloseErr) {
+		t.Fatalf("CloseStore error = %v, want %v", err, target.storeCloseErr)
+	}
+	if err := routed.CloseStore(); !errors.Is(err, target.storeCloseErr) {
+		t.Fatalf("second CloseStore error = %v, want %v", err, target.storeCloseErr)
+	}
+	if target.storeCloseCalls != 1 {
+		t.Fatalf("target store close calls = %d, want 1", target.storeCloseCalls)
+	}
+	if source.storeCloseCalls != 0 {
+		t.Fatalf("source store close calls = %d, want 0", source.storeCloseCalls)
+	}
+}
+
+func TestSameStoreRouteDoesNotTakeOwnership(t *testing.T) {
+	beadsDir := filepath.Join(t.TempDir(), ".beads")
+	if err := os.MkdirAll(beadsDir, 0755); err != nil {
+		t.Fatalf("mkdir beads dir: %v", err)
+	}
+	source := newMockStorage()
+	b := NewWithBeadsDirAndStore(filepath.Dir(beadsDir), beadsDir, source)
+
+	routed := b.forAgentBeadsDir(filepath.Dir(beadsDir), beadsDir)
+	if routed.Store() != source {
+		t.Fatal("same-database route did not retain caller-provided store")
+	}
+	if err := routed.CloseStore(); err != nil {
+		t.Fatalf("CloseStore: %v", err)
+	}
+	if source.storeCloseCalls != 0 {
+		t.Fatalf("source store close calls = %d, want 0", source.storeCloseCalls)
 	}
 }
 

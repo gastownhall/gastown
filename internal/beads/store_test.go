@@ -30,6 +30,8 @@ type mockStorage struct {
 	addDepErr       error
 	removeDepErr    error
 	getLabelsErr    error
+	storeCloseErr   error
+	storeCloseCalls int
 }
 
 func newMockStorage() *mockStorage {
@@ -291,7 +293,10 @@ func (m *mockStorage) GetReadyWork(_ context.Context, filter beadsdk.WorkFilter)
 	return result, nil
 }
 
-func (m *mockStorage) Close() error { return nil }
+func (m *mockStorage) Close() error {
+	m.storeCloseCalls++
+	return m.storeCloseErr
+}
 
 // --- Tests ---
 
