@@ -1312,7 +1312,7 @@ func (e *Engineer) ProcessMRInfo(ctx context.Context, mr *MRInfo) ProcessResult 
 
 // HandleMRInfoSuccess handles a successful merge from MRInfo.
 func (e *Engineer) HandleMRInfoSuccess(mr *MRInfo, result ProcessResult) {
-	workBeadID := resolveMergedWorkBead(e.beads.ForAgentBead(), mergedWorkBeadCloseRequest{
+	workBeadID := resolveMergedWorkBead(e.beads.ForAgentBeadID(mr.AgentBead), mergedWorkBeadCloseRequest{
 		MRID:        mr.ID,
 		Branch:      mr.Branch,
 		SourceIssue: mr.SourceIssue,

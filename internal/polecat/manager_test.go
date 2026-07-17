@@ -2451,7 +2451,7 @@ esac
 	}
 }
 
-func TestManagerAgentLifecycleUsesTownBeadsDir(t *testing.T) {
+func TestManagerAgentLifecycleUsesRigBeadsDir(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("test uses Unix shell script mock for bd")
 	}
@@ -2522,7 +2522,7 @@ case "$cmd" in
     exit 0
     ;;
 esac
-`, logPath, townBeadsDir)
+`, logPath, rigBeadsDir)
 	if err := os.WriteFile(filepath.Join(binDir, "bd"), []byte(script), 0755); err != nil {
 		t.Fatalf("write mock bd: %v", err)
 	}
@@ -2542,14 +2542,14 @@ esac
 		t.Fatalf("read mock log: %v", err)
 	}
 	logOutput := string(logBytes)
-	if strings.Contains(logOutput, "env="+rigBeadsDir) {
-		t.Fatalf("manager agent lifecycle used rig BEADS_DIR; log:\n%s", logOutput)
+	if strings.Contains(logOutput, "env="+townBeadsDir) {
+		t.Fatalf("manager agent lifecycle used town BEADS_DIR; log:\n%s", logOutput)
 	}
-	if !strings.Contains(logOutput, "env="+townBeadsDir+" args=") || !strings.Contains(logOutput, "args=create") {
-		t.Fatalf("manager create did not use town BEADS_DIR; log:\n%s", logOutput)
+	if !strings.Contains(logOutput, "env="+rigBeadsDir+" args=") || !strings.Contains(logOutput, "args=create") {
+		t.Fatalf("manager create did not use rig BEADS_DIR; log:\n%s", logOutput)
 	}
-	if !strings.Contains(logOutput, "env="+townBeadsDir+" args=") || !strings.Contains(logOutput, "args=show") || !strings.Contains(logOutput, "args=update") {
-		t.Fatalf("manager reset did not use town BEADS_DIR for show/update; log:\n%s", logOutput)
+	if !strings.Contains(logOutput, "env="+rigBeadsDir+" args=") || !strings.Contains(logOutput, "args=show") || !strings.Contains(logOutput, "args=update") {
+		t.Fatalf("manager reset did not use rig BEADS_DIR for show/update; log:\n%s", logOutput)
 	}
 }
 

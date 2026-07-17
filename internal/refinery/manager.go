@@ -742,7 +742,7 @@ func (m *Manager) PostMerge(idOrBranch string) (*PostMergeResult, error) {
 	if err != nil {
 		return nil, err
 	}
-	workBeadID := resolveMergedWorkBead(b.ForAgentBead(), mergedWorkBeadCloseRequest{
+	workBeadID := resolveMergedWorkBead(b.ForAgentBeadID(mr.AgentBead), mergedWorkBeadCloseRequest{
 		MRID:        mr.ID,
 		Branch:      mr.Branch,
 		SourceIssue: mr.IssueID,

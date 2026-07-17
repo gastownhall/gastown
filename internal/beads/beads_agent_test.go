@@ -81,7 +81,7 @@ func installMockBDShowRecorder(t *testing.T, showOutput string) string {
 
 	script := `#!/bin/sh
 LOG_FILE='` + logPath + `'
-printf '%s\n' "$*" >> "$LOG_FILE"
+printf 'BEADS_DIR=%s %s\n' "$BEADS_DIR" "$*" >> "$LOG_FILE"
 
 cmd=""
 for arg in "$@"; do
@@ -233,6 +233,62 @@ func TestUpdateAgentState_UsesUpdateDescriptionPath(t *testing.T) {
 	// Should NOT use the obsolete bd agent state or bd set-state path
 	if strings.Contains(logOutput, "agent state") || strings.Contains(logOutput, "set-state") {
 		t.Fatalf("mock bd log %q unexpectedly used obsolete bd agent state / set-state path", logOutput)
+	}
+}
+
+func TestForAgentBeadIDRoutesPolecatLifecycleWritesToRig(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("test uses Unix shell script mocks for bd")
+	}
+
+	townRoot := t.TempDir()
+	rigPath := filepath.Join(townRoot, "gastown")
+	townBeadsDir := filepath.Join(townRoot, ".beads")
+	rigBeadsDir := filepath.Join(rigPath, ".beads")
+	if err := os.MkdirAll(filepath.Join(townRoot, "mayor"), 0755); err != nil {
+		t.Fatalf("mkdir mayor: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(townRoot, "mayor", "town.json"), []byte("{}"), 0644); err != nil {
+		t.Fatalf("write town marker: %v", err)
+	}
+	for _, dir := range []string{townBeadsDir, rigBeadsDir} {
+		if err := os.MkdirAll(dir, 0755); err != nil {
+			t.Fatalf("mkdir %s: %v", dir, err)
+		}
+	}
+
+	const polecatID = "gst-gastown-polecat-nux"
+	logPath := installMockBDShowRecorder(t, `[{"id":"gst-gastown-polecat-nux","title":"Polecat nux","issue_type":"agent","labels":["gt:agent"],"description":"role_type: polecat\nrig: gastown\nagent_state: working\nactive_mr: gst-wisp-1"}]`)
+	lifecycleBeads := New(rigPath).ForAgentBeadID(polecatID)
+
+	if err := lifecycleBeads.UpdateAgentActiveMR(polecatID, "gst-wisp-1"); err != nil {
+		t.Fatalf("UpdateAgentActiveMR: %v", err)
+	}
+	if err := lifecycleBeads.UpdateAgentCompletion(polecatID, &CompletionMetadata{ExitType: "COMPLETED", MRID: "gst-wisp-1"}); err != nil {
+		t.Fatalf("UpdateAgentCompletion: %v", err)
+	}
+	if err := lifecycleBeads.UpdateAgentState(polecatID, "done"); err != nil {
+		t.Fatalf("UpdateAgentState: %v", err)
+	}
+	if err := lifecycleBeads.UpdateAgentCleanupStatus(polecatID, "clean"); err != nil {
+		t.Fatalf("UpdateAgentCleanupStatus: %v", err)
+	}
+
+	logOutput := readMockBDLog(t, logPath)
+	if strings.Contains(logOutput, "BEADS_DIR="+townBeadsDir) {
+		t.Fatalf("polecat lifecycle operation targeted town beads instead of rig beads:\n%s", logOutput)
+	}
+	if writes := strings.Count(logOutput, "BEADS_DIR="+rigBeadsDir+" update "+polecatID); writes != 4 {
+		t.Fatalf("rig lifecycle writes = %d, want 4:\n%s", writes, logOutput)
+	}
+
+	crewID := "gst-gastown-crew-max"
+	if err := New(rigPath).ForAgentBeadID(crewID).UpdateAgentState(crewID, "done"); err != nil {
+		t.Fatalf("UpdateAgentState crew: %v", err)
+	}
+	logOutput = readMockBDLog(t, logPath)
+	if !strings.Contains(logOutput, "BEADS_DIR="+townBeadsDir+" update "+crewID) {
+		t.Fatalf("crew lifecycle operation did not retain town beads target:\n%s", logOutput)
 	}
 }
 

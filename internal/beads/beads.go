@@ -16,6 +16,7 @@ import (
 	"time"
 
 	beadsdk "github.com/steveyegge/beads"
+	"github.com/steveyegge/gastown/internal/constants"
 	"github.com/steveyegge/gastown/internal/runtime"
 	"github.com/steveyegge/gastown/internal/telemetry"
 	"github.com/steveyegge/gastown/internal/util"
@@ -640,6 +641,17 @@ func (b *Beads) ForRoutedAgentBead() *Beads {
 		townRoot:   b.getTownRoot(),
 		noRoute:    true,
 	}
+}
+
+// ForAgentBeadID returns the storage wrapper for an agent identity. Polecat
+// identities are stored in their rig database; all other agent identities
+// retain the town-database behavior of ForAgentBead.
+func (b *Beads) ForAgentBeadID(id string) *Beads {
+	_, role, _, ok := ParseAgentBeadID(id)
+	if ok && role == constants.RolePolecat {
+		return b.ForRoutedAgentBead()
+	}
+	return b.ForAgentBead()
 }
 
 func (b *Beads) agentBeadTarget() *Beads {
