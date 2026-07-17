@@ -297,6 +297,58 @@ func TestForAgentBeadIDRoutesPolecatLifecycleWritesToRig(t *testing.T) {
 	}
 }
 
+func TestForAgentBeadIDRoutesLongHyphenatedPrefixPolecatToRig(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("test uses Unix shell script mocks for bd")
+	}
+
+	townRoot := t.TempDir()
+	rigPath := filepath.Join(townRoot, "gastown")
+	townBeadsDir := filepath.Join(townRoot, ".beads")
+	rigBeadsDir := filepath.Join(rigPath, ".beads")
+	if err := os.MkdirAll(filepath.Join(townRoot, "mayor"), 0755); err != nil {
+		t.Fatalf("mkdir mayor: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(townRoot, "mayor", "town.json"), []byte("{}"), 0644); err != nil {
+		t.Fatalf("write town marker: %v", err)
+	}
+	for _, dir := range []string{townBeadsDir, rigBeadsDir} {
+		if err := os.MkdirAll(dir, 0755); err != nil {
+			t.Fatalf("mkdir %s: %v", dir, err)
+		}
+	}
+	if err := os.WriteFile(filepath.Join(townBeadsDir, "routes.jsonl"), []byte(`{"prefix":"long-hyphen-prefix-","path":"gastown"}
+{"prefix":"hq-","path":"."}
+`), 0644); err != nil {
+		t.Fatalf("write routes: %v", err)
+	}
+
+	const polecatID = "long-hyphen-prefix-gastown-polecat-nux"
+	logPath := installMockBDShowRecorder(t, `[{"id":"long-hyphen-prefix-gastown-polecat-nux","title":"Polecat nux","issue_type":"agent","labels":["gt:agent"],"description":"role_type: polecat\nrig: gastown\nagent_state: working"}]`)
+	lifecycleBeads := New(townRoot).ForAgentBeadID(polecatID)
+
+	if !lifecycleBeads.noRoute {
+		t.Fatal("polecat lifecycle wrapper must disable further ID routing")
+	}
+	if lifecycleBeads.beadsDir != rigBeadsDir {
+		t.Fatalf("polecat lifecycle beads dir = %q, want %q", lifecycleBeads.beadsDir, rigBeadsDir)
+	}
+	if got := lifecycleBeads.ForAgentBeadID(polecatID); got != lifecycleBeads {
+		t.Fatal("noRoute polecat wrapper must not be re-routed")
+	}
+	if err := lifecycleBeads.UpdateAgentState(polecatID, "done"); err != nil {
+		t.Fatalf("UpdateAgentState: %v", err)
+	}
+
+	logOutput := readMockBDLog(t, logPath)
+	if !strings.Contains(logOutput, "BEADS_DIR="+rigBeadsDir+" update "+polecatID) {
+		t.Fatalf("polecat lifecycle operation did not target rig beads:\n%s", logOutput)
+	}
+	if strings.Contains(logOutput, "BEADS_DIR="+townBeadsDir+" update "+polecatID) {
+		t.Fatalf("polecat lifecycle operation targeted town beads:\n%s", logOutput)
+	}
+}
+
 func TestClearAgentActiveMRIfMatchesClearsExactMatch(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("test uses Unix shell script mocks for bd")

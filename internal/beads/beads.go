@@ -632,9 +632,13 @@ func (b *Beads) ForAgentBead() *Beads {
 // routed database. Polecat identities live alongside their rig's work beads,
 // so their rig-prefixed IDs must not be redirected to the town database.
 func (b *Beads) ForRoutedAgentBead() *Beads {
+	return b.forRoutedAgentBeadsDir(b.getResolvedBeadsDir())
+}
+
+func (b *Beads) forRoutedAgentBeadsDir(beadsDir string) *Beads {
 	return &Beads{
 		workDir:    b.workDir,
-		beadsDir:   b.getResolvedBeadsDir(),
+		beadsDir:   beadsDir,
 		isolated:   b.isolated,
 		serverPort: b.serverPort,
 		store:      b.store,
@@ -647,6 +651,13 @@ func (b *Beads) ForRoutedAgentBead() *Beads {
 // identities are stored in their rig database; all other agent identities
 // retain the town-database behavior of ForAgentBead.
 func (b *Beads) ForAgentBeadID(id string) *Beads {
+	if b.noRoute {
+		return b
+	}
+	if beadsDir := b.routedPolecatBeadsDir(id); beadsDir != "" {
+		return b.forRoutedAgentBeadsDir(beadsDir)
+	}
+
 	_, role, _, ok := ParseAgentBeadID(id)
 	if ok && role == constants.RolePolecat {
 		// Resolve the owning rig before disabling ID routing. Callers such as
@@ -655,6 +666,45 @@ func (b *Beads) ForAgentBeadID(id string) *Beads {
 		return b.forIssueID(id).ForRoutedAgentBead()
 	}
 	return b.ForAgentBead()
+}
+
+// routedPolecatBeadsDir resolves a polecat identity using the town's configured
+// routes. Agent ID parsing normally treats the first hyphen-delimited segment
+// as the prefix, but valid configured prefixes may themselves contain hyphens.
+func (b *Beads) routedPolecatBeadsDir(id string) string {
+	townRoot := b.getTownRoot()
+	if townRoot == "" {
+		return ""
+	}
+
+	routes, err := LoadRoutes(filepath.Join(townRoot, ".beads"))
+	if err != nil {
+		return ""
+	}
+
+	var targetPath string
+	longestPrefix := 0
+	for _, route := range routes {
+		if route.Path == "." || len(route.Prefix) <= longestPrefix || !strings.HasPrefix(id, route.Prefix) {
+			continue
+		}
+
+		// Parse the portion after the configured prefix with a known-safe
+		// synthetic prefix. This preserves ParseAgentBeadID's compatibility
+		// contract while recognizing route prefixes such as "long-prefix-".
+		_, role, _, ok := ParseAgentBeadID("gt-" + strings.TrimPrefix(id, route.Prefix))
+		if !ok || role != constants.RolePolecat {
+			continue
+		}
+
+		targetPath = route.Path
+		longestPrefix = len(route.Prefix)
+	}
+	if targetPath == "" {
+		return ""
+	}
+
+	return ResolveBeadsDir(filepath.Join(townRoot, targetPath))
 }
 
 func (b *Beads) agentBeadTarget() *Beads {
