@@ -649,7 +649,10 @@ func (b *Beads) ForRoutedAgentBead() *Beads {
 func (b *Beads) ForAgentBeadID(id string) *Beads {
 	_, role, _, ok := ParseAgentBeadID(id)
 	if ok && role == constants.RolePolecat {
-		return b.ForRoutedAgentBead()
+		// Resolve the owning rig before disabling ID routing. Callers such as
+		// patrol start at the town root, where pinning first would incorrectly
+		// target the town database.
+		return b.forIssueID(id).ForRoutedAgentBead()
 	}
 	return b.ForAgentBead()
 }

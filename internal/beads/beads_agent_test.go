@@ -256,10 +256,15 @@ func TestForAgentBeadIDRoutesPolecatLifecycleWritesToRig(t *testing.T) {
 			t.Fatalf("mkdir %s: %v", dir, err)
 		}
 	}
+	if err := os.WriteFile(filepath.Join(townBeadsDir, "routes.jsonl"), []byte(`{"prefix":"gst-","path":"gastown"}
+{"prefix":"hq-","path":"."}
+`), 0644); err != nil {
+		t.Fatalf("write routes: %v", err)
+	}
 
 	const polecatID = "gst-gastown-polecat-nux"
 	logPath := installMockBDShowRecorder(t, `[{"id":"gst-gastown-polecat-nux","title":"Polecat nux","issue_type":"agent","labels":["gt:agent"],"description":"role_type: polecat\nrig: gastown\nagent_state: working\nactive_mr: gst-wisp-1"}]`)
-	lifecycleBeads := New(rigPath).ForAgentBeadID(polecatID)
+	lifecycleBeads := New(townRoot).ForAgentBeadID(polecatID)
 
 	if err := lifecycleBeads.UpdateAgentActiveMR(polecatID, "gst-wisp-1"); err != nil {
 		t.Fatalf("UpdateAgentActiveMR: %v", err)

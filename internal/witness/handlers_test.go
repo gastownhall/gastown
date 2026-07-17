@@ -181,6 +181,72 @@ func TestNotifyMayorSlotOpen_BlocksNonCompletedExit(t *testing.T) {
 	}
 }
 
+func TestSlotOpenDecisionFromTownRootReadsRigPolecatIdentity(t *testing.T) {
+	const (
+		rigName     = "gastown"
+		polecatName = "nux"
+	)
+	townRoot := setupActiveMRGitSafeWorkDir(t, rigName, polecatName)
+	if err := os.MkdirAll(filepath.Join(townRoot, "mayor"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(townRoot, "mayor", "town.json"), []byte("{}"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	hqBeadsDir := filepath.Join(townRoot, ".beads")
+	rigBeadsDir := filepath.Join(townRoot, rigName, "mayor", "rig", ".beads")
+	for _, dir := range []string{hqBeadsDir, rigBeadsDir} {
+		if err := os.MkdirAll(dir, 0755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.WriteFile(filepath.Join(hqBeadsDir, "routes.jsonl"), []byte(`{"prefix":"gst-","path":"gastown/mayor/rig"}
+{"prefix":"hq-","path":"."}
+`), 0644); err != nil {
+		t.Fatal(err)
+	}
+	installSlotOpenIdentityBD(t, rigBeadsDir)
+
+	decision := slotOpenDecision(townRoot, townRoot, rigName, polecatName, string(ExitTypeCompleted))
+	if !decision.Reusable {
+		t.Fatalf("slotOpenDecision from town root = %+v, want reusable after reading rig identity", decision)
+	}
+}
+
+func installSlotOpenIdentityBD(t *testing.T, rigBeadsDir string) {
+	t.Helper()
+	binDir := t.TempDir()
+	scriptPath := filepath.Join(binDir, "bd")
+	script := `#!/bin/sh
+cmd=""
+for arg in "$@"; do
+	case "$arg" in
+		--*) ;;
+		*) cmd="$arg"; break ;;
+	esac
+done
+
+case "$cmd" in
+	show)
+		if [ "$BEADS_DIR" = "$MOCK_RIG_BEADS_DIR" ]; then
+			printf '%s\n' '[{"id":"gst-gastown-polecat-nux","issue_type":"agent","labels":["gt:agent"],"description":"role_type: polecat\nrig: gastown\nagent_state: idle\ncleanup_status: clean"}]'
+		else
+			printf '%s\n' '[]'
+		fi
+		;;
+	*) printf '%s\n' '[]' ;;
+esac
+`
+	if err := os.WriteFile(scriptPath, []byte(script), 0755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	t.Setenv("MOCK_RIG_BEADS_DIR", rigBeadsDir)
+	beads.ResetBdAllowStaleCacheForTest()
+	t.Cleanup(beads.ResetBdAllowStaleCacheForTest)
+}
+
 func TestNotifyMayorSlotOpen_SchedulerDispatchSuppressesMayor(t *testing.T) {
 	t.Setenv("PATH", t.TempDir())
 	townRoot, workDir := setupSlotOpenTestTown(t)
