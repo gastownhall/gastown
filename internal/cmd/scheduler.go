@@ -137,7 +137,10 @@ func runSchedulerStatus(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("loading scheduler state: %w", err)
 	}
 
-	scheduled := listScheduledBeads(townRoot)
+	scheduled, err := listScheduledBeads(townRoot)
+	if err != nil {
+		return fmt.Errorf("listing scheduled beads: %w", err)
+	}
 
 	capacitySnapshot, err := polecatCapacitySnapshotForTown(townRoot)
 	if err != nil {
@@ -214,7 +217,10 @@ func runSchedulerList(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	scheduled := listScheduledBeads(townRoot)
+	scheduled, err := listScheduledBeads(townRoot)
+	if err != nil {
+		return fmt.Errorf("listing scheduled beads: %w", err)
+	}
 
 	if schedulerListJSON {
 		enc := json.NewEncoder(os.Stdout)
@@ -310,7 +316,10 @@ func runSchedulerClear(cmd *cobra.Command, args []string) error {
 		// Close ALL sling contexts for this specific work bead (there may be
 		// duplicates if concurrent scheduleBead calls raced past idempotency).
 		// Scan all rig dirs since contexts live in target rig beads. (GH#3468)
-		contexts := listAllSlingContextRecords(townRoot)
+		contexts, err := listAllSlingContextRecords(townRoot)
+		if err != nil {
+			return fmt.Errorf("listing sling contexts: %w", err)
+		}
 
 		closed := 0
 		for _, ctx := range contexts {
@@ -334,7 +343,10 @@ func runSchedulerClear(cmd *cobra.Command, args []string) error {
 	}
 
 	// Close all open sling contexts across all dirs
-	allContexts := listAllSlingContextRecords(townRoot)
+	allContexts, err := listAllSlingContextRecords(townRoot)
+	if err != nil {
+		return fmt.Errorf("listing sling contexts: %w", err)
+	}
 
 	if len(allContexts) == 0 {
 		fmt.Println("Scheduler is already empty.")
@@ -367,8 +379,15 @@ func runSchedulerRun(cmd *cobra.Command, args []string) error {
 // listScheduledBeads returns info about all scheduled beads for display.
 // Reconciles sling context beads with work bead readiness to mark blocked status.
 // Uses batch fetch for work bead info to avoid N+1 subprocess spawns.
-func listScheduledBeads(townRoot string) []scheduledBeadInfo {
-	assessments, _ := assessScheduledContexts(townRoot)
+func listScheduledBeads(townRoot string) ([]scheduledBeadInfo, error) {
+	assessments, err := assessScheduledContexts(townRoot)
+	if err != nil {
+		return nil, err
+	}
+	return scheduledBeadInfosFromAssessments(assessments), nil
+}
+
+func scheduledBeadInfosFromAssessments(assessments []scheduledContextAssessment) []scheduledBeadInfo {
 	var result []scheduledBeadInfo
 	for _, assessment := range assessments {
 		bead, ok := scheduledBeadInfoFromWork(assessment.context.issue.Title, assessment.fields, assessment.info, assessment.found, assessment.ready)
@@ -405,12 +424,12 @@ func scheduledBeadInfoFromWork(ctxTitle string, fields *capacity.SlingContextFie
 
 // beadsSearchDirs returns directories to scan for scheduled beads:
 // the town root plus any rig directories that have a .beads/ subdirectory.
-func beadsSearchDirs(townRoot string) []string {
+func beadsSearchDirs(townRoot string) ([]string, error) {
 	dirs := []string{townRoot}
 	seen := map[string]bool{townRoot: true}
 	entries, err := os.ReadDir(townRoot)
 	if err != nil {
-		return dirs
+		return nil, fmt.Errorf("discovering scheduler beads search dirs: %w", err)
 	}
 	for _, e := range entries {
 		if !e.IsDir() || strings.HasPrefix(e.Name(), ".") || e.Name() == "mayor" || e.Name() == "settings" {
@@ -429,7 +448,7 @@ func beadsSearchDirs(townRoot string) []string {
 			seen[mayorRigDir] = true
 		}
 	}
-	return dirs
+	return dirs, nil
 }
 
 // countActivePolecats counts all running polecat tmux sessions across all rigs.

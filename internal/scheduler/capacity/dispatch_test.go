@@ -141,6 +141,59 @@ func TestDispatchCycle_Run_WithFailures(t *testing.T) {
 	}
 }
 
+func TestDispatchCycle_RunPlan_DoesNotRequery(t *testing.T) {
+	queried := false
+	checkedCapacity := false
+	dispatched := []string{}
+	successCalled := []string{}
+
+	cycle := &DispatchCycle{
+		AvailableCapacity: func() (int, error) {
+			checkedCapacity = true
+			return 0, nil
+		},
+		QueryPending: func() ([]PendingBead, error) {
+			queried = true
+			return nil, nil
+		},
+		Validate: func(b PendingBead) error {
+			if b.ID == "blocked" {
+				return errors.New("blocked")
+			}
+			return nil
+		},
+		Execute: func(b PendingBead) error {
+			dispatched = append(dispatched, b.ID)
+			return nil
+		},
+		OnSuccess: func(b PendingBead) error {
+			successCalled = append(successCalled, b.ID)
+			return nil
+		},
+		BatchSize: 10,
+	}
+
+	report, err := cycle.RunPlan(DispatchPlan{
+		ToDispatch: []PendingBead{{ID: "planned"}, {ID: "blocked"}},
+		Reason:     "ready",
+	})
+	if err != nil {
+		t.Fatalf("RunPlan() error: %v", err)
+	}
+	if queried || checkedCapacity {
+		t.Fatalf("RunPlan re-queried: queried=%v checkedCapacity=%v", queried, checkedCapacity)
+	}
+	if report.Dispatched != 1 || report.Failed != 1 || report.Reason != "ready" {
+		t.Fatalf("report = %+v, want dispatched=1 failed=1 reason=ready", report)
+	}
+	if len(dispatched) != 1 || dispatched[0] != "planned" {
+		t.Fatalf("dispatched = %v, want [planned]", dispatched)
+	}
+	if len(successCalled) != 1 || successCalled[0] != "planned" {
+		t.Fatalf("successCalled = %v, want [planned]", successCalled)
+	}
+}
+
 func TestDispatchCycle_Run_NoBeads(t *testing.T) {
 	cycle := &DispatchCycle{
 		AvailableCapacity: func() (int, error) { return 5, nil },

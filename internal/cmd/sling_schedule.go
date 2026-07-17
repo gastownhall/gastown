@@ -340,7 +340,13 @@ func areScheduled(beadIDs []string) map[string]bool {
 	}
 
 	// Scan all rig beads dirs (sling contexts live in target rig's DB). (GH#3468)
-	contexts := listAllSlingContexts(townRoot)
+	contexts, err := listAllSlingContexts(townRoot)
+	if err != nil {
+		for _, id := range beadIDs {
+			result[id] = true
+		}
+		return result
+	}
 
 	// Build lookup of work bead IDs from open contexts. Cleanup owns stale-state
 	// closure; idempotency must not use a different definition of scheduled.

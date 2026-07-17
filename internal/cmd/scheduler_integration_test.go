@@ -302,7 +302,11 @@ func createSlingContext(t *testing.T, hqPath string, fields *capacity.SlingConte
 // Returns nil if none found.
 func findSlingContext(t *testing.T, hqPath, workBeadID string) *capacity.SlingContextFields {
 	t.Helper()
-	for _, ctx := range listAllSlingContexts(hqPath) {
+	contexts, err := listAllSlingContexts(hqPath)
+	if err != nil {
+		t.Fatalf("listAllSlingContexts: %v", err)
+	}
+	for _, ctx := range contexts {
 		fields := beads.ParseSlingContextFields(ctx.Description)
 		if fields != nil && fields.WorkBeadID == workBeadID {
 			return fields
@@ -535,7 +539,11 @@ func TestSchedulerBlockedStatusReporting(t *testing.T) {
 		t.Fatalf("unblocked queued bead %s not found in scheduler list", blockedID)
 	}
 	contextCount := 0
-	for _, ctx := range listAllSlingContexts(hqPath) {
+	contexts, err := listAllSlingContexts(hqPath)
+	if err != nil {
+		t.Fatalf("listAllSlingContexts: %v", err)
+	}
+	for _, ctx := range contexts {
 		fields := beads.ParseSlingContextFields(ctx.Description)
 		if fields != nil && fields.WorkBeadID == blockedID {
 			contextCount++
@@ -752,7 +760,11 @@ func TestSchedulerSlingContextIdempotency(t *testing.T) {
 	// Verify: only one sling context exists across all rig dirs
 	// (sling contexts live in the target rig's beads dir per dee628d3).
 	count := 0
-	for _, ctx := range listAllSlingContexts(hqPath) {
+	contexts, err := listAllSlingContexts(hqPath)
+	if err != nil {
+		t.Fatalf("listAllSlingContexts: %v", err)
+	}
+	for _, ctx := range contexts {
 		fields := beads.ParseSlingContextFields(ctx.Description)
 		if fields != nil && fields.WorkBeadID == beadID {
 			count++

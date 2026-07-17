@@ -375,6 +375,37 @@ func TestPrintDryRunPlanUsesCapacitySnapshot(t *testing.T) {
 	}
 }
 
+func TestPrintDryRunPlanValidationReasonNotCapacity(t *testing.T) {
+	out := captureStdout(t, func() {
+		printDryRunPlan(capacity.DispatchPlan{
+			Skipped: 2,
+			Reason:  "validation",
+		}, polecatCapacitySnapshot{Max: 2, Free: 2}, 5)
+	})
+	if !strings.Contains(out, "validation failed for 2 candidate") {
+		t.Fatalf("dry-run output %q missing validation reason", out)
+	}
+	if strings.Contains(out, "No capacity") {
+		t.Fatalf("dry-run output %q should not report capacity for validation failures", out)
+	}
+}
+
+func TestPrintDispatchNoOpReportsExplicitReason(t *testing.T) {
+	out := captureStdout(t, func() {
+		printDispatchNoOp(capacity.DispatchReport{Reason: "none"}, polecatCapacitySnapshot{})
+	})
+	if !strings.Contains(out, "No ready beads scheduled for dispatch") {
+		t.Fatalf("none output = %q", out)
+	}
+
+	out = captureStdout(t, func() {
+		printDispatchNoOp(capacity.DispatchReport{Reason: "validation", Skipped: 1}, polecatCapacitySnapshot{})
+	})
+	if !strings.Contains(out, "No dispatchable beads") || !strings.Contains(out, "validation") {
+		t.Fatalf("validation output = %q", out)
+	}
+}
+
 func TestResolveTargetRigPassesHeldAdmissionToSpawn(t *testing.T) {
 	townRoot := setupPolecatCapacityRig(t, 1)
 	oldSpawn := spawnPolecatForSling
