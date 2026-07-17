@@ -119,6 +119,21 @@ func TestParseChildrenJSON(t *testing.T) {
 			wantIDs: []string{},
 		},
 		{
+			name:    "empty input",
+			input:   `   `,
+			wantErr: true,
+		},
+		{
+			name:    "malformed bare array",
+			input:   `[`,
+			wantErr: true,
+		},
+		{
+			name:    "malformed object envelope",
+			input:   `{"hq-wisp-root":[`,
+			wantErr: true,
+		},
+		{
 			name:    "invalid json",
 			input:   `not json`,
 			wantErr: true,
