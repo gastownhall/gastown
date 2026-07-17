@@ -81,6 +81,100 @@ func TestNudgeRefinerySessionName(t *testing.T) {
 	}
 }
 
+func TestUpdateAgentModeRoutesPrefixedPolecatToRig(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("test uses a POSIX bd stub")
+	}
+
+	townRoot := t.TempDir()
+	hqBeadsDir := filepath.Join(townRoot, ".beads")
+	rigDir := filepath.Join(townRoot, "gastown")
+	rigBeadsDir := filepath.Join(rigDir, ".beads")
+	for _, dir := range []string{
+		filepath.Join(townRoot, "mayor"),
+		hqBeadsDir,
+		rigBeadsDir,
+	} {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatalf("mkdir %s: %v", dir, err)
+		}
+	}
+	if err := os.WriteFile(filepath.Join(townRoot, "mayor", "town.json"), []byte("{}"), 0o644); err != nil {
+		t.Fatalf("write town marker: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(hqBeadsDir, "routes.jsonl"), []byte(`{"prefix":"gt-","path":"gastown"}
+{"prefix":"hq-","path":"."}
+`), 0o644); err != nil {
+		t.Fatalf("write routes: %v", err)
+	}
+	binDir := filepath.Join(townRoot, "bin")
+	if err := os.MkdirAll(binDir, 0o755); err != nil {
+		t.Fatalf("mkdir bin: %v", err)
+	}
+	logPath := filepath.Join(townRoot, "bd.log")
+	bdScript := `#!/bin/sh
+set -eu
+printf 'BEADS_DIR=%s %s\n' "$BEADS_DIR" "$*" >> "$BD_LOG"
+cmd=""
+for arg in "$@"; do
+  case "$arg" in
+    --*) ;;
+    *) cmd="$arg"; break ;;
+  esac
+done
+case "$cmd" in
+  version) exit 0 ;;
+  show) printf '[{"id":"gt-gastown-polecat-nux","title":"Nux","status":"open","description":""}]\n' ;;
+  update)
+    body=$(cat)
+    case "$body" in
+      *"mode: ralph"*) printf 'mode=ralph\n' >> "$BD_LOG" ;;
+      *) printf 'mode=missing\n' >> "$BD_LOG" ;;
+    esac
+    ;;
+esac
+`
+	if err := os.WriteFile(filepath.Join(binDir, "bd"), []byte(bdScript), 0o755); err != nil {
+		t.Fatalf("write bd stub: %v", err)
+	}
+	t.Setenv("BD_LOG", logPath)
+	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	cwd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("getwd: %v", err)
+	}
+	t.Cleanup(func() { _ = os.Chdir(cwd) })
+	if err := os.Chdir(townRoot); err != nil {
+		t.Fatalf("chdir town root: %v", err)
+	}
+
+	updateAgentMode("gastown/polecats/nux", "ralph", "", "")
+
+	log, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatalf("read bd log: %v", err)
+	}
+	logOutput := string(log)
+	resolvedRigBeadsDir, err := filepath.EvalSymlinks(rigBeadsDir)
+	if err != nil {
+		t.Fatalf("resolve rig beads directory: %v", err)
+	}
+	resolvedHQBeadsDir, err := filepath.EvalSymlinks(hqBeadsDir)
+	if err != nil {
+		t.Fatalf("resolve HQ beads directory: %v", err)
+	}
+	if !strings.Contains(logOutput, "BEADS_DIR="+resolvedRigBeadsDir+" update gt-gastown-polecat-nux") {
+		t.Fatalf("mode update did not target rig beads:\n%s", logOutput)
+	}
+	if strings.Contains(logOutput, "BEADS_DIR="+resolvedHQBeadsDir+" update gt-gastown-polecat-nux") {
+		t.Fatalf("mode update targeted HQ beads:\n%s", logOutput)
+	}
+	if !strings.Contains(logOutput, "mode=ralph") {
+		t.Fatalf("ralph mode metadata was not written:\n%s", logOutput)
+	}
+}
+
 // TestWakeRigAgentsDoesNotNudgeRefinery verifies that wakeRigAgents only
 // nudges the witness, not the refinery. The refinery should only be nudged
 // when an MR is actually created (via nudgeRefinery), not at polecat dispatch time.

@@ -1477,7 +1477,9 @@ func updateAgentMode(agentID, mode, workDir, townBeadsDir string) {
 
 	agentWorkDir := beads.ResolveHookDir(townRoot, agentBeadID, workDir)
 	bd := beads.New(agentWorkDir)
-	if err := bd.UpdateAgentDescriptionFields(agentBeadID, beads.AgentFieldUpdates{Mode: &mode}); err != nil {
+	agentBd := bd.ForAgentBeadID(agentBeadID)
+	defer func() { _ = agentBd.CloseStore() }()
+	if err := agentBd.UpdateAgentDescriptionFields(agentBeadID, beads.AgentFieldUpdates{Mode: &mode}); err != nil {
 		fmt.Fprintf(os.Stderr, "Warning: couldn't set agent %s mode: %v\n", agentBeadID, err)
 	}
 }
