@@ -627,6 +627,21 @@ func (b *Beads) ForAgentBead() *Beads {
 	}
 }
 
+// ForRoutedAgentBead returns a wrapper for agent beads stored in the current
+// routed database. Polecat identities live alongside their rig's work beads,
+// so their rig-prefixed IDs must not be redirected to the town database.
+func (b *Beads) ForRoutedAgentBead() *Beads {
+	return &Beads{
+		workDir:    b.workDir,
+		beadsDir:   b.getResolvedBeadsDir(),
+		isolated:   b.isolated,
+		serverPort: b.serverPort,
+		store:      b.store,
+		townRoot:   b.getTownRoot(),
+		noRoute:    true,
+	}
+}
+
 func (b *Beads) agentBeadTarget() *Beads {
 	if b.noRoute {
 		return b

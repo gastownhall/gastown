@@ -1,9 +1,15 @@
 package cmd
 
 import (
+	"os"
+	"path/filepath"
+	"runtime"
+	"strings"
 	"testing"
 	"time"
 
+	"github.com/steveyegge/gastown/internal/beads"
+	"github.com/steveyegge/gastown/internal/rig"
 	"github.com/steveyegge/gastown/internal/style"
 )
 
@@ -209,3 +215,101 @@ func TestFormatCountStyled(t *testing.T) {
 	}
 }
 
+func TestPolecatIdentityUsesRigDatabaseAndPrimeFindsHookedWork(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("test uses a Unix shell mock for bd")
+	}
+
+	townRoot := t.TempDir()
+	townBeadsDir := filepath.Join(townRoot, ".beads")
+	rigPath := filepath.Join(townRoot, "gastown")
+	rigBeadsDir := filepath.Join(rigPath, "mayor", "rig", ".beads")
+	for _, dir := range []string{
+		filepath.Join(townRoot, "mayor"),
+		townBeadsDir,
+		filepath.Join(rigPath, ".beads"),
+		rigBeadsDir,
+		filepath.Join(rigPath, "polecats", "furiosa"),
+	} {
+		if err := os.MkdirAll(dir, 0755); err != nil {
+			t.Fatalf("mkdir %s: %v", dir, err)
+		}
+	}
+	if err := os.WriteFile(filepath.Join(townRoot, "mayor", "town.json"), []byte(`{"name":"test"}`), 0644); err != nil {
+		t.Fatalf("write town config: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(rigPath, ".beads", "redirect"), []byte("mayor/rig/.beads\n"), 0644); err != nil {
+		t.Fatalf("write rig redirect: %v", err)
+	}
+	if err := beads.WriteRoutes(townBeadsDir, []beads.Route{
+		{Prefix: "hq-", Path: "."},
+		{Prefix: "gst-", Path: "gastown/mayor/rig"},
+	}); err != nil {
+		t.Fatalf("write routes: %v", err)
+	}
+
+	binDir := t.TempDir()
+	logPath := filepath.Join(binDir, "bd.log")
+	script := `#!/bin/sh
+printf 'beads_dir=%s args=%s\n' "$BEADS_DIR" "$*" >> "$MOCK_BD_LOG"
+cmd=""
+for arg in "$@"; do
+  case "$arg" in
+    --*) ;;
+    *) cmd="$arg"; break ;;
+  esac
+done
+case "$cmd" in
+  version) exit 0 ;;
+  create) printf '%s\n' '{"id":"gst-gastown-polecat-furiosa","title":"Polecat furiosa","status":"open"}' ;;
+  show) printf '%s\n' '[{"id":"gst-gastown-polecat-furiosa","title":"Polecat furiosa","issue_type":"task","labels":["gt:agent"],"status":"open","description":"role_type: polecat\nrig: gastown\nagent_state: idle\nhook_bead: null"}]' ;;
+  list) printf '%s\n' '[{"id":"gst-work","title":"Routed work","status":"hooked","assignee":"gastown/polecats/furiosa"}]' ;;
+esac
+`
+	if err := os.WriteFile(filepath.Join(binDir, "bd"), []byte(script), 0755); err != nil {
+		t.Fatalf("write mock bd: %v", err)
+	}
+	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	t.Setenv("MOCK_BD_LOG", logPath)
+
+	r := &rig.Rig{Name: "gastown", Path: rigPath}
+	identityID := polecatBeadIDForRig(r, r.Name, "furiosa")
+	identityBeads := polecatIdentityBeads(r)
+	if _, err := identityBeads.CreateAgentBead(identityID, "Polecat furiosa", &beads.AgentFields{
+		RoleType: "polecat", Rig: r.Name, AgentState: "idle",
+	}); err != nil {
+		t.Fatalf("create routed polecat identity: %v", err)
+	}
+	if issue, _, err := identityBeads.GetAgentBead(identityID); err != nil || issue == nil {
+		t.Fatalf("resolve routed polecat identity: issue=%v err=%v", issue, err)
+	}
+
+	hooked, err := findAgentWorkOnce(RoleContext{
+		Role:     RolePolecat,
+		Rig:      r.Name,
+		Polecat:  "furiosa",
+		TownRoot: townRoot,
+		WorkDir:  filepath.Join(rigPath, "polecats", "furiosa"),
+	}, "gastown/polecats/furiosa")
+	if err != nil {
+		t.Fatalf("find hooked work: %v", err)
+	}
+	if hooked == nil || hooked.ID != "gst-work" {
+		t.Fatalf("findAgentWorkOnce() = %#v, want routed hooked work", hooked)
+	}
+
+	logData, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatalf("read mock bd log: %v", err)
+	}
+	logOutput := string(logData)
+	if strings.Contains(logOutput, "beads_dir="+townBeadsDir) {
+		t.Fatalf("polecat identity accessed town beads instead of rig beads:\n%s", logOutput)
+	}
+	if !strings.Contains(logOutput, "beads_dir="+rigBeadsDir) ||
+		!strings.Contains(logOutput, "args=create") ||
+		!strings.Contains(logOutput, "args=show") ||
+		!strings.Contains(logOutput, "args=list") {
+		t.Fatalf("polecat identity and hook lookup did not use rig beads:\n%s", logOutput)
+	}
+}

@@ -1052,7 +1052,7 @@ func runPolecatCheckRecovery(cmd *cobra.Command, args []string) error {
 	rigPath := r.Path
 	bd := beads.New(rigPath)
 	agentBeadID := polecatBeadIDForRig(r, rigName, polecatName)
-	agentIssue, fields, err := bd.GetAgentBead(agentBeadID)
+	agentIssue, fields, err := bd.ForRoutedAgentBead().GetAgentBead(agentBeadID)
 
 	status := RecoveryStatus{
 		Rig:     rigName,
@@ -1980,7 +1980,7 @@ func checkNukeActiveMRSafety(checker activeMRRemovalChecker, polecatName, rigNam
 func resetPolecatAgentBeadForReuse(r *rig.Rig, rigName, polecatName string) {
 	agentBeadID := polecatBeadIDForRig(r, rigName, polecatName)
 	bd := beads.New(r.Path)
-	if err := bd.ForAgentBead().ResetAgentBeadForReuse(agentBeadID, "nuked"); err != nil {
+	if err := bd.ForRoutedAgentBead().ResetAgentBeadForReuse(agentBeadID, "nuked"); err != nil {
 		fmt.Printf("  %s agent bead not found or already cleaned\n", style.Dim.Render("○"))
 	} else {
 		fmt.Printf("  %s reset agent bead %s\n", style.Success.Render("✓"), agentBeadID)

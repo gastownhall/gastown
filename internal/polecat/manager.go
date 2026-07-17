@@ -355,7 +355,7 @@ func (m *Manager) createAgentBeadWithRetry(agentID string, fields *beads.AgentFi
 }
 
 func (m *Manager) agentBeads() *beads.Beads {
-	return m.beads.ForAgentBead()
+	return m.beads.ForRoutedAgentBead()
 }
 
 func (m *Manager) resetAgentBeadForReuse(agentID, reason string) error {
@@ -410,7 +410,7 @@ func (m *Manager) agentBeadID(name string) string {
 // ZFC #10: This is the ZFC-compliant way to check if removal is safe.
 func (m *Manager) getCleanupStatusFromBead(name string) CleanupStatus {
 	agentID := m.agentBeadID(name)
-	_, fields, err := m.beads.GetAgentBead(agentID)
+	_, fields, err := m.agentBeads().GetAgentBead(agentID)
 	if err != nil || fields == nil {
 		return CleanupUnknown
 	}
@@ -1305,7 +1305,7 @@ func (m *Manager) removeWithOptionsLocked(name string, force, nuclear, selfNuke 
 }
 
 // ActiveMRRemovalBlocker returns the pending active-MR reason that should block
-// non-force polecat removal. It reads agent metadata from the town agent-bead
+// non-force polecat removal. It reads agent metadata from the rig agent-bead
 // store, then classifies the MR/source through the normal rig beads reader.
 func (m *Manager) ActiveMRRemovalBlocker(name string) (string, string) {
 	agentID := m.agentBeadID(name)
@@ -1928,7 +1928,7 @@ func (m *Manager) ReuseIdlePolecat(name string, opts AddOptions) (*Polecat, erro
 	// The column stays stale (e.g., "idle" from previous gt done) until
 	// StartSession sets it to "working". Without this, the column and
 	// description diverge, causing dashboards to show incorrect state.
-	// Agent beads live in town DB — bypass prefix routing.
+	// Polecat identities live in the rig DB; retain that target for updates.
 	if err := m.agentBeads().UpdateAgentState(agentID, "spawning"); err != nil {
 		style.PrintWarning("could not sync agent_state column to spawning: %v", err)
 	}
@@ -2565,8 +2565,7 @@ func (m *Manager) Get(name string) (*Polecat, error) {
 // Valid states: "spawning", "working", "done", "stuck", "idle"
 func (m *Manager) SetAgentState(name string, state string) error {
 	agentID := m.agentBeadID(name)
-	// Agent beads live in the town DB — bypass prefix routing that would
-	// otherwise misroute "za-*" / "my-*" agent IDs to a rig DB.
+	// Polecat identities live in the rig DB; retain that target for updates.
 	return m.agentBeads().UpdateAgentState(agentID, state)
 }
 
@@ -2780,7 +2779,7 @@ func (m *Manager) loadFromBeads(name string) (*Polecat, error) {
 	// it resolves to a currently hooked bead for this assignee. This avoids stale
 	// issue reporting when hook_bead diverges from the work bead state.
 	agentID := m.agentBeadID(name)
-	_, fields, agentErr := m.beads.GetAgentBead(agentID)
+	_, fields, agentErr := m.agentBeads().GetAgentBead(agentID)
 	if agentErr == nil && fields != nil && fields.HookBead != "" {
 		if hookIssue, err := m.beads.Show(fields.HookBead); err == nil &&
 			isCurrentHookedIssueForAssignee(hookIssue, assignee) {
@@ -3079,7 +3078,7 @@ func (m *Manager) DetectStalePolecats(threshold int) ([]*StalenessInfo, error) {
 
 		// Check agent bead state
 		agentID := m.agentBeadID(p.Name)
-		_, fields, err := m.beads.GetAgentBead(agentID)
+		_, fields, err := m.agentBeads().GetAgentBead(agentID)
 		if err == nil && fields != nil {
 			info.AgentState = fields.AgentState
 		}
