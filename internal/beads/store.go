@@ -10,6 +10,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -24,6 +25,11 @@ import (
 // Callers are responsible for closing the store when done.
 func (b *Beads) SetStore(store beadsdk.Storage) {
 	b.store = store
+	if store == nil {
+		b.storeBeadsDir = ""
+		return
+	}
+	b.storeBeadsDir = b.getResolvedBeadsDir()
 }
 
 // Store returns the in-process beadsdk.Storage, or nil if not set.
@@ -35,13 +41,21 @@ func (b *Beads) Store() beadsdk.Storage {
 // The store is used for direct SDK calls, bypassing bd subprocess spawning.
 // Callers are responsible for closing the store when done.
 func NewWithStore(workDir string, store beadsdk.Storage) *Beads {
-	return &Beads{workDir: workDir, store: store}
+	b := &Beads{workDir: workDir, store: store}
+	if store != nil {
+		b.storeBeadsDir = b.getResolvedBeadsDir()
+	}
+	return b
 }
 
 // NewWithBeadsDirAndStore creates a Beads wrapper with an explicit BEADS_DIR
 // and an in-process store. Used for cross-database access from polecat worktrees.
 func NewWithBeadsDirAndStore(workDir, beadsDir string, store beadsdk.Storage) *Beads {
-	return &Beads{workDir: workDir, beadsDir: beadsDir, store: store}
+	b := &Beads{workDir: workDir, beadsDir: beadsDir, store: store}
+	if store != nil {
+		b.storeBeadsDir = b.getResolvedBeadsDir()
+	}
+	return b
 }
 
 // OpenStore opens a beadsdk.Storage for the resolved beads directory.
@@ -55,6 +69,10 @@ func NewWithBeadsDirAndStore(workDir, beadsDir string, store beadsdk.Storage) *B
 //	if err != nil { /* fall back to subprocess */ }
 //	defer cleanup()
 func (b *Beads) OpenStore(ctx context.Context) (beadsdk.Storage, func(), error) {
+	if b.storeErr != nil {
+		return nil, nil, b.storeErr
+	}
+
 	beadsDir := b.beadsDir
 	if beadsDir == "" {
 		beadsDir = ResolveBeadsDir(b.workDir)
@@ -63,7 +81,7 @@ func (b *Beads) OpenStore(ctx context.Context) (beadsdk.Storage, func(), error) 
 		return nil, nil, fmt.Errorf("no beads directory found")
 	}
 
-	store, err := beadsdk.OpenFromConfig(ctx, beadsDir)
+	store, err := b.openStore(ctx, beadsDir)
 	if err != nil {
 		return nil, nil, fmt.Errorf("opening beads store: %w", err)
 	}
@@ -72,6 +90,38 @@ func (b *Beads) OpenStore(ctx context.Context) (beadsdk.Storage, func(), error) 
 		_ = store.Close()
 	}
 	return store, cleanup, nil
+}
+
+// rebindStore returns the source store only when its directory is known to be
+// the requested target. A routed wrapper otherwise opens a distinct target
+// store, so in-process operations cannot write through the source database.
+func (b *Beads) rebindStore(beadsDir string) (beadsdk.Storage, error) {
+	if b.store == nil {
+		return nil, nil
+	}
+	if sameBeadsDir(b.storeBeadsDir, beadsDir) {
+		return b.store, nil
+	}
+
+	store, err := b.openStore(context.Background(), beadsDir)
+	if err != nil {
+		return nil, fmt.Errorf("opening routed beads store for %s: %w", beadsDir, err)
+	}
+	return store, nil
+}
+
+func (b *Beads) openStore(ctx context.Context, beadsDir string) (beadsdk.Storage, error) {
+	if b.storeOpener != nil {
+		return b.storeOpener(ctx, beadsDir)
+	}
+	return beadsdk.OpenFromConfig(ctx, beadsDir)
+}
+
+func sameBeadsDir(left, right string) bool {
+	if left == "" || right == "" {
+		return false
+	}
+	return filepath.Clean(ResolveBeadsDir(left)) == filepath.Clean(ResolveBeadsDir(right))
 }
 
 // storeCtx returns a context with a standard timeout for store operations.

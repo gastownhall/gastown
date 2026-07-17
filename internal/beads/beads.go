@@ -551,7 +551,10 @@ type Beads struct {
 	// bypass the bd subprocess and use the store directly. Follows the
 	// pattern in internal/daemon/convoy_manager.go. Callers are responsible
 	// for closing the store.
-	store beadsdk.Storage
+	store         beadsdk.Storage
+	storeBeadsDir string // Resolved directory for store; required before sharing it with a routed wrapper.
+	storeErr      error  // Failed routed-store binding; prevents an incorrect CLI fallback.
+	storeOpener   func(context.Context, string) (beadsdk.Storage, error)
 
 	// Lazy-cached town root for routing resolution.
 	// Populated on first call to getTownRoot() to avoid filesystem walk on every operation.
@@ -617,15 +620,7 @@ func (b *Beads) ForAgentBead() *Beads {
 		return b
 	}
 	townBeadsDir := filepath.Join(townRoot, ".beads")
-	return &Beads{
-		workDir:    townRoot,
-		beadsDir:   townBeadsDir,
-		isolated:   b.isolated,
-		serverPort: b.serverPort,
-		store:      b.store,
-		townRoot:   townRoot,
-		noRoute:    true,
-	}
+	return b.forAgentBeadsDir(townRoot, townBeadsDir)
 }
 
 // ForRoutedAgentBead returns a wrapper for agent beads stored in the current
@@ -636,15 +631,30 @@ func (b *Beads) ForRoutedAgentBead() *Beads {
 }
 
 func (b *Beads) forRoutedAgentBeadsDir(beadsDir string) *Beads {
-	return &Beads{
-		workDir:    b.workDir,
-		beadsDir:   beadsDir,
-		isolated:   b.isolated,
-		serverPort: b.serverPort,
-		store:      b.store,
-		townRoot:   b.getTownRoot(),
-		noRoute:    true,
+	return b.forAgentBeadsDir(b.workDir, beadsDir)
+}
+
+func (b *Beads) forAgentBeadsDir(workDir, beadsDir string) *Beads {
+	target := &Beads{
+		workDir:     workDir,
+		beadsDir:    beadsDir,
+		isolated:    b.isolated,
+		serverPort:  b.serverPort,
+		storeOpener: b.storeOpener,
+		townRoot:    b.getTownRoot(),
+		noRoute:     true,
 	}
+
+	store, err := b.rebindStore(beadsDir)
+	if err != nil {
+		target.storeErr = err
+		return target
+	}
+	target.store = store
+	if store != nil {
+		target.storeBeadsDir = target.getResolvedBeadsDir()
+	}
+	return target
 }
 
 // ForAgentBeadID returns the storage wrapper for an agent identity. Polecat
@@ -844,6 +854,10 @@ func (b *Beads) run(args ...string) ([]byte, error) {
 // --body-file=- that read multi-line content from stdin (avoids embedding
 // newlines in --description, which bd 1.0.3+ rejects).
 func (b *Beads) runWithStdin(stdinData []byte, args ...string) (_ []byte, retErr error) {
+	if b.storeErr != nil {
+		return nil, b.storeErr
+	}
+
 	start := time.Now()
 	// Declare buffers before defer so the closure captures them after cmd.Run.
 	var stdout, stderr bytes.Buffer
@@ -931,6 +945,10 @@ func (b *Beads) runWithStdin(stdinData []byte, args ...string) (_ []byte, retErr
 // (e.g., setting an hq-* hook bead on a gt-* agent bead).
 // See: sling_helpers.go verifyBeadExists/hookBeadWithRetry for the same pattern.
 func (b *Beads) runWithRouting(args ...string) (_ []byte, retErr error) { //nolint:unparam // mirrors run() signature for consistency
+	if b.storeErr != nil {
+		return nil, b.storeErr
+	}
+
 	start := time.Now()
 	var stdout, stderr bytes.Buffer
 	defer func() {
@@ -1634,6 +1652,13 @@ func (b *Beads) ReadyWithType(issueType string) ([]*Issue, error) {
 
 // Show returns detailed information about an issue.
 func (b *Beads) Show(id string) (*Issue, error) {
+	if b.storeErr != nil {
+		return nil, b.storeErr
+	}
+
+	// Route cross-rig queries via routes.jsonl so that rig-level bead IDs
+	// (e.g., "gt-abc123") resolve to the correct rig database.
+	// noRoute (see ForAgentBead) bypasses this for agent-bead lookups.
 	if !b.noRoute {
 		if target := b.forIssueID(id); target != b {
 			return target.Show(id)
@@ -2043,6 +2068,10 @@ func normalizeBugTitle(title string) string {
 
 // Update updates an existing issue.
 func (b *Beads) Update(id string, opts UpdateOptions) error {
+	if b.storeErr != nil {
+		return b.storeErr
+	}
+
 	if !b.noRoute {
 		if target := b.forIssueID(id); target != b {
 			return target.Update(id, opts)

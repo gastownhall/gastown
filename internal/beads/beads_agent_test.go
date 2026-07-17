@@ -1,6 +1,7 @@
 package beads
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -8,6 +9,8 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+
+	beadsdk "github.com/steveyegge/beads"
 )
 
 func installMockBDFixedShowOutput(t *testing.T, showOutput string) {
@@ -346,6 +349,95 @@ func TestForAgentBeadIDRoutesLongHyphenatedPrefixPolecatToRig(t *testing.T) {
 	}
 	if strings.Contains(logOutput, "BEADS_DIR="+townBeadsDir+" update "+polecatID) {
 		t.Fatalf("polecat lifecycle operation targeted town beads:\n%s", logOutput)
+	}
+}
+
+func TestForAgentBeadIDRebindsStoreToRoutedPolecatRig(t *testing.T) {
+	const polecatID = "long-hyphen-prefix-gastown-polecat-nux"
+
+	for _, tc := range []struct {
+		name  string
+		build func(string, beadsdk.Storage) *Beads
+	}{
+		{
+			name: "NewWithStore",
+			build: func(townRoot string, store beadsdk.Storage) *Beads {
+				return NewWithStore(townRoot, store)
+			},
+		},
+		{
+			name: "SetStore",
+			build: func(townRoot string, store beadsdk.Storage) *Beads {
+				b := New(townRoot)
+				b.SetStore(store)
+				return b
+			},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			townRoot := t.TempDir()
+			rigPath := filepath.Join(townRoot, "gastown")
+			townBeadsDir := filepath.Join(townRoot, ".beads")
+			rigBeadsDir := filepath.Join(rigPath, ".beads")
+			if err := os.MkdirAll(filepath.Join(townRoot, "mayor"), 0755); err != nil {
+				t.Fatalf("mkdir mayor: %v", err)
+			}
+			if err := os.WriteFile(filepath.Join(townRoot, "mayor", "town.json"), []byte("{}"), 0644); err != nil {
+				t.Fatalf("write town marker: %v", err)
+			}
+			for _, dir := range []string{townBeadsDir, rigBeadsDir} {
+				if err := os.MkdirAll(dir, 0755); err != nil {
+					t.Fatalf("mkdir %s: %v", dir, err)
+				}
+			}
+			if err := os.WriteFile(filepath.Join(townBeadsDir, "routes.jsonl"), []byte(`{"prefix":"long-hyphen-prefix-","path":"gastown"}
+{"prefix":"hq-","path":"."}
+`), 0644); err != nil {
+				t.Fatalf("write routes: %v", err)
+			}
+
+			hqStore := newMockStorage()
+			rigStore := newMockStorage()
+			hqStore.issues[polecatID] = &beadsdk.Issue{ID: polecatID, Title: "town polecat"}
+			rigStore.issues[polecatID] = &beadsdk.Issue{ID: polecatID, Title: "rig polecat"}
+
+			b := tc.build(townRoot, hqStore)
+			var opened []string
+			b.storeOpener = func(_ context.Context, beadsDir string) (beadsdk.Storage, error) {
+				opened = append(opened, filepath.Clean(beadsDir))
+				if filepath.Clean(beadsDir) != filepath.Clean(rigBeadsDir) {
+					t.Fatalf("opened store for %q, want %q", beadsDir, rigBeadsDir)
+				}
+				return rigStore, nil
+			}
+
+			routed := b.ForAgentBeadID(polecatID)
+			if routed.Store() != rigStore {
+				t.Fatal("routed polecat wrapper retained the town store instead of binding the rig store")
+			}
+			if len(opened) != 1 || opened[0] != filepath.Clean(rigBeadsDir) {
+				t.Fatalf("opened stores = %v, want only %q", opened, rigBeadsDir)
+			}
+
+			issue, err := routed.Show(polecatID)
+			if err != nil {
+				t.Fatalf("Show: %v", err)
+			}
+			if issue.Title != "rig polecat" {
+				t.Fatalf("Show title = %q, want rig store issue", issue.Title)
+			}
+
+			title := "updated rig polecat"
+			if err := routed.Update(polecatID, UpdateOptions{Title: &title}); err != nil {
+				t.Fatalf("Update: %v", err)
+			}
+			if rigStore.issues[polecatID].Title != title {
+				t.Fatalf("rig store title = %q, want %q", rigStore.issues[polecatID].Title, title)
+			}
+			if hqStore.issues[polecatID].Title != "town polecat" {
+				t.Fatalf("town store was modified: %q", hqStore.issues[polecatID].Title)
+			}
+		})
 	}
 }
 
