@@ -198,6 +198,10 @@ func getConvoyInfoFromIssue(issueID, cwd string) *ConvoyInfo {
 		return nil
 	}
 
+	return getConvoyInfoFromSourceIssue(issue)
+}
+
+func getConvoyInfoFromSourceIssue(issue *beads.Issue) *ConvoyInfo {
 	attachment := beads.ParseAttachmentFields(issue)
 	if attachment == nil || attachment.ConvoyID == "" {
 		return nil

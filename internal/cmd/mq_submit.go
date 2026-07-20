@@ -139,15 +139,15 @@ func runMqSubmit(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("cannot determine source issue from branch '%s'; use --issue to specify", branch)
 	}
 
-	// Initialize beads for looking up source issue
+	// Initialize current-rig beads for merge-request queue operations, then
+	// resolve the source through town-level routing for source-owned operations.
 	bd := beads.New(cwd)
-	sourceIssue, err := bd.Show(issueID)
+	sourceInfo, err := resolveSubmitSourceIssue(cwd, issueID)
 	if err != nil {
-		return fmt.Errorf("source issue validation failed: source_issue %s could not be resolved: %w", issueID, err)
-	}
-	if err := validateConcreteSourceIssue(issueID, sourceIssue); err != nil {
 		return fmt.Errorf("source issue validation failed: %w", err)
 	}
+	sourceBD := sourceInfo.BD
+	sourceIssue := sourceInfo.Issue
 
 	// Determine target branch
 	// Priority: explicit --epic > formula_vars base_branch > integration branch auto-detect > rig default.
@@ -155,7 +155,7 @@ func runMqSubmit(cmd *cobra.Command, args []string) error {
 	if mqSubmitEpic != "" {
 		// Explicit --epic flag: read stored branch name, fall back to template
 		rigPath := filepath.Join(townRoot, rigName)
-		target = resolveIntegrationBranchName(bd, rigPath, mqSubmitEpic)
+		target = resolveIntegrationBranchName(sourceBD, rigPath, mqSubmitEpic)
 	} else {
 		// Check for explicit --base-branch override in formula vars on the source issue.
 		// When gt sling dispatches with --base-branch, the value is persisted in
@@ -179,7 +179,7 @@ func runMqSubmit(cmd *cobra.Command, args []string) error {
 				refineryEnabled = settings.MergeQueue.IsRefineryIntegrationEnabled()
 			}
 			if refineryEnabled {
-				autoTarget, err := beads.DetectIntegrationBranch(bd, g, issueID)
+				autoTarget, err := beads.DetectIntegrationBranch(sourceBD, g, issueID)
 				if err != nil {
 					// Non-fatal: log and continue with default branch as target
 					fmt.Printf("  %s\n", style.Dim.Render(fmt.Sprintf("(note: %v)", err)))
@@ -203,7 +203,7 @@ func runMqSubmit(cmd *cobra.Command, args []string) error {
 	// steps are complete. This prevents polecats from skipping steps like
 	// self-review, build-check, or state-update.
 	if !mqSubmitSkipDeps && !mqSubmitResubmit && sourceIssue != nil {
-		if err := checkMoleculeStepDeps(bd, sourceIssue); err != nil {
+		if err := checkMoleculeStepDeps(sourceBD, sourceIssue); err != nil {
 			return err
 		}
 	}
@@ -247,7 +247,7 @@ func runMqSubmit(cmd *cobra.Command, args []string) error {
 	}
 
 	if existingMR != nil {
-		if err := validateMergeRequestSource(bd, existingMR, issueID); err != nil {
+		if err := validateMergeRequestSource(existingMR, issueID, sourceIssue); err != nil {
 			return fmt.Errorf("existing merge request validation failed: %w", err)
 		}
 		mrIssue = existingMR
@@ -277,7 +277,7 @@ func runMqSubmit(cmd *cobra.Command, args []string) error {
 		// GH#2599: Back-link source issue to MR bead for discoverability.
 		if issueID != "" {
 			comment := fmt.Sprintf("MR created: %s", mrIssue.ID)
-			if err := bd.AddComment(issueID, comment); err != nil {
+			if err := sourceBD.AddComment(issueID, comment); err != nil {
 				style.PrintWarning("could not back-link source issue %s to MR %s: %v", issueID, mrIssue.ID, err)
 			}
 		}

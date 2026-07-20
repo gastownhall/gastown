@@ -434,12 +434,12 @@ func TestSourceValidationRejectsInternalIssues(t *testing.T) {
 
 func TestValidateMergeRequestSourceRejectsMissingAndMismatchedSource(t *testing.T) {
 	missing := &beads.Issue{ID: "gt-mr", Description: "branch: polecat/test/gt-work\n"}
-	if err := validateMergeRequestSource(nil, missing, "gt-work"); err == nil || !strings.Contains(err.Error(), "missing source_issue") {
+	if err := validateMergeRequestSource(missing, "gt-work", &beads.Issue{ID: "gt-work", Type: "task"}); err == nil || !strings.Contains(err.Error(), "missing source_issue") {
 		t.Fatalf("missing source validation error = %v, want missing source_issue", err)
 	}
 
 	mismatched := &beads.Issue{ID: "gt-mr", Description: "source_issue: gt-other\n"}
-	if err := validateMergeRequestSource(nil, mismatched, "gt-work"); err == nil || !strings.Contains(err.Error(), "does not match expected") {
+	if err := validateMergeRequestSource(mismatched, "gt-work", &beads.Issue{ID: "gt-work", Type: "task"}); err == nil || !strings.Contains(err.Error(), "does not match expected") {
 		t.Fatalf("mismatched source validation error = %v, want mismatch", err)
 	}
 }
