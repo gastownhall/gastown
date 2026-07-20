@@ -136,6 +136,120 @@ func TestBuildExitNotesArgs_UsesAppend(t *testing.T) {
 	}
 }
 
+func TestResolveExitIssueID(t *testing.T) {
+	// Regression coverage for sbx-gastown-5ljh2: the hooked-bead query MUST
+	// precede the loose branch-name heuristic. A foreman/review polecat checks
+	// out the PR head branch (a non-polecat branch); parseBranchName's fallback
+	// regex extracts a BOGUS id from it (feat/external-systems-in-admin →
+	// "external-systems", celandine-work → "celandine-work"). Trusting that id
+	// closed the wrong bead and mis-attributed the exit event (viola/celandine
+	// zombies). The authoritative source is the bead gt sling hooked to the agent.
+
+	// Sentinel funcs that fail the test if a stage that should have been
+	// short-circuited is reached.
+	hookNever := func(t *testing.T) func(string) string {
+		return func(string) string {
+			t.Helper()
+			t.Error("findHooked should not be consulted when --issue is set")
+			return ""
+		}
+	}
+	existsNever := func(t *testing.T) func(string) bool {
+		return func(string) bool {
+			t.Helper()
+			t.Error("exists should not be consulted when a higher-priority source resolved")
+			return false
+		}
+	}
+
+	t.Run("explicit --issue wins over hook and branch", func(t *testing.T) {
+		got, fromHook := resolveExitIssueID(
+			"sbx-gastown-explicit",
+			"feat/external-systems-in-admin", // would parse to a bogus id
+			"gastown-prime/polecats/viola",
+			hookNever(t),
+			existsNever(t),
+		)
+		if got != "sbx-gastown-explicit" || fromHook {
+			t.Fatalf("got (%q, fromHook=%v), want (sbx-gastown-explicit, false)", got, fromHook)
+		}
+	})
+
+	t.Run("hooked bead wins over a branch that parses to a different id", func(t *testing.T) {
+		// The viola/celandine regression: branch parses to "external-systems"
+		// but the agent's real hooked bead is sbx-gastown-332nw.
+		got, fromHook := resolveExitIssueID(
+			"",
+			"feat/external-systems-in-admin",
+			"gastown-prime/polecats/viola",
+			func(agentID string) string {
+				if agentID != "gastown-prime/polecats/viola" {
+					t.Errorf("findHooked got agentID %q", agentID)
+				}
+				return "sbx-gastown-332nw"
+			},
+			existsNever(t), // branch heuristic must never be reached
+		)
+		if got != "sbx-gastown-332nw" || !fromHook {
+			t.Fatalf("got (%q, fromHook=%v), want (sbx-gastown-332nw, true)", got, fromHook)
+		}
+	})
+
+	t.Run("branch-derived id resolving to no bead is rejected", func(t *testing.T) {
+		// No hooked bead; branch parses to a bogus "external-systems" that is not
+		// a real bead → reject and fall through to "" (the "no issue ID detected"
+		// skip), NOT a hard bd-close failure on a nonexistent id.
+		got, fromHook := resolveExitIssueID(
+			"",
+			"feat/external-systems-in-admin",
+			"gastown-prime/polecats/viola",
+			func(string) string { return "" },
+			func(id string) bool {
+				if id != "external-systems" {
+					t.Errorf("exists got id %q, want the bogus branch-derived id", id)
+				}
+				return false
+			},
+		)
+		if got != "" || fromHook {
+			t.Fatalf("got (%q, fromHook=%v), want (\"\", false)", got, fromHook)
+		}
+	})
+
+	t.Run("legacy branch id accepted when it resolves to a real bead", func(t *testing.T) {
+		// No hooked bead, but the branch heuristic yields a real bead → use it
+		// (preserves the legacy polecat/<worker>/<issue> path).
+		got, fromHook := resolveExitIssueID(
+			"",
+			"celandine-work",
+			"gastown-prime/polecats/celandine",
+			func(string) string { return "" },
+			func(id string) bool { return id == "celandine-work" },
+		)
+		if got != "celandine-work" || fromHook {
+			t.Fatalf("got (%q, fromHook=%v), want (celandine-work, false)", got, fromHook)
+		}
+	})
+
+	t.Run("empty sender skips hook lookup, no branch match yields empty", func(t *testing.T) {
+		got, fromHook := resolveExitIssueID(
+			"",
+			"polecat/viola-mk123", // modern branch: parseBranchName returns "" issue
+			"",
+			func(agentID string) string {
+				if agentID != "" {
+					t.Errorf("findHooked got non-empty agentID %q", agentID)
+				}
+				return ""
+			},
+			func(string) bool { return false },
+		)
+		if got != "" || fromHook {
+			t.Fatalf("got (%q, fromHook=%v), want (\"\", false)", got, fromHook)
+		}
+	})
+}
+
 func TestBuildDomainNote_BackwardCompat(t *testing.T) {
 	// Verify backward compatibility: calling with nil wisps produces same
 	// output as the original function (no wisp section).

@@ -85,25 +85,38 @@ func runExit(cmd *cobra.Command, args []string) error {
 		exitFailures = append(exitFailures, reason)
 	}
 
-	// Auto-detect issue from branch name
-	issueID := exitIssue
-	if issueID == "" {
-		issueID = parseBranchName(branch).Issue
-	}
-
-	// Fallback: query for hooked beads assigned to this agent.
-	// Modern polecat branches (polecat/<worker>-<timestamp>) don't embed the
-	// issue ID, so parseBranchName returns "". Query beads directly for
-	// status=hooked + assignee — same pattern gt done uses (hq-l6mm5).
-	if issueID == "" {
-		sender := detectSender()
-		if sender != "" {
-			bd := beads.New(beads.ResolveBeadsDir(townRoot))
-			if hookIssue := findHookedBeadForAgent(bd, sender); hookIssue != "" {
-				issueID = hookIssue
-				fmt.Printf("%s Issue resolved from hooked bead: %s\n", style.Bold.Render("✓"), issueID)
-			}
+	// Resolve the issue this polecat worked on. Order of authority:
+	//   1. Explicit --issue flag (operator/formula-provided).
+	//   2. The bead HOOKED to this agent — authoritative: gt sling assigns it,
+	//      independent of whatever branch we happen to be on.
+	//   3. Branch-name heuristic — LEGACY, and only trusted if it resolves to a
+	//      real bead.
+	//
+	// The hooked-bead query MUST precede the branch heuristic (this used to be
+	// the other way around). parseBranchName's loose fallback regex extracts a
+	// bogus id from non-polecat branches: a foreman/review polecat checks out the
+	// PR head branch (e.g. feat/external-systems-in-admin → "external-systems"),
+	// which is non-empty, so it short-circuited the reliable hooked-bead query.
+	// The bogus id then closed the wrong (nonexistent) bead AND emitted an exit
+	// event the deacon's reaper couldn't attribute to this polecat — so the
+	// polecat's real bead stayed open and it was never reaped (the viola/celandine
+	// zombies). Only the ~2/40 daily exits NOT on a polecat/<worker>-<ts> branch
+	// hit this; every modern polecat branch already fell through to the hook query.
+	//
+	// The ordering + existence-validation logic is factored into resolveExitIssueID
+	// so it can be unit-tested against injected lookups (see exit_test.go).
+	sender := detectSender()
+	findHooked := func(agentID string) string {
+		if agentID == "" {
+			return ""
 		}
+		bd := beads.New(beads.ResolveBeadsDir(townRoot))
+		return findHookedBeadForAgent(bd, agentID)
+	}
+	issueID, issueFromHook := resolveExitIssueID(exitIssue, branch, sender, findHooked,
+		func(id string) bool { return beadExists(townRoot, id) })
+	if issueFromHook {
+		fmt.Printf("%s Issue resolved from hooked bead: %s\n", style.Bold.Render("✓"), issueID)
 	}
 
 	// Determine rig name
@@ -312,6 +325,63 @@ type exitBeadInfo struct {
 	Design      string
 	Title       string
 	Description string
+}
+
+// resolveExitIssueID picks the bead this polecat's exit should act on, in strict
+// order of authority: explicit --issue flag, then the bead hooked to this agent
+// (authoritative — gt sling assigns it regardless of branch), then a LEGACY
+// branch-name heuristic that is only trusted when it resolves to a real bead.
+//
+// findHooked looks up the hooked bead for an agent (empty agentID → ""); exists
+// reports whether a candidate id is a real bead. Both are injected so the
+// resolution ORDER can be unit-tested without live beads/git. It returns the
+// resolved id and whether it came from the hooked-bead query (for the caller's
+// confirmation print).
+//
+// The hooked-bead query MUST precede the branch heuristic: parseBranchName's
+// loose fallback regex extracts a bogus id from non-polecat branches (a
+// foreman/review polecat sitting on a PR head branch, e.g.
+// feat/external-systems-in-admin → "external-systems"), which previously
+// short-circuited the reliable hook query and mis-attributed the exit.
+func resolveExitIssueID(explicit, branch, sender string, findHooked func(agentID string) string, exists func(id string) bool) (issueID string, fromHook bool) {
+	if explicit != "" {
+		return explicit, false
+	}
+	if hookIssue := findHooked(sender); hookIssue != "" {
+		return hookIssue, true
+	}
+	// Legacy branch-name fallback (old polecat/<worker>/<issue> format).
+	// Validate it resolves to a real bead so a bogus regex extraction from a
+	// non-polecat branch never hard-fails the close or mis-attributes the exit.
+	if candidate := parseBranchName(branch).Issue; candidate != "" && exists(candidate) {
+		return candidate, false
+	}
+	return "", false
+}
+
+// beadExists reports whether id resolves to a real bead. Guards the legacy
+// branch-name fallback in runExit: parseBranchName's loose regex can extract a
+// bogus id from a non-polecat branch (e.g. a foreman/review polecat sitting on a
+// PR head branch), and closing a nonexistent bead both hard-fails and emits an
+// exit event the deacon's reaper can't attribute — leaving the polecat un-reaped.
+func beadExists(townRoot, id string) bool {
+	if id == "" {
+		return false
+	}
+	bdCmd := exec.Command("bd", "show", id, "--json")
+	bdCmd.Dir = townRoot
+	bdCmd.Env = append(os.Environ(), "BEADS_DIR="+beads.ResolveBeadsDir(townRoot))
+	out, err := bdCmd.Output()
+	if err != nil || len(out) == 0 {
+		return false
+	}
+	var items []struct {
+		ID string `json:"id"`
+	}
+	if err := json.Unmarshal(out, &items); err != nil {
+		return false
+	}
+	return len(items) > 0 && items[0].ID != ""
 }
 
 // readExitBeadInfo runs `bd show <id> --json` and extracts key fields.
