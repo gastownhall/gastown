@@ -42,12 +42,13 @@ const (
 
 	// doltStateRetries is a reduced retry count for SetAgentStateWithRetry.
 	// Agent state is a monitoring concern, not a correctness requirement (see
-	// comment on SetAgentStateWithRetry). 10 retries with exponential backoff
-	// wastes ~2 minutes on persistent failures, blocking `gt sling` for no
-	// benefit since the caller already treats errors as warn-only.
-	// 3 retries (total backoff ~3.5s) is sufficient to ride out transient
-	// Dolt hiccups without punishing interactive workflows.
-	doltStateRetries = 3
+	// comment on SetAgentStateWithRetry). This is called immediately after
+	// session startup (polecat_spawn.go:465), when Dolt may be under load
+	// or still processing prior operations. The 3-retry limit caused fresh
+	// polecats to remain stuck in "spawning" state due to Dolt timeouts on
+	// high-concurrency dispatches (hq-uhd). Increased to 10 retries to
+	// match the hook retry pattern and provide ~2 minutes for state updates.
+	doltStateRetries = 10
 )
 
 // doltBackoff calculates exponential backoff with ±25% jitter for a given attempt (1-indexed).
