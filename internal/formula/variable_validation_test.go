@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/BurntSushi/toml"
 	"github.com/steveyegge/gastown/internal/constants"
 )
 
@@ -221,13 +222,19 @@ func TestAllEmbeddedFormulas_VariableValidation(t *testing.T) {
 			// Skip formulas that don't parse (may have other issues)
 			continue
 		}
+		var decoded Formula
+		metadata, err := toml.Decode(string(data), &decoded)
+		if err != nil {
+			failures = append(failures, entry.Name()+": "+err.Error())
+			continue
+		}
 
 		if err := f.ValidateTemplateVariables(); err != nil {
 			failures = append(failures, entry.Name()+": "+err.Error())
 		}
 
 		for name, variable := range f.Vars {
-			if variable.Required && variable.Default != "" {
+			if variable.Required && metadata.IsDefined("vars", name, "default") {
 				failures = append(failures, fmt.Sprintf(
 					"%s: variable %q cannot be required and have a default",
 					entry.Name(), name,
