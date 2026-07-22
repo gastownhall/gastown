@@ -1409,6 +1409,23 @@ func TestStop_ClosesLazilyOpenedStores(t *testing.T) {
 	}
 }
 
+func TestEventPollBackoffCapsStoreOpenRetries(t *testing.T) {
+	interval := eventPollInterval
+	want := []time.Duration{
+		10 * time.Second,
+		20 * time.Second,
+		40 * time.Second,
+		eventPollMaxBackoff,
+		eventPollMaxBackoff,
+	}
+	for i, expected := range want {
+		interval = eventPollBackoff(interval)
+		if interval != expected {
+			t.Fatalf("step %d: interval = %v, want %v", i, interval, expected)
+		}
+	}
+}
+
 func TestStop_ClosesMultipleStores(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("skipping on Windows")
