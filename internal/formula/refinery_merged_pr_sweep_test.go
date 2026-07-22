@@ -68,6 +68,21 @@ func TestRefineryPatrolDoesNotUseBranchFormPRLookup(t *testing.T) {
 	}
 }
 
+func TestRefineryPatrolStepInspectionUsesRoutedShow(t *testing.T) {
+	contentBytes, err := formulasFS.ReadFile("formulas/mol-refinery-patrol.formula.toml")
+	if err != nil {
+		t.Fatalf("reading refinery formula: %v", err)
+	}
+	content := string(contentBytes)
+
+	if !strings.Contains(content, "`gt show <step-id>`") {
+		t.Fatal("refinery formula must inspect steps through prefix-aware gt show")
+	}
+	if strings.Contains(content, "`bd show <step-id>`") {
+		t.Fatal("refinery formula must not inspect steps through cwd-dependent bd show")
+	}
+}
+
 func loadRefineryPatrolFormula(t *testing.T) *Formula {
 	t.Helper()
 	content, err := formulasFS.ReadFile("formulas/mol-refinery-patrol.formula.toml")

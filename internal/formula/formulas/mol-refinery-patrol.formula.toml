@@ -42,7 +42,7 @@ fixes the code in-place and resubmits the MR without losing context.
 
 ## CRITICAL: Read Step Instructions Before Acting
 
-Before executing ANY step, you MUST run `bd show <step-id>` and read the full
+Before executing ANY step, you MUST run `gt show <step-id>` and read the full
 description. Steps contain **Config:** values that override default behavior.
 If a config says to skip, you skip. If it specifies a command, you use that
 exact command — not your own assumption. Do NOT guess what a step requires
