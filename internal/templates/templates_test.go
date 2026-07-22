@@ -258,6 +258,34 @@ func TestRenderRole_Refinery_DefaultBranch(t *testing.T) {
 	}
 }
 
+func TestRenderRole_RefineryUsesRoutedStepInspection(t *testing.T) {
+	tmpl, err := New()
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+
+	output, err := tmpl.RenderRole("refinery", RoleData{
+		Role:          "refinery",
+		RigName:       "myrig",
+		TownRoot:      "/test/town",
+		TownName:      "town",
+		WorkDir:       "/test/town/myrig/refinery/rig",
+		DefaultBranch: "main",
+		MayorSession:  "gt-town-mayor",
+		DeaconSession: "gt-town-deacon",
+	})
+	if err != nil {
+		t.Fatalf("RenderRole() error = %v", err)
+	}
+
+	if !strings.Contains(output, "`gt show <step-id>`") {
+		t.Fatal("refinery role must inspect steps through prefix-aware gt show")
+	}
+	if strings.Contains(output, "`bd show <step-id>`") {
+		t.Fatal("refinery role must not inspect steps through cwd-dependent bd show")
+	}
+}
+
 func TestRenderMessage_Spawn(t *testing.T) {
 	tmpl, err := New()
 	if err != nil {
