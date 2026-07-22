@@ -52,3 +52,37 @@ func resolveAgentTrackingBeadsDir() (string, error) {
 	}
 	return beadsDir, nil
 }
+
+// resolveAgentBeadTrackingDir resolves the database that actually contains an
+// agent bead. Patrol commands normally start in a rig checkout, but canonical
+// agent beads may still live in the town database. In that case the ID alone
+// does not carry enough routing information (it commonly has the rig prefix),
+// so probe the cwd-local database first and then the town database.
+func resolveAgentBeadTrackingDir(agentBead string) (string, error) {
+	currentBeadsDir, err := resolveAgentTrackingBeadsDir()
+	if err != nil {
+		return "", err
+	}
+
+	if _, err := getAllAgentLabels(agentBead, currentBeadsDir); err == nil {
+		return currentBeadsDir, nil
+	}
+
+	cwd, err := os.Getwd()
+	if err != nil {
+		return currentBeadsDir, nil
+	}
+	townRoot := beads.FindTownRoot(cwd)
+	if townRoot == "" {
+		return currentBeadsDir, nil
+	}
+	townBeadsDir := beads.ResolveBeadsDir(beads.GetTownBeadsPath(townRoot))
+	if townBeadsDir == "" || filepath.Clean(townBeadsDir) == filepath.Clean(currentBeadsDir) {
+		return currentBeadsDir, nil
+	}
+
+	if _, err := getAllAgentLabels(agentBead, townBeadsDir); err == nil {
+		return townBeadsDir, nil
+	}
+	return currentBeadsDir, nil
+}

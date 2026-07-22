@@ -94,7 +94,7 @@ type agentStateResult struct {
 func runAgentState(cmd *cobra.Command, args []string) error {
 	agentBead := args[0]
 
-	beadsDir, err := resolveAgentTrackingBeadsDir()
+	beadsDir, err := resolveAgentBeadTrackingDir(agentBead)
 	if err != nil {
 		return fmt.Errorf("not in a beads workspace: %w", err)
 	}
