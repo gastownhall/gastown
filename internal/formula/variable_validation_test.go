@@ -1,6 +1,7 @@
 package formula
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -217,12 +218,21 @@ func TestAllEmbeddedFormulas_VariableValidation(t *testing.T) {
 
 		f, err := Parse(data)
 		if err != nil {
-			// Skip formulas that don't parse (may have other issues)
+			failures = append(failures, entry.Name()+": "+err.Error())
 			continue
 		}
 
 		if err := f.ValidateTemplateVariables(); err != nil {
 			failures = append(failures, entry.Name()+": "+err.Error())
+		}
+
+		for name, variable := range f.Vars {
+			if variable.Required && variable.Default != "" {
+				failures = append(failures, fmt.Sprintf(
+					"%s: variable %q cannot be required and have a default",
+					entry.Name(), name,
+				))
+			}
 		}
 	}
 
