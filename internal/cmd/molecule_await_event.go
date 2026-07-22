@@ -389,11 +389,14 @@ func waitForEventFiles(ctx context.Context, eventDir string, contextCheckAfter t
 		return &AwaitEventResult{Reason: "timeout"}, nil
 	}
 
-	// Set up context-yield timer when requested.
-	// A nil channel is never selected, so when contextCheckAfter is zero
-	// the timer case never fires and existing behavior is preserved.
+	// Set up context-yield timer when requested, but only if the full timeout
+	// is significantly longer than the context-check interval. This prevents
+	// context-check from preempting exponential backoff at moderate idle counts.
+	// Context-check is intended for very long waits (e.g., idle 10+), not for
+	// routine backoff tiers (idle 5-7 = 8m-2m timeouts). Only yield if the wait
+	// is at least 2x the context-check interval.
 	var contextYieldC <-chan time.Time
-	if contextCheckAfter > 0 {
+	if contextCheckAfter > 0 && remaining > 2*contextCheckAfter {
 		t := time.NewTimer(contextCheckAfter)
 		defer t.Stop()
 		contextYieldC = t.C

@@ -523,6 +523,59 @@ func TestWaitForEventFilesNoContextYieldWhenZero(t *testing.T) {
 	}
 }
 
+func TestWaitForEventFilesContextYieldOnlyForLongWaits(t *testing.T) {
+	// Regression test for ci-73d: context-check should only fire when the
+	// timeout is significantly longer than the context-check interval (2x).
+	// This prevents context-check from preempting exponential backoff at
+	// moderate idle counts, freezing the idle counter.
+	dir := t.TempDir()
+
+	tests := []struct {
+		name           string
+		timeout        time.Duration
+		contextCheck   time.Duration
+		expectedReason string
+		description    string
+	}{
+		{
+			name:           "short wait (less than 2x context-check)",
+			timeout:        8 * time.Second,
+			contextCheck:   5 * time.Second,
+			expectedReason: "timeout",
+			description:    "8s timeout with 5s context-check: 8 < 10, so no yield",
+		},
+		{
+			name:           "very short wait (less than context-check)",
+			timeout:        3 * time.Second,
+			contextCheck:   5 * time.Second,
+			expectedReason: "timeout",
+			description:    "3s timeout with 5s context-check: 3 < 10, so no yield",
+		},
+		{
+			name:           "long wait (more than 2x context-check)",
+			timeout:        12 * time.Second,
+			contextCheck:   5 * time.Second,
+			expectedReason: "context-yield",
+			description:    "12s timeout with 5s context-check: 12 > 10, so yield at 5s",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ctx, cancel := context.WithTimeout(context.Background(), tt.timeout)
+			defer cancel()
+
+			result, err := waitForEventFiles(ctx, dir, tt.contextCheck)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if result.Reason != tt.expectedReason {
+				t.Errorf("expected reason %q (%s), got %q", tt.expectedReason, tt.description, result.Reason)
+			}
+		})
+	}
+}
+
 func TestEffortLevelContextYield(t *testing.T) {
 	// context-yield must produce EffortLevel "full" so context-check is
 	// not abbreviated.
