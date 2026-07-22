@@ -849,6 +849,7 @@ func runDoltDump(cmd *cobra.Command, args []string) error {
 
 	fmt.Printf("Dolt diagnostic snapshot (non-fatal)\n")
 	fmt.Printf("  Live PID:   %d\n", pid)
+	fmt.Printf("  PID file:   %s\n", config.PidFile)
 	fmt.Printf("  Port:       %d\n", config.Port)
 	fmt.Printf("  Data dir:   %s\n", config.DataDir)
 	fmt.Printf("  Log file:   %s\n", config.LogFile)

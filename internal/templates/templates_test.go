@@ -20,6 +20,26 @@ func TestNew(t *testing.T) {
 	}
 }
 
+func TestTownRootDoltHangDiagnosticsAreNonFatal(t *testing.T) {
+	content := TownRootCLAUDEmd()
+	for _, want := range []string{
+		"gt dolt dump",
+		"gt dolt status",
+		"~/gt/daemon/dolt.pid",
+		"does not signal the process",
+	} {
+		if !strings.Contains(content, want) {
+			t.Errorf("town-root Dolt diagnostics missing %q", want)
+		}
+	}
+	if strings.Contains(content, "~/gt/.dolt-data/dolt.pid") {
+		t.Error("town-root Dolt diagnostics reference the obsolete PID path")
+	}
+	if strings.Contains(content, "kill -QUIT $(") {
+		t.Error("town-root Dolt diagnostics contain an executable SIGQUIT workflow")
+	}
+}
+
 func TestRenderRole_Mayor(t *testing.T) {
 	tmpl, err := New()
 	if err != nil {

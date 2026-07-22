@@ -32,6 +32,10 @@ diagnostics:
 {{cmd}} escalate -s HIGH "Dolt: <describe symptom>"
 ```
 
+The GT-managed PID file is `~/gt/daemon/dolt.pid` for the default town root.
+It does not live under the Dolt data directory. Treat it as metadata only:
+`{{cmd}} dolt dump` resolves the live server PID safely and does not signal the process.
+
 For Dolt outages and non-Dolt GT behavior mismatches, include the RCA capture checklist
 from `docs/dolt-health-guide.md` in the escalation or follow-up bead.
 
