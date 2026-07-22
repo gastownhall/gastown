@@ -3,8 +3,10 @@ package cmd
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -521,6 +523,139 @@ func TestWaitForEventFilesNoContextYieldWhenZero(t *testing.T) {
 	if elapsed > deadline+2*time.Second {
 		t.Errorf("wait took %v; should have returned at ~%v", elapsed, deadline)
 	}
+}
+
+func TestAwaitEventContextYieldPreservesBackoffWindow(t *testing.T) {
+	until := time.Now().Add(2 * time.Second).Unix()
+	log := runAwaitEventBackoffTest(t, []string{"gt:agent", "idle:1", fmt.Sprintf("backoff-until:%d", until)}, "5s", "50ms")
+
+	updates := updateLines(log)
+	if len(updates) == 0 {
+		t.Fatalf("expected bd update calls, log:\n%s", log)
+	}
+	for _, line := range updates {
+		if !strings.Contains(line, "backoff-until:") {
+			t.Fatalf("context-yield cleared backoff window; update %q in log:\n%s", line, log)
+		}
+	}
+}
+
+func TestAwaitEventTimeoutClearsBackoffWindow(t *testing.T) {
+	until := time.Now().Add(2 * time.Second).Unix()
+	log := runAwaitEventBackoffTest(t, []string{"gt:agent", "idle:1", fmt.Sprintf("backoff-until:%d", until)}, "80ms", "")
+
+	updates := updateLines(log)
+	if len(updates) == 0 {
+		t.Fatalf("expected bd update calls, log:\n%s", log)
+	}
+	last := updates[len(updates)-1]
+	if strings.Contains(last, "backoff-until:") {
+		t.Fatalf("timeout did not clear backoff window; last update %q in log:\n%s", last, log)
+	}
+}
+
+func runAwaitEventBackoffTest(t *testing.T, labels []string, timeout, contextCheck string) string {
+	t.Helper()
+
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "mayor"), 0755); err != nil {
+		t.Fatalf("mkdir mayor: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "mayor", "town.json"), []byte(`{"name":"test"}`), 0644); err != nil {
+		t.Fatalf("write town.json: %v", err)
+	}
+	beadsDir := filepath.Join(root, ".beads")
+	if err := os.MkdirAll(beadsDir, 0755); err != nil {
+		t.Fatalf("mkdir .beads: %v", err)
+	}
+	t.Setenv("BEADS_DIR", beadsDir)
+	t.Chdir(root)
+
+	binDir := filepath.Join(root, "bin")
+	if err := os.MkdirAll(binDir, 0755); err != nil {
+		t.Fatalf("mkdir bin: %v", err)
+	}
+	logPath := filepath.Join(root, "bd.log")
+	showJSON, err := json.Marshal([]struct {
+		Labels []string `json:"labels"`
+	}{{Labels: labels}})
+	if err != nil {
+		t.Fatalf("marshal labels: %v", err)
+	}
+	script := fmt.Sprintf(`#!/bin/sh
+printf '%%s\n' "$*" >> %q
+case "$1" in
+show)
+cat <<'JSON'
+%s
+JSON
+;;
+update)
+exit 0
+;;
+*)
+exit 0
+;;
+esac
+`, logPath, string(showJSON))
+	if err := os.WriteFile(filepath.Join(binDir, "bd"), []byte(script), 0755); err != nil {
+		t.Fatalf("write bd stub: %v", err)
+	}
+	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	oldChannel := awaitEventChannel
+	oldTimeout := awaitEventTimeout
+	oldBackoffBase := awaitEventBackoffBase
+	oldBackoffMult := awaitEventBackoffMult
+	oldBackoffMax := awaitEventBackoffMax
+	oldQuiet := awaitEventQuiet
+	oldAgentBead := awaitEventAgentBead
+	oldCleanup := awaitEventCleanup
+	oldContextCheck := awaitEventContextCheckInterval
+	oldJSON := moleculeJSON
+	t.Cleanup(func() {
+		awaitEventChannel = oldChannel
+		awaitEventTimeout = oldTimeout
+		awaitEventBackoffBase = oldBackoffBase
+		awaitEventBackoffMult = oldBackoffMult
+		awaitEventBackoffMax = oldBackoffMax
+		awaitEventQuiet = oldQuiet
+		awaitEventAgentBead = oldAgentBead
+		awaitEventCleanup = oldCleanup
+		awaitEventContextCheckInterval = oldContextCheck
+		moleculeJSON = oldJSON
+	})
+
+	awaitEventChannel = "test"
+	awaitEventTimeout = timeout
+	awaitEventBackoffBase = ""
+	awaitEventBackoffMult = 2
+	awaitEventBackoffMax = ""
+	awaitEventQuiet = true
+	awaitEventAgentBead = "gt-agent"
+	awaitEventCleanup = false
+	awaitEventContextCheckInterval = contextCheck
+	moleculeJSON = false
+
+	if err := runMoleculeAwaitEvent(nil, nil); err != nil {
+		t.Fatalf("runMoleculeAwaitEvent: %v", err)
+	}
+
+	data, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatalf("read bd log: %v", err)
+	}
+	return string(data)
+}
+
+func updateLines(log string) []string {
+	var updates []string
+	for _, line := range strings.Split(log, "\n") {
+		if strings.HasPrefix(line, "update ") {
+			updates = append(updates, line)
+		}
+	}
+	return updates
 }
 
 func TestEffortLevelContextYield(t *testing.T) {
