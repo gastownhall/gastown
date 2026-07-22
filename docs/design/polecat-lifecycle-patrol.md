@@ -68,7 +68,7 @@ The new session discovers its position via:
 ```bash
 gt prime --hook    # Loads role context, reads hook
 bd mol current     # Discovers which step is next
-bd show <step-id>  # Reads step instructions
+gt show <step-id>  # Reads step instructions through prefix-aware routing
 ```
 
 No explicit "handoff payload" is needed. The beads state IS the handoff.
