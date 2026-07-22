@@ -288,6 +288,7 @@ func (b *Beads) createAgentBeadViaStore(ctx context.Context, id, title, descript
 		UpdatedAt:   now,
 		CreatedBy:   actor,
 		Labels:      []string{"gt:agent"},
+		Ephemeral:   true,
 	}
 	if err := store.CreateIssue(ctx, issue, actor); err != nil {
 		return nil, err
