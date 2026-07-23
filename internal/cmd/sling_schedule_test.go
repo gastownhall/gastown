@@ -5,8 +5,68 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/steveyegge/gastown/internal/beads"
+	"github.com/steveyegge/gastown/internal/scheduler/capacity"
 	"github.com/steveyegge/gastown/internal/wisp"
 )
+
+func TestScheduledLocalBaseRoundTripToSpawn(t *testing.T) {
+	townRoot, rigPath, _ := setupMutableBDRawSlingTest(t, "Keep this body.")
+	contextPath := filepath.Join(townRoot, "sling-context.json")
+	t.Setenv("BD_CONTEXT_FILE", contextPath)
+
+	err := scheduleBead("gt-rawrollback", "gastown", ScheduleOptions{
+		Merge:       "local",
+		BaseBranch:  "feature/local-integration",
+		NoConvoy:    true,
+		HookRawBead: true,
+		Force:       true,
+	})
+	if err != nil {
+		t.Fatalf("scheduleBead: %v", err)
+	}
+
+	description, err := os.ReadFile(contextPath)
+	if err != nil {
+		t.Fatalf("read scheduled context: %v", err)
+	}
+	fields := beads.ParseSlingContextFields(string(description))
+	if fields == nil {
+		t.Fatalf("parse scheduled context: %s", description)
+	}
+	if fields.Merge != "local" || fields.BaseBranch != "feature/local-integration" {
+		t.Fatalf("stored context merge/base = %q/%q, want local/feature/local-integration", fields.Merge, fields.BaseBranch)
+	}
+
+	oldSpawn := spawnPolecatForSling
+	t.Cleanup(func() { spawnPolecatForSling = oldSpawn })
+	var gotOpts SlingSpawnOptions
+	spawnPolecatForSling = func(rigName string, opts SlingSpawnOptions) (*SpawnedPolecatInfo, error) {
+		gotOpts = opts
+		return &SpawnedPolecatInfo{
+			RigName:     rigName,
+			PolecatName: "localbase",
+			ClonePath:   rigPath,
+			Pane:        "test-pane",
+		}, nil
+	}
+
+	_, err = dispatchSingleBead(capacity.PendingBead{
+		ID:         "gt-context",
+		WorkBeadID: "gt-rawrollback",
+		TargetRig:  "gastown",
+		Context:    fields,
+	}, townRoot, "test")
+	if err != nil {
+		t.Fatalf("dispatchSingleBead: %v", err)
+	}
+	if !gotOpts.LocalBase {
+		t.Fatal("scheduled local merge did not set SlingSpawnOptions.LocalBase")
+	}
+	if gotOpts.BaseBranch != "feature/local-integration" {
+		t.Fatalf("scheduled spawn base branch = %q, want feature/local-integration", gotOpts.BaseBranch)
+	}
+}
 
 // TestAreScheduledFailClosed verifies that areScheduled fails closed when
 // running outside a town root — all requested IDs should be treated as scheduled.

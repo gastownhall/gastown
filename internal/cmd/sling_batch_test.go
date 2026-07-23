@@ -11,6 +11,51 @@ import (
 	"testing"
 )
 
+func TestBatchSlingPropagatesLocalBaseToSpawn(t *testing.T) {
+	townRoot, rigPath, _ := setupMutableBDRawSlingTest(t, "Keep this body.")
+
+	oldDryRun, oldForce := slingDryRun, slingForce
+	oldHookRaw, oldNoConvoy, oldNoBoot := slingHookRawBead, slingNoConvoy, slingNoBoot
+	oldMerge, oldBaseBranch := slingMerge, slingBaseBranch
+	oldSpawn := spawnPolecatForSling
+	t.Cleanup(func() {
+		slingDryRun, slingForce = oldDryRun, oldForce
+		slingHookRawBead, slingNoConvoy, slingNoBoot = oldHookRaw, oldNoConvoy, oldNoBoot
+		slingMerge, slingBaseBranch = oldMerge, oldBaseBranch
+		spawnPolecatForSling = oldSpawn
+	})
+
+	slingDryRun = false
+	slingForce = true
+	slingHookRawBead = true
+	slingNoConvoy = true
+	slingNoBoot = true
+	slingMerge = "local"
+	slingBaseBranch = "feature/local-integration"
+
+	var gotOpts SlingSpawnOptions
+	spawnPolecatForSling = func(rigName string, opts SlingSpawnOptions) (*SpawnedPolecatInfo, error) {
+		gotOpts = opts
+		return &SpawnedPolecatInfo{
+			RigName:     rigName,
+			PolecatName: "toast",
+			ClonePath:   rigPath,
+			Pane:        "test-pane",
+		}, nil
+	}
+
+	err := runBatchSling([]string{"gt-rawrollback"}, "gastown", filepath.Join(townRoot, ".beads"))
+	if err != nil {
+		t.Fatalf("runBatchSling: %v", err)
+	}
+	if !gotOpts.LocalBase {
+		t.Fatal("batch local merge did not set SlingSpawnOptions.LocalBase")
+	}
+	if gotOpts.BaseBranch != "feature/local-integration" {
+		t.Fatalf("batch spawn base branch = %q, want feature/local-integration", gotOpts.BaseBranch)
+	}
+}
+
 // TestCreateBatchConvoy_CreatesOneConvoyTrackingAllBeads verifies that
 // createBatchConvoy creates exactly one convoy and adds tracking deps for all
 // provided bead IDs. This is the core contract of the N-convoys → 1-convoy change.

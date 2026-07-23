@@ -117,6 +117,19 @@ case "$cmd" in
       esac
     done
     ;;
+  list)
+    printf '[]\n'
+    ;;
+  create)
+    for arg in "$@"; do
+      case "$arg" in
+        --description=*) printf "%s" "${arg#--description=}" > "$BD_CONTEXT_FILE" ;;
+      esac
+    done
+    printf '{"id":"gt-context"}\n'
+    ;;
+  dep)
+    ;;
   version)
     echo "bd test"
     ;;
@@ -964,6 +977,8 @@ exit /b 0
 	prevResolveTargetAgent := resolveTargetAgentFn
 	prevRollback := rollbackSlingArtifactsFn
 	prevHook := hookBeadWithRetryFn
+	prevMerge := slingMerge
+	prevBaseBranch := slingBaseBranch
 	t.Cleanup(func() {
 		slingNoConvoy = prevNoConvoy
 		slingNoBoot = prevNoBoot
@@ -972,12 +987,22 @@ exit /b 0
 		resolveTargetAgentFn = prevResolveTargetAgent
 		rollbackSlingArtifactsFn = prevRollback
 		hookBeadWithRetryFn = prevHook
+		slingMerge = prevMerge
+		slingBaseBranch = prevBaseBranch
 	})
 	slingNoConvoy = true
 	slingNoBoot = true
 	slingHookRawBead = true
+	slingMerge = "local"
+	slingBaseBranch = "feature/local-integration"
 
 	spawnPolecatForSling = func(rigName string, opts SlingSpawnOptions) (*SpawnedPolecatInfo, error) {
+		if !opts.LocalBase {
+			t.Fatal("runSling did not propagate local merge mode to polecat spawn")
+		}
+		if opts.BaseBranch != "feature/local-integration" {
+			t.Fatalf("spawn base branch = %q, want feature/local-integration", opts.BaseBranch)
+		}
 		return &SpawnedPolecatInfo{RigName: rigName, PolecatName: "Toast", ClonePath: filepath.Join(townRoot, "fake-polecat")}, nil
 	}
 	resolveTargetAgentFn = func(target string) (agentID string, pane string, hookRoot string, err error) {
@@ -1853,6 +1878,12 @@ func TestExecuteSlingRawReviewOnlyHookFailureClearsPreHookMetadata(t *testing.T)
 		hookBeadWithRetryWithTownRootFn = prevHook
 	})
 	spawnPolecatForSling = func(rigName string, opts SlingSpawnOptions) (*SpawnedPolecatInfo, error) {
+		if !opts.LocalBase {
+			t.Fatal("executeSling did not propagate local merge mode to polecat spawn")
+		}
+		if opts.BaseBranch != "feature/local-integration" {
+			t.Fatalf("spawn base branch = %q, want feature/local-integration", opts.BaseBranch)
+		}
 		return &SpawnedPolecatInfo{
 			RigName:     rigName,
 			PolecatName: "toast",
@@ -1874,6 +1905,8 @@ func TestExecuteSlingRawReviewOnlyHookFailureClearsPreHookMetadata(t *testing.T)
 		ReviewOnly:  true,
 		NoConvoy:    true,
 		NoBoot:      true,
+		Merge:       "local",
+		BaseBranch:  "feature/local-integration",
 	})
 	if err == nil {
 		t.Fatal("expected hook failure from executeSling")

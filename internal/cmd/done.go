@@ -67,6 +67,7 @@ var (
 	doneResume        bool
 	donePreVerified   bool
 	doneTarget        string
+	doneBaseRef       string
 	doneSkipVerify    bool
 )
 
@@ -87,6 +88,49 @@ func doneContaminationBaseRef(defaultBranch, explicitTarget string) string {
 	}
 
 	return "origin/" + targetBranch
+}
+
+func donePreflightBaseRef(resolvedTarget, explicitBaseRef string) (string, bool) {
+	if explicitBaseRef = strings.TrimSpace(explicitBaseRef); explicitBaseRef != "" {
+		return explicitBaseRef, true
+	}
+	return resolvedTarget, false
+}
+
+func resolveDoneTarget(defaultBranch, explicitTarget, townRoot, rigName, issueID string, sourceIssue *beads.Issue, bd beads.IssueShower, checker beads.BranchChecker) string {
+	target := defaultBranch
+	if explicitTarget != "" {
+		target = explicitTarget
+		fmt.Printf("  Target branch: %s (from --target flag)\n", target)
+		return target
+	}
+
+	if sourceIssue != nil {
+		if af := beads.ParseAttachmentFields(sourceIssue); af != nil {
+			if bb := extractFormulaVar(af.FormulaVars, "base_branch"); bb != "" && bb != defaultBranch {
+				target = bb
+				fmt.Printf("  Target branch override: %s (from formula_vars)\n", target)
+			}
+		}
+	} else if issueID != "" {
+		style.PrintWarning("could not load source issue %s for target branch detection (Dolt/beads lookup failed) — using default branch %s", issueID, defaultBranch)
+	}
+
+	if target == defaultBranch && issueID != "" && bd != nil && checker != nil {
+		refineryEnabled := true
+		settingsPath := filepath.Join(townRoot, rigName, "settings", "config.json")
+		if settings, err := config.LoadRigSettings(settingsPath); err == nil && settings.MergeQueue != nil {
+			refineryEnabled = settings.MergeQueue.IsRefineryIntegrationEnabled()
+		}
+		if refineryEnabled {
+			autoTarget, err := beads.DetectIntegrationBranch(bd, checker, issueID)
+			if err == nil && autoTarget != "" {
+				target = autoTarget
+			}
+		}
+	}
+
+	return target
 }
 
 func shouldUpdateAgentStateOnDone(pushFailed, mrFailed bool) bool {
@@ -660,6 +704,7 @@ func init() {
 	doneCmd.Flags().BoolVar(&doneResume, "resume", false, "Resume from last checkpoint (auto-detected, for Witness recovery)")
 	doneCmd.Flags().BoolVar(&donePreVerified, "pre-verified", false, "Mark MR as pre-verified (polecat ran gates after rebasing onto target)")
 	doneCmd.Flags().StringVar(&doneTarget, "target", "", "Explicit MR target branch (overrides formula_vars and auto-detection)")
+	doneCmd.Flags().StringVar(&doneBaseRef, "base-ref", "", "Explicit ref for commit comparison and preflight rebase (defaults to resolved target)")
 	doneCmd.Flags().BoolVar(&doneSkipVerify, "skip-verify", false, "Skip verified-push checks for audit/test-only completion (recorded on bead)")
 
 	rootCmd.AddCommand(doneCmd)
@@ -944,7 +989,6 @@ func runDone(cmd *cobra.Command, args []string) (retErr error) {
 	if rigCfg, err := rig.LoadRigConfig(filepath.Join(townRoot, rigName)); err == nil && rigCfg.DefaultBranch != "" {
 		defaultBranch = rigCfg.DefaultBranch
 	}
-	baseRef := g.CleanBaseRef("origin", defaultBranch, doneTarget)
 
 	// For COMPLETED, we need an issue ID and branch must not be the default branch
 	var mrID string
@@ -954,6 +998,8 @@ func runDone(cmd *cobra.Command, args []string) (retErr error) {
 	var convoyInfo *ConvoyInfo // Populated if issue is tracked by a convoy
 	var sourceIssueForNoMerge *beads.Issue
 	var sourceBD *beads.Beads
+	target := defaultBranch
+	baseRef := g.CleanBaseRef("origin", defaultBranch, target)
 	if exitType == ExitCompleted {
 		if branch == defaultBranch || branch == "master" {
 			return fmt.Errorf("cannot submit %s/master branch to merge queue", defaultBranch)
@@ -979,19 +1025,6 @@ func runDone(cmd *cobra.Command, args []string) (retErr error) {
 			return fmt.Errorf("cannot complete: uncommitted changes would be lost\nCommit your changes first, or use --status DEFERRED to exit without completing\nUncommitted: %s", workStatus.String())
 		}
 
-		// Check if branch has commits ahead of the clean target base. In fork-backed
-		// rigs this is upstream/main, not the fork's origin/main.
-		aheadCount, err := g.CommitsAhead(baseRef, "HEAD")
-		if err != nil {
-			// Fallback to local branch comparison if origin not available
-			aheadCount, err = g.CommitsAhead(defaultBranch, branch)
-			if err != nil {
-				// Can't determine - assume work exists and continue
-				style.PrintWarning("could not check commits ahead of %s: %v", defaultBranch, err)
-				aheadCount = 1
-			}
-		}
-
 		// Check no_merge or review_only flags on the hooked bead. When set,
 		// this is a non-code task (email, research, analysis, PRD review)
 		// where zero commits is expected.
@@ -1010,6 +1043,25 @@ func runDone(cmd *cobra.Command, args []string) (retErr error) {
 					isNoMergeTask = true
 				}
 				reviewOnlySource = af.ReviewOnly
+			}
+		}
+		target = resolveDoneTarget(defaultBranch, doneTarget, townRoot, rigName, issueID, sourceIssueForNoMerge, sourceBD, g)
+		var hasExplicitBaseRef bool
+		baseRef, hasExplicitBaseRef = donePreflightBaseRef(g.CleanBaseRef("origin", defaultBranch, target), doneBaseRef)
+
+		// Check if branch has commits ahead of the clean target base. In fork-backed
+		// rigs this is upstream/main, not the fork's origin/main.
+		aheadCount, err := g.CommitsAhead(baseRef, "HEAD")
+		if err != nil {
+			if hasExplicitBaseRef {
+				return fmt.Errorf("checking commits ahead of explicit base ref %s: %w", baseRef, err)
+			}
+			// Fallback to local branch comparison if origin not available
+			aheadCount, err = g.CommitsAhead(defaultBranch, branch)
+			if err != nil {
+				// Can't determine - assume work exists and continue
+				style.PrintWarning("could not check commits ahead of %s: %v", defaultBranch, err)
+				aheadCount = 1
 			}
 		}
 
@@ -1077,20 +1129,20 @@ func runDone(cmd *cobra.Command, args []string) (retErr error) {
 					closeReason := "Completed with no code changes (already fixed or already merged)"
 					noMRCommitSHA, _ := g.Rev("HEAD")
 					if doneSkipVerify {
-						noteVerifiedPushSkipped(bd, cwd, issueID, defaultBranch, noMRCommitSHA, "--skip-verify on no-MR close")
+						noteVerifiedPushSkipped(bd, cwd, issueID, target, noMRCommitSHA, "--skip-verify on no-MR close")
 						if noMRCommitSHA != "" {
-							closeReason = fmt.Sprintf("%s\nskip_verify: true\ntarget_branch: %s\ncommit_sha: %s", closeReason, defaultBranch, noMRCommitSHA)
+							closeReason = fmt.Sprintf("%s\nskip_verify: true\ntarget_branch: %s\ncommit_sha: %s", closeReason, target, noMRCommitSHA)
 						}
 					} else if !isNoMergeTask {
 						if g.ForkBackedRemote("origin") {
 							return fmt.Errorf("cannot close no-MR code bead in fork/upstream mode: %s has no commits ahead of %s; use the fork PR flow instead", branch, baseRef)
 						}
-						if verifyErr := g.VerifyPushedCommitReachableFromPushTarget("origin", defaultBranch, noMRCommitSHA); verifyErr != nil {
-							noteVerifiedPushFailure(bd, cwd, issueID, defaultBranch, noMRCommitSHA, verifyErr)
+						if verifyErr := g.VerifyPushedCommitReachableFromPushTarget("origin", target, noMRCommitSHA); verifyErr != nil {
+							noteVerifiedPushFailure(bd, cwd, issueID, target, noMRCommitSHA, verifyErr)
 							return fmt.Errorf("cannot close no-MR code bead: %w", verifyErr)
 						}
 						if noMRCommitSHA != "" {
-							closeReason = fmt.Sprintf("%s\ntarget_branch: %s\ncommit_sha: %s", closeReason, defaultBranch, noMRCommitSHA)
+							closeReason = fmt.Sprintf("%s\ntarget_branch: %s\ncommit_sha: %s", closeReason, target, noMRCommitSHA)
 						}
 					}
 					// G15 fix: Force-close bypasses molecule dependency checks.
@@ -1130,9 +1182,6 @@ func runDone(cmd *cobra.Command, args []string) (retErr error) {
 		// the auto-rebase below) sees the current clean base. In fork-backed rigs,
 		// that base is upstream/main, not the fork's origin/main.
 		contaminationBase := baseRef
-		if doneTarget != "" && doneTarget != defaultBranch {
-			contaminationBase = doneContaminationBaseRef(defaultBranch, doneTarget)
-		}
 		fetchRemote := git.RemoteForRef(contaminationBase)
 		if fetchRemote == "" {
 			fetchRemote = "origin"
@@ -1606,48 +1655,6 @@ func runDone(cmd *cobra.Command, args []string) (retErr error) {
 			}
 		}
 
-		// Determine target branch for the MR.
-		// Priority: explicit --target flag > formula_vars base_branch > integration branch auto-detect > rig default.
-		target := defaultBranch
-		explicitTarget := false
-
-		// 1. Explicit --target flag (highest priority — polecat knows its base branch).
-		// This is the most reliable path: the formula passes {{base_branch}} directly,
-		// avoiding any dependency on bd.Show() or Dolt availability.
-		if doneTarget != "" {
-			target = doneTarget
-			explicitTarget = true
-			fmt.Printf("  Target branch: %s (from --target flag)\n", target)
-		}
-
-		// 2. Check for --base-branch override in formula vars (stored on bead at sling time).
-		// Fallback for polecats dispatched before --target flag existed, or when
-		// the formula doesn't pass --target explicitly.
-		if !explicitTarget && target == defaultBranch && sourceIssueForNoMerge != nil {
-			if af := beads.ParseAttachmentFields(sourceIssueForNoMerge); af != nil {
-				if bb := extractFormulaVar(af.FormulaVars, "base_branch"); bb != "" && bb != defaultBranch {
-					target = bb
-					fmt.Printf("  Target branch override: %s (from formula_vars)\n", target)
-				}
-			}
-		}
-
-		// 3. Auto-detect integration branch from epic hierarchy (if enabled).
-		// Only overrides if no explicit target was set above.
-		if !explicitTarget && target == defaultBranch {
-			refineryEnabled := true
-			settingsPath := filepath.Join(townRoot, rigName, "settings", "config.json")
-			if settings, err := config.LoadRigSettings(settingsPath); err == nil && settings.MergeQueue != nil {
-				refineryEnabled = settings.MergeQueue.IsRefineryIntegrationEnabled()
-			}
-			if refineryEnabled {
-				autoTarget, err := beads.DetectIntegrationBranch(sourceBD, g, issueID)
-				if err == nil && autoTarget != "" {
-					target = autoTarget
-				}
-			}
-		}
-
 		// Get source issue for priority inheritance
 		var priority int
 		if donePriority >= 0 {
@@ -1746,7 +1753,7 @@ func runDone(cmd *cobra.Command, args []string) (retErr error) {
 				description += fmt.Sprintf("\npre_verified_at: %s", time.Now().UTC().Format(time.RFC3339))
 				// Capture current clean target HEAD as the verified base.
 				// The polecat rebased onto this SHA before running gates.
-				verifiedBaseRef := g.CleanBaseRef("origin", defaultBranch, target)
+				verifiedBaseRef := baseRef
 				if verifiedBase, baseErr := g.Rev(verifiedBaseRef); baseErr == nil {
 					description += fmt.Sprintf("\npre_verified_base: %s", verifiedBase)
 				} else {

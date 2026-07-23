@@ -37,6 +37,7 @@ const nudgeLockTimeout = 30 * time.Second
 
 // validSessionNameRe validates session names to prevent shell injection
 var validSessionNameRe = regexp.MustCompile(`^[a-zA-Z0-9_-]+$`)
+var tmuxVersionRe = regexp.MustCompile(`tmux (?:next-)?([0-9]+)\.([0-9]+)`)
 
 // Common errors
 var (
@@ -1583,6 +1584,177 @@ func (t *Tmux) sendEnterVerified(target string) error {
 	return fmt.Errorf("nudge Enter not processed after %d retries: pane content unchanged", maxRetries)
 }
 
+// sendEnterViaControlClient routes Enter through tmux's client key table.
+// Copilot CLI ignores Enter injected directly into a detached pane, while the
+// same key delivered through an attached client is handled like physical input.
+func (t *Tmux) sendEnterViaControlClient(session, target string) error {
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+
+	if err := t.requireControlClientSubmit(ctx); err != nil {
+		return err
+	}
+	position, err := t.runContext(ctx, "display-message", "-t", target, "-p", "#{window_index}\t#{pane_index}\t#{pane_id}")
+	if err != nil {
+		return fmt.Errorf("resolve control-client target %q: %w", target, err)
+	}
+	position = strings.TrimSpace(position)
+	if parts := strings.Split(position, "\t"); len(parts) != 3 || !isTmuxIndex(parts[0]) || !isTmuxIndex(parts[1]) || !strings.HasPrefix(parts[2], "%") {
+		return fmt.Errorf("resolve control-client target %q: unexpected pane position %q", target, position)
+	}
+
+	helperSession := fmt.Sprintf("gt-submit-%d-%d", os.Getpid(), time.Now().UnixNano())
+	if _, err := t.runContext(ctx, "new-session", "-d", "-s", helperSession, "sleep 5"); err != nil {
+		return fmt.Errorf("create control-client session: %w", err)
+	}
+	defer func() {
+		cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cleanupCancel()
+		_, _ = t.runContext(cleanupCtx, "kill-session", "-t", "="+helperSession)
+	}()
+	positionParts := strings.Split(position, "\t")
+	helperWindowIndex, err := t.runContext(ctx, "display-message", "-t", helperSession, "-p", "#{window_index}")
+	if err != nil {
+		return fmt.Errorf("resolve control-client helper window: %w", err)
+	}
+	helperWindowIndex = strings.TrimSpace(helperWindowIndex)
+	if !isTmuxIndex(helperWindowIndex) {
+		return fmt.Errorf("resolve control-client helper window: unexpected index %q", helperWindowIndex)
+	}
+	helperWindow := helperSession + ":" + helperWindowIndex
+	if _, err := t.runContext(ctx, "link-window", "-k", "-s", target, "-t", helperWindow); err != nil {
+		return fmt.Errorf("link control-client target window: %w", err)
+	}
+	helperTarget := helperWindow + "." + positionParts[1]
+	if _, err := t.runContext(ctx, "select-window", "-t", helperWindow); err != nil {
+		return fmt.Errorf("select linked control-client window: %w", err)
+	}
+
+	cmd := t.commandContext(ctx,
+		"-C", "attach-session",
+		"-E",
+		"-f", "active-pane,ignore-size,no-output",
+		"-t", helperSession,
+	)
+	stdin, err := cmd.StdinPipe()
+	if err != nil {
+		return fmt.Errorf("create tmux control client stdin: %w", err)
+	}
+	var output bytes.Buffer
+	cmd.Stdout = &output
+	cmd.Stderr = &output
+	if err := cmd.Start(); err != nil {
+		_ = stdin.Close()
+		return fmt.Errorf("start tmux control client: %w", err)
+	}
+
+	waitCh := make(chan error, 1)
+	go func() { waitCh <- cmd.Wait() }()
+	closeClient := func() error {
+		_ = stdin.Close()
+		select {
+		case err := <-waitCh:
+			if err != nil && ctx.Err() == nil {
+				return fmt.Errorf("tmux control client exited: %w (%s)", err, strings.TrimSpace(output.String()))
+			}
+			return nil
+		case <-ctx.Done():
+			return fmt.Errorf("wait for tmux control client exit: %w", ctx.Err())
+		}
+	}
+
+	for {
+		clients, listErr := t.runContext(ctx, "list-clients", "-F", "#{client_pid}\t#{client_control_mode}")
+		if listErr == nil && controlClientRegistered(clients, cmd.Process.Pid) {
+			break
+		}
+		select {
+		case waitErr := <-waitCh:
+			_ = stdin.Close()
+			return fmt.Errorf("tmux control client exited before registration: %v (%s)", waitErr, strings.TrimSpace(output.String()))
+		case <-ctx.Done():
+			_ = closeClient()
+			return fmt.Errorf("wait for tmux control client: %w", ctx.Err())
+		case <-time.After(25 * time.Millisecond):
+		}
+	}
+
+	if _, err := fmt.Fprintf(stdin, "select-pane -t %s\n", helperTarget); err != nil {
+		_ = closeClient()
+		return fmt.Errorf("target tmux control client at %q: %w", helperTarget, err)
+	}
+	if _, err := fmt.Fprintln(stdin, "send-keys -K Enter"); err != nil {
+		_ = closeClient()
+		return fmt.Errorf("send Enter through tmux control client: %w", err)
+	}
+
+	// send-keys -K queues the key on the client command queue. Keep the client
+	// alive briefly so the queued key reaches the pane before EOF detaches it.
+	time.Sleep(100 * time.Millisecond)
+	return closeClient()
+}
+
+func controlClientRegistered(clients string, pid int) bool {
+	wantPID := strconv.Itoa(pid)
+	for _, line := range strings.Split(clients, "\n") {
+		fields := strings.Split(strings.TrimSpace(line), "\t")
+		if len(fields) == 2 && fields[0] == wantPID && fields[1] == "1" {
+			return true
+		}
+	}
+	return false
+}
+
+func (t *Tmux) requireControlClientSubmit(ctx context.Context) error {
+	cmd := exec.CommandContext(ctx, "tmux", "-V")
+	output, err := cmd.Output()
+	if err != nil {
+		return fmt.Errorf("detect tmux version for Copilot submit: %w", err)
+	}
+	version := strings.TrimSpace(string(output))
+	if !tmuxSupportsControlClientSubmit(version) {
+		return fmt.Errorf("Copilot nudge submission requires tmux 3.4 or newer (found %q)", version)
+	}
+	return nil
+}
+
+func tmuxSupportsControlClientSubmit(version string) bool {
+	match := tmuxVersionRe.FindStringSubmatch(version)
+	if len(match) != 3 {
+		return false
+	}
+	major, majorErr := strconv.Atoi(match[1])
+	minor, minorErr := strconv.Atoi(match[2])
+	if majorErr != nil || minorErr != nil {
+		return false
+	}
+	return major > 3 || (major == 3 && minor >= 4)
+}
+
+func (t *Tmux) sendEnterForSession(session, target string) error {
+	if session != "" && t.shouldSkipEscapeForSession(session) {
+		return t.sendEnterViaControlClient(session, target)
+	}
+	return t.sendEnterVerified(target)
+}
+
+func (t *Tmux) sessionForTarget(target string) string {
+	out, err := t.run("display-message", "-t", target, "-p", "#{session_name}")
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(out)
+}
+
+func (t *Tmux) requireCopilotSubmitSupport(session string) error {
+	if session == "" || !t.shouldSkipEscapeForSession(session) {
+		return nil
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	return t.requireControlClientSubmit(ctx)
+}
+
 // adaptiveTextDelay returns the post-text-delivery delay for a message.
 // Base 500ms + 25ms per chunk beyond the first, capped at 2s.
 // Longer messages need more time for tmux to process all chunks under load.
@@ -1772,6 +1944,15 @@ func isTmuxIndex(value string) bool {
 	return err == nil && n >= 0
 }
 
+func (t *Tmux) shouldSkipEscapeForSession(session string) bool {
+	for _, processName := range t.resolveSessionProcessNames(session) {
+		if strings.TrimSpace(processName) == "copilot" {
+			return true
+		}
+	}
+	return false
+}
+
 // NudgeSessionWithOpts is like NudgeSession but accepts delivery options.
 // See NudgeOpts for available options.
 func (t *Tmux) NudgeSessionWithOpts(session, message string, opts NudgeOpts) error {
@@ -1801,6 +1982,9 @@ func (t *Tmux) NudgeSessionWithOpts(session, message string, opts NudgeOpts) err
 	if agentPane, err := t.FindAgentPane(session); err == nil && agentPane != "" {
 		target = t.canonicalPaneTarget(session, agentPane)
 	}
+	if err := t.requireCopilotSubmitSupport(session); err != nil {
+		return err
+	}
 
 	// 0. Pre-delivery: dismiss Rewind menu if the session is stuck in it.
 	// A previous nudge or user action may have triggered Claude Code's
@@ -1824,8 +2008,7 @@ func (t *Tmux) NudgeSessionWithOpts(session, message string, opts NudgeOpts) err
 		// Auto-skip Escape for Copilot CLI sessions. Escape cancels in-flight
 		// generation in Copilot CLI (like Gemini), leaving the nudge text
 		// stranded in the input field without Enter being processed. (hq-isz)
-		agentType, _ := t.GetEnvironment(session, "GT_AGENT")
-		if agentType == "copilot" {
+		if t.shouldSkipEscapeForSession(session) {
 			opts.SkipEscape = true
 		}
 	}
@@ -1871,7 +2054,7 @@ func (t *Tmux) NudgeSessionWithOpts(session, message string, opts NudgeOpts) err
 	// 7. Submit with verification — confirms Enter was processed and the
 	// message actually left the composer instead of being stranded by a
 	// swallowed carriage return. (GH#gt-0b5, PR #4461 replacement)
-	if err := t.submitComposer(target, sanitized, readyPromptPrefixForSession(t, session)); err != nil {
+	if err := t.submitComposer(session, target, sanitized, readyPromptPrefixForSession(t, session)); err != nil {
 		return fmt.Errorf("nudge to session %q: %w", session, err)
 	}
 
@@ -1898,6 +2081,12 @@ func (t *Tmux) NudgePane(pane, message string) error {
 	}
 	defer releaseNudgeLock(pane)
 
+	session := t.sessionForTarget(pane)
+	if err := t.requireCopilotSubmitSupport(session); err != nil {
+		return err
+	}
+	skipEscape := session != "" && t.shouldSkipEscapeForSession(session)
+
 	// 0. Pre-delivery: dismiss Rewind menu if active. (GH#gt-8el)
 	if t.isInRewindMode(pane) {
 		t.dismissRewindMode(pane)
@@ -1914,7 +2103,7 @@ func (t *Tmux) NudgePane(pane, message string) error {
 	sanitized := sanitizeNudgeMessage(message)
 	// Snapshot before typing the nudge so the message text itself cannot look
 	// like the agent's busy indicator.
-	sendEscape := t.shouldSendEscape(pane)
+	sendEscape := !skipEscape && t.shouldSendEscape(pane)
 
 	// 3. Send text via send-keys -l. Messages > 512 bytes are chunked
 	//    with 10ms inter-chunk delays to avoid argument length limits.
@@ -1944,7 +2133,7 @@ func (t *Tmux) NudgePane(pane, message string) error {
 	// 7. Submit with verification — confirms Enter was processed and the
 	// message actually left the composer instead of being stranded by a
 	// swallowed carriage return. (GH#gt-0b5, PR #4461 replacement)
-	if err := t.submitComposer(pane, sanitized, DefaultReadyPromptPrefix); err != nil {
+	if err := t.submitComposer(session, pane, sanitized, DefaultReadyPromptPrefix); err != nil {
 		return fmt.Errorf("nudge to pane %q: %w", pane, err)
 	}
 
@@ -3277,9 +3466,9 @@ func matchesPromptPrefix(line, readyPromptPrefix string) bool {
 // renders in its status bar while actively generating. Detection of "is the
 // agent working?" scrapes the pane for any of these (see hasBusyIndicator), and
 // that signal underpins IsIdle, WaitForIdle, and the nudge Escape-suppression in
-// shouldSendEscape. Claude Code, Codex, and Gemini all surface "esc to
-// interrupt"; if an agent uses different wording, add it here — that is the only
-// place that needs to change.
+// shouldSendEscape. Agent TUIs surface variants such as "esc to interrupt",
+// "esc interrupt", and "esc stop agents"; if an agent uses different wording,
+// add it here — that is the only place that needs to change.
 //
 // FRAGILITY (gastownhall/gastown#4240): this couples to upstream TUI status
 // text. Scraping the status bar cannot detect a silent upstream rename on its
@@ -3289,7 +3478,7 @@ func matchesPromptPrefix(line, readyPromptPrefix string) bool {
 // change is intentional rather than accidental. The idle side is already
 // centralized via the agent presets' ReadyPromptPrefix; this is its busy-side
 // counterpart.
-var busyIndicators = []string{"esc to interrupt"}
+var busyIndicators = []string{"esc to interrupt", "esc interrupt", "esc stop agents"}
 
 func hasBusyIndicator(line string) bool {
 	trimmed := strings.TrimSpace(line)

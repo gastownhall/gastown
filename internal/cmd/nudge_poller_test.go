@@ -28,3 +28,11 @@ func TestShouldSkipDrainUntilIdle(t *testing.T) {
 		})
 	}
 }
+
+func TestShouldRequireIdleForCopilotWithoutReadyPrefix(t *testing.T) {
+	t.Parallel()
+
+	if !shouldRequireIdle("copilot", "") {
+		t.Fatal("Copilot pollers must wait for idle even without a configured ready prompt prefix")
+	}
+}

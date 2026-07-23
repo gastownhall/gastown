@@ -1514,6 +1514,26 @@ func TestAddWithOptions_UsesCanonicalOriginDefaultBranch(t *testing.T) {
 	}
 }
 
+func TestAddWithOptions_UsesExplicitLocalBaseRef(t *testing.T) {
+	mgr, mayorRig := setupCanonicalBranchManagerTest(t)
+	featureSHA := createStalePolecatCommit(t, mayorRig, "main", "feature/shared-base")
+
+	polecat, err := mgr.AddWithOptions("toast", AddOptions{
+		BaseBranch: "refs/heads/feature/shared-base",
+	})
+	if err != nil {
+		t.Fatalf("AddWithOptions: %v", err)
+	}
+
+	gotSHA, err := git.NewGit(polecat.ClonePath).Rev("HEAD")
+	if err != nil {
+		t.Fatalf("resolve fresh polecat HEAD: %v", err)
+	}
+	if gotSHA != featureSHA {
+		t.Fatalf("fresh polecat HEAD = %s, want local feature base %s", gotSHA, featureSHA)
+	}
+}
+
 func TestAllocateAndAdd_RunsWispSetupCommand(t *testing.T) {
 	mgr, _ := setupCanonicalBranchManagerTest(t)
 	writeWispSetupCommand(t, mgr, setupCommandWriteMarker("setup-marker"))
@@ -1574,6 +1594,35 @@ func TestReuseIdlePolecat_RunsSetupCommand(t *testing.T) {
 	}
 	if got := strings.TrimSpace(string(data)); got != "setup" {
 		t.Fatalf("reuse setup marker = %q, want setup", got)
+	}
+}
+
+func TestReuseIdlePolecat_UsesExplicitLocalBaseRef(t *testing.T) {
+	mgr, mayorRig := setupCanonicalBranchManagerTest(t)
+	featureSHA := createStalePolecatCommit(t, mayorRig, "main", "feature/shared-base")
+
+	polecat, err := mgr.AddWithOptions("toast", AddOptions{})
+	if err != nil {
+		t.Fatalf("AddWithOptions: %v", err)
+	}
+	if err := git.NewGit(polecat.ClonePath).CleanForce(); err != nil {
+		t.Fatalf("clean idle polecat: %v", err)
+	}
+
+	reused, err := mgr.ReuseIdlePolecat("toast", AddOptions{
+		HookBead:   "gt-next",
+		BaseBranch: "refs/heads/feature/shared-base",
+	})
+	if err != nil {
+		t.Fatalf("ReuseIdlePolecat: %v", err)
+	}
+
+	gotSHA, err := git.NewGit(reused.ClonePath).Rev("HEAD")
+	if err != nil {
+		t.Fatalf("resolve reused polecat HEAD: %v", err)
+	}
+	if gotSHA != featureSHA {
+		t.Fatalf("reused polecat HEAD = %s, want local feature base %s", gotSHA, featureSHA)
 	}
 }
 

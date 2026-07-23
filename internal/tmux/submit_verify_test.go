@@ -81,8 +81,23 @@ func TestAnalyzeSubmission(t *testing.T) {
 	}{
 		{
 			name:    "normal text beats stale busy indicator",
-			content: "transcript\n❯ resume the patrol\n· Thinking... (esc to interrupt)",
+			content: "· Thinking... (esc to interrupt)\ntranscript\n❯ resume the patrol",
 			want:    probeStranded,
+		},
+		{
+			name:    "live busy indicator beats submitted prompt history",
+			content: "transcript\n❯ resume the patrol\n· Working (esc interrupt)",
+			want:    probeTurnStarted,
+		},
+		{
+			name:    "live busy indicator does not hide stranded active composer",
+			content: "transcript\n────────────────\n❯ resume the patrol\n────────────────\n◉ Working · esc interrupt",
+			want:    probeStranded,
+		},
+		{
+			name:    "busy marker typed in composer remains stranded",
+			content: "transcript\n❯ investigate esc interrupt handling",
+			want:    probeComposerDirty,
 		},
 		{
 			name:    "busy without composer means turn started",

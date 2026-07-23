@@ -37,6 +37,7 @@ stale, the refinery falls through to normal gate execution.
 |----------|--------|-------------|
 | issue | hook_bead | The issue ID you're assigned to work on |
 | base_branch | sling vars | The base branch to rebase on (default: main) |
+| base_ref | sling vars | The resolved local or remote ref to rebase on (default: origin/main) |
 | setup_command | rig config | Setup/install command (e.g., `pnpm install`). Empty = skip. |
 | typecheck_command | rig config | Type check command (e.g., `tsc --noEmit`). Empty = skip. |
 | test_command | rig config | Test command. Empty = skip. Rig must configure for its language. |
@@ -52,7 +53,7 @@ stale, the refinery falls through to normal gate execution.
 | Context filling | Use gt handoff to cycle to fresh session |
 | Unsure what to do | Mail Witness, don't guess |"""
 formula = "mol-polecat-work"
-version = 11
+version = 12
 
 [[steps]]
 id = "load-context"
@@ -94,7 +95,7 @@ If a prior branch exists, check it out instead of creating a new one:
 ```bash
 git fetch origin
 git branch -a | grep <branch-from-notes>
-# If it exists: git checkout <branch> && git rebase origin/{{base_branch}}
+# If it exists: git checkout <branch> && git rebase {{base_ref}}
 ```
 
 This lets you make a targeted fix rather than starting from scratch.
@@ -124,7 +125,7 @@ id = "branch-setup"
 title = "Set up working branch"
 needs = ["load-context"]
 description = """
-Ensure you're on a FRESH branch named for THIS bead, based on latest origin/{{base_branch}}.
+Ensure you're on a FRESH branch named for THIS bead, based on {{base_ref}}.
 
 **The branch name is load-bearing metadata.** `gt done` infers the MR's
 source_issue from the bead-id embedded in your branch name. A reused branch
@@ -153,7 +154,7 @@ git fetch origin
 git branch -r | grep <prior-branch>
 # If found, check it out:
 git checkout -b <prior-branch> origin/<prior-branch>
-git rebase origin/{{base_branch}}
+git rebase {{base_ref}}
 ```
 
 This exception applies ONLY when the prior branch is for {{issue}}. A branch
@@ -162,7 +163,7 @@ from a different bead is never reusable.
 **3. Otherwise, create a fresh branch NAMED FOR THE HOOKED BEAD:**
 ```bash
 git fetch origin
-git checkout -b "polecat/<name>/{{issue}}+$(openssl rand -hex 3)" origin/{{base_branch}}
+git checkout -b "polecat/<name>/{{issue}}+$(openssl rand -hex 3)" {{base_ref}}
 ```
 
 The format is `polecat/<your-name>/<bead-id>+<short-unique-suffix>`. The
@@ -189,7 +190,7 @@ git checkout -- .
 **5. Sync with {{base_branch}}:**
 ```bash
 git fetch origin
-git rebase origin/{{base_branch}}      # Get latest, rebase your branch
+git rebase {{base_ref}}      # Rebase onto the resolved dispatch base
 ```
 
 If rebase conflicts:
@@ -206,7 +207,7 @@ If setup_command is set, run it to install dependencies:
 This ensures dependencies are installed before you start work.
 Empty setup_command means "not configured" — skip this step.
 
-**Exit criteria:** You're on a clean feature branch whose name embeds {{issue}}, rebased on latest {{base_branch}}, dependencies installed."""
+**Exit criteria:** You're on a clean feature branch whose name embeds {{issue}}, rebased on {{base_ref}}, dependencies installed."""
 
 [[steps]]
 id = "implement"
@@ -289,7 +290,7 @@ Tried: <what you've attempted>"
 ```
 
 **Exit criteria (HARD GATE):** Implementation complete AND code committed to git.
-- Code tasks: `git status` shows clean working tree, `git log origin/{{base_branch}}..HEAD` shows at least 1 commit
+- Code tasks: `git status` shows clean working tree, `git log {{base_ref}}..HEAD` shows at least 1 commit
 - Report tasks: all findings persisted to bead via --notes or --design
 Do NOT proceed to the next step with uncommitted changes."""
 
@@ -320,7 +321,7 @@ git add -A && git commit -m "<type>: <descriptive message> ({{issue}})"
 
 **4. VERIFY commits exist (HARD GATE — do NOT close this step without passing):**
 ```bash
-git log origin/{{base_branch}}..HEAD --oneline
+git log {{base_ref}}..HEAD --oneline
 ```
 
 This MUST show at least 1 commit. If it shows NOTHING:
@@ -346,7 +347,7 @@ If the bead is `review_only: true`, also verify a fresh assignee-authored
 If findings/evidence are persisted, proceed to review. Report-only tasks with
 findings persisted can skip commit verification.
 
-**Exit criteria:** Working tree clean AND either (a) at least 1 commit ahead of origin/{{base_branch}}, or (b) report-only task with findings persisted to bead."""
+**Exit criteria:** Working tree clean AND either (a) at least 1 commit ahead of {{base_ref}}, or (b) report-only task with findings persisted to bead."""
 
 [[steps]]
 id = "self-review"
@@ -367,8 +368,8 @@ and specific fix suggestions. Fix any CRITICAL or MAJOR issues before proceeding
 
 **1. Review the diff:**
 ```bash
-git diff origin/{{base_branch}}...HEAD     # All changes vs {{base_branch}}
-git log --oneline origin/{{base_branch}}..HEAD  # All commits
+git diff {{base_ref}}...HEAD     # All changes vs {{base_branch}}
+git log --oneline {{base_ref}}..HEAD  # All commits
 ```
 
 **2. Check for common issues:**
@@ -386,7 +387,7 @@ Don't just note them - fix them now. Amend or add commits as needed.
 
 **4. Verify no unintended changes:**
 ```bash
-git diff --stat origin/{{base_branch}}...HEAD
+git diff --stat {{base_ref}}...HEAD
 # Only files relevant to {{issue}} should appear
 ```
 
@@ -461,8 +462,8 @@ instead of minutes).
 
 **1. Fetch and rebase onto target:**
 ```bash
-git fetch origin {{base_branch}}
-git rebase origin/{{base_branch}}
+git fetch origin
+git rebase {{base_ref}}
 ```
 
 If rebase conflicts:
@@ -508,7 +509,7 @@ that you ran the full gate suite on a rebased branch, enabling fast-path merge.
 project, you may skip this step and use `gt done` without --pre-verified.
 The refinery will run gates normally (slower but still correct).
 
-**Exit criteria:** Branch rebased onto latest origin/{{base_branch}}, all configured gates pass."""
+**Exit criteria:** Branch rebased onto {{base_ref}}, all configured gates pass."""
 
 [[steps]]
 id = "submit-and-exit"
@@ -526,7 +527,7 @@ Once you run `gt done`, you're gone. The command:
 
 **Pre-flight: Verify you have actual work to submit (HARD GATE):**
 ```bash
-git log origin/{{base_branch}}..HEAD --oneline
+git log {{base_ref}}..HEAD --oneline
 ```
 This MUST show at least 1 commit. If it shows nothing, do NOT run `gt done`.
 `gt done` will reject zero-commit branches for polecats.
@@ -534,10 +535,10 @@ This MUST show at least 1 commit. If it shows nothing, do NOT run `gt done`.
 **Run gt done:**
 ```bash
 # For code tasks with pre-verification (recommended — enables fast-path merge):
-gt done --pre-verified --target {{base_branch}}
+gt done --pre-verified --target {{base_branch}} --base-ref {{base_ref}}
 
 # For code tasks without pre-verification (gates skipped or failed):
-gt done --target {{base_branch}}
+gt done --target {{base_branch}} --base-ref {{base_ref}}
 
 # For report-only tasks (no commits — audits, reviews, research):
 gt done --status DEFERRED
@@ -573,6 +574,10 @@ required = true
 [vars.base_branch]
 description = "The base branch to rebase on and compare against (e.g., main, integration/epic-id)"
 default = "main"
+
+[vars.base_ref]
+description = "The resolved local or remote ref to rebase on (e.g., origin/main, refs/heads/integration/epic-id)"
+default = "origin/main"
 
 [vars.setup_command]
 description = "Setup/install command (e.g., pnpm install). Empty = skip."

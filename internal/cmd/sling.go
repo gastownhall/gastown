@@ -720,6 +720,7 @@ func runSling(cmd *cobra.Command, args []string) (retErr error) {
 		BeadID:       beadID,
 		TownRoot:     townRoot,
 		BaseBranch:   slingBaseBranch,
+		LocalBase:    slingMerge == "local",
 		ResumeBranch: slingResumeBranch,
 	})
 	if err != nil {
@@ -760,9 +761,7 @@ func runSling(cmd *cobra.Command, args []string) (retErr error) {
 	}
 
 	// Inject base_branch var for formula instantiation (non-main only; formula default handles main)
-	if newPolecatInfo != nil && newPolecatInfo.BaseBranch != "" && newPolecatInfo.BaseBranch != "main" {
-		slingVars = append(slingVars, fmt.Sprintf("base_branch=%s", newPolecatInfo.BaseBranch))
-	}
+	slingVars = appendSpawnBaseVars(slingVars, newPolecatInfo)
 	// Inject resume_branch var when the polecat was attached to an existing branch
 	// (gh#3602: gt sling --branch / --pr). Lets formulas tell the polecat it is
 	// resuming an existing PR instead of creating a fresh branch.

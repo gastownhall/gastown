@@ -122,6 +122,7 @@ type ResolveTargetOptions struct {
 	Account              string
 	Agent                string
 	NoBoot               bool
+	LocalBase            bool
 	HookBead             string // Bead ID to set atomically during polecat spawn (empty = skip)
 	BeadID               string // For cross-rig guard checks (empty = skip guard)
 	TownRoot             string
@@ -239,6 +240,7 @@ func resolveTarget(target string, opts ResolveTargetOptions) (*ResolvedTarget, e
 			HookBead:      opts.HookBead,
 			Agent:         opts.Agent,
 			BaseBranch:    opts.BaseBranch,
+			LocalBase:     opts.LocalBase,
 			ResumeBranch:  opts.ResumeBranch,
 			SkipAdmission: opts.SkipPolecatAdmission,
 		}
@@ -281,6 +283,7 @@ func resolveTarget(target string, opts ResolveTargetOptions) (*ResolvedTarget, e
 				HookBead:      opts.HookBead,
 				Agent:         opts.Agent,
 				BaseBranch:    opts.BaseBranch,
+				LocalBase:     opts.LocalBase,
 				ResumeBranch:  opts.ResumeBranch,
 				SkipAdmission: opts.SkipPolecatAdmission,
 			}

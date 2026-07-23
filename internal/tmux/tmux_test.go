@@ -1895,6 +1895,214 @@ func TestNudgeSession_WithRetry(t *testing.T) {
 	}
 }
 
+func TestShouldSkipEscapeForCopilotProcessName(t *testing.T) {
+	tm := newTestTmux(t)
+	sessionName := "gt-test-copilot-runtime-" + fmt.Sprintf("%d", time.Now().UnixNano()%10000)
+
+	if err := tm.NewSession(sessionName, os.TempDir()); err != nil {
+		t.Fatalf("NewSession: %v", err)
+	}
+	defer func() { _ = tm.KillSession(sessionName) }()
+
+	if err := tm.SetEnvironment(sessionName, "GT_AGENT", "deacon"); err != nil {
+		t.Fatalf("SetEnvironment GT_AGENT: %v", err)
+	}
+	if err := tm.SetEnvironment(sessionName, "GT_PROCESS_NAMES", "node,copilot"); err != nil {
+		t.Fatalf("SetEnvironment GT_PROCESS_NAMES: %v", err)
+	}
+
+	if !tm.shouldSkipEscapeForSession(sessionName) {
+		t.Fatal("Copilot runtime must skip Escape even when GT_AGENT is a role identity")
+	}
+}
+
+func TestSendEnterViaControlClient(t *testing.T) {
+	tm := newTestTmux(t)
+	sessionName := "gt-test-control-enter-" + fmt.Sprintf("%d", time.Now().UnixNano()%10000)
+	target := sessionName + ":0.0"
+
+	if err := tm.NewSession(sessionName, os.TempDir()); err != nil {
+		t.Fatalf("NewSession: %v", err)
+	}
+	defer func() { _ = tm.KillSession(sessionName) }()
+
+	if err := tm.SendKeys(sessionName, "read line; echo received:$line"); err != nil {
+		t.Fatalf("start reader: %v", err)
+	}
+	time.Sleep(200 * time.Millisecond)
+	if err := tm.sendMessageToTarget(target, "hello"); err != nil {
+		t.Fatalf("type test message: %v", err)
+	}
+
+	if err := tm.sendEnterViaControlClient(sessionName, target); err != nil {
+		t.Fatalf("sendEnterViaControlClient: %v", err)
+	}
+
+	deadline := time.Now().Add(3 * time.Second)
+	for {
+		pane, err := tm.CapturePane(target, 10)
+		if err != nil {
+			t.Fatalf("CapturePane: %v", err)
+		}
+		if strings.Contains(pane, "received:hello") {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("control-client Enter did not submit input; pane:\n%s", pane)
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+
+	group, err := tm.run("display-message", "-t", sessionName, "-p", "#{session_group}")
+	if err != nil {
+		t.Fatalf("display session group: %v", err)
+	}
+	if got := strings.TrimSpace(group); got != "" {
+		t.Errorf("source session group = %q, want ungrouped", got)
+	}
+}
+
+func TestSendEnterViaControlClientWithHighBaseIndex(t *testing.T) {
+	socket := "gt-test-control-base-" + fmt.Sprintf("%d", time.Now().UnixNano())
+	tm := NewTmuxWithSocket(socket)
+	defer func() { _ = tm.KillServer() }()
+
+	if err := tm.NewSession("anchor", os.TempDir()); err != nil {
+		t.Fatalf("create anchor session: %v", err)
+	}
+	if _, err := tm.run("set-option", "-g", "base-index", "9999"); err != nil {
+		t.Fatalf("set high base-index: %v", err)
+	}
+
+	const sessionName = "target"
+	target := sessionName + ":9999.0"
+	if err := tm.NewSession(sessionName, os.TempDir()); err != nil {
+		t.Fatalf("NewSession: %v", err)
+	}
+	if err := tm.sendEnterViaControlClient(sessionName, target); err != nil {
+		t.Fatalf("sendEnterViaControlClient: %v", err)
+	}
+
+	group, err := tm.run("display-message", "-t", sessionName, "-p", "#{session_group}")
+	if err != nil {
+		t.Fatalf("display session group: %v", err)
+	}
+	if got := strings.TrimSpace(group); got != "" {
+		t.Errorf("source session group = %q, want ungrouped", got)
+	}
+}
+
+func TestSendEnterViaControlClientIgnoresDefaultCommand(t *testing.T) {
+	socket := "gt-test-control-command-" + fmt.Sprintf("%d", time.Now().UnixNano())
+	tm := NewTmuxWithSocket(socket)
+	defer func() { _ = tm.KillServer() }()
+
+	const sessionName = "target"
+	target := sessionName + ":0.0"
+	if err := tm.NewSession(sessionName, os.TempDir()); err != nil {
+		t.Fatalf("NewSession: %v", err)
+	}
+	if _, err := tm.run("set-option", "-g", "default-command", "false"); err != nil {
+		t.Fatalf("set terminating default-command: %v", err)
+	}
+	if err := tm.sendEnterViaControlClient(sessionName, target); err != nil {
+		t.Fatalf("sendEnterViaControlClient: %v", err)
+	}
+}
+
+func TestSendEnterViaControlClientPreservesSourceSession(t *testing.T) {
+	tm := newTestTmux(t)
+	sessionName := "gt-test-control-isolation-" + fmt.Sprintf("%d", time.Now().UnixNano()%10000)
+
+	if err := tm.NewSession(sessionName, os.TempDir()); err != nil {
+		t.Fatalf("NewSession: %v", err)
+	}
+	defer func() { _ = tm.KillSession(sessionName) }()
+	if _, err := tm.run("new-window", "-d", "-t", sessionName+":1"); err != nil {
+		t.Fatalf("new-window: %v", err)
+	}
+	if _, err := tm.run("split-window", "-d", "-t", sessionName+":1.0"); err != nil {
+		t.Fatalf("split-window: %v", err)
+	}
+	if _, err := tm.run("select-pane", "-t", sessionName+":1.0"); err != nil {
+		t.Fatalf("select source pane: %v", err)
+	}
+	if _, err := tm.run("set-environment", "-t", sessionName, "SSH_AUTH_SOCK", "ORIGINAL"); err != nil {
+		t.Fatalf("set-environment: %v", err)
+	}
+
+	target := sessionName + ":1.1"
+	if err := tm.SendKeys(target, "read line; echo received:$line"); err != nil {
+		t.Fatalf("start reader: %v", err)
+	}
+	time.Sleep(200 * time.Millisecond)
+	if err := tm.sendMessageToTarget(target, "hello"); err != nil {
+		t.Fatalf("type test message: %v", err)
+	}
+	if err := tm.sendEnterViaControlClient(sessionName, target); err != nil {
+		t.Fatalf("sendEnterViaControlClient: %v", err)
+	}
+
+	current, err := tm.run("display-message", "-t", sessionName, "-p", "#{window_index}")
+	if err != nil {
+		t.Fatalf("display current window: %v", err)
+	}
+	if got := strings.TrimSpace(current); got != "0" {
+		t.Errorf("source session current window = %q, want 0", got)
+	}
+	activePane, err := tm.run("display-message", "-t", sessionName+":1", "-p", "#{pane_index}")
+	if err != nil {
+		t.Fatalf("display active pane: %v", err)
+	}
+	if got := strings.TrimSpace(activePane); got != "0" {
+		t.Errorf("source window active pane = %q, want 0", got)
+	}
+	env, err := tm.run("show-environment", "-t", sessionName, "SSH_AUTH_SOCK")
+	if err != nil {
+		t.Fatalf("show-environment: %v", err)
+	}
+	if got := strings.TrimSpace(env); got != "SSH_AUTH_SOCK=ORIGINAL" {
+		t.Errorf("source session environment = %q, want SSH_AUTH_SOCK=ORIGINAL", got)
+	}
+}
+
+func TestTmuxSupportsControlClientSubmit(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		version string
+		want    bool
+	}{
+		{"tmux 3.3a", false},
+		{"tmux 3.4", true},
+		{"tmux 3.6b", true},
+		{"tmux next-3.7", true},
+		{"unexpected", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.version, func(t *testing.T) {
+			if got := tmuxSupportsControlClientSubmit(tt.version); got != tt.want {
+				t.Errorf("tmuxSupportsControlClientSubmit(%q) = %v, want %v", tt.version, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestControlClientRegistered(t *testing.T) {
+	t.Parallel()
+
+	clients := "93594\t0\n84815\t1\n"
+	if !controlClientRegistered(clients, 84815) {
+		t.Fatal("expected exact control client PID to be registered")
+	}
+	if controlClientRegistered(clients, 93594) {
+		t.Fatal("normal attached client must not count as control client")
+	}
+	if controlClientRegistered(clients, 8481) {
+		t.Fatal("partial PID must not match")
+	}
+}
+
 func TestNudgeSession_WithStoredPaneID(t *testing.T) {
 	tm := newTestTmux(t)
 	sessionName := "gt-test-nudge-paneid-" + fmt.Sprintf("%d", time.Now().UnixNano()%10000)
@@ -2285,6 +2493,8 @@ func TestHasBusyIndicator(t *testing.T) {
 	}{
 		{"claude status busy", "⏵⏵ bypass permissions on ... · esc to interrupt", true},
 		{"codex status busy", "• Working (2m 18s • esc to interrupt)", true},
+		{"copilot working busy", "Working · 6.5 KiB · esc interrupt", true},
+		{"copilot subagents busy", "Waiting for background agents · esc stop agents", true},
 		{"idle line", "› Review ready notification", false},
 		{"blank", "", false},
 	}

@@ -75,11 +75,11 @@ func runNudgePoller(cmd *cobra.Command, args []string) error {
 	// to avoid canceling in-flight generation. (GH#gt-wasn)
 	nudgeOpts := tmux.NudgeOpts{}
 	agentName := ""
-	hasPromptDetection := false
+	requireIdle := false
 	if name, err := t.GetEnvironment(sessionName, "GT_AGENT"); err == nil && name != "" {
 		agentName = name
 		if preset := config.GetAgentPresetByName(agentName); preset != nil {
-			hasPromptDetection = preset.ReadyPromptPrefix != ""
+			requireIdle = shouldRequireIdle(agentName, preset.ReadyPromptPrefix)
 			if preset.EscapeCancelsRequest {
 				nudgeOpts.SkipEscape = true
 			}
@@ -113,7 +113,7 @@ func runNudgePoller(cmd *cobra.Command, args []string) error {
 			// is actually idle. Runtimes without prompt detection preserve the old
 			// best-effort behavior and drain on the poll interval.
 			waitErr := t.WaitForIdle(sessionName, idleTimeout)
-			if shouldSkipDrainUntilIdle(hasPromptDetection, waitErr) {
+			if shouldSkipDrainUntilIdle(requireIdle, waitErr) {
 				continue
 			}
 
@@ -134,6 +134,10 @@ func runNudgePoller(cmd *cobra.Command, args []string) error {
 			}
 		}
 	}
+}
+
+func shouldRequireIdle(agentName, readyPromptPrefix string) bool {
+	return readyPromptPrefix != "" || agentName == "copilot"
 }
 
 func shouldSkipDrainUntilIdle(hasPromptDetection bool, waitErr error) bool {

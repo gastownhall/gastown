@@ -240,6 +240,7 @@ func executeSling(params SlingParams) (*SlingResult, error) {
 		HookBead:     params.BeadID,
 		Agent:        params.Agent,
 		BaseBranch:   params.BaseBranch,
+		LocalBase:    params.Merge == "local",
 		ResumeBranch: params.ResumeBranch,
 		// Create is always true for rig targets: executeSling only handles
 		// rig-targeted dispatch (batch sling + queue dispatch), where a fresh
@@ -311,9 +312,7 @@ func executeSling(params SlingParams) (*SlingResult, error) {
 		rigCmdVars := loadRigCommandVars(townRoot, params.RigName)
 		// Build per-bead vars: rig defaults first, then user vars (higher priority)
 		allVars = append(rigCmdVars, params.Vars...)
-		if spawnInfo.BaseBranch != "" && spawnInfo.BaseBranch != "main" {
-			allVars = append(allVars, fmt.Sprintf("base_branch=%s", spawnInfo.BaseBranch))
-		}
+		allVars = appendSpawnBaseVars(allVars, spawnInfo)
 
 		// GH#gt-zqvj: Inject prior attempt context when re-dispatching an issue
 		// that already has an open MR from a previous polecat. The new polecat

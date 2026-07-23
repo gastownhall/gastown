@@ -229,6 +229,21 @@ func analyzeComposerLine(line []rune, dim []bool, needle, promptPrefix string) s
 	return probeComposerDirty
 }
 
+func isComposerDivider(line []rune) bool {
+	trimmed := []rune(strings.TrimSpace(string(line)))
+	if len(trimmed) < 3 {
+		return false
+	}
+	for _, r := range trimmed {
+		switch r {
+		case '─', '━', '═', '-':
+		default:
+			return false
+		}
+	}
+	return true
+}
+
 func analyzeSubmission(escContent, needle, promptPrefix string) submitProbe {
 	if needle == "" || promptPrefix == "" {
 		return probeUnknown
@@ -236,14 +251,28 @@ func analyzeSubmission(escContent, needle, promptPrefix string) submitProbe {
 	plain, dim := stripAnsiTrackDim(escContent)
 	lines, lineDims := splitRunesAndDim(plain, dim)
 
+	// Copilot's active composer is enclosed by horizontal dividers above its
+	// live status line. Inspect that region first so a concurrent Working
+	// indicator cannot hide text whose Enter was swallowed.
+	belowComposer := false
 	for i := len(lines) - 1; i >= 0; i-- {
-		if matchesPromptPrefix(string(lines[i]), promptPrefix) {
+		if isComposerDivider(lines[i]) {
+			if belowComposer {
+				break
+			}
+			belowComposer = true
+			continue
+		}
+		if belowComposer && matchesPromptPrefix(string(lines[i]), promptPrefix) {
 			return analyzeComposerLine(lines[i], lineDims[i], needle, promptPrefix)
 		}
 	}
 
-	for _, line := range lines {
-		if hasBusyIndicator(string(line)) {
+	for i := len(lines) - 1; i >= 0; i-- {
+		if matchesPromptPrefix(string(lines[i]), promptPrefix) {
+			return analyzeComposerLine(lines[i], lineDims[i], needle, promptPrefix)
+		}
+		if hasBusyIndicator(string(lines[i])) {
 			return probeTurnStarted
 		}
 	}
@@ -282,8 +311,8 @@ func (t *Tmux) pollSubmission(target, needle, promptPrefix string, attempts int)
 	return last
 }
 
-func (t *Tmux) submitComposer(target, message, promptPrefix string) error {
-	enterErr := t.sendEnterVerified(target)
+func (t *Tmux) submitComposer(session, target, message, promptPrefix string) error {
+	enterErr := t.sendEnterForSession(session, target)
 	needle := submitNeedle(message)
 	if needle == "" {
 		return enterErr
@@ -297,13 +326,25 @@ func (t *Tmux) submitComposer(target, message, promptPrefix string) error {
 	case probeComposerDirty:
 		return fmt.Errorf("%w (composer contains other text after Enter)", ErrSubmitNotVerified)
 	case probeStranded:
-		return t.recoverStrandedComposer(target, message, needle, promptPrefix)
+		return t.recoverStrandedComposer(session, target, message, needle, promptPrefix)
 	default:
 		return enterErr
 	}
 }
 
-func (t *Tmux) recoverStrandedComposer(target, message, needle, promptPrefix string) error {
+func (t *Tmux) recoverStrandedComposer(session, target, message, needle, promptPrefix string) error {
+	if session != "" && t.shouldSkipEscapeForSession(session) {
+		if err := t.sendEnterViaControlClient(session, target); err != nil {
+			return fmt.Errorf("%w (control-client retry failed: %v)", ErrSubmitNotVerified, err)
+		}
+		switch probe := t.pollSubmission(target, needle, promptPrefix, submitProbeAttempts); probe {
+		case probeTurnStarted, probeComposerCleared:
+			return nil
+		default:
+			return fmt.Errorf("%w (composer state after control-client retry: %s)", ErrSubmitNotVerified, probe)
+		}
+	}
+
 	if _, err := t.run("send-keys", "-t", target, "C-j"); err != nil {
 		return fmt.Errorf("%w (C-j reset failed: %v)", ErrSubmitNotVerified, err)
 	}
