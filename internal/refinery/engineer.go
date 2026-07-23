@@ -489,15 +489,16 @@ func (e *Engineer) Config() *MergeQueueConfig {
 
 // ProcessResult contains the result of processing a merge request.
 type ProcessResult struct {
-	Success        bool
-	MergeCommit    string
-	Error          string
-	Conflict       bool
-	TestsFailed    bool
-	SlotTimeout    bool // Merge slot contention timeout (distinct from build/test failure)
-	BranchNotFound bool // Source branch no longer exists (e.g. cleaned up after cherry-pick)
-	NoMerge        bool // MR/source is intentionally not merge-eligible, not a build failure
-	NeedsApproval  bool // PR exists but lacks required approving review (merge_strategy=pr)
+	Success         bool
+	MergeCommit     string
+	MergeSlotHolder string
+	Error           string
+	Conflict        bool
+	TestsFailed     bool
+	SlotTimeout     bool // Merge slot contention timeout (distinct from build/test failure)
+	BranchNotFound  bool // Source branch no longer exists (e.g. cleaned up after cherry-pick)
+	NoMerge         bool // MR/source is intentionally not merge-eligible, not a build failure
+	NeedsApproval   bool // PR exists but lacks required approving review (merge_strategy=pr)
 }
 
 // doMerge performs the actual git merge operation.
@@ -693,11 +694,12 @@ func (e *Engineer) doMerge(ctx context.Context, mr *MRInfo, skipGates ...bool) P
 	}
 
 	// Step 7-8: Push to origin (when auto_push is enabled).
+	var pushHolder string
+	var releaseSlotOnReturn bool
 	if e.config.AutoPush {
 		// Acquire merge slot before push to serialize writes to the default branch.
 		// Only serialize pushes to the rig's default branch (typically main).
 		// Integration-branch and feature-branch pushes don't need serialization.
-		var pushHolder string
 		if target == e.rig.DefaultBranch() {
 			var slotErr error
 			pushHolder, slotErr = e.acquireMainPushSlot(ctx)
@@ -716,10 +718,11 @@ func (e *Engineer) doMerge(ctx context.Context, mr *MRInfo, skipGates ...bool) P
 					Error:       fmt.Sprintf("failed to acquire merge slot before push: %v", slotErr),
 				}
 			}
+			releaseSlotOnReturn = true
 			defer func() {
 				// pushHolder is empty when the self-conflict bypass fires — conflict-resolution
 				// owns the slot, so we must not release it here.
-				if pushHolder != "" {
+				if releaseSlotOnReturn && pushHolder != "" {
 					if releaseErr := e.mergeSlotRelease(pushHolder); releaseErr != nil {
 						_, _ = fmt.Fprintf(e.output, "[Engineer] Warning: failed to release merge slot for push (%s): %v\n", pushHolder, releaseErr)
 					}
@@ -755,14 +758,16 @@ func (e *Engineer) doMerge(ctx context.Context, mr *MRInfo, skipGates ...bool) P
 				Error:   err.Error(),
 			}
 		}
+		releaseSlotOnReturn = false
 	} else {
 		_, _ = fmt.Fprintf(e.output, "[Engineer] Auto-push disabled, skipping push to origin/%s\n", target)
 	}
 
 	_, _ = fmt.Fprintf(e.output, "[Engineer] Successfully merged: %s\n", shortSHA(mergeCommit))
 	return ProcessResult{
-		Success:     true,
-		MergeCommit: mergeCommit,
+		Success:         true,
+		MergeCommit:     mergeCommit,
+		MergeSlotHolder: pushHolder,
 	}
 }
 
@@ -1349,7 +1354,10 @@ func (e *Engineer) ProcessMRInfo(ctx context.Context, mr *MRInfo) ProcessResult 
 // HandleMRInfoSuccess handles a successful merge from MRInfo.
 func (e *Engineer) HandleMRInfoSuccess(mr *MRInfo, result ProcessResult) bool {
 	if mr.ID != "" && !e.isSyntheticMergeMechanicsMR(mr) {
-		holder := e.rig.Name + "/refinery"
+		holder := result.MergeSlotHolder
+		if holder == "" {
+			holder = e.rig.Name + "/refinery"
+		}
 		coordinator := newPostMergeCoordinator(
 			e.beads,
 			e.rig.DefaultBranch(),
