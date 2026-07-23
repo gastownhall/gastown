@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"os"
 	"path/filepath"
 	"testing"
 )
@@ -100,4 +101,81 @@ func TestConvoyMeta(t *testing.T) {
 	if len(meta.LegIssues) != 3 {
 		t.Errorf("len(LegIssues) = %d, want 3", len(meta.LegIssues))
 	}
+}
+
+func TestLoadSynthesisFormulaUsesGTTownRootAndExistingConvoyMetadata(t *testing.T) {
+	townRoot := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(townRoot, "mayor"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(townRoot, "mayor", "town.json"), []byte(`{"name":"test-town"}`), 0644); err != nil {
+		t.Fatal(err)
+	}
+	formulasDir := filepath.Join(townRoot, ".beads", "formulas")
+	if err := os.MkdirAll(formulasDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	formulaName := "gt-town-root-only"
+	if err := os.WriteFile(filepath.Join(formulasDir, formulaName+".formula.toml"), []byte(sprintfTestFormula(formulaName, "town tier sentinel")), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	oldWD, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chdir(oldWD) })
+	if err := os.Chdir(t.TempDir()); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("GT_ROOT", "")
+	t.Setenv("GT_TOWN_ROOT", townRoot)
+
+	meta := &ConvoyMeta{}
+	parseConvoyDescriptionMeta(meta, "Formula convoy: "+formulaName+"\n\nLegs: 1\nRig: gastown")
+	if meta.Formula != formulaName {
+		t.Fatalf("Formula = %q, want %q", meta.Formula, formulaName)
+	}
+	if meta.Rig != "gastown" {
+		t.Fatalf("Rig = %q, want gastown", meta.Rig)
+	}
+
+	f, err := loadSynthesisFormula(meta, "")
+	if err != nil {
+		t.Fatalf("loadSynthesisFormula() error: %v", err)
+	}
+	if f == nil || f.Name != formulaName {
+		t.Fatalf("loaded formula = %#v, want %q", f, formulaName)
+	}
+}
+
+func TestLoadSynthesisFormulaPreservesExplicitPathPrecedence(t *testing.T) {
+	dir := t.TempDir()
+	explicitPath := filepath.Join(dir, "explicit.formula.toml")
+	if err := os.WriteFile(explicitPath, []byte(sprintfTestFormula("explicit-path", "explicit path wins")), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	meta := &ConvoyMeta{
+		Formula:     "missing-named-formula",
+		FormulaPath: explicitPath,
+		Rig:         "gastown",
+	}
+	f, err := loadSynthesisFormula(meta, "gastown")
+	if err != nil {
+		t.Fatalf("loadSynthesisFormula() error: %v", err)
+	}
+	if f == nil || f.Name != "explicit-path" {
+		t.Fatalf("loaded formula = %#v, want explicit-path", f)
+	}
+}
+
+func sprintfTestFormula(name, description string) string {
+	return "formula = \"" + name + "\"\n" +
+		"version = 1\n" +
+		"description = \"" + description + "\"\n\n" +
+		"[[steps]]\n" +
+		"id = \"step-1\"\n" +
+		"title = \"Step 1\"\n" +
+		"description = \"Do it\"\n"
 }

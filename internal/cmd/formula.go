@@ -55,10 +55,8 @@ Commands:
   run     Execute a formula (pour and dispatch)
   create  Create a new formula template
 
-Search paths (in order):
-  1. .beads/formulas/ (project)
-  2. ~/.beads/formulas/ (user)
-  3. $GT_ROOT/.beads/formulas/ (orchestrator)
+Named formula execution resolves formulas from the target rig, then town,
+then embedded formulas. List/show are delegated to bd.
 
 Examples:
   gt formula list                    # List all formulas
@@ -72,10 +70,7 @@ var formulaListCmd = &cobra.Command{
 	Short: "List available formulas",
 	Long: `List available formulas from all search paths.
 
-Searches for formula files (.formula.toml, .formula.json) in:
-  1. .beads/formulas/ (project)
-  2. ~/.beads/formulas/ (user)
-  3. $GT_ROOT/.beads/formulas/ (orchestrator)
+Delegates to bd formula list, using bd's configured formula search paths.
 
 Examples:
   gt formula list            # List all formulas
@@ -218,41 +213,41 @@ func runFormulaShow(cmd *cobra.Command, args []string) error {
 // For convoy-type formulas, it creates a convoy bead, creates leg beads,
 // and slings each leg to a separate polecat with leg-specific prompts.
 func runFormulaRun(cmd *cobra.Command, args []string) error {
+	townRoot, err := workspace.FindFromCwdOrError()
+	if err != nil {
+		return fmt.Errorf("finding town root: %w", err)
+	}
+
 	// Determine target rig first (needed for default formula lookup)
 	targetRig := formulaRunRig
 	var rigPath string
 	if targetRig == "" {
 		// Try to detect from current directory
-		townRoot, err := workspace.FindFromCwd()
-		if err == nil && townRoot != "" {
-			rigName, r, rigErr := findCurrentRig(townRoot)
-			if rigErr == nil && rigName != "" {
-				targetRig = rigName
-				if r != nil {
-					rigPath = r.Path
-				}
+		rigName, r, rigErr := findCurrentRig(townRoot)
+		if rigErr == nil && rigName != "" {
+			targetRig = rigName
+			if r != nil {
+				rigPath = r.Path
 			}
-			// Still no rig — auto-select when there is exactly one registered rig,
-			// otherwise surface a helpful error (e.g. Deacon at HQ level on
-			// non-default installs where "gastown" rig does not exist).
-			if targetRig == "" {
-				name, path, inferErr := autoInferRig(townRoot)
-				if inferErr != nil {
-					return inferErr
-				}
-				targetRig = name
-				rigPath = path
+		}
+		// Still no rig — auto-select when there is exactly one registered rig,
+		// otherwise surface a helpful error (e.g. Deacon at HQ level on
+		// non-default installs where "gastown" rig does not exist).
+		if targetRig == "" {
+			name, path, inferErr := autoInferRig(townRoot)
+			if inferErr != nil {
+				return inferErr
 			}
-		} else {
-			// No town root found, cannot determine target rig
-			return fmt.Errorf("cannot determine target rig: not in a Gas Town workspace; use --rig=NAME")
+			targetRig = name
+			rigPath = path
 		}
 	} else {
-		// If rig specified, construct path
-		townRoot, err := workspace.FindFromCwd()
-		if err == nil && townRoot != "" {
-			rigPath = filepath.Join(townRoot, targetRig)
+		if err := validateFormulaRunRigName(targetRig); err != nil {
+			return err
 		}
+		// Rig settings live at the rig container path; formula content resolution
+		// below handles any route-resolved .beads path for the same rig name.
+		rigPath = filepath.Join(townRoot, targetRig)
 	}
 
 	// Get formula name from args or default
@@ -270,16 +265,10 @@ func runFormulaRun(cmd *cobra.Command, args []string) error {
 		fmt.Printf("%s Using default formula: %s\n", style.Dim.Render("Note:"), formulaName)
 	}
 
-	// Find the formula file
-	formulaPath, err := findFormulaFile(formulaName)
+	// Resolve and parse the named formula through the shared tiered resolver.
+	f, err := loadNamedFormula(formulaName, townRoot, targetRig)
 	if err != nil {
-		return fmt.Errorf("finding formula: %w", err)
-	}
-
-	// Parse the formula
-	f, err := parseFormulaFile(formulaPath)
-	if err != nil {
-		return fmt.Errorf("parsing formula: %w", err)
+		return fmt.Errorf("loading formula: %w", err)
 	}
 
 	// Handle dry-run mode
@@ -303,6 +292,33 @@ func runFormulaRun(cmd *cobra.Command, args []string) error {
 		fmt.Printf("  4. Sling to rig:   gt sling <mol-id> %s\n", targetRig)
 		return nil
 	}
+}
+
+func loadNamedFormulaFromCwd(name, rigName string) (*formula.Formula, error) {
+	townRoot, err := workspace.FindFromCwdOrError()
+	if err != nil {
+		return nil, fmt.Errorf("finding town root: %w", err)
+	}
+	return loadNamedFormula(name, townRoot, rigName)
+}
+
+func loadNamedFormula(name, townRoot, rigName string) (*formula.Formula, error) {
+	content, err := formula.ResolveFormulaContent(name, townRoot, rigName)
+	if err != nil {
+		return nil, err
+	}
+	f, err := formula.Parse(content)
+	if err != nil {
+		return nil, fmt.Errorf("parsing formula %q: %w", name, err)
+	}
+	return f, nil
+}
+
+func validateFormulaRunRigName(rigName string) error {
+	if rigName == "" || filepath.IsAbs(rigName) || strings.Contains(rigName, "..") || strings.Contains(rigName, "/") || strings.Contains(rigName, "\\") {
+		return fmt.Errorf("invalid rig name %q", rigName)
+	}
+	return nil
 }
 
 // dryRunFormula shows what would happen without executing
@@ -431,7 +447,7 @@ func executeConvoyFormula(f *formula.Formula, formulaName, targetRig string) err
 		style.Bold.Render("🚚"), formulaName)
 
 	// Get town root and resolve rig-scoped bead prefix
-	townRoot, err := workspace.FindFromCwd()
+	townRoot, err := workspace.FindFromCwdOrError()
 	if err != nil {
 		return fmt.Errorf("finding town root: %w", err)
 	}
@@ -716,7 +732,7 @@ func executeWorkflowFormula(f *formula.Formula, formulaName, targetRig string) e
 	}
 
 	// Get town beads directory
-	townRoot, err := workspace.FindFromCwd()
+	townRoot, err := workspace.FindFromCwdOrError()
 	if err != nil {
 		return fmt.Errorf("finding town root: %w", err)
 	}
@@ -1033,45 +1049,6 @@ func substituteFormulaVars(text string, vars map[string]interface{}) string {
 		}
 		return fmt.Sprint(v)
 	})
-}
-
-// findFormulaFile searches for a formula file by name
-func findFormulaFile(name string) (string, error) {
-	// Search paths in order
-	searchPaths := []string{}
-
-	// 1. Project .beads/formulas/
-	if cwd, err := os.Getwd(); err == nil {
-		searchPaths = append(searchPaths, filepath.Join(cwd, ".beads", "formulas"))
-	}
-
-	// 2. Town .beads/formulas/
-	if townRoot, err := workspace.FindFromCwd(); err == nil {
-		searchPaths = append(searchPaths, filepath.Join(townRoot, ".beads", "formulas"))
-	}
-
-	// 3. User ~/.beads/formulas/
-	if home, err := os.UserHomeDir(); err == nil {
-		searchPaths = append(searchPaths, filepath.Join(home, ".beads", "formulas"))
-	}
-
-	// Try each path with common extensions
-	extensions := []string{".formula.toml", ".formula.json"}
-	for _, basePath := range searchPaths {
-		for _, ext := range extensions {
-			path := filepath.Join(basePath, name+ext)
-			if _, err := os.Stat(path); err == nil {
-				return path, nil
-			}
-		}
-	}
-
-	return "", fmt.Errorf("formula '%s' not found in search paths", name)
-}
-
-// parseFormulaFile parses a formula file using the formula package's TOML parser.
-func parseFormulaFile(path string) (*formula.Formula, error) {
-	return formula.ParseFile(path)
 }
 
 // renderTemplate renders a Go text/template with the given context map
