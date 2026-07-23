@@ -542,9 +542,10 @@ type UpdateOptions struct {
 // eliminates ~600ms of subprocess overhead per operation.
 type Beads struct {
 	workDir    string
-	beadsDir   string // Optional BEADS_DIR override for cross-database access
-	isolated   bool   // If true, suppress inherited beads env vars (for test isolation)
-	serverPort int    // If set, pass --server-port to bd init and GT_DOLT_PORT to env
+	beadsDir   string          // Optional BEADS_DIR override for cross-database access
+	isolated   bool            // If true, suppress inherited beads env vars (for test isolation)
+	serverPort int             // If set, pass --server-port to bd init and GT_DOLT_PORT to env
+	ctx        context.Context // Optional caller deadline/cancellation for all operations.
 
 	// store is an optional in-process beadsdk.Storage. When set, methods
 	// bypass the bd subprocess and use the store directly. Follows the
@@ -569,6 +570,24 @@ type Beads struct {
 // New creates a new Beads wrapper for the given directory.
 func New(workDir string) *Beads {
 	return &Beads{workDir: workDir}
+}
+
+// WithContext binds caller cancellation and deadlines to subsequent operations.
+// It mutates and returns b so callers can configure a newly-created wrapper
+// fluently. Derived wrappers used for prefix routing preserve this context.
+func (b *Beads) WithContext(ctx context.Context) *Beads {
+	b.ctx = ctx
+	return b
+}
+
+// operationContext applies the normal per-operation ceiling while respecting
+// any earlier caller deadline.
+func (b *Beads) operationContext(timeout time.Duration) (context.Context, context.CancelFunc) {
+	parent := b.ctx
+	if parent == nil {
+		parent = context.Background()
+	}
+	return context.WithTimeout(parent, timeout)
 }
 
 // NewIsolated creates a Beads wrapper for test isolation.
@@ -621,6 +640,7 @@ func (b *Beads) ForAgentBead() *Beads {
 		beadsDir:   townBeadsDir,
 		isolated:   b.isolated,
 		serverPort: b.serverPort,
+		ctx:        b.ctx,
 		store:      b.store,
 		townRoot:   townRoot,
 		noRoute:    true,
@@ -711,6 +731,7 @@ func (b *Beads) forIssueID(id string) *Beads {
 		beadsDir:   resolved,
 		isolated:   b.isolated,
 		serverPort: b.serverPort,
+		ctx:        b.ctx,
 		townRoot:   b.townRoot,
 		noRoute:    true,
 	}
@@ -785,7 +806,7 @@ func (b *Beads) runWithStdin(stdinData []byte, args ...string) (_ []byte, retErr
 	// Bound the subprocess runtime so a slow Dolt response doesn't leave bd
 	// blocking forever (under memory pressure that invites Jetsam SIGKILL).
 	// The context covers both the initial attempt and the --flat retry.
-	ctx, cancel := context.WithTimeout(context.Background(), resolveBdSubprocessTimeout())
+	ctx, cancel := b.operationContext(resolveBdSubprocessTimeout())
 	defer cancel()
 
 	// Always explicitly set BEADS_DIR to prevent inherited env vars from
@@ -860,7 +881,7 @@ func (b *Beads) runWithRouting(args ...string) (_ []byte, retErr error) { //noli
 	fullArgs := MaybePrependAllowStaleWithEnv(runEnv, args)
 
 	// Bound subprocess runtime — see bdSubprocessTimeout doc comment.
-	ctx, cancel := context.WithTimeout(context.Background(), resolveBdSubprocessTimeout())
+	ctx, cancel := b.operationContext(resolveBdSubprocessTimeout())
 	defer cancel()
 
 	cmd := exec.CommandContext(ctx, "bd", fullArgs...) //nolint:gosec // G204: bd is a trusted internal tool
@@ -1634,7 +1655,7 @@ func (b *Beads) ShowMultiple(ids []string) (map[string]*Issue, error) {
 			for targetDir, groupIDs := range groups {
 				target := b
 				if targetDir != fallbackDir {
-					target = NewWithBeadsDir(filepath.Dir(targetDir), targetDir)
+					target = NewWithBeadsDir(filepath.Dir(targetDir), targetDir).WithContext(b.ctx)
 				}
 				issues, err := target.showMultipleLocal(groupIDs)
 				if err != nil {
@@ -1721,6 +1742,7 @@ func (b *Beads) Create(opts CreateOptions) (*Issue, error) {
 			beadsDir:   targetDir,
 			serverPort: b.serverPort,
 			isolated:   b.isolated,
+			ctx:        b.ctx,
 		}
 		return bdForCreate.Create(opts)
 	}
@@ -1796,6 +1818,7 @@ func (b *Beads) CreateWithID(id string, opts CreateOptions) (*Issue, error) {
 			beadsDir:   targetDir,
 			serverPort: b.serverPort,
 			isolated:   b.isolated,
+			ctx:        b.ctx,
 		}
 		return bdForCreate.CreateWithID(id, opts)
 	}
@@ -2165,7 +2188,7 @@ func (b *Beads) ReleaseWithReason(id, reason string) error {
 		if reason != "" {
 			updates["notes"] = "Released: " + reason
 		}
-		ctx, cancel := storeCtx()
+		ctx, cancel := b.storeCtx()
 		defer cancel()
 		return b.store.UpdateIssue(ctx, id, updates, b.getActor())
 	}
