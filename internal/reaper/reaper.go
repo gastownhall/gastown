@@ -223,13 +223,18 @@ func parentExcludeJoin(dbName string) (joinClause, whereCondition string) {
 
 const openWispStatusWhere = "w.status IN ('open', 'hooked', 'in_progress')"
 
-// liveAttachmentWhere fails closed for wisps referenced by live workflow state.
-// Attachments are metadata links rather than dependency rows, so parent checks
-// alone cannot protect them. Search both durable issues and ephemeral wisps:
-// the latter includes agent/session, patrol, convoy, and review-handoff state.
-func liveAttachmentWhere(wispAlias string) string {
-	marker := fmt.Sprintf("CONCAT('%%attached_molecule: ', %s.id, '%%')", wispAlias)
+// liveReferenceWhere fails closed for wisps that are themselves live merge
+// requests or are referenced by any live workflow state. References may be
+// metadata (attached_molecule, active_mr, mr_id, queue/handoff descriptions) or
+// typed dependency rows. Search both durable issues and ephemeral wisps.
+func liveReferenceWhere(wispAlias string) string {
+	idPattern := fmt.Sprintf("CONCAT('%%', %s.id, '%%')", wispAlias)
 	return fmt.Sprintf(`NOT EXISTS (
+		SELECT 1 FROM wisp_labels live_mr
+		WHERE live_mr.issue_id = %s.id
+		AND live_mr.label = 'gt:merge-request'
+		AND %s.status NOT IN ('closed', 'tombstone')
+	) AND NOT EXISTS (
 		SELECT 1 FROM issues live_i
 		WHERE live_i.status NOT IN ('closed', 'tombstone')
 		AND live_i.description LIKE %s
@@ -238,7 +243,31 @@ func liveAttachmentWhere(wispAlias string) string {
 		WHERE live_w.id != %s.id
 		AND live_w.status NOT IN ('closed', 'tombstone')
 		AND live_w.description LIKE %s
-	)`, marker, wispAlias, marker)
+	) AND NOT EXISTS (
+		SELECT 1 FROM comments live_c
+		INNER JOIN issues live_c_i ON live_c_i.id = live_c.issue_id
+		WHERE live_c_i.status NOT IN ('closed', 'tombstone')
+		AND live_c.text LIKE %s
+	) AND NOT EXISTS (
+		SELECT 1 FROM wisp_comments live_wc
+		INNER JOIN wisps live_wc_w ON live_wc_w.id = live_wc.issue_id
+		WHERE live_wc_w.status NOT IN ('closed', 'tombstone')
+		AND live_wc.text LIKE %s
+	) AND NOT EXISTS (
+		SELECT 1 FROM wisp_dependencies live_wd
+		LEFT JOIN wisps live_wd_w ON live_wd_w.id = live_wd.issue_id
+		LEFT JOIN issues live_wd_i ON live_wd_i.id = live_wd.issue_id
+		WHERE live_wd.depends_on_wisp_id = %s.id
+		AND (live_wd_w.status NOT IN ('closed', 'tombstone')
+			OR live_wd_i.status NOT IN ('closed', 'tombstone'))
+	) AND NOT EXISTS (
+		SELECT 1 FROM dependencies live_d
+		LEFT JOIN wisps live_d_w ON live_d_w.id = live_d.issue_id
+		LEFT JOIN issues live_d_i ON live_d_i.id = live_d.issue_id
+		WHERE live_d.depends_on_wisp_id = %s.id
+		AND (live_d_w.status NOT IN ('closed', 'tombstone')
+			OR live_d_i.status NOT IN ('closed', 'tombstone'))
+	)`, wispAlias, wispAlias, idPattern, wispAlias, idPattern, idPattern, idPattern, wispAlias, wispAlias)
 }
 
 // closedMoleculeStepSubquery selects step-wisps whose parent molecule has already closed.
@@ -283,11 +312,11 @@ func HasReaperSchema(db *sql.DB) (bool, error) {
 
 	var count int
 	err := db.QueryRowContext(ctx,
-		"SELECT COUNT(*) FROM information_schema.tables WHERE table_name IN ('wisps', 'issues', 'wisp_dependencies') AND table_schema = DATABASE()").Scan(&count)
+		"SELECT COUNT(*) FROM information_schema.tables WHERE table_name IN ('wisps', 'issues', 'comments', 'wisp_labels', 'wisp_comments', 'wisp_dependencies') AND table_schema = DATABASE()").Scan(&count)
 	if err != nil {
 		return false, fmt.Errorf("check reaper schema: %w", err)
 	}
-	if count < 3 {
+	if count < 6 {
 		return false, nil
 	}
 
@@ -338,7 +367,7 @@ func Scan(db *sql.DB, dbName string, maxAge, purgeAge, mailDeleteAge, staleIssue
 
 	moleculeStepQuery := fmt.Sprintf(
 		"SELECT COUNT(*) FROM wisps w %s WHERE %s AND w.issue_type != 'agent' AND %s",
-		moleculeStepJoin, openWispStatusWhere, liveAttachmentWhere("w"))
+		moleculeStepJoin, openWispStatusWhere, liveReferenceWhere("w"))
 	if err := db.QueryRowContext(ctx, moleculeStepQuery).Scan(&result.MoleculeStepCandidates); err != nil {
 		return nil, fmt.Errorf("count molecule step candidates: %w", err)
 	}
@@ -350,20 +379,20 @@ func Scan(db *sql.DB, dbName string, maxAge, purgeAge, mailDeleteAge, staleIssue
 	// Closed-molecule steps are counted separately above and excluded here so counts stay disjoint.
 	reapQuery := fmt.Sprintf(
 		"SELECT COUNT(*) FROM wisps w %s %s WHERE %s AND w.created_at < ? AND w.issue_type != 'agent' AND %s AND closed_molecule_step.issue_id IS NULL AND %s",
-		parentJoin, moleculeStepExcludeJoin, openWispStatusWhere, parentWhere, liveAttachmentWhere("w"))
+		parentJoin, moleculeStepExcludeJoin, openWispStatusWhere, parentWhere, liveReferenceWhere("w"))
 	if err := db.QueryRowContext(ctx, reapQuery, now.Add(-maxAge)).Scan(&result.ReapCandidates); err != nil {
 		return nil, fmt.Errorf("count reap candidates: %w", err)
 	}
 	protectedQuery := fmt.Sprintf(
-		"SELECT COUNT(*) FROM wisps w WHERE %s AND w.created_at < ? AND w.issue_type != 'agent' AND NOT (%s)",
-		openWispStatusWhere, liveAttachmentWhere("w"))
+		"SELECT COUNT(*) FROM wisps w WHERE w.status NOT IN ('closed', 'tombstone') AND w.created_at < ? AND w.issue_type != 'agent' AND NOT (%s)",
+		liveReferenceWhere("w"))
 	if err := db.QueryRowContext(ctx, protectedQuery, now.Add(-maxAge)).Scan(&result.ProtectedReferences); err != nil {
-		return nil, fmt.Errorf("count protected attachment references: %w", err)
+		return nil, fmt.Errorf("count protected live references: %w", err)
 	}
 	if result.ProtectedReferences > 0 {
 		result.Anomalies = append(result.Anomalies, Anomaly{
-			Type:    "protected_live_attachment",
-			Message: fmt.Sprintf("%d old wisp(s) retained because live workflow state still references them", result.ProtectedReferences),
+			Type:    "protected_live_reference",
+			Message: fmt.Sprintf("%d old wisp(s) retained because live MR, metadata, or dependency state protects them", result.ProtectedReferences),
 			Count:   result.ProtectedReferences,
 		})
 	}
@@ -372,7 +401,7 @@ func Scan(db *sql.DB, dbName string, maxAge, purgeAge, mailDeleteAge, staleIssue
 	// metadata references it; recovery must run before physical deletion.
 	purgeQuery := fmt.Sprintf(
 		"SELECT COUNT(*) FROM wisps w WHERE w.status = 'closed' AND w.closed_at < ? AND %s",
-		liveAttachmentWhere("w"))
+		liveReferenceWhere("w"))
 	if err := db.QueryRowContext(ctx, purgeQuery, now.Add(-purgeAge)).Scan(&result.PurgeCandidates); err != nil {
 		return nil, fmt.Errorf("count purge candidates: %w", err)
 	}
@@ -456,20 +485,20 @@ func Reap(db *sql.DB, dbName string, maxAge time.Duration, dryRun bool) (*ReapRe
 	// max-age counts exclude them to keep dry-run and scan counts disjoint.
 	whereClause := fmt.Sprintf(
 		"%s AND w.created_at < ? AND w.issue_type != 'agent' AND %s AND closed_molecule_step.issue_id IS NULL AND %s",
-		openWispStatusWhere, parentWhere, liveAttachmentWhere("w"))
+		openWispStatusWhere, parentWhere, liveReferenceWhere("w"))
 
 	result := &ReapResult{Database: dbName, DryRun: dryRun}
 	protectedQuery := fmt.Sprintf(
-		"SELECT COUNT(*) FROM wisps w WHERE %s AND w.created_at < ? AND w.issue_type != 'agent' AND NOT (%s)",
-		openWispStatusWhere, liveAttachmentWhere("w"))
+		"SELECT COUNT(*) FROM wisps w WHERE w.status NOT IN ('closed', 'tombstone') AND w.created_at < ? AND w.issue_type != 'agent' AND NOT (%s)",
+		liveReferenceWhere("w"))
 	if err := db.QueryRowContext(ctx, protectedQuery, cutoff).Scan(&result.ProtectedReferences); err != nil {
-		return nil, fmt.Errorf("count protected attachment references: %w", err)
+		return nil, fmt.Errorf("count protected live references: %w", err)
 	}
 
 	if dryRun {
 		moleculeStepCountQuery := fmt.Sprintf(
 			"SELECT COUNT(*) FROM wisps w %s WHERE %s AND w.issue_type != 'agent' AND %s",
-			moleculeStepJoin, openWispStatusWhere, liveAttachmentWhere("w"))
+			moleculeStepJoin, openWispStatusWhere, liveReferenceWhere("w"))
 		if err := db.QueryRowContext(ctx, moleculeStepCountQuery).Scan(&result.MoleculeStepsClosed); err != nil {
 			return nil, fmt.Errorf("dry-run molecule step count: %w", err)
 		}
@@ -509,7 +538,7 @@ func Reap(db *sql.DB, dbName string, maxAge time.Duration, dryRun bool) (*ReapRe
 
 	moleculeStepIDQuery := fmt.Sprintf(
 		"SELECT w.id FROM wisps w %s WHERE %s AND w.issue_type != 'agent' AND %s LIMIT %d",
-		moleculeStepJoin, openWispStatusWhere, liveAttachmentWhere("w"), DefaultBatchSize)
+		moleculeStepJoin, openWispStatusWhere, liveReferenceWhere("w"), DefaultBatchSize)
 	moleculeStepsClosed, err := closeWispsInBatches(ctx, conn, moleculeStepIDQuery, nil, "closed molecule steps")
 	if err != nil {
 		return nil, err
@@ -597,7 +626,7 @@ func closeWispsInBatches(ctx context.Context, runner sqlRunner, idQuery string, 
 
 		updateQuery := fmt.Sprintf(
 			"UPDATE wisps w SET status='closed', closed_at=NOW() WHERE w.id IN (%s) AND w.status IN ('open', 'hooked', 'in_progress') AND w.issue_type != 'agent' AND %s",
-			inClause, liveAttachmentWhere("w"))
+			inClause, liveReferenceWhere("w"))
 		sqlResult, err := runner.ExecContext(ctx, updateQuery, args...)
 		if err != nil {
 			return total, fmt.Errorf("close %s batch: %w", description, err)
@@ -640,7 +669,7 @@ func purgeClosedWisps(db *sql.DB, dbName string, purgeAge time.Duration, dryRun 
 	// Digest: count by wisp_type, excluding live attachment references.
 	digestQuery := fmt.Sprintf(
 		"SELECT COALESCE(w.wisp_type, 'unknown') AS wtype, COUNT(*) AS cnt FROM wisps w WHERE w.status = 'closed' AND w.closed_at < ? AND %s GROUP BY wtype",
-		liveAttachmentWhere("w"))
+		liveReferenceWhere("w"))
 	rows, err := db.QueryContext(ctx, digestQuery, deleteCutoff)
 	if err != nil {
 		return 0, nil, fmt.Errorf("digest query: %w", err)
@@ -684,7 +713,7 @@ func purgeClosedWisps(db *sql.DB, dbName string, purgeAge time.Duration, dryRun 
 	// Batch delete with the same fail-closed liveness predicate as the digest.
 	idQuery := fmt.Sprintf(
 		"SELECT w.id FROM wisps w WHERE w.status = 'closed' AND w.closed_at < ? AND %s LIMIT %d",
-		liveAttachmentWhere("w"), DefaultBatchSize)
+		liveReferenceWhere("w"), DefaultBatchSize)
 	auxTables := []string{"wisp_labels", "wisp_comments", "wisp_events", "wisp_dependencies"}
 
 	totalDeleted, err := batchDeleteRows(ctx, conn, idQuery, deleteCutoff, "wisps", auxTables)
@@ -963,7 +992,7 @@ func batchDeleteRows(ctx context.Context, runner sqlRunner, idQuery string, cuto
 		if primaryTable == "wisps" {
 			// Revalidate immediately before physical deletion. This catches an
 			// attachment committed after the candidate batch was selected.
-			delPrimary += " AND " + liveAttachmentWhere("wisps")
+			delPrimary += " AND " + liveReferenceWhere("wisps")
 		}
 		sqlResult, err := runner.ExecContext(ctx, delPrimary, args...)
 		if err != nil {
