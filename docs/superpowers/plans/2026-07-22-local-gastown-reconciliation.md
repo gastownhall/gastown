@@ -418,7 +418,115 @@ git add internal/daemon/convoy_manager.go internal/daemon/*convoy*test.go intern
 git commit -m "fix(mountain): enforce pause before successor dispatch"
 ```
 
-### Task 8: Validate the combined build and install safely
+### Task 8: Keep MR-backed sources open until verified integration
+
+**Files:**
+- Modify: `internal/cmd/done.go`
+- Test: `internal/cmd/done_test.go`
+- Test: `internal/cmd/done_closeDescendants_test.go`
+- Test: `internal/refinery/manager_test.go`
+- Test: `internal/convoy/operations_test.go`
+
+- [ ] **Step 1: Write the failing source-transition tests**
+
+Cover a normal merge-request completion with an ordinary `blocks` successor:
+
+```go
+source := issue("gt-source", "in_progress")
+successor := issue("gt-successor", "open", blocks("gt-source"))
+result := runDoneWithVerifiedMR(source)
+
+assert.Equal(t, "in_progress", result.SourceStatus)
+assert.True(t, result.MRCreated)
+assert.True(t, result.SuccessorBlocked)
+```
+
+Also cover proof failure, superseded MR retry, attached-molecule cleanup, direct merge, and no-merge behavior.
+
+- [ ] **Step 2: Run the red tests**
+
+```bash
+go test ./internal/cmd ./internal/refinery ./internal/convoy -run 'Source.*Integration|MRBacked|PostMerge'
+```
+
+Expected: FAIL because the common `notifyWitness` path closes `hookedBeadID` after creating a verified MR.
+
+- [ ] **Step 3: Make source ownership explicit**
+
+In the normal MR path, retain the source issue and attached source molecule until verified post-merge cleanup. Continue clearing the worker hook and retiring the session, but do not call `hookBd.Close(hookedBeadID)` or burn source attachment descendants while `mrID` is non-empty.
+
+Direct-merge and no-merge paths retain their existing terminal behavior. Failed MR creation keeps the source open.
+
+- [ ] **Step 4: Verify refinery is the only MR source closer**
+
+Require:
+
+```text
+verify target contains submitted SHA
+-> close MR as merged
+-> close source
+-> finalize owning worker
+```
+
+A failure at any stage must leave the remaining evidence retriable.
+
+- [ ] **Step 5: Run focused tests and commit**
+
+```bash
+go test ./internal/cmd ./internal/refinery ./internal/convoy -run 'Done|Source|PostMerge|MergeBlocks'
+git add internal/cmd internal/refinery internal/convoy
+git commit -m "fix(done): retain MR sources until verified integration"
+```
+
+Expected: PASS.
+
+### Task 9: Stabilize respawn locks and branch continuation occupancy
+
+**Files:**
+- Modify: `internal/cmd/sling.go`
+- Modify: `internal/cmd/sling_dispatch.go`
+- Modify: `internal/cmd/polecat_spawn.go`
+- Modify: `internal/polecat/manager.go`
+- Test: existing adjacent sling and polecat tests
+
+- [ ] **Step 1: Write failing ownership tests**
+
+Cover:
+
+```text
+dead respawn owner -> stale state recoverable
+live respawn owner -> second dispatch refused
+branch occupied in worker A -> worker B continuation refused with owner evidence
+--branch continuation -> exact requested tree and base_ref only
+expired reservation -> reclaimed
+live reservation -> never reclaimed
+```
+
+- [ ] **Step 2: Run the red tests**
+
+```bash
+go test ./internal/cmd ./internal/polecat -run 'Respawn|Reservation|Continuation|Occup'
+```
+
+Expected: at least the stale-owner, wrong-tree, and occupancy diagnostics cases fail.
+
+- [ ] **Step 3: Bind state to verifiable ownership**
+
+Respawn/admission state must include the owning PID/session, worker, branch, issue, and creation time. Reclaim only when the owner is proven dead or the lease is expired and no matching live session/worktree exists.
+
+Branch continuation must resolve the requested branch to one worktree before allocation and fail closed if another live worker owns it. Error output must name that worker/worktree.
+
+- [ ] **Step 4: Run focused tests and commit**
+
+```bash
+go test ./internal/cmd ./internal/polecat -run 'Sling|Respawn|Reservation|Continuation|Occup'
+git add internal/cmd internal/polecat
+git commit -m "fix(sling): bind respawn and continuation to live ownership"
+```
+
+Expected: PASS.
+
+### Task 10: Validate the combined build and install safely
 
 **Files:**
 - Modify only if validation reveals defects directly caused by the reconciliation.
@@ -469,7 +577,7 @@ gt mountain status --json
 
 Expected: inventory agrees with `check-recovery`, merged legacy workers are idle, pending/unsafe completed workers remain done, and paused Mountains dispatch no successors.
 
-### Task 9: Review, publish, and integrate
+### Task 11: Review, publish, and integrate
 
 **Files:**
 - No additional source files.
@@ -482,7 +590,9 @@ Review specifically:
 - Copilot process-snapshot reconciliation;
 - agent-store routing;
 - post-merge finalization ordering and idempotency;
-- pause race behavior in both dispatch paths.
+- pause race behavior in both dispatch paths;
+- source retention from MR submission through verified post-merge;
+- respawn, continuation, reservation, and branch-occupancy ownership.
 
 - [ ] **Step 2: Push the approved feature branch**
 
