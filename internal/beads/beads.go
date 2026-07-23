@@ -2130,6 +2130,32 @@ func (b *Beads) closeInCurrentDB(opts closeOptions, ids ...string) error {
 		return b.storeClose(opts.reason, runtime.SessionIDFromEnv(), ids...)
 	}
 
+	type closeGroup struct {
+		target *Beads
+		ids    []string
+	}
+	groups := make([]closeGroup, 0, len(ids))
+	groupByDir := make(map[string]int, len(ids))
+	for _, id := range ids {
+		target := b.forIssueID(id)
+		targetDir := target.getResolvedBeadsDir()
+		if idx, ok := groupByDir[targetDir]; ok {
+			groups[idx].ids = append(groups[idx].ids, id)
+			continue
+		}
+		groupByDir[targetDir] = len(groups)
+		groups = append(groups, closeGroup{target: target, ids: []string{id}})
+	}
+
+	for _, group := range groups {
+		if err := group.target.forceCloseWithReasonInCurrentDB(reason, group.ids...); err != nil {
+			return fmt.Errorf("force closing %s in %s: %w", strings.Join(group.ids, ","), group.target.getResolvedBeadsDir(), err)
+		}
+	}
+	return nil
+}
+
+func (b *Beads) forceCloseWithReasonInCurrentDB(reason string, ids ...string) error {
 	args := append([]string{"close"}, ids...)
 	if opts.withReason {
 		args = append(args, "--reason="+opts.reason)
