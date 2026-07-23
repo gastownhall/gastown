@@ -725,9 +725,214 @@ func makeLogger() (func(string, ...interface{}), *[]string) {
 	return logger, &msgs
 }
 
+func containsLog(logs []string, substr string) bool {
+	for _, msg := range logs {
+		if strings.Contains(msg, substr) {
+			return true
+		}
+	}
+	return false
+}
+
+func createConvoyFeedFixture(t *testing.T, store beadsdk.Storage, convoyID string, convoyLabels []string) {
+	t.Helper()
+
+	ctx := context.Background()
+	now := time.Now().UTC()
+	convoy := &beadsdk.Issue{
+		ID:        convoyID,
+		Title:     "Mountain: Test Convoy",
+		Status:    beadsdk.StatusOpen,
+		Labels:    convoyLabels,
+		Priority:  2,
+		IssueType: beadsdk.TypeTask,
+		CreatedAt: now,
+		UpdatedAt: now,
+	}
+	closed := &beadsdk.Issue{
+		ID:        "test-closed-" + convoyID,
+		Title:     "Closed Task",
+		Status:    beadsdk.StatusClosed,
+		Priority:  2,
+		IssueType: beadsdk.TypeTask,
+		CreatedAt: now,
+		UpdatedAt: now,
+	}
+	ready := &beadsdk.Issue{
+		ID:        "test-ready-" + convoyID,
+		Title:     "Ready Task",
+		Status:    beadsdk.StatusOpen,
+		Priority:  2,
+		IssueType: beadsdk.TypeTask,
+		CreatedAt: now,
+		UpdatedAt: now,
+	}
+
+	for _, iss := range []*beadsdk.Issue{convoy, closed, ready} {
+		if err := store.CreateIssue(ctx, iss, "test"); err != nil {
+			t.Fatalf("CreateIssue %s: %v", iss.ID, err)
+		}
+	}
+	for _, trackedID := range []string{closed.ID, ready.ID} {
+		dep := &beadsdk.Dependency{
+			IssueID:     convoy.ID,
+			DependsOnID: trackedID,
+			Type:        beadsdk.DependencyType("tracks"),
+			CreatedAt:   now,
+			CreatedBy:   "test",
+		}
+		if err := store.AddDependency(ctx, dep, "test"); err != nil {
+			t.Fatalf("AddDependency %s: %v", trackedID, err)
+		}
+	}
+}
+
 // ---------------------------------------------------------------------------
 // feedNextReadyIssue tests (real beads store)
 // ---------------------------------------------------------------------------
+
+func TestCheckConvoysForIssue_SkipsPausedMountainSuccessorDispatch(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("skipping on windows")
+	}
+
+	store, cleanup := setupTestStore(t)
+	defer cleanup()
+
+	createConvoyFeedFixture(t, store, "test-cv-paused", []string{"mountain", "mountain:paused"})
+	townRoot := setupTownRoot(t)
+	gtPath, logPath := makeGTStub(t, 0)
+	logger, logMsgs := makeLogger()
+
+	checked := CheckConvoysForIssue(context.Background(), store, townRoot, "test-closed-test-cv-paused", "test", logger, gtPath, nil)
+
+	if len(checked) != 1 || checked[0] != "test-cv-paused" {
+		t.Fatalf("checked convoys = %v, want [test-cv-paused]", checked)
+	}
+	if data, err := os.ReadFile(logPath); err == nil && strings.Contains(string(data), "sling") {
+		t.Fatalf("paused Mountain dispatched successor; gt log:\n%s", data)
+	}
+	if !containsLog(*logMsgs, "mountain is paused") {
+		t.Fatalf("expected paused Mountain log, got %v", *logMsgs)
+	}
+}
+
+func TestCheckConvoysForIssue_ResumedMountainDispatchesOneSuccessor(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("skipping on windows")
+	}
+
+	store, cleanup := setupTestStore(t)
+	defer cleanup()
+
+	createConvoyFeedFixture(t, store, "test-cv-resumed", []string{"mountain"})
+	townRoot := setupTownRoot(t)
+	gtPath, logPath := makeGTStub(t, 0)
+	logger, _ := makeLogger()
+
+	CheckConvoysForIssue(context.Background(), store, townRoot, "test-closed-test-cv-resumed", "test", logger, gtPath, nil)
+
+	data, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatalf("gt stub was not called: %v", err)
+	}
+	logStr := strings.TrimSpace(string(data))
+	if strings.Count(logStr, "sling test-ready-test-cv-resumed testrig --no-boot") != 1 {
+		t.Fatalf("resumed Mountain should dispatch exactly one successor, got log:\n%s", logStr)
+	}
+}
+
+func TestCheckConvoysForIssue_RegularConvoyDispatchUnaffected(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("skipping on windows")
+	}
+
+	store, cleanup := setupTestStore(t)
+	defer cleanup()
+
+	createConvoyFeedFixture(t, store, "test-cv-regular", nil)
+	townRoot := setupTownRoot(t)
+	gtPath, logPath := makeGTStub(t, 0)
+	logger, _ := makeLogger()
+
+	CheckConvoysForIssue(context.Background(), store, townRoot, "test-closed-test-cv-regular", "test", logger, gtPath, nil)
+
+	data, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatalf("gt stub was not called: %v", err)
+	}
+	if !strings.Contains(string(data), "sling test-ready-test-cv-regular testrig --no-boot") {
+		t.Fatalf("regular convoy did not dispatch successor, got log:\n%s", data)
+	}
+}
+
+func TestCheckConvoysForIssue_PauseLookupFailureFailsClosed(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("skipping on windows")
+	}
+
+	store, cleanup := setupTestStore(t)
+	defer cleanup()
+
+	createConvoyFeedFixture(t, store, "test-cv-lookup-fail", []string{"mountain"})
+	if err := store.DeleteIssue(context.Background(), "test-cv-lookup-fail"); err != nil {
+		t.Fatalf("DeleteIssue convoy: %v", err)
+	}
+	townRoot := setupTownRoot(t)
+	gtPath, logPath := makeGTStub(t, 0)
+	logger, logMsgs := makeLogger()
+
+	feedNextReadyIssue(context.Background(), store, townRoot, "test-cv-lookup-fail", "test", logger, gtPath, func(string) bool { return false }, nil)
+
+	if data, err := os.ReadFile(logPath); err == nil && strings.Contains(string(data), "sling") {
+		t.Fatalf("lookup failure dispatched successor; gt log:\n%s", data)
+	}
+	if !containsLog(*logMsgs, "could not read convoy state") {
+		t.Fatalf("expected lookup failure log, got %v", *logMsgs)
+	}
+}
+
+func TestFeedNextReadyIssue_RechecksPauseAtExecutionBoundary(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("skipping on windows")
+	}
+
+	store, cleanup := setupTestStore(t)
+	defer cleanup()
+
+	ctx := context.Background()
+	convoyID := "test-cv-race"
+	createConvoyFeedFixture(t, store, convoyID, []string{"mountain"})
+	townRoot := setupTownRoot(t)
+	gtPath, logPath := makeGTStub(t, 0)
+	logger, logMsgs := makeLogger()
+
+	oldHook := afterDispatchIssueCommandConstructedForTest
+	flipped := false
+	afterDispatchIssueCommandConstructedForTest = func() {
+		if !flipped {
+			flipped = true
+			if err := store.UpdateIssue(ctx, convoyID, map[string]interface{}{
+				"labels": []string{"mountain", "mountain:paused"},
+			}, "test"); err != nil {
+				t.Fatalf("pause convoy during boundary race: %v", err)
+			}
+		}
+	}
+	t.Cleanup(func() { afterDispatchIssueCommandConstructedForTest = oldHook })
+
+	feedNextReadyIssue(ctx, store, townRoot, convoyID, "test", logger, gtPath, func(string) bool { return false }, nil)
+
+	if !flipped {
+		t.Fatal("test did not reach pre-dispatch boundary")
+	}
+	if data, err := os.ReadFile(logPath); err == nil && strings.Contains(string(data), "sling") {
+		t.Fatalf("Mountain paused after readiness check dispatched successor; gt log:\n%s", data)
+	}
+	if !containsLog(*logMsgs, "mountain is paused") {
+		t.Fatalf("expected paused Mountain log, got %v", *logMsgs)
+	}
+}
 
 func TestFeedNextReadyIssue_DispatchesFirstReadyIssue(t *testing.T) {
 	if runtime.GOOS == "windows" {
@@ -1169,8 +1374,12 @@ func TestDispatchIssue_Success(t *testing.T) {
 
 	townRoot := t.TempDir()
 	gtPath, logPath := makeGTStub(t, 0)
+	store, cleanup := setupTestStore(t)
+	defer cleanup()
+	createConvoyFeedFixture(t, store, "test-cv-dispatch", []string{"mountain"})
+	logger, _ := makeLogger()
 
-	err := dispatchIssue(context.Background(), townRoot, "test-abc", "myrig", gtPath, "")
+	err := dispatchIssue(context.Background(), store, "test-cv-dispatch", "test", logger, townRoot, "test-abc", "myrig", gtPath, "")
 	if err != nil {
 		t.Fatalf("dispatchIssue returned error: %v", err)
 	}
@@ -1193,8 +1402,12 @@ func TestDispatchIssue_Failure(t *testing.T) {
 
 	townRoot := t.TempDir()
 	gtPath, _ := makeGTStub(t, 1)
+	store, cleanup := setupTestStore(t)
+	defer cleanup()
+	createConvoyFeedFixture(t, store, "test-cv-dispatch-fail", []string{"mountain"})
+	logger, _ := makeLogger()
 
-	err := dispatchIssue(context.Background(), townRoot, "test-fail", "myrig", gtPath, "")
+	err := dispatchIssue(context.Background(), store, "test-cv-dispatch-fail", "test", logger, townRoot, "test-fail", "myrig", gtPath, "")
 	if err == nil {
 		t.Fatal("dispatchIssue should return error when gt exits 1")
 	}

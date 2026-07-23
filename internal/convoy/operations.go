@@ -168,6 +168,8 @@ var slingableTypes = map[string]bool{
 	"":        true, // Empty type defaults to task
 }
 
+var afterDispatchIssueCommandConstructedForTest func()
+
 // IsSlingableType reports whether a bead type can be dispatched via gt sling.
 // Exported for use by cmd/convoy.go stranded scan path.
 func IsSlingableType(issueType string) bool {
@@ -183,6 +185,19 @@ var blockingDepTypes = map[string]bool{
 	"conditional-blocks": true,
 	"waits-for":          true,
 	"merge-blocks":       true,
+}
+
+const MountainPausedLabel = "mountain:paused"
+
+// MountainDispatchAllowedLabels reports whether a convoy's labels permit
+// dispatching successor work.
+func MountainDispatchAllowedLabels(labels []string) bool {
+	for _, label := range labels {
+		if label == MountainPausedLabel {
+			return false
+		}
+	}
+	return true
 }
 
 // isIssueBlocked checks if an issue has unclosed blocking dependencies.
@@ -283,6 +298,11 @@ func isIssueBlocked(ctx context.Context, store beadsdk.Storage, issueID string, 
 // next close event triggers another feed cycle.
 // gtPath is the resolved path to the gt binary.
 func feedNextReadyIssue(ctx context.Context, store beadsdk.Storage, townRoot, convoyID, caller string, logger func(format string, args ...interface{}), gtPath string, isRigParked func(string) bool, resolver *StoreResolver) {
+	convoy, ok := convoyDispatchAllowed(ctx, store, convoyID, caller, logger)
+	if !ok {
+		return
+	}
+
 	tracked := getConvoyTrackedIssues(ctx, store, convoyID, townRoot, resolver)
 	if len(tracked) == 0 {
 		return
@@ -290,10 +310,8 @@ func feedNextReadyIssue(ctx context.Context, store beadsdk.Storage, townRoot, co
 
 	// Extract base_branch from convoy description fields
 	var baseBranch string
-	if convoy, err := store.GetIssue(ctx, convoyID); err == nil && convoy != nil {
-		if cf := beads.ParseConvoyFields(&beads.Issue{Description: convoy.Description}); cf != nil {
-			baseBranch = cf.BaseBranch
-		}
+	if cf := beads.ParseConvoyFields(&beads.Issue{Description: convoy.Description}); cf != nil {
+		baseBranch = cf.BaseBranch
 	}
 
 	// Sort by priority (lower = higher) then by ID for deterministic tie-breaking.
@@ -338,8 +356,12 @@ func feedNextReadyIssue(ctx context.Context, store beadsdk.Storage, townRoot, co
 			continue
 		}
 
+		if _, ok := convoyDispatchAllowed(ctx, store, convoyID, caller, logger); !ok {
+			return
+		}
+
 		logger("%s: convoy %s: feeding next ready issue %s to %s", caller, convoyID, issue.ID, rig)
-		if err := dispatchIssue(ctx, townRoot, issue.ID, rig, gtPath, baseBranch); err != nil {
+		if err := dispatchIssue(ctx, store, convoyID, caller, logger, townRoot, issue.ID, rig, gtPath, baseBranch); err != nil {
 			logger("%s: convoy %s: dispatch %s failed: %s", caller, convoyID, issue.ID, util.FirstLine(err.Error()))
 			continue // Try next issue on dispatch failure
 		}
@@ -347,6 +369,27 @@ func feedNextReadyIssue(ctx context.Context, store beadsdk.Storage, townRoot, co
 	}
 
 	logger("%s: convoy %s: no ready issues to feed", caller, convoyID)
+}
+
+func convoyDispatchAllowed(ctx context.Context, store beadsdk.Storage, convoyID, caller string, logger func(format string, args ...interface{})) (*beadsdk.Issue, bool) {
+	if store == nil {
+		logger("%s: convoy %s: could not read convoy state, skipping successor dispatch", caller, convoyID)
+		return nil, false
+	}
+	convoy, err := store.GetIssue(ctx, convoyID)
+	if err != nil {
+		logger("%s: convoy %s: could not read convoy state, skipping successor dispatch: %s", caller, convoyID, util.FirstLine(err.Error()))
+		return nil, false
+	}
+	if convoy == nil {
+		logger("%s: convoy %s: could not read convoy state, skipping successor dispatch", caller, convoyID)
+		return nil, false
+	}
+	if !MountainDispatchAllowedLabels(convoy.Labels) {
+		logger("%s: convoy %s: mountain is paused, skipping successor dispatch", caller, convoyID)
+		return nil, false
+	}
+	return convoy, true
 }
 
 // getConvoyTrackedIssues returns issues tracked by a convoy with fresh status.
@@ -609,7 +652,7 @@ func FireCrossRigDepNotifications(ctx context.Context, closedIssueID, townRoot s
 // dispatchIssue dispatches an issue to a rig via gt sling.
 // The context parameter enables cancellation on daemon shutdown.
 // gtPath is the resolved path to the gt binary.
-func dispatchIssue(ctx context.Context, townRoot, issueID, rig, gtPath, baseBranch string) error {
+func dispatchIssue(ctx context.Context, store beadsdk.Storage, convoyID, caller string, logger func(format string, args ...interface{}), townRoot, issueID, rig, gtPath, baseBranch string) error {
 	args := []string{"sling", issueID, rig, "--no-boot"}
 	if baseBranch != "" {
 		args = append(args, "--base-branch="+baseBranch)
@@ -619,6 +662,13 @@ func dispatchIssue(ctx context.Context, townRoot, issueID, rig, gtPath, baseBran
 	util.SetProcessGroup(cmd)
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
+
+	if afterDispatchIssueCommandConstructedForTest != nil {
+		afterDispatchIssueCommandConstructedForTest()
+	}
+	if _, ok := convoyDispatchAllowed(ctx, store, convoyID, caller, logger); !ok {
+		return nil
+	}
 
 	if err := cmd.Run(); err != nil {
 		return fmt.Errorf("%v: %s", err, strings.TrimSpace(stderr.String()))

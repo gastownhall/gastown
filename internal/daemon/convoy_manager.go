@@ -32,6 +32,8 @@ const (
 	convoyGracePeriod = 5 * time.Minute
 )
 
+var afterStrandedSlingCommandConstructedForTest func()
+
 // strandedConvoyInfo matches the JSON output of `gt convoy stranded --json`.
 type strandedConvoyInfo struct {
 	ID           string    `json:"id"`
@@ -540,6 +542,10 @@ func (m *ConvoyManager) feedFirstReady(c strandedConvoyInfo) {
 		return
 	}
 
+	if !m.convoyDispatchAllowed(c) {
+		return
+	}
+
 	for _, issueID := range c.ReadyIssues {
 		prefix := beads.ExtractPrefix(issueID)
 		if prefix == "" {
@@ -558,6 +564,10 @@ func (m *ConvoyManager) feedFirstReady(c strandedConvoyInfo) {
 			continue
 		}
 
+		if !m.convoyDispatchAllowed(c) {
+			return
+		}
+
 		m.logger("Convoy %s: feeding %s to %s", c.ID, issueID, rig)
 
 		slingArgs := []string{"sling", issueID, rig, "--no-boot"}
@@ -571,6 +581,13 @@ func (m *ConvoyManager) feedFirstReady(c strandedConvoyInfo) {
 		var stderr bytes.Buffer
 		cmd.Stderr = &stderr
 
+		if afterStrandedSlingCommandConstructedForTest != nil {
+			afterStrandedSlingCommandConstructedForTest()
+		}
+		if !m.convoyDispatchAllowed(c) {
+			return
+		}
+
 		if err := cmd.Run(); err != nil {
 			m.logger("Convoy %s: sling %s failed: %s", c.ID, issueID, util.FirstLine(stderr.String()))
 			continue
@@ -579,6 +596,44 @@ func (m *ConvoyManager) feedFirstReady(c strandedConvoyInfo) {
 	}
 
 	m.logger("Convoy %s: no dispatchable issues (all %d skipped)", c.ID, len(c.ReadyIssues))
+}
+
+func (m *ConvoyManager) convoyDispatchAllowed(c strandedConvoyInfo) bool {
+	labels, err := m.lookupConvoyLabels(c.ID)
+	if err != nil {
+		m.logger("Convoy %s: could not read convoy state, skipping successor dispatch: %s", c.ID, util.FirstLine(err.Error()))
+		return false
+	}
+	if !convoy.MountainDispatchAllowedLabels(labels) {
+		m.logger("Convoy %s: mountain is paused, skipping successor dispatch", c.ID)
+		return false
+	}
+	return true
+}
+
+func (m *ConvoyManager) lookupConvoyLabels(convoyID string) ([]string, error) {
+	cmd := exec.CommandContext(m.ctx, "bd", "show", convoyID, "--json")
+	cmd.Dir = m.townRoot
+	cmd.Env = bdReadOnlyRoutingEnv(m.townRoot)
+	util.SetProcessGroup(cmd)
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+
+	if err := cmd.Run(); err != nil {
+		return nil, fmt.Errorf("%v: %s", err, strings.TrimSpace(stderr.String()))
+	}
+
+	var issues []struct {
+		Labels []string `json:"labels"`
+	}
+	if err := json.Unmarshal(stdout.Bytes(), &issues); err != nil {
+		return nil, fmt.Errorf("parsing convoy state: %w", err)
+	}
+	if len(issues) == 0 {
+		return nil, fmt.Errorf("convoy not found")
+	}
+	return issues[0].Labels, nil
 }
 
 // checkConvoyCompletion runs gt convoy check to auto-close a convoy whose

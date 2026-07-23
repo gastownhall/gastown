@@ -108,6 +108,7 @@ exit 0
 	if err := os.WriteFile(filepath.Join(binDir, "gt"), []byte(gtScript), 0755); err != nil {
 		t.Fatalf("write mock gt: %v", err)
 	}
+	installBdShowLabelsStub(t, binDir, nil, false)
 	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
 
 	return scanTestPaths{
@@ -116,6 +117,140 @@ exit 0
 		slingLogPath: slingLogPath,
 		checkLogPath: checkLogPath,
 	}
+}
+
+func installBdShowLabelsStub(t *testing.T, binDir string, labelsByID map[string][]string, fail bool) {
+	t.Helper()
+
+	var cases strings.Builder
+	for id, labels := range labelsByID {
+		data, err := json.Marshal([]map[string]interface{}{{
+			"id":     id,
+			"labels": labels,
+		}})
+		if err != nil {
+			t.Fatalf("marshal labels for %s: %v", id, err)
+		}
+		fmt.Fprintf(&cases, "  %q) echo %q; exit 0 ;;\n", id, string(data))
+	}
+
+	failClause := ""
+	if fail {
+		failClause = `echo "bd show failed" >&2
+exit 2
+`
+	}
+
+	script := `#!/bin/sh
+if [ "$1" = "show" ]; then
+` + failClause + `
+  case "$2" in
+` + cases.String() + `  esac
+  printf '[{"id":"%s","labels":[]}]' "$2"
+  exit 0
+fi
+echo '[]'
+exit 0
+`
+	if err := os.WriteFile(filepath.Join(binDir, "bd"), []byte(script), 0755); err != nil {
+		t.Fatalf("write mock bd: %v", err)
+	}
+}
+
+func installBdShowLabelsSequenceStub(t *testing.T, binDir, convoyID string, sequence [][]string) {
+	t.Helper()
+
+	sequenceDir := filepath.Join(binDir, "bd-show-sequence")
+	if err := os.MkdirAll(sequenceDir, 0755); err != nil {
+		t.Fatalf("mkdir sequence dir: %v", err)
+	}
+	for i, labels := range sequence {
+		data, err := json.Marshal([]map[string]interface{}{{
+			"id":     convoyID,
+			"labels": labels,
+		}})
+		if err != nil {
+			t.Fatalf("marshal labels sequence %d: %v", i, err)
+		}
+		if err := os.WriteFile(filepath.Join(sequenceDir, fmt.Sprintf("%d.json", i+1)), data, 0644); err != nil {
+			t.Fatalf("write labels sequence %d: %v", i, err)
+		}
+	}
+
+	counterPath := filepath.Join(sequenceDir, "counter")
+	script := `#!/bin/sh
+if [ "$1" = "show" ] && [ "$2" = "` + convoyID + `" ]; then
+  count=0
+  if [ -f "` + counterPath + `" ]; then
+    count=$(cat "` + counterPath + `")
+  fi
+  count=$((count + 1))
+  echo "$count" > "` + counterPath + `"
+  if [ -f "` + sequenceDir + `/$count.json" ]; then
+    cat "` + sequenceDir + `/$count.json"
+    exit 0
+  fi
+fi
+printf '[{"id":"%s","labels":[]}]' "$2"
+exit 0
+`
+	if err := os.WriteFile(filepath.Join(binDir, "bd"), []byte(script), 0755); err != nil {
+		t.Fatalf("write sequence mock bd: %v", err)
+	}
+}
+
+func installBdShowLabelsFileStub(t *testing.T, binDir, convoyID string, labels []string) func([]string) {
+	t.Helper()
+
+	labelsPath := filepath.Join(binDir, "bd-labels.json")
+	writeLabels := func(next []string) {
+		t.Helper()
+		data, err := json.Marshal([]map[string]interface{}{{
+			"id":     convoyID,
+			"labels": next,
+		}})
+		if err != nil {
+			t.Fatalf("marshal labels for %s: %v", convoyID, err)
+		}
+		if err := os.WriteFile(labelsPath, data, 0644); err != nil {
+			t.Fatalf("write labels file: %v", err)
+		}
+	}
+	writeLabels(labels)
+
+	script := `#!/bin/sh
+if [ "$1" = "show" ] && [ "$2" = "` + convoyID + `" ]; then
+  cat "` + labelsPath + `"
+  exit 0
+fi
+printf '[{"id":"%s","labels":[]}]' "$2"
+exit 0
+`
+	if err := os.WriteFile(filepath.Join(binDir, "bd"), []byte(script), 0755); err != nil {
+		t.Fatalf("write file-backed mock bd: %v", err)
+	}
+	return writeLabels
+}
+
+func readOptionalFile(t *testing.T, path string) string {
+	t.Helper()
+	data, err := os.ReadFile(path)
+	if os.IsNotExist(err) {
+		return ""
+	}
+	if err != nil {
+		t.Fatalf("read %s: %v", path, err)
+	}
+	return string(data)
+}
+
+func containsString(items []string, substr string) bool {
+	for _, item := range items {
+		if strings.Contains(item, substr) {
+			return true
+		}
+	}
+	return false
 }
 
 func TestEventPoll_DetectsCloseEvents(t *testing.T) {
@@ -255,6 +390,149 @@ func TestScanStranded_FeedsReadyIssues(t *testing.T) {
 	logContent := string(data)
 	if !strings.Contains(logContent, "sling") || !strings.Contains(logContent, "gt-issue1") {
 		t.Errorf("expected gt sling to be invoked for gt-issue1, got: %q", logContent)
+	}
+}
+
+func TestScanStranded_SkipsPausedMountain(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("skipping on Windows")
+	}
+
+	paths := mockGtForScanTest(t, scanTestOpts{
+		strandedJSON: `[{"id":"hq-cv-mountain","title":"Mountain: Test","ready_count":1,"ready_issues":["gt-issue1"]}]`,
+		routes:       `{"prefix":"gt-","path":"gt/.beads"}` + "\n",
+	})
+	installBdShowLabelsStub(t, paths.binDir, map[string][]string{
+		"hq-cv-mountain": {"mountain", "mountain:paused"},
+	}, false)
+	var logged []string
+	logger := func(format string, args ...interface{}) {
+		logged = append(logged, fmt.Sprintf(format, args...))
+	}
+
+	m := NewConvoyManager(paths.townRoot, logger, "gt", 10*time.Minute, nil, nil, nil)
+	m.scan()
+
+	if got := readOptionalFile(t, paths.slingLogPath); got != "" {
+		t.Fatalf("paused Mountain dispatched successor; sling log:\n%s", got)
+	}
+	if !containsString(logged, "mountain is paused") {
+		t.Fatalf("expected paused Mountain log, got %v", logged)
+	}
+}
+
+func TestScanStranded_SkipsPausedMountainWithRenamedConvoy(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("skipping on Windows")
+	}
+
+	paths := mockGtForScanTest(t, scanTestOpts{
+		strandedJSON: `[{"id":"hq-cv-renamed","title":"Renamed convoy","ready_count":1,"ready_issues":["gt-issue1"]}]`,
+		routes:       `{"prefix":"gt-","path":"gt/.beads"}` + "\n",
+	})
+	installBdShowLabelsStub(t, paths.binDir, map[string][]string{
+		"hq-cv-renamed": {"mountain", "mountain:paused"},
+	}, false)
+
+	m := NewConvoyManager(paths.townRoot, func(string, ...interface{}) {}, "gt", 10*time.Minute, nil, nil, nil)
+	m.scan()
+
+	if got := readOptionalFile(t, paths.slingLogPath); got != "" {
+		t.Fatalf("renamed paused Mountain dispatched successor; sling log:\n%s", got)
+	}
+}
+
+func TestScanStranded_RechecksPauseAtExecutionBoundary(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("skipping on Windows")
+	}
+
+	paths := mockGtForScanTest(t, scanTestOpts{
+		strandedJSON: `[{"id":"hq-cv-race","title":"Mountain: Race","ready_count":1,"ready_issues":["gt-issue1"]}]`,
+		routes:       `{"prefix":"gt-","path":"gt/.beads"}` + "\n",
+	})
+	writeLabels := installBdShowLabelsFileStub(t, paths.binDir, "hq-cv-race", []string{"mountain"})
+	oldHook := afterStrandedSlingCommandConstructedForTest
+	afterStrandedSlingCommandConstructedForTest = func() {
+		writeLabels([]string{"mountain", "mountain:paused"})
+	}
+	t.Cleanup(func() { afterStrandedSlingCommandConstructedForTest = oldHook })
+
+	m := NewConvoyManager(paths.townRoot, func(string, ...interface{}) {}, "gt", 10*time.Minute, nil, nil, nil)
+	m.scan()
+
+	if got := readOptionalFile(t, paths.slingLogPath); got != "" {
+		t.Fatalf("Mountain paused after readiness check dispatched successor; sling log:\n%s", got)
+	}
+}
+
+func TestScanStranded_ResumedMountainFeedsOneSuccessor(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("skipping on Windows")
+	}
+
+	paths := mockGtForScanTest(t, scanTestOpts{
+		strandedJSON: `[{"id":"hq-cv-mountain","title":"Mountain: Test","ready_count":1,"ready_issues":["gt-issue1"]}]`,
+		routes:       `{"prefix":"gt-","path":"gt/.beads"}` + "\n",
+	})
+	installBdShowLabelsStub(t, paths.binDir, map[string][]string{
+		"hq-cv-mountain": {"mountain"},
+	}, false)
+
+	m := NewConvoyManager(paths.townRoot, func(string, ...interface{}) {}, "gt", 10*time.Minute, nil, nil, nil)
+	m.scan()
+
+	logContent := readOptionalFile(t, paths.slingLogPath)
+	if strings.Count(logContent, "sling gt-issue1 gt --no-boot") != 1 {
+		t.Fatalf("resumed Mountain should dispatch exactly one successor, got: %q", logContent)
+	}
+}
+
+func TestScanStranded_RegularConvoyFeedsUnaffected(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("skipping on Windows")
+	}
+
+	paths := mockGtForScanTest(t, scanTestOpts{
+		strandedJSON: `[{"id":"hq-cv-regular","title":"Regular","ready_count":1,"ready_issues":["gt-issue1"]}]`,
+		routes:       `{"prefix":"gt-","path":"gt/.beads"}` + "\n",
+	})
+	installBdShowLabelsStub(t, paths.binDir, map[string][]string{
+		"hq-cv-regular": nil,
+	}, false)
+
+	m := NewConvoyManager(paths.townRoot, func(string, ...interface{}) {}, "gt", 10*time.Minute, nil, nil, nil)
+	m.scan()
+
+	logContent := readOptionalFile(t, paths.slingLogPath)
+	if !strings.Contains(logContent, "sling gt-issue1 gt --no-boot") {
+		t.Fatalf("regular convoy should dispatch, got: %q", logContent)
+	}
+}
+
+func TestScanStranded_PauseLookupFailureFailsClosed(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("skipping on Windows")
+	}
+
+	paths := mockGtForScanTest(t, scanTestOpts{
+		strandedJSON: `[{"id":"hq-cv-mountain","title":"Mountain: Test","ready_count":1,"ready_issues":["gt-issue1"]}]`,
+		routes:       `{"prefix":"gt-","path":"gt/.beads"}` + "\n",
+	})
+	installBdShowLabelsStub(t, paths.binDir, nil, true)
+	var logged []string
+	logger := func(format string, args ...interface{}) {
+		logged = append(logged, fmt.Sprintf(format, args...))
+	}
+
+	m := NewConvoyManager(paths.townRoot, logger, "gt", 10*time.Minute, nil, nil, nil)
+	m.scan()
+
+	if got := readOptionalFile(t, paths.slingLogPath); got != "" {
+		t.Fatalf("lookup failure dispatched successor; sling log:\n%s", got)
+	}
+	if !containsString(logged, "could not read convoy state") {
+		t.Fatalf("expected lookup failure log, got %v", logged)
 	}
 }
 
