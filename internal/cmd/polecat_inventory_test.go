@@ -7,6 +7,7 @@ import (
 
 	"github.com/steveyegge/gastown/internal/beads"
 	"github.com/steveyegge/gastown/internal/polecat"
+	"github.com/steveyegge/gastown/internal/rig"
 )
 
 func TestPolecatSessionSet(t *testing.T) {
@@ -194,5 +195,66 @@ func TestPolecatNameFromAssignee(t *testing.T) {
 		if got != tt.wantName || ok != tt.wantOK {
 			t.Fatalf("polecatNameFromAssignee(%q) = %q, %v", tt.assignee, got, ok)
 		}
+	}
+}
+
+func TestCollectPolecatListItemsUsesAgentAuthorityAndRigActiveWork(t *testing.T) {
+	setupPolecatTestRegistry(t)
+	r := &rig.Rig{Name: "gastown", Path: t.TempDir()}
+	agentID := beads.PolecatBeadIDWithPrefix("gt", "gastown", "nux")
+	agentIssue := &beads.Issue{
+		ID: agentID,
+		Description: beads.FormatAgentDescription("Polecat nux", &beads.AgentFields{
+			AgentState:    string(beads.AgentStateDone),
+			CleanupStatus: string(polecat.CleanupClean),
+		}),
+	}
+
+	items := collectPolecatListItemsFromAuthority(
+		r,
+		[]string{"nux"},
+		map[string]*beads.Issue{agentID: agentIssue},
+		map[string]*beads.Issue{},
+		nil,
+		nil,
+	)
+	if len(items) != 1 {
+		t.Fatalf("items len = %d, want 1", len(items))
+	}
+	if items[0].State != polecat.StateDone || items[0].CleanupStatus != string(polecat.CleanupClean) || !items[0].Reusable || items[0].NeedsRecovery {
+		t.Fatalf("item from town agent authority = %+v, want done clean reusable", items[0])
+	}
+
+	activeWork := &beads.Issue{ID: "gt-hook", Status: string(beads.IssueStatusHooked), Assignee: "gastown/polecats/nux"}
+	items = collectPolecatListItemsFromAuthority(
+		r,
+		[]string{"nux"},
+		map[string]*beads.Issue{agentID: agentIssue},
+		map[string]*beads.Issue{"nux": activeWork},
+		nil,
+		nil,
+	)
+	if items[0].Issue != "gt-hook" || !items[0].NeedsRecovery || !items[0].CountsTowardCapacity || items[0].Reusable {
+		t.Fatalf("item with rig active work = %+v, want active work to remain authoritative", items[0])
+	}
+}
+
+func TestCollectPolecatListItemsMissingAgentAuthorityFailsClosed(t *testing.T) {
+	setupPolecatTestRegistry(t)
+	r := &rig.Rig{Name: "gastown", Path: t.TempDir()}
+
+	items := collectPolecatListItemsFromAuthority(
+		r,
+		[]string{"nux"},
+		map[string]*beads.Issue{},
+		map[string]*beads.Issue{},
+		nil,
+		nil,
+	)
+	if len(items) != 1 {
+		t.Fatalf("items len = %d, want 1", len(items))
+	}
+	if !items[0].NeedsRecovery || items[0].Reason != "cleanup-unknown" || !items[0].CountsTowardCapacity {
+		t.Fatalf("missing agent authority item = %+v, want cleanup-unknown recovery", items[0])
 	}
 }

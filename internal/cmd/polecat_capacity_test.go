@@ -333,6 +333,42 @@ func TestApplyAgentFieldsToCapacitySnapshotSeparatesPendingMR(t *testing.T) {
 	}
 }
 
+func TestApplyPolecatCapacityUsesAgentAuthorityAndRigActiveWork(t *testing.T) {
+	setupPolecatTestRegistry(t)
+	agentID := beads.PolecatBeadIDWithPrefix("gt", "gastown", "nux")
+	agentIssue := &beads.Issue{
+		ID: agentID,
+		Description: beads.FormatAgentDescription("Polecat nux", &beads.AgentFields{
+			AgentState:    string(beads.AgentStateDone),
+			CleanupStatus: string(polecat.CleanupClean),
+		}),
+	}
+
+	snapshot := polecatCapacitySnapshot{Max: 2}
+	applyPolecatCapacityFromAuthority(&snapshot, "gastown", []string{"nux"}, "gt", map[string]*beads.Issue{agentID: agentIssue}, map[string]*beads.Issue{}, nil)
+	if snapshot.ReusableIdle != 1 || snapshot.RecoveryBlocked != 0 || snapshot.capacityUsed != 0 {
+		t.Fatalf("snapshot from town agent authority = %+v, want reusable idle without capacity use", snapshot)
+	}
+
+	activeWork := &beads.Issue{ID: "gt-hook", Status: string(beads.IssueStatusHooked), Assignee: "gastown/polecats/nux"}
+	snapshot = polecatCapacitySnapshot{Max: 2}
+	applyPolecatCapacityFromAuthority(&snapshot, "gastown", []string{"nux"}, "gt", map[string]*beads.Issue{agentID: agentIssue}, map[string]*beads.Issue{"nux": activeWork}, nil)
+	if snapshot.RecoveryBlocked != 1 || snapshot.capacityUsed != 1 || snapshot.ReusableIdle != 0 {
+		t.Fatalf("snapshot with rig active work = %+v, want active work to consume capacity", snapshot)
+	}
+}
+
+func TestApplyPolecatCapacityMissingAgentAuthorityFailsClosed(t *testing.T) {
+	setupPolecatTestRegistry(t)
+	snapshot := polecatCapacitySnapshot{Max: 2}
+
+	applyPolecatCapacityFromAuthority(&snapshot, "gastown", []string{"nux"}, "gt", map[string]*beads.Issue{}, map[string]*beads.Issue{}, nil)
+
+	if snapshot.RecoveryBlocked != 1 || snapshot.capacityUsed != 1 || snapshot.ReusableIdle != 0 {
+		t.Fatalf("snapshot with missing agent authority = %+v, want recovery-blocked capacity use", snapshot)
+	}
+}
+
 func TestCapacitySnapshotRecoveryBlockedDoesNotAlwaysConsumeFreeCapacity(t *testing.T) {
 	snapshot := polecatCapacitySnapshot{Max: 3}
 	applyWorkstateDispositionToCapacitySnapshot(&snapshot, polecat.StateIdle, polecat.WorkstateDisposition{

@@ -498,7 +498,7 @@ func runPolecatList(cmd *cobra.Command, args []string) error {
 			fmt.Fprintf(os.Stderr, "warning: failed to list polecats in %s: %v\n", r.Name, err)
 			continue
 		}
-		agents, agentErr := bd.ListAgentBeads()
+		agents, agentErr := listPolecatAgentBeads(bd)
 		if agentErr != nil {
 			fmt.Fprintf(os.Stderr, "warning: failed to list agent beads in %s: %v\n", r.Name, agentErr)
 			agents = nil
@@ -509,43 +509,9 @@ func runPolecatList(cmd *cobra.Command, args []string) error {
 			activeWork = nil
 		}
 
-		// Track known polecat names from filesystem for zombie detection
 		knownNames := make(map[string]bool)
+		allPolecats = append(allPolecats, collectPolecatListItemsFromAuthority(r, polecatNames, agents, activeWork, activeWorkErr, sessions)...)
 		for _, name := range polecatNames {
-			agentBeadID := polecatBeadIDForRig(r, r.Name, name)
-			fields := parsePolecatAgentFields(agents[agentBeadID])
-			item := buildPolecatInventoryItem(r.Name, name, fields, activeWork[name], sessions)
-			if activeWorkErr != nil {
-				item = buildPolecatInventoryItemFromEvidence(r.Name, name, fields, polecatActiveWorkLookupError(activeWorkErr), sessions)
-			}
-			disposition := item.Disposition
-			state := effectivePolecatState(PolecatListItem{
-				State:                item.State,
-				Issue:                item.Issue,
-				SessionRunning:       item.SessionRunning,
-				CountsTowardCapacity: disposition.CountsTowardCapacity,
-			})
-			allPolecats = append(allPolecats, PolecatListItem{
-				Rig:                  r.Name,
-				Name:                 name,
-				State:                state,
-				Issue:                item.Issue,
-				CleanupStatus:        item.CleanupStatus,
-				ActiveMR:             item.ActiveMR,
-				Branch:               item.Branch,
-				Verdict:              disposition.Verdict,
-				Reason:               disposition.Reason,
-				Reusable:             disposition.Reusable,
-				SafeToNuke:           disposition.SafeToNuke,
-				NeedsRecovery:        disposition.NeedsRecovery,
-				NeedsMQSubmit:        disposition.NeedsMQSubmit,
-				MQStatus:             disposition.MQStatus,
-				CountsTowardCapacity: disposition.CountsTowardCapacity,
-				ReuseStatus:          disposition.ReuseStatus,
-				Blockers:             disposition.Blockers,
-				SessionRunning:       item.SessionRunning,
-				SessionName:          item.SessionName,
-			})
 			knownNames[name] = true
 		}
 
@@ -630,6 +596,51 @@ func runPolecatList(cmd *cobra.Command, args []string) error {
 	}
 
 	return nil
+}
+
+func listPolecatAgentBeads(bd *beads.Beads) (map[string]*beads.Issue, error) {
+	return bd.ForAgentBead().ListAgentBeads()
+}
+
+func collectPolecatListItemsFromAuthority(r *rig.Rig, polecatNames []string, agents, activeWork map[string]*beads.Issue, activeWorkErr error, sessions polecatSessionSet) []PolecatListItem {
+	items := make([]PolecatListItem, 0, len(polecatNames))
+	for _, name := range polecatNames {
+		agentBeadID := polecatBeadIDForRig(r, r.Name, name)
+		fields := parsePolecatAgentFields(agents[agentBeadID])
+		item := buildPolecatInventoryItem(r.Name, name, fields, activeWork[name], sessions)
+		if activeWorkErr != nil {
+			item = buildPolecatInventoryItemFromEvidence(r.Name, name, fields, polecatActiveWorkLookupError(activeWorkErr), sessions)
+		}
+		disposition := item.Disposition
+		state := effectivePolecatState(PolecatListItem{
+			State:                item.State,
+			Issue:                item.Issue,
+			SessionRunning:       item.SessionRunning,
+			CountsTowardCapacity: disposition.CountsTowardCapacity,
+		})
+		items = append(items, PolecatListItem{
+			Rig:                  r.Name,
+			Name:                 name,
+			State:                state,
+			Issue:                item.Issue,
+			CleanupStatus:        item.CleanupStatus,
+			ActiveMR:             item.ActiveMR,
+			Branch:               item.Branch,
+			Verdict:              disposition.Verdict,
+			Reason:               disposition.Reason,
+			Reusable:             disposition.Reusable,
+			SafeToNuke:           disposition.SafeToNuke,
+			NeedsRecovery:        disposition.NeedsRecovery,
+			NeedsMQSubmit:        disposition.NeedsMQSubmit,
+			MQStatus:             disposition.MQStatus,
+			CountsTowardCapacity: disposition.CountsTowardCapacity,
+			ReuseStatus:          disposition.ReuseStatus,
+			Blockers:             disposition.Blockers,
+			SessionRunning:       item.SessionRunning,
+			SessionName:          item.SessionName,
+		})
+	}
+	return items
 }
 
 func runPolecatAdd(cmd *cobra.Command, args []string) error {

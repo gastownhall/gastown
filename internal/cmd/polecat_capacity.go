@@ -213,7 +213,7 @@ func polecatCapacitySnapshotForTownNoCleanup(townRoot string) (polecatCapacitySn
 		}
 
 		rigBeads := beads.New(rigPath)
-		agents, err := rigBeads.ListAgentBeads()
+		agents, err := listPolecatAgentBeads(rigBeads)
 		if err != nil {
 			return snapshot, fmt.Errorf("listing agent beads for %s capacity: %w", rigName, err)
 		}
@@ -222,12 +222,7 @@ func polecatCapacitySnapshotForTownNoCleanup(townRoot string) (polecatCapacitySn
 			return snapshot, fmt.Errorf("listing active polecat work for %s capacity: %w", rigName, err)
 		}
 		prefix := beads.GetPrefixForRig(townRoot, rigName)
-		for _, name := range polecatNames {
-			agentID := beads.PolecatBeadIDWithPrefix(prefix, rigName, name)
-			issue := agents[agentID]
-			fields := parsePolecatAgentFields(issue)
-			applyAgentFieldsToCapacitySnapshot(&snapshot, rigName, name, fields, activeWork[name], sessions)
-		}
+		applyPolecatCapacityFromAuthority(&snapshot, rigName, polecatNames, prefix, agents, activeWork, sessions)
 	}
 
 	reservations, err := readPolecatAdmissionReservations(townRoot)
@@ -242,6 +237,15 @@ func polecatCapacitySnapshotForTownNoCleanup(townRoot string) (polecatCapacitySn
 		}
 	}
 	return snapshot, nil
+}
+
+func applyPolecatCapacityFromAuthority(snapshot *polecatCapacitySnapshot, rigName string, polecatNames []string, prefix string, agents, activeWork map[string]*beads.Issue, sessions polecatSessionSet) {
+	for _, name := range polecatNames {
+		agentID := beads.PolecatBeadIDWithPrefix(prefix, rigName, name)
+		issue := agents[agentID]
+		fields := parsePolecatAgentFields(issue)
+		applyAgentFieldsToCapacitySnapshot(snapshot, rigName, name, fields, activeWork[name], sessions)
+	}
 }
 
 func listPolecatDirectoryNames(rigPath string) ([]string, error) {
