@@ -1,14 +1,162 @@
 package cmd
 
 import (
+	"encoding/json"
 	"errors"
+	"os"
+	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
 	"github.com/steveyegge/gastown/internal/beads"
+	"github.com/steveyegge/gastown/internal/config"
 	"github.com/steveyegge/gastown/internal/polecat"
 	"github.com/steveyegge/gastown/internal/rig"
 )
+
+type polecatAuthorityBoundaryFixture struct {
+	townRoot    string
+	townBeads   string
+	rigPath     string
+	rigBeads    string
+	logPath     string
+	agentBeadID string
+}
+
+func setupPolecatAuthorityBoundaryFixture(t *testing.T, activeIssues ...*beads.Issue) polecatAuthorityBoundaryFixture {
+	t.Helper()
+	if runtime.GOOS == "windows" {
+		t.Skip("test uses Unix shell script mock for bd")
+	}
+
+	townRoot := t.TempDir()
+	townBeads := filepath.Join(townRoot, ".beads")
+	rigPath := filepath.Join(townRoot, "gastown")
+	rigBeads := filepath.Join(rigPath, ".beads")
+	for _, dir := range []string{
+		filepath.Join(townRoot, "mayor"),
+		townBeads,
+		rigBeads,
+		filepath.Join(rigPath, "polecats", "nux"),
+	} {
+		if err := os.MkdirAll(dir, 0755); err != nil {
+			t.Fatalf("mkdir %s: %v", dir, err)
+		}
+	}
+	if err := os.WriteFile(filepath.Join(townRoot, "mayor", "town.json"), []byte(`{"name":"test"}`), 0644); err != nil {
+		t.Fatalf("write town.json: %v", err)
+	}
+	if err := beads.WriteRoutes(townBeads, []beads.Route{
+		{Prefix: "hq-", Path: "."},
+		{Prefix: "gt-", Path: "gastown"},
+	}); err != nil {
+		t.Fatalf("write routes: %v", err)
+	}
+	configureScheduler(t, townRoot, 2, 1)
+	if err := config.SaveRigsConfig(filepath.Join(townRoot, "mayor", "rigs.json"), &config.RigsConfig{
+		Version: config.CurrentRigsVersion,
+		Rigs: map[string]config.RigEntry{
+			"gastown": {GitURL: "https://example.invalid/gastown.git"},
+		},
+	}); err != nil {
+		t.Fatalf("SaveRigsConfig: %v", err)
+	}
+
+	agentBeadID := beads.PolecatBeadIDWithPrefix("gt", "gastown", "nux")
+	agentIssue := &beads.Issue{
+		ID:     agentBeadID,
+		Title:  "Polecat nux",
+		Status: string(beads.StatusOpen),
+		Type:   "agent",
+		Labels: []string{"gt:agent"},
+		Description: beads.FormatAgentDescription("Polecat nux", &beads.AgentFields{
+			AgentState:    string(beads.AgentStateDone),
+			CleanupStatus: string(polecat.CleanupClean),
+		}),
+	}
+	townAgentsJSON := marshalIssuesForTest(t, []*beads.Issue{agentIssue})
+	rigActiveJSON := marshalIssuesForTest(t, activeIssues)
+
+	binDir := t.TempDir()
+	logPath := filepath.Join(binDir, "bd.log")
+	script := `#!/bin/sh
+if [ "$1" = "--allow-stale" ] && [ "$2" = "version" ]; then
+  exit 1
+fi
+printf '%s|%s\n' "${BEADS_DIR:-}" "$*" >> "$MOCK_BD_LOG"
+case "$1" in
+  version)
+    echo "bd mock"
+    exit 0
+    ;;
+  list)
+    if [ "${MOCK_AUTHORITY_FAIL:-}" = "1" ] && [ "${BEADS_DIR:-}" = "$MOCK_TOWN_BEADS" ]; then
+      echo "town authority unavailable" >&2
+      exit 7
+    fi
+    if [ "${BEADS_DIR:-}" = "$MOCK_TOWN_BEADS" ]; then
+      printf '%s\n' "$MOCK_TOWN_AGENTS_JSON"
+    else
+      printf '[]\n'
+    fi
+    exit 0
+    ;;
+  query)
+    if [ "${BEADS_DIR:-}" = "$MOCK_RIG_BEADS" ]; then
+      printf '%s\n' "$MOCK_RIG_ACTIVE_JSON"
+    else
+      printf '[]\n'
+    fi
+    exit 0
+    ;;
+  *)
+    printf '[]\n'
+    exit 0
+    ;;
+esac
+`
+	if err := os.WriteFile(filepath.Join(binDir, "bd"), []byte(script), 0755); err != nil {
+		t.Fatalf("write mock bd: %v", err)
+	}
+	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	t.Setenv("MOCK_BD_LOG", logPath)
+	t.Setenv("MOCK_TOWN_BEADS", townBeads)
+	t.Setenv("MOCK_RIG_BEADS", rigBeads)
+	t.Setenv("MOCK_TOWN_AGENTS_JSON", townAgentsJSON)
+	t.Setenv("MOCK_RIG_ACTIVE_JSON", rigActiveJSON)
+	beads.ResetBdAllowStaleCacheForTest()
+
+	return polecatAuthorityBoundaryFixture{
+		townRoot:    townRoot,
+		townBeads:   townBeads,
+		rigPath:     rigPath,
+		rigBeads:    rigBeads,
+		logPath:     logPath,
+		agentBeadID: agentBeadID,
+	}
+}
+
+func marshalIssuesForTest(t *testing.T, issues []*beads.Issue) string {
+	t.Helper()
+	if issues == nil {
+		issues = []*beads.Issue{}
+	}
+	data, err := json.Marshal(issues)
+	if err != nil {
+		t.Fatalf("marshal issues: %v", err)
+	}
+	return string(data)
+}
+
+func readAuthorityBoundaryLog(t *testing.T, fixture polecatAuthorityBoundaryFixture) string {
+	t.Helper()
+	data, err := os.ReadFile(fixture.logPath)
+	if err != nil {
+		t.Fatalf("read bd log: %v", err)
+	}
+	return string(data)
+}
 
 func TestPolecatSessionSet(t *testing.T) {
 	setupPolecatTestRegistry(t)
@@ -239,6 +387,83 @@ func TestCollectPolecatListItemsUsesAgentAuthorityAndRigActiveWork(t *testing.T)
 	}
 }
 
+func TestPolecatInventoryReadsTownAgentAuthorityWithoutRigAgentBead(t *testing.T) {
+	setupPolecatTestRegistry(t)
+	fixture := setupPolecatAuthorityBoundaryFixture(t)
+	bd := beads.New(fixture.rigPath)
+
+	agents, err := listPolecatAgentBeads(bd)
+	if err != nil {
+		t.Fatalf("listPolecatAgentBeads: %v", err)
+	}
+	activeWork, err := listActivePolecatWorkByName(bd, "gastown")
+	if err != nil {
+		t.Fatalf("listActivePolecatWorkByName: %v", err)
+	}
+
+	items := collectPolecatListItemsFromAuthority(
+		&rig.Rig{Name: "gastown", Path: fixture.rigPath},
+		[]string{"nux"},
+		agents,
+		activeWork,
+		nil,
+		nil,
+	)
+	if len(items) != 1 {
+		t.Fatalf("items len = %d, want 1", len(items))
+	}
+	if items[0].State != polecat.StateDone || items[0].CleanupStatus != string(polecat.CleanupClean) || !items[0].Reusable || items[0].NeedsRecovery {
+		t.Fatalf("item = %+v, want town authority to make done clean polecat reusable", items[0])
+	}
+
+	logOutput := readAuthorityBoundaryLog(t, fixture)
+	if !strings.Contains(logOutput, fixture.townBeads+"|list") {
+		t.Fatalf("agent bead list did not use town authority:\n%s", logOutput)
+	}
+	if strings.Contains(logOutput, fixture.rigBeads+"|list") {
+		t.Fatalf("agent bead list used rig-local beads dir:\n%s", logOutput)
+	}
+	if !strings.Contains(logOutput, fixture.rigBeads+"|query") {
+		t.Fatalf("active work query did not use rig store:\n%s", logOutput)
+	}
+}
+
+func TestPolecatInventoryActiveWorkRemainsRigRouted(t *testing.T) {
+	setupPolecatTestRegistry(t)
+	activeIssue := &beads.Issue{ID: "gt-hook", Status: string(beads.IssueStatusHooked), Assignee: "gastown/polecats/nux"}
+	fixture := setupPolecatAuthorityBoundaryFixture(t, activeIssue)
+	bd := beads.New(fixture.rigPath)
+
+	agents, err := listPolecatAgentBeads(bd)
+	if err != nil {
+		t.Fatalf("listPolecatAgentBeads: %v", err)
+	}
+	activeWork, err := listActivePolecatWorkByName(bd, "gastown")
+	if err != nil {
+		t.Fatalf("listActivePolecatWorkByName: %v", err)
+	}
+
+	items := collectPolecatListItemsFromAuthority(
+		&rig.Rig{Name: "gastown", Path: fixture.rigPath},
+		[]string{"nux"},
+		agents,
+		activeWork,
+		nil,
+		nil,
+	)
+	if len(items) != 1 {
+		t.Fatalf("items len = %d, want 1", len(items))
+	}
+	if items[0].Issue != "gt-hook" || !items[0].NeedsRecovery || !items[0].CountsTowardCapacity || items[0].Reusable {
+		t.Fatalf("item = %+v, want rig active work to override reusable town metadata", items[0])
+	}
+
+	logOutput := readAuthorityBoundaryLog(t, fixture)
+	if !strings.Contains(logOutput, fixture.townBeads+"|list") || !strings.Contains(logOutput, fixture.rigBeads+"|query") {
+		t.Fatalf("expected town agent list and rig active query:\n%s", logOutput)
+	}
+}
+
 func TestCollectPolecatListItemsMissingAgentAuthorityFailsClosed(t *testing.T) {
 	setupPolecatTestRegistry(t)
 	r := &rig.Rig{Name: "gastown", Path: t.TempDir()}
@@ -256,5 +481,31 @@ func TestCollectPolecatListItemsMissingAgentAuthorityFailsClosed(t *testing.T) {
 	}
 	if !items[0].NeedsRecovery || items[0].Reason != "cleanup-unknown" || !items[0].CountsTowardCapacity {
 		t.Fatalf("missing agent authority item = %+v, want cleanup-unknown recovery", items[0])
+	}
+}
+
+func TestPolecatInventoryAuthorityLookupFailureFailsClosed(t *testing.T) {
+	setupPolecatTestRegistry(t)
+	fixture := setupPolecatAuthorityBoundaryFixture(t)
+	t.Setenv("MOCK_AUTHORITY_FAIL", "1")
+	bd := beads.New(fixture.rigPath)
+
+	agents, agentErr := listPolecatAgentBeads(bd)
+	if agentErr == nil {
+		t.Fatal("listPolecatAgentBeads error = nil, want authority lookup failure")
+	}
+	items := collectPolecatListItemsFromAuthority(
+		&rig.Rig{Name: "gastown", Path: fixture.rigPath},
+		[]string{"nux"},
+		agents,
+		map[string]*beads.Issue{},
+		nil,
+		nil,
+	)
+	if len(items) != 1 {
+		t.Fatalf("items len = %d, want 1", len(items))
+	}
+	if !items[0].NeedsRecovery || items[0].Reason != "cleanup-unknown" || !items[0].CountsTowardCapacity {
+		t.Fatalf("item after authority failure = %+v, want cleanup-unknown recovery", items[0])
 	}
 }

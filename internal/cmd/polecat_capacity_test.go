@@ -369,6 +369,63 @@ func TestApplyPolecatCapacityMissingAgentAuthorityFailsClosed(t *testing.T) {
 	}
 }
 
+func TestCapacitySnapshotReadsTownAgentAuthorityWithoutRigAgentBead(t *testing.T) {
+	setupPolecatTestRegistry(t)
+	fixture := setupPolecatAuthorityBoundaryFixture(t)
+
+	snapshot, err := polecatCapacitySnapshotForTownNoCleanup(fixture.townRoot)
+	if err != nil {
+		t.Fatalf("polecatCapacitySnapshotForTownNoCleanup: %v", err)
+	}
+	if snapshot.ReusableIdle != 1 || snapshot.RecoveryBlocked != 0 || snapshot.capacityUsed != 0 {
+		t.Fatalf("snapshot = %+v, want town authority to mark polecat reusable without capacity use", snapshot)
+	}
+
+	logOutput := readAuthorityBoundaryLog(t, fixture)
+	if !strings.Contains(logOutput, fixture.townBeads+"|list") {
+		t.Fatalf("agent bead list did not use town authority:\n%s", logOutput)
+	}
+	if strings.Contains(logOutput, fixture.rigBeads+"|list") {
+		t.Fatalf("agent bead list used rig-local beads dir:\n%s", logOutput)
+	}
+	if !strings.Contains(logOutput, fixture.rigBeads+"|query") {
+		t.Fatalf("active work query did not use rig store:\n%s", logOutput)
+	}
+}
+
+func TestCapacitySnapshotActiveWorkRemainsRigRouted(t *testing.T) {
+	setupPolecatTestRegistry(t)
+	activeIssue := &beads.Issue{ID: "gt-hook", Status: string(beads.IssueStatusHooked), Assignee: "gastown/polecats/nux"}
+	fixture := setupPolecatAuthorityBoundaryFixture(t, activeIssue)
+
+	snapshot, err := polecatCapacitySnapshotForTownNoCleanup(fixture.townRoot)
+	if err != nil {
+		t.Fatalf("polecatCapacitySnapshotForTownNoCleanup: %v", err)
+	}
+	if snapshot.capacityUsed != 1 || snapshot.ReusableIdle != 0 || snapshot.Working+snapshot.RecoveryBlocked != 1 {
+		t.Fatalf("snapshot = %+v, want rig active work to consume capacity", snapshot)
+	}
+
+	logOutput := readAuthorityBoundaryLog(t, fixture)
+	if !strings.Contains(logOutput, fixture.townBeads+"|list") || !strings.Contains(logOutput, fixture.rigBeads+"|query") {
+		t.Fatalf("expected town agent list and rig active query:\n%s", logOutput)
+	}
+}
+
+func TestCapacitySnapshotAuthorityLookupFailureFailsClosed(t *testing.T) {
+	setupPolecatTestRegistry(t)
+	fixture := setupPolecatAuthorityBoundaryFixture(t)
+	t.Setenv("MOCK_AUTHORITY_FAIL", "1")
+
+	_, err := polecatCapacitySnapshotForTownNoCleanup(fixture.townRoot)
+	if err == nil {
+		t.Fatal("polecatCapacitySnapshotForTownNoCleanup error = nil, want authority lookup failure")
+	}
+	if !strings.Contains(err.Error(), "listing agent beads for gastown capacity") {
+		t.Fatalf("error = %v, want capacity authority failure", err)
+	}
+}
+
 func TestCapacitySnapshotRecoveryBlockedDoesNotAlwaysConsumeFreeCapacity(t *testing.T) {
 	snapshot := polecatCapacitySnapshot{Max: 3}
 	applyWorkstateDispositionToCapacitySnapshot(&snapshot, polecat.StateIdle, polecat.WorkstateDisposition{
