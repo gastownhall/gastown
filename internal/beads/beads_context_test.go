@@ -8,7 +8,18 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	beadsdk "github.com/steveyegge/beads"
 )
+
+type contextBlockingStore struct {
+	*mockStorage
+}
+
+func (s *contextBlockingStore) SearchIssues(ctx context.Context, _ string, _ beadsdk.IssueFilter) ([]*beadsdk.Issue, error) {
+	<-ctx.Done()
+	return nil, ctx.Err()
+}
 
 func TestWithContextCancelsSlowBDQuery(t *testing.T) {
 	if runtime.GOOS == "windows" {
@@ -58,5 +69,22 @@ sleep 30
 	}
 	if !strings.Contains(err.Error(), "bd list") {
 		t.Fatalf("error does not identify the canceled query: %v", err)
+	}
+}
+
+func TestWithContextCancelsSlowStoreQuery(t *testing.T) {
+	store := &contextBlockingStore{mockStorage: newMockStorage()}
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+
+	start := time.Now()
+	_, err := NewWithStore("/tmp/test", store).WithContext(ctx).List(ListOptions{})
+	elapsed := time.Since(start)
+
+	if err == nil || !strings.Contains(err.Error(), context.DeadlineExceeded.Error()) {
+		t.Fatalf("slow store query error = %v, want deadline exceeded", err)
+	}
+	if elapsed > time.Second {
+		t.Fatalf("store query ignored caller deadline: %s", elapsed)
 	}
 }
