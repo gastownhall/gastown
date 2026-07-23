@@ -19,10 +19,10 @@ type HookAttachmentValidCheck struct {
 }
 
 type invalidAttachment struct {
-	pinnedBeadID   string
-	pinnedBeadDir  string // Directory where the pinned bead was found
-	moleculeID     string
-	reason         string // "not_found" or "closed"
+	pinnedBeadID  string
+	pinnedBeadDir string // Directory where the pinned bead was found
+	moleculeID    string
+	reason        string // "not_found" or "closed"
 }
 
 // NewHookAttachmentValidCheck creates a new hook attachment validation check.
@@ -76,19 +76,20 @@ func (c *HookAttachmentValidCheck) Run(ctx *CheckContext) *CheckResult {
 		Status:  StatusError,
 		Message: fmt.Sprintf("Found %d invalid hook attachment(s)", len(c.invalidAttachments)),
 		Details: details,
-		FixHint: "Run 'gt doctor --fix' to detach invalid molecules, or 'gt mol detach <pinned-bead-id>' manually",
+		FixHint: "Run 'gt doctor --fix' to repair invalid attachment metadata safely",
 	}
 }
 
-// checkBeadsDir checks all pinned beads in a directory for invalid attachments.
+// checkBeadsDir checks all live beads in a directory for invalid attachments.
 func (c *HookAttachmentValidCheck) checkBeadsDir(beadsDir, _ string) []invalidAttachment { // location unused but kept for future diagnostic output
 	var invalid []invalidAttachment
 
 	b := beads.New(filepath.Dir(beadsDir))
 
-	// List all pinned beads
-	pinnedBeads, err := b.List(beads.ListOptions{
-		Status:   beads.StatusPinned,
+	// Hooked base issues are the critical case. Limiting this check to pinned
+	// role beads misses deleted polecat work molecules.
+	liveBeads, err := b.List(beads.ListOptions{
+		Status:   "all",
 		Priority: -1,
 	})
 	if err != nil {
@@ -96,7 +97,12 @@ func (c *HookAttachmentValidCheck) checkBeadsDir(beadsDir, _ string) []invalidAt
 		return nil
 	}
 
-	for _, pinnedBead := range pinnedBeads {
+	for _, pinnedBead := range liveBeads {
+		switch pinnedBead.Status {
+		case beads.StatusPinned, "open", "hooked", "in_progress", "blocked":
+		default:
+			continue
+		}
 		// Parse attachment fields from the pinned bead
 		attachment := beads.ParseAttachmentFields(pinnedBead)
 		if attachment == nil || attachment.AttachedMolecule == "" {
@@ -168,14 +174,15 @@ func (c *HookAttachmentValidCheck) formatInvalid(inv invalidAttachment) string {
 	return fmt.Sprintf("%s: attached molecule %s %s", inv.pinnedBeadID, inv.moleculeID, reasonText)
 }
 
-// Fix detaches all invalid molecule attachments.
+// Fix repairs all invalid molecule attachments while preserving completion
+// routing metadata (notably no_merge/review_only external-PR state).
 func (c *HookAttachmentValidCheck) Fix(ctx *CheckContext) error {
 	var errors []string
 
 	for _, inv := range c.invalidAttachments {
 		b := beads.New(filepath.Dir(inv.pinnedBeadDir))
 
-		_, err := b.DetachMolecule(inv.pinnedBeadID)
+		_, err := b.RepairMissingMolecule(inv.pinnedBeadID)
 		if err != nil {
 			errors = append(errors, fmt.Sprintf("failed to detach from %s: %v", inv.pinnedBeadID, err))
 		}
@@ -196,9 +203,9 @@ type HookSingletonCheck struct {
 }
 
 type duplicateHandoff struct {
-	title     string
-	beadsDir  string
-	beadIDs   []string // All IDs with this title (first one is kept, rest are duplicates)
+	title    string
+	beadsDir string
+	beadIDs  []string // All IDs with this title (first one is kept, rest are duplicates)
 }
 
 // NewHookSingletonCheck creates a new hook singleton check.
