@@ -243,9 +243,20 @@ Recommended action: ..."
 
 **5. BURN orphans:**
 ```bash
-# For empty wisps, etc.
-rm .beads-wisp/<wisp-file>
+# Preview the complete candidate batch. This canonicalizes IDs, excludes
+# message/escalation/audit/event and other preserved records, and persists the
+# reviewed safe set plus digest on the recovery bead.
+gt mol burn-orphans --preview --audit-bead <recovery-bead> <wisp-id>...
+
+# Execute exactly the safe IDs printed by preview. Copy the preview digest;
+# execution independently revalidates labels/types and fails before mutation
+# if any ID is extra, missing, newly preserved, or otherwise changed.
+gt mol burn-orphans --execute --audit-bead <recovery-bead> \
+  --validated-digest <preview-digest> <safe-wisp-id>...
 ```
+
+Never manipulate `.beads-wisp` or other Dolt-internal files directly. Preview
+and execution audit comments are the durable recovery record.
 
 **Exit criteria:** All orphans handled."""
 
