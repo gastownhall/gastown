@@ -536,3 +536,41 @@ func TestTemplateContentEqual(t *testing.T) {
 		t.Error("expected invalid JSON to not match")
 	}
 }
+
+// TestInstallForRole_ClaudeDisablesSandbox verifies that provisioned Claude
+// settings.json disables Claude Code's OS-level Bash sandbox for both
+// autonomous and interactive roles. The sandbox (Seatbelt/bubblewrap) blocks
+// the setgid syscall that gt/Dolt writes need inside `gt sling`, which stalled
+// the deacon's self-propulsion (sbx-gastown-99rfk). Gastown agents run in
+// trusted worktrees with --dangerously-skip-permissions, so the built-in
+// sandbox adds no safety here and only causes hangs.
+func TestInstallForRole_ClaudeDisablesSandbox(t *testing.T) {
+	for _, role := range []string{"deacon", "polecat", "witness", "refinery", "mayor", "crew"} {
+		t.Run(role, func(t *testing.T) {
+			dir := t.TempDir()
+			if err := InstallForRole("claude", dir, dir, role, ".claude", "settings.json", true); err != nil {
+				t.Fatalf("InstallForRole: %v", err)
+			}
+
+			data, err := os.ReadFile(filepath.Join(dir, ".claude", "settings.json"))
+			if err != nil {
+				t.Fatalf("reading settings.json: %v", err)
+			}
+
+			var settings struct {
+				Sandbox struct {
+					Enabled *bool `json:"enabled"`
+				} `json:"sandbox"`
+			}
+			if err := json.Unmarshal(data, &settings); err != nil {
+				t.Fatalf("unmarshaling settings.json: %v", err)
+			}
+			if settings.Sandbox.Enabled == nil {
+				t.Fatalf("settings.json missing sandbox.enabled key (role %q)", role)
+			}
+			if *settings.Sandbox.Enabled {
+				t.Errorf("sandbox.enabled = true, want false (role %q)", role)
+			}
+		})
+	}
+}

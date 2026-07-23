@@ -4,6 +4,9 @@
   "enabledPlugins": {
     "beads@beads-marketplace": false
   },
+  "sandbox": {
+    "enabled": false
+  },
   "hooks": {
     "PreToolUse": [
       {
