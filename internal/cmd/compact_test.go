@@ -290,6 +290,30 @@ func TestCleanOrphanedWispDepsUsesTypedTargets(t *testing.T) {
 	}
 }
 
+func TestPromoteWispUsesCanonicalSDKPromotion(t *testing.T) {
+	data, err := os.ReadFile("compact.go")
+	if err != nil {
+		t.Fatalf("read compact.go: %v", err)
+	}
+	body := compactSourceBetween(t, string(data), "func promoteWisp(", "// deleteWisp")
+
+	for _, forbidden := range []string{
+		`bd.Run("update"`,
+		`bd.Run("promote"`,
+		`bd.Run("comments"`,
+		`--persistent`,
+		`depends_on_id`,
+	} {
+		if strings.Contains(body, forbidden) {
+			t.Fatalf("promoteWisp should not use %q:\n%s", forbidden, body)
+		}
+	}
+
+	if !strings.Contains(body, `bd.PromoteWisp(w.ID, reason)`) {
+		t.Fatalf("promoteWisp should delegate to Beads SDK promotion:\n%s", body)
+	}
+}
+
 func compactSourceBetween(t *testing.T, source, startMarker, endMarker string) string {
 	t.Helper()
 	start := strings.Index(source, startMarker)
