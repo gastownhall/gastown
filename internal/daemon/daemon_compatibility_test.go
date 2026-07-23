@@ -51,3 +51,18 @@ func TestCheckBeadsStoreCompatibility_RejectsNewerWorkspaceVersion(t *testing.T)
 		t.Fatalf("unexpected error: %v", err)
 	}
 }
+
+func TestLimitDaemonBeadsStoreConnections(t *testing.T) {
+	store, cleanup := setupTestStore(t)
+	defer cleanup()
+
+	accessor, ok := store.(beadsDBAccessor)
+	if !ok || accessor.DB() == nil {
+		t.Skip("store does not expose its SQL pool")
+	}
+
+	limitDaemonBeadsStoreConnections(store)
+	if got := accessor.DB().Stats().MaxOpenConnections; got != daemonBeadsStoreMaxConns {
+		t.Fatalf("MaxOpenConnections = %d, want %d", got, daemonBeadsStoreMaxConns)
+	}
+}

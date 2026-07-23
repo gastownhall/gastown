@@ -1138,6 +1138,21 @@ type beadsDBAccessor interface {
 	DB() *sql.DB
 }
 
+const daemonBeadsStoreMaxConns = 2
+
+// limitDaemonBeadsStoreConnections keeps each long-lived event-polling store
+// from reserving the SDK default pool (10 connections) on the shared Dolt
+// server. Two connections allow overlapping event and convoy queries without
+// multiplying connection pressure by every registered rig.
+func limitDaemonBeadsStoreConnections(store beadsdk.Storage) {
+	accessor, ok := store.(beadsDBAccessor)
+	if !ok || accessor.DB() == nil {
+		return
+	}
+	accessor.DB().SetMaxOpenConns(daemonBeadsStoreMaxConns)
+	accessor.DB().SetMaxIdleConns(daemonBeadsStoreMaxConns)
+}
+
 // embeddedBeadsVersion returns the semver of the beads module linked into this binary.
 // Empty string means build info did not include a parseable module version.
 func embeddedBeadsVersion() string {
@@ -2076,6 +2091,7 @@ func (d *Daemon) openBeadsStores() (map[string]beadsdk.Storage, error) {
 	// Town-level store (hq)
 	hqBeadsDir := filepath.Join(d.config.TownRoot, ".beads")
 	if store, err := beadsdk.OpenFromConfig(d.ctx, hqBeadsDir); err == nil {
+		limitDaemonBeadsStoreConnections(store)
 		stores["hq"] = store
 	} else {
 		d.logger.Printf("Convoy: hq beads store unavailable: %s", util.FirstLine(err.Error()))
@@ -2092,6 +2108,7 @@ func (d *Daemon) openBeadsStores() (map[string]beadsdk.Storage, error) {
 			d.logger.Printf("Convoy: %s beads store unavailable: %s", rigName, util.FirstLine(err.Error()))
 			continue
 		}
+		limitDaemonBeadsStoreConnections(store)
 		stores[rigName] = store
 	}
 

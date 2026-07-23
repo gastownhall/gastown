@@ -213,7 +213,17 @@ func (m *ConvoyManager) runEventPoll() {
 				}
 				if len(m.stores) == 0 {
 					m.storesMu.Unlock()
-					continue // still not ready, try next tick
+					// Opening a store runs the beads schema compatibility path. Treat
+					// an empty result like any other poll failure so a stale or
+					// temporarily unavailable schema cannot be retried every five
+					// seconds indefinitely.
+					newInterval := eventPollBackoff(currentInterval)
+					if newInterval != currentInterval {
+						currentInterval = newInterval
+						ticker.Reset(currentInterval)
+						m.logger("Convoy: store-open backoff → %s", currentInterval)
+					}
+					continue // still not ready, retry with bounded backoff
 				}
 			}
 			// Take a snapshot of stores for this tick to avoid holding the
@@ -228,10 +238,7 @@ func (m *ConvoyManager) runEventPoll() {
 			// Exponential backoff on consecutive errors to avoid hammering
 			// a recovering Dolt server. Reset on success. (GH#2686)
 			if hadError {
-				newInterval := currentInterval * 2
-				if newInterval > eventPollMaxBackoff {
-					newInterval = eventPollMaxBackoff
-				}
+				newInterval := eventPollBackoff(currentInterval)
 				if newInterval != currentInterval {
 					currentInterval = newInterval
 					ticker.Reset(currentInterval)
@@ -244,6 +251,14 @@ func (m *ConvoyManager) runEventPoll() {
 			}
 		}
 	}
+}
+
+func eventPollBackoff(current time.Duration) time.Duration {
+	next := current * 2
+	if next > eventPollMaxBackoff {
+		return eventPollMaxBackoff
+	}
+	return next
 }
 
 // pollStoresSnapshot polls events from all non-parked stores in the snapshot.
