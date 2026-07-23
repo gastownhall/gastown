@@ -424,6 +424,59 @@ func TestEngineer_LoadConfig_WithMergeQueue(t *testing.T) {
 	}
 }
 
+// TestEngineer_LoadConfig_PrefersSettingsConfig verifies the hq-am01 fix: when
+// both settings/config.json (canonical) and the legacy rig-root config.json
+// exist, LoadConfig reads the canonical settings file. This is what makes
+// `gt rig settings set merge_queue.*` actually take effect in the refinery.
+func TestEngineer_LoadConfig_PrefersSettingsConfig(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "engineer-test-*")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	// Legacy rig-root config.json with stale/default-ish values.
+	legacy := map[string]interface{}{
+		"merge_queue": map[string]interface{}{
+			"max_concurrent": 1,
+			"on_conflict":    "assign_back",
+		},
+	}
+	legacyData, _ := json.MarshalIndent(legacy, "", "  ")
+	if err := os.WriteFile(filepath.Join(tmpDir, "config.json"), legacyData, 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Canonical settings/config.json with the operator's intended values.
+	settingsDir := filepath.Join(tmpDir, "settings")
+	if err := os.MkdirAll(settingsDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	settings := map[string]interface{}{
+		"merge_queue": map[string]interface{}{
+			"max_concurrent": 3,
+			"on_conflict":    "auto_rebase",
+		},
+	}
+	settingsData, _ := json.MarshalIndent(settings, "", "  ")
+	if err := os.WriteFile(filepath.Join(settingsDir, "config.json"), settingsData, 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	r := &rig.Rig{Name: "test-rig", Path: tmpDir}
+	e := NewEngineer(r)
+	if err := e.LoadConfig(); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if e.config.MaxConcurrent != 3 {
+		t.Errorf("MaxConcurrent = %d, want 3 (canonical settings, not legacy 1)", e.config.MaxConcurrent)
+	}
+	if e.config.OnConflict != "auto_rebase" {
+		t.Errorf("OnConflict = %q, want auto_rebase (canonical settings, not legacy)", e.config.OnConflict)
+	}
+}
+
 func TestEngineer_LoadConfig_AutoPushDisabled(t *testing.T) {
 	tmpDir, err := os.MkdirTemp("", "engineer-test-*")
 	if err != nil {
