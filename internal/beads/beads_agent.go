@@ -608,6 +608,67 @@ func (b *Beads) ClearAgentActiveMRIfMatches(id string, expectedMR string) (bool,
 	return true, nil
 }
 
+// FinalizeAgentAfterMergedMR atomically transitions a clean DONE agent to
+// IDLE and clears active_mr after its matching MR has been merged.
+func (b *Beads) FinalizeAgentAfterMergedMR(id, expectedMR string) error {
+	if target := b.agentBeadTarget(); target != b {
+		return target.FinalizeAgentAfterMergedMR(id, expectedMR)
+	}
+
+	id = strings.TrimSpace(id)
+	expectedMR = strings.TrimSpace(expectedMR)
+	if id == "" || expectedMR == "" {
+		return fmt.Errorf("agent ID and merged MR ID are required")
+	}
+
+	fl, lockErr := b.lockAgentBead(id)
+	if lockErr != nil {
+		return fmt.Errorf("locking agent bead %s: %w", id, lockErr)
+	}
+	defer func() { _ = fl.Unlock() }()
+
+	issue, err := b.Show(id)
+	if err != nil {
+		return err
+	}
+	if !IsAgentBead(issue) {
+		return fmt.Errorf("%s is not an agent bead", id)
+	}
+	fields := ParseAgentFields(issue.Description)
+	if strings.TrimSpace(fields.AgentState) == string(AgentStateIdle) &&
+		!agentFieldPresent(fields.ActiveMR) &&
+		strings.TrimSpace(fields.CleanupStatus) == "clean" &&
+		!agentFieldPresent(fields.HookBead) &&
+		!fields.MRFailed &&
+		!fields.PushFailed {
+		return nil
+	}
+	switch {
+	case strings.TrimSpace(fields.AgentState) != string(AgentStateDone):
+		return fmt.Errorf("agent_state=%q, want done", fields.AgentState)
+	case strings.TrimSpace(fields.ActiveMR) != expectedMR:
+		return fmt.Errorf("active_mr=%q, want %q", fields.ActiveMR, expectedMR)
+	case strings.TrimSpace(fields.CleanupStatus) != "clean":
+		return fmt.Errorf("cleanup_status=%q, want clean", fields.CleanupStatus)
+	case agentFieldPresent(fields.HookBead):
+		return fmt.Errorf("hook_bead=%q, want empty", fields.HookBead)
+	case fields.MRFailed:
+		return fmt.Errorf("mr_failed=true")
+	case fields.PushFailed:
+		return fmt.Errorf("push_failed=true")
+	}
+
+	fields.AgentState = string(AgentStateIdle)
+	fields.ActiveMR = ""
+	description := FormatAgentDescription(issue.Title, fields)
+	return b.Update(id, UpdateOptions{Description: &description})
+}
+
+func agentFieldPresent(value string) bool {
+	value = strings.TrimSpace(value)
+	return value != "" && !strings.EqualFold(value, "null")
+}
+
 // UpdateAgentNotificationLevel updates the notification_level field in an agent bead.
 // Valid levels: verbose, normal, muted (DND mode).
 // Pass empty string to reset to default (normal).

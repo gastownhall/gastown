@@ -307,7 +307,9 @@ func (e *Engineer) recheckBatchEligibility(batch []*MRInfo, target string, resul
 		if eligibility := e.recheckMRStillMergeable(mr, target); !eligibility.Success {
 			if eligibility.NoMerge {
 				_, _ = fmt.Fprintf(e.output, "[Batch] MR %s is not merge-eligible: %s\n", mr.ID, eligibility.Error)
-				e.HandleMRInfoFailure(mr, eligibility)
+				if err := e.HandleMRInfoFailure(mr, eligibility); err != nil {
+					result.Error = err
+				}
 			} else {
 				result.Error = fmt.Errorf("pre-batch eligibility recheck failed for %s: %s", mr.ID, eligibility.Error)
 			}
@@ -345,7 +347,9 @@ func (e *Engineer) processSingleMR(ctx context.Context, mr *MRInfo, target strin
 	} else if processResult.NoMerge {
 		// Policy-ineligible work is intentionally blocked. Dequeue silently.
 		_, _ = fmt.Fprintf(e.output, "[Batch] MR %s: not merge-eligible, dequeuing\n", mr.ID)
-		e.HandleMRInfoFailure(mr, processResult)
+		if err := e.HandleMRInfoFailure(mr, processResult); err != nil {
+			result.Error = err
+		}
 	} else if processResult.NeedsApproval {
 		// PR awaiting human approval — leave in queue for retry on next poll.
 		_, _ = fmt.Fprintf(e.output, "[Batch] MR %s: PR awaiting approval, will retry\n", mr.ID)
@@ -431,7 +435,9 @@ func (e *Engineer) fastForwardBatch(ctx context.Context, stacked []*MRInfo, targ
 			}
 			if eligibility.NoMerge {
 				_, _ = fmt.Fprintf(e.output, "[Batch] MR %s became ineligible before push: %s\n", mr.ID, eligibility.Error)
-				e.HandleMRInfoFailure(mr, eligibility)
+				if err := e.HandleMRInfoFailure(mr, eligibility); err != nil {
+					result.Error = err
+				}
 			} else {
 				result.Error = fmt.Errorf("pre-push eligibility recheck failed for %s: %s", mr.ID, eligibility.Error)
 			}

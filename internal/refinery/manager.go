@@ -521,46 +521,7 @@ func (m *Manager) calculateIssueScore(issue *beads.Issue, now time.Time) float64
 
 // issueToMR converts a beads issue to a MergeRequest.
 func (m *Manager) issueToMR(issue *beads.Issue) *MergeRequest {
-	if issue == nil {
-		return nil
-	}
-
-	// Get configured default branch for this rig
-	defaultBranch := m.rig.DefaultBranch()
-
-	fields := beads.ParseMRFields(issue)
-	if fields == nil {
-		// No MR fields in description, construct from title/ID
-		return &MergeRequest{
-			ID:           issue.ID,
-			IssueID:      issue.ID,
-			Status:       mrStatusFromIssue(issue),
-			CreatedAt:    parseTime(issue.CreatedAt),
-			TargetBranch: defaultBranch,
-		}
-	}
-
-	// Default target to rig's default branch if not specified
-	target := fields.Target
-	if target == "" {
-		target = defaultBranch
-	}
-
-	return &MergeRequest{
-		ID:           issue.ID,
-		Branch:       fields.Branch,
-		Worker:       fields.Worker,
-		AgentBead:    fields.AgentBead,
-		IssueID:      fields.SourceIssue,
-		TargetBranch: target,
-		CommitSHA:    fields.CommitSHA,
-		PRURL:        fields.PRURL,
-		PRNumber:     fields.PRNumber,
-		MergeCommit:  fields.MergeCommit,
-		Status:       mrStatusFromIssue(issue),
-		CloseReason:  CloseReason(fields.CloseReason),
-		CreatedAt:    parseTime(issue.CreatedAt),
-	}
+	return mergeRequestFromIssue(issue, m.rig.DefaultBranch())
 }
 
 func mrStatusFromIssue(issue *beads.Issue) MRStatus {
@@ -707,7 +668,7 @@ func (m *Manager) RejectMR(idOrBranch string, reason string, notify bool) (*Merg
 		mr.AgentBead = closeResult.AgentBead
 	}
 	if closeResult.AgentActiveMRClearErr != nil {
-		_, _ = fmt.Fprintf(m.output, "Warning: failed to clear agent bead %s active_mr: %v\n", closeResult.AgentBead, closeResult.AgentActiveMRClearErr)
+		return nil, fmt.Errorf("clear rejected MR from agent bead %s: %w", closeResult.AgentBead, closeResult.AgentActiveMRClearErr)
 	}
 
 	// Update in-memory state for return value
@@ -749,81 +710,34 @@ func (m *Manager) PostMerge(idOrBranch string) (*PostMergeResult, error) {
 	if err != nil {
 		return nil, err
 	}
-	return m.postMergeMR(b, mr)
+	return m.runPostMergeCoordinator(b, mr)
 }
 
-// PostMergeMR performs post-merge cleanup for an MR snapshot that the caller has
-// already verified. This keeps proof and side effects on the same MR metadata.
+// PostMergeMR performs proof-bound post-merge cleanup. The supplied snapshot is
+// used only for drift detection; the coordinator reloads all authoritative state.
 func (m *Manager) PostMergeMR(mr *MergeRequest) (*PostMergeResult, error) {
 	if mr == nil {
 		return nil, ErrMRNotFound
 	}
 	b := beads.New(m.rig.BeadsPath())
-	return m.postMergeMR(b, mr)
+	return m.runPostMergeCoordinator(b, mr)
 }
 
-func (m *Manager) postMergeMR(b *beads.Beads, mr *MergeRequest) (*PostMergeResult, error) {
-	workBeadID := resolveMergedWorkBead(b.ForAgentBead(), mergedWorkBeadCloseRequest{
-		MRID:        mr.ID,
-		Branch:      mr.Branch,
-		SourceIssue: mr.IssueID,
-		AgentBead:   mr.AgentBead,
-	})
-
-	result := &PostMergeResult{
-		MR:            mr,
-		SourceIssueID: workBeadID,
+func (m *Manager) runPostMergeCoordinator(b *beads.Beads, mr *MergeRequest) (*PostMergeResult, error) {
+	gitDir := filepath.Join(m.rig.Path, "refinery", "rig")
+	if _, err := os.Stat(gitDir); os.IsNotExist(err) {
+		gitDir = filepath.Join(m.rig.Path, "mayor", "rig")
 	}
-
-	// Close the MR bead
-	closeResult, err := closeTerminalMR(b, mr.ID, terminalMRCloseOptions{
-		Reason:        string(CloseReasonMerged),
-		MergeCommit:   mr.MergeCommit,
-		AgentBeadHint: mr.AgentBead,
-		ExpectedMR:    mr,
-	})
-	if err != nil {
-		return result, fmt.Errorf("closing MR bead: %w", err)
-	}
-	if closeResult.AgentBead != "" {
-		mr.AgentBead = closeResult.AgentBead
-	}
-	if closeResult.AgentActiveMRClearErr != nil {
-		_, _ = fmt.Fprintf(m.output, "Warning: failed to clear agent bead %s active_mr: %v\n", closeResult.AgentBead, closeResult.AgentActiveMRClearErr)
-	}
-	if closeResult.AlreadyTerminal {
-		_, _ = fmt.Fprintf(m.output, "  %s MR already closed\n", style.Dim.Render("—"))
-		result.MRClosed = true
-		if mr.CloseReason != CloseReasonMerged {
-			if mr.CloseReason == "" {
-				return result, fmt.Errorf("post-merge retry for already-closed MR %s requires close_reason=%s", mr.ID, CloseReasonMerged)
-			}
-			return result, fmt.Errorf("post-merge retry for already-closed MR %s has close_reason=%s", mr.ID, mr.CloseReason)
-		}
-	} else if closeResult.Closed {
-		if closeErr := mr.Close(CloseReasonMerged); closeErr != nil {
-			_, _ = fmt.Fprintf(m.output, "Warning: failed to update MR state: %v\n", closeErr)
-		}
-		result.MRClosed = true
-	} else {
-		return result, fmt.Errorf("closing MR bead: MR %s status is not open or terminal", mr.ID)
-	}
-
-	// Close the source issue with reason and --force to bypass dependency checks.
-	// The source issue may have an attached molecule whose open steps would
-	// block a normal close. Resolve before MR close clears active_mr, then close
-	// only from this post-merge success path.
-	sourceResult := closeMergedWorkBead(b, nil, m.output, mergedWorkBeadCloseRequest{
-		MRID:        mr.ID,
-		Target:      mr.TargetBranch,
-		SourceIssue: workBeadID,
-		MergeCommit: mr.MergeCommit,
-	})
-	result.SourceIssueID = sourceResult.WorkBeadID
-	result.SourceIssueClosed = sourceResult.Closed
-	result.SourceIssueNotFound = sourceResult.NotFound
-
-	return result, nil
+	g := git.NewGit(gitDir)
+	coordinator := newPostMergeCoordinator(
+		b,
+		m.rig.DefaultBranch(),
+		func(authoritative *MergeRequest) error {
+			return verifyPostMergeProof(g, authoritative)
+		},
+		nil,
+	)
+	return coordinator.run(mr, mr.MergeCommit)
 }
 
 // notifyWorkerRejected sends a rejection notification to a polecat.

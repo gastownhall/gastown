@@ -48,6 +48,25 @@ func setupTestManager(t *testing.T) (*Manager, string) {
 	return NewManager(r), rigPath
 }
 
+func setupManagerPostMergeProof(t *testing.T, rigPath string) string {
+	t.Helper()
+	origin := filepath.Join(rigPath, "origin.git")
+	workDir := filepath.Join(rigPath, "mayor", "rig")
+	if err := os.MkdirAll(filepath.Dir(workDir), 0755); err != nil {
+		t.Fatalf("mkdir mayor: %v", err)
+	}
+	run(t, rigPath, "git", "init", "--bare", "--initial-branch=main", origin)
+	run(t, rigPath, "git", "clone", origin, workDir)
+	run(t, workDir, "git", "config", "user.email", "test@test.com")
+	run(t, workDir, "git", "config", "user.name", "Test")
+	run(t, workDir, "git", "checkout", "-b", "main")
+	writeFile(t, workDir, "README.md", "# Test\n")
+	run(t, workDir, "git", "add", ".")
+	run(t, workDir, "git", "commit", "-m", "initial")
+	run(t, workDir, "git", "push", "-u", "origin", "main")
+	return run(t, workDir, "git", "rev-parse", "HEAD")
+}
+
 func TestManager_StartForegroundDeprecated(t *testing.T) {
 	mgr, _ := setupTestManager(t)
 	err := mgr.Start(true, "")
@@ -531,6 +550,7 @@ func TestCompareScoredIssues_UsesDeterministicIDTieBreaker(t *testing.T) {
 
 func TestManager_PostMerge_ClosesMRAndSourceIssue(t *testing.T) {
 	mgr, rigPath := setupTestManager(t)
+	commit := setupManagerPostMergeProof(t, rigPath)
 	testutil.RequireDoltContainer(t)
 	port, _ := strconv.Atoi(testutil.DoltContainerPort())
 	b := beads.NewIsolatedWithPort(rigPath, port)
@@ -546,9 +566,17 @@ func TestManager_PostMerge_ClosesMRAndSourceIssue(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create source issue: %v", err)
 	}
+	agentIssue, err := b.Create(beads.CreateOptions{
+		Title:       "Polecat nux",
+		Labels:      []string{"gt:agent"},
+		Description: "role_type: polecat\nagent_state: done\ncleanup_status: clean\nhook_bead: null\nactive_mr: null",
+	})
+	if err != nil {
+		t.Fatalf("create agent issue: %v", err)
+	}
 
 	// Create an MR bead with branch and source_issue fields
-	mrDesc := "branch: polecat/test/gt-xyz\nsource_issue: " + srcIssue.ID + "\nworker: test\ntarget: main"
+	mrDesc := "branch: polecat/test/gt-xyz\nsource_issue: " + srcIssue.ID + "\nworker: test\ntarget: main\ncommit_sha: " + commit + "\nagent_bead: " + agentIssue.ID
 	mrIssue, err := b.Create(beads.CreateOptions{
 		Title:       "MR for feature X",
 		Labels:      []string{"gt:merge-request"},
@@ -556,6 +584,9 @@ func TestManager_PostMerge_ClosesMRAndSourceIssue(t *testing.T) {
 	})
 	if err != nil {
 		t.Fatalf("create MR issue: %v", err)
+	}
+	if err := b.UpdateAgentActiveMR(agentIssue.ID, mrIssue.ID); err != nil {
+		t.Fatalf("set active_mr: %v", err)
 	}
 
 	// Run PostMerge
@@ -627,6 +658,7 @@ func TestManager_RejectMR_ClearsMatchingActiveMR(t *testing.T) {
 
 func TestManager_PostMerge_ClearsMatchingActiveMRAndClosesSource(t *testing.T) {
 	mgr, rigPath := setupTestManager(t)
+	commit := setupManagerPostMergeProof(t, rigPath)
 	testutil.RequireDoltContainer(t)
 	port, _ := strconv.Atoi(testutil.DoltContainerPort())
 	b := beads.NewIsolatedWithPort(rigPath, port)
@@ -641,7 +673,7 @@ func TestManager_PostMerge_ClearsMatchingActiveMRAndClosesSource(t *testing.T) {
 	agentIssue, err := b.Create(beads.CreateOptions{
 		Title:       "Polecat nux",
 		Labels:      []string{"gt:agent"},
-		Description: "role_type: polecat\nrig: testrig\nagent_state: working\nactive_mr: null",
+		Description: "role_type: polecat\nrig: testrig\nagent_state: done\ncleanup_status: clean\nhook_bead: null\nactive_mr: null",
 	})
 	if err != nil {
 		t.Fatalf("create agent issue: %v", err)
@@ -649,7 +681,7 @@ func TestManager_PostMerge_ClearsMatchingActiveMRAndClosesSource(t *testing.T) {
 	mrIssue, err := b.Create(beads.CreateOptions{
 		Title:       "MR for feature X",
 		Labels:      []string{"gt:merge-request"},
-		Description: "branch: polecat/test/gt-xyz\nsource_issue: " + srcIssue.ID + "\nworker: test\ntarget: main\nagent_bead: " + agentIssue.ID + "\nmerge_commit: abc123",
+		Description: "branch: polecat/test/gt-xyz\nsource_issue: " + srcIssue.ID + "\nworker: test\ntarget: main\ncommit_sha: " + commit + "\nagent_bead: " + agentIssue.ID + "\nmerge_commit: " + commit,
 	})
 	if err != nil {
 		t.Fatalf("create MR issue: %v", err)
@@ -673,6 +705,7 @@ func TestManager_PostMerge_ClearsMatchingActiveMRAndClosesSource(t *testing.T) {
 
 func TestManager_PostMerge_ClosesWorkBeadFromAgentFallbackBeforeActiveMRClear(t *testing.T) {
 	mgr, rigPath := setupTestManager(t)
+	commit := setupManagerPostMergeProof(t, rigPath)
 	testutil.RequireDoltContainer(t)
 	port, _ := strconv.Atoi(testutil.DoltContainerPort())
 	b := beads.NewIsolatedWithPort(rigPath, port)
@@ -687,7 +720,7 @@ func TestManager_PostMerge_ClosesWorkBeadFromAgentFallbackBeforeActiveMRClear(t 
 	agentIssue, err := b.Create(beads.CreateOptions{
 		Title:       "Polecat nux",
 		Labels:      []string{"gt:agent"},
-		Description: "role_type: polecat\nrig: testrig\nagent_state: working\nactive_mr: null",
+		Description: "role_type: polecat\nrig: testrig\nagent_state: done\ncleanup_status: clean\nhook_bead: null\nactive_mr: null",
 	})
 	if err != nil {
 		t.Fatalf("create agent issue: %v", err)
@@ -695,7 +728,7 @@ func TestManager_PostMerge_ClosesWorkBeadFromAgentFallbackBeforeActiveMRClear(t 
 	mrIssue, err := b.Create(beads.CreateOptions{
 		Title:       "MR for feature X",
 		Labels:      []string{"gt:merge-request"},
-		Description: "branch: polecat/test/gt-xyz\nworker: test\ntarget: main\nagent_bead: " + agentIssue.ID + "\nmerge_commit: abc123",
+		Description: "branch: polecat/test/gt-xyz\nworker: test\ntarget: main\ncommit_sha: " + commit + "\nagent_bead: " + agentIssue.ID + "\nmerge_commit: " + commit,
 	})
 	if err != nil {
 		t.Fatalf("create MR issue: %v", err)
@@ -727,6 +760,7 @@ func TestManager_PostMerge_ClosesWorkBeadFromAgentFallbackBeforeActiveMRClear(t 
 
 func TestManager_PostMerge_AlreadyClosedMRRetriesActiveMRCleanup(t *testing.T) {
 	mgr, rigPath := setupTestManager(t)
+	commit := setupManagerPostMergeProof(t, rigPath)
 	testutil.RequireDoltContainer(t)
 	port, _ := strconv.Atoi(testutil.DoltContainerPort())
 	b := beads.NewIsolatedWithPort(rigPath, port)
@@ -741,7 +775,7 @@ func TestManager_PostMerge_AlreadyClosedMRRetriesActiveMRCleanup(t *testing.T) {
 	agentIssue, err := b.Create(beads.CreateOptions{
 		Title:       "Polecat nux",
 		Labels:      []string{"gt:agent"},
-		Description: "role_type: polecat\nrig: testrig\nagent_state: working\nactive_mr: null",
+		Description: "role_type: polecat\nrig: testrig\nagent_state: done\ncleanup_status: clean\nhook_bead: null\nactive_mr: null",
 	})
 	if err != nil {
 		t.Fatalf("create agent issue: %v", err)
@@ -749,7 +783,7 @@ func TestManager_PostMerge_AlreadyClosedMRRetriesActiveMRCleanup(t *testing.T) {
 	mrIssue, err := b.Create(beads.CreateOptions{
 		Title:       "Already merged MR",
 		Labels:      []string{"gt:merge-request"},
-		Description: "branch: polecat/test/gt-xyz\nsource_issue: " + srcIssue.ID + "\nworker: test\ntarget: main\nagent_bead: " + agentIssue.ID + "\nclose_reason: merged",
+		Description: "branch: polecat/test/gt-xyz\nsource_issue: " + srcIssue.ID + "\nworker: test\ntarget: main\ncommit_sha: " + commit + "\nagent_bead: " + agentIssue.ID + "\nclose_reason: merged",
 	})
 	if err != nil {
 		t.Fatalf("create MR issue: %v", err)

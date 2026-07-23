@@ -81,12 +81,17 @@ func closeTerminalMR(b *beads.Beads, mrID string, opts terminalMRCloseOptions) (
 		return result, nil
 	}
 
-	if result.AgentBead != "" {
+	if result.AgentBead != "" && shouldClearAgentActiveMR(opts.Reason, fields.CloseReason) {
 		cleared, clearErr := b.ForAgentBead().ClearAgentActiveMRIfMatches(result.AgentBead, mrID)
 		result.AgentActiveMRCleared = cleared
 		result.AgentActiveMRClearErr = clearErr
 	}
 	return result, nil
+}
+
+func shouldClearAgentActiveMR(requestedReason, authoritativeReason string) bool {
+	return normalizedMRCloseReason(requestedReason) == string(CloseReasonRejected) &&
+		normalizedMRCloseReason(authoritativeReason) == string(CloseReasonRejected)
 }
 
 func validateTerminalMRCloseSnapshot(mrID string, fields *beads.MRFields, expected *MergeRequest) error {

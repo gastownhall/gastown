@@ -211,24 +211,15 @@ esac
 	}
 }
 
-func TestEngineerCloseMRWithReasonRecordsMergeCommitAndClearsActiveMR(t *testing.T) {
+func TestEngineerCloseMRWithReasonRejectsMergedBypass(t *testing.T) {
 	e, b, mrIssue, agentIssue, _ := setupEngineerTerminalCloseTest(t, "gt-wisp-old")
 
-	if err := e.closeMRWithReason(&MRInfo{ID: mrIssue.ID, AgentBead: agentIssue.ID}, string(CloseReasonMerged), "abc123"); err != nil {
-		t.Fatalf("closeMRWithReason: %v", err)
+	if err := e.closeMRWithReason(&MRInfo{ID: mrIssue.ID, AgentBead: agentIssue.ID}, string(CloseReasonMerged), "abc123"); err == nil {
+		t.Fatal("closeMRWithReason allowed merged lifecycle bypass")
 	}
 
-	assertIssueStatus(t, b, mrIssue.ID, string(beads.StatusClosed))
-	assertAgentActiveMR(t, b, agentIssue.ID, "")
-	assertMRCloseReason(t, b, mrIssue.ID, string(CloseReasonMerged))
-	issue, err := b.Show(mrIssue.ID)
-	if err != nil {
-		t.Fatalf("show MR %s: %v", mrIssue.ID, err)
-	}
-	fields := beads.ParseMRFields(issue)
-	if fields.MergeCommit != "abc123" {
-		t.Fatalf("MR merge_commit = %q, want abc123", fields.MergeCommit)
-	}
+	assertIssueStatus(t, b, mrIssue.ID, string(beads.StatusOpen))
+	assertAgentActiveMR(t, b, agentIssue.ID, mrIssue.ID)
 }
 
 func TestEngineerCloseMRWithReasonRejectsAndClearsMatchingActiveMR(t *testing.T) {
@@ -1072,11 +1063,26 @@ func TestHandleMRInfoSuccess_ProofFailurePreservesRemoteBranch(t *testing.T) {
 		CommitSHA:   commit,
 	}, ProcessResult{Success: true, MergeCommit: "unused"})
 
-	if !strings.Contains(buf.String(), "Post-merge proof failed") {
-		t.Fatalf("output missing proof failure:\n%s", buf.String())
+	if !strings.Contains(buf.String(), "Post-merge cleanup failed") {
+		t.Fatalf("output missing authoritative cleanup failure:\n%s", buf.String())
 	}
+
 	if out := run(t, workDir, "git", "ls-remote", "--heads", "origin", branch); !strings.Contains(out, commit) {
 		t.Fatalf("remote branch was not preserved; ls-remote=%q want commit %s", out, commit)
+	}
+}
+
+func TestHandleMRInfoFailurePropagatesRejectionCleanupError(t *testing.T) {
+	workDir, g, cleanup := testGitRepo(t)
+	defer cleanup()
+	e := newTestEngineer(t, workDir, g)
+
+	err := e.HandleMRInfoFailure(&MRInfo{ID: "gt-mr-reject"}, ProcessResult{
+		NoMerge: true,
+		Error:   "policy rejected",
+	})
+	if err == nil || !strings.Contains(err.Error(), "failed to close ineligible") {
+		t.Fatalf("HandleMRInfoFailure error = %v, want rejection cleanup failure", err)
 	}
 }
 

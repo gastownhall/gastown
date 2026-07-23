@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -259,6 +260,47 @@ func TestClearAgentActiveMRIfMatchesClearsExactMatch(t *testing.T) {
 	logOutput := readMockBDLog(t, logPath)
 	if !strings.Contains(logOutput, "show gt-gastown-polecat-nux --json") || !strings.Contains(logOutput, "update gt-gastown-polecat-nux") {
 		t.Fatalf("mock bd log %q missing show/update", logOutput)
+	}
+}
+
+func TestFinalizeAgentAfterMergedMRAtomicallyRequiresReadyState(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("test uses Unix shell script mocks for bd")
+	}
+	tests := []struct {
+		name        string
+		description string
+		wantErr     bool
+	}{
+		{"ready", "role_type: polecat\nagent_state: done\nactive_mr: gt-wisp-old\ncleanup_status: clean\nhook_bead: null", false},
+		{"working", "role_type: polecat\nagent_state: working\nactive_mr: gt-wisp-old\ncleanup_status: clean\nhook_bead: null", true},
+		{"wrong mr", "role_type: polecat\nagent_state: done\nactive_mr: gt-wisp-new\ncleanup_status: clean\nhook_bead: null", true},
+		{"dirty", "role_type: polecat\nagent_state: done\nactive_mr: gt-wisp-old\ncleanup_status: has_uncommitted\nhook_bead: null", true},
+		{"hooked", "role_type: polecat\nagent_state: done\nactive_mr: gt-wisp-old\ncleanup_status: clean\nhook_bead: gt-task", true},
+		{"mr failed", "role_type: polecat\nagent_state: done\nactive_mr: gt-wisp-old\ncleanup_status: clean\nhook_bead: null\nmr_failed: true", true},
+		{"push failed", "role_type: polecat\nagent_state: done\nactive_mr: gt-wisp-old\ncleanup_status: clean\nhook_bead: null\npush_failed: true", true},
+		{"idle dirty", "role_type: polecat\nagent_state: idle\nactive_mr: null\ncleanup_status: has_uncommitted\nhook_bead: null", true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tmpDir := t.TempDir()
+			if err := os.MkdirAll(filepath.Join(tmpDir, ".beads"), 0755); err != nil {
+				t.Fatalf("mkdir .beads: %v", err)
+			}
+			payload := `[{"id":"gt-gastown-polecat-nux","title":"Polecat nux","issue_type":"agent","labels":["gt:agent"],"description":` +
+				strconv.Quote(tt.description) + `}]`
+			logPath := installMockBDShowRecorder(t, payload)
+			bd := NewIsolated(tmpDir)
+
+			err := bd.FinalizeAgentAfterMergedMR("gt-gastown-polecat-nux", "gt-wisp-old")
+			if (err != nil) != tt.wantErr {
+				t.Fatalf("FinalizeAgentAfterMergedMR error = %v, wantErr %v", err, tt.wantErr)
+			}
+			updated := strings.Contains(readMockBDLog(t, logPath), "update gt-gastown-polecat-nux")
+			if updated == tt.wantErr {
+				t.Fatalf("updated = %v, want %v", updated, !tt.wantErr)
+			}
+		})
 	}
 }
 
