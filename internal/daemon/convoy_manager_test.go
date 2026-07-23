@@ -918,6 +918,7 @@ exit 0
 	if err := os.WriteFile(filepath.Join(binDir, "gt"), []byte(gtScript), 0755); err != nil {
 		t.Fatalf("write mock gt: %v", err)
 	}
+	installBdShowLabelsStub(t, binDir, nil, false)
 	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
 
 	var logged []string
@@ -1003,6 +1004,7 @@ exit 0
 	if err := os.WriteFile(filepath.Join(binDir, "gt"), []byte(gtScript), 0755); err != nil {
 		t.Fatalf("write mock gt: %v", err)
 	}
+	installBdShowLabelsStub(t, binDir, nil, false)
 	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
 
 	var logged []string
@@ -1078,6 +1080,7 @@ exit 0
 	if err := os.WriteFile(filepath.Join(binDir, "gt"), []byte(gtScript), 0755); err != nil {
 		t.Fatalf("write mock gt: %v", err)
 	}
+	installBdShowLabelsStub(t, binDir, nil, false)
 	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
 
 	var logged []string
@@ -1133,6 +1136,7 @@ exit 0
 	if err := os.WriteFile(filepath.Join(binDir, "gt"), []byte(gtScript), 0755); err != nil {
 		t.Fatalf("write mock gt: %v", err)
 	}
+	installBdShowLabelsStub(t, binDir, nil, false)
 	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
 
 	var logged []string
@@ -1330,6 +1334,7 @@ exit 0
 	if err := os.WriteFile(filepath.Join(binDir, "gt"), []byte(gtScript), 0755); err != nil {
 		t.Fatalf("write mock gt: %v", err)
 	}
+	installBdShowLabelsStub(t, binDir, nil, false)
 	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
 
 	var logged []string
@@ -1390,6 +1395,8 @@ exit 0
 	if err := os.WriteFile(filepath.Join(binDir, "gt"), []byte(gtScript), 0755); err != nil {
 		t.Fatalf("write mock gt: %v", err)
 	}
+	installBdShowLabelsStub(t, binDir, nil, false)
+	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
 
 	var logged []string
 	logger := func(format string, args ...interface{}) {
