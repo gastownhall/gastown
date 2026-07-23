@@ -652,9 +652,13 @@ func findFormula(name string) (string, error) {
 		searchPaths = append(searchPaths, filepath.Join(home, ".beads", "formulas"))
 	}
 
-	// Add GT_ROOT formulas if set
+	// Add town-root formulas if set. Prefer GT_ROOT, but fall back to
+	// GT_TOWN_ROOT: daemon-launched patrol sessions only set GT_TOWN_ROOT, so
+	// reading GT_ROOT alone leaves formula resolution empty there (hq-2ui).
 	if gtRoot := os.Getenv("GT_ROOT"); gtRoot != "" {
 		searchPaths = append(searchPaths, filepath.Join(gtRoot, ".beads", "formulas"))
+	} else if townRoot := os.Getenv("GT_TOWN_ROOT"); townRoot != "" {
+		searchPaths = append(searchPaths, filepath.Join(townRoot, ".beads", "formulas"))
 	}
 
 	// Try each search path
