@@ -205,6 +205,24 @@ func TestDeaconPatrolDoesNotRunAgeBasedWispGC(t *testing.T) {
 	}
 }
 
+// TestPatrolFormulasDoNotRunAgeBasedWispGC keeps the emergency safety brake in
+// place. Age alone is not proof that a molecule is detached or abandoned.
+func TestPatrolFormulasDoNotRunAgeBasedWispGC(t *testing.T) {
+	for _, name := range []string{
+		"mol-deacon-patrol.formula.toml",
+		"mol-witness-patrol.formula.toml",
+		"mol-refinery-patrol.formula.toml",
+	} {
+		content, err := formulasFS.ReadFile("formulas/" + name)
+		if err != nil {
+			t.Fatalf("reading %s: %v", name, err)
+		}
+		if strings.Contains(string(content), "bd mol wisp gc --age") {
+			t.Errorf("%s must not run age-based wisp GC", name)
+		}
+	}
+}
+
 // TestPatrolFormulasUseDynamicBeadResolution verifies that patrol formulas
 // resolve their agent bead ID dynamically at runtime via `gt agents resolve`,
 // rather than hardcoding a prefix like `gt-<rig>-refinery`.

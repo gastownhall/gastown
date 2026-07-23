@@ -369,6 +369,7 @@ func TestClosedMoleculeStepReapBehavior(t *testing.T) {
 			"step-open-parent-old":     {id: "step-open-parent-old", status: "open", issueType: "task", createdAt: now.Add(-48 * time.Hour)},
 			"step-non-molecule-parent": {id: "step-non-molecule-parent", status: "open", issueType: "task", createdAt: now.Add(-48 * time.Hour)},
 			"agent-step":               {id: "agent-step", status: "open", issueType: "agent", createdAt: now.Add(-48 * time.Hour)},
+			"live-attached-old":        {id: "live-attached-old", status: "open", issueType: "molecule", createdAt: now.Add(-48 * time.Hour)},
 			"stale-orphan":             {id: "stale-orphan", status: "open", issueType: "task", createdAt: now.Add(-48 * time.Hour)},
 			"fresh-orphan":             {id: "fresh-orphan", status: "open", issueType: "task", createdAt: now.Add(-1 * time.Hour)},
 		},
@@ -383,7 +384,8 @@ func TestClosedMoleculeStepReapBehavior(t *testing.T) {
 			{issueID: "step-non-molecule-parent", dependsOnID: "closed-epic", depType: "parent-child"},
 			{issueID: "agent-step", dependsOnID: "mol-closed", depType: "parent-child"},
 		},
-		ops: map[int][]string{},
+		refs: map[string]bool{"live-attached-old": true},
+		ops:  map[int][]string{},
 	}
 	db := openFakeReaperDB(t, state)
 	t.Cleanup(func() { _ = db.Close() })
@@ -399,6 +401,9 @@ func TestClosedMoleculeStepReapBehavior(t *testing.T) {
 	if scan.ReapCandidates != 2 {
 		t.Fatalf("Scan ReapCandidates = %d, want 2", scan.ReapCandidates)
 	}
+	if scan.ProtectedReferences != 1 {
+		t.Fatalf("Scan ProtectedReferences = %d, want 1", scan.ProtectedReferences)
+	}
 
 	beforeDryRun := state.statuses()
 	dryRun, err := Reap(db, "testdb", maxAge, true)
@@ -411,34 +416,40 @@ func TestClosedMoleculeStepReapBehavior(t *testing.T) {
 	if dryRun.Reaped != 2 {
 		t.Fatalf("dry-run Reaped = %d, want 2", dryRun.Reaped)
 	}
-	if dryRun.OpenRemain != 10 {
-		t.Fatalf("dry-run OpenRemain = %d, want 10", dryRun.OpenRemain)
+	if dryRun.ProtectedReferences != 1 {
+		t.Fatalf("dry-run ProtectedReferences = %d, want 1", dryRun.ProtectedReferences)
+	}
+	if dryRun.OpenRemain != 11 {
+		t.Fatalf("dry-run OpenRemain = %d, want 11", dryRun.OpenRemain)
 	}
 	if afterDryRun := state.statuses(); !reflect.DeepEqual(afterDryRun, beforeDryRun) {
 		t.Fatalf("dry-run mutated statuses: before=%v after=%v", beforeDryRun, afterDryRun)
 	}
 
 	preRealOps := state.opCounts()
+	// Simulate an attachment committing after the candidate SELECT but before
+	// the closing UPDATE. The UPDATE must revalidate and retain this step.
+	state.attachBeforeUpdate = "step-closed-mol-recent"
 	realRun, err := Reap(db, "testdb", maxAge, false)
 	if err != nil {
 		t.Fatalf("real Reap: %v", err)
 	}
-	if realRun.MoleculeStepsClosed != 2 {
-		t.Fatalf("real MoleculeStepsClosed = %d, want 2", realRun.MoleculeStepsClosed)
+	if realRun.MoleculeStepsClosed != 1 {
+		t.Fatalf("real MoleculeStepsClosed = %d, want 1", realRun.MoleculeStepsClosed)
 	}
 	if realRun.Reaped != 2 {
 		t.Fatalf("real Reaped = %d, want 2", realRun.Reaped)
 	}
-	if realRun.OpenRemain != 6 {
-		t.Fatalf("real OpenRemain = %d, want 6", realRun.OpenRemain)
+	if realRun.OpenRemain != 8 {
+		t.Fatalf("real OpenRemain = %d, want 8", realRun.OpenRemain)
 	}
 
-	for _, id := range []string{"step-closed-mol-recent", "step-closed-mol-old", "step-non-molecule-parent", "stale-orphan"} {
+	for _, id := range []string{"step-closed-mol-old", "step-non-molecule-parent", "stale-orphan"} {
 		if got := state.status(id); got != "closed" {
 			t.Fatalf("%s status = %q, want closed", id, got)
 		}
 	}
-	for _, id := range []string{"step-mixed-parent-old", "step-external-parent-old", "step-open-parent-old", "agent-step", "fresh-orphan", "mol-open"} {
+	for _, id := range []string{"step-closed-mol-recent", "step-mixed-parent-old", "step-external-parent-old", "step-open-parent-old", "agent-step", "live-attached-old", "fresh-orphan", "mol-open"} {
 		if got := state.status(id); got != "open" {
 			t.Fatalf("%s status = %q, want open", id, got)
 		}
@@ -451,9 +462,9 @@ func TestClosedMoleculeStepReapBehavior(t *testing.T) {
 		assertOpsContainInOrder(t, ops,
 			"EXEC SET @@autocommit = 0",
 			"QUERY SELECT w.id FROM wisps w INNER JOIN",
-			"EXEC UPDATE wisps SET status='closed'",
+			"EXEC UPDATE wisps w SET status='closed'",
 			"QUERY SELECT w.id FROM wisps w LEFT JOIN",
-			"EXEC UPDATE wisps SET status='closed'",
+			"EXEC UPDATE wisps w SET status='closed'",
 			"EXEC COMMIT",
 			"EXEC CALL DOLT_COMMIT",
 			"QUERY SELECT COUNT(*) FROM wisps WHERE status IN",
@@ -491,11 +502,14 @@ type fakeDep struct {
 }
 
 type fakeReaperState struct {
-	mu       sync.Mutex
-	wisps    map[string]*fakeWisp
-	deps     []fakeDep
-	nextConn int
-	ops      map[int][]string
+	mu    sync.Mutex
+	wisps map[string]*fakeWisp
+	deps  []fakeDep
+	refs  map[string]bool
+	// attachBeforeUpdate simulates a concurrent attachment after selection.
+	attachBeforeUpdate string
+	nextConn           int
+	ops                map[int][]string
 }
 
 func (s *fakeReaperState) status(id string) string {
@@ -554,7 +568,7 @@ func (s *fakeReaperState) moleculeStepCandidatesLocked() []string {
 
 func (s *fakeReaperState) isMoleculeStepCandidateLocked(id string) bool {
 	w := s.wisps[id]
-	if w == nil || !isOpenWispStatus(w.status) || w.issueType == "agent" {
+	if w == nil || !isOpenWispStatus(w.status) || w.issueType == "agent" || s.refs[id] {
 		return false
 	}
 	for _, dep := range s.deps {
@@ -578,7 +592,7 @@ func (s *fakeReaperState) isMoleculeStepCandidateLocked(id string) bool {
 func (s *fakeReaperState) staleCandidatesLocked(cutoff time.Time, excludeMoleculeSteps bool) []string {
 	var ids []string
 	for id, w := range s.wisps {
-		if !isOpenWispStatus(w.status) || w.issueType == "agent" || !w.createdAt.Before(cutoff) {
+		if !isOpenWispStatus(w.status) || w.issueType == "agent" || s.refs[id] || !w.createdAt.Before(cutoff) {
 			continue
 		}
 		if s.hasOpenParentLocked(id) {
@@ -588,6 +602,17 @@ func (s *fakeReaperState) staleCandidatesLocked(cutoff time.Time, excludeMolecul
 			continue
 		}
 		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+	return ids
+}
+
+func (s *fakeReaperState) protectedCandidatesLocked(cutoff time.Time) []string {
+	var ids []string
+	for id, w := range s.wisps {
+		if isOpenWispStatus(w.status) && w.issueType != "agent" && s.refs[id] && w.createdAt.Before(cutoff) {
+			ids = append(ids, id)
+		}
 	}
 	sort.Strings(ids)
 	return ids
@@ -654,6 +679,8 @@ func (c *fakeReaperConn) QueryContext(_ context.Context, query string, args []dr
 	c.state.record(c.id, "QUERY "+normalized)
 
 	switch {
+	case strings.Contains(normalized, "SELECT COUNT(*) FROM wisps w") && strings.Contains(normalized, "AND NOT (NOT EXISTS"):
+		return fakeCountRows(len(c.state.protectedCandidatesLocked(namedTime(args)))), nil
 	case strings.Contains(normalized, "SELECT COUNT(*) FROM wisps w") && strings.Contains(normalized, "created_at <"):
 		if err := validateStaleWispQuery(normalized); err != nil {
 			return nil, err
@@ -694,17 +721,21 @@ func (c *fakeReaperConn) ExecContext(_ context.Context, query string, args []dri
 	c.state.record(c.id, "EXEC "+normalized)
 
 	switch {
-	case strings.HasPrefix(normalized, "UPDATE wisps SET status='closed'"):
+	case strings.HasPrefix(normalized, "UPDATE wisps w SET status='closed'"):
+		if c.state.attachBeforeUpdate != "" {
+			c.state.refs[c.state.attachBeforeUpdate] = true
+			c.state.attachBeforeUpdate = ""
+		}
 		affected := int64(0)
 		for _, arg := range args {
 			id, _ := arg.Value.(string)
-			if w := c.state.wisps[id]; w != nil && isOpenWispStatus(w.status) {
+			if w := c.state.wisps[id]; w != nil && isOpenWispStatus(w.status) && !c.state.refs[id] {
 				w.status = "closed"
 				affected++
 			}
 		}
 		return fakeReaperResult(affected), nil
-	case normalized == "SET @@autocommit = 0" || normalized == "SET @@autocommit = 1" || normalized == "ROLLBACK" || normalized == "COMMIT" || strings.HasPrefix(normalized, "CALL DOLT_COMMIT"):
+	case normalized == "SET TRANSACTION ISOLATION LEVEL READ COMMITTED" || normalized == "SET @@autocommit = 0" || normalized == "SET @@autocommit = 1" || normalized == "ROLLBACK" || normalized == "COMMIT" || strings.HasPrefix(normalized, "CALL DOLT_COMMIT"):
 		return fakeReaperResult(0), nil
 	default:
 		return nil, fmt.Errorf("unexpected exec: %s", normalized)

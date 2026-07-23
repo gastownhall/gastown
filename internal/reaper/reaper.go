@@ -102,6 +102,7 @@ type ScanResult struct {
 	Database               string    `json:"database"`
 	ReapCandidates         int       `json:"reap_candidates"`
 	MoleculeStepCandidates int       `json:"molecule_step_candidates,omitempty"`
+	ProtectedReferences    int       `json:"protected_references,omitempty"`
 	PurgeCandidates        int       `json:"purge_candidates"`
 	MailCandidates         int       `json:"mail_candidates"`
 	StaleCandidates        int       `json:"stale_candidates"`
@@ -114,6 +115,7 @@ type ReapResult struct {
 	Database            string    `json:"database"`
 	Reaped              int       `json:"reaped"`
 	MoleculeStepsClosed int       `json:"molecule_steps_closed,omitempty"`
+	ProtectedReferences int       `json:"protected_references,omitempty"`
 	OpenRemain          int       `json:"open_remain"`
 	DryRun              bool      `json:"dry_run,omitempty"`
 	Anomalies           []Anomaly `json:"anomalies,omitempty"`
@@ -221,6 +223,24 @@ func parentExcludeJoin(dbName string) (joinClause, whereCondition string) {
 
 const openWispStatusWhere = "w.status IN ('open', 'hooked', 'in_progress')"
 
+// liveAttachmentWhere fails closed for wisps referenced by live workflow state.
+// Attachments are metadata links rather than dependency rows, so parent checks
+// alone cannot protect them. Search both durable issues and ephemeral wisps:
+// the latter includes agent/session, patrol, convoy, and review-handoff state.
+func liveAttachmentWhere(wispAlias string) string {
+	marker := fmt.Sprintf("CONCAT('%%attached_molecule: ', %s.id, '%%')", wispAlias)
+	return fmt.Sprintf(`NOT EXISTS (
+		SELECT 1 FROM issues live_i
+		WHERE live_i.status NOT IN ('closed', 'tombstone')
+		AND live_i.description LIKE %s
+	) AND NOT EXISTS (
+		SELECT 1 FROM wisps live_w
+		WHERE live_w.id != %s.id
+		AND live_w.status NOT IN ('closed', 'tombstone')
+		AND live_w.description LIKE %s
+	)`, marker, wispAlias, marker)
+}
+
 // closedMoleculeStepSubquery selects step-wisps whose parent molecule has already closed.
 // wisp_dependencies.issue_id is the child; depends_on_wisp_id is the parent molecule.
 const closedMoleculeStepSubquery = `
@@ -317,8 +337,8 @@ func Scan(db *sql.DB, dbName string, maxAge, purgeAge, mailDeleteAge, staleIssue
 	moleculeStepExcludeJoin := closedMoleculeStepExcludeJoin("closed_molecule_step")
 
 	moleculeStepQuery := fmt.Sprintf(
-		"SELECT COUNT(*) FROM wisps w %s WHERE %s AND w.issue_type != 'agent'",
-		moleculeStepJoin, openWispStatusWhere)
+		"SELECT COUNT(*) FROM wisps w %s WHERE %s AND w.issue_type != 'agent' AND %s",
+		moleculeStepJoin, openWispStatusWhere, liveAttachmentWhere("w"))
 	if err := db.QueryRowContext(ctx, moleculeStepQuery).Scan(&result.MoleculeStepCandidates); err != nil {
 		return nil, fmt.Errorf("count molecule step candidates: %w", err)
 	}
@@ -329,17 +349,30 @@ func Scan(db *sql.DB, dbName string, maxAge, purgeAge, mailDeleteAge, staleIssue
 	// Uses LEFT JOIN anti-pattern instead of correlated EXISTS to avoid O(n*m) cost (gt-jd1z).
 	// Closed-molecule steps are counted separately above and excluded here so counts stay disjoint.
 	reapQuery := fmt.Sprintf(
-		"SELECT COUNT(*) FROM wisps w %s %s WHERE %s AND w.created_at < ? AND w.issue_type != 'agent' AND %s AND closed_molecule_step.issue_id IS NULL",
-		parentJoin, moleculeStepExcludeJoin, openWispStatusWhere, parentWhere)
+		"SELECT COUNT(*) FROM wisps w %s %s WHERE %s AND w.created_at < ? AND w.issue_type != 'agent' AND %s AND closed_molecule_step.issue_id IS NULL AND %s",
+		parentJoin, moleculeStepExcludeJoin, openWispStatusWhere, parentWhere, liveAttachmentWhere("w"))
 	if err := db.QueryRowContext(ctx, reapQuery, now.Add(-maxAge)).Scan(&result.ReapCandidates); err != nil {
 		return nil, fmt.Errorf("count reap candidates: %w", err)
 	}
+	protectedQuery := fmt.Sprintf(
+		"SELECT COUNT(*) FROM wisps w WHERE %s AND w.created_at < ? AND w.issue_type != 'agent' AND NOT (%s)",
+		openWispStatusWhere, liveAttachmentWhere("w"))
+	if err := db.QueryRowContext(ctx, protectedQuery, now.Add(-maxAge)).Scan(&result.ProtectedReferences); err != nil {
+		return nil, fmt.Errorf("count protected attachment references: %w", err)
+	}
+	if result.ProtectedReferences > 0 {
+		result.Anomalies = append(result.Anomalies, Anomaly{
+			Type:    "protected_live_attachment",
+			Message: fmt.Sprintf("%d old wisp(s) retained because live workflow state still references them", result.ProtectedReferences),
+			Count:   result.ProtectedReferences,
+		})
+	}
 
-	// Count purge candidates: closed wisps past purge_age.
-	// No parent check needed — closed wisps past the delete age are unconditionally purgeable.
-	// The parent check (correlated subqueries on wisp_dependencies) was causing O(n*m) query
-	// cost with 1800+ closed wisps, leading to CPU spikes and connection timeouts (gt-wvd2).
-	purgeQuery := "SELECT COUNT(*) FROM wisps w WHERE w.status = 'closed' AND w.closed_at < ?"
+	// Count purge candidates. Even a closed wisp is retained while live workflow
+	// metadata references it; recovery must run before physical deletion.
+	purgeQuery := fmt.Sprintf(
+		"SELECT COUNT(*) FROM wisps w WHERE w.status = 'closed' AND w.closed_at < ? AND %s",
+		liveAttachmentWhere("w"))
 	if err := db.QueryRowContext(ctx, purgeQuery, now.Add(-purgeAge)).Scan(&result.PurgeCandidates); err != nil {
 		return nil, fmt.Errorf("count purge candidates: %w", err)
 	}
@@ -422,14 +455,21 @@ func Reap(db *sql.DB, dbName string, maxAge time.Duration, dryRun bool) (*ReapRe
 	// Closed-molecule steps are closed immediately through a separate path, so stale
 	// max-age counts exclude them to keep dry-run and scan counts disjoint.
 	whereClause := fmt.Sprintf(
-		"%s AND w.created_at < ? AND w.issue_type != 'agent' AND %s AND closed_molecule_step.issue_id IS NULL", openWispStatusWhere, parentWhere)
+		"%s AND w.created_at < ? AND w.issue_type != 'agent' AND %s AND closed_molecule_step.issue_id IS NULL AND %s",
+		openWispStatusWhere, parentWhere, liveAttachmentWhere("w"))
 
 	result := &ReapResult{Database: dbName, DryRun: dryRun}
+	protectedQuery := fmt.Sprintf(
+		"SELECT COUNT(*) FROM wisps w WHERE %s AND w.created_at < ? AND w.issue_type != 'agent' AND NOT (%s)",
+		openWispStatusWhere, liveAttachmentWhere("w"))
+	if err := db.QueryRowContext(ctx, protectedQuery, cutoff).Scan(&result.ProtectedReferences); err != nil {
+		return nil, fmt.Errorf("count protected attachment references: %w", err)
+	}
 
 	if dryRun {
 		moleculeStepCountQuery := fmt.Sprintf(
-			"SELECT COUNT(*) FROM wisps w %s WHERE %s AND w.issue_type != 'agent'",
-			moleculeStepJoin, openWispStatusWhere)
+			"SELECT COUNT(*) FROM wisps w %s WHERE %s AND w.issue_type != 'agent' AND %s",
+			moleculeStepJoin, openWispStatusWhere, liveAttachmentWhere("w"))
 		if err := db.QueryRowContext(ctx, moleculeStepCountQuery).Scan(&result.MoleculeStepsClosed); err != nil {
 			return nil, fmt.Errorf("dry-run molecule step count: %w", err)
 		}
@@ -450,6 +490,12 @@ func Reap(db *sql.DB, dbName string, maxAge time.Duration, dryRun bool) (*ReapRe
 	}
 	defer conn.Close()
 
+	// Candidate IDs are selected in one statement and closed in the next.
+	// READ COMMITTED makes the final UPDATE's NOT EXISTS predicates observe an
+	// attachment committed after selection instead of reusing a stale snapshot.
+	if _, err := conn.ExecContext(ctx, "SET TRANSACTION ISOLATION LEVEL READ COMMITTED"); err != nil {
+		return nil, fmt.Errorf("set transaction isolation: %w", err)
+	}
 	if _, err := conn.ExecContext(ctx, "SET @@autocommit = 0"); err != nil {
 		return nil, fmt.Errorf("disable autocommit: %w", err)
 	}
@@ -462,8 +508,8 @@ func Reap(db *sql.DB, dbName string, maxAge time.Duration, dryRun bool) (*ReapRe
 	}()
 
 	moleculeStepIDQuery := fmt.Sprintf(
-		"SELECT w.id FROM wisps w %s WHERE %s AND w.issue_type != 'agent' LIMIT %d",
-		moleculeStepJoin, openWispStatusWhere, DefaultBatchSize)
+		"SELECT w.id FROM wisps w %s WHERE %s AND w.issue_type != 'agent' AND %s LIMIT %d",
+		moleculeStepJoin, openWispStatusWhere, liveAttachmentWhere("w"), DefaultBatchSize)
 	moleculeStepsClosed, err := closeWispsInBatches(ctx, conn, moleculeStepIDQuery, nil, "closed molecule steps")
 	if err != nil {
 		return nil, err
@@ -550,8 +596,8 @@ func closeWispsInBatches(ctx context.Context, runner sqlRunner, idQuery string, 
 		inClause := strings.Join(placeholders, ",")
 
 		updateQuery := fmt.Sprintf(
-			"UPDATE wisps SET status='closed', closed_at=NOW() WHERE id IN (%s) AND status IN ('open', 'hooked', 'in_progress') AND issue_type != 'agent'",
-			inClause)
+			"UPDATE wisps w SET status='closed', closed_at=NOW() WHERE w.id IN (%s) AND w.status IN ('open', 'hooked', 'in_progress') AND w.issue_type != 'agent' AND %s",
+			inClause, liveAttachmentWhere("w"))
 		sqlResult, err := runner.ExecContext(ctx, updateQuery, args...)
 		if err != nil {
 			return total, fmt.Errorf("close %s batch: %w", description, err)
@@ -591,11 +637,10 @@ func purgeClosedWisps(db *sql.DB, dbName string, purgeAge time.Duration, dryRun 
 	deleteCutoff := time.Now().UTC().Add(-purgeAge)
 	var anomalies []Anomaly
 
-	// Digest: count by wisp_type.
-	// No parent check — closed wisps past the delete age are unconditionally purgeable.
-	// The parent check (correlated subqueries on wisp_dependencies) was causing O(n*m)
-	// query cost with 1800+ closed wisps, leading to CPU spikes and timeouts (gt-wvd2).
-	digestQuery := "SELECT COALESCE(w.wisp_type, 'unknown') AS wtype, COUNT(*) AS cnt FROM wisps w WHERE w.status = 'closed' AND w.closed_at < ? GROUP BY wtype"
+	// Digest: count by wisp_type, excluding live attachment references.
+	digestQuery := fmt.Sprintf(
+		"SELECT COALESCE(w.wisp_type, 'unknown') AS wtype, COUNT(*) AS cnt FROM wisps w WHERE w.status = 'closed' AND w.closed_at < ? AND %s GROUP BY wtype",
+		liveAttachmentWhere("w"))
 	rows, err := db.QueryContext(ctx, digestQuery, deleteCutoff)
 	if err != nil {
 		return 0, nil, fmt.Errorf("digest query: %w", err)
@@ -620,27 +665,36 @@ func purgeClosedWisps(db *sql.DB, dbName string, purgeAge time.Duration, dryRun 
 		return digestTotal, anomalies, nil
 	}
 
-	if _, err := db.ExecContext(ctx, "SET @@autocommit = 0"); err != nil {
+	conn, err := db.Conn(ctx)
+	if err != nil {
+		return 0, nil, fmt.Errorf("pin connection: %w", err)
+	}
+	defer conn.Close()
+
+	if _, err := conn.ExecContext(ctx, "SET TRANSACTION ISOLATION LEVEL READ COMMITTED"); err != nil {
+		return 0, nil, fmt.Errorf("set transaction isolation: %w", err)
+	}
+	if _, err := conn.ExecContext(ctx, "SET @@autocommit = 0"); err != nil {
 		return 0, nil, fmt.Errorf("disable autocommit: %w", err)
 	}
 	defer func() {
-		_, _ = db.ExecContext(context.Background(), "SET @@autocommit = 1")
+		_, _ = conn.ExecContext(context.Background(), "SET @@autocommit = 1")
 	}()
 
-	// Batch delete — simple status+age filter, no parent check needed for purge.
+	// Batch delete with the same fail-closed liveness predicate as the digest.
 	idQuery := fmt.Sprintf(
-		"SELECT w.id FROM wisps w WHERE w.status = 'closed' AND w.closed_at < ? LIMIT %d",
-		DefaultBatchSize)
+		"SELECT w.id FROM wisps w WHERE w.status = 'closed' AND w.closed_at < ? AND %s LIMIT %d",
+		liveAttachmentWhere("w"), DefaultBatchSize)
 	auxTables := []string{"wisp_labels", "wisp_comments", "wisp_events", "wisp_dependencies"}
 
-	totalDeleted, err := batchDeleteRows(ctx, db, idQuery, deleteCutoff, "wisps", auxTables)
+	totalDeleted, err := batchDeleteRows(ctx, conn, idQuery, deleteCutoff, "wisps", auxTables)
 	if err != nil {
 		return totalDeleted, anomalies, err
 	}
 
 	if totalDeleted > 0 {
 		// Flush SQL transaction to working set before DOLT_COMMIT.
-		if _, err := db.ExecContext(ctx, "COMMIT"); err != nil {
+		if _, err := conn.ExecContext(ctx, "COMMIT"); err != nil {
 			anomalies = append(anomalies, Anomaly{
 				Type:    "sql_commit_failed",
 				Message: fmt.Sprintf("sql commit after purge failed: %v", err),
@@ -648,7 +702,7 @@ func purgeClosedWisps(db *sql.DB, dbName string, purgeAge time.Duration, dryRun 
 			return totalDeleted, anomalies, nil
 		}
 		commitMsg := fmt.Sprintf("reaper: purge %d closed wisps from %s", totalDeleted, dbName)
-		if _, err := db.ExecContext(ctx, fmt.Sprintf("CALL DOLT_COMMIT('--allow-empty', '-Am', '%s')", commitMsg)); err != nil { //nolint:gosec // G201: commitMsg from safe values
+		if _, err := conn.ExecContext(ctx, fmt.Sprintf("CALL DOLT_COMMIT('--allow-empty', '-Am', '%s')", commitMsg)); err != nil { //nolint:gosec // G201: commitMsg from safe values
 			// Non-fatal — log but continue.
 			anomalies = append(anomalies, Anomaly{
 				Type:    "dolt_commit_failed",
@@ -847,10 +901,10 @@ func AutoClose(db *sql.DB, dbName string, staleAge time.Duration, dryRun bool) (
 }
 
 // batchDeleteRows deletes rows from a primary table and its auxiliary tables in batches.
-func batchDeleteRows(ctx context.Context, db *sql.DB, idQuery string, cutoffArg time.Time, primaryTable string, auxTables []string) (int, error) {
+func batchDeleteRows(ctx context.Context, runner sqlRunner, idQuery string, cutoffArg time.Time, primaryTable string, auxTables []string) (int, error) {
 	totalDeleted := 0
 	for {
-		idRows, err := db.QueryContext(ctx, idQuery, cutoffArg)
+		idRows, err := runner.QueryContext(ctx, idQuery, cutoffArg)
 		if err != nil {
 			return totalDeleted, fmt.Errorf("select batch: %w", err)
 		}
@@ -880,7 +934,7 @@ func batchDeleteRows(ctx context.Context, db *sql.DB, idQuery string, cutoffArg 
 
 		for _, tbl := range auxTables {
 			delAux := fmt.Sprintf("DELETE FROM `%s` WHERE issue_id IN %s", tbl, inClause) //nolint:gosec // G201: tbl is internal
-			if _, err := db.ExecContext(ctx, delAux, args...); err != nil {
+			if _, err := runner.ExecContext(ctx, delAux, args...); err != nil {
 				// Non-fatal: log and continue.
 			}
 		}
@@ -900,13 +954,18 @@ func batchDeleteRows(ctx context.Context, db *sql.DB, idQuery string, cutoffArg 
 			}
 		}
 		for _, delReverse := range reverseDeletes {
-			if _, err := db.ExecContext(ctx, delReverse, args...); err != nil {
+			if _, err := runner.ExecContext(ctx, delReverse, args...); err != nil {
 				// Non-fatal.
 			}
 		}
 
 		delPrimary := fmt.Sprintf("DELETE FROM `%s` WHERE id IN %s", primaryTable, inClause) //nolint:gosec // G201: primaryTable is internal
-		sqlResult, err := db.ExecContext(ctx, delPrimary, args...)
+		if primaryTable == "wisps" {
+			// Revalidate immediately before physical deletion. This catches an
+			// attachment committed after the candidate batch was selected.
+			delPrimary += " AND " + liveAttachmentWhere("wisps")
+		}
+		sqlResult, err := runner.ExecContext(ctx, delPrimary, args...)
 		if err != nil {
 			return totalDeleted, fmt.Errorf("delete %s batch: %w", primaryTable, err)
 		}
