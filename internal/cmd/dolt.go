@@ -889,7 +889,7 @@ func runDoltDump(cmd *cobra.Command, args []string) error {
 		fmt.Printf("  (unable to read recent logs: %v)\n", err)
 	}
 
-	fmt.Printf("\nNo signal was sent. Do not use kill -QUIT for routine diagnostics unless the Dolt version has been verified not to terminate on SIGQUIT.\n")
+	fmt.Printf("\nNo signal was sent. Never send SIGQUIT to the live Dolt server; use gt dolt dump for non-signaling diagnostics.\n")
 
 	return nil
 }

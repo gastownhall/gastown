@@ -27,6 +27,7 @@ func TestTownRootDoltHangDiagnosticsAreNonFatal(t *testing.T) {
 		"gt dolt status",
 		"~/gt/daemon/dolt.pid",
 		"does not signal the process",
+		"Never send SIGQUIT to the live Dolt server",
 	} {
 		if !strings.Contains(content, want) {
 			t.Errorf("town-root Dolt diagnostics missing %q", want)
@@ -35,8 +36,14 @@ func TestTownRootDoltHangDiagnosticsAreNonFatal(t *testing.T) {
 	if strings.Contains(content, "~/gt/.dolt-data/dolt.pid") {
 		t.Error("town-root Dolt diagnostics reference the obsolete PID path")
 	}
-	if strings.Contains(content, "kill -QUIT $(") {
-		t.Error("town-root Dolt diagnostics contain an executable SIGQUIT workflow")
+	for _, forbidden := range []string{
+		"kill -QUIT",
+		"capture SIGQUIT",
+		"only use it if",
+	} {
+		if strings.Contains(content, forbidden) {
+			t.Errorf("town-root Dolt diagnostics contain unsafe SIGQUIT guidance %q", forbidden)
+		}
 	}
 }
 
