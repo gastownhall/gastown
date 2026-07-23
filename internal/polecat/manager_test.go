@@ -23,6 +23,27 @@ import (
 	"github.com/steveyegge/gastown/internal/tmux"
 )
 
+func TestIsReusableCandidateState(t *testing.T) {
+	tests := []struct {
+		state State
+		want  bool
+	}{
+		{state: StateIdle, want: true},
+		{state: StateDone, want: true},
+		{state: StateWorking, want: false},
+		{state: StateStalled, want: false},
+		{state: StateReviewNeeded, want: false},
+	}
+
+	for _, tt := range tests {
+		t.Run(string(tt.state), func(t *testing.T) {
+			if got := isReusableCandidateState(tt.state); got != tt.want {
+				t.Fatalf("isReusableCandidateState(%q) = %v, want %v", tt.state, got, tt.want)
+			}
+		})
+	}
+}
+
 func TestHasSubmittableWorkForWorkstateUsesBranchTargetStatus(t *testing.T) {
 	repo := setupManagerSquashPreservedRepo(t)
 	if got := hasSubmittableWorkForWorkstate(repo, []string{"integration/test"}); got {

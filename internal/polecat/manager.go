@@ -2289,11 +2289,15 @@ func (m *Manager) FindIdlePolecat() (*Polecat, error) {
 		return nil, err
 	}
 	for _, p := range polecats {
-		if p.State == StateIdle && m.reuseDecisionForPolecat(p.Name, p.State).Reusable {
+		if isReusableCandidateState(p.State) && m.reuseDecisionForPolecat(p.Name, p.State).Reusable {
 			return p, nil
 		}
 	}
 	return nil, nil
+}
+
+func isReusableCandidateState(state State) bool {
+	return state == StateIdle || state == StateDone
 }
 
 // ReuseDecisionForPolecat exposes the same reuse verdict used by FindIdlePolecat
