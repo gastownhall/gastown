@@ -422,8 +422,10 @@ git commit -m "fix(mountain): enforce pause before successor dispatch"
 
 **Files:**
 - Modify: `internal/cmd/done.go`
+- Modify: `internal/cmd/molecule_step.go`
 - Test: `internal/cmd/done_test.go`
 - Test: `internal/cmd/done_closeDescendants_test.go`
+- Test: `internal/cmd/molecule_step_test.go`
 - Test: `internal/refinery/manager_test.go`
 - Test: `internal/convoy/operations_test.go`
 
@@ -441,7 +443,7 @@ assert.True(t, result.MRCreated)
 assert.True(t, result.SuccessorBlocked)
 ```
 
-Also cover proof failure, superseded MR retry, attached-molecule cleanup, direct merge, and no-merge behavior.
+Also cover proof failure, superseded MR retry, attached-molecule cleanup, MR-backed workflow steps on `COMPLETED` and `DEFERRED`, `gt mol step done`, rejection/requeue, direct merge, and no-merge behavior.
 
 - [ ] **Step 2: Run the red tests**
 
@@ -453,7 +455,7 @@ Expected: FAIL because the common `notifyWitness` path closes `hookedBeadID` aft
 
 - [ ] **Step 3: Make source ownership explicit**
 
-In the normal MR path, retain the source issue and attached source molecule until verified post-merge cleanup. Continue clearing the worker hook and retiring the session, but do not call `hookBd.Close(hookedBeadID)` or burn source attachment descendants while `mrID` is non-empty.
+Enforce centrally that an issue referenced by an open MR cannot become terminal outside verified post-merge. In the normal MR path, retain the source issue and attached source molecule until verified post-merge cleanup. Continue clearing the worker hook and retiring the session, but do not call `hookBd.Close(hookedBeadID)` or burn source attachment descendants while `mrID` is non-empty. Apply the same guard to workflow-step and molecule-step completion.
 
 Direct-merge and no-merge paths retain their existing terminal behavior. Failed MR creation keeps the source open.
 
@@ -480,53 +482,84 @@ git commit -m "fix(done): retain MR sources until verified integration"
 
 Expected: PASS.
 
-### Task 9: Stabilize respawn locks and branch continuation occupancy
+### Task 9: Make respawn accounting attempt-scoped
+
+**Files:**
+- Modify: `internal/cmd/polecat_spawn.go`
+- Modify: `internal/witness/spawn_count.go`
+- Test: existing adjacent sling and polecat tests
+
+- [ ] **Step 1: Write failing respawn-epoch tests**
+
+Cover:
+
+```text
+failed preflight/checkout/allocation -> counter unchanged
+established failed session -> counter increments once
+successful completion -> deterministic reset/new epoch
+reopened bead -> deterministic reset/new epoch
+concurrent dispatch -> live circuit breaker remains enforced
+```
+
+- [ ] **Step 2: Run the red tests**
+
+```bash
+go test ./internal/cmd ./internal/witness -run 'Respawn|SpawnCount'
+```
+
+Expected: failed allocation currently consumes an attempt and lifecycle epochs are not represented.
+
+- [ ] **Step 3: Count established attempts, not intentions**
+
+Move accounting after successful worker/session establishment and record the bead lifecycle epoch. A failed preflight, checkout, or allocation must leave the count unchanged. Preserve the live circuit breaker and define completion/reopen reset semantics without silently clearing a live failure loop.
+
+- [ ] **Step 4: Run focused tests and commit**
+
+```bash
+go test ./internal/cmd ./internal/witness -run 'Respawn|SpawnCount|Sling'
+git add internal/cmd/polecat_spawn.go internal/witness
+git commit -m "fix(sling): scope respawn counts to established attempts"
+```
+
+Expected: PASS.
+
+### Task 10: Bind continuation to one branch-owning worktree
 
 **Files:**
 - Modify: `internal/cmd/sling.go`
 - Modify: `internal/cmd/sling_dispatch.go`
 - Modify: `internal/cmd/polecat_spawn.go`
 - Modify: `internal/polecat/manager.go`
-- Test: existing adjacent sling and polecat tests
+- Modify: `internal/git/git.go`
+- Test: existing adjacent sling, git, and polecat tests
 
-- [ ] **Step 1: Write failing ownership tests**
+- [ ] **Step 1: Write failing continuation tests**
 
-Cover:
-
-```text
-dead respawn owner -> stale state recoverable
-live respawn owner -> second dispatch refused
-branch occupied in worker A -> worker B continuation refused with owner evidence
---branch continuation -> exact requested tree and base_ref only
-expired reservation -> reclaimed
-live reservation -> never reclaimed
-```
+Cover idle, done, occupied, missing-local, and remote-only branches. Assert that an occupied branch resolves to its existing worker or fails without mutation; no path may use forced duplicate checkout. Assert exactly one canonical `base_branch` and `base_ref` for direct, deferred, batch, local, and continuation dispatch.
 
 - [ ] **Step 2: Run the red tests**
 
 ```bash
-go test ./internal/cmd ./internal/polecat -run 'Respawn|Reservation|Continuation|Occup'
+go test ./internal/cmd ./internal/git ./internal/polecat -run 'Continuation|Occup|BaseRef|ResumeBranch'
 ```
 
-Expected: at least the stale-owner, wrong-tree, and occupancy diagnostics cases fail.
+Expected: new-worker continuation can force a duplicate checkout while reuse fails, and formula variables can contain contradictory duplicate bases.
 
-- [ ] **Step 3: Bind state to verifiable ownership**
+- [ ] **Step 3: Resolve ownership before allocation**
 
-Respawn/admission state must include the owning PID/session, worker, branch, issue, and creation time. Reclaim only when the owner is proven dead or the lease is expired and no matching live session/worktree exists.
-
-Branch continuation must resolve the requested branch to one worktree before allocation and fail closed if another live worker owns it. Error output must name that worker/worktree.
+Locate the unique worktree owning the requested branch. Reactivate that exact polecat when safe, or fail closed with the owning worker/worktree in the error. Remove forced duplicate branch checkout. Keep continuation source distinct from integration target and canonicalize formula variables before dispatch.
 
 - [ ] **Step 4: Run focused tests and commit**
 
 ```bash
-go test ./internal/cmd ./internal/polecat -run 'Sling|Respawn|Reservation|Continuation|Occup'
-git add internal/cmd internal/polecat
-git commit -m "fix(sling): bind respawn and continuation to live ownership"
+go test ./internal/cmd ./internal/git ./internal/polecat -run 'Sling|Continuation|Occup|BaseRef|ResumeBranch'
+git add internal/cmd internal/git internal/polecat
+git commit -m "fix(sling): bind continuation to branch ownership"
 ```
 
 Expected: PASS.
 
-### Task 10: Validate the combined build and install safely
+### Task 11: Validate the combined build and install safely
 
 **Files:**
 - Modify only if validation reveals defects directly caused by the reconciliation.
@@ -579,7 +612,7 @@ Expected: inventory agrees with `check-recovery`, merged legacy workers are idle
 
 Also run one daemon dog-molecule cycle against installed `bd` and verify the map-keyed `bd show --children --json` envelope is parsed: steps are discovered and closed without `unknown step` or `unrecognized JSON shape` log entries. Confirm a successful 13/13 Dolt backup does not emit a FAILED escalation.
 
-### Task 11: Review, publish, and integrate
+### Task 12: Review, publish, and integrate
 
 **Files:**
 - No additional source files.
