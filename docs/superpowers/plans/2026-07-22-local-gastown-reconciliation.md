@@ -577,6 +577,8 @@ gt mountain status --json
 
 Expected: inventory agrees with `check-recovery`, merged legacy workers are idle, pending/unsafe completed workers remain done, and paused Mountains dispatch no successors.
 
+Also run one daemon dog-molecule cycle against installed `bd` and verify the map-keyed `bd show --children --json` envelope is parsed: steps are discovered and closed without `unknown step` or `unrecognized JSON shape` log entries. Confirm a successful 13/13 Dolt backup does not emit a FAILED escalation.
+
 ### Task 11: Review, publish, and integrate
 
 **Files:**
