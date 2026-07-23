@@ -223,7 +223,6 @@ Dog returns to available state in the pool.
 [vars]
 [vars.period]
 description = "The digest period type (daily, weekly, custom)"
-required = true
 default = "daily"
 
 [vars.date]
