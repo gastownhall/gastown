@@ -203,9 +203,6 @@ func (c *postMergeCoordinator) run(expected *MergeRequest, mergeCommit string) (
 	}
 	fields := beads.ParseAgentFields(agent.Description)
 	if agentAlreadyFinalized(fields) {
-		if err := c.releaseSlot(); err != nil {
-			return result, fmt.Errorf("release merge slot: %w", err)
-		}
 		return result, nil
 	}
 	if err := requireFinalizableAgent(fields, mr.ID); err != nil {

@@ -300,13 +300,23 @@ func TestPostMergeCoordinatorMissingAgentAndUnresolvedSourceAreErrors(t *testing
 	})
 }
 
-func TestPostMergeCoordinatorRetryIsIdempotent(t *testing.T) {
+func TestPostMergeCoordinatorRetryAfterReacquisitionDoesNotReleaseNewLease(t *testing.T) {
 	f := successfulPostMergeLifecycle()
 	c := f.coordinator()
+	activeLease := "lifecycle-attempt-1"
+	c.releaseSlot = func() error {
+		f.events = append(f.events, "release-slot")
+		activeLease = ""
+		return nil
+	}
 	if _, err := c.run(f.mr, "merge"); err != nil {
 		t.Fatalf("first run: %v", err)
 	}
+	if activeLease != "" {
+		t.Fatalf("first lifecycle left lease %q held", activeLease)
+	}
 
+	activeLease = "lifecycle-attempt-2"
 	f.events = nil
 	if _, err := c.run(f.mr, "merge"); err != nil {
 		t.Fatalf("retry: %v", err)
@@ -314,6 +324,14 @@ func TestPostMergeCoordinatorRetryIsIdempotent(t *testing.T) {
 	fields := beads.ParseAgentFields(f.agent.Description)
 	if fields.AgentState != string(beads.AgentStateIdle) || fields.ActiveMR != "" {
 		t.Fatalf("retry changed finalized agent incorrectly: %+v", fields)
+	}
+	for _, event := range f.events {
+		if event == "release-slot" {
+			t.Fatalf("retry released a lease acquired after the completed lifecycle: %v", f.events)
+		}
+	}
+	if activeLease != "lifecycle-attempt-2" {
+		t.Fatalf("retry changed reacquired lease to %q", activeLease)
 	}
 }
 
