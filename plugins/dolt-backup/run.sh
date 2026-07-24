@@ -11,6 +11,9 @@ set -euo pipefail
 
 # --- Configuration -----------------------------------------------------------
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$SCRIPT_DIR/timeout.sh"
+
 # Honor GT_TOWN_ROOT first (set by daemon when invoking plugins). The
 # earlier hardcoded ~/gt fallback caused "No databases found" for towns
 # rooted elsewhere (hq-huub).
@@ -152,7 +155,7 @@ for DB in "${PROD_DBS[@]}"; do
   # (PIPESTATUS reflects the `true`), recording failed syncs as successful
   # and writing hash markers for backups that never happened.
   SYNC_RC=0
-  SYNC_OUTPUT=$(cd "$DB_DIR" && timeout "$BACKUP_TIMEOUT" dolt backup sync "$BACKUP_NAME" 2>&1) || SYNC_RC=$?
+  SYNC_OUTPUT=$(cd "$DB_DIR" && run_with_timeout "$BACKUP_TIMEOUT" dolt backup sync "$BACKUP_NAME" 2>&1) || SYNC_RC=$?
   SYNC_ELAPSED=$(( $(date +%s) - SYNC_START ))
 
   if [[ $SYNC_RC -eq 0 ]]; then
