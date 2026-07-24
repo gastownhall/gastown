@@ -3,6 +3,7 @@ package refinery
 import (
 	"context"
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -151,6 +152,13 @@ func newPrepushEngineer(t *testing.T, workDir string, store *prepushStore) *Engi
 	t.Helper()
 	g := newTestGit(t, workDir)
 	e := newTestEngineer(t, workDir, g)
+	beadsDir := filepath.Join(workDir, ".beads")
+	if err := os.MkdirAll(beadsDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(beadsDir, beads.RoutesFileName), []byte(`{"prefix":"gt-","path":"."}`+"\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
 	e.beads = beads.NewWithStore(workDir, store)
 	return e
 }

@@ -18,38 +18,66 @@ import (
 
 // MergeSlotStatus represents the result of checking a merge slot.
 type MergeSlotStatus struct {
-	ID        string   `json:"id"`
-	Available bool     `json:"available"`
-	Holder    string   `json:"holder,omitempty"`
-	Waiters   []string `json:"waiters,omitempty"`
-	Error     string   `json:"error,omitempty"`
+	ID        string      `json:"id"`
+	Available bool        `json:"available"`
+	Holder    string      `json:"holder,omitempty"`
+	Waiters   []string    `json:"waiters,omitempty"`
+	Lease     *MergeLease `json:"lease,omitempty"`
+	Error     string      `json:"error,omitempty"`
+}
+
+type MergeLeasePhase string
+
+const (
+	MergeLeasePhaseAcquired          MergeLeasePhase = "acquired"
+	MergeLeasePhaseMutationPossible  MergeLeasePhase = "mutation-possible"
+	MergeLeasePhaseProofEstablished  MergeLeasePhase = "proof-established"
+	MergeLeasePhaseLifecycleComplete MergeLeasePhase = "lifecycle-complete"
+)
+
+type MergeLease struct {
+	OwnerToken    string          `json:"owner_token"`
+	Phase         MergeLeasePhase `json:"phase"`
+	Target        string          `json:"target"`
+	PrePushSHA    string          `json:"pre_push_sha"`
+	IntendedTip   string          `json:"intended_tip"`
+	MRIDs         []string        `json:"mr_ids"`
+	SubmittedSHAs []string        `json:"submitted_shas"`
+	BatchID       string          `json:"batch_id,omitempty"`
 }
 
 // mergeSlotData is the JSON structure stored in the merge slot bead's Description.
 type mergeSlotData struct {
-	Holder  string   `json:"holder"`
-	Waiters []string `json:"waiters,omitempty"`
+	Holder  string      `json:"holder"`
+	Waiters []string    `json:"waiters,omitempty"`
+	Lease   *MergeLease `json:"lease,omitempty"`
 }
 
 // parseMergeSlotData decodes the merge slot state from a bead's Description field.
-func parseMergeSlotData(issue *Issue) mergeSlotData {
+func parseMergeSlotData(issue *Issue) (mergeSlotData, error) {
 	if issue.Description == "" {
-		return mergeSlotData{}
+		return mergeSlotData{}, nil
 	}
 	var data mergeSlotData
-	_ = json.Unmarshal([]byte(issue.Description), &data)
-	return data
+	if err := json.Unmarshal([]byte(issue.Description), &data); err != nil {
+		return mergeSlotData{}, fmt.Errorf("decode merge slot %s: %w", issue.ID, err)
+	}
+	return data, nil
 }
 
 // mergeSlotStatusFromIssue builds a MergeSlotStatus from a bead issue.
-func mergeSlotStatusFromIssue(issue *Issue) *MergeSlotStatus {
-	data := parseMergeSlotData(issue)
+func mergeSlotStatusFromIssue(issue *Issue) (*MergeSlotStatus, error) {
+	data, err := parseMergeSlotData(issue)
+	if err != nil {
+		return nil, err
+	}
 	return &MergeSlotStatus{
 		ID:        issue.ID,
 		Available: data.Holder == "",
 		Holder:    data.Holder,
 		Waiters:   data.Waiters,
-	}
+		Lease:     data.Lease,
+	}, nil
 }
 
 // getMergeSlotBead finds the merge slot bead (label=gt:merge-slot).
@@ -92,7 +120,7 @@ func (b *Beads) MergeSlotCheck() (*MergeSlotStatus, error) {
 		}
 		return nil, fmt.Errorf("checking merge slot: %w", err)
 	}
-	return mergeSlotStatusFromIssue(issue), nil
+	return mergeSlotStatusFromIssue(issue)
 }
 
 // MergeSlotAcquire attempts to acquire the merge slot for exclusive access.
@@ -110,12 +138,13 @@ func (b *Beads) MergeSlotAcquire(holder string, addWaiter bool) (*MergeSlotStatu
 		return nil, fmt.Errorf("acquiring merge slot: %w", err)
 	}
 
-	data := parseMergeSlotData(issue)
+	data, err := parseMergeSlotData(issue)
+	if err != nil {
+		return nil, err
+	}
 
 	if data.Holder != "" && data.Holder != holder {
-		// Slot is held by someone else.
 		if addWaiter {
-			// Add to waiters list if not already present.
 			alreadyWaiting := false
 			for _, w := range data.Waiters {
 				if w == holder {
@@ -125,9 +154,9 @@ func (b *Beads) MergeSlotAcquire(holder string, addWaiter bool) (*MergeSlotStatu
 			}
 			if !alreadyWaiting {
 				data.Waiters = append(data.Waiters, holder)
-				newDesc, _ := json.Marshal(data)
-				desc := string(newDesc)
-				_ = b.Update(issue.ID, UpdateOptions{Description: &desc})
+				if err := b.writeMergeSlotData(issue.ID, data); err != nil {
+					return nil, fmt.Errorf("recording merge slot waiter: %w", err)
+				}
 			}
 		}
 		return &MergeSlotStatus{
@@ -137,20 +166,9 @@ func (b *Beads) MergeSlotAcquire(holder string, addWaiter bool) (*MergeSlotStatu
 		}, nil
 	}
 
-	// Slot is available or we already hold it — acquire.
 	data.Holder = holder
-	// Remove from waiters if present.
-	filtered := data.Waiters[:0]
-	for _, w := range data.Waiters {
-		if w != holder {
-			filtered = append(filtered, w)
-		}
-	}
-	data.Waiters = filtered
-
-	newDesc, _ := json.Marshal(data)
-	desc := string(newDesc)
-	if err := b.Update(issue.ID, UpdateOptions{Description: &desc}); err != nil {
+	data.Waiters = removeMergeSlotWaiter(data.Waiters, holder)
+	if err := b.writeMergeSlotData(issue.ID, data); err != nil {
 		return nil, fmt.Errorf("acquiring merge slot: %w", err)
 	}
 
@@ -160,6 +178,73 @@ func (b *Beads) MergeSlotAcquire(holder string, addWaiter bool) (*MergeSlotStatu
 		Holder:    holder,
 		Waiters:   data.Waiters,
 	}, nil
+}
+
+// MergeSlotAcquireLease atomically records the owner token and pre-push
+// evidence when acquiring the merge slot for a target-branch push.
+func (b *Beads) MergeSlotAcquireLease(holder string, addWaiter bool, lease MergeLease) (*MergeSlotStatus, error) {
+	if holder == "" || lease.OwnerToken != holder || lease.Phase != MergeLeasePhaseAcquired {
+		return nil, fmt.Errorf("acquiring merge lease: invalid owner token or initial phase")
+	}
+	issue, err := b.getMergeSlotBead()
+	if err != nil {
+		return nil, fmt.Errorf("acquiring merge lease: %w", err)
+	}
+	data, err := parseMergeSlotData(issue)
+	if err != nil {
+		return nil, err
+	}
+	if data.Holder != "" && data.Holder != holder {
+		if addWaiter {
+			found := false
+			for _, waiter := range data.Waiters {
+				found = found || waiter == holder
+			}
+			if !found {
+				data.Waiters = append(data.Waiters, holder)
+				if err := b.writeMergeSlotData(issue.ID, data); err != nil {
+					return nil, err
+				}
+			}
+		}
+		return &MergeSlotStatus{ID: issue.ID, Holder: data.Holder, Waiters: data.Waiters, Lease: data.Lease}, nil
+	}
+	if data.Holder == holder {
+		if data.Lease == nil || data.Lease.OwnerToken != holder {
+			return nil, fmt.Errorf("acquiring merge lease: holder %q has no matching persisted lease", holder)
+		}
+		return mergeSlotStatusFromIssue(issue)
+	}
+	data.Holder = holder
+	leaseCopy := lease
+	leaseCopy.MRIDs = append([]string(nil), lease.MRIDs...)
+	leaseCopy.SubmittedSHAs = append([]string(nil), lease.SubmittedSHAs...)
+	data.Lease = &leaseCopy
+	data.Waiters = removeMergeSlotWaiter(data.Waiters, holder)
+	if err := b.writeMergeSlotData(issue.ID, data); err != nil {
+		return nil, fmt.Errorf("acquiring merge lease: %w", err)
+	}
+	return &MergeSlotStatus{ID: issue.ID, Holder: holder, Waiters: data.Waiters, Lease: data.Lease}, nil
+}
+
+// MergeSlotTransition advances a persisted lease after comparing the exact
+// owner token. Phase regressions and skipped phases fail closed.
+func (b *Beads) MergeSlotTransition(holder string, phase MergeLeasePhase) error {
+	issue, err := b.getMergeSlotBead()
+	if err != nil {
+		return fmt.Errorf("transitioning merge lease: %w", err)
+	}
+	data, err := parseMergeSlotData(issue)
+	if err != nil {
+		return err
+	}
+	if err := transitionMergeSlotData(&data, holder, phase); err != nil {
+		return err
+	}
+	if err := b.writeMergeSlotData(issue.ID, data); err != nil {
+		return fmt.Errorf("transitioning merge lease: %w", err)
+	}
+	return nil
 }
 
 // MergeSlotRelease releases the merge slot after conflict resolution completes.
@@ -173,15 +258,14 @@ func (b *Beads) MergeSlotRelease(holder string) error {
 		return fmt.Errorf("releasing merge slot: %w", err)
 	}
 
-	data := parseMergeSlotData(issue)
+	data, err := parseMergeSlotData(issue)
+	if err != nil {
+		return err
+	}
 
 	if data.Holder == "" {
 		return nil // Already available
 	}
-	if holder != "" && data.Holder != holder {
-		return fmt.Errorf("slot release failed: held by %q, not %q", data.Holder, holder)
-	}
-
 	// Clear holder; promote first waiter if any.
 	var newHolder string
 	var remainingWaiters []string
@@ -190,15 +274,73 @@ func (b *Beads) MergeSlotRelease(holder string) error {
 		remainingWaiters = data.Waiters[1:]
 	}
 
-	newData := mergeSlotData{Holder: newHolder, Waiters: remainingWaiters}
-	newDesc, _ := json.Marshal(newData)
-	desc := string(newDesc)
-
-	if err := b.Update(issue.ID, UpdateOptions{Description: &desc}); err != nil {
+	if err := releaseMergeSlotData(&data, holder); err != nil {
+		return err
+	}
+	data.Holder = newHolder
+	data.Waiters = remainingWaiters
+	if err := b.writeMergeSlotData(issue.ID, data); err != nil {
 		return fmt.Errorf("releasing merge slot: %w", err)
 	}
 
 	return nil
+}
+
+func transitionMergeSlotData(data *mergeSlotData, holder string, phase MergeLeasePhase) error {
+	if data == nil || data.Lease == nil {
+		return fmt.Errorf("merge lease transition failed: no persisted lease")
+	}
+	if holder == "" || data.Holder != holder || data.Lease.OwnerToken != holder {
+		return fmt.Errorf("merge lease transition failed: held by %q with owner %q, not %q",
+			data.Holder, data.Lease.OwnerToken, holder)
+	}
+	order := map[MergeLeasePhase]int{
+		MergeLeasePhaseAcquired:          0,
+		MergeLeasePhaseMutationPossible:  1,
+		MergeLeasePhaseProofEstablished:  2,
+		MergeLeasePhaseLifecycleComplete: 3,
+	}
+	current, currentOK := order[data.Lease.Phase]
+	next, nextOK := order[phase]
+	if !currentOK || !nextOK || next < current || next > current+1 {
+		return fmt.Errorf("merge lease transition failed: invalid phase transition %q -> %q", data.Lease.Phase, phase)
+	}
+	data.Lease.Phase = phase
+	return nil
+}
+
+func releaseMergeSlotData(data *mergeSlotData, holder string) error {
+	if data == nil || data.Holder == "" {
+		return nil
+	}
+	if holder == "" || data.Holder != holder {
+		return fmt.Errorf("slot release failed: held by %q, not %q", data.Holder, holder)
+	}
+	if data.Lease != nil && data.Lease.OwnerToken != holder {
+		return fmt.Errorf("slot release failed: lease owned by %q, not %q", data.Lease.OwnerToken, holder)
+	}
+	data.Holder = ""
+	data.Lease = nil
+	return nil
+}
+
+func removeMergeSlotWaiter(waiters []string, holder string) []string {
+	filtered := waiters[:0]
+	for _, waiter := range waiters {
+		if waiter != holder {
+			filtered = append(filtered, waiter)
+		}
+	}
+	return filtered
+}
+
+func (b *Beads) writeMergeSlotData(id string, data mergeSlotData) error {
+	raw, err := json.Marshal(data)
+	if err != nil {
+		return fmt.Errorf("encode merge slot %s: %w", id, err)
+	}
+	desc := string(raw)
+	return b.Update(id, UpdateOptions{Description: &desc})
 }
 
 // MergeSlotEnsureExists creates the merge slot if it doesn't exist.

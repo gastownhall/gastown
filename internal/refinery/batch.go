@@ -2,9 +2,12 @@ package refinery
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
+
+	"github.com/steveyegge/gastown/internal/beads"
 )
 
 // BatchConfig holds configuration for the batch-then-bisect merge queue.
@@ -225,6 +228,35 @@ func (e *Engineer) ProcessBatch(ctx context.Context, batch []*MRInfo, target str
 	}
 
 	_, _ = fmt.Fprintf(e.output, "[Batch] Processing batch of %d MRs targeting %s\n", len(batch), target)
+	retained, retainedErr := e.retainedBatchLease(batch, target)
+	if retainedErr != nil {
+		result.Error = retainedErr
+		return result
+	}
+	if retained != nil {
+		resumed, resumeErr := e.resumeProofBoundPush(ctx, retained, func() error {
+			for _, mr := range batch {
+				if eligibility := e.recheckMRStillMergeable(mr, target); !eligibility.Success {
+					return &mergeEligibilityError{mr: mr, result: eligibility}
+				}
+			}
+			return nil
+		})
+		if resumeErr != nil {
+			var eligibilityErr *mergeEligibilityError
+			if errors.As(resumeErr, &eligibilityErr) &&
+				resumeErr.Error() == eligibilityErr.Error() &&
+				eligibilityErr.result.NoMerge {
+				if err := e.HandleMRInfoFailure(eligibilityErr.mr, eligibilityErr.result); err != nil {
+					result.Error = err
+				}
+				return result
+			}
+			result.Error = resumeErr
+			return result
+		}
+		return e.finalizePushedBatch(batch, resumed.intendedTip, resumed.holder, resumed.phase, result)
+	}
 	if !e.recheckBatchEligibility(batch, target, result) {
 		return result
 	}
@@ -407,63 +439,52 @@ func (e *Engineer) fastForwardBatch(ctx context.Context, stacked []*MRInfo, targ
 		return result
 	}
 
-	// Acquire merge slot for default branch pushes
 	var pushHolder string
-	releaseSlotOnReturn := false
+	var leasePhase beads.MergeLeasePhase
 	if target == e.rig.DefaultBranch() {
-		var slotErr error
-		pushHolder, slotErr = e.acquireMainPushSlot(ctx)
-		if slotErr != nil {
-			if resetErr := e.git.ResetHard("origin/" + target); resetErr != nil {
-				_, _ = fmt.Fprintf(e.output, "[Batch] Warning: failed to reset %s after slot failure: %v\n", target, resetErr)
-			}
-			result.Error = fmt.Errorf("acquire merge slot: %w", slotErr)
-			return result
-		}
-		releaseSlotOnReturn = true
-		defer func() {
-			if releaseSlotOnReturn && pushHolder != "" {
-				if releaseErr := e.mergeSlotRelease(pushHolder); releaseErr != nil {
-					_, _ = fmt.Fprintf(e.output, "[Batch] Warning: failed to release merge slot: %v\n", releaseErr)
+		leaseResult, pushErr := e.executeProofBoundPush(ctx, batchMergeLease(stacked, target, tipSHA), func() error {
+			for _, mr := range stacked {
+				if eligibility := e.recheckMRStillMergeable(mr, target); !eligibility.Success {
+					return &mergeEligibilityError{mr: mr, result: eligibility}
 				}
 			}
-		}()
-	}
-
-	for _, mr := range stacked {
-		if eligibility := e.recheckMRStillMergeable(mr, target); !eligibility.Success {
+			return nil
+		})
+		if pushErr != nil {
+			var eligibilityErr *mergeEligibilityError
 			if resetErr := e.git.ResetHard("origin/" + target); resetErr != nil {
-				_, _ = fmt.Fprintf(e.output, "[Batch] Warning: failed to reset %s after pre-push eligibility failure: %v\n", target, resetErr)
+				pushErr = errors.Join(pushErr, fmt.Errorf("reset %s after push boundary failure: %w", target, resetErr))
 			}
-			if eligibility.NoMerge {
-				_, _ = fmt.Fprintf(e.output, "[Batch] MR %s became ineligible before push: %s\n", mr.ID, eligibility.Error)
-				if err := e.HandleMRInfoFailure(mr, eligibility); err != nil {
+			if errors.As(pushErr, &eligibilityErr) &&
+				pushErr.Error() == eligibilityErr.Error() &&
+				eligibilityErr.result.NoMerge {
+				if err := e.HandleMRInfoFailure(eligibilityErr.mr, eligibilityErr.result); err != nil {
 					result.Error = err
 				}
-			} else {
-				result.Error = fmt.Errorf("pre-push eligibility recheck failed for %s: %s", mr.ID, eligibility.Error)
+				return result
 			}
+			result.Error = pushErr
+			return result
+		}
+		pushHolder = leaseResult.holder
+		leasePhase = leaseResult.phase
+		tipSHA = leaseResult.intendedTip
+	} else {
+		for _, mr := range stacked {
+			if eligibility := e.recheckMRStillMergeable(mr, target); !eligibility.Success {
+				result.Error = fmt.Errorf("pre-push eligibility recheck failed for %s: %s", mr.ID, eligibility.Error)
+				return result
+			}
+		}
+		if pushErr := e.pushTarget("origin", target, false); pushErr != nil {
+			result.Error = fmt.Errorf("push to origin: %w", pushErr)
+			return result
+		}
+		if verifyErr := e.verifyPushedCommit("origin", target, tipSHA); verifyErr != nil {
+			result.Error = verifyErr
 			return result
 		}
 	}
-
-	// Push to origin
-	_, _ = fmt.Fprintf(e.output, "[Batch] Pushing %d merged MRs to origin/%s...\n", len(stacked), target)
-	if pushErr := e.git.Push("origin", target, false); pushErr != nil {
-		if resetErr := e.git.ResetHard("origin/" + target); resetErr != nil {
-			_, _ = fmt.Fprintf(e.output, "[Batch] Warning: failed to reset %s after push failure: %v\n", target, resetErr)
-		}
-		result.Error = fmt.Errorf("push to origin: %w", pushErr)
-		return result
-	}
-	if verifyErr := e.git.VerifyPushedCommit("origin", target, tipSHA); verifyErr != nil {
-		if resetErr := e.git.ResetHard("origin/" + target); resetErr != nil {
-			_, _ = fmt.Fprintf(e.output, "[Batch] Warning: failed to reset %s after verified-push failure: %v\n", target, resetErr)
-		}
-		result.Error = verifyErr
-		return result
-	}
-	releaseSlotOnReturn = false
 
 	ids := make([]string, len(stacked))
 	for i, mr := range stacked {
@@ -471,18 +492,30 @@ func (e *Engineer) fastForwardBatch(ctx context.Context, stacked []*MRInfo, targ
 	}
 	_, _ = fmt.Fprintf(e.output, "[Batch] Successfully merged batch: %s (commit %s)\n", strings.Join(ids, ", "), shortSHA(tipSHA))
 
-	result.MergeCommit = tipSHA
+	return e.finalizePushedBatch(stacked, tipSHA, pushHolder, leasePhase, result)
+}
 
-	// GH#2321: Run post-merge cleanup for each merged MR — close source beads,
-	// delete branches, nudge mayor, and check convoy completion.
-	// HandleMRInfoSuccess was previously dead code (never called), causing task
-	// beads to remain open after successful merges.
+func (e *Engineer) finalizePushedBatch(
+	stacked []*MRInfo,
+	tipSHA, pushHolder string,
+	leasePhase beads.MergeLeasePhase,
+	result *BatchResult,
+) *BatchResult {
+	result.MergeCommit = tipSHA
+	if leasePhase == beads.MergeLeasePhaseLifecycleComplete {
+		if err := e.completeMergeLease(pushHolder); err != nil {
+			result.Error = err
+			return result
+		}
+		result.Merged = append(result.Merged, stacked...)
+		return result
+	}
 	cleaned, cleanupErr := finalizeBatchMRLifecycles(
 		stacked,
 		tipSHA,
 		pushHolder,
 		e.handleMRInfoSuccess,
-		e.mergeSlotRelease,
+		e.completeMergeLease,
 	)
 	if cleanupErr != nil {
 		result.Error = cleanupErr
@@ -502,7 +535,12 @@ func finalizeBatchMRLifecycles(
 	cleaned := make([]*MRInfo, 0, len(stacked))
 	var firstFailure string
 	for _, mr := range stacked {
-		result := ProcessResult{Success: true, MergeCommit: mergeCommit, MergeSlotHolder: holder}
+		result := ProcessResult{
+			Success:         true,
+			MergeCommit:     mergeCommit,
+			MergeSlotHolder: holder,
+			MergeLeasePhase: beads.MergeLeasePhaseProofEstablished,
+		}
 		if finalize(mr, result, false) {
 			cleaned = append(cleaned, mr)
 		} else if firstFailure == "" {

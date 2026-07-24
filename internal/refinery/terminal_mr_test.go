@@ -68,3 +68,48 @@ func TestValidateTerminalMRCloseSnapshotAllowsMatchingSnapshot(t *testing.T) {
 		t.Fatalf("validateTerminalMRCloseSnapshot: %v", err)
 	}
 }
+
+func TestValidateTerminalMRCloseSnapshotRejectsAgentBeadDrift(t *testing.T) {
+	expected := &MergeRequest{
+		ID:           "gt-mr-proof",
+		Branch:       "polecat/test/proof",
+		IssueID:      "gt-proof",
+		TargetBranch: "main",
+		CommitSHA:    "abc123",
+		AgentBead:    "hq-agent-original",
+	}
+	fields := &beads.MRFields{
+		Branch:      expected.Branch,
+		SourceIssue: expected.IssueID,
+		Target:      expected.TargetBranch,
+		CommitSHA:   expected.CommitSHA,
+		AgentBead:   "hq-agent-replacement",
+	}
+
+	err := validateTerminalMRCloseSnapshot(expected.ID, fields, expected)
+	if err == nil || !strings.Contains(err.Error(), "agent_bead") {
+		t.Fatalf("validateTerminalMRCloseSnapshot error = %v, want agent_bead drift failure", err)
+	}
+}
+
+func TestValidateTerminalMRCloseSnapshotRejectsAgentInjectionWhenExpectedEmpty(t *testing.T) {
+	expected := &MergeRequest{
+		ID:           "gt-mr-proof",
+		Branch:       "polecat/test/proof",
+		IssueID:      "gt-proof",
+		TargetBranch: "main",
+		CommitSHA:    "abc123",
+	}
+	fields := &beads.MRFields{
+		Branch:      expected.Branch,
+		SourceIssue: expected.IssueID,
+		Target:      expected.TargetBranch,
+		CommitSHA:   expected.CommitSHA,
+		AgentBead:   "hq-agent-injected",
+	}
+
+	err := validateTerminalMRCloseSnapshot(expected.ID, fields, expected)
+	if err == nil || !strings.Contains(err.Error(), "agent_bead") {
+		t.Fatalf("validateTerminalMRCloseSnapshot error = %v, want empty-to-nonempty agent_bead drift failure", err)
+	}
+}
