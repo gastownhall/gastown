@@ -2,13 +2,23 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Rebuild the local Gas Town distribution on current upstream while preserving all required local behavior, converging completed polecats through a proof-bound lifecycle, and making Mountain pause and merge-integration guarantees enforceable.
+**Goal:** Rebuild the local Gas Town distribution on current upstream while preserving all required local behavior, retiring completed polecats through upstream's proof-bound lifecycle, and making Mountain pause and merge-integration guarantees enforceable.
 
-**Architecture:** Start from a clean current-upstream integration base and replay only audited local behavior, rather than rebasing the entire 35-commit branch mechanically. Make the town agent store authoritative for inventory, finalize `DONE -> IDLE` only after target-integration proof, and gate every ConvoyManager dispatch path on the Mountain pause label. Keep the existing direct `StateDone` allocator admission only until proof-bound finalization and legacy migration are verified, then remove it.
+**Architecture:** Start from a clean current-upstream integration base and replay only audited local behavior, rather than rebasing the entire 35-commit branch mechanically. Make the town agent store authoritative for inventory, preserve upstream's intentional `WORKING -> DONE -> SAFE_TO_NUKE -> retired` lifecycle, and gate every ConvoyManager dispatch path on the Mountain pause label. Never return completed sandboxes to `IDLE`; after verified integration, canonical recovery and exact branch-ownership proof may retire them through the existing non-force cleanup path so the pool can create a fresh `IDLE` worker.
 
 **Tech Stack:** Go, Cobra, Git, tmux, Beads/Dolt, TOML formulas, Go unit/integration tests.
 
 ---
+
+## Upstream-First Triage Rule
+
+Before designing or implementing any Gas Town bug fix, inspect the live
+`gastownhall/gastown` GitHub repository for an existing fix or documented
+intent. Verify the current `main` ref, then search relevant issues, pull
+requests, commits, documentation, and code history. Reuse or align with
+upstream behavior when available; implement a local fix only after recording
+what upstream provides, what remains missing, and why the local change is
+necessary.
 
 ## Compatibility Matrix
 
@@ -29,13 +39,14 @@
 - `internal/cmd/done.go`: preserve resolved dispatch-base and target semantics on top of upstream worktree/source validation.
 - `internal/tmux/tmux.go`, `internal/cmd/nudge_poller.go`: retain Copilot runtime/composer delivery behavior over upstream process snapshots.
 - `internal/cmd/polecat.go`, `internal/cmd/polecat_capacity.go`: read agent metadata from `ForAgentBead()` while retaining rig-local active-work queries.
-- `internal/refinery/terminal_mr.go`, `internal/refinery/manager.go`: clear MR metadata and finalize the owning completed worker after verified post-merge success.
-- `internal/polecat/manager.go`: return allocation to idle-only after proof-bound finalization and legacy migration.
+- `internal/refinery/terminal_mr.go`, `internal/refinery/manager.go`: preserve upstream verified post-merge MR/source cleanup and matching `active_mr` clearing.
+- `internal/witness/handlers.go`, `internal/polecat/workstate.go`: retire only canonically `SAFE_TO_NUKE` completed workers through non-force cleanup after verified merge evidence.
+- `internal/polecat/manager.go`: preserve idle-only allocation; completed sandboxes are retired, never reused.
 - `internal/daemon/convoy_manager.go`: enforce Mountain pause before reactive and stranded dispatch.
 - `internal/convoy/operations.go`: enforce the same pause policy at the shared continuation boundary where feasible.
 - `internal/cmd/mq.go`: retain upstream target-reachability proof and conditional branch deletion.
 - `internal/formula/formulas/mol-refinery-patrol.formula.toml`: retain upstream verified post-merge flow and local routed step inspection.
-- `docs/concepts/polecat-lifecycle.md`: document the final `DONE -> IDLE` transition and evidence boundary.
+- `docs/concepts/polecat-lifecycle.md`: document the final `DONE -> SAFE_TO_NUKE -> retired` transition and evidence boundary.
 
 ### Task 1: Establish the reviewed upstream integration base
 
@@ -202,88 +213,60 @@ git add internal/cmd/polecat.go internal/cmd/polecat_capacity.go internal/cmd/*p
 git commit -m "fix(polecat): read inventory metadata from agent authority"
 ```
 
-### Task 5: Finalize completed workers only after integration proof
+### Task 5: Retire completed workers only after verified integration
+
+**Upstream contract:** Preserve PR #4434 (`DONE` retirement), PR #4530
+(`StateDone` may classify `SAFE_TO_NUKE`), and PR #4560 (post-merge proof
+before cleanup). Do not transition completed workers back to `IDLE`.
 
 **Files:**
-- Modify: `internal/refinery/terminal_mr.go`
-- Modify: `internal/refinery/manager.go`
-- Modify: `internal/beads/beads_agent.go`
-- Test: `internal/refinery/terminal_mr_test.go`
-- Test: `internal/refinery/manager_test.go`
-- Test: `internal/beads/beads_agent_test.go`
+- Modify: `internal/witness/handlers.go`
+- Modify only if needed: `internal/polecat/workstate.go`
+- Test: `internal/witness/handlers_test.go`
+- Test: adjacent polecat recovery/workstate tests
 
-- [ ] **Step 1: Write failing agent-finalization tests**
+- [ ] **Step 1: Write failing proof-bound retirement tests**
 
-Cover these cases:
+Cover verified merged completion, pending MR, dirty worktree, live session,
+hooked worker, failure flags, missing/ambiguous source, mismatched branch owner,
+and the sibling-branch cross-wire reported by upstream issue #4535. Assert that
+uncertain cases preserve the worker and evidence unchanged.
 
-```go
-{
-    name: "merged owner transitions done to idle",
-    state: "done",
-    activeMR: "auso-mr-1",
-    cleanupStatus: "clean",
-    wantState: "idle",
-}
-{
-    name: "different active MR is untouched",
-    state: "done",
-    activeMR: "auso-mr-2",
-    cleanupStatus: "clean",
-    wantState: "done",
-}
-{
-    name: "dirty completed worker is not finalized",
-    state: "done",
-    activeMR: "auso-mr-1",
-    cleanupStatus: "has_uncommitted",
-    wantState: "done",
-}
-```
-
-Also assert that proof failure in `runVerifiedMQPostMerge` never invokes finalization.
-
-- [ ] **Step 2: Run tests and verify failure**
+- [ ] **Step 2: Verify RED**
 
 ```bash
-go test ./internal/beads ./internal/refinery ./internal/cmd -run 'Finalize|PostMergeProof'
+go test ./internal/witness ./internal/polecat -run 'Merged|Retire|SafeToNuke|BranchOwner'
 ```
 
-Expected: FAIL because post-merge currently clears `active_mr` but never transitions `done` to `idle`.
+Expected: verified terminal `DONE` workers remain stranded because no general
+post-merge owner invokes safe retirement.
 
-- [ ] **Step 3: Add a compare-and-finalize agent operation**
+- [ ] **Step 3: Add narrow post-merge retirement**
 
-Implement a Beads helper with semantics:
+After existing verified post-merge MR/source cleanup, ask the canonical
+workstate/check-recovery path to classify the exact owning worker. Require:
 
-```go
-func (b *Beads) FinalizeCompletedAgentIfMRMatches(agentID, mrID string) (bool, error)
-```
+- `StateDone`;
+- terminal merged MR and terminal source evidence;
+- matching/cleared `active_mr` according to upstream compare-and-clear rules;
+- `cleanup_status=clean`, empty hook, no push/MR failure flags;
+- no live session;
+- clean live git predicates;
+- exactly one worktree owning the submitted branch and matching agent.
 
-It must load from `ForAgentBead()`, require `agent_state=done`, matching `active_mr`, `cleanup_status=clean`, empty `hook_bead`, and no push/MR failure flags, then atomically update the agent fields to `agent_state=idle` and clear `active_mr`. A mismatch returns `(false, nil)`; storage failures return an error.
+Only `SAFE_TO_NUKE` may call the existing non-force nuke/removal path. Never
+use `--force`, never convert to `IDLE`, and never delete a branch when ownership
+is missing or ambiguous. Errors must preserve the sandbox and surface for retry.
 
-- [ ] **Step 4: Defer the existing active-MR clear for merged cleanup**
-
-Add a `DeferAgentFinalization` option to `terminalMRCloseOptions`. Rejection and other terminal paths retain the current immediate `ClearAgentActiveMRIfMatches` behavior. The verified merged path sets this option so ownership evidence remains available if source closure fails and the operation must be retried.
-
-- [ ] **Step 5: Invoke finalization from verified post-merge cleanup**
-
-Call the helper only after `verifyMQPostMergeProof` succeeds, the MR is terminal with `close_reason=merged`, and the source issue is closed or already terminal/not found. Surface finalization failure as a post-merge error so capacity is not silently reported as restored. On retry, the retained matching `active_mr` makes the transition idempotent.
-
-- [ ] **Step 6: Run focused tests**
+- [ ] **Step 4: Run focused tests and commit**
 
 ```bash
-go test ./internal/beads ./internal/refinery ./internal/cmd -run 'Agent|Finalize|PostMerge'
+go test ./internal/witness ./internal/polecat -run 'Merged|Retire|SafeToNuke|BranchOwner'
+git add internal/witness internal/polecat
+git commit -m "fix(polecat): retire merged workers after verified cleanup"
 ```
 
-Expected: PASS.
-
-- [ ] **Step 7: Commit**
-
-```bash
-git add internal/beads internal/refinery internal/cmd
-git commit -m "fix(polecat): finalize merged workers to idle"
-```
-
-### Task 6: Migrate legacy completed workers and remove direct-DONE allocation
+### Task 6: Retire proven legacy workers and preserve idle-only allocation
 
 **Files:**
 - Modify: `internal/cmd/polecat.go`
@@ -291,63 +274,42 @@ git commit -m "fix(polecat): finalize merged workers to idle"
 - Modify: `internal/polecat/manager_test.go`
 - Modify: `docs/concepts/polecat-lifecycle.md`
 
-- [ ] **Step 1: Add a dry-run reconciliation command test**
+- [ ] **Step 1: Add a dry-run retirement command test**
 
-Add coverage for a command that lists only `StateDone` workers whose live recovery decision is reusable and whose MR/source integration is proven. Dirty, unknown, failed, hooked, or pending-MR workers must be reported but not changed.
+Add `gt polecat retire-completed [rig] --dry-run --json`. It must report the
+canonical recovery decision and exact branch-ownership evidence for every
+`StateDone` worker. Dirty, unknown, failed, hooked, live, pending-MR, missing,
+or ambiguous workers are reported but never changed.
 
-- [ ] **Step 2: Implement explicit reconciliation**
+- [ ] **Step 2: Implement explicit legacy retirement**
 
-Add `gt polecat reconcile-completed [rig] --dry-run` using the same rich evidence path as `check-recovery`. Without `--dry-run`, transition only proven reusable legacy workers to idle after re-reading and comparing their state, cleanup, hook, failure flags, and `active_mr` to the assessed snapshot. This separate legacy path must support already-merged workers whose older cleanup flow cleared `active_mr`; it must not weaken the normal proof-bound finalizer.
+Without `--dry-run`, re-read and compare the assessed evidence, then invoke the
+same non-force retirement path as Task 5 only for `SAFE_TO_NUKE`. Support older
+merged workers whose matching `active_mr` was already safely cleared, but do
+not infer merge success from absence alone.
 
-- [ ] **Step 3: Run migration in dry-run mode against the live town**
+- [ ] **Step 3: Preserve idle-only allocation**
 
-```bash
-gt polecat reconcile-completed --all --dry-run --json
-```
+`FindIdlePolecat` must admit only `StateIdle`. Remove temporary direct-DONE
+admission and assert a clean `StateDone` worker is unavailable until retired.
+Pool replenishment creates a fresh `IDLE` sandbox after retirement.
 
-Expected: every proposed transition includes proof details; no worker changes state.
-
-- [ ] **Step 4: Run the approved migration**
-
-```bash
-gt polecat reconcile-completed --all --json
-```
-
-Expected: only proven workers transition to idle.
-
-- [ ] **Step 5: Restore idle-only allocation**
-
-Change `FindIdlePolecat` candidate admission back to:
-
-```go
-if state != StateIdle {
-    continue
-}
-```
-
-Remove the local test that admits `StateDone`, and add a regression test that a clean but unfinalized `StateDone` worker remains unavailable.
-
-- [ ] **Step 6: Update lifecycle documentation and test**
+- [ ] **Step 4: Update lifecycle documentation**
 
 Document:
 
 ```text
-WORKING -> DONE -> IDLE
+WORKING -> DONE -> SAFE_TO_NUKE -> RETIRED
+                                  -> fresh IDLE worker on replenishment
 ```
 
-`DONE` preserves evidence while integration is pending. `IDLE` is entered only after verified target reachability, terminal MR/source cleanup, and clean agent state.
+- [ ] **Step 5: Run dry-run, tests, and commit**
 
 ```bash
+gt polecat retire-completed --all --dry-run --json
 go test ./internal/polecat ./internal/cmd
-```
-
-Expected: PASS.
-
-- [ ] **Step 7: Commit**
-
-```bash
 git add internal/polecat internal/cmd docs/concepts/polecat-lifecycle.md
-git commit -m "fix(polecat): converge completed workers after merge proof"
+git commit -m "fix(polecat): retire proven legacy workers safely"
 ```
 
 ### Task 7: Enforce Mountain pause on every successor-dispatch path
@@ -467,7 +429,8 @@ Require:
 verify target contains submitted SHA
 -> close MR as merged
 -> close source
--> finalize owning worker
+-> clear only matching MR metadata
+-> leave canonical evidence for witness retirement
 ```
 
 A failure at any stage must leave the remaining evidence retriable.
@@ -608,7 +571,9 @@ gt polecat list --all --json
 gt mountain status --json
 ```
 
-Expected: inventory agrees with `check-recovery`, merged legacy workers are idle, pending/unsafe completed workers remain done, and paused Mountains dispatch no successors.
+Expected: inventory agrees with `check-recovery`, proven merged legacy workers
+are retired and replaced with fresh idle pool capacity, pending/unsafe
+completed workers remain done, and paused Mountains dispatch no successors.
 
 Also run one daemon dog-molecule cycle against installed `bd` and verify the map-keyed `bd show --children --json` envelope is parsed: steps are discovered and closed without `unknown step` or `unrecognized JSON shape` log entries. Confirm a successful 13/13 Dolt backup does not emit a FAILED escalation.
 
@@ -624,7 +589,7 @@ Review specifically:
 - resolved-base semantics after upstream `done.go` changes;
 - Copilot process-snapshot reconciliation;
 - agent-store routing;
-- post-merge finalization ordering and idempotency;
+- proof-bound post-merge retirement ordering, branch ownership, and idempotency;
 - pause race behavior in both dispatch paths;
 - source retention from MR submission through verified post-merge;
 - respawn, continuation, reservation, and branch-occupancy ownership.
