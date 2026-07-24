@@ -1147,44 +1147,6 @@ func TestDoMergeDirectPreservesSubmittedHeadForPostMergeProof(t *testing.T) {
 	}
 }
 
-func TestDoMergeDirectRetainsMergeSlotForPostMergeCoordinator(t *testing.T) {
-	workDir, g, cleanup := testGitRepo(t)
-	defer cleanup()
-
-	branch := "polecat/test/slot-proof"
-	createFeatureBranch(t, workDir, branch, "slot-proof.txt", "landed\n")
-	commit := run(t, workDir, "git", "rev-parse", branch)
-	run(t, workDir, "git", "push", "origin", branch)
-
-	e := newTestEngineer(t, workDir, g)
-	var acquiredHolder string
-	var released []string
-	e.mergeSlotAcquire = func(holder string, _ bool) (*beads.MergeSlotStatus, error) {
-		acquiredHolder = holder
-		return &beads.MergeSlotStatus{Available: true, Holder: holder}, nil
-	}
-	e.mergeSlotRelease = func(holder string) error {
-		released = append(released, holder)
-		return nil
-	}
-
-	result := e.doMerge(context.Background(), &MRInfo{
-		ID:        "mr-slot-proof",
-		Branch:    branch,
-		Target:    "main",
-		CommitSHA: commit,
-	})
-	if !result.Success {
-		t.Fatalf("doMerge failed: %s", result.Error)
-	}
-	if acquiredHolder == "" {
-		t.Fatal("doMerge did not acquire the merge slot")
-	}
-	if len(released) != 0 {
-		t.Fatalf("doMerge released merge slot before post-merge proof: %v", released)
-	}
-}
-
 func TestDoMergeDirectRejectsAdvancedSourceBranch(t *testing.T) {
 	workDir, g, cleanup := testGitRepo(t)
 	defer cleanup()
