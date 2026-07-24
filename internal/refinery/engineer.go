@@ -268,15 +268,7 @@ type Engineer struct {
 	router                *mail.Router // Mail router for sending protocol messages
 	mergeSlotEnsureExists func() (string, error)
 	mergeSlotAcquire      func(holder string, addWaiter bool) (*beads.MergeSlotStatus, error)
-	mergeSlotCheck        func() (*beads.MergeSlotStatus, error)
-	mergeSlotAcquireLease func(holder string, addWaiter bool, lease beads.MergeLease) (*beads.MergeSlotStatus, error)
-	mergeSlotTransition   func(holder string, phase beads.MergeLeasePhase) error
 	mergeSlotRelease      func(holder string) error
-	pushRemoteBranchTip   func(remote, branch string) (string, error)
-	pushTarget            func(remote, branch string, force bool) error
-	verifyPushedCommit    func(remote, branch, commit string) error
-	verifyPushedReachable func(remote, branch, commit string) error
-	nudgeMayor            func(message string) error
 	mergeSlotMaxRetries   int           // Max retries for slot acquisition (0 = no retry)
 	mergeSlotRetryBackoff time.Duration // Initial backoff between retries
 	testAllowSyntheticMRs bool          // Test-only: legacy merge-mechanics tests use synthetic MRs without beads.
@@ -294,12 +286,11 @@ func NewEngineer(r *rig.Rig) *Engineer {
 		gitDir = filepath.Join(r.Path, "mayor", "rig")
 	}
 	beadsClient := beads.New(r.Path)
-	gitClient := git.NewGit(gitDir)
 
 	return &Engineer{
 		rig:     r,
 		beads:   beadsClient,
-		git:     gitClient,
+		git:     git.NewGit(gitDir),
 		config:  cfg,
 		workDir: gitDir,
 		output:  os.Stdout,
@@ -310,23 +301,8 @@ func NewEngineer(r *rig.Rig) *Engineer {
 		mergeSlotAcquire: func(holder string, addWaiter bool) (*beads.MergeSlotStatus, error) {
 			return beadsClient.MergeSlotAcquire(holder, addWaiter)
 		},
-		mergeSlotCheck: beadsClient.MergeSlotCheck,
-		mergeSlotAcquireLease: func(holder string, addWaiter bool, lease beads.MergeLease) (*beads.MergeSlotStatus, error) {
-			return beadsClient.MergeSlotAcquireLease(holder, addWaiter, lease)
-		},
-		mergeSlotTransition: beadsClient.MergeSlotTransition,
 		mergeSlotRelease: func(holder string) error {
 			return beadsClient.MergeSlotRelease(holder)
-		},
-		pushRemoteBranchTip:   gitClient.PushRemoteBranchTip,
-		pushTarget:            gitClient.Push,
-		verifyPushedCommit:    gitClient.VerifyPushedCommit,
-		verifyPushedReachable: gitClient.VerifyPushedCommitReachableFromPushTarget,
-		nudgeMayor: func(message string) error {
-			cmd := exec.Command("gt", "nudge", "mayor/", message)
-			util.SetDetachedProcessGroup(cmd)
-			cmd.Dir = gitDir
-			return cmd.Run()
 		},
 		mergeSlotMaxRetries:   10,
 		mergeSlotRetryBackoff: 500 * time.Millisecond,
@@ -516,7 +492,6 @@ type ProcessResult struct {
 	Success         bool
 	MergeCommit     string
 	MergeSlotHolder string
-	MergeLeasePhase beads.MergeLeasePhase
 	Error           string
 	Conflict        bool
 	TestsFailed     bool
@@ -532,9 +507,6 @@ func (e *Engineer) doMerge(ctx context.Context, mr *MRInfo, skipGates ...bool) P
 		return ProcessResult{Success: false, Error: "merge request is missing"}
 	}
 	branch, target := mr.Branch, mr.Target
-	if resumed, ok := e.tryResumeSingleMergeLease(ctx, mr); ok {
-		return resumed
-	}
 
 	if eligibility := e.recheckMRStillMergeable(mr, target); !eligibility.Success {
 		if eligibility.NoMerge {
@@ -723,45 +695,70 @@ func (e *Engineer) doMerge(ctx context.Context, mr *MRInfo, skipGates ...bool) P
 
 	// Step 7-8: Push to origin (when auto_push is enabled).
 	var pushHolder string
-	var leasePhase beads.MergeLeasePhase
+	var releaseSlotOnReturn bool
 	if e.config.AutoPush {
+		// Acquire merge slot before push to serialize writes to the default branch.
+		// Only serialize pushes to the rig's default branch (typically main).
+		// Integration-branch and feature-branch pushes don't need serialization.
 		if target == e.rig.DefaultBranch() {
-			leaseResult, pushErr := e.executeProofBoundPush(ctx, singleMergeLease(mr, target, mergeCommit), func() error {
-				eligibility := e.recheckMRStillMergeable(mr, target)
-				if !eligibility.Success {
-					return &mergeEligibilityError{mr: mr, result: eligibility}
-				}
-				return nil
-			})
-			if pushErr != nil {
-				var eligibilityErr *mergeEligibilityError
+			var slotErr error
+			pushHolder, slotErr = e.acquireMainPushSlot(ctx)
+			if slotErr != nil {
+				// Reset the checked-out target branch to origin to undo the local merge commit.
+				// ResetHard is required because target is the current branch (checked out in Step 2).
 				if resetErr := e.git.ResetHard("origin/" + target); resetErr != nil {
-					pushErr = errors.Join(pushErr, fmt.Errorf("reset %s after push boundary failure: %w", target, resetErr))
+					_, _ = fmt.Fprintf(e.output, "[Engineer] Warning: failed to reset %s after slot failure: %v\n", target, resetErr)
 				}
-				if errors.As(pushErr, &eligibilityErr) {
-					eligibilityErr.result.Error = pushErr.Error()
-					return eligibilityErr.result
-				}
+				// Only classify as SlotTimeout for actual contention (retries exhausted).
+				// Infrastructure errors (beads down, permission errors) should surface
+				// through the normal failure/notification path for operator visibility.
 				return ProcessResult{
 					Success:     false,
-					SlotTimeout: errors.Is(pushErr, errMergeSlotTimeout),
-					Error:       pushErr.Error(),
+					SlotTimeout: errors.Is(slotErr, errMergeSlotTimeout),
+					Error:       fmt.Sprintf("failed to acquire merge slot before push: %v", slotErr),
 				}
 			}
-			pushHolder = leaseResult.holder
-			leasePhase = leaseResult.phase
-			mergeCommit = leaseResult.intendedTip
-		} else {
-			if eligibility := e.recheckMRStillMergeable(mr, target); !eligibility.Success {
-				return eligibility
+			releaseSlotOnReturn = true
+			defer func() {
+				// pushHolder is empty when the self-conflict bypass fires — conflict-resolution
+				// owns the slot, so we must not release it here.
+				if releaseSlotOnReturn && pushHolder != "" {
+					if releaseErr := e.mergeSlotRelease(pushHolder); releaseErr != nil {
+						_, _ = fmt.Fprintf(e.output, "[Engineer] Warning: failed to release merge slot for push (%s): %v\n", pushHolder, releaseErr)
+					}
+				}
+			}()
+		}
+
+		if eligibility := e.recheckMRStillMergeable(mr, target); !eligibility.Success {
+			if resetErr := e.git.ResetHard("origin/" + target); resetErr != nil {
+				_, _ = fmt.Fprintf(e.output, "[Engineer] Warning: failed to reset %s after pre-push eligibility failure: %v\n", target, resetErr)
 			}
-			if err := e.pushTarget("origin", target, false); err != nil {
-				return ProcessResult{Success: false, Error: fmt.Sprintf("failed to push to origin: %v", err)}
+			return eligibility
+		}
+
+		_, _ = fmt.Fprintf(e.output, "[Engineer] Pushing to origin/%s...\n", target)
+		if err := e.git.Push("origin", target, false); err != nil {
+			// Reset the checked-out target branch to undo the local merge commit.
+			// Without this, the next retry could see stale local state from the failed push.
+			if resetErr := e.git.ResetHard("origin/" + target); resetErr != nil {
+				_, _ = fmt.Fprintf(e.output, "[Engineer] Warning: failed to reset %s after push failure: %v\n", target, resetErr)
 			}
-			if err := e.verifyPushedCommit("origin", target, mergeCommit); err != nil {
-				return ProcessResult{Success: false, Error: err.Error()}
+			return ProcessResult{
+				Success: false,
+				Error:   fmt.Sprintf("failed to push to origin: %v", err),
 			}
 		}
+		if err := e.git.VerifyPushedCommit("origin", target, mergeCommit); err != nil {
+			if resetErr := e.git.ResetHard("origin/" + target); resetErr != nil {
+				_, _ = fmt.Fprintf(e.output, "[Engineer] Warning: failed to reset %s after verified-push failure: %v\n", target, resetErr)
+			}
+			return ProcessResult{
+				Success: false,
+				Error:   err.Error(),
+			}
+		}
+		releaseSlotOnReturn = false
 	} else {
 		_, _ = fmt.Fprintf(e.output, "[Engineer] Auto-push disabled, skipping push to origin/%s\n", target)
 	}
@@ -771,7 +768,6 @@ func (e *Engineer) doMerge(ctx context.Context, mr *MRInfo, skipGates ...bool) P
 		Success:         true,
 		MergeCommit:     mergeCommit,
 		MergeSlotHolder: pushHolder,
-		MergeLeasePhase: leasePhase,
 	}
 }
 
@@ -1361,36 +1357,33 @@ func (e *Engineer) HandleMRInfoSuccess(mr *MRInfo, result ProcessResult) bool {
 }
 
 func (e *Engineer) handleMRInfoSuccess(mr *MRInfo, result ProcessResult, releaseLease bool) bool {
-	holder := strings.TrimSpace(result.MergeSlotHolder)
-	lifecycleAlreadyComplete := result.MergeLeasePhase == beads.MergeLeasePhaseLifecycleComplete
-	if mr.ID != "" && !e.isSyntheticMergeMechanicsMR(mr) && !lifecycleAlreadyComplete {
+	if mr.ID != "" && !e.isSyntheticMergeMechanicsMR(mr) {
+		holder := result.MergeSlotHolder
+		if holder == "" {
+			holder = e.rig.Name + "/refinery"
+		}
 		coordinator := newPostMergeCoordinator(
 			e.beads,
 			e.rig.DefaultBranch(),
 			func(authoritative *MergeRequest) error {
 				return verifyPostMergeProof(e.git, authoritative)
 			},
-			nil,
+			func() error {
+				if !releaseLease {
+					return nil
+				}
+				return e.mergeSlotRelease(holder)
+			},
 		)
 		if _, err := coordinator.run(mergeRequestFromMRInfo(mr), result.MergeCommit); err != nil {
 			_, _ = fmt.Fprintf(e.output, "[Engineer] Post-merge cleanup failed for %s: %v\n", mr.ID, err)
 			return false
 		}
-	} else if !lifecycleAlreadyComplete {
-		if err := e.verifyMRInfoPostMergeProof(mr); err != nil {
-			_, _ = fmt.Fprintf(e.output, "[Engineer] Post-merge proof failed for %s: %v\n", mr.ID, err)
-			return false
+		if releaseLease {
+			_, _ = fmt.Fprintf(e.output, "[Engineer] Released merge slot\n")
 		}
-	}
-	if releaseLease && holder != "" {
-		if err := e.completeMergeLease(holder); err != nil {
-			_, _ = fmt.Fprintf(e.output, "[Engineer] Failed to complete merge lease for %s: %v\n", mr.ID, err)
-			return false
-		}
-		_, _ = fmt.Fprintf(e.output, "[Engineer] Released merge slot\n")
-	}
-	if lifecycleAlreadyComplete && holder == "" {
-		_, _ = fmt.Fprintf(e.output, "[Engineer] Completed lifecycle for %s is missing its retained owner token\n", mr.ID)
+	} else if err := e.verifyMRInfoPostMergeProof(mr); err != nil {
+		_, _ = fmt.Fprintf(e.output, "[Engineer] Post-merge proof failed for %s: %v\n", mr.ID, err)
 		return false
 	}
 
@@ -1442,7 +1435,10 @@ func (e *Engineer) handleMRInfoSuccess(mr *MRInfo, result ProcessResult, release
 	// dependent work. Without this, mayor only discovers completion by polling.
 	// Uses nudge (not mail) to avoid permanent Dolt commits for routine signals (GH#2434).
 	nudgeMsg := fmt.Sprintf("MERGED: %s issue=%s branch=%s", mr.ID, mr.SourceIssue, mr.Branch)
-	if err := e.nudgeMayor(nudgeMsg); err != nil {
+	nudgeCmd := exec.Command("gt", "nudge", "mayor/", nudgeMsg)
+	util.SetDetachedProcessGroup(nudgeCmd)
+	nudgeCmd.Dir = e.workDir
+	if err := nudgeCmd.Run(); err != nil {
 		_, _ = fmt.Fprintf(e.output, "[Engineer] Warning: failed to nudge mayor about merge: %v\n", err)
 	}
 

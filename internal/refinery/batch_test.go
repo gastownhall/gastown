@@ -101,44 +101,7 @@ func newTestEngineer(t *testing.T, workDir string, g *gitpkg.Git) *Engineer {
 	e.mergeSlotAcquire = func(holder string, addWaiter bool) (*beads.MergeSlotStatus, error) {
 		return &beads.MergeSlotStatus{Available: true, Holder: holder}, nil
 	}
-	var leaseStatus *beads.MergeSlotStatus
-	e.mergeSlotCheck = func() (*beads.MergeSlotStatus, error) {
-		if leaseStatus == nil {
-			return &beads.MergeSlotStatus{Available: true}, nil
-		}
-		return leaseStatus, nil
-	}
-	e.mergeSlotAcquireLease = func(holder string, _ bool, lease beads.MergeLease) (*beads.MergeSlotStatus, error) {
-		status, err := e.mergeSlotAcquire(holder, false)
-		if err != nil {
-			return nil, err
-		}
-		if status == nil || status.Holder != holder {
-			return status, nil
-		}
-		leaseCopy := lease
-		leaseStatus = &beads.MergeSlotStatus{Holder: holder, Lease: &leaseCopy}
-		return leaseStatus, nil
-	}
-	e.mergeSlotTransition = func(holder string, phase beads.MergeLeasePhase) error {
-		if leaseStatus == nil || leaseStatus.Holder != holder || leaseStatus.Lease == nil {
-			return fmt.Errorf("lease holder mismatch")
-		}
-		leaseStatus.Lease.Phase = phase
-		return nil
-	}
-	e.mergeSlotRelease = func(holder string) error {
-		if leaseStatus != nil && leaseStatus.Holder != holder {
-			return fmt.Errorf("lease holder mismatch")
-		}
-		leaseStatus = nil
-		return nil
-	}
-	e.pushRemoteBranchTip = g.PushRemoteBranchTip
-	e.pushTarget = g.Push
-	e.verifyPushedCommit = g.VerifyPushedCommit
-	e.verifyPushedReachable = g.VerifyPushedCommitReachableFromPushTarget
-	e.nudgeMayor = func(string) error { return nil }
+	e.mergeSlotRelease = func(holder string) error { return nil }
 	return e
 }
 

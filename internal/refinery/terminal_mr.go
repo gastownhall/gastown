@@ -98,15 +98,30 @@ func validateTerminalMRCloseSnapshot(mrID string, fields *beads.MRFields, expect
 	if expected == nil || fields == nil {
 		return nil
 	}
-	actual := &MergeRequest{
-		ID:           mrID,
-		Branch:       fields.Branch,
-		IssueID:      fields.SourceIssue,
-		TargetBranch: fields.Target,
-		CommitSHA:    fields.CommitSHA,
-		AgentBead:    fields.AgentBead,
+	checks := []struct {
+		name string
+		got  string
+		want string
+	}{
+		{name: "branch", got: fields.Branch, want: expected.Branch},
+		{name: "source_issue", got: fields.SourceIssue, want: expected.IssueID},
+		{name: "commit_sha", got: fields.CommitSHA, want: expected.CommitSHA},
 	}
-	return validateMergeRequestIdentity(expected, actual, "after merge proof")
+	if strings.TrimSpace(expected.TargetBranch) != "" {
+		checks = append(checks, struct {
+			name string
+			got  string
+			want string
+		}{name: "target", got: fields.Target, want: expected.TargetBranch})
+	}
+	for _, check := range checks {
+		got := strings.TrimSpace(check.got)
+		want := strings.TrimSpace(check.want)
+		if want != "" && got != want {
+			return fmt.Errorf("MR %s changed after merge proof: %s=%q, verified %q", mrID, check.name, got, want)
+		}
+	}
+	return nil
 }
 
 func firstNonEmpty(values ...string) string {

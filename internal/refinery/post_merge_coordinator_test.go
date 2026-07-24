@@ -17,7 +17,6 @@ type fakePostMergeLifecycle struct {
 	events     []string
 	sourceGone bool
 	sourceNoop bool
-	proofHook  func()
 }
 
 func successfulPostMergeLifecycle() *fakePostMergeLifecycle {
@@ -60,13 +59,7 @@ func (f *fakePostMergeLifecycle) loadMR(string) (*MergeRequest, error) {
 	return &copy, nil
 }
 
-func (f *fakePostMergeLifecycle) verify(*MergeRequest) error {
-	err := f.event("proof")
-	if err == nil && f.proofHook != nil {
-		f.proofHook()
-	}
-	return err
-}
+func (f *fakePostMergeLifecycle) verify(*MergeRequest) error { return f.event("proof") }
 
 func (f *fakePostMergeLifecycle) closeMR(mr *MergeRequest, _ string) error {
 	if err := f.event("close-mr"); err != nil {
@@ -152,34 +145,6 @@ func TestPostMergeCoordinatorProofFailureHasNoMutations(t *testing.T) {
 	}
 }
 
-func TestPostMergeCoordinatorRejectsAgentDriftAfterProofBeforeClose(t *testing.T) {
-	f := successfulPostMergeLifecycle()
-	originalAgent := f.mr.AgentBead
-	f.proofHook = func() {
-		f.mr.AgentBead = "hq-agent-injected"
-	}
-
-	_, err := f.coordinator().run(f.mr, "merge")
-	if err == nil || !strings.Contains(err.Error(), "agent_bead") {
-		t.Fatalf("run error = %v, want post-proof agent drift failure", err)
-	}
-	if f.mr.Status != MROpen || f.source.Status != string(beads.StatusOpen) {
-		t.Fatalf("post-proof drift mutated MR/source: mr=%s source=%s", f.mr.Status, f.source.Status)
-	}
-	fields := beads.ParseAgentFields(f.agent.Description)
-	if fields.AgentState != string(beads.AgentStateDone) || fields.ActiveMR != f.mr.ID {
-		t.Fatalf("post-proof drift mutated agent: %+v", fields)
-	}
-	for _, event := range f.events {
-		if event == "close-mr" || event == "close-source" || event == "finalize-agent" || event == "release-slot" {
-			t.Fatalf("post-proof drift reached mutation or release: %v", f.events)
-		}
-	}
-	if originalAgent == f.mr.AgentBead {
-		t.Fatal("test did not inject authoritative agent drift")
-	}
-}
-
 func TestPostMergeCoordinatorRunsOrderedLifecycle(t *testing.T) {
 	f := successfulPostMergeLifecycle()
 
@@ -188,7 +153,7 @@ func TestPostMergeCoordinatorRunsOrderedLifecycle(t *testing.T) {
 		t.Fatalf("run error: %v", err)
 	}
 	want := []string{
-		"load-mr", "proof", "load-mr", "close-mr", "load-mr",
+		"load-mr", "proof", "close-mr", "load-mr",
 		"load-source", "close-source", "load-source", "load-agent", "finalize-agent", "release-slot",
 	}
 
@@ -243,7 +208,7 @@ func TestPostMergeCoordinatorRequiresAuthoritativeMergedTerminalReason(t *testin
 			if err == nil || !strings.Contains(err.Error(), "close_reason") {
 				t.Fatalf("run error = %v, want terminal reason failure", err)
 			}
-			want := []string{"load-mr", "proof", "load-mr", "close-mr", "load-mr"}
+			want := []string{"load-mr", "proof", "close-mr", "load-mr"}
 			if !reflect.DeepEqual(f.events, want) {
 				t.Fatalf("events = %v, want %v", f.events, want)
 			}

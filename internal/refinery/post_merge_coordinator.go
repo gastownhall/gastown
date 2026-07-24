@@ -105,21 +105,9 @@ func (c *postMergeCoordinator) run(expected *MergeRequest, mergeCommit string) (
 	if err := requireSameMergeRequestSnapshot(expected, mr); err != nil {
 		return result, err
 	}
-	proofSnapshot := *mr
 	if err := c.verifyProof(mr); err != nil {
 		return result, fmt.Errorf("post-merge proof: %w", err)
 	}
-	mr, err = c.loadMR(expected.ID)
-	if err != nil {
-		return result, fmt.Errorf("reload MR after post-merge proof: %w", err)
-	}
-	if mr == nil {
-		return result, fmt.Errorf("reload MR %s after post-merge proof: missing", expected.ID)
-	}
-	if err := validateMergeRequestIdentity(&proofSnapshot, mr, "after merge proof"); err != nil {
-		return result, err
-	}
-	result.MR = mr
 
 	if err := c.closeMR(mr, mergeCommit); err != nil {
 		return result, fmt.Errorf("close MR: %w", err)
@@ -230,13 +218,6 @@ func (c *postMergeCoordinator) run(expected *MergeRequest, mergeCommit string) (
 }
 
 func requireSameMergeRequestSnapshot(expected, actual *MergeRequest) error {
-	return validateMergeRequestIdentity(expected, actual, "before post-merge finalization")
-}
-
-func validateMergeRequestIdentity(expected, actual *MergeRequest, boundary string) error {
-	if expected == nil || actual == nil {
-		return fmt.Errorf("cannot compare missing merge request identity")
-	}
 	checks := []struct {
 		name string
 		want string
@@ -251,8 +232,8 @@ func validateMergeRequestIdentity(expected, actual *MergeRequest, boundary strin
 	}
 	for _, check := range checks {
 		if strings.TrimSpace(check.want) != strings.TrimSpace(check.got) {
-			return fmt.Errorf("MR %s changed %s: %s=%q, verified %q",
-				expected.ID, boundary, check.name, strings.TrimSpace(check.got), strings.TrimSpace(check.want))
+			return fmt.Errorf("MR %s changed before post-merge finalization: %s=%q, submitted %q",
+				expected.ID, check.name, strings.TrimSpace(check.got), strings.TrimSpace(check.want))
 		}
 	}
 	return nil
