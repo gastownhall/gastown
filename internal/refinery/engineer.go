@@ -1353,10 +1353,6 @@ func (e *Engineer) ProcessMRInfo(ctx context.Context, mr *MRInfo) ProcessResult 
 
 // HandleMRInfoSuccess handles a successful merge from MRInfo.
 func (e *Engineer) HandleMRInfoSuccess(mr *MRInfo, result ProcessResult) bool {
-	return e.handleMRInfoSuccess(mr, result, true)
-}
-
-func (e *Engineer) handleMRInfoSuccess(mr *MRInfo, result ProcessResult, releaseLease bool) bool {
 	if mr.ID != "" && !e.isSyntheticMergeMechanicsMR(mr) {
 		holder := result.MergeSlotHolder
 		if holder == "" {
@@ -1369,9 +1365,6 @@ func (e *Engineer) handleMRInfoSuccess(mr *MRInfo, result ProcessResult, release
 				return verifyPostMergeProof(e.git, authoritative)
 			},
 			func() error {
-				if !releaseLease {
-					return nil
-				}
 				return e.mergeSlotRelease(holder)
 			},
 		)
@@ -1379,9 +1372,7 @@ func (e *Engineer) handleMRInfoSuccess(mr *MRInfo, result ProcessResult, release
 			_, _ = fmt.Fprintf(e.output, "[Engineer] Post-merge cleanup failed for %s: %v\n", mr.ID, err)
 			return false
 		}
-		if releaseLease {
-			_, _ = fmt.Fprintf(e.output, "[Engineer] Released merge slot\n")
-		}
+		_, _ = fmt.Fprintf(e.output, "[Engineer] Released merge slot\n")
 	} else if err := e.verifyMRInfoPostMergeProof(mr); err != nil {
 		_, _ = fmt.Fprintf(e.output, "[Engineer] Post-merge proof failed for %s: %v\n", mr.ID, err)
 		return false

@@ -7,7 +7,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -151,76 +150,6 @@ func TestFastForwardBatch_BlocksForkBackedDefaultPush(t *testing.T) {
 		t.Fatalf("expected fork-backed default push refusal, got: %+v", result)
 	}
 	assertOriginMainUnchangedAndReset(t, workDir, before)
-}
-
-func TestFinalizeBatchMRLifecyclesReleasesSharedLeaseAfterAllSucceed(t *testing.T) {
-	mrs := []*MRInfo{{ID: "mr-1"}, {ID: "mr-2"}}
-	var events []string
-	releases := 0
-
-	merged, err := finalizeBatchMRLifecycles(
-		mrs,
-		"merge-commit",
-		"batch-lease",
-		func(mr *MRInfo, result ProcessResult, releaseLease bool) bool {
-			if releaseLease {
-				t.Fatalf("MR %s lifecycle was allowed to release the shared batch lease", mr.ID)
-			}
-			if result.MergeSlotHolder != "batch-lease" {
-				t.Fatalf("MR %s holder = %q, want batch-lease", mr.ID, result.MergeSlotHolder)
-			}
-			if releases != 0 {
-				t.Fatalf("lease released before MR %s lifecycle", mr.ID)
-			}
-			events = append(events, "finalize-"+mr.ID)
-			return true
-		},
-		func(holder string) error {
-			releases++
-			events = append(events, "release-"+holder)
-			return nil
-		},
-	)
-	if err != nil {
-		t.Fatalf("finalize batch: %v", err)
-	}
-	if len(merged) != 2 {
-		t.Fatalf("merged = %d MRs, want 2", len(merged))
-	}
-	if releases != 1 {
-		t.Fatalf("release count = %d, want 1", releases)
-	}
-	want := []string{"finalize-mr-1", "finalize-mr-2", "release-batch-lease"}
-	if !reflect.DeepEqual(events, want) {
-		t.Fatalf("events = %v, want %v", events, want)
-	}
-}
-
-func TestFinalizeBatchMRLifecyclesRetainsSharedLeaseOnFailure(t *testing.T) {
-	mrs := []*MRInfo{{ID: "mr-1"}, {ID: "mr-2"}}
-	releases := 0
-
-	merged, err := finalizeBatchMRLifecycles(
-		mrs,
-		"merge-commit",
-		"batch-lease",
-		func(mr *MRInfo, _ ProcessResult, _ bool) bool {
-			return mr.ID != "mr-1"
-		},
-		func(string) error {
-			releases++
-			return nil
-		},
-	)
-	if err == nil || !strings.Contains(err.Error(), "mr-1") {
-		t.Fatalf("error = %v, want mr-1 lifecycle failure", err)
-	}
-	if len(merged) != 1 || merged[0].ID != "mr-2" {
-		t.Fatalf("merged = %+v, want only mr-2", merged)
-	}
-	if releases != 0 {
-		t.Fatalf("release count = %d, want lease retained", releases)
-	}
 }
 
 // --- AssembleBatch tests ---

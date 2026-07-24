@@ -409,7 +409,6 @@ func (e *Engineer) fastForwardBatch(ctx context.Context, stacked []*MRInfo, targ
 
 	// Acquire merge slot for default branch pushes
 	var pushHolder string
-	releaseSlotOnReturn := false
 	if target == e.rig.DefaultBranch() {
 		var slotErr error
 		pushHolder, slotErr = e.acquireMainPushSlot(ctx)
@@ -420,9 +419,8 @@ func (e *Engineer) fastForwardBatch(ctx context.Context, stacked []*MRInfo, targ
 			result.Error = fmt.Errorf("acquire merge slot: %w", slotErr)
 			return result
 		}
-		releaseSlotOnReturn = true
 		defer func() {
-			if releaseSlotOnReturn && pushHolder != "" {
+			if pushHolder != "" {
 				if releaseErr := e.mergeSlotRelease(pushHolder); releaseErr != nil {
 					_, _ = fmt.Fprintf(e.output, "[Batch] Warning: failed to release merge slot: %v\n", releaseErr)
 				}
@@ -463,7 +461,6 @@ func (e *Engineer) fastForwardBatch(ctx context.Context, stacked []*MRInfo, targ
 		result.Error = verifyErr
 		return result
 	}
-	releaseSlotOnReturn = false
 
 	ids := make([]string, len(stacked))
 	for i, mr := range stacked {
@@ -477,47 +474,18 @@ func (e *Engineer) fastForwardBatch(ctx context.Context, stacked []*MRInfo, targ
 	// delete branches, nudge mayor, and check convoy completion.
 	// HandleMRInfoSuccess was previously dead code (never called), causing task
 	// beads to remain open after successful merges.
-	cleaned, cleanupErr := finalizeBatchMRLifecycles(
-		stacked,
-		tipSHA,
-		pushHolder,
-		e.handleMRInfoSuccess,
-		e.mergeSlotRelease,
-	)
-	if cleanupErr != nil {
-		result.Error = cleanupErr
+	cleaned := make([]*MRInfo, 0, len(stacked))
+	for _, mr := range stacked {
+		mergeResult := ProcessResult{Success: true, MergeCommit: tipSHA}
+		if e.HandleMRInfoSuccess(mr, mergeResult) {
+			cleaned = append(cleaned, mr)
+		} else if result.Error == nil {
+			result.Error = fmt.Errorf("post-merge cleanup proof failed for %s", mr.ID)
+		}
 	}
 	result.Merged = cleaned
 
 	return result
-}
-
-func finalizeBatchMRLifecycles(
-	stacked []*MRInfo,
-	mergeCommit string,
-	holder string,
-	finalize func(*MRInfo, ProcessResult, bool) bool,
-	release func(string) error,
-) ([]*MRInfo, error) {
-	cleaned := make([]*MRInfo, 0, len(stacked))
-	var firstFailure string
-	for _, mr := range stacked {
-		result := ProcessResult{Success: true, MergeCommit: mergeCommit, MergeSlotHolder: holder}
-		if finalize(mr, result, false) {
-			cleaned = append(cleaned, mr)
-		} else if firstFailure == "" {
-			firstFailure = mr.ID
-		}
-	}
-	if firstFailure != "" {
-		return cleaned, fmt.Errorf("post-merge cleanup proof failed for %s", firstFailure)
-	}
-	if holder != "" {
-		if err := release(holder); err != nil {
-			return cleaned, fmt.Errorf("release merge slot: %w", err)
-		}
-	}
-	return cleaned, nil
 }
 
 // bisectBatch performs binary search to find which MR(s) caused a test failure.
