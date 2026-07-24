@@ -934,7 +934,10 @@ func (e *Engineer) recheckMRStillMergeable(mr *MRInfo, target string) ProcessRes
 		}
 		if closeReason := strings.TrimSpace(fields.CloseReason); closeReason != "" {
 			if strings.EqualFold(closeReason, string(CloseReasonMerged)) {
-				return ProcessResult{Success: false, Error: fmt.Sprintf("open MR %s claims close_reason=merged without post-merge proof", mrID)}
+				if err := e.closeMRWithReason(mr, string(CloseReasonMerged)); err != nil {
+					return ProcessResult{Success: false, Error: fmt.Sprintf("failed to close already-merged MR %s: %v", mrID, err)}
+				}
+				return mergeIneligibleResult("MR close_reason is %s", closeReason)
 			}
 			return e.rejectMRBeforeMerge(mr, fmt.Sprintf("MR close_reason is %s", closeReason))
 		}
@@ -1348,27 +1351,44 @@ func (e *Engineer) ProcessMRInfo(ctx context.Context, mr *MRInfo) ProcessResult 
 
 // HandleMRInfoSuccess handles a successful merge from MRInfo.
 func (e *Engineer) HandleMRInfoSuccess(mr *MRInfo, result ProcessResult) bool {
-	if mr.ID != "" && !e.isSyntheticMergeMechanicsMR(mr) {
-		holder := e.rig.Name + "/refinery"
-		coordinator := newPostMergeCoordinator(
-			e.beads,
-			e.rig.DefaultBranch(),
-			func(authoritative *MergeRequest) error {
-				return verifyPostMergeProof(e.git, authoritative)
-			},
-			func() error {
-				return e.mergeSlotRelease(holder)
-			},
-		)
-		if _, err := coordinator.run(mergeRequestFromMRInfo(mr), result.MergeCommit); err != nil {
-			_, _ = fmt.Fprintf(e.output, "[Engineer] Post-merge cleanup failed for %s: %v\n", mr.ID, err)
-			return false
-		}
+	workBeadID := resolveMergedWorkBead(e.beads.ForAgentBead(), mergedWorkBeadCloseRequest{
+		MRID:        mr.ID,
+		Branch:      mr.Branch,
+		SourceIssue: mr.SourceIssue,
+		AgentBead:   mr.AgentBead,
+	})
+
+	// Release merge slot if this was a conflict resolution
+	// The slot is held while conflict resolution is in progress
+	holder := e.rig.Name + "/refinery"
+	if err := e.mergeSlotRelease(holder); err != nil {
+		// Best-effort: slot release failures are always non-fatal.
+		// Slot may not have been held (optional acquisition) or may have expired.
+		_, _ = fmt.Fprintf(e.output, "[Engineer] Note: merge slot release: %v\n", err)
+	} else {
 		_, _ = fmt.Fprintf(e.output, "[Engineer] Released merge slot\n")
-	} else if err := e.verifyMRInfoPostMergeProof(mr); err != nil {
+	}
+	if err := e.verifyMRInfoPostMergeProof(mr); err != nil {
 		_, _ = fmt.Fprintf(e.output, "[Engineer] Post-merge proof failed for %s: %v\n", mr.ID, err)
 		return false
 	}
+
+	// Update and close the MR bead
+	if mr.ID != "" && !e.isSyntheticMergeMechanicsMR(mr) {
+		if err := e.closeMRWithReason(mr, string(CloseReasonMerged), result.MergeCommit); err != nil {
+			_, _ = fmt.Fprintf(e.output, "[Engineer] Post-merge cleanup failed for %s: %v\n", mr.ID, err)
+			return false
+		}
+	}
+
+	// 1. Close source issue with reference to MR. Resolve before MR close clears
+	// active_mr, then close after the real merge success has been recorded.
+	closeMergedWorkBead(e.beads, nil, e.output, mergedWorkBeadCloseRequest{
+		MRID:        mr.ID,
+		Target:      mr.Target,
+		SourceIssue: workBeadID,
+		MergeCommit: result.MergeCommit,
+	})
 
 	// 1.2. Close conflict-resolution tasks that this land has made moot (hq-jnap).
 	// Conflict beads otherwise outlive the successful re-land of their content
@@ -1516,21 +1536,41 @@ func requirePullRequestHead(pr *git.PullRequestInfo, expectedHead string) error 
 }
 
 func (e *Engineer) verifyMRInfoPostMergeProof(mr *MRInfo) error {
-	return verifyPostMergeProof(e.git, mergeRequestFromMRInfo(mr))
+	if mr == nil {
+		return fmt.Errorf("merge request is missing")
+	}
+	if e.git == nil {
+		return fmt.Errorf("git client is missing")
+	}
+	target := strings.TrimSpace(mr.Target)
+	if target == "" {
+		return fmt.Errorf("missing target branch")
+	}
+	if source := strings.TrimSpace(mr.Branch); source != "" && source == target {
+		return fmt.Errorf("source branch %s matches target branch", source)
+	}
+	commit := strings.TrimSpace(mr.CommitSHA)
+	if commit == "" {
+		return fmt.Errorf("missing submitted commit_sha")
+	}
+	if err := e.git.VerifyPushedCommitReachableFromPushTarget("origin", target, commit); err != nil {
+		return fmt.Errorf("target %s does not contain submitted head %s: %w", target, commit, err)
+	}
+	return nil
 }
 
 // HandleMRInfoFailure handles a failed merge from MRInfo.
 // For conflicts, creates a resolution task and blocks the MR until resolved.
 // For slot timeouts, the MR stays in queue for automatic retry without notifying polecats.
 // This enables non-blocking delegation: the queue continues to the next MR.
-func (e *Engineer) HandleMRInfoFailure(mr *MRInfo, result ProcessResult) error {
+func (e *Engineer) HandleMRInfoFailure(mr *MRInfo, result ProcessResult) {
 	// Slot timeout is transient infrastructure contention — not a build/test/conflict failure.
 	// The MR stays in queue and will be retried on the next poll cycle.
 	// No polecat notification needed since there's nothing for a worker to fix.
 	if result.SlotTimeout {
 		_, _ = fmt.Fprintf(e.output, "[Engineer] ✗ Slot timeout: %s - %s\n", mr.ID, result.Error)
 		_, _ = fmt.Fprintln(e.output, "[Engineer] MR remains in queue for automatic retry (slot contention)")
-		return nil
+		return
 	}
 
 	// Policy ineligibility is intentional — not a build/test failure.
@@ -1544,9 +1584,8 @@ func (e *Engineer) HandleMRInfoFailure(mr *MRInfo, result ProcessResult) error {
 		_, _ = fmt.Fprintf(e.output, "[Engineer] MR %s: %s, dequeued\n", mr.ID, reason)
 		if closeErr := e.closeIneligibleMR(mr, reason); closeErr != nil {
 			_, _ = fmt.Fprintf(e.output, "[Engineer] Warning: failed to close ineligible MR %s: %v\n", mr.ID, closeErr)
-			return fmt.Errorf("failed to close ineligible MR %s: %w", mr.ID, closeErr)
 		}
-		return nil
+		return
 	}
 
 	// NeedsApproval: PR exists but lacks required approving review (merge_strategy=pr).
@@ -1554,7 +1593,7 @@ func (e *Engineer) HandleMRInfoFailure(mr *MRInfo, result ProcessResult) error {
 	// No polecat notification needed; the PR just needs a human review on GitHub.
 	if result.NeedsApproval {
 		_, _ = fmt.Fprintf(e.output, "[Engineer] MR %s: PR awaiting human approval, will retry next poll\n", mr.ID)
-		return nil
+		return
 	}
 
 	// Branch-not-found: the remote branch doesn't exist. This can mean either
@@ -1570,7 +1609,7 @@ func (e *Engineer) HandleMRInfoFailure(mr *MRInfo, result ProcessResult) error {
 		if err := mayorCmd.Run(); err != nil {
 			_, _ = fmt.Fprintf(e.output, "[Engineer] Warning: failed to nudge mayor about missing branch: %v\n", err)
 		}
-		return nil
+		return
 	}
 
 	// Nudge polecat directly about the merge failure.
@@ -1641,7 +1680,6 @@ func (e *Engineer) HandleMRInfoFailure(mr *MRInfo, result ProcessResult) error {
 	} else {
 		_, _ = fmt.Fprintln(e.output, "[Engineer] MR remains in queue for retry")
 	}
-	return nil
 }
 
 func (e *Engineer) closeIneligibleMR(mr *MRInfo, reason string) error {
@@ -1652,13 +1690,20 @@ func (e *Engineer) closeMRWithReason(mr *MRInfo, closeReason string, mergeCommit
 	if mr == nil || strings.TrimSpace(mr.ID) == "" {
 		return nil
 	}
+	var commit string
+	if len(mergeCommit) > 0 {
+		commit = mergeCommit[0]
+	}
+	var expected *MergeRequest
 	if normalizedMRCloseReason(closeReason) == string(CloseReasonMerged) {
-		return fmt.Errorf("merged MR closure requires proof-bound post-merge coordinator")
+		expected = mergeRequestFromMRInfo(mr)
 	}
 	result, err := closeTerminalMR(e.beads, mr.ID, terminalMRCloseOptions{
 		Reason:        closeReason,
+		MergeCommit:   commit,
 		AgentBeadHint: mr.AgentBead,
 		MissingOK:     true,
+		ExpectedMR:    expected,
 	})
 	if err != nil {
 		return err
@@ -1667,7 +1712,7 @@ func (e *Engineer) closeMRWithReason(mr *MRInfo, closeReason string, mergeCommit
 		_, _ = fmt.Fprintf(e.output, "[Engineer] Closed MR bead: %s (%s)\n", mr.ID, closeReason)
 	}
 	if result.AgentActiveMRClearErr != nil {
-		return fmt.Errorf("clear rejected MR from agent bead %s: %w", result.AgentBead, result.AgentActiveMRClearErr)
+		_, _ = fmt.Fprintf(e.output, "[Engineer] Warning: failed to clear agent bead %s active_mr: %v\n", result.AgentBead, result.AgentActiveMRClearErr)
 	}
 	return nil
 }

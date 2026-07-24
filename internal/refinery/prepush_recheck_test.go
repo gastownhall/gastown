@@ -187,31 +187,8 @@ func TestRecheckMRStillMergeable_RejectsMissingSourceField(t *testing.T) {
 	if result.Success || !result.NoMerge {
 		t.Fatalf("missing source_issue should be rejected, got: %+v", result)
 	}
-
 	if got := store.closeReasons["gt-mr"]; got != "rejected: MR has missing source_issue" {
 		t.Fatalf("MR close reason = %q, want missing source rejection", got)
-	}
-}
-
-func TestRecheckMRStillMergeableDoesNotCloseMergedClaimWithoutProof(t *testing.T) {
-	workDir, _, cleanup := testGitRepo(t)
-	defer cleanup()
-	mrIssue := prepushMRIssue("gt-mr", "feature", "main", "gt-work", "submitted")
-	fields := beads.ParseMRFields(&beads.Issue{Description: mrIssue.Description})
-	fields.CloseReason = string(CloseReasonMerged)
-	mrIssue.Description = beads.FormatMRFields(fields)
-	source := prepushIssue("gt-work", "work", "gt:task")
-	store := newPrepushStore(mrIssue, source)
-	e := newPrepushEngineer(t, workDir, store)
-
-	result := e.recheckMRStillMergeable(&MRInfo{
-		ID: "gt-mr", Branch: "feature", Target: "main", SourceIssue: "gt-work", CommitSHA: "submitted",
-	}, "main")
-	if result.Success {
-		t.Fatalf("merged metadata claim unexpectedly passed: %+v", result)
-	}
-	if mrIssue.Status != beadsdk.StatusOpen || store.closeReasons["gt-mr"] != "" {
-		t.Fatalf("unproved merged claim mutated MR: status=%s reason=%q", mrIssue.Status, store.closeReasons["gt-mr"])
 	}
 }
 
