@@ -10,6 +10,6 @@
     "export": "promptfoo eval --output results.json --output results.html"
   },
   "devDependencies": {
-    "promptfoo": "0.121.2"
+    "promptfoo": "0.121.19"
   }
 }
