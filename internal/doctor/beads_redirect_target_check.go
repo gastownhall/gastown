@@ -117,7 +117,24 @@ func (c *BeadsRedirectTargetCheck) Run(ctx *CheckContext) *CheckResult {
 				continue
 			}
 
-			// Check 3: Does the target have a working beads setup?
+			// Check 3: Is the target itself a redirect?
+			// bd does not follow redirect chains — it warns "redirect chains not
+			// allowed" and stops at this intermediate directory, leaving lookups
+			// pointed at the wrong database or none at all ("issue not found"
+			// when bd runs from a polecat worktree). The redirect must name the
+			// FINAL destination (hq-szhze).
+			if _, err := os.Stat(filepath.Join(resolved, "redirect")); err == nil {
+				relWt, _ := filepath.Rel(ctx.TownRoot, wt)
+				broken = append(broken, brokenTarget{
+					worktreePath: wt,
+					target:       target,
+					resolvedPath: resolved,
+					reason:       fmt.Sprintf("target is itself a redirect — bd does not follow chains: %s", relWt),
+				})
+				continue
+			}
+
+			// Check 4: Does the target have a working beads setup?
 			// A valid beads directory should have at least one of: dolt/, redirect, config.yaml
 			if !hasBeadsSetup(resolved) {
 				relWt, _ := filepath.Rel(ctx.TownRoot, wt)

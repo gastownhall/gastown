@@ -333,8 +333,13 @@ func TestBeadsRedirectTargetCheck_FixUnfixable(t *testing.T) {
 	}
 }
 
+// Tracked beads architecture: rig/.beads redirects to mayor/rig/.beads. A
+// worktree redirect that stops at rig/.beads forms a CHAIN, and bd does not
+// follow chains — it prints "redirect chains not allowed, ignoring redirect in
+// <rig>/.beads" and resolves against the intermediate directory, so lookups miss
+// the real database ("issue not found" from a polecat worktree). The check must
+// flag it and the fix must collapse it to the final destination (hq-szhze).
 func TestBeadsRedirectTargetCheck_MayorRedirectChain(t *testing.T) {
-	// Test tracked beads architecture: rig/.beads has redirect to mayor/rig/.beads
 	townRoot := t.TempDir()
 	rigDir := filepath.Join(townRoot, "myrig")
 	rigBeadsDir := filepath.Join(rigDir, ".beads")
@@ -359,8 +364,7 @@ func TestBeadsRedirectTargetCheck_MayorRedirectChain(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Create crew with redirect to rig beads (which itself redirects to mayor)
-	// The redirect target (rig/.beads) exists and has a "redirect" marker, so hasBeadsSetup returns true
+	// Create crew with redirect to rig beads, which itself redirects to mayor.
 	if err := os.MkdirAll(crewBeadsDir, 0755); err != nil {
 		t.Fatal(err)
 	}
@@ -372,8 +376,30 @@ func TestBeadsRedirectTargetCheck_MayorRedirectChain(t *testing.T) {
 	ctx := &CheckContext{TownRoot: townRoot}
 	result := check.Run(ctx)
 
-	if result.Status != StatusOK {
-		t.Errorf("Expected StatusOK for valid redirect chain, got %v: %s (details: %v)",
+	if result.Status != StatusWarning {
+		t.Fatalf("Expected StatusWarning for redirect chain, got %v: %s (details: %v)",
+			result.Status, result.Message, result.Details)
+	}
+	if len(result.Details) != 1 || !strings.Contains(result.Details[0], "does not follow chains") {
+		t.Errorf("Expected chain diagnosis in details, got %v", result.Details)
+	}
+
+	// Fix must rewrite the crew redirect to name mayor/rig/.beads directly.
+	if err := check.Fix(ctx); err != nil {
+		t.Fatalf("Fix() error = %v", err)
+	}
+	data, err := os.ReadFile(filepath.Join(crewBeadsDir, "redirect"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := strings.TrimSpace(string(data))
+	if want := "../../mayor/rig/.beads"; got != want {
+		t.Errorf("redirect after fix = %q, want %q", got, want)
+	}
+
+	// And the check must now pass: one hop, no further redirect.
+	if result := check.Run(ctx); result.Status != StatusOK {
+		t.Errorf("Expected StatusOK after fix, got %v: %s (details: %v)",
 			result.Status, result.Message, result.Details)
 	}
 }

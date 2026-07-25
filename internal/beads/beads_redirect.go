@@ -191,7 +191,10 @@ func ComputeRedirectTarget(townRoot, worktreePath string) (string, error) {
 	if rigHasOwnDB(rigBeadsPath) {
 		depth := len(parts) - 1
 		upPath := strings.Repeat("../", depth)
-		return upPath + ".beads", nil
+		// Collapse the chain: rig/.beads may itself be a redirect to
+		// mayor/rig/.beads, and bd stops at the first hop (see
+		// collapseRigRedirect).
+		return collapseRigRedirect(rigBeadsPath, upPath), nil
 	}
 
 	// Rig has no own database — try town-level .beads (has routes.jsonl,
@@ -261,28 +264,45 @@ func ComputeRedirectTarget(townRoot, worktreePath string) (string, error) {
 		// Direct redirect to mayor/rig/.beads since rig/.beads doesn't exist
 		redirectPath = upPath + "mayor/rig/.beads"
 	} else {
-		redirectPath = upPath + ".beads"
-
 		// Check if rig-level beads has a redirect (tracked beads case).
 		// If so, redirect directly to the final destination to avoid chains.
-		// The bd CLI doesn't support redirect chains, so we must skip intermediate hops.
-		rigRedirectPath := filepath.Join(rigBeadsPath, "redirect")
-		if data, err := os.ReadFile(rigRedirectPath); err == nil {
-			rigRedirectTarget := strings.TrimSpace(string(data))
-			if rigRedirectTarget != "" {
-				if filepath.IsAbs(rigRedirectTarget) {
-					// Absolute redirect — pass through as-is (ResolveBeadsDir handles it)
-					redirectPath = rigRedirectTarget
-				} else {
-					// Relative redirect (e.g., "mayor/rig/.beads" for tracked beads).
-					// Redirect worktree directly to the final destination.
-					redirectPath = upPath + rigRedirectTarget
-				}
-			}
-		}
+		redirectPath = collapseRigRedirect(rigBeadsPath, upPath)
 	}
 
 	return redirectPath, nil
+}
+
+// collapseRigRedirect returns the redirect target a worktree should use to reach
+// the rig's beads database in ONE hop, given upPath — the "../" prefix that
+// walks from the worktree up to the rig root.
+//
+// The bd CLI does not follow redirect chains: it prints "redirect chains not
+// allowed, ignoring redirect in <dir>" and stops at the intermediate directory,
+// leaving lookups pointed at the wrong database (or none). So when
+// <rig>/.beads is itself just a redirect — the tracked-beads layout, where the
+// real database lives under mayor/rig/.beads — skip the intermediate hop and
+// point straight at the final destination.
+//
+// Missing the collapse in the rig-has-own-DB path is what made bd fail with
+// "issue not found" when run from a polecat worktree in fastlio2_ros2 and
+// navigation_server, the two rigs whose .beads has both metadata.json and a
+// redirect (hq-szhze).
+func collapseRigRedirect(rigBeadsPath, upPath string) string {
+	data, err := os.ReadFile(filepath.Join(rigBeadsPath, "redirect")) //nolint:gosec // G304: trusted beads path
+	if err != nil {
+		return upPath + ".beads"
+	}
+	target := strings.TrimSpace(string(data))
+	if target == "" {
+		return upPath + ".beads"
+	}
+	if filepath.IsAbs(target) {
+		// Absolute redirect — pass through as-is (ResolveBeadsDir handles it).
+		return target
+	}
+	// Relative redirect (e.g., "mayor/rig/.beads") — resolved from the rig root,
+	// so re-anchor it to the worktree.
+	return upPath + target
 }
 
 // SetupRedirect creates a .beads/redirect file for a worktree to point to the rig's shared beads.

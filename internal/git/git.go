@@ -496,6 +496,19 @@ func (g *Git) CheckoutNewBranch(branch, startPoint string) error {
 	return err
 }
 
+// CheckoutDetach checks out the given ref with a detached HEAD.
+// Equivalent to: git checkout --detach <ref>
+//
+// Use this instead of Checkout when parking a worktree on a shared branch's
+// content. Git refuses to check out a branch that another linked worktree of
+// the same repo already has ("already checked out at ..."), and every polecat,
+// crew, and refinery workspace in a rig is a worktree of one bare repo.
+// Detaching takes the content without claiming the branch.
+func (g *Git) CheckoutDetach(ref string) error {
+	_, err := g.run("checkout", "--detach", ref)
+	return err
+}
+
 // Fetch fetches from the remote.
 func (g *Git) Fetch(remote string) error {
 	_, err := g.run("fetch", remote)

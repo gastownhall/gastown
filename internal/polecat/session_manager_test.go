@@ -779,11 +779,11 @@ func TestParseFreshBranchName_Rejects(t *testing.T) {
 		"master",
 		"develop",
 		"feature/x",
-		"polecat/",          // empty tail
-		"polecat/alpha",     // no ts or issue
-		"polecat/alpha-",    // trailing dash, no ts
-		"polecat//gt-abc@1", // empty polecat name
-		"polecat/alpha/@1",  // empty issue
+		"polecat/",              // empty tail
+		"polecat/alpha",         // no ts or issue
+		"polecat/alpha-",        // trailing dash, no ts
+		"polecat//gt-abc@1",     // empty polecat name
+		"polecat/alpha/@1",      // empty issue
 		"polecat/alpha/gt-abc@", // empty ts
 		"",
 	}
@@ -838,6 +838,24 @@ func TestShouldCreateFreshSessionBranch_Structural(t *testing.T) {
 			issue:           "gt-abc",
 			canonicalBranch: "",
 			want:            false,
+		},
+		{
+			// gt done parks finished polecats on origin/<default> with a
+			// detached HEAD to avoid contending with the refinery's checkout of
+			// that branch (hq-szhze). There is no branch to commit to, so the
+			// next assignment must get a fresh one.
+			name:            "detached HEAD triggers fresh",
+			currentBranch:   "HEAD",
+			issue:           "gt-abc",
+			canonicalBranch: "main",
+			want:            true,
+		},
+		{
+			name:            "detached HEAD triggers fresh even with unknown canonical",
+			currentBranch:   "HEAD",
+			issue:           "gt-abc",
+			canonicalBranch: "",
+			want:            true,
 		},
 	}
 

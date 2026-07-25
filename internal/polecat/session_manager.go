@@ -188,6 +188,10 @@ func (m *SessionManager) freshBranchName(polecatName, issue string) string {
 	return fmt.Sprintf("polecat/%s-%s", polecatName, ts)
 }
 
+// detachedHEAD is what git.CurrentBranch (rev-parse --abbrev-ref HEAD) reports
+// when the worktree has no branch checked out.
+const detachedHEAD = "HEAD"
+
 // freshBranchMeta holds the identity decoded from a branch produced by
 // freshBranchName. ok=false means the branch does not match either format.
 type freshBranchMeta struct {
@@ -253,6 +257,14 @@ func shouldCreateFreshSessionBranch(currentBranch, issue, canonicalBranch string
 	// for this issue isn't discarded.
 	if meta.ok && issue != "" && meta.issue == issue {
 		return false
+	}
+
+	// Detached HEAD — how gt done parks a finished polecat on origin/<default>
+	// without contending with the refinery's checkout of that branch (hq-szhze).
+	// Equivalent to sitting on the canonical base: there is no branch to commit
+	// to, so a fresh one is required.
+	if currentBranch == detachedHEAD {
+		return true
 	}
 
 	// On the canonical base branch — need a fresh polecat branch to work on.

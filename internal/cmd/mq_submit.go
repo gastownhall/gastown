@@ -144,22 +144,24 @@ func runMqSubmit(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("cannot submit %s/master branch to merge queue", defaultBranch)
 	}
 
-	// Parse branch info
+	// Parse branch info for the worker name. The issue is NOT taken from the
+	// branch here — see resolveSourceIssue below.
 	info := parseBranchName(branch)
-
-	// Override with explicit flags
-	issueID := mqSubmitIssue
-	if issueID == "" {
-		issueID = info.Issue
-	}
 	worker := info.Worker
-
-	if issueID == "" {
-		return fmt.Errorf("cannot determine source issue from branch '%s'; use --issue to specify", branch)
-	}
 
 	// Initialize beads for looking up source issue
 	bd := beads.New(cwd)
+
+	// Resolve the source issue: --issue > HOOKED bead > branch name.
+	// The hooked bead wins over the branch name because reused polecat branches
+	// carry the PREVIOUS assignment's name and mis-attribute the MR (hq-szhze).
+	issueID, err := resolveSourceIssue(bd, branch, mqSubmitIssue, detectSender())
+	if err != nil {
+		return err
+	}
+	if issueID == "" {
+		return fmt.Errorf("cannot determine source issue from branch '%s' or hooked beads; use --issue to specify", branch)
+	}
 
 	// Determine target branch
 	// Priority: explicit --epic > formula_vars base_branch > integration branch auto-detect > rig default.

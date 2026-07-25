@@ -331,14 +331,9 @@ func runDone(cmd *cobra.Command, args []string) (retErr error) {
 		}
 	}
 
-	// Parse branch info
+	// Parse branch info for the worker name. The issue is NOT taken from the
+	// branch here — see resolveSourceIssue below.
 	info := parseBranchName(branch)
-
-	// Override with explicit flags
-	issueID := doneIssue
-	if issueID == "" {
-		issueID = info.Issue
-	}
 	worker := info.Worker
 
 	// Determine polecat name from sender detection
@@ -346,6 +341,14 @@ func runDone(cmd *cobra.Command, args []string) (retErr error) {
 	polecatName := ""
 	if parts := strings.Split(sender, "/"); len(parts) >= 2 {
 		polecatName = parts[len(parts)-1]
+	}
+
+	// Resolve the source issue: --issue > HOOKED bead > branch name.
+	// The hooked bead wins over the branch name because reused polecat branches
+	// carry the PREVIOUS assignment's name and mis-attribute the MR (hq-szhze).
+	issueID, err := resolveSourceIssue(beads.New(cwd), branch, doneIssue, sender)
+	if err != nil {
+		return err
 	}
 
 	// Get agent bead ID for cross-referencing
@@ -362,16 +365,6 @@ func runDone(cmd *cobra.Command, args []string) (retErr error) {
 
 		// Persistent polecat model (gt-hdf8): no deferred session kill.
 		// Sessions stay alive after gt done — polecat transitions to IDLE.
-	}
-
-	// If issue ID not set by flag or branch name, query for hooked beads
-	// assigned to this agent. This replaces reading agent_bead.hook_bead
-	// (hq-l6mm5: direct bead tracking instead of agent bead slot).
-	if issueID == "" && sender != "" {
-		bd := beads.New(cwd)
-		if hookIssue := findHookedBeadForAgent(bd, sender); hookIssue != "" {
-			issueID = hookIssue
-		}
 	}
 
 	// Write done-intent label EARLY, before push/MR operations.
@@ -1262,18 +1255,34 @@ notifyWitness:
 			// Remember the old branch so we can delete it after switching
 			oldBranch := branch
 
-			fmt.Printf("%s Syncing worktree to %s...\n", style.Bold.Render("→"), defaultBranch)
-			if err := g.Checkout(defaultBranch); err != nil {
-				style.PrintWarning("could not checkout %s: %v (worktree stays on feature branch)", defaultBranch, err)
-			} else if err := g.Pull("origin", defaultBranch); err != nil {
-				style.PrintWarning("could not pull %s: %v (worktree on %s but may be stale)", defaultBranch, defaultBranch, err)
+			// Park the worktree on origin/<defaultBranch> with a DETACHED HEAD
+			// rather than checking out the branch itself (hq-szhze).
+			//
+			// Polecat sandboxes are linked worktrees of the rig's bare repo, and
+			// the refinery worktree (<rig>/refinery/rig) holds <defaultBranch>
+			// checked out permanently. `git checkout main` here therefore fails
+			// with "'main' is already checked out at <rig>/refinery/rig", which
+			// left the worktree stuck on the feature branch AND skipped the
+			// branch deletion below. The next assignment then committed onto a
+			// stale branch whose name mis-attributed the MR. Detaching takes
+			// main's content without claiming the branch, so it never contends.
+			fmt.Printf("%s Syncing worktree to origin/%s...\n", style.Bold.Render("→"), defaultBranch)
+			syncErr := g.Fetch("origin")
+			if syncErr != nil {
+				style.PrintWarning("could not fetch origin: %v (syncing to possibly stale refs)", syncErr)
+			}
+			syncErr = g.CheckoutDetach("origin/" + defaultBranch)
+			if syncErr != nil {
+				style.PrintWarning("could not sync worktree to origin/%s: %v (worktree stays on feature branch)", defaultBranch, syncErr)
 			} else {
-				fmt.Printf("%s Worktree synced to %s\n", style.Bold.Render("✓"), defaultBranch)
+				fmt.Printf("%s Worktree synced to origin/%s (detached)\n", style.Bold.Render("✓"), defaultBranch)
 			}
 
 			// Delete the old polecat branch (non-fatal: cleanup only).
 			// This prevents stale branch accumulation from persistent polecats.
-			if oldBranch != "" && oldBranch != defaultBranch && oldBranch != "master" {
+			// Only safe once the sync moved HEAD off that branch — git refuses
+			// to delete the branch that is currently checked out.
+			if syncErr == nil && oldBranch != "" && oldBranch != defaultBranch && oldBranch != "master" {
 				if err := g.DeleteBranch(oldBranch, true); err != nil {
 					style.PrintWarning("could not delete old branch %s: %v", oldBranch, err)
 				} else {
@@ -1656,23 +1665,15 @@ doneStateUpdate:
 	clearDoneCheckpoints(bd, agentBeadID)
 }
 
-// findHookedBeadForAgent queries for beads with status=hooked assigned to this agent.
-// This is the authoritative source for what work a polecat is doing, since the
-// work bead itself tracks status and assignee (hq-l6mm5).
-// Returns empty string if no hooked bead is found.
+// findHookedBeadForAgent returns the first bead with status=hooked assigned to
+// this agent, or "" if there is none. See findHookedBeadsForAgent, and prefer
+// resolveSourceIssue when the answer will label an MR.
 func findHookedBeadForAgent(bd *beads.Beads, agentID string) string {
-	if agentID == "" {
+	hooked := findHookedBeadsForAgent(bd, agentID)
+	if len(hooked) == 0 {
 		return ""
 	}
-	hookedBeads, err := bd.List(beads.ListOptions{
-		Status:   beads.StatusHooked,
-		Assignee: agentID,
-		Priority: -1,
-	})
-	if err != nil || len(hookedBeads) == 0 {
-		return ""
-	}
-	return hookedBeads[0].ID
+	return hooked[0]
 }
 
 // parseCleanupStatus converts a string flag value to a CleanupStatus.
