@@ -859,6 +859,18 @@ func (rc *RuntimeConfig) BuildCommand() string {
 	return cmd
 }
 
+// unwrappedCommandBase returns the basename of command with any "gt-" wrapper
+// prefix stripped, so a wrapper script like "gt-opencode" (which execs the
+// real "opencode" binary after running setup, e.g. `gt prime`) is recognized
+// as its wrapped agent. Mirrors the unwrapping convention already used by
+// ResolveProcessNames (see agents.go) for liveness/process-name matching —
+// prompt-delivery detection must agree with it, or a wrapped agent silently
+// gets the wrong prompt-delivery mechanism.
+func unwrappedCommandBase(command string) string {
+	base := filepath.Base(command)
+	return strings.TrimPrefix(base, "gt-")
+}
+
 // BuildCommandWithPrompt returns the full command line with an initial prompt.
 // If the config has an InitialPrompt, it's appended as a quoted argument.
 // If prompt is provided, it overrides the config's InitialPrompt.
@@ -885,22 +897,24 @@ func (rc *RuntimeConfig) BuildCommandWithPrompt(prompt string) string {
 		return base
 	}
 
+	cmdBase := unwrappedCommandBase(resolved.Command)
+
 	// OpenCode requires --prompt flag for initial prompt in interactive mode.
-	// Positional argument causes opencode to exit immediately.
-	// Match both "opencode" and full paths like "/home/user/.opencode/bin/opencode".
-	if resolved.Command == "opencode" || filepath.Base(resolved.Command) == "opencode" {
+	// Positional argument causes opencode to exit immediately (it's interpreted
+	// as a project directory to open).
+	if cmdBase == "opencode" {
 		return base + " --prompt " + quoteForShell(p)
 	}
 
 	// Copilot requires -i flag for initial prompt in interactive mode.
-	if resolved.Command == "copilot" || filepath.Base(resolved.Command) == "copilot" {
+	if cmdBase == "copilot" {
 		return base + " -i " + quoteForShell(p)
 	}
 
 	// Gemini requires -i (--prompt-interactive) to auto-execute the prompt
 	// while staying in interactive mode. Positional args populate the input
 	// field but don't execute, and -p runs headless (exits after completion).
-	if resolved.Command == "gemini" || filepath.Base(resolved.Command) == "gemini" {
+	if cmdBase == "gemini" {
 		return base + " -i " + quoteForShell(p)
 	}
 
@@ -919,7 +933,7 @@ func (rc *RuntimeConfig) BuildArgsWithPrompt(prompt string) []string {
 	}
 
 	if p != "" && resolved.PromptMode != "none" {
-		switch resolved.Command {
+		switch unwrappedCommandBase(resolved.Command) {
 		case "opencode":
 			args = append(args, "--prompt", p)
 		case "copilot", "gemini":
