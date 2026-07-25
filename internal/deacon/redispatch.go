@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/steveyegge/gastown/internal/beads"
+	"github.com/steveyegge/gastown/internal/config"
 	"github.com/steveyegge/gastown/internal/util"
 )
 
@@ -80,13 +81,14 @@ type ModelEscalationRule struct {
 // ModelEscalationConfig defines per-rig agent promotion rules for re-dispatch.
 // Loaded from <rig>/refinery/rig/.gastown/model-escalation.json.
 type ModelEscalationConfig struct {
-	Type             string                `json:"type"`
-	Version          int                   `json:"version"`
-	Enabled          bool                  `json:"enabled"`
-	Description      string                `json:"description,omitempty"`
-	Rules            []ModelEscalationRule `json:"rules"`
-	MaxTotalAttempts int                   `json:"max_total_attempts,omitempty"`
-	Fallback         string                `json:"fallback,omitempty"`
+	Type              string                    `json:"type"`
+	Version           int                       `json:"version"`
+	Enabled           bool                      `json:"enabled"`
+	Description       string                    `json:"description,omitempty"`
+	Rules             []ModelEscalationRule     `json:"rules"`
+	ValidationFailure *ValidationRecoveryConfig `json:"validation_failure,omitempty"`
+	MaxTotalAttempts  int                       `json:"max_total_attempts,omitempty"`
+	Fallback          string                    `json:"fallback,omitempty"`
 }
 
 // ModelEscalationConfigPath is the path within a rig project directory where
@@ -302,8 +304,28 @@ func Redispatch(townRoot, beadID, sourceRig string, maxAttempts int, cooldown ti
 		return result
 	}
 
+	// Determine the agent that failed. After a re-dispatch, LastAgent is the
+	// durable source of truth. On the first recovery, use the configured polecat
+	// agent for the rig. This lets from_agent rules prevent a hosted worker from
+	// being sent back to the hosted relief valve indefinitely.
+	fromAgent := beadState.LastAgent
+	if fromAgent == "" {
+		fromAgent = configuredPolecatAgent(townRoot, targetRig)
+	}
+
 	// Determine agent override from model escalation config (if any).
-	escalationAgent := resolveAgentForRedispatch(townRoot, targetRig, beadState)
+	escalationAgent, matchedRule := resolveAgentDecision(townRoot, targetRig, beadState, fromAgent)
+	if fromAgent != "" && !matchedRule {
+		result.Action = "escalated"
+		result.Message = fmt.Sprintf("no crash-recovery rule matches failed agent %q; escalated to Mayor", fromAgent)
+		if err := escalateToMayor(townRoot, beadID, beadState); err != nil {
+			result.Error = fmt.Errorf("escalating unmatched agent to mayor: %w", err)
+		} else {
+			beadState.RecordEscalation()
+		}
+		_ = SaveRedispatchState(townRoot, state)
+		return result
+	}
 
 	// Re-dispatch via gt sling
 	err = slingBead(townRoot, beadID, targetRig, escalationAgent)
@@ -420,13 +442,25 @@ func LoadModelEscalationConfig(rigProjectDir string) (*ModelEscalationConfig, er
 //
 // Returns "" (empty) if no escalation is configured or no rule applies — the caller
 // should omit the --agent flag and let the rig use its default.
-func resolveAgentForRedispatch(townRoot, targetRig string, beadState *BeadRedispatchState) string {
+func resolveAgentForRedispatch(townRoot, targetRig string, beadState *BeadRedispatchState, fromAgent ...string) string {
+	source := ""
+	if len(fromAgent) > 0 {
+		source = fromAgent[0]
+	}
+	agent, _ := resolveAgentDecision(townRoot, targetRig, beadState, source)
+	return agent
+}
+
+// resolveAgentDecision returns the target agent and whether an escalation rule
+// matched. fromAgent is enforced when present; an empty from_agent in config is
+// a wildcard for backwards compatibility.
+func resolveAgentDecision(townRoot, targetRig string, beadState *BeadRedispatchState, fromAgent string) (string, bool) {
 	// Rig project dir is <townRoot>/<rig>/refinery/rig
 	rigProjectDir := filepath.Join(townRoot, targetRig, "refinery", "rig")
 
 	cfg, err := LoadModelEscalationConfig(rigProjectDir)
 	if err != nil || cfg == nil || !cfg.Enabled || len(cfg.Rules) == 0 {
-		return ""
+		return "", true
 	}
 
 	// Total failures = prior re-dispatch attempts + 1 (initial failure that triggered
@@ -434,12 +468,31 @@ func resolveAgentForRedispatch(townRoot, targetRig string, beadState *BeadRedisp
 	// it reflects the number of completed re-dispatches, not the current one.
 	totalFailures := beadState.AttemptCount + 1
 
+	matchedSource := false
 	for _, rule := range cfg.Rules {
+		if rule.FromAgent != "" && fromAgent != "" && rule.FromAgent != fromAgent {
+			continue
+		}
+		matchedSource = true
 		if totalFailures >= rule.PromoteAfterFailures {
-			return rule.ToAgent
+			return rule.ToAgent, true
 		}
 	}
-	return ""
+	return "", matchedSource
+}
+
+// configuredPolecatAgent returns the rig's effective local worker alias when it
+// is explicitly configured. Validation setups pin this value so a first crash
+// can be matched against from_agent without relying on a dead tmux session.
+func configuredPolecatAgent(townRoot, rigName string) string {
+	settings, err := config.LoadRigSettings(config.RigSettingsPath(filepath.Join(townRoot, rigName)))
+	if err != nil || settings == nil {
+		return ""
+	}
+	if agent := strings.TrimSpace(settings.RoleAgents["polecat"]); agent != "" {
+		return agent
+	}
+	return strings.TrimSpace(settings.Agent)
 }
 
 // slingBead dispatches a bead to a rig via gt sling.

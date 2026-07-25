@@ -9,9 +9,9 @@ import (
 
 func TestParseRecoveredBeadSubject(t *testing.T) {
 	tests := []struct {
-		subject  string
-		wantID   string
-		wantOK   bool
+		subject string
+		wantID  string
+		wantOK  bool
 	}{
 		{"RECOVERED_BEAD gt-abc123", "gt-abc123", true},
 		{"RECOVERED_BEAD bd-xyz", "bd-xyz", true},
@@ -316,6 +316,35 @@ func TestResolveAgentForRedispatch_NoConfig(t *testing.T) {
 	got := resolveAgentForRedispatch(t.TempDir(), "myrig", state)
 	if got != "" {
 		t.Errorf("expected empty agent when no config, got %q", got)
+	}
+}
+
+func TestResolveAgentForRedispatch_EnforcesFromAgent(t *testing.T) {
+	townDir := t.TempDir()
+	rigName := "myrig"
+	rigProjectDir := filepath.Join(townDir, rigName, "refinery", "rig", ".gastown")
+	if err := os.MkdirAll(rigProjectDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	configContent := `{
+		"type": "model-escalation",
+		"version": 1,
+		"enabled": true,
+		"rules": [{
+			"from_agent": "opencode-local",
+			"to_agent": "opencode-go",
+			"promote_after_failures": 1
+		}]
+	}`
+	if err := os.WriteFile(filepath.Join(rigProjectDir, "model-escalation.json"), []byte(configContent), 0600); err != nil {
+		t.Fatal(err)
+	}
+	state := &BeadRedispatchState{BeadID: "gt-test"}
+	if got := resolveAgentForRedispatch(townDir, rigName, state, "opencode-local"); got != "opencode-go" {
+		t.Fatalf("local failure target = %q, want opencode-go", got)
+	}
+	if got := resolveAgentForRedispatch(townDir, rigName, state, "opencode-go"); got != "" {
+		t.Fatalf("hosted failure must not match local rule, got %q", got)
 	}
 }
 

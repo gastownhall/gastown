@@ -188,6 +188,21 @@ The `redispatch` command handles:
 Exit codes: 0=dispatched, 2=cooldown, 3=skipped. Non-zero non-error codes are
 informational - archive the message regardless.
 
+**VALIDATION_FAILED events** (from Refinery, daemon, or an operator):
+Confirmed validation regressions are recorded and processed mechanically by
+`gt validation report`; they do not need an LLM judgment pass in the inbox.
+Inspect the durable incident ledger during patrol:
+```bash
+gt validation status
+```
+The first distinct failure dispatches the configured hosted repair. Exact
+repeats are deduplicated. A distinct failure after the hosted attempt is
+escalated to Mayor and must not be re-dispatched automatically. Resolve
+pre-merge incidents after their source issue lands:
+```bash
+gt validation resolve --rig <rig> --source-issue <issue-id> --phase pre-merge
+```
+
 Callbacks may spawn new polecats, update issue state, or trigger other actions.
 
 **Hygiene principle**: Archive messages after they're fully processed.
