@@ -1,9 +1,10 @@
 description = """
 Boot triage cycle - the daemon's watchdog for Deacon health.
 
-Boot is spawned fresh on each daemon tick to decide whether to start/wake/nudge/interrupt
-the Deacon, or do nothing. This centralizes the "when to wake" decision in an agent that
-can reason about context rather than relying on mechanical thresholds.
+Boot is spawned fresh to handle either ordinary Deacon triage or one explicitly routed
+LM Studio recovery incident. Ordinary healthy triage decides whether to
+start/wake/nudge/interrupt the Deacon, or do nothing. Incident triage is keyed on
+watchdog status + $GT_AGENT and is strictly bounded by the incident dossier.
 
 Boot lifecycle:
 1. Observe (wisps, mail, git state, tmux panes)
@@ -24,7 +25,41 @@ title = "Observe system state"
 description = """
 Observe the current system state to inform triage decisions.
 
-**Step 1: Check Deacon state**
+**Step 1: Check the independent LM Studio watchdog and incident dossier**
+```bash
+watchdog_file="$GT_ROOT/deacon/lmstudio-watchdog.json"
+cat "$watchdog_file" 2>/dev/null || echo '{"status":"unknown"}'
+
+# For an active incident, obtain incident_id from the watchdog JSON, then read:
+# $GT_ROOT/deacon/recovery-incidents/<incident-id>.json
+```
+
+Read the entire incident dossier before any incident action. Treat both files as
+read-only. The watchdog owns every state transition and all success verification.
+
+Canonical watchdog phases:
+- `healthy`: there is no active incident; use ordinary Deacon triage below.
+- `suspect`: a first failure is awaiting mechanical confirmation.
+- `recovering-local`: the watchdog is performing bounded local recovery.
+- `escalated-go`: the watchdog has routed the incident to an `opencode-go` Boot.
+- `go-exhausted`: the watchdog positively correlated a Go quota or usage exhaustion error
+  to this incident. It does not mean merely that Go failed to recover service.
+- `claude-last-ditch`: explicit state authorization for one last-ditch Claude attempt.
+- `recovered-by-claude`: the watchdog mechanically verified recovery after that attempt.
+- `report-pending`: a mechanically verified incident needs an overseer report from an
+  `opencode-local` Boot.
+- `awaiting-human`: automated recovery is exhausted and human action is required.
+
+Record the exact `status`, `incident_id`, and current `$GT_AGENT`. Never infer a later
+phase from an agent's claim, a successful command, or the contents of an older dossier.
+Local mechanical recovery owns the 90-second head start before Go is spawned; Go does
+not own or extend that window.
+
+If an incident identifier is present, skip the ordinary Deacon observations below.
+Incident agents observe only the matching watchdog record, incident dossier, and the
+LM Studio evidence those records identify.
+
+**Step 2: Check Deacon state (ordinary triage only)**
 ```bash
 # Is Deacon session alive?
 tmux has-session -t hq-deacon 2>/dev/null && echo "alive" || echo "dead"
@@ -33,19 +68,7 @@ tmux has-session -t hq-deacon 2>/dev/null && echo "alive" || echo "dead"
 gt peek deacon --lines 20
 ```
 
-**Step 2: Check the independent LM Studio watchdog**
-```bash
-cat "$GT_ROOT/deacon/lmstudio-watchdog.json" 2>/dev/null || echo '{"status":"unknown"}'
-```
-
-Interpret the watchdog before acting on Deacon:
-- `healthy` or `recovered`: normal Deacon triage is allowed.
-- `suspect` or `recovering`: do not restart local agents yet; mechanical recovery owns
-  the incident.
-- `escalated-go`: mechanical recovery failed. Diagnose LM Studio, `lms server status`,
-  `lms ps`, and recent watchdog logs. Do not promote to Claude or Codex automatically.
-
-**Step 3: Check agent bead state**
+**Step 3: Check agent bead state (ordinary triage only)**
 ```bash
 bd show hq-deacon 2>/dev/null
 # Look for:
@@ -53,7 +76,7 @@ bd show hq-deacon 2>/dev/null
 # - last_activity: when was last update?
 ```
 
-**Step 4: Check recent activity**
+**Step 4: Check recent activity (ordinary triage only)**
 ```bash
 # Recent feed events
 gt feed --since 10m --plain | head -20
@@ -62,7 +85,7 @@ gt feed --since 10m --plain | head -20
 ls -lt $GT_ROOT/.beads-wisp/*.wisp.json 2>/dev/null | head -5
 ```
 
-**Step 5: Check Deacon mail**
+**Step 5: Check Deacon mail (ordinary triage only)**
 ```bash
 # Does Deacon have unread mail?
 gt mail inbox deacon 2>/dev/null | head -10
@@ -74,7 +97,10 @@ Record observations for the decide step:
 - last_activity_age: duration since last activity
 - pending_mail: count of unread messages
 - error_signals: any errors observed
-- lmstudio_status: healthy/suspect/recovering/recovered/escalated-go/unknown
+- lmstudio_status: healthy/suspect/recovering-local/escalated-go/go-exhausted/
+  claude-last-ditch/recovered-by-claude/report-pending/awaiting-human/unknown
+- incident_id: identifier from the watchdog, if any
+- boot_agent: `$GT_AGENT`
 """
 
 [[steps]]
@@ -83,6 +109,33 @@ title = "Decide on action"
 needs = ["observe"]
 description = """
 Analyze observations and decide what action to take.
+
+**Incident dispatch comes first**
+
+Dispatch primarily on the exact pair `status + $GT_AGENT`:
+
+| Watchdog status | Boot agent | Action |
+|-----------------|------------|--------|
+| `suspect` or `recovering-local` | Any | NOTHING; mechanical recovery owns the incident |
+| `escalated-go` | `opencode-go` | Diagnose/repair only this incident |
+| `go-exhausted` | Any | NOTHING; wait for an explicit watchdog transition |
+| `claude-last-ditch` | `claude` | Exactly one bounded last-ditch attempt |
+| `recovered-by-claude` | Any | NOTHING; wait for the watchdog's report transition |
+| `report-pending` | `opencode-local` | Validate watchdog proof and report |
+| `awaiting-human` | Any | NOTHING; preserve evidence for the human |
+| Any incident/agent mismatch | Any | NOTHING and exit |
+
+Incident work always preempts the ordinary matrix. Do not start, wake, recycle, or
+interrupt Deacon as an incidental part of incident handling.
+
+Only `go-exhausted` may transition to `claude-last-ditch`, and only the watchdog may
+make that transition. Ambiguous, authentication, network, or ordinary Go failures must transition to `awaiting-human`; they never authorize Claude. Elapsed time, an agent claim,
+and a generic nonzero exit are not evidence of quota or usage exhaustion.
+
+**Ordinary healthy triage**
+
+Only `healthy` (or `unknown` when there is no incident identifier) uses the existing
+Deacon decision matrix:
 
 **Decision Matrix**
 
@@ -96,11 +149,8 @@ Analyze observations and decide what action to take.
 | Alive, idle > 15 min | Any | WAKE |
 | Alive, stuck (errors) | Any | INTERRUPT |
 
-**LM Studio override:** When `lmstudio_status` is `suspect` or `recovering`, choose
-NOTHING and let mechanical recovery finish. When it is `escalated-go`, diagnose and
-repair LM Studio first; start or restart the local Deacon only after a successful API
-canary. Claude and Codex are extraordinary human-approved tiers and must never be
-selected automatically by Boot.
+Routine daemon triage must not spawn cloud recovery. It remains local and unchanged.
+An ordinary healthy Boot must never promote itself to Go or Claude.
 
 **Judgment Guidance**
 
@@ -132,6 +182,58 @@ title = "Execute decided action"
 needs = ["decide"]
 description = """
 Execute the action decided in the previous step.
+
+**Incident actions (higher priority than ordinary actions)**
+
+For `escalated-go` + `opencode-go`:
+1. Read the incident dossier again and confirm its `incident_id` still matches the
+   watchdog.
+2. Diagnose within incident scope only: LM Studio process/server health, `lms server
+   status`, `lms ps`, the API/JIT canary failure recorded in the dossier, and recent
+   watchdog/LM Studio logs for this incident.
+3. Apply only a bounded LM Studio repair relevant to that evidence. Do not touch Deacon,
+   unrelated agents, repositories, credentials, routing, or configuration hierarchy.
+4. Stop. Do not declare success and do not write the watchdog or dossier. The watchdog
+   will re-probe and classify the recorded Go result. It may record `go-exhausted` only
+   after positively correlating quota or usage exhaustion evidence to this incident;
+   ambiguous, authentication, network, and ordinary failures go to `awaiting-human`.
+
+For `claude-last-ditch` + `claude` only:
+1. Re-read the watchdog and incident dossier. If status is no longer exactly
+   `claude-last-ditch`, take no action and exit immediately.
+2. Make exactly one invocation's bounded repair attempt within the recorded incident
+   scope. Do not spawn or reinvoke Claude.
+3. Preserve LM Studio's required Qwen service contract:
+   `qwen/qwen3.6-35b-a3b`, `parallel=2`, and `TTL=14400`.
+4. Do not change gateways. Do not change the model hierarchy. Never invoke Codex.
+5. Do not claim or record recovery. Only the watchdog may declare recovery after its
+   independent canary. Exit immediately after the one attempt, whether it appears to
+   work or not.
+
+Claude must not act in `go-exhausted`, `awaiting-human`, or any other state. A human or
+the watchdog must explicitly authorize `claude-last-ditch`; Boot never creates that
+authorization and never spawns a cloud tier itself.
+
+For `report-pending` + `opencode-local`:
+1. Validate the recovered state by re-reading the current watchdog record and matching
+   incident dossier. Confirm that the watchdog, rather than an agent claim, recorded
+   the successful canary.
+2. Send a concise human-readable report to the overseer. Include incident id, start and
+   recovery timestamps, attempted tiers, watchdog canary evidence, current Qwen model,
+   parallelism/TTL, and any follow-up:
+```bash
+gt mail send overseer -s "LM Studio recovery report: <incident-id>" \
+  -m "Watchdog status: <recovered-by-claude or report-pending>
+Mechanical verification: <watchdog canary evidence>
+Incident summary: <human-readable summary from the matching dossier>" \
+  --permanent --type notification
+```
+3. Never rewrite the state to mark the report complete. Reporting acknowledgements and
+   all later transitions remain watchdog-owned.
+
+For `awaiting-human`, preserve the dossier and exit without another automated repair.
+
+**Ordinary Deacon actions (`healthy` only)**
 
 **NOTHING**
 No action needed. Log observation and exit.
@@ -177,6 +279,9 @@ needs = ["act"]
 description = """
 Clean up stale handoff messages from Deacon's inbox.
 
+Run this step only for ordinary `healthy` Deacon triage. Incident Boots do not clean
+mail; after their single routed action they proceed directly to exit.
+
 Handoff messages older than 1 hour are likely stale - the intended recipient
 either processed them or crashed before seeing them.
 
@@ -212,6 +317,11 @@ title = "Exit or handoff"
 needs = ["cleanup"]
 description = """
 Complete this Boot cycle.
+
+**Incident mode**
+Exit after the one routed action. Do not hand off to another agent, spawn another Boot,
+edit watchdog state, or reinterpret command success as recovery. All success remains
+mechanically verified by the watchdog.
 
 **In degraded mode (GT_DEGRADED=true)**
 Exit directly - no handoff needed:
