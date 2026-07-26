@@ -133,7 +133,7 @@ type AgentRuntime struct {
 	NotificationLevel string `json:"notification_level,omitempty"` // Notification level (verbose, normal, muted)
 	UnreadMail        int    `json:"unread_mail"`                  // Number of unread messages
 	FirstSubject      string `json:"first_subject,omitempty"`      // Subject of first unread message
-	AgentAlias        string `json:"agent_alias,omitempty"`        // Configured agent name (e.g., "opus-46", "pi")
+	AgentAlias        string `json:"agent_alias,omitempty"`        // Effective running agent, or configured agent when stopped
 	AgentInfo         string `json:"agent_info,omitempty"`         // Runtime summary (e.g., "claude/opus", "pi/kimi-k2p5")
 }
 
@@ -179,10 +179,18 @@ type StatusSum struct {
 	ActiveHooks   int `json:"active_hooks"`
 }
 
-// resolveAgentDisplay inspects the actual running process in the tmux session
-// to determine what runtime and model are being used. Falls back to config
-// when the session isn't running.
-func resolveAgentDisplay(townRoot string, townSettings *config.TownSettings, role string, sessionName string, running bool) (alias, info string) {
+var statusSessionEnvironment = func(sessionName, key string) (string, error) {
+	return tmux.NewTmux().GetEnvironment(sessionName, key)
+}
+
+var statusRuntimeDetector = detectRuntimeFromSession
+
+// resolveAgentDisplay reports the effective runtime for a running session and
+// the effective configured runtime for a stopped agent. GT_AGENT is set from
+// the final runtime config (including --agent overrides), so it is more
+// authoritative than the workspace default and works on platforms without
+// /proc process inspection.
+func resolveAgentDisplay(townRoot, rigPath, role, agentName, sessionName string, running bool) (alias, info string) {
 	// Map legacy role names to config role names
 	configRole := role
 	switch role {
@@ -192,12 +200,18 @@ func resolveAgentDisplay(townRoot string, townSettings *config.TownSettings, rol
 		configRole = constants.RoleDeacon
 	}
 
-	// Get alias from config
-	if townSettings != nil {
-		alias = townSettings.RoleAgents[configRole]
-		if alias == "" {
-			alias = townSettings.DefaultAgent
+	var configuredRuntime *config.RuntimeConfig
+	if (configRole == constants.RolePolecat || configRole == constants.RoleCrew) && agentName != "" {
+		configuredRuntime = config.ResolveWorkerAgentConfig(agentName, townRoot, rigPath)
+		if configuredRuntime != nil {
+			alias = configuredRuntime.ResolvedAgent
 		}
+	}
+	if configuredRuntime == nil {
+		configuredRuntime = config.ResolveRoleAgentConfig(configRole, townRoot, rigPath)
+	}
+	if alias == "" {
+		alias, _ = config.ResolveRoleAgentName(configRole, townRoot, rigPath)
 	}
 
 	// If mayor is in ACP mode, use the ACP agent name instead
@@ -207,24 +221,45 @@ func resolveAgentDisplay(townRoot string, townSettings *config.TownSettings, rol
 		}
 	}
 
-	// If session is running, inspect the actual process
+	// A running session records the final selected alias, including recovery
+	// overrides such as opencode-go.
 	if running && sessionName != "" {
-		if detected := detectRuntimeFromSession(sessionName); detected != "" {
+		if activeAlias, err := statusSessionEnvironment(sessionName, "GT_AGENT"); err == nil && activeAlias != "" {
+			alias = activeAlias
+			if content, envErr := statusSessionEnvironment(sessionName, "OPENCODE_CONFIG_CONTENT"); envErr == nil {
+				info = openCodeModelInfo(content)
+			}
+			if info == "" {
+				if activeRuntime, _, resolveErr := config.ResolveAgentConfigWithOverride(townRoot, rigPath, activeAlias); resolveErr == nil {
+					info = buildInfoFromConfig(activeRuntime)
+				}
+			}
+		}
+		if detected := statusRuntimeDetector(sessionName); detected != "" && info == "" {
 			info = detected
-			return alias, info
 		}
 	}
 
 	// Fall back to config-based display
-	if townSettings != nil && alias != "" {
-		rc := townSettings.Agents[alias]
-		if rc != nil {
-			info = buildInfoFromConfig(rc)
-		} else {
-			info = alias
-		}
+	if info == "" && configuredRuntime != nil {
+		info = buildInfoFromConfig(configuredRuntime)
+	}
+	if info == "" {
+		info = alias
 	}
 	return alias, info
+}
+
+// openCodeModelInfo extracts only the non-sensitive model identifier from
+// OPENCODE_CONFIG_CONTENT. The full session configuration is never exposed.
+func openCodeModelInfo(content string) string {
+	var cfg struct {
+		Model string `json:"model"`
+	}
+	if err := json.Unmarshal([]byte(content), &cfg); err != nil {
+		return ""
+	}
+	return strings.TrimSpace(cfg.Model)
 }
 
 // detectRuntimeFromSession inspects the actual process tree in a tmux session
@@ -429,6 +464,11 @@ func readPiDefaults() string {
 
 // buildInfoFromConfig builds display info from a RuntimeConfig (fallback when not running).
 func buildInfoFromConfig(rc *config.RuntimeConfig) string {
+	if content := rc.Env["OPENCODE_CONFIG_CONTENT"]; content != "" {
+		if model := openCodeModelInfo(content); model != "" {
+			return model
+		}
+	}
 	if rc.Command == "" {
 		return "claude"
 	}
@@ -638,9 +678,6 @@ func gatherStatus() (TownStatus, error) {
 		rigsConfig = &config.RigsConfig{Rigs: make(map[string]config.RigEntry)}
 	}
 
-	// Load town settings for agent display info
-	townSettings, _ := config.LoadOrCreateTownSettings(config.TownSettingsPath(townRoot))
-
 	// Create rig manager
 	g := git.NewGit(townRoot)
 	mgr := rig.NewManager(townRoot, rigsConfig, g)
@@ -678,6 +715,10 @@ func gatherStatus() (TownStatus, error) {
 	rigs, err := mgr.DiscoverRigs()
 	if err != nil {
 		return TownStatus{}, fmt.Errorf("discovering rigs: %w", err)
+	}
+	rigPaths := make(map[string]string, len(rigs))
+	for _, r := range rigs {
+		rigPaths[r.Name] = r.Path
 	}
 
 	// Pre-fetch agent beads across all rig-specific beads DBs. If another status
@@ -952,14 +993,15 @@ func gatherStatus() (TownStatus, error) {
 	// Enrich agents with runtime info — inspect actual running processes
 	for i := range status.Agents {
 		a := &status.Agents[i]
-		alias, info := resolveAgentDisplay(townRoot, townSettings, a.Role, a.Session, a.Running)
+		alias, info := resolveAgentDisplay(townRoot, "", a.Role, a.Name, a.Session, a.Running)
 		a.AgentAlias = alias
 		a.AgentInfo = info
 	}
 	for i := range status.Rigs {
+		rigPath := rigPaths[status.Rigs[i].Name]
 		for j := range status.Rigs[i].Agents {
 			a := &status.Rigs[i].Agents[j]
-			alias, info := resolveAgentDisplay(townRoot, townSettings, a.Role, a.Session, a.Running)
+			alias, info := resolveAgentDisplay(townRoot, rigPath, a.Role, a.Name, a.Session, a.Running)
 			a.AgentAlias = alias
 			a.AgentInfo = info
 		}

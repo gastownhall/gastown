@@ -396,7 +396,19 @@ func New(config *Config) (*Daemon, error) {
 		metrics:         dm,
 		rigPool:         newRigWorkerPool(0, 0, logger), // defaults: 10 workers, 30s timeout
 	}
+	d.ensureRigWispConfigs()
 	return d, nil
+}
+
+// ensureRigWispConfigs reconciles the optional local config layer once at
+// daemon startup. Missing files represent an empty operational config, so
+// create that canonical state instead of warning on every patrol cycle.
+func (d *Daemon) ensureRigWispConfigs() {
+	for _, rigName := range d.getKnownRigs() {
+		if err := wisp.NewConfig(d.config.TownRoot, rigName).Ensure(); err != nil {
+			d.logger.Printf("Warning: failed to initialize wisp config for %s: %v", rigName, err)
+		}
+	}
 }
 
 func applyDoltServerConfigEnv(config *DoltServerConfig) {
@@ -2192,11 +2204,6 @@ func (d *Daemon) getPatrolRigs(patrol string) []string {
 // (daemon cannot import cmd).
 func (d *Daemon) isRigOperational(rigName string) (bool, string) {
 	cfg := wisp.NewConfig(d.config.TownRoot, rigName)
-
-	// Warn if wisp config is missing - parked/docked state may have been lost
-	if _, err := os.Stat(cfg.ConfigPath()); os.IsNotExist(err) {
-		d.logger.Printf("Warning: no wisp config for %s - parked state may have been lost", rigName)
-	}
 
 	// Check wisp layer first (local/ephemeral overrides)
 	status := cfg.GetString("status")

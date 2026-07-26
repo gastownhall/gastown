@@ -1,10 +1,61 @@
 package wisp
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"testing"
 )
+
+func TestConfig_EnsureCreatesCanonicalEmptyConfig(t *testing.T) {
+	tmpDir := t.TempDir()
+	cfg := NewConfig(tmpDir, "testrig")
+
+	if err := cfg.Ensure(); err != nil {
+		t.Fatalf("Ensure() error: %v", err)
+	}
+
+	data, err := os.ReadFile(cfg.ConfigPath())
+	if err != nil {
+		t.Fatalf("read ensured config: %v", err)
+	}
+	var got ConfigFile
+	if err := json.Unmarshal(data, &got); err != nil {
+		t.Fatalf("unmarshal ensured config: %v", err)
+	}
+	if got.Rig != "testrig" {
+		t.Fatalf("Rig = %q, want testrig", got.Rig)
+	}
+	if got.Values == nil || len(got.Values) != 0 {
+		t.Fatalf("Values = %#v, want initialized empty map", got.Values)
+	}
+	if got.Blocked == nil || len(got.Blocked) != 0 {
+		t.Fatalf("Blocked = %#v, want initialized empty slice", got.Blocked)
+	}
+}
+
+func TestConfig_EnsurePreservesExistingConfig(t *testing.T) {
+	tmpDir := t.TempDir()
+	cfg := NewConfig(tmpDir, "testrig")
+	if err := cfg.Set("status", "parked"); err != nil {
+		t.Fatalf("Set() error: %v", err)
+	}
+	before, err := os.ReadFile(cfg.ConfigPath())
+	if err != nil {
+		t.Fatalf("read config before Ensure: %v", err)
+	}
+
+	if err := cfg.Ensure(); err != nil {
+		t.Fatalf("Ensure() error: %v", err)
+	}
+	after, err := os.ReadFile(cfg.ConfigPath())
+	if err != nil {
+		t.Fatalf("read config after Ensure: %v", err)
+	}
+	if string(after) != string(before) {
+		t.Fatalf("Ensure() changed existing config:\nbefore: %s\nafter: %s", before, after)
+	}
+}
 
 func TestConfig_BasicOperations(t *testing.T) {
 	// Create temp directory for test

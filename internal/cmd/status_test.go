@@ -394,6 +394,74 @@ func TestParseRuntimeInfo_PiBare(t *testing.T) {
 	}
 }
 
+func TestOpenCodeModelInfo(t *testing.T) {
+	t.Parallel()
+	if got := openCodeModelInfo(`{"lsp":true,"model":"opencode-go/qwen3.7-max"}`); got != "opencode-go/qwen3.7-max" {
+		t.Fatalf("openCodeModelInfo() = %q, want opencode-go/qwen3.7-max", got)
+	}
+	if got := openCodeModelInfo(`{"lsp":true}`); got != "" {
+		t.Fatalf("openCodeModelInfo() without model = %q, want empty", got)
+	}
+	if got := openCodeModelInfo(`not-json`); got != "" {
+		t.Fatalf("openCodeModelInfo() invalid JSON = %q, want empty", got)
+	}
+}
+
+func TestResolveAgentDisplay_RunningSessionUsesEffectiveAliasAndModel(t *testing.T) {
+	oldEnvironment := statusSessionEnvironment
+	oldDetector := statusRuntimeDetector
+	t.Cleanup(func() {
+		statusSessionEnvironment = oldEnvironment
+		statusRuntimeDetector = oldDetector
+	})
+
+	statusSessionEnvironment = func(_ string, key string) (string, error) {
+		switch key {
+		case "GT_AGENT":
+			return "opencode-go", nil
+		case "OPENCODE_CONFIG_CONTENT":
+			return `{"lsp":true,"model":"opencode-go/qwen3.7-max"}`, nil
+		default:
+			return "", os.ErrNotExist
+		}
+	}
+	statusRuntimeDetector = func(string) string { return "" }
+
+	alias, info := resolveAgentDisplay(t.TempDir(), "", "polecat", "jasper", "cy-jasper", true)
+	if alias != "opencode-go" {
+		t.Fatalf("alias = %q, want opencode-go", alias)
+	}
+	if info != "opencode-go/qwen3.7-max" {
+		t.Fatalf("info = %q, want opencode-go/qwen3.7-max", info)
+	}
+}
+
+func TestResolveAgentDisplay_StoppedAgentUsesRigRoleSetting(t *testing.T) {
+	townRoot := t.TempDir()
+	rigPath := filepath.Join(townRoot, "canary")
+	if err := os.MkdirAll(rigPath, 0o755); err != nil {
+		t.Fatalf("mkdir rig: %v", err)
+	}
+
+	townSettings := config.NewTownSettings()
+	townSettings.DefaultAgent = "claude"
+	if err := config.SaveTownSettings(config.TownSettingsPath(townRoot), townSettings); err != nil {
+		t.Fatalf("save town settings: %v", err)
+	}
+	rigSettings := config.NewRigSettings()
+	rigSettings.Agent = "codex"
+	rigSettings.RoleAgents = make(map[string]string)
+	rigSettings.RoleAgents["witness"] = "gemini"
+	if err := config.SaveRigSettings(config.RigSettingsPath(rigPath), rigSettings); err != nil {
+		t.Fatalf("save rig settings: %v", err)
+	}
+
+	alias, _ := resolveAgentDisplay(townRoot, rigPath, "witness", "witness", "", false)
+	if alias != "gemini" {
+		t.Fatalf("alias = %q, want rig role alias gemini", alias)
+	}
+}
+
 func TestBuildInfoFromConfig(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
@@ -420,6 +488,16 @@ func TestBuildInfoFromConfig(t *testing.T) {
 			name: "opencode with -m",
 			rc:   &config.RuntimeConfig{Command: "opencode", Args: []string{"-m", "gpt-5"}},
 			want: "opencode/gpt-5",
+		},
+		{
+			name: "opencode model from environment config",
+			rc: &config.RuntimeConfig{
+				Command: "gt-opencode",
+				Env: map[string]string{
+					"OPENCODE_CONFIG_CONTENT": `{"lsp":true,"model":"lmstudio/qwen/qwen3.6-35b-a3b"}`,
+				},
+			},
+			want: "lmstudio/qwen/qwen3.6-35b-a3b",
 		},
 		{
 			name: "empty command",
