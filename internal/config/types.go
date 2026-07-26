@@ -356,6 +356,11 @@ type DaemonThresholds struct {
 	// (deacon was healthy). Prevents burning API calls when deacon is running fine (default "15m").
 	BootIdleSuppression string `json:"boot_idle_suppression,omitempty"`
 
+	// BootAutoSpawn controls daemon-triggered AI Boot sessions (default true).
+	// Disable when an independent mechanical watchdog invokes Boot only for
+	// confirmed recovery incidents.
+	BootAutoSpawn *bool `json:"boot_auto_spawn,omitempty"`
+
 	// DeaconGracePeriod is time to wait after starting Deacon before checking heartbeat (default "5m").
 	DeaconGracePeriod string `json:"deacon_grace_period,omitempty"`
 

@@ -33,7 +33,19 @@ tmux has-session -t hq-deacon 2>/dev/null && echo "alive" || echo "dead"
 gt peek deacon --lines 20
 ```
 
-**Step 2: Check agent bead state**
+**Step 2: Check the independent LM Studio watchdog**
+```bash
+cat "$GT_ROOT/deacon/lmstudio-watchdog.json" 2>/dev/null || echo '{"status":"unknown"}'
+```
+
+Interpret the watchdog before acting on Deacon:
+- `healthy` or `recovered`: normal Deacon triage is allowed.
+- `suspect` or `recovering`: do not restart local agents yet; mechanical recovery owns
+  the incident.
+- `escalated-go`: mechanical recovery failed. Diagnose LM Studio, `lms server status`,
+  `lms ps`, and recent watchdog logs. Do not promote to Claude or Codex automatically.
+
+**Step 3: Check agent bead state**
 ```bash
 bd show hq-deacon 2>/dev/null
 # Look for:
@@ -41,7 +53,7 @@ bd show hq-deacon 2>/dev/null
 # - last_activity: when was last update?
 ```
 
-**Step 3: Check recent activity**
+**Step 4: Check recent activity**
 ```bash
 # Recent feed events
 gt feed --since 10m --plain | head -20
@@ -50,7 +62,7 @@ gt feed --since 10m --plain | head -20
 ls -lt $GT_ROOT/.beads-wisp/*.wisp.json 2>/dev/null | head -5
 ```
 
-**Step 4: Check Deacon mail**
+**Step 5: Check Deacon mail**
 ```bash
 # Does Deacon have unread mail?
 gt mail inbox deacon 2>/dev/null | head -10
@@ -62,6 +74,7 @@ Record observations for the decide step:
 - last_activity_age: duration since last activity
 - pending_mail: count of unread messages
 - error_signals: any errors observed
+- lmstudio_status: healthy/suspect/recovering/recovered/escalated-go/unknown
 """
 
 [[steps]]
@@ -82,6 +95,12 @@ Analyze observations and decide what action to take.
 | Alive, idle 5-15 min | Has mail | NUDGE |
 | Alive, idle > 15 min | Any | WAKE |
 | Alive, stuck (errors) | Any | INTERRUPT |
+
+**LM Studio override:** When `lmstudio_status` is `suspect` or `recovering`, choose
+NOTHING and let mechanical recovery finish. When it is `escalated-go`, diagnose and
+repair LM Studio first; start or restart the local Deacon only after a successful API
+canary. Claude and Codex are extraordinary human-approved tiers and must never be
+selected automatically by Boot.
 
 **Judgment Guidance**
 

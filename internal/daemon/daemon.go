@@ -1330,6 +1330,11 @@ func (d *Daemon) bootSpawnCooldown() time.Duration {
 }
 
 func (d *Daemon) ensureBootRunning() {
+	if !d.loadOperationalConfig().GetDaemonConfig().BootAutoSpawnV() {
+		d.logger.Println("Automatic Boot spawning disabled; waiting for explicit incident triage")
+		return
+	}
+
 	// Cooldown gate: skip if Boot was spawned recently (fixes #2084)
 	if !d.bootLastSpawned.IsZero() && time.Since(d.bootLastSpawned) < d.bootSpawnCooldown() {
 		d.logger.Printf("Boot spawned %s ago, within cooldown (%s), skipping",
