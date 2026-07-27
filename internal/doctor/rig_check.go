@@ -371,8 +371,12 @@ type WitnessExistsCheck struct {
 	FixableCheck
 	rigPath     string
 	needsCreate bool
-	needsClone  bool
-	needsMail   bool
+}
+
+// CanFix is state-dependent: creating a missing directory is safe, but
+// replacing an unexpected file at witness/ requires manual inspection.
+func (c *WitnessExistsCheck) CanFix() bool {
+	return c.needsCreate
 }
 
 // NewWitnessExistsCheck creates a new witness exists check.
@@ -400,30 +404,34 @@ func (c *WitnessExistsCheck) Run(ctx *CheckContext) *CheckResult {
 	}
 
 	witnessDir := filepath.Join(c.rigPath, "witness")
-	rigClone := filepath.Join(witnessDir, "rig")
-	mailInbox := filepath.Join(witnessDir, "mail", "inbox.jsonl")
-
 	var issues []string
+	misplacedRootGit := false
 	c.needsCreate = false
-	c.needsClone = false
-	c.needsMail = false
 
-	// Check witness/ directory
-	if _, err := os.Stat(witnessDir); os.IsNotExist(err) {
+	// witness/ is the canonical clone-free working directory. Older towns may
+	// still have a witness/rig git clone; the witness manager supports that
+	// layout, but a clone is no longer a structural requirement. Runtime
+	// settings and hooks are intentionally owned by their dedicated checks.
+	info, err := os.Stat(witnessDir)
+	if os.IsNotExist(err) {
 		issues = append(issues, "Missing: witness/")
 		c.needsCreate = true
+	} else if err != nil {
+		issues = append(issues, fmt.Sprintf("Cannot inspect witness/: %v", err))
+	} else if !info.IsDir() {
+		issues = append(issues, "Invalid: witness/ is not a directory")
 	} else {
-		// Check witness/rig/ clone
-		rigGit := filepath.Join(rigClone, ".git")
-		if _, err := os.Stat(rigGit); os.IsNotExist(err) {
-			issues = append(issues, "Missing: witness/rig/ (git clone)")
-			c.needsClone = true
-		}
-
-		// Check witness/mail/inbox.jsonl
-		if _, err := os.Stat(mailInbox); os.IsNotExist(err) {
-			issues = append(issues, "Missing: witness/mail/inbox.jsonl")
-			c.needsMail = true
+		// Canonical Witness homes are clone-free at witness/ itself. A Git
+		// marker here means a product worktree was misplaced one level too
+		// high; only the supported legacy witness/rig/.git layout may contain
+		// product Git metadata.
+		rootGit := filepath.Join(witnessDir, ".git")
+		if _, err := os.Lstat(rootGit); err == nil {
+			misplacedRootGit = true
+			issues = append(issues,
+				"Invalid: witness/.git is a misplaced product worktree; canonical witness/ must be clone-free (legacy Git belongs at witness/rig/.git)")
+		} else if !os.IsNotExist(err) {
+			issues = append(issues, fmt.Sprintf("Cannot inspect witness/.git: %v", err))
 		}
 	}
 
@@ -435,39 +443,32 @@ func (c *WitnessExistsCheck) Run(ctx *CheckContext) *CheckResult {
 		}
 	}
 
+	fixHint := "Replace the invalid witness/ path with a directory after preserving any file contents"
+	if c.needsCreate {
+		fixHint = "Run 'gt doctor --fix' to create missing structure"
+	} else if misplacedRootGit {
+		fixHint = "Preserve any product changes, then remove the misplaced witness/.git worktree; use clone-free witness/ or supported legacy witness/rig/.git"
+	}
 	return &CheckResult{
 		Name:    c.Name(),
 		Status:  StatusWarning,
 		Message: "Witness structure incomplete",
 		Details: issues,
-		FixHint: "Run 'gt doctor --fix' to create missing structure",
+		FixHint: fixHint,
 	}
 }
 
 // Fix creates missing witness structure.
 func (c *WitnessExistsCheck) Fix(ctx *CheckContext) error {
+	if !c.needsCreate {
+		return ErrCannotFix
+	}
 	witnessDir := filepath.Join(c.rigPath, "witness")
 
 	if c.needsCreate {
 		if err := os.MkdirAll(witnessDir, 0755); err != nil {
 			return fmt.Errorf("failed to create witness/: %w", err)
 		}
-	}
-
-	if c.needsMail {
-		mailDir := filepath.Join(witnessDir, "mail")
-		if err := os.MkdirAll(mailDir, 0755); err != nil {
-			return fmt.Errorf("failed to create witness/mail/: %w", err)
-		}
-		inboxPath := filepath.Join(mailDir, "inbox.jsonl")
-		if err := os.WriteFile(inboxPath, []byte{}, 0644); err != nil {
-			return fmt.Errorf("failed to create inbox.jsonl: %w", err)
-		}
-	}
-
-	// Note: Cannot auto-fix clone without knowing the repo URL
-	if c.needsClone {
-		return fmt.Errorf("cannot auto-create witness/rig/ clone (requires repo URL)")
 	}
 
 	return nil

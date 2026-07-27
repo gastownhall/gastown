@@ -351,7 +351,7 @@ func New(config *Config) (*Daemon, error) {
 	}
 	restartTracker := NewRestartTracker(config.TownRoot, rtCfg)
 	if err := restartTracker.Load(); err != nil {
-		logger.Printf("Warning: failed to load restart state: %v", err)
+		logger.Printf("Warning: failed to load restart state; restart authorization is fail-closed: %v", err)
 	}
 
 	// Initialize OpenTelemetry (best-effort — telemetry failure never blocks startup).
@@ -729,6 +729,17 @@ func (d *Daemon) Run() (err error) {
 		d.logger.Printf("Quota dog ticker started (interval %v)", interval)
 	}
 
+	// Scan local agent panes independently of the general heartbeat. A living
+	// OpenCode process can retain a terminal after its model has fatally
+	// crashed, so process liveness alone is insufficient.
+	modelCrashExecutor := &daemonModelCrashExecutor{daemon: d}
+	modelCrashSupervisor := newModelCrashSupervisor(
+		modelCrashStateFile(d.config.TownRoot), realModelCrashClock{}, modelCrashExecutor)
+	modelCrashTicker := time.NewTicker(modelCrashScanInterval)
+	modelCrashChan := modelCrashTicker.C
+	defer modelCrashTicker.Stop()
+	d.logger.Printf("Local model-crash supervisor started (interval %v)", modelCrashScanInterval)
+
 	// Note: PATCH-010 uses per-session hooks in deacon/manager.go (SetAutoRespawnHook).
 	// Global pane-died hooks don't fire reliably in tmux 3.2a, so we rely on the
 	// per-session approach which has been tested to work for continuous recovery.
@@ -753,7 +764,7 @@ func (d *Daemon) Run() (err error) {
 				d.logger.Println("Received reload-restart signal, reloading restart tracker from disk")
 				if d.restartTracker != nil {
 					if err := d.restartTracker.Load(); err != nil {
-						d.logger.Printf("Warning: failed to reload restart tracker: %v", err)
+						d.logger.Printf("Warning: failed to reload restart tracker; restart authorization remains fail-closed: %v", err)
 					}
 				}
 			} else {
@@ -836,6 +847,13 @@ func (d *Daemon) Run() (err error) {
 			// rotates credentials to available accounts via keychain swap.
 			if !d.isShutdownInProgress() {
 				d.runQuotaDog()
+			}
+
+		case <-modelCrashChan:
+			if !d.isShutdownInProgress() && !estop.IsActive(d.config.TownRoot) {
+				if err := modelCrashSupervisor.Scan(); err != nil {
+					d.logger.Printf("Local model-crash supervisor scan failed: %v", err)
+				}
 			}
 
 		case <-timer.C:
@@ -1335,6 +1353,13 @@ func (d *Daemon) ensureBootRunning() {
 		return
 	}
 
+	// A Deacon crash-loop latch is handled by RestartTracker's local watchdog
+	// probe gate. Never promote this infrastructure loop to hosted Boot.
+	if d.restartTracker != nil && d.restartTracker.IsInCrashLoop("deacon") {
+		d.logger.Println("Deacon crash loop latched; hosted Boot suppressed (local watchdog probe only)")
+		return
+	}
+
 	// Cooldown gate: skip if Boot was spawned recently (fixes #2084)
 	if !d.bootLastSpawned.IsZero() && time.Since(d.bootLastSpawned) < d.bootSpawnCooldown() {
 		d.logger.Printf("Boot spawned %s ago, within cooldown (%s), skipping",
@@ -1478,28 +1503,50 @@ func (d *Daemon) runDegradedBootTriage(b *boot.Boot) {
 // ensureDeaconRunning ensures the Deacon is running.
 // Uses deacon.Manager for consistent startup behavior (WaitForShellReady, GUPP, etc.).
 func (d *Daemon) ensureDeaconRunning() {
+	d.ensureDeaconRunningWithManager(deacon.NewManager(d.config.TownRoot))
+}
+
+type deaconProbeManager interface {
+	Start(string) error
+	Stop() error
+}
+
+func (d *Daemon) ensureDeaconRunningWithManager(mgr deaconProbeManager) {
 	const agentID = "deacon"
 
-	// Check restart tracker for backoff/crash loop
-	if d.restartTracker != nil {
-		if d.restartTracker.IsInCrashLoop(agentID) {
-			d.logger.Printf("Deacon is in crash loop, skipping restart (use 'gt daemon clear-backoff deacon' to reset)")
-			return
-		}
-		if !d.restartTracker.CanRestart(agentID) {
-			remaining := d.restartTracker.GetBackoffRemaining(agentID)
-			d.logger.Printf("Deacon restart in backoff, %s remaining", remaining.Round(time.Second))
-			return
-		}
+	d.retryDeaconCrashLoopAlertWithNotification(agentID, sendModelCrashNotification)
+
+	allowed, crashLoopProbe := d.authorizeDeaconRestartDecision(agentID)
+	if !allowed {
+		return
 	}
 
-	mgr := deacon.NewManager(d.config.TownRoot)
+	if crashLoopProbe && d.deaconHeartbeatFresh(d.restartTracker.now()) {
+		d.restartTracker.RecordSuccess(agentID)
+		if err := d.restartTracker.Save(); err != nil {
+			d.logger.Printf("Warning: failed to persist stable Deacon crash-loop recovery: %v", err)
+		}
+		return
+	}
 
-	if err := mgr.Start(""); err != nil {
+	agentOverride := ""
+	if crashLoopProbe {
+		if err := mgr.Stop(); err != nil && err != deacon.ErrNotRunning {
+			d.logger.Printf("Deacon local probe could not stop stale session: %v", err)
+			return
+		}
+		agentOverride = "opencode-local"
+	}
+
+	if err := mgr.Start(agentOverride); err != nil {
 		if err == deacon.ErrAlreadyRunning {
-			// Deacon is running - record success to reset backoff
-			if d.restartTracker != nil {
+			// Only an ordinary check may treat an existing process as success.
+			// A crash-loop probe with a stale heartbeat must keep the latch.
+			if d.restartTracker != nil && !crashLoopProbe {
 				d.restartTracker.RecordSuccess(agentID)
+				if saveErr := d.restartTracker.Save(); saveErr != nil {
+					d.logger.Printf("Warning: failed to persist Deacon restart success: %v", saveErr)
+				}
 			}
 			return
 		}
@@ -1509,18 +1556,87 @@ func (d *Daemon) ensureDeaconRunning() {
 
 	// Record this restart attempt for backoff tracking
 	if d.restartTracker != nil {
-		d.restartTracker.RecordRestart(agentID)
+		newlyLatched := d.restartTracker.RecordRestart(agentID)
 		if err := d.restartTracker.Save(); err != nil {
 			d.logger.Printf("Warning: failed to save restart state: %v", err)
+		}
+		if newlyLatched {
+			d.retryDeaconCrashLoopAlertWithNotification(agentID, sendModelCrashNotification)
 		}
 	}
 
 	// Track when we started the Deacon to prevent race condition in checkDeaconHeartbeat.
 	// The heartbeat file will still be stale until the Deacon runs a full patrol cycle.
 	d.deaconLastStarted = time.Now()
-	d.metrics.recordRestart(d.ctx, "deacon")
+	if d.metrics != nil {
+		d.metrics.recordRestart(d.ctx, "deacon")
+	}
 	telemetry.RecordDaemonRestart(d.ctx, "deacon")
 	d.logger.Println("Deacon started successfully")
+}
+
+// authorizeDeaconRestart applies ordinary backoff plus the stricter
+// crash-loop probe gate. A latched probe is local-only, requires a fresh
+// healthy LM Studio watchdog observation, and bypasses CanRestart exactly once
+// because CanRestart deliberately remains false while the latch persists.
+func (d *Daemon) authorizeDeaconRestart(agentID string) bool {
+	allowed, _ := d.authorizeDeaconRestartDecision(agentID)
+	return allowed
+}
+
+func (d *Daemon) authorizeDeaconRestartDecision(agentID string) (allowed, crashLoopProbe bool) {
+	if d.restartTracker == nil {
+		return true, false
+	}
+	if !d.restartTracker.IsInCrashLoop(agentID) {
+		if d.restartTracker.CanRestart(agentID) {
+			return true, false
+		}
+		remaining := d.restartTracker.GetBackoffRemaining(agentID)
+		d.logger.Printf("Deacon restart in backoff, %s remaining", remaining.Round(time.Second))
+		return false, false
+	}
+
+	if !d.localModelWatchdogHealthy(d.restartTracker.now()) {
+		d.logger.Printf("Deacon crash-loop probe blocked: LM Studio watchdog is not fresh and healthy")
+		return false, false
+	}
+	taken, err := d.restartTracker.TakeWatchdogProbePersisted(agentID)
+	if err != nil {
+		d.logger.Printf("Deacon crash-loop probe blocked: failed to persist consumed probe: %v", err)
+		return false, false
+	}
+	if !taken {
+		d.logger.Printf("Deacon is in crash loop, local watchdog probe remains in cooldown (use 'gt daemon clear-backoff deacon' to reset)")
+		return false, false
+	}
+	d.logger.Printf("Deacon crash-loop cooldown elapsed with healthy local watchdog; allowing one local probe")
+	return true, true
+}
+
+func (d *Daemon) deaconHeartbeatFresh(now time.Time) bool {
+	hb := deacon.ReadHeartbeat(d.config.TownRoot)
+	if hb == nil || hb.Timestamp.IsZero() {
+		return false
+	}
+	age := now.Sub(hb.Timestamp)
+	return age >= 0 && age < deacon.HeartbeatStaleThreshold
+}
+
+func (d *Daemon) localModelWatchdogHealthy(now time.Time) bool {
+	data, err := os.ReadFile(filepath.Join(d.config.TownRoot, "deacon", "lmstudio-watchdog.json"))
+	if err != nil {
+		return false
+	}
+	var state struct {
+		Status    string    `json:"status"`
+		CheckedAt time.Time `json:"checked_at"`
+	}
+	if json.Unmarshal(data, &state) != nil || state.Status != "healthy" || state.CheckedAt.IsZero() {
+		return false
+	}
+	age := now.Sub(state.CheckedAt)
+	return age >= 0 && age <= 2*time.Minute
 }
 
 // deaconGracePeriod returns the config-driven deacon grace period.
@@ -1662,7 +1778,6 @@ func (d *Daemon) restartStuckDeacon(sessionName, reason string) {
 	if d.restartTracker != nil {
 		if d.restartTracker.IsInCrashLoop(agentID) {
 			d.logger.Printf("Stuck-agent-dog: Deacon in crash loop, not restarting (use 'gt daemon clear-backoff deacon')")
-			d.notifySlack("admin", "critical", fmt.Sprintf("Deacon crash loop detected — manual intervention required. Reason: %s", reason))
 			return
 		}
 		if !d.restartTracker.CanRestart(agentID) {
@@ -1714,6 +1829,48 @@ func (d *Daemon) restartStuckDeacon(sessionName, reason string) {
 
 	d.logger.Printf("Stuck-agent-dog: Deacon restarted successfully")
 	d.notifySlack("admin", "high", fmt.Sprintf("Deacon was stuck (%s) — auto-restarted successfully", reason))
+}
+
+func (d *Daemon) alertDeaconCrashLoopLatch() {
+	_ = d.alertDeaconCrashLoopLatchWithNotification(sendModelCrashNotification)
+}
+
+func (d *Daemon) alertDeaconCrashLoopLatchWithNotification(notify func(string, string) error) error {
+	const message = "Deacon crash loop latched after rapid local restart failures. Hosted promotion is disabled; one local watchdog probe is allowed every 30 minutes."
+	const subject = "DEACON_CRASH_LOOP_LATCHED"
+	d.logger.Printf("DEACON CRASH LOOP LATCHED: %s", message)
+	d.notifySlack("admin", "critical", message)
+
+	cmd := exec.Command(d.gtPath, "mail", "send", "--human",
+		"-s", subject,
+		"-m", message) //nolint:gosec // daemon-owned binary path and fixed arguments
+	setSysProcAttr(cmd)
+	cmd.Dir = d.config.TownRoot
+	cmd.Env = append(os.Environ(), "BD_ACTOR=daemon")
+	var mailErr error
+	if output, err := cmd.CombinedOutput(); err != nil {
+		d.logger.Printf("Warning: failed to send Deacon crash-loop latch alert: %v (%s)",
+			err, util.FirstLine(string(output)))
+		mailErr = err
+	}
+	if notify != nil {
+		if err := notify(subject, message); err != nil {
+			d.logger.Printf("Warning: failed to send Deacon crash-loop macOS notification: %v", err)
+		}
+	}
+	return mailErr
+}
+
+func (d *Daemon) retryDeaconCrashLoopAlertWithNotification(agentID string, notify func(string, string) error) {
+	if d.restartTracker == nil || !d.restartTracker.CrashLoopAlertPending(agentID) {
+		return
+	}
+	if err := d.alertDeaconCrashLoopLatchWithNotification(notify); err != nil {
+		return
+	}
+	if err := d.restartTracker.MarkCrashLoopAlertDeliveredPersisted(agentID); err != nil {
+		d.logger.Printf("Warning: failed to persist delivered Deacon crash-loop alert: %v", err)
+	}
 }
 
 // notifySlack sends a notification via gt-notify (zero token cost).

@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"bytes"
+	"encoding/json"
 	"io"
 	"os"
 	"path/filepath"
@@ -204,6 +205,83 @@ func TestOutputStatusText_IncludesDNDSection(t *testing.T) {
 	}
 	if !strings.Contains(out, "on") {
 		t.Fatalf("expected DND state 'on' in status output, got: %q", out)
+	}
+}
+
+func TestModelCrashRecoveryStatusSurfacesConfirmedAndExhaustedIncidents(t *testing.T) {
+	townRoot := t.TempDir()
+	stateDir := filepath.Join(townRoot, "deacon")
+	if err := os.MkdirAll(stateDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	state := `{
+		"version": 1,
+		"sessions": {
+			"rig/polecats/toast": {
+				"session_name": "gt-toast",
+				"incident_id": "model-crash-toast",
+				"local_restarts": 1,
+				"recovery_action": "local-restart",
+				"recovery_exhausted": false
+			},
+			"deacon": {
+				"session_name": "gt-deacon",
+				"incident_id": "model-crash-deacon",
+				"local_restarts": 1,
+				"recovery_action": "awaiting-local-probe",
+				"recovery_exhausted": true
+			}
+		},
+		"alerts": {}
+	}`
+	if err := os.WriteFile(filepath.Join(stateDir, "model-crash-supervisor.json"), []byte(state), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	recovery := loadModelCrashRecoveryStatus(townRoot)
+	if recovery == nil || recovery.Confirmed != 2 || recovery.Exhausted != 1 {
+		t.Fatalf("model-crash status summary = %#v, want 2 confirmed / 1 exhausted", recovery)
+	}
+	if !recovery.WatchdogUnavailable || recovery.WatchdogError == "" {
+		t.Fatalf("provisioned status hid unavailable watchdog: %#v", recovery)
+	}
+	status := TownStatus{Name: "gt", Location: townRoot, ModelCrashRecovery: recovery}
+	data, err := json.Marshal(status)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{`"model_crash_recovery"`, `"model-crash-toast"`, `"recovery_exhausted":true`, `"watchdog_unavailable":true`} {
+		if !strings.Contains(string(data), want) {
+			t.Fatalf("status JSON missing %q: %s", want, data)
+		}
+	}
+
+	var out bytes.Buffer
+	if err := outputStatusText(&out, status); err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"Model crash recovery:", "watchdog unavailable", "2 confirmed", "1 exhausted", "rig/polecats/toast", "deacon"} {
+		if !strings.Contains(out.String(), want) {
+			t.Fatalf("status text missing %q: %s", want, out.String())
+		}
+	}
+}
+
+func TestModelCrashRecoveryStatusOmitsUnprovisionedTown(t *testing.T) {
+	townRoot := t.TempDir()
+	if got := loadModelCrashRecoveryStatus(townRoot); got != nil {
+		t.Fatalf("unprovisioned town exposed local watchdog failure: %#v", got)
+	}
+	marker := filepath.Join(townRoot, "bin", "gt-lmstudio-watchdog")
+	if err := os.MkdirAll(filepath.Dir(marker), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(marker, []byte("#!/bin/sh\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	got := loadModelCrashRecoveryStatus(townRoot)
+	if got == nil || !got.WatchdogUnavailable {
+		t.Fatalf("installed watchdog contract silently opted out: %#v", got)
 	}
 }
 

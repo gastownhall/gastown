@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"syscall"
@@ -63,17 +64,39 @@ func init() {
 
 // TownStatus represents the overall status of the workspace.
 type TownStatus struct {
-	Name     string         `json:"name"`
-	Location string         `json:"location"`
-	Overseer *OverseerInfo  `json:"overseer,omitempty"` // Human operator
-	DND      *DNDInfo       `json:"dnd,omitempty"`      // Current agent DND status
-	Daemon   *ServiceInfo   `json:"daemon,omitempty"`   // Daemon status
-	Dolt     *DoltInfo      `json:"dolt,omitempty"`     // Dolt server status
-	Tmux     *TmuxInfo      `json:"tmux,omitempty"`     // Tmux server status
-	ACP      *ServiceInfo   `json:"acp,omitempty"`      // ACP mayor status
-	Agents   []AgentRuntime `json:"agents"`             // Global agents (Mayor, Deacon)
-	Rigs     []RigStatus    `json:"rigs"`
-	Summary  StatusSum      `json:"summary"`
+	Name               string                    `json:"name"`
+	Location           string                    `json:"location"`
+	Overseer           *OverseerInfo             `json:"overseer,omitempty"` // Human operator
+	DND                *DNDInfo                  `json:"dnd,omitempty"`      // Current agent DND status
+	Daemon             *ServiceInfo              `json:"daemon,omitempty"`   // Daemon status
+	Dolt               *DoltInfo                 `json:"dolt,omitempty"`     // Dolt server status
+	Tmux               *TmuxInfo                 `json:"tmux,omitempty"`     // Tmux server status
+	ACP                *ServiceInfo              `json:"acp,omitempty"`      // ACP mayor status
+	Agents             []AgentRuntime            `json:"agents"`             // Global agents (Mayor, Deacon)
+	Rigs               []RigStatus               `json:"rigs"`
+	Summary            StatusSum                 `json:"summary"`
+	ModelCrashRecovery *ModelCrashRecoveryStatus `json:"model_crash_recovery,omitempty"`
+}
+
+// ModelCrashRecoveryStatus is additive durable recovery visibility for
+// confirmed local-model crashes and exhausted supervisor actions.
+type ModelCrashRecoveryStatus struct {
+	Confirmed           int                        `json:"confirmed"`
+	Exhausted           int                        `json:"exhausted"`
+	Incidents           []ModelCrashStatusIncident `json:"incidents,omitempty"`
+	WatchdogUnavailable bool                       `json:"watchdog_unavailable,omitempty"`
+	WatchdogError       string                     `json:"watchdog_error,omitempty"`
+	Error               string                     `json:"error,omitempty"`
+}
+
+// ModelCrashStatusIncident is the status-safe projection of one durable
+// supervisor incident.
+type ModelCrashStatusIncident struct {
+	Identity          string `json:"identity"`
+	SessionName       string `json:"session_name"`
+	IncidentID        string `json:"incident_id"`
+	RecoveryAction    string `json:"recovery_action"`
+	RecoveryExhausted bool   `json:"recovery_exhausted"`
 }
 
 // ServiceInfo represents a background service status.
@@ -838,11 +861,12 @@ func gatherStatus() (TownStatus, error) {
 
 	// Build status - parallel fetch global agents and rigs
 	status := TownStatus{
-		Name:     townConfig.Name,
-		Location: townRoot,
-		Overseer: overseerInfo,
-		DND:      detectCurrentDNDStatus(townRoot),
-		Rigs:     make([]RigStatus, len(rigs)),
+		Name:               townConfig.Name,
+		Location:           townRoot,
+		Overseer:           overseerInfo,
+		DND:                detectCurrentDNDStatus(townRoot),
+		Rigs:               make([]RigStatus, len(rigs)),
+		ModelCrashRecovery: loadModelCrashRecoveryStatus(townRoot),
 	}
 
 	// Daemon status
@@ -1024,6 +1048,47 @@ func gatherStatus() (TownStatus, error) {
 	return status, nil
 }
 
+func loadModelCrashRecoveryStatus(townRoot string) *ModelCrashRecoveryStatus {
+	if !daemon.IsModelCrashRecoveryProvisioned(townRoot) {
+		return nil
+	}
+	recovery := &ModelCrashRecoveryStatus{}
+	if err := daemon.ValidateModelCrashWatchdog(townRoot, time.Now()); err != nil {
+		recovery.WatchdogUnavailable = true
+		recovery.WatchdogError = err.Error()
+	}
+	incidents, err := daemon.LoadModelCrashRecoveryIncidents(townRoot)
+	if err != nil {
+		recovery.Error = err.Error()
+		return recovery
+	}
+	for _, incident := range incidents {
+		if !incident.Confirmed && !incident.RecoveryExhausted {
+			continue
+		}
+		if incident.Confirmed {
+			recovery.Confirmed++
+		}
+		if incident.RecoveryExhausted {
+			recovery.Exhausted++
+		}
+		recovery.Incidents = append(recovery.Incidents, ModelCrashStatusIncident{
+			Identity:          incident.Identity,
+			SessionName:       incident.SessionName,
+			IncidentID:        incident.IncidentID,
+			RecoveryAction:    incident.RecoveryAction,
+			RecoveryExhausted: incident.RecoveryExhausted,
+		})
+	}
+	if len(recovery.Incidents) == 0 && !recovery.WatchdogUnavailable {
+		return nil
+	}
+	sort.Slice(recovery.Incidents, func(i, j int) bool {
+		return recovery.Incidents[i].Identity < recovery.Incidents[j].Identity
+	})
+	return recovery
+}
+
 func outputStatusJSON(status TownStatus) error {
 	enc := json.NewEncoder(os.Stdout)
 	enc.SetIndent("", "  ")
@@ -1111,6 +1176,27 @@ func outputStatusText(w io.Writer, status TownStatus) error {
 			}
 		}
 		fmt.Fprintf(w, "%s\n", strings.Join(parts, "  "))
+		fmt.Fprintln(w)
+	}
+
+	if recovery := status.ModelCrashRecovery; recovery != nil {
+		fmt.Fprintf(w, "%s %s", style.Warning.Render("⚠"),
+			style.Bold.Render("Model crash recovery:"))
+		if recovery.WatchdogUnavailable {
+			fmt.Fprintf(w, " %s", style.Warning.Render("watchdog unavailable: "+recovery.WatchdogError))
+		}
+		fmt.Fprintln(w)
+		if recovery.Error != "" {
+			fmt.Fprintf(w, "   %s\n", style.Warning.Render("state unreadable: "+recovery.Error))
+		} else {
+			fmt.Fprintf(w, "   %d confirmed, %d exhausted\n",
+				recovery.Confirmed, recovery.Exhausted)
+			for _, incident := range recovery.Incidents {
+				fmt.Fprintf(w, "   %s incident=%s action=%s exhausted=%t\n",
+					incident.Identity, incident.IncidentID,
+					incident.RecoveryAction, incident.RecoveryExhausted)
+			}
+		}
 		fmt.Fprintln(w)
 	}
 

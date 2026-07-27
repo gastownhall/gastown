@@ -11,6 +11,7 @@ import (
 
 	"github.com/spf13/cobra"
 	"github.com/steveyegge/gastown/internal/config"
+	"github.com/steveyegge/gastown/internal/daemon"
 	"github.com/steveyegge/gastown/internal/git"
 	"github.com/steveyegge/gastown/internal/polecat"
 	"github.com/steveyegge/gastown/internal/rig"
@@ -34,7 +35,36 @@ var (
 	sessionStatusJSON          bool
 	sessionHealthJSON          bool
 	sessionHealthMaxInactivity time.Duration
+	sessionRestartAgent        string
 )
+
+type sessionRestartManager interface {
+	IsRunning(string) (bool, error)
+	Stop(string, bool) error
+	Start(string, polecat.SessionStartOptions) error
+}
+
+var sessionRestartManagerForRig = func(rigName string) (sessionRestartManager, error) {
+	manager, _, err := getSessionManager(rigName)
+	if err != nil {
+		return nil, err
+	}
+	return manager, nil
+}
+
+var sessionRestartValidateAgent = func(rigName, agent string) error {
+	if agent == "" {
+		return nil
+	}
+	townRoot, targetRig, err := getRig(rigName)
+	if err != nil {
+		return err
+	}
+	if _, _, err := config.ResolveAgentConfigWithOverride(townRoot, targetRig.Path, agent); err != nil {
+		return fmt.Errorf("invalid agent override %q: %w", agent, err)
+	}
+	return nil
+}
 
 var sessionCmd = &cobra.Command{
 	Use:     "session",
@@ -209,6 +239,7 @@ func init() {
 
 	// Restart flags
 	sessionRestartCmd.Flags().BoolVarP(&sessionForce, "force", "f", false, "Force immediate shutdown")
+	sessionRestartCmd.Flags().StringVar(&sessionRestartAgent, "agent", "", "Agent alias for the restarted polecat (overrides rig/town default)")
 
 	// Status flags
 	sessionStatusCmd.Flags().BoolVar(&sessionStatusJSON, "json", false, "Output as JSON")
@@ -233,11 +264,16 @@ func init() {
 }
 
 type sessionHealthReport struct {
-	Session              string `json:"session"`
-	Status               string `json:"status"`
-	Healthy              bool   `json:"healthy"`
-	Zombie               bool   `json:"zombie"`
-	MaxInactivitySeconds int64  `json:"max_inactivity_seconds"`
+	Session               string `json:"session"`
+	Status                string `json:"status"`
+	Healthy               bool   `json:"healthy"`
+	Zombie                bool   `json:"zombie"`
+	MaxInactivitySeconds  int64  `json:"max_inactivity_seconds"`
+	ModelCrash            bool   `json:"model_crash"`
+	ModelCrashFingerprint string `json:"model_crash_fingerprint,omitempty"`
+	IncidentID            string `json:"incident_id"`
+	RecoveryAction        string `json:"recovery_action"`
+	RecoveryExhausted     bool   `json:"recovery_exhausted"`
 }
 
 func newSessionHealthReport(session string, status tmux.ZombieStatus, maxInactivity time.Duration) sessionHealthReport {
@@ -248,6 +284,13 @@ func newSessionHealthReport(session string, status tmux.ZombieStatus, maxInactiv
 		Zombie:               status.IsZombie(),
 		MaxInactivitySeconds: int64(maxInactivity.Seconds()),
 	}
+}
+
+func applyModelCrashHealth(report *sessionHealthReport, fingerprint string) {
+	report.Status = "model-crashed"
+	report.Healthy = false
+	report.ModelCrash = true
+	report.ModelCrashFingerprint = fingerprint
 }
 
 // parseAddress parses "rig/polecat" format.
@@ -553,8 +596,11 @@ func runSessionRestart(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
+	if err := sessionRestartValidateAgent(rigName, sessionRestartAgent); err != nil {
+		return err
+	}
 
-	polecatMgr, _, err := getSessionManager(rigName)
+	polecatMgr, err := sessionRestartManagerForRig(rigName)
 	if err != nil {
 		return err
 	}
@@ -590,7 +636,7 @@ func runSessionRestart(cmd *cobra.Command, args []string) error {
 
 	// Start fresh session
 	fmt.Printf("Starting session for %s/%s...\n", rigName, polecatName)
-	opts := polecat.SessionStartOptions{}
+	opts := polecat.SessionStartOptions{Agent: sessionRestartAgent}
 	if err := polecatMgr.Start(polecatName, opts); err != nil {
 		return fmt.Errorf("starting session: %w", err)
 	}
@@ -652,8 +698,25 @@ func runSessionStatus(cmd *cobra.Command, args []string) error {
 
 func runSessionHealth(cmd *cobra.Command, args []string) error {
 	sessionName := args[0]
-	status := tmux.NewTmux().CheckSessionHealth(sessionName, sessionHealthMaxInactivity)
+	t := tmux.NewTmux()
+	status := t.CheckSessionHealth(sessionName, sessionHealthMaxInactivity)
 	report := newSessionHealthReport(sessionName, status, sessionHealthMaxInactivity)
+	if output, err := t.CapturePane(sessionName, 80); err == nil {
+		if fingerprint, crashed := session.DetectModelCrash(output); crashed {
+			applyModelCrashHealth(&report, fingerprint)
+		}
+	}
+	townRoot, _ := t.GetEnvironment(sessionName, "GT_ROOT")
+	if townRoot == "" {
+		townRoot, _ = workspace.FindFromCwd()
+	}
+	if townRoot != "" {
+		if recovery, err := daemon.LoadModelCrashSessionHealth(townRoot, sessionName); err == nil {
+			report.IncidentID = recovery.IncidentID
+			report.RecoveryAction = recovery.RecoveryAction
+			report.RecoveryExhausted = recovery.RecoveryExhausted
+		}
+	}
 
 	if sessionHealthJSON {
 		enc := json.NewEncoder(os.Stdout)
