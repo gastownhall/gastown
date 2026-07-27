@@ -148,6 +148,67 @@ func TestIssueDetailsIsBlocked(t *testing.T) {
 			},
 			want: false,
 		},
+		// merge-blocks deps gate on actual integration, not just closure.
+		// Treating an unknown dep type as non-blocking made merge-blocks
+		// weaker than blocks and dispatched successors against un-merged
+		// code (see gastownhall/gastown#1893).
+		{
+			name: "open merge-blocks dependency marks blocked",
+			in: issueDetails{
+				Dependencies: []issueDependency{
+					{DependencyType: "merge-blocks", Status: "open"},
+				},
+			},
+			want: true,
+		},
+		{
+			name: "closed but unmerged merge-blocks dependency marks blocked",
+			in: issueDetails{
+				Dependencies: []issueDependency{
+					{DependencyType: "merge-blocks", Status: "closed", CloseReason: "Closed"},
+				},
+			},
+			want: true,
+		},
+		{
+			name: "merged merge-blocks dependency does not mark blocked",
+			in: issueDetails{
+				Dependencies: []issueDependency{
+					{DependencyType: "merge-blocks", Status: "closed", CloseReason: "Merged in gt-mr\ncommit_sha: abc123"},
+				},
+			},
+			want: false,
+		},
+		{
+			name: "tombstoned merge-blocks dependency does not mark blocked",
+			in: issueDetails{
+				Dependencies: []issueDependency{
+					{DependencyType: "merge-blocks", Status: "tombstone"},
+				},
+			},
+			want: false,
+		},
+		// These types are blocking everywhere else in the codebase
+		// (convoy.blockingDepTypes, beads.blockingDependencyTypes) but were
+		// silently ignored by this gate.
+		{
+			name: "open waits-for dependency marks blocked",
+			in: issueDetails{
+				Dependencies: []issueDependency{
+					{DependencyType: "waits-for", Status: "open"},
+				},
+			},
+			want: true,
+		},
+		{
+			name: "open conditional-blocks dependency marks blocked",
+			in: issueDetails{
+				Dependencies: []issueDependency{
+					{DependencyType: "conditional-blocks", Status: "open"},
+				},
+			},
+			want: true,
+		},
 	}
 
 	for _, tc := range tests {

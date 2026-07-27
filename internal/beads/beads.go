@@ -482,6 +482,14 @@ func isBlockingDependencyType(depType string) bool {
 	return blockingDependencyTypes[strings.ToLower(strings.TrimSpace(depType))]
 }
 
+// IsUnresolvedBlockingDependency reports whether dep is a blocking dependency
+// that has not yet been satisfied. Callers that hold raw dependency edges
+// (rather than a full Issue) should use this instead of comparing dependency
+// types by hand, so merge-blocks gating stays consistent everywhere.
+func IsUnresolvedBlockingDependency(dep IssueDep) bool {
+	return isBlockingDependencyType(dep.DependencyType) && !isResolvedDependency(dep)
+}
+
 func isResolvedDependency(dep IssueDep) bool {
 	status := strings.ToLower(strings.TrimSpace(dep.Status))
 	switch status {

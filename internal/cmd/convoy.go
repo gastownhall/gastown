@@ -2598,6 +2598,7 @@ type issueDependency struct {
 	ID             string `json:"id"`
 	Status         string `json:"status"`
 	DependencyType string `json:"dependency_type"`
+	CloseReason    string `json:"close_reason,omitempty"`
 }
 
 // issueDetails holds basic issue info.
@@ -2619,8 +2620,16 @@ func (d issueDetails) IsBlocked() bool {
 	}
 
 	// bd show can omit blocked_by_count; fall back to live dependency edges.
+	// Delegate to the beads helper so every blocking dep type is honoured —
+	// notably merge-blocks, which stays blocked until the blocker's close
+	// reason confirms the code actually merged (gastownhall/gastown#1893).
 	for _, dep := range d.Dependencies {
-		if dep.DependencyType == "blocks" && dep.Status != "closed" && dep.Status != "tombstone" {
+		if beads.IsUnresolvedBlockingDependency(beads.IssueDep{
+			ID:             dep.ID,
+			Status:         dep.Status,
+			DependencyType: dep.DependencyType,
+			CloseReason:    dep.CloseReason,
+		}) {
 			return true
 		}
 	}
@@ -2701,6 +2710,7 @@ func issueToDetails(issue *beads.Issue) *issueDetails {
 			ID:             dep.ID,
 			Status:         dep.Status,
 			DependencyType: dep.DependencyType,
+			CloseReason:    dep.CloseReason,
 		})
 	}
 
