@@ -111,3 +111,67 @@ func TestShouldBlockRespawn_UnknownBead(t *testing.T) {
 		t.Error("ShouldBlockRespawn = true for unknown bead")
 	}
 }
+
+// A dispatch that is charged but never established must be refundable, so that
+// failed preflight/allocation/startup does not burn the circuit breaker.
+func TestRefundBeadRespawn_UnchargesUnestablishedAttempt(t *testing.T) {
+	tmpDir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(tmpDir, "witness"), 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	RecordBeadRespawn(tmpDir, "bead-refund")
+	RecordBeadRespawn(tmpDir, "bead-refund")
+
+	if got := RefundBeadRespawn(tmpDir, "bead-refund"); got != 1 {
+		t.Errorf("RefundBeadRespawn = %d, want 1", got)
+	}
+	if got := RecordBeadRespawn(tmpDir, "bead-refund"); got != 2 {
+		t.Errorf("count after refund+record = %d, want 2", got)
+	}
+}
+
+// Refunding every charge must clear the breaker completely, not leave a
+// zero-count record that ShouldBlockRespawn or a future migration could
+// misinterpret.
+func TestRefundBeadRespawn_FloorsAtZeroAndClearsBlock(t *testing.T) {
+	tmpDir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(tmpDir, "witness"), 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	for i := 0; i < config.DefaultWitnessMaxBeadRespawns; i++ {
+		RecordBeadRespawn(tmpDir, "bead-floor")
+	}
+	if !ShouldBlockRespawn(tmpDir, "bead-floor") {
+		t.Fatal("precondition: bead should be blocked at threshold")
+	}
+
+	for i := 0; i < config.DefaultWitnessMaxBeadRespawns; i++ {
+		RefundBeadRespawn(tmpDir, "bead-floor")
+	}
+	if ShouldBlockRespawn(tmpDir, "bead-floor") {
+		t.Error("bead still blocked after refunding every charge")
+	}
+
+	// Extra refunds must not drive the count negative.
+	if got := RefundBeadRespawn(tmpDir, "bead-floor"); got != 0 {
+		t.Errorf("RefundBeadRespawn below zero = %d, want 0", got)
+	}
+	if got := RecordBeadRespawn(tmpDir, "bead-floor"); got != 1 {
+		t.Errorf("count after over-refund then record = %d, want 1", got)
+	}
+}
+
+// Refunding a bead that was never charged is a no-op, not a panic or a
+// negative count.
+func TestRefundBeadRespawn_UnknownBeadIsNoop(t *testing.T) {
+	tmpDir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(tmpDir, "witness"), 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	if got := RefundBeadRespawn(tmpDir, "never-charged"); got != 0 {
+		t.Errorf("RefundBeadRespawn on unknown bead = %d, want 0", got)
+	}
+}

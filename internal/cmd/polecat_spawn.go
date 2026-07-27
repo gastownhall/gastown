@@ -51,6 +51,20 @@ func (s *SpawnedPolecatInfo) SessionStarted() bool {
 }
 
 // SlingSpawnOptions contains options for spawning a polecat via sling.
+// preSpawnDoltChecksFn gates polecat allocation on Dolt being reachable and
+// having connection capacity (gt-94llt7, gt-1obzke), preventing orphaned
+// polecats and connection storms during mass sling. It is a variable so tests
+// can exercise the spawn path past this gate without a live Dolt server.
+var preSpawnDoltChecksFn = func(m *polecat.Manager) error {
+	if err := m.CheckDoltHealth(); err != nil {
+		return fmt.Errorf("pre-spawn health check failed: %w", err)
+	}
+	if err := m.CheckDoltServerCapacity(); err != nil {
+		return fmt.Errorf("admission control: %w", err)
+	}
+	return nil
+}
+
 type SlingSpawnOptions struct {
 	TownRoot      string // Gas Town workspace root; falls back to cwd when empty
 	Force         bool   // Force spawn even if polecat has uncommitted work
@@ -142,7 +156,7 @@ func reclaimBrokenIdlePolecatForSling(polecatMgr *polecat.Manager) (bool, error)
 // SpawnPolecatForSling creates a fresh polecat and optionally starts its session.
 // This is used by gt sling when the target is a rig name.
 // The caller (sling) handles hook attachment and nudging.
-func SpawnPolecatForSling(rigName string, opts SlingSpawnOptions) (*SpawnedPolecatInfo, error) {
+func SpawnPolecatForSling(rigName string, opts SlingSpawnOptions) (info *SpawnedPolecatInfo, err error) {
 	// Find workspace
 	townRoot := opts.TownRoot
 	if townRoot == "" {
@@ -174,14 +188,11 @@ func SpawnPolecatForSling(rigName string, opts SlingSpawnOptions) (*SpawnedPolec
 
 	// Pre-spawn Dolt health check (gt-94llt7): verify Dolt is reachable before
 	// allocating a polecat. Prevents orphaned polecats when Dolt is down.
-	if err := polecatMgr.CheckDoltHealth(); err != nil {
-		return nil, fmt.Errorf("pre-spawn health check failed: %w", err)
-	}
-
-	// Pre-spawn admission control (gt-1obzke): verify Dolt server has connection
-	// capacity before spawning. Prevents connection storms during mass sling.
-	if err := polecatMgr.CheckDoltServerCapacity(); err != nil {
-		return nil, fmt.Errorf("admission control: %w", err)
+	//
+	// Indirected for tests so spawn-path behavior after this gate can be
+	// exercised without a live Dolt server (and without its retry backoff).
+	if err := preSpawnDoltChecksFn(polecatMgr); err != nil {
+		return nil, err
 	}
 
 	if blocked, reason := IsRigParkedOrDocked(townRoot, rigName); blocked {
@@ -204,6 +215,13 @@ func SpawnPolecatForSling(rigName string, opts SlingSpawnOptions) (*SpawnedPolec
 	// Per-bead respawn circuit breaker (clown show #22):
 	// Track how many times this bead has been slung. Block after N attempts
 	// to prevent witness→deacon→sling feedback loops.
+	//
+	// The attempt is charged here, before allocation, so concurrent spawners
+	// observe it immediately. Everything below can still fail (reclaim, idle
+	// lookup, worktree setup, tmux startup) without a polecat ever running, so
+	// the charge is refunded unless this call returns an established polecat.
+	// Otherwise failures that the bead is not responsible for would burn the
+	// breaker and permanently wedge a blameless bead after N of them.
 	if opts.HookBead != "" && !opts.Force {
 		if witness.ShouldBlockRespawn(townRoot, opts.HookBead) {
 			maxRespawns := config.LoadOperationalConfig(townRoot).GetWitnessConfig().MaxBeadRespawnsV()
@@ -215,6 +233,13 @@ func SpawnPolecatForSling(rigName string, opts SlingSpawnOptions) (*SpawnedPolec
 				opts.HookBead, rigName, opts.HookBead)
 		}
 		witness.RecordBeadRespawn(townRoot, opts.HookBead)
+		// Named returns make this cover every exit path, including panics and
+		// any success path added later.
+		defer func() {
+			if err != nil || info == nil {
+				witness.RefundBeadRespawn(townRoot, opts.HookBead)
+			}
+		}()
 	}
 
 	if reclaimed, err := reclaimBrokenIdlePolecatForSling(polecatMgr); err != nil {

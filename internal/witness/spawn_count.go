@@ -126,6 +126,49 @@ func RecordBeadRespawn(workDir, beadID string) int {
 	return rec.Count
 }
 
+// RefundBeadRespawn decrements the respawn count for beadID and returns the new
+// count, flooring at zero. It is the inverse of RecordBeadRespawn and exists so
+// a dispatch that was charged but never established (failed reclaim, allocation,
+// worktree setup or tmux startup) does not consume a circuit-breaker attempt.
+//
+// The count is charged before allocation so that concurrent spawners see the
+// attempt immediately; this refunds it on the failure paths. Refunding the last
+// charge removes the record entirely, matching ResetBeadRespawnCount so no
+// zero-count residue is left behind.
+//
+// Serialized via respawnMu (in-process) and flock (cross-process), identically
+// to RecordBeadRespawn.
+func RefundBeadRespawn(workDir, beadID string) int {
+	respawnMu.Lock()
+	defer respawnMu.Unlock()
+
+	townRoot, err := workspace.Find(workDir)
+	if err != nil || townRoot == "" {
+		townRoot = workDir
+	}
+
+	// Cross-process flock to serialize with other witness instances.
+	unlock, flockErr := lock.FlockAcquire(beadRespawnStateFile(townRoot) + ".flock")
+	if flockErr == nil {
+		defer unlock()
+	}
+
+	state := loadBeadRespawnState(townRoot)
+	rec, ok := state.Beads[beadID]
+	if !ok {
+		return 0
+	}
+	rec.Count--
+	if rec.Count <= 0 {
+		delete(state.Beads, beadID)
+		_ = saveBeadRespawnState(townRoot, state) // Non-fatal: mirrors RecordBeadRespawn
+		return 0
+	}
+	rec.LastRespawn = time.Now().UTC()
+	_ = saveBeadRespawnState(townRoot, state) // Non-fatal: mirrors RecordBeadRespawn
+	return rec.Count
+}
+
 // ResetBeadRespawnCount resets the respawn counter for beadID to zero.
 // Used by `gt sling respawn-reset` to allow re-dispatch after investigation.
 func ResetBeadRespawnCount(workDir, beadID string) error {
