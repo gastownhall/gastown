@@ -180,6 +180,7 @@ type Issue struct {
 	Design      string   `json:"design,omitempty"`
 	Notes       string   `json:"notes,omitempty"`
 	Status      string   `json:"status"`
+	CloseReason string   `json:"close_reason,omitempty"`
 	Priority    int      `json:"priority"`
 	Type        string   `json:"issue_type"`
 	CreatedAt   string   `json:"created_at"`

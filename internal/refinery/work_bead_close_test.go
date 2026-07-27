@@ -211,17 +211,17 @@ func TestCloseMergedWorkBead_RejectsNonMergeableTargets(t *testing.T) {
 	}
 }
 
-func TestCloseMergedWorkBead_AlreadyTerminalConcreteTargetIsNoop(t *testing.T) {
+func TestCloseMergedWorkBead_AlreadyTerminalConcreteTargetStampsMergeReason(t *testing.T) {
 	work := newFakeWorkBeadStore()
 	work.add(workIssue("gt-source", string(beads.StatusClosed)))
 
 	result := closeMergedWorkBead(work, nil, nil, mergedWorkBeadCloseRequest{MRID: "gt-mr", SourceIssue: "gt-source"})
 
 	if !result.Closed || result.WorkBeadID != "gt-source" {
-		t.Fatalf("result = %+v, want terminal no-op success", result)
+		t.Fatalf("result = %+v, want terminal success", result)
 	}
-	if len(work.closeCalls) != 0 {
-		t.Fatalf("close calls = %v, want none", work.closeCalls)
+	if work.lastCloseReason != "Merged in gt-mr" {
+		t.Errorf("close reason = %q, want %q", work.lastCloseReason, "Merged in gt-mr")
 	}
 }
 
@@ -265,5 +265,58 @@ func TestManagerIssueToMRIncludesAgentBead(t *testing.T) {
 	mr := mgr.issueToMR(issue)
 	if mr.AgentBead != "gt-agent" {
 		t.Fatalf("AgentBead = %q, want gt-agent", mr.AgentBead)
+	}
+}
+
+// gt done closes the source bead before the refinery finishes merging, so by
+// the time post-merge runs the bead is already terminal. Bailing out there left
+// close_reason as "Closed", which silently breaks merge-blocks dependencies:
+// they only treat a blocker as satisfied when close_reason starts with
+// "Merged in ", so successors would stay blocked forever.
+func TestCloseMergedWorkBead_StampsMergeReasonOnAlreadyClosedBead(t *testing.T) {
+	work := newFakeWorkBeadStore()
+	work.add(workIssue("gt-source", string(beads.StatusClosed)))
+
+	result := closeMergedWorkBead(work, nil, nil, mergedWorkBeadCloseRequest{
+		MRID:        "gt-mr",
+		Branch:      "polecat/atom/gt-source+abc123",
+		Target:      "feature/x",
+		SourceIssue: "gt-source",
+		MergeCommit: "abc123",
+	})
+
+	if !result.Closed || result.WorkBeadID != "gt-source" {
+		t.Fatalf("result = %+v, want Closed with WorkBeadID gt-source", result)
+	}
+	if !strings.HasPrefix(work.lastCloseReason, "Merged in gt-mr") {
+		t.Errorf("close reason = %q, want it to start with %q", work.lastCloseReason, "Merged in gt-mr")
+	}
+	if !strings.Contains(work.lastCloseReason, "commit_sha: abc123") {
+		t.Errorf("close reason = %q, want it to record commit_sha", work.lastCloseReason)
+	}
+}
+
+// Re-stamping an identical merge reason is pointless write traffic against
+// Dolt, and post-merge is retried, so an already-correct bead must be left
+// alone.
+func TestCloseMergedWorkBead_DoesNotRestampAlreadyMergedBead(t *testing.T) {
+	work := newFakeWorkBeadStore()
+	closed := workIssue("gt-source", string(beads.StatusClosed))
+	closed.CloseReason = "Merged in gt-mr\ntarget_branch: feature/x\ncommit_sha: abc123"
+	work.add(closed)
+
+	result := closeMergedWorkBead(work, nil, nil, mergedWorkBeadCloseRequest{
+		MRID:        "gt-mr",
+		Branch:      "polecat/atom/gt-source+abc123",
+		Target:      "feature/x",
+		SourceIssue: "gt-source",
+		MergeCommit: "abc123",
+	})
+
+	if !result.Closed {
+		t.Fatalf("result = %+v, want Closed", result)
+	}
+	if len(work.closeCalls) != 0 {
+		t.Errorf("close was called %v, want no write for an already-merged bead", work.closeCalls)
 	}
 }

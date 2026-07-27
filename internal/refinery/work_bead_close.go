@@ -63,20 +63,37 @@ func closeMergedWorkBead(work workBeadCloser, agent issueReader, out io.Writer, 
 		result.NotFound = true
 		return result
 	}
+	closeReasonPrefix := fmt.Sprintf("Merged in %s", req.MRID)
+	closeReason := closeReasonPrefix
+	if req.MergeCommit != "" {
+		closeReason = fmt.Sprintf("%s\ntarget_branch: %s\ncommit_sha: %s", closeReason, req.Target, req.MergeCommit)
+	}
+
+	// `gt done` closes the source bead before the refinery finishes merging, so
+	// the bead is usually already terminal by the time we get here. Returning
+	// early left close_reason as whatever `gt done` wrote, which breaks
+	// merge-blocks dependents: they only treat a blocker as satisfied when the
+	// reason starts with "Merged in ". Stamp the merge reason instead.
 	if beads.IssueStatus(strings.TrimSpace(issue.Status)).IsTerminal() {
-		logf("[Refinery] Work bead already closed: %s\n", workBeadID)
 		result.Closed = true
+		if reason := refineryMergedWorkBeadCloseBlockReason(issue); reason != "" {
+			logf("[Refinery] Work bead already closed: %s\n", workBeadID)
+			return result
+		}
+		if strings.HasPrefix(strings.TrimSpace(issue.CloseReason), closeReasonPrefix) {
+			logf("[Refinery] Work bead already closed with merge reason: %s\n", workBeadID)
+			return result
+		}
+		logf("[Refinery] Work bead already closed, stamping merge reason: %s\n", workBeadID)
+		if err := work.ForceCloseWithReason(closeReason, workBeadID); err != nil {
+			logf("[Refinery] Warning: failed to stamp merge reason on %s: %v\n", workBeadID, err)
+		}
 		return result
 	}
 	if reason := refineryMergedWorkBeadCloseBlockReason(issue); reason != "" {
 		logf("[Refinery] Warning: refusing to close non-mergeable work bead %s (%s)\n", workBeadID, reason)
 		result.NotFound = true
 		return result
-	}
-
-	closeReason := fmt.Sprintf("Merged in %s", req.MRID)
-	if req.MergeCommit != "" {
-		closeReason = fmt.Sprintf("%s\ntarget_branch: %s\ncommit_sha: %s", closeReason, req.Target, req.MergeCommit)
 	}
 
 	if err := work.ForceCloseWithReason(closeReason, workBeadID); err != nil {
