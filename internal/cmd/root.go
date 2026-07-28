@@ -189,11 +189,19 @@ func isRoleCommand(cmd *cobra.Command) bool {
 	return false
 }
 
+// isDoneCommand reports whether cmd is the top-level `gt done` command (or one
+// of its subcommands). Nested `done` subcommands owned by other parents — most
+// notably `gt dog done` — must not trip the polecat-only guard, so a command
+// named "done" only counts when it sits directly beneath the root command.
 func isDoneCommand(cmd *cobra.Command) bool {
 	for c := cmd; c != nil; c = c.Parent() {
-		if c.Name() == "done" {
+		if c.Name() != "done" {
+			continue
+		}
+		if parent := c.Parent(); parent == nil || parent.Parent() == nil {
 			return true
 		}
+		return false
 	}
 	return false
 }

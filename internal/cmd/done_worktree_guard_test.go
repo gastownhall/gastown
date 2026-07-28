@@ -298,6 +298,27 @@ func TestIsDoneCommand(t *testing.T) {
 	}
 }
 
+func TestIsDoneCommandIgnoresNestedDoneSubcommands(t *testing.T) {
+	root := &cobra.Command{Use: "gt"}
+	done := &cobra.Command{Use: "done"}
+	root.AddCommand(done)
+
+	dog := &cobra.Command{Use: "dog"}
+	dogDone := &cobra.Command{Use: "done"}
+	dog.AddCommand(dogDone)
+	root.AddCommand(dog)
+
+	if !isDoneCommand(done) {
+		t.Fatal("top-level done command should be detected")
+	}
+	if isDoneCommand(dogDone) {
+		t.Fatal("gt dog done must not trip the polecat-only gt done guard")
+	}
+	if isDoneCommand(dog) {
+		t.Fatal("gt dog should not be detected as done")
+	}
+}
+
 func TestPersistentPreRunDoneRejectsBeforeRegistryFallback(t *testing.T) {
 	townRoot, _ := setupDoneGuardWorktree(t, "nested", "shiny")
 	initDoneGuardGitRepo(t, townRoot)
