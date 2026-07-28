@@ -1,7 +1,13 @@
 #!/usr/bin/env bash
-# git-hygiene/run.sh — Clean stale branches, stashes, and loose objects.
+# git-hygiene/run.sh — Report (and optionally clean) stale branches, stashes,
+# and loose objects across all rig repos.
 #
-# Runs across all rig repos. Covers:
+# SAFETY: This plugin defaults to REPORT-ONLY. It has never run destructively
+# in this town, and its deletions are irreversible in places where a branch is
+# the only durable record of a worker's commits. Nothing is mutated unless
+# GIT_HYGIENE_APPLY=1 is set explicitly.
+#
+# Covers:
 # - Merged local branches
 # - Orphan local branches (polecat/*, dog/*, fix/*, etc. with no remote)
 # - Merged remote branches on GitHub
@@ -12,10 +18,42 @@ set -euo pipefail
 
 log() { echo "[git-hygiene] $*"; }
 
+# --- Mode --------------------------------------------------------------------
+
+if [ "${GIT_HYGIENE_APPLY:-0}" = "1" ]; then
+  DRY_RUN=0
+  MODE="apply"
+else
+  DRY_RUN=1
+  MODE="report-only"
+fi
+
+# record <result> <title> <description>
+record() {
+  gt plugin record-run --plugin git-hygiene --result "$1" \
+    --title "$2" --description "$3" >/dev/null 2>&1 || true
+}
+
+# act <description> -- <command...>
+# Runs the command when applying; only logs it when reporting.
+act() {
+  local desc="$1"; shift
+  [ "$1" = "--" ] && shift
+  if [ "$DRY_RUN" = "1" ]; then
+    log "    WOULD $desc"
+    return 0
+  fi
+  log "    $desc"
+  "$@"
+}
+
+log "Mode: $MODE (set GIT_HYGIENE_APPLY=1 to actually delete)"
+
 # --- Enumerate rig repos -----------------------------------------------------
 
 RIG_JSON=$(gt rig list --json 2>/dev/null) || {
   log "SKIP: could not get rig list"
+  record skipped "Plugin: git-hygiene [skipped]" "Skipped: could not get rig list"
   exit 0
 }
 
@@ -29,6 +67,8 @@ for r in rigs:
 
 if [ -z "$RIG_PATHS" ]; then
   log "SKIP: no rigs with repo paths found"
+  record skipped "Plugin: git-hygiene [skipped]" \
+    "Skipped: no rigs reported a repo_path from 'gt rig list --json'"
   exit 0
 fi
 
@@ -54,20 +94,26 @@ while IFS= read -r REPO_PATH; do
   log ""
   log "=== Cleaning: $REPO_PATH ==="
 
-  # Detect default branch
+  # Detect default branch. symbolic-ref exits non-zero when origin/HEAD is not
+  # set, which under `set -e` + pipefail would abort the whole run, so tolerate
+  # the failure and fall back.
   DEFAULT_BRANCH=$(git -C "$REPO_PATH" symbolic-ref refs/remotes/origin/HEAD 2>/dev/null \
-    | sed 's|refs/remotes/origin/||')
+    | sed 's|refs/remotes/origin/||' || true)
   if [ -z "$DEFAULT_BRANCH" ]; then
     DEFAULT_BRANCH="main"
   fi
-  CURRENT_BRANCH=$(git -C "$REPO_PATH" branch --show-current 2>/dev/null)
+  CURRENT_BRANCH=$(git -C "$REPO_PATH" branch --show-current 2>/dev/null || true)
 
   # Step 1: Prune remote tracking refs
-  log "  Pruning remote tracking refs..."
-  git -C "$REPO_PATH" fetch --prune --all 2>/dev/null || true
+  if [ "$DRY_RUN" = "1" ]; then
+    log "  Skipping fetch --prune (report-only); results reflect current refs"
+  else
+    log "  Pruning remote tracking refs..."
+    git -C "$REPO_PATH" fetch --prune --all 2>/dev/null || true
+  fi
 
   # Step 2: Delete merged local branches
-  log "  Deleting merged local branches..."
+  log "  Merged local branches..."
   MERGED_BRANCHES=$(git -C "$REPO_PATH" branch --merged "$DEFAULT_BRANCH" 2>/dev/null \
     | grep -v "^\*" \
     | grep -v "^+" \
@@ -83,13 +129,14 @@ while IFS= read -r REPO_PATH; do
     case "$BRANCH" in
       refinery-patrol|merge/*) continue ;;
     esac
-    log "    Deleting merged: $BRANCH"
-    git -C "$REPO_PATH" branch -d "$BRANCH" 2>/dev/null && LOCAL_MERGED=$((LOCAL_MERGED + 1))
+    if act "delete merged branch: $BRANCH" -- git -C "$REPO_PATH" branch -d "$BRANCH" 2>/dev/null; then
+      LOCAL_MERGED=$((LOCAL_MERGED + 1))
+    fi
   done <<< "$MERGED_BRANCHES"
   TOTAL_LOCAL_MERGED=$((TOTAL_LOCAL_MERGED + LOCAL_MERGED))
 
   # Step 3: Delete stale unmerged orphan branches
-  log "  Deleting stale orphan branches..."
+  log "  Stale orphan branches..."
   STALE_PATTERNS="polecat/|dog/|fix/|pr-|integration/|worktree-agent-"
   ALL_BRANCHES=$(git -C "$REPO_PATH" branch 2>/dev/null \
     | grep -v "^\*" \
@@ -111,13 +158,14 @@ while IFS= read -r REPO_PATH; do
     if git -C "$REPO_PATH" rev-parse --verify "refs/remotes/origin/$BRANCH" >/dev/null 2>&1; then
       continue
     fi
-    log "    Deleting orphan: $BRANCH"
-    git -C "$REPO_PATH" branch -D "$BRANCH" 2>/dev/null && LOCAL_ORPHAN=$((LOCAL_ORPHAN + 1))
+    if act "force-delete orphan branch: $BRANCH" -- git -C "$REPO_PATH" branch -D "$BRANCH" 2>/dev/null; then
+      LOCAL_ORPHAN=$((LOCAL_ORPHAN + 1))
+    fi
   done <<< "$ALL_BRANCHES"
   TOTAL_LOCAL_ORPHAN=$((TOTAL_LOCAL_ORPHAN + LOCAL_ORPHAN))
 
   # Step 4: Delete merged remote branches on GitHub
-  log "  Deleting merged remote branches..."
+  log "  Merged remote branches..."
   REMOTE_DELETED=0
 
   GH_REPO=$(git -C "$REPO_PATH" remote get-url origin 2>/dev/null \
@@ -140,35 +188,39 @@ while IFS= read -r REPO_PATH; do
         continue
       fi
       if git -C "$REPO_PATH" merge-base --is-ancestor "origin/$RBRANCH" "origin/$DEFAULT_BRANCH" 2>/dev/null; then
-        log "    Deleting remote: origin/$RBRANCH"
-        gh api "repos/$GH_REPO/git/refs/heads/$RBRANCH" -X DELETE 2>/dev/null && REMOTE_DELETED=$((REMOTE_DELETED + 1))
+        if act "delete REMOTE branch $GH_REPO:$RBRANCH" -- gh api "repos/$GH_REPO/git/refs/heads/$RBRANCH" -X DELETE 2>/dev/null; then
+          REMOTE_DELETED=$((REMOTE_DELETED + 1))
+        fi
       fi
     done <<< "$REMOTE_BRANCHES"
   fi
   TOTAL_REMOTE=$((TOTAL_REMOTE + REMOTE_DELETED))
 
   # Step 5: Clear stale stashes
-  log "  Clearing stashes..."
+  log "  Stashes..."
   STASH_COUNT=$(git -C "$REPO_PATH" stash list 2>/dev/null | wc -l | tr -d ' ')
   if [ "$STASH_COUNT" -gt 0 ]; then
-    log "    Clearing $STASH_COUNT stash(es)"
-    git -C "$REPO_PATH" stash clear 2>/dev/null
+    act "clear $STASH_COUNT stash(es)" -- git -C "$REPO_PATH" stash clear 2>/dev/null || true
     TOTAL_STASHES=$((TOTAL_STASHES + STASH_COUNT))
   fi
 
   # Step 6: Garbage collect
-  log "  Running git gc..."
-  git -C "$REPO_PATH" gc --prune=now --quiet 2>/dev/null && TOTAL_GC=$((TOTAL_GC + 1))
+  log "  Garbage collection..."
+  if act "run git gc --prune=now" -- git -C "$REPO_PATH" gc --prune=now --quiet 2>/dev/null; then
+    TOTAL_GC=$((TOTAL_GC + 1))
+  fi
 
   log "  Done: $LOCAL_MERGED merged, $LOCAL_ORPHAN orphan, $REMOTE_DELETED remote, $STASH_COUNT stash(es)"
 done <<< "$RIG_PATHS"
 
 # --- Report -------------------------------------------------------------------
 
-SUMMARY="$RIG_COUNT rig(s): $TOTAL_LOCAL_MERGED merged, $TOTAL_LOCAL_ORPHAN orphan, $TOTAL_REMOTE remote, $TOTAL_STASHES stash(es), $TOTAL_GC gc"
+SUMMARY="[$MODE] $RIG_COUNT rig(s): $TOTAL_LOCAL_MERGED merged, $TOTAL_LOCAL_ORPHAN orphan, $TOTAL_REMOTE remote, $TOTAL_STASHES stash(es), $TOTAL_GC gc"
 log ""
 log "=== Git Hygiene Summary ==="
 log "$SUMMARY"
+if [ "$DRY_RUN" = "1" ]; then
+  log "Report-only: nothing was deleted. Re-run with GIT_HYGIENE_APPLY=1 to apply."
+fi
 
-gt plugin record-run --plugin git-hygiene --result success \
-  --title "git-hygiene: $SUMMARY" --description "$SUMMARY" >/dev/null 2>&1 || true
+record success "git-hygiene: $SUMMARY" "$SUMMARY"

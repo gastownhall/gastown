@@ -735,6 +735,19 @@ func rigStatePriority(hasWitness, hasRefinery bool, opState string) int {
 	}
 }
 
+// rigRepoPath returns the path to a rig's mayor clone, or "" if the rig has no
+// usable clone. Consumers of `gt rig list --json` treat a non-empty repo_path
+// as a git repository they may operate on, so a path is only reported when a
+// .git entry is actually present (a directory for a normal clone, a file for a
+// worktree).
+func rigRepoPath(rigPath string) string {
+	repoPath := filepath.Join(rigPath, "mayor", "rig")
+	if _, err := os.Stat(filepath.Join(repoPath, ".git")); err != nil {
+		return ""
+	}
+	return repoPath
+}
+
 func runRigList(cmd *cobra.Command, args []string) error {
 	// Find workspace
 	townRoot, err := workspace.FindFromCwdOrError()
@@ -764,6 +777,7 @@ func runRigList(cmd *cobra.Command, args []string) error {
 	type rigInfo struct {
 		Name        string `json:"name"`
 		BeadsPrefix string `json:"beads_prefix"`
+		RepoPath    string `json:"repo_path,omitempty"`
 		Status      string `json:"status"`
 		Witness     string `json:"witness"`
 		Refinery    string `json:"refinery"`
@@ -804,6 +818,7 @@ func runRigList(cmd *cobra.Command, args []string) error {
 		rigs = append(rigs, rigInfo{
 			Name:        name,
 			BeadsPrefix: prefix,
+			RepoPath:    rigRepoPath(r.Path),
 			Status:      strings.ToLower(opState),
 			Witness:     witnessStatus,
 			Refinery:    refineryStatus,

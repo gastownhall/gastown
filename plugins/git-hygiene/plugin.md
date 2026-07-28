@@ -25,9 +25,33 @@ GitHub, stale stashes, and garbage collection.
 
 Requires: `gh` CLI installed and authenticated (`gh auth status`).
 
+## Safety: report-only by default
+
+This plugin **does not delete anything** unless `GIT_HYGIENE_APPLY=1` is set.
+By default it reports what it *would* delete and records a run, leaving every
+repo untouched.
+
+This matters because several of its steps are irreversible and operate well
+beyond the local machine:
+
+- it force-deletes local branches (`git branch -D`), and in this town a polecat
+  branch is often the only durable record of that worker's commits;
+- it **deletes remote branches on GitHub** via `gh api ... -X DELETE`, including
+  branches in third-party orgs;
+- it runs `git stash clear` and `git gc --prune=now`.
+
+Review a report-only run before enabling deletion:
+
+```bash
+bash plugins/git-hygiene/run.sh                     # report only
+GIT_HYGIENE_APPLY=1 bash plugins/git-hygiene/run.sh # actually delete
+```
+
 ## Step 1: Enumerate rig repos
 
-Iterate all undocked rigs to find their repo paths:
+Iterate all undocked rigs to find their repo paths. This relies on the
+`repo_path` field of `gt rig list --json`, which points at each rig's mayor
+clone and is omitted for rigs that have no clone:
 
 ```bash
 RIG_JSON=$(gt rig list --json 2>/dev/null)
