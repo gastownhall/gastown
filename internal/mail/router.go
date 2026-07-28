@@ -1834,13 +1834,29 @@ func AddressToSessionIDs(address string) []string {
 		return []string{session.OverseerSessionName()}
 	}
 
-	// Mayor address: "mayor/" or "mayor"
-	if strings.HasPrefix(address, constants.RoleMayor) {
+	// Dog address: "deacon/dogs/<name>" — dogs are town-level agents managed by
+	// the deacon, but they own their own session (hq-dog-<name>). This MUST be
+	// checked before the deacon case below: a plain prefix match on "deacon"
+	// swallows every dog address and fires the notification into the deacon's
+	// pane instead of the dog's. See internal/dog/session_manager.go, which
+	// deliberately names dogs "hq-dog-" rather than "hq-deacon-" for exactly
+	// this reason — the naming avoided the collision, this resolver did not.
+	if dogName, ok := strings.CutPrefix(address, constants.RoleDeacon+"/dogs/"); ok {
+		dogName = strings.Trim(dogName, "/")
+		if dogName != "" && !strings.Contains(dogName, "/") {
+			return []string{session.DogSessionName(dogName)}
+		}
+		return nil
+	}
+
+	// Mayor address: exactly "mayor" or "mayor/" — NOT a prefix match, which
+	// would capture unrelated sub-addresses and misdeliver them to the mayor.
+	if address == constants.RoleMayor || address == constants.RoleMayor+"/" {
 		return []string{session.MayorSessionName()}
 	}
 
-	// Deacon address: "deacon/" or "deacon"
-	if strings.HasPrefix(address, constants.RoleDeacon) {
+	// Deacon address: exactly "deacon" or "deacon/" — NOT a prefix match.
+	if address == constants.RoleDeacon || address == constants.RoleDeacon+"/" {
 		return []string{session.DeaconSessionName()}
 	}
 

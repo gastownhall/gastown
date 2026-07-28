@@ -407,25 +407,13 @@ func runMoleculeStatus(cmd *cobra.Command, args []string) error {
 
 		// Query for hooked beads using the authoritative source: bead status + assignee.
 		// First try status=hooked (work that's been slung but not yet claimed)
-		hookedBeads, err := b.List(beads.ListOptions{
-			Status:   beads.StatusHooked,
-			Assignee: target,
-			Priority: -1,
-		})
-		if err != nil {
-			return nil
-		}
+		hookedBeads := listHookedByAssignee(b, beads.StatusHooked, target)
 
 		// If no hooked beads found, also check in_progress beads assigned to this agent.
 		// This handles the case where work was claimed (status changed to in_progress)
 		// but the session was interrupted before completion. The hook should persist.
 		if len(hookedBeads) == 0 {
-			inProgressBeads, _ := b.List(beads.ListOptions{
-				Status:   "in_progress",
-				Assignee: target,
-				Priority: -1,
-			})
-			hookedBeads = inProgressBeads
+			hookedBeads = listHookedByAssignee(b, "in_progress", target)
 		}
 
 		// For town-level roles (mayor, deacon), scan all rigs if nothing found locally
@@ -439,17 +427,9 @@ func runMoleculeStatus(cmd *cobra.Command, args []string) error {
 		// See: https://github.com/steveyegge/gastown/issues/1438
 		if len(hookedBeads) == 0 && !isTownLevelRole(target) && townRoot != "" {
 			townB := beads.New(filepath.Join(townRoot, ".beads"))
-			if townHooked, err := townB.List(beads.ListOptions{
-				Status:   beads.StatusHooked,
-				Assignee: target,
-				Priority: -1,
-			}); err == nil && len(townHooked) > 0 {
+			if townHooked := listHookedByAssignee(townB, beads.StatusHooked, target); len(townHooked) > 0 {
 				hookedBeads = townHooked
-			} else if townInProgress, err := townB.List(beads.ListOptions{
-				Status:   "in_progress",
-				Assignee: target,
-				Priority: -1,
-			}); err == nil && len(townInProgress) > 0 {
+			} else if townInProgress := listHookedByAssignee(townB, "in_progress", target); len(townInProgress) > 0 {
 				hookedBeads = townInProgress
 			}
 		}
@@ -548,6 +528,46 @@ func extractRoleFromIdentity(target string) string {
 // buildAgentIdentity constructs the agent identity string from role context.
 // Town-level agents (mayor, deacon) use trailing slash to match the format
 // used when setting assignee on hooked beads (see resolveSelfTarget in sling.go).
+// hookAssigneeVariants returns every assignee spelling a hook record may use
+// for one agent, most-likely first.
+//
+// Hook records are written with inconsistent trailing slashes: the sling path
+// stores town-level assignees WITHOUT one ("deacon"), while buildAgentIdentity
+// produces one ("deacon/"). Querying a single spelling made an agent's own hook
+// invisible to bare `gt hook` while `gt hook show <self>` — which normalizes to
+// the other spelling — found it at the same instant.
+//
+// That contradiction is the trigger of the deacon heartbeat-starvation loop
+// (hq-ls0oi): the deacon read an empty hook, re-slung, and the resulting
+// success-under-Interrupted output was indistinguishable from an injection, so
+// it held and stopped heartbeating. Query both spellings and the contradiction
+// cannot arise.
+func hookAssigneeVariants(target string) []string {
+	if target == "" {
+		return nil
+	}
+	if trimmed := strings.TrimSuffix(target, "/"); trimmed != target {
+		return []string{target, trimmed}
+	}
+	return []string{target, target + "/"}
+}
+
+// listHookedByAssignee lists beads of the given status for an agent, trying
+// each assignee spelling. Returns the first non-empty result.
+func listHookedByAssignee(b *beads.Beads, status, target string) []*beads.Issue {
+	for _, assignee := range hookAssigneeVariants(target) {
+		issues, err := b.List(beads.ListOptions{
+			Status:   status,
+			Assignee: assignee,
+			Priority: -1,
+		})
+		if err == nil && len(issues) > 0 {
+			return issues
+		}
+	}
+	return nil
+}
+
 func buildAgentIdentity(ctx RoleContext) string {
 	switch ctx.Role {
 	case RoleMayor:
@@ -1218,30 +1238,12 @@ func scanAllRigsForHookedBeads(townRoot, target string) []*beads.Issue {
 
 		b := beads.New(rigBeadsDir)
 		// First check for hooked beads
-		hookedBeads, err := b.List(beads.ListOptions{
-			Status:   beads.StatusHooked,
-			Assignee: target,
-			Priority: -1,
-		})
-		if err != nil {
-			continue
-		}
-
-		if len(hookedBeads) > 0 {
+		if hookedBeads := listHookedByAssignee(b, beads.StatusHooked, target); len(hookedBeads) > 0 {
 			return hookedBeads
 		}
 
 		// Also check for in_progress beads (work that was claimed but session interrupted)
-		inProgressBeads, err := b.List(beads.ListOptions{
-			Status:   "in_progress",
-			Assignee: target,
-			Priority: -1,
-		})
-		if err != nil {
-			continue
-		}
-
-		if len(inProgressBeads) > 0 {
+		if inProgressBeads := listHookedByAssignee(b, "in_progress", target); len(inProgressBeads) > 0 {
 			return inProgressBeads
 		}
 	}

@@ -183,6 +183,19 @@ func TestAddressToSessionIDs(t *testing.T) {
 		{"mayor", []string{"hq-mayor"}},
 		{"mayor/", []string{"hq-mayor"}},
 		{"deacon", []string{"hq-deacon"}},
+		{"deacon/", []string{"hq-deacon"}},
+
+		// Dogs are town-level but own their session (hq-dog-<name>). A prefix
+		// match on "deacon" used to swallow these and fire every dog-plugin
+		// notification into the deacon's pane, interrupting its in-flight tool
+		// calls. Regression guard for hq-ls0oi.
+		{"deacon/dogs/bravo", []string{"hq-dog-bravo"}},
+		{"deacon/dogs/charlie", []string{"hq-dog-charlie"}},
+		{"deacon/dogs/alpha", []string{"hq-dog-alpha"}},
+
+		// Malformed dog addresses must NOT fall back to the deacon's pane.
+		{"deacon/dogs/", nil},
+		{"deacon/dogs/a/b", nil},
 
 		// Rig singletons - single session (no crew/polecat ambiguity)
 		{"gastown/refinery", []string{"gt-refinery"}},
