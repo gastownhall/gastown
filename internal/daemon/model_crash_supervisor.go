@@ -18,6 +18,9 @@ const (
 	modelCrashWatchdogMaxAge        = 2 * time.Minute
 	modelCrashControlProbeInterval  = 30 * time.Minute
 	modelCrashProgressResetInterval = 30 * time.Minute
+	modelStallNudgeAfter            = 15 * time.Minute
+	modelStallLocalRestartAfter     = 30 * time.Minute
+	modelStallGoEscalateAfter       = 60 * time.Minute
 )
 
 type modelCrashClock interface {
@@ -29,14 +32,15 @@ type realModelCrashClock struct{}
 func (realModelCrashClock) Now() time.Time { return time.Now() }
 
 type modelCrashSession struct {
-	Name       string
-	InstanceID string
-	Identity   string
-	Role       string
-	Agent      string
-	WorkUnit   string
-	WorkDir    string
-	Output     string
+	Name        string
+	InstanceID  string
+	Identity    string
+	Role        string
+	Agent       string
+	WorkUnit    string
+	WorkDir     string
+	Output      string
+	HeartbeatAt time.Time
 }
 
 type modelCrashWatchdog struct {
@@ -44,10 +48,26 @@ type modelCrashWatchdog struct {
 	CheckedAt time.Time `json:"checked_at"`
 }
 
+type modelCrashRecoveryPolicy struct {
+	NudgeAfter        time.Duration
+	LocalRestartAfter time.Duration
+	GoEscalateAfter   time.Duration
+}
+
+func defaultModelCrashRecoveryPolicy() modelCrashRecoveryPolicy {
+	return modelCrashRecoveryPolicy{
+		NudgeAfter:        modelStallNudgeAfter,
+		LocalRestartAfter: modelStallLocalRestartAfter,
+		GoEscalateAfter:   modelStallGoEscalateAfter,
+	}
+}
+
 type modelCrashExecutor interface {
 	Sessions() ([]modelCrashSession, error)
 	LMWatchdog() (modelCrashWatchdog, error)
 	Restart(modelCrashSession, string) error
+	Nudge(modelCrashSession, string) error
+	RecoveryPolicy(modelCrashSession) modelCrashRecoveryPolicy
 	ActivePolecat(modelCrashSession) bool
 	AllowsContinuation(modelCrashSession, string, string) bool
 	Alert(string, string) error
@@ -68,6 +88,11 @@ type modelCrashSessionState struct {
 	NextProbeAt           time.Time `json:"next_probe_at,omitempty"`
 	RecoveryAction        string    `json:"recovery_action,omitempty"`
 	RecoveryExhausted     bool      `json:"recovery_exhausted"`
+	Kind                  string    `json:"kind,omitempty"`
+	Tier                  string    `json:"tier,omitempty"`
+	LeaseOwner            string    `json:"lease_owner,omitempty"`
+	StallStartedAt        time.Time `json:"stall_started_at,omitempty"`
+	StallNudges           int       `json:"stall_nudges,omitempty"`
 }
 
 type modelCrashState struct {
@@ -215,6 +240,10 @@ func (s *modelCrashSupervisor) Scan() error {
 		}
 		fingerprint, fatal := session.DetectModelCrash(candidate.Output)
 		if !fatal {
+			if s.handleStall(candidate, current, now) {
+				changed = true
+				continue
+			}
 			if current == nil || strings.TrimSpace(candidate.Output) == "" {
 				continue
 			}
@@ -233,6 +262,9 @@ func (s *modelCrashSupervisor) Scan() error {
 				SessionName: candidate.Name,
 				IncidentID:  newModelCrashIncidentID(candidate.Identity, now),
 				WorkUnit:    strings.TrimSpace(candidate.WorkUnit),
+				Kind:        "session-fatal",
+				Tier:        "local",
+				LeaseOwner:  "daemon/model-crash-supervisor",
 			}
 			s.state.Sessions[candidate.Identity] = current
 		}
@@ -289,6 +321,7 @@ func (s *modelCrashSupervisor) Scan() error {
 					fmt.Sprintf("Local model-crash restart failed for %s: %v", candidate.Identity, err))
 			} else {
 				current.RecoveryAction = "local-restart"
+				current.Tier = "local"
 				current.RecoveryExhausted = false
 			}
 			continue
@@ -311,6 +344,7 @@ func (s *modelCrashSupervisor) Scan() error {
 					fmt.Sprintf("OpenCode Go continuation failed for %s: %v", candidate.Identity, err))
 			} else {
 				current.RecoveryAction = "go-continuation"
+				current.Tier = "go"
 				current.RecoveryExhausted = false
 			}
 			continue
@@ -327,6 +361,104 @@ func (s *modelCrashSupervisor) Scan() error {
 		return s.save()
 	}
 	return nil
+}
+
+// handleStall advances the time-based local-first ladder for an active worker
+// whose durable heartbeat has stopped. The write-ahead state transitions are
+// the action lease: daemon restarts cannot replay a nudge, restart, or hosted
+// continuation for the same incident.
+func (s *modelCrashSupervisor) handleStall(candidate modelCrashSession, current *modelCrashSessionState, now time.Time) bool {
+	policy := s.executor.RecoveryPolicy(candidate)
+	if strings.TrimSpace(candidate.WorkUnit) == "" || candidate.HeartbeatAt.IsZero() ||
+		now.Before(candidate.HeartbeatAt) || now.Sub(candidate.HeartbeatAt) < policy.NudgeAfter {
+		return false
+	}
+	if current == nil {
+		current = &modelCrashSessionState{
+			SessionName:    candidate.Name,
+			IncidentID:     newModelCrashIncidentID(candidate.Identity+"-stall", now),
+			WorkUnit:       strings.TrimSpace(candidate.WorkUnit),
+			Kind:           "session-stall",
+			Tier:           "local",
+			LeaseOwner:     "daemon/model-crash-supervisor",
+			StallStartedAt: candidate.HeartbeatAt,
+		}
+		s.state.Sessions[candidate.Identity] = current
+	}
+	if current.Kind != "session-stall" {
+		return false
+	}
+	current.SessionName = candidate.Name
+	if current.StallStartedAt.IsZero() {
+		current.StallStartedAt = candidate.HeartbeatAt
+	}
+	stallAge := now.Sub(current.StallStartedAt)
+
+	if stallAge >= policy.GoEscalateAfter && candidate.Role == "polecat" &&
+		current.GoContinuations == 0 && s.executor.ActivePolecat(candidate) &&
+		s.executor.AllowsContinuation(candidate, "opencode-local", "opencode-go") {
+		current.GoContinuations = 1
+		current.Tier = "go"
+		current.NextProbeAt = time.Time{}
+		current.RecoveryAction = "go-continuation-pending"
+		if err := s.save(); err != nil {
+			current.RecoveryAction = "go-continuation-state-failed"
+			current.RecoveryExhausted = true
+			return true
+		}
+		if err := s.executor.Restart(candidate, "opencode-go"); err != nil {
+			current.RecoveryAction = "go-continuation-failed"
+			current.RecoveryExhausted = true
+			s.alertOnce(current.IncidentID+":go-continuation-failed",
+				fmt.Sprintf("OpenCode Go stall continuation failed for %s: %v", candidate.Identity, err))
+		} else {
+			current.RecoveryAction = "go-continuation"
+			current.RecoveryExhausted = false
+		}
+		return true
+	}
+
+	if stallAge >= policy.LocalRestartAfter && current.LocalRestarts == 0 {
+		current.LocalRestarts = 1
+		current.NextProbeAt = current.StallStartedAt.Add(policy.GoEscalateAfter)
+		current.RecoveryAction = "local-restart-pending"
+		if err := s.save(); err != nil {
+			current.RecoveryAction = "local-restart-state-failed"
+			current.RecoveryExhausted = true
+			return true
+		}
+		if err := s.executor.Restart(candidate, "opencode-local"); err != nil {
+			current.RecoveryAction = "local-restart-failed"
+			current.RecoveryExhausted = true
+			s.alertOnce(current.IncidentID+":local-restart-failed",
+				fmt.Sprintf("Local stall restart failed for %s: %v", candidate.Identity, err))
+		} else {
+			current.RecoveryAction = "local-restart"
+			current.RecoveryExhausted = false
+		}
+		return true
+	}
+
+	if current.StallNudges == 0 {
+		current.StallNudges = 1
+		current.NextProbeAt = current.StallStartedAt.Add(policy.LocalRestartAfter)
+		current.RecoveryAction = "nudge-pending"
+		if err := s.save(); err != nil {
+			current.RecoveryAction = "nudge-state-failed"
+			current.RecoveryExhausted = true
+			return true
+		}
+		if err := s.executor.Nudge(candidate,
+			"No durable progress has been observed for 15 minutes. Report progress or the blocking condition."); err != nil {
+			current.RecoveryAction = "nudge-failed"
+			s.alertOnce(current.IncidentID+":nudge-failed",
+				fmt.Sprintf("Stall nudge failed for %s: %v", candidate.Identity, err))
+		} else {
+			current.RecoveryAction = "nudged"
+		}
+		return true
+	}
+	return false
 }
 
 func (s *modelCrashSupervisor) runLocalProbe(candidate modelCrashSession, state *modelCrashSessionState, now time.Time) error {
@@ -451,8 +583,17 @@ type ModelCrashRecoveryIncident struct {
 	Identity          string
 	SessionName       string
 	IncidentID        string
+	Kind              string
+	WorkUnit          string
+	Tier              string
+	LeaseOwner        string
 	RecoveryAction    string
 	RecoveryExhausted bool
+	LocalRestarts     int
+	GoContinuations   int
+	ControlProbes     int
+	StallNudges       int
+	NextActionAt      time.Time
 	Confirmed         bool
 }
 
@@ -478,8 +619,17 @@ func LoadModelCrashRecoveryIncidents(townRoot string) ([]ModelCrashRecoveryIncid
 			Identity:          identity,
 			SessionName:       candidate.SessionName,
 			IncidentID:        candidate.IncidentID,
+			Kind:              candidate.Kind,
+			WorkUnit:          candidate.WorkUnit,
+			Tier:              candidate.Tier,
+			LeaseOwner:        candidate.LeaseOwner,
 			RecoveryAction:    candidate.RecoveryAction,
 			RecoveryExhausted: candidate.RecoveryExhausted,
+			LocalRestarts:     candidate.LocalRestarts,
+			GoContinuations:   candidate.GoContinuations,
+			ControlProbes:     candidate.ControlProbes,
+			StallNudges:       candidate.StallNudges,
+			NextActionAt:      candidate.NextProbeAt,
 			Confirmed: candidate.LocalRestarts > 0 || candidate.GoContinuations > 0 ||
 				candidate.ControlProbes > 0 || candidate.RecoveryAction != "",
 		})

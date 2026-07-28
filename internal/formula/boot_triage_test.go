@@ -98,7 +98,7 @@ func TestBootTriageFormulaPreservesRoutineTriageAndMechanicalAuthority(t *testin
 		"must not spawn cloud recovery",
 		"Do not change gateways",
 		"Do not change the model hierarchy",
-		"Never invoke Codex",
+		"Never invoke Codex yourself",
 		"Only the watchdog may declare recovery",
 	} {
 		if !strings.Contains(formula, want) {
@@ -107,15 +107,15 @@ func TestBootTriageFormulaPreservesRoutineTriageAndMechanicalAuthority(t *testin
 	}
 }
 
-func TestBootTriageFormulaRequiresCorrelatedGoExhaustionForClaude(t *testing.T) {
+func TestBootTriageFormulaRequiresFiniteInfrastructureLadder(t *testing.T) {
 	formula := readBootTriageFormula(t)
 
 	for _, want := range []string{
-		"positively correlated",
-		"quota or usage exhaustion error",
-		"Only `go-exhausted` may transition to `claude-last-ditch`",
-		"Ambiguous, authentication, network, or ordinary Go failures",
-		"must transition to `awaiting-human`",
+		"Only the watchdog may advance the finite Go → Claude → Codex ladder",
+		"`claude-last-ditch` | `claude`",
+		"`codex-last-ditch` | `codex`",
+		"Failure freezes the",
+		"incident in `awaiting-human`",
 		"Local mechanical recovery owns the 90-second head start before Go is spawned",
 	} {
 		if !strings.Contains(formula, want) {

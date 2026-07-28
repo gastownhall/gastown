@@ -42,10 +42,11 @@ Canonical watchdog phases:
 - `suspect`: a first failure is awaiting mechanical confirmation.
 - `recovering-local`: the watchdog is performing bounded local recovery.
 - `escalated-go`: the watchdog has routed the incident to an `opencode-go` Boot.
-- `go-exhausted`: the watchdog positively correlated a Go quota or usage exhaustion error
-  to this incident. It does not mean merely that Go failed to recover service.
+- `go-exhausted`: the watchdog recorded the bounded Go attempt as exhausted.
 - `claude-last-ditch`: explicit state authorization for one last-ditch Claude attempt.
 - `recovered-by-claude`: the watchdog mechanically verified recovery after that attempt.
+- `codex-last-ditch`: explicit state authorization for one final Codex attempt.
+- `recovered-by-codex`: the watchdog mechanically verified recovery after that attempt.
 - `report-pending`: a mechanically verified incident needs an overseer report from an
   `opencode-local` Boot.
 - `awaiting-human`: automated recovery is exhausted and human action is required.
@@ -98,7 +99,8 @@ Record observations for the decide step:
 - pending_mail: count of unread messages
 - error_signals: any errors observed
 - lmstudio_status: healthy/suspect/recovering-local/escalated-go/go-exhausted/
-  claude-last-ditch/recovered-by-claude/report-pending/awaiting-human/unknown
+  claude-last-ditch/recovered-by-claude/codex-last-ditch/recovered-by-codex/
+  report-pending/awaiting-human/unknown
 - incident_id: identifier from the watchdog, if any
 - boot_agent: `$GT_AGENT`
 """
@@ -120,7 +122,9 @@ Dispatch primarily on the exact pair `status + $GT_AGENT`:
 | `escalated-go` | `opencode-go` | Diagnose/repair only this incident |
 | `go-exhausted` | Any | NOTHING; wait for an explicit watchdog transition |
 | `claude-last-ditch` | `claude` | Exactly one bounded last-ditch attempt |
+| `codex-last-ditch` | `codex` | Exactly one bounded final recovery attempt |
 | `recovered-by-claude` | Any | NOTHING; wait for the watchdog's report transition |
+| `recovered-by-codex` | Any | NOTHING; wait for the watchdog's report transition |
 | `report-pending` | `opencode-local` | Validate watchdog proof and report |
 | `awaiting-human` | Any | NOTHING; preserve evidence for the human |
 | Any incident/agent mismatch | Any | NOTHING and exit |
@@ -128,9 +132,8 @@ Dispatch primarily on the exact pair `status + $GT_AGENT`:
 Incident work always preempts the ordinary matrix. Do not start, wake, recycle, or
 interrupt Deacon as an incidental part of incident handling.
 
-Only `go-exhausted` may transition to `claude-last-ditch`, and only the watchdog may
-make that transition. Ambiguous, authentication, network, or ordinary Go failures must transition to `awaiting-human`; they never authorize Claude. Elapsed time, an agent claim,
-and a generic nonzero exit are not evidence of quota or usage exhaustion.
+Only the watchdog may advance the finite Go → Claude → Codex ladder. An agent claim,
+elapsed time, or a generic nonzero exit never authorizes Boot to spawn another tier.
 
 **Ordinary healthy triage**
 
@@ -194,9 +197,7 @@ For `escalated-go` + `opencode-go`:
 3. Apply only a bounded LM Studio repair relevant to that evidence. Do not touch Deacon,
    unrelated agents, repositories, credentials, routing, or configuration hierarchy.
 4. Stop. Do not declare success and do not write the watchdog or dossier. The watchdog
-   will re-probe and classify the recorded Go result. It may record `go-exhausted` only
-   after positively correlating quota or usage exhaustion evidence to this incident;
-   ambiguous, authentication, network, and ordinary failures go to `awaiting-human`.
+   will re-probe and classify the recorded Go result before advancing at most once.
 
 For `claude-last-ditch` + `claude` only:
 1. Re-read the watchdog and incident dossier. If status is no longer exactly
@@ -205,7 +206,7 @@ For `claude-last-ditch` + `claude` only:
    scope. Do not spawn or reinvoke Claude.
 3. Preserve LM Studio's required Qwen service contract:
    `qwen/qwen3.6-35b-a3b`, `parallel=2`, and `TTL=14400`.
-4. Do not change gateways. Do not change the model hierarchy. Never invoke Codex.
+4. Do not change gateways. Do not change the model hierarchy. Never invoke Codex yourself.
 5. Do not claim or record recovery. Only the watchdog may declare recovery after its
    independent canary. Exit immediately after the one attempt, whether it appears to
    work or not.
@@ -213,6 +214,11 @@ For `claude-last-ditch` + `claude` only:
 Claude must not act in `go-exhausted`, `awaiting-human`, or any other state. A human or
 the watchdog must explicitly authorize `claude-last-ditch`; Boot never creates that
 authorization and never spawns a cloud tier itself.
+
+For `codex-last-ditch` + `codex` only, follow the same infrastructure-only constraints
+as Claude. Make one bounded attempt, preserve the Qwen service contract, and exit.
+Codex must never spawn another agent or write watchdog state. Failure freezes the
+incident in `awaiting-human`; only the watchdog may verify success.
 
 For `report-pending` + `opencode-local`:
 1. Validate the recovered state by re-reading the current watchdog record and matching

@@ -15,7 +15,7 @@ const ModelCrashFatalSignature = "The model has crashed without additional infor
 
 var (
 	ansiEscapePattern          = regexp.MustCompile(`\x1b(?:\[[0-?]*[ -/]*[@-~]|\][^\x07]*(?:\x07|\x1b\\))`)
-	openCodeModeModelPattern   = regexp.MustCompile(`^(?:Build|Plan)\s*·\s*.+\s+\(local(?:,\s*[^)]+)?\)$`)
+	openCodeModeModelPattern   = regexp.MustCompile(`^(?:[[:^alnum:]]+\s*)?(?:Build|Plan)\s*·\s*.+\s+\(local(?:,\s*[^)]+)?\)(?:\s+.+)?$`)
 	openCodeLocalSourcePattern = regexp.MustCompile(`^[[:alnum:]][[:alnum:] ._+/-]*\s+\(local(?:,\s*[^)]+)?\)$`)
 	openCodeWorkspacePattern   = regexp.MustCompile(`^(?:~[/\\]|/|[[:alpha:]]:[/\\])`)
 	ModelCrashFatalFingerprint = fingerprintModelCrash(ModelCrashFatalSignature)
@@ -43,8 +43,13 @@ func DetectModelCrash(output string) (string, bool) {
 }
 
 func isOpenCodeModelCrashChrome(line string) bool {
-	trimmed := strings.TrimSpace(strings.Trim(line, "│┃┆┊┌┐└┘├┤┬┴┼─━╭╮╰╯"))
+	trimmed := strings.TrimSpace(strings.Trim(line, "│┃┆┊┌┐└┘├┤┬┴┼─━╭╮╰╯╹▀▄▁▂▃▅▆▇█"))
 	if trimmed == "" {
+		return true
+	}
+	// OpenCode may render the fatal message as a quoted block. After slicing
+	// at the signature the closing quote remains on its own decorated line.
+	if trimmed == `"` || trimmed == `'` {
 		return true
 	}
 	// OpenCode renders the active mode/model and local provider as structured

@@ -68,14 +68,15 @@ func TestModelCrashRecoveryCheckSurfacesUnavailableWatchdog(t *testing.T) {
 	}
 }
 
-func TestModelCrashRecoveryCheckFailsForConfirmedOrExhaustedIncident(t *testing.T) {
+func TestModelCrashRecoveryCheckDistinguishesActiveAndExhaustedIncident(t *testing.T) {
 	tests := []struct {
 		name      string
 		action    string
 		exhausted bool
+		want      CheckStatus
 	}{
-		{name: "confirmed recovery active", action: "local-restart"},
-		{name: "recovery exhausted", action: "awaiting-local-probe", exhausted: true},
+		{name: "confirmed recovery active", action: "local-restart", want: StatusWarning},
+		{name: "recovery exhausted", action: "awaiting-local-probe", exhausted: true, want: StatusError},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -104,8 +105,8 @@ func TestModelCrashRecoveryCheckFailsForConfirmedOrExhaustedIncident(t *testing.
 
 			check := NewModelCrashRecoveryCheck()
 			result := check.Run(&CheckContext{TownRoot: townRoot})
-			if result.Status != StatusError {
-				t.Fatalf("status = %s, want Error: %#v", result.Status, result)
+			if result.Status != tt.want {
+				t.Fatalf("status = %s, want %s: %#v", result.Status, tt.want, result)
 			}
 			if result.Message == "" || len(result.Details) == 0 {
 				t.Fatalf("doctor result lacks incident visibility: %#v", result)

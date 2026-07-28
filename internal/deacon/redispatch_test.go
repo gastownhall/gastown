@@ -254,6 +254,59 @@ func TestLoadModelEscalationConfig(t *testing.T) {
 			t.Errorf("expected ToAgent=claude, got %q", cfg.Rules[0].ToAgent)
 		}
 	})
+
+	t.Run("loads bounded local first policy", func(t *testing.T) {
+		dir := t.TempDir()
+		gastown := filepath.Join(dir, ".gastown")
+		if err := os.MkdirAll(gastown, 0755); err != nil {
+			t.Fatal(err)
+		}
+		content := `{
+			"type":"model-escalation","version":2,"enabled":true,"rules":[],
+			"recovery":{
+				"nudge_after":"15m","local_restart_after":"30m","go_escalate_after":"60m",
+				"max_local_restarts":1,"max_go_attempts":1,
+				"break_glass":{"enabled":true,"scope":"infrastructure-only",
+					"agents":["claude","codex"],"max_attempts_per_agent":1,
+					"timeout":"10m","automatic":true,
+					"tier_policy":{
+						"claude":{"max_attempts":1,"timeout":"10m","mode":"automatic"},
+						"codex":{"max_attempts":1,"timeout":"10m","mode":"automatic"}
+					}}
+			}
+		}`
+		if err := os.WriteFile(filepath.Join(gastown, "model-escalation.json"), []byte(content), 0600); err != nil {
+			t.Fatal(err)
+		}
+		cfg, err := LoadModelEscalationConfig(dir)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if cfg.Recovery == nil || cfg.Recovery.GoEscalateAfter != "60m" {
+			t.Fatalf("recovery policy = %#v", cfg.Recovery)
+		}
+	})
+
+	t.Run("rejects product scoped break glass", func(t *testing.T) {
+		dir := t.TempDir()
+		gastown := filepath.Join(dir, ".gastown")
+		if err := os.MkdirAll(gastown, 0755); err != nil {
+			t.Fatal(err)
+		}
+		content := `{"enabled":true,"rules":[],"recovery":{"break_glass":{
+			"enabled":true,"scope":"all-work","agents":["claude","codex"],
+			"max_attempts_per_agent":1,"timeout":"10m",
+			"tier_policy":{
+				"claude":{"max_attempts":1,"timeout":"10m","mode":"automatic"},
+				"codex":{"max_attempts":1,"timeout":"10m","mode":"automatic"}
+			}}}}`
+		if err := os.WriteFile(filepath.Join(gastown, "model-escalation.json"), []byte(content), 0600); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := LoadModelEscalationConfig(dir); err == nil {
+			t.Fatal("expected unsafe break-glass policy to be rejected")
+		}
+	})
 }
 
 func TestResolveAgentForRedispatch(t *testing.T) {

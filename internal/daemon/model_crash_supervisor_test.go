@@ -24,6 +24,11 @@ func TestModelCrashSupervisorIntervals(t *testing.T) {
 	if modelCrashProgressResetInterval != 30*time.Minute {
 		t.Fatalf("progress reset interval = %v, want 30m", modelCrashProgressResetInterval)
 	}
+	if modelStallNudgeAfter != 15*time.Minute || modelStallLocalRestartAfter != 30*time.Minute ||
+		modelStallGoEscalateAfter != 60*time.Minute {
+		t.Fatalf("stall intervals = %v/%v/%v",
+			modelStallNudgeAfter, modelStallLocalRestartAfter, modelStallGoEscalateAfter)
+	}
 }
 
 func TestModelCrashWorkerWorkUnitExtraction(t *testing.T) {
@@ -108,6 +113,15 @@ func (e *fakeModelCrashExecutor) Restart(s modelCrashSession, agent string) erro
 	return e.restartErr
 }
 
+func (e *fakeModelCrashExecutor) Nudge(s modelCrashSession, message string) error {
+	e.actions = append(e.actions, modelCrashAction{kind: "nudge", identity: s.Identity})
+	return nil
+}
+
+func (e *fakeModelCrashExecutor) RecoveryPolicy(modelCrashSession) modelCrashRecoveryPolicy {
+	return defaultModelCrashRecoveryPolicy()
+}
+
 func (e *fakeModelCrashExecutor) ActivePolecat(s modelCrashSession) bool {
 	return e.activePolecats[s.Identity]
 }
@@ -172,6 +186,55 @@ func TestModelCrashSupervisorRequiresTwoIdenticalObservations(t *testing.T) {
 	}
 	if len(executor.actions) != 1 || executor.actions[0].agent != "opencode-local" {
 		t.Fatalf("second identical observation actions = %#v, want one local restart", executor.actions)
+	}
+}
+
+func TestModelCrashSupervisorStallLadder(t *testing.T) {
+	now := time.Date(2026, 7, 27, 12, 0, 0, 0, time.UTC)
+	clock := &fakeModelCrashClock{now: now}
+	candidate := fatalLocalSession("rig/polecats/nux", "polecat", "run-1")
+	candidate.Output = "waiting"
+	candidate.HeartbeatAt = now.Add(-modelStallNudgeAfter)
+	executor := &fakeModelCrashExecutor{
+		sessions:          []modelCrashSession{candidate},
+		watchdog:          healthyWatchdog(now),
+		activePolecats:    map[string]bool{candidate.Identity: true},
+		escalationAllowed: map[string]bool{candidate.Identity: true},
+	}
+	supervisor := newTestModelCrashSupervisor(t, clock, executor)
+
+	if err := supervisor.Scan(); err != nil {
+		t.Fatal(err)
+	}
+	if len(executor.actions) != 1 || executor.actions[0].kind != "nudge" {
+		t.Fatalf("15m actions = %#v, want one nudge", executor.actions)
+	}
+
+	clock.now = candidate.HeartbeatAt.Add(modelStallLocalRestartAfter)
+	executor.watchdog = healthyWatchdog(clock.now)
+	if err := supervisor.Scan(); err != nil {
+		t.Fatal(err)
+	}
+	if len(executor.actions) != 2 || executor.actions[1].agent != "opencode-local" {
+		t.Fatalf("30m actions = %#v, want local restart", executor.actions)
+	}
+
+	clock.now = candidate.HeartbeatAt.Add(modelStallGoEscalateAfter)
+	executor.watchdog = healthyWatchdog(clock.now)
+	if err := supervisor.Scan(); err != nil {
+		t.Fatal(err)
+	}
+	if len(executor.actions) != 3 || executor.actions[2].agent != "opencode-go" {
+		t.Fatalf("60m actions = %#v, want Go continuation", executor.actions)
+	}
+
+	clock.now = clock.now.Add(time.Minute)
+	executor.watchdog = healthyWatchdog(clock.now)
+	if err := supervisor.Scan(); err != nil {
+		t.Fatal(err)
+	}
+	if len(executor.actions) != 3 {
+		t.Fatalf("ladder replayed action: %#v", executor.actions)
 	}
 }
 

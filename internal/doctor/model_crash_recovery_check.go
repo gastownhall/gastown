@@ -56,11 +56,15 @@ func (c *ModelCrashRecoveryCheck) Run(ctx *CheckContext) *CheckResult {
 
 	details := make([]string, 0, len(incidents))
 	active := 0
+	exhausted := 0
 	for _, incident := range incidents {
 		if !incident.Confirmed && !incident.RecoveryExhausted {
 			continue
 		}
 		active++
+		if incident.RecoveryExhausted {
+			exhausted++
+		}
 		details = append(details, fmt.Sprintf(
 			"%s: incident=%s action=%s exhausted=%t session=%s",
 			incident.Identity, incident.IncidentID, incident.RecoveryAction,
@@ -74,10 +78,16 @@ func (c *ModelCrashRecoveryCheck) Run(ctx *CheckContext) *CheckResult {
 			Category: CategoryInfrastructure,
 		}
 	}
+	status := StatusWarning
+	message := fmt.Sprintf("%d model-crash recovery incident(s) are being observed", active)
+	if exhausted > 0 {
+		status = StatusError
+		message = fmt.Sprintf("%d exhausted model-crash recovery incident(s) require attention", exhausted)
+	}
 	return &CheckResult{
 		Name:     c.Name(),
-		Status:   StatusError,
-		Message:  fmt.Sprintf("%d confirmed model-crash recovery incident(s) require attention", active),
+		Status:   status,
+		Message:  message,
 		Details:  details,
 		FixHint:  "Inspect with 'gt session health <tmux-session> --json'; recovery actions are supervisor-owned",
 		Category: CategoryInfrastructure,

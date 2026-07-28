@@ -15,6 +15,7 @@ import (
 
 	"github.com/gofrs/flock"
 	"github.com/steveyegge/gastown/internal/atomicfile"
+	"github.com/steveyegge/gastown/internal/beads"
 	"github.com/steveyegge/gastown/internal/util"
 )
 
@@ -30,6 +31,8 @@ const (
 // quality failures. It lives under validation_failure in model-escalation.json.
 type ValidationRecoveryConfig struct {
 	Enabled           bool   `json:"enabled"`
+	LocalAgent        string `json:"local_agent,omitempty"`
+	MaxLocalAttempts  int    `json:"max_local_attempts,omitempty"`
 	ToAgent           string `json:"to_agent"`
 	MaxHostedAttempts int    `json:"max_hosted_attempts"`
 	RepairPriority    int    `json:"repair_priority"`
@@ -74,7 +77,9 @@ type ValidationIncident struct {
 	InitialCommit     string                  `json:"initial_commit,omitempty"`
 	RepairBead        string                  `json:"repair_bead,omitempty"`
 	TargetAgent       string                  `json:"target_agent,omitempty"`
+	LocalAttempts     int                     `json:"local_attempts"`
 	HostedAttempts    int                     `json:"hosted_attempts"`
+	MaxLocalAttempts  int                     `json:"max_local_attempts"`
 	MaxHostedAttempts int                     `json:"max_hosted_attempts"`
 	Status            string                  `json:"status"`
 	LastError         string                  `json:"last_error,omitempty"`
@@ -288,6 +293,12 @@ func loadValidationRecoveryConfig(townRoot, rigName string) (*ValidationRecovery
 	if result.ToAgent == "" {
 		result.ToAgent = "opencode-go"
 	}
+	if result.LocalAgent == "" {
+		result.LocalAgent = "opencode-local"
+	}
+	if result.MaxLocalAttempts <= 0 {
+		result.MaxLocalAttempts = 1
+	}
 	if result.MaxHostedAttempts <= 0 {
 		result.MaxHostedAttempts = 1
 	}
@@ -341,6 +352,7 @@ func ProcessValidationFailure(townRoot string, raw ValidationFailure) *Validatio
 					Branch:            event.Branch,
 					InitialCommit:     event.Commit,
 					TargetAgent:       cfg.ToAgent,
+					MaxLocalAttempts:  cfg.MaxLocalAttempts,
 					MaxHostedAttempts: cfg.MaxHostedAttempts,
 					Status:            "recorded",
 					FirstEvent:        event,
@@ -380,7 +392,8 @@ func ProcessValidationFailure(townRoot string, raw ValidationFailure) *Validatio
 		})
 		incident.UpdatedAt = time.Now().UTC()
 
-		if incident.HostedAttempts >= incident.MaxHostedAttempts {
+		if incident.LocalAttempts >= incident.MaxLocalAttempts &&
+			incident.HostedAttempts >= incident.MaxHostedAttempts {
 			if incident.Status == "escalated" {
 				action = "already-escalated"
 			} else {
@@ -440,12 +453,21 @@ func ProcessValidationFailure(townRoot string, raw ValidationFailure) *Validatio
 			})
 		}
 	}
+	targetAgent := cfg.LocalAgent
+	hostedAttempt := false
+	if currentState, loadErr := LoadValidationState(townRoot); loadErr == nil {
+		if current := currentState.Incidents[incidentID]; current != nil &&
+			current.LocalAttempts >= current.MaxLocalAttempts {
+			targetAgent = cfg.ToAgent
+			hostedAttempt = true
+		}
+	}
 	if err == nil {
 		beadID := event.SourceIssue
 		if event.Phase == "post-merge" {
 			beadID = repairBead
 		}
-		err = dispatchValidationRepairFn(townRoot, beadID, event.Rig, event.Branch, cfg.ToAgent, incidentID)
+		err = dispatchValidationRepairFn(townRoot, beadID, event.Rig, event.Branch, targetAgent, incidentID)
 	}
 
 	stateErr := withValidationState(townRoot, func(state *ValidationState) error {
@@ -456,8 +478,13 @@ func ProcessValidationFailure(townRoot string, raw ValidationFailure) *Validatio
 			incident.Status = "dispatch-error"
 			incident.LastError = err.Error()
 		} else {
-			incident.Status = "hosted-dispatched"
-			incident.HostedAttempts++
+			if hostedAttempt {
+				incident.Status = "hosted-dispatched"
+				incident.HostedAttempts++
+			} else {
+				incident.Status = "local-dispatched"
+				incident.LocalAttempts++
+			}
 		}
 		return nil
 	})
@@ -471,7 +498,7 @@ func ProcessValidationFailure(townRoot string, raw ValidationFailure) *Validatio
 		IncidentID: incidentID,
 		Action:     "dispatched",
 		RepairBead: repairBead,
-		Message:    fmt.Sprintf("dispatched one repair attempt with agent %q", cfg.ToAgent),
+		Message:    fmt.Sprintf("dispatched one repair attempt with agent %q", targetAgent),
 	}
 }
 
@@ -529,10 +556,7 @@ Evidence:
 	if event.SourceIssue != "" {
 		args = append(args, "--deps=discovered-from:"+event.SourceIssue)
 	}
-	cmd := exec.Command("bd", args...)
-	cmd.Dir = workDir
-	cmd.Env = deaconMutationRoutingEnv(townRoot)
-	util.SetDetachedProcessGroup(cmd)
+	cmd := beads.Command(workDir, filepath.Join(workDir, ".beads"), beads.MutationRouting, args...)
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		return "", fmt.Errorf("creating validation repair bead: %w (%s)", err, strings.TrimSpace(string(output)))

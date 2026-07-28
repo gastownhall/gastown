@@ -599,6 +599,28 @@ func (m *ConvoyManager) feedFirstReady(c strandedConvoyInfo) {
 			continue
 		}
 
+		churnFingerprint := m.convoyDispatchFingerprint(
+			c, issueID, prefix, rig, convoyDispatchAssignmentChurn,
+		)
+		leased, churned, leaseErr := m.dispatchCircuits.TryAcquireLease(
+			c.ID, issueID, "convoy/"+c.ID+"@"+rig, churnFingerprint,
+		)
+		if leaseErr != nil {
+			m.logger("Convoy %s: assignment lease persistence failed for %s; failing closed: %v",
+				c.ID, issueID, leaseErr)
+			continue
+		}
+		if churned {
+			m.logger("Convoy %s: repeated assignment churn for %s; circuit opened and work parked",
+				c.ID, issueID)
+			m.retryPermanentConvoyDispatchAlert(c.ID, issueID, convoyDispatchAssignmentChurn)
+			continue
+		}
+		if !leased {
+			m.logger("Convoy %s: active assignment lease suppresses resling of %s", c.ID, issueID)
+			continue
+		}
+
 		m.logger("Convoy %s: feeding %s to %s", c.ID, issueID, rig)
 
 		slingArgs := []string{"sling", issueID, rig, "--no-boot"}
@@ -613,6 +635,10 @@ func (m *ConvoyManager) feedFirstReady(c strandedConvoyInfo) {
 		cmd.Stderr = &stderr
 
 		if err := cmd.Run(); err != nil {
+			if releaseErr := m.dispatchCircuits.ReleaseLease(c.ID, issueID); releaseErr != nil {
+				m.logger("Convoy %s: failed to release assignment lease for %s: %v",
+					c.ID, issueID, releaseErr)
+			}
 			errText := util.FirstLine(stderr.String())
 			if kind := classifyPermanentConvoyDispatchError(errText); kind != "" {
 				fingerprint := m.convoyDispatchFingerprint(c, issueID, prefix, rig, kind)

@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 
@@ -86,9 +87,39 @@ type ModelEscalationConfig struct {
 	Enabled           bool                      `json:"enabled"`
 	Description       string                    `json:"description,omitempty"`
 	Rules             []ModelEscalationRule     `json:"rules"`
+	Recovery          *RecoveryPolicy           `json:"recovery,omitempty"`
 	ValidationFailure *ValidationRecoveryConfig `json:"validation_failure,omitempty"`
 	MaxTotalAttempts  int                       `json:"max_total_attempts,omitempty"`
 	Fallback          string                    `json:"fallback,omitempty"`
+}
+
+// RecoveryPolicy configures the bounded local-first recovery ladder. Duration
+// values use Go duration syntax. Omitted values retain daemon defaults.
+type RecoveryPolicy struct {
+	NudgeAfter        string           `json:"nudge_after,omitempty"`
+	LocalRestartAfter string           `json:"local_restart_after,omitempty"`
+	GoEscalateAfter   string           `json:"go_escalate_after,omitempty"`
+	MaxLocalRestarts  int              `json:"max_local_restarts,omitempty"`
+	MaxGoAttempts     int              `json:"max_go_attempts,omitempty"`
+	BreakGlass        BreakGlassPolicy `json:"break_glass,omitempty"`
+}
+
+// BreakGlassPolicy is deliberately scoped to restoring infrastructure.
+// Ordinary product work stops after its bounded Go attempt.
+type BreakGlassPolicy struct {
+	Enabled     bool                            `json:"enabled,omitempty"`
+	Scope       string                          `json:"scope,omitempty"`
+	Agents      []string                        `json:"agents,omitempty"`
+	MaxAttempts int                             `json:"max_attempts_per_agent,omitempty"`
+	Timeout     string                          `json:"timeout,omitempty"`
+	Automatic   bool                            `json:"automatic,omitempty"`
+	TierPolicy  map[string]BreakGlassTierPolicy `json:"tier_policy,omitempty"`
+}
+
+type BreakGlassTierPolicy struct {
+	MaxAttempts int    `json:"max_attempts"`
+	Timeout     string `json:"timeout"`
+	Mode        string `json:"mode"` // automatic or approval
 }
 
 // ModelEscalationConfigPath is the path within a rig project directory where
@@ -430,7 +461,81 @@ func LoadModelEscalationConfig(rigProjectDir string) (*ModelEscalationConfig, er
 	if err := json.Unmarshal(data, &cfg); err != nil {
 		return nil, fmt.Errorf("parsing model escalation config %s: %w", path, err)
 	}
+	if err := validateRecoveryPolicy(cfg.Recovery); err != nil {
+		return nil, fmt.Errorf("invalid recovery policy %s: %w", path, err)
+	}
 	return &cfg, nil
+}
+
+func validateRecoveryPolicy(policy *RecoveryPolicy) error {
+	if policy == nil {
+		return nil
+	}
+	parse := func(name, value string) (time.Duration, error) {
+		if value == "" {
+			return 0, nil
+		}
+		result, err := time.ParseDuration(value)
+		if err != nil || result <= 0 {
+			return 0, fmt.Errorf("%s must be a positive duration", name)
+		}
+		return result, nil
+	}
+	nudge, err := parse("nudge_after", policy.NudgeAfter)
+	if err != nil {
+		return err
+	}
+	restart, err := parse("local_restart_after", policy.LocalRestartAfter)
+	if err != nil {
+		return err
+	}
+	hosted, err := parse("go_escalate_after", policy.GoEscalateAfter)
+	if err != nil {
+		return err
+	}
+	if nudge > 0 && restart > 0 && restart < nudge {
+		return fmt.Errorf("local_restart_after must not precede nudge_after")
+	}
+	if restart > 0 && hosted > 0 && hosted < restart {
+		return fmt.Errorf("go_escalate_after must not precede local_restart_after")
+	}
+	if policy.MaxLocalRestarts < 0 || policy.MaxLocalRestarts > 1 {
+		return fmt.Errorf("max_local_restarts must be 0 or 1")
+	}
+	if policy.MaxGoAttempts < 0 || policy.MaxGoAttempts > 1 {
+		return fmt.Errorf("max_go_attempts must be 0 or 1")
+	}
+	bg := policy.BreakGlass
+	if bg.Enabled {
+		if bg.Scope != "infrastructure-only" {
+			return fmt.Errorf("break_glass.scope must be infrastructure-only")
+		}
+		if !slices.Equal(bg.Agents, []string{"claude", "codex"}) {
+			return fmt.Errorf("break_glass.agents must be [claude, codex]")
+		}
+		if bg.MaxAttempts != 1 {
+			return fmt.Errorf("break_glass.max_attempts_per_agent must be 1")
+		}
+		if _, err := parse("break_glass.timeout", bg.Timeout); err != nil {
+			return err
+		}
+		for _, agent := range bg.Agents {
+			tier, ok := bg.TierPolicy[agent]
+			if !ok {
+				return fmt.Errorf("break_glass.tier_policy.%s is required", agent)
+			}
+			if tier.MaxAttempts != 1 {
+				return fmt.Errorf("break_glass.tier_policy.%s.max_attempts must be 1", agent)
+			}
+			if _, err := parse("break_glass.tier_policy."+agent+".timeout", tier.Timeout); err != nil {
+				return err
+			}
+			if tier.Mode != "automatic" && tier.Mode != "approval" {
+				return fmt.Errorf("break_glass.tier_policy.%s.mode must be automatic or approval", agent)
+			}
+		}
+	}
+	return nil
 }
 
 // resolveAgentForRedispatch determines which agent alias to use when re-dispatching

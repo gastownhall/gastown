@@ -94,6 +94,66 @@ func TestConvoyDispatchCircuitPersistsAndRetriesOnlyAfterFingerprintChange(t *te
 	}
 }
 
+func TestConvoyDispatchLeasePersistsAndOpensChurnCircuit(t *testing.T) {
+	root := t.TempDir()
+	now := time.Date(2026, 7, 27, 12, 0, 0, 0, time.UTC)
+	clock := func() time.Time { return now }
+	breaker := newConvoyDispatchCircuitBreaker(root, clock)
+
+	const (
+		convoyID    = "hq-convoy"
+		issueID     = "gt-123"
+		fingerprint = "issue:open:unassigned"
+	)
+	acquired, churned, err := breaker.TryAcquireLease(
+		convoyID, issueID, "convoy/hq-convoy@gastown", fingerprint,
+	)
+	if err != nil || !acquired || churned {
+		t.Fatalf("first lease = (%v, %v, %v), want acquired", acquired, churned, err)
+	}
+
+	reloaded := newConvoyDispatchCircuitBreaker(root, clock)
+	acquired, churned, err = reloaded.TryAcquireLease(
+		convoyID, issueID, "convoy/hq-convoy@gastown", fingerprint,
+	)
+	if err != nil || acquired || churned {
+		t.Fatalf("live persisted lease = (%v, %v, %v), want suppressed", acquired, churned, err)
+	}
+
+	now = now.Add(convoyDispatchLeaseDuration + time.Second)
+	acquired, churned, err = reloaded.TryAcquireLease(
+		convoyID, issueID, "convoy/hq-convoy@gastown", fingerprint,
+	)
+	if err != nil || !acquired || churned {
+		t.Fatalf("second lease = (%v, %v, %v), want acquired", acquired, churned, err)
+	}
+
+	now = now.Add(convoyDispatchLeaseDuration + time.Second)
+	acquired, churned, err = reloaded.TryAcquireLease(
+		convoyID, issueID, "convoy/hq-convoy@gastown", fingerprint,
+	)
+	if err != nil || acquired || !churned {
+		t.Fatalf("third lease = (%v, %v, %v), want churn circuit", acquired, churned, err)
+	}
+	if got := reloaded.FailureKind(convoyID, issueID); got != convoyDispatchAssignmentChurn {
+		t.Fatalf("failure kind = %q, want %q", got, convoyDispatchAssignmentChurn)
+	}
+}
+
+func TestConvoyFailedDispatchReleasesLease(t *testing.T) {
+	root := t.TempDir()
+	breaker := newConvoyDispatchCircuitBreaker(root, time.Now)
+	if acquired, _, err := breaker.TryAcquireLease("hq-cv", "gt-1", "owner", "fp"); err != nil || !acquired {
+		t.Fatalf("TryAcquireLease: acquired=%v err=%v", acquired, err)
+	}
+	if err := breaker.ReleaseLease("hq-cv", "gt-1"); err != nil {
+		t.Fatalf("ReleaseLease: %v", err)
+	}
+	if acquired, _, err := breaker.TryAcquireLease("hq-cv", "gt-1", "owner", "fp"); err != nil || !acquired {
+		t.Fatalf("lease after failed dispatch: acquired=%v err=%v", acquired, err)
+	}
+}
+
 func TestConvoyRouteFingerprintChangesOnlyForRelevantPrefix(t *testing.T) {
 	root := t.TempDir()
 	routesDir := filepath.Join(root, ".beads")

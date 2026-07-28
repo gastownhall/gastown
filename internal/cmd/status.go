@@ -1001,8 +1001,8 @@ func gatherStatus() (TownStatus, error) {
 			rigWg.Wait()
 
 			activeHooks := 0
-			for _, hook := range rs.Hooks {
-				if hook.HasWork {
+			for _, agent := range rs.Agents {
+				if agent.HasWork {
 					activeHooks++
 				}
 			}
@@ -1013,6 +1013,7 @@ func gatherStatus() (TownStatus, error) {
 	}
 
 	wg.Wait()
+	applyRecoveryAgentStates(townRoot, &status)
 
 	// Enrich agents with runtime info — inspect actual running processes
 	for i := range status.Agents {
@@ -1046,6 +1047,44 @@ func gatherStatus() (TownStatus, error) {
 	status.Summary.RigCount = len(rigs)
 
 	return status, nil
+}
+
+func applyRecoveryAgentStates(townRoot string, status *TownStatus) {
+	incidents, err := daemon.LoadModelCrashRecoveryIncidents(townRoot)
+	if err != nil {
+		return
+	}
+	bySession := make(map[string]daemon.ModelCrashRecoveryIncident, len(incidents))
+	for _, incident := range incidents {
+		bySession[incident.SessionName] = incident
+	}
+	apply := func(agent *AgentRuntime) {
+		incident, ok := bySession[agent.Session]
+		if !ok {
+			return
+		}
+		if strings.Contains(incident.RecoveryAction, "pending") ||
+			strings.Contains(incident.RecoveryAction, "restart") ||
+			strings.Contains(incident.RecoveryAction, "continuation") ||
+			strings.Contains(incident.RecoveryAction, "probe") {
+			agent.State = "recovering"
+			return
+		}
+		switch incident.Kind {
+		case "session-stall":
+			agent.State = "stalled"
+		case "session-fatal", "":
+			agent.State = "crashed"
+		}
+	}
+	for i := range status.Agents {
+		apply(&status.Agents[i])
+	}
+	for i := range status.Rigs {
+		for j := range status.Rigs[i].Agents {
+			apply(&status.Rigs[i].Agents[j])
+		}
+	}
 }
 
 func loadModelCrashRecoveryStatus(townRoot string) *ModelCrashRecoveryStatus {

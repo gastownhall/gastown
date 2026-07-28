@@ -9,11 +9,13 @@ import (
 	goruntime "runtime"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/steveyegge/gastown/internal/beads"
 	"github.com/steveyegge/gastown/internal/config"
 	"github.com/steveyegge/gastown/internal/deacon"
 	"github.com/steveyegge/gastown/internal/dog"
+	"github.com/steveyegge/gastown/internal/polecat"
 	"github.com/steveyegge/gastown/internal/util"
 )
 
@@ -99,9 +101,53 @@ func (e *daemonModelCrashExecutor) Sessions() ([]modelCrashSession, error) {
 		candidate.InstanceID = instanceID
 		candidate.WorkDir = workDir
 		candidate.Output = output
+		if hb := polecat.ReadSessionHeartbeat(e.daemon.config.TownRoot, name); hb != nil {
+			candidate.HeartbeatAt = hb.Timestamp
+		}
 		result = append(result, candidate)
 	}
 	return result, nil
+}
+
+func (e *daemonModelCrashExecutor) Nudge(candidate modelCrashSession, message string) error {
+	if candidate.Identity == "" {
+		return fmt.Errorf("cannot nudge session with empty identity")
+	}
+	cmd := exec.Command(e.daemon.gtPath, "nudge", candidate.Identity, message)
+	cmd.Dir = e.daemon.config.TownRoot
+	util.SetDetachedProcessGroup(cmd)
+	if output, err := cmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("gt nudge %s: %w: %s",
+			candidate.Identity, err, strings.TrimSpace(string(output)))
+	}
+	return nil
+}
+
+func (e *daemonModelCrashExecutor) RecoveryPolicy(candidate modelCrashSession) modelCrashRecoveryPolicy {
+	result := defaultModelCrashRecoveryPolicy()
+	if candidate.WorkDir == "" {
+		return result
+	}
+	cfg, err := deacon.LoadModelEscalationConfig(candidate.WorkDir)
+	if err != nil || cfg == nil || cfg.Recovery == nil {
+		return result
+	}
+	if parsed, parseErr := time.ParseDuration(cfg.Recovery.NudgeAfter); parseErr == nil && parsed > 0 {
+		result.NudgeAfter = parsed
+	}
+	if parsed, parseErr := time.ParseDuration(cfg.Recovery.LocalRestartAfter); parseErr == nil && parsed > 0 {
+		result.LocalRestartAfter = parsed
+	}
+	if parsed, parseErr := time.ParseDuration(cfg.Recovery.GoEscalateAfter); parseErr == nil && parsed > 0 {
+		result.GoEscalateAfter = parsed
+	}
+	if result.LocalRestartAfter < result.NudgeAfter {
+		result.LocalRestartAfter = result.NudgeAfter
+	}
+	if result.GoEscalateAfter < result.LocalRestartAfter {
+		result.GoEscalateAfter = result.LocalRestartAfter
+	}
+	return result
 }
 
 func (e *daemonModelCrashExecutor) LMWatchdog() (modelCrashWatchdog, error) {

@@ -41,6 +41,20 @@ func TestDetectModelCrashUsesCapturedFatalSignatureOnly(t *testing.T) {
 ╰────────────────────────────────────────`,
 			want: true,
 		},
+		{
+			name: "live OpenCode footer with mode glyph and usage columns",
+			output: `┃
+┃  "` + fatal + `"
+┃
+     ▣  Build · Qwen3.6 35B-A3B (local, loaded)
+
+  ┃
+  ┃
+  ┃  Build · Qwen3.6 35B-A3B (local, loaded) LM Studio (local)
+  ╹▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀
+   /Users/alice/gt/shortener/polecats/nux/ 78.1K (60%) ctrl+p commands`,
+			want: true,
+		},
 		{name: "newer successful progress supersedes fatal", output: fatal + "\nassistant: recovery complete; continuing work", want: false},
 		{name: "newer tool progress supersedes footer", output: fatal + "\n│ Build · Qwen3.6 35B-A3B (local, loaded)\nTool: reading AGENTS.md", want: false},
 		{name: "footer-like prose is meaningful output", output: fatal + "\nassistant: Build · recovery is complete", want: false},

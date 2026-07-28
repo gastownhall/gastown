@@ -19,7 +19,22 @@ type convoyDispatchFailureKind string
 const (
 	convoyDispatchRespawnExhausted    convoyDispatchFailureKind = "respawn-exhausted"
 	convoyDispatchRigPrefixUnresolved convoyDispatchFailureKind = "rig-prefix-unresolved"
+	convoyDispatchAssignmentChurn     convoyDispatchFailureKind = "assignment-churn"
 )
+
+const (
+	convoyDispatchLeaseDuration = 60 * time.Minute
+	convoyDispatchChurnLimit    = 2
+)
+
+type convoyDispatchLease struct {
+	ConvoyID   string    `json:"convoy_id"`
+	IssueID    string    `json:"issue_id"`
+	Owner      string    `json:"owner"`
+	Attempts   int       `json:"attempts"`
+	AcquiredAt time.Time `json:"acquired_at"`
+	ExpiresAt  time.Time `json:"expires_at"`
+}
 
 type convoyDispatchCircuitEntry struct {
 	ConvoyID     string                    `json:"convoy_id"`
@@ -33,6 +48,7 @@ type convoyDispatchCircuitEntry struct {
 
 type convoyDispatchCircuitState struct {
 	Circuits    map[string]*convoyDispatchCircuitEntry `json:"circuits"`
+	Leases      map[string]*convoyDispatchLease        `json:"leases,omitempty"`
 	LastUpdated time.Time                              `json:"last_updated"`
 }
 
@@ -55,6 +71,7 @@ func newConvoyDispatchCircuitBreaker(townRoot string, now func() time.Time) *con
 		now:      now,
 		state: convoyDispatchCircuitState{
 			Circuits: make(map[string]*convoyDispatchCircuitEntry),
+			Leases:   make(map[string]*convoyDispatchLease),
 		},
 	}
 	b.loadErr = b.load()
@@ -98,7 +115,66 @@ func (b *convoyDispatchCircuitBreaker) load() error {
 	if b.state.Circuits == nil {
 		b.state.Circuits = make(map[string]*convoyDispatchCircuitEntry)
 	}
+	if b.state.Leases == nil {
+		b.state.Leases = make(map[string]*convoyDispatchLease)
+	}
 	return nil
+}
+
+// TryAcquireLease writes the assignment intent before gt sling runs. A live
+// lease suppresses convoy rescans across daemon restarts. If the same issue
+// becomes dispatchable again after two completed lease windows, the circuit
+// opens instead of alternating polecats indefinitely.
+func (b *convoyDispatchCircuitBreaker) TryAcquireLease(
+	convoyID, issueID, owner, churnFingerprint string,
+) (acquired bool, churned bool, err error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+
+	key := convoyDispatchCircuitKey(convoyID, issueID)
+	now := b.now().UTC()
+	attempts := 1
+	if existing := b.state.Leases[key]; existing != nil {
+		if now.Before(existing.ExpiresAt) {
+			return false, false, nil
+		}
+		attempts = existing.Attempts + 1
+	}
+	if attempts > convoyDispatchChurnLimit {
+		delete(b.state.Leases, key)
+		b.state.Circuits[key] = &convoyDispatchCircuitEntry{
+			ConvoyID:     convoyID,
+			IssueID:      issueID,
+			Kind:         convoyDispatchAssignmentChurn,
+			Fingerprint:  churnFingerprint,
+			Error:        fmt.Sprintf("work returned to the ready queue after %d assignment leases", attempts-1),
+			LatchedAt:    now,
+			AlertPending: true,
+		}
+		return false, true, b.saveLocked()
+	}
+	b.state.Leases[key] = &convoyDispatchLease{
+		ConvoyID:   convoyID,
+		IssueID:    issueID,
+		Owner:      owner,
+		Attempts:   attempts,
+		AcquiredAt: now,
+		ExpiresAt:  now.Add(convoyDispatchLeaseDuration),
+	}
+	return true, false, b.saveLocked()
+}
+
+// ReleaseLease allows a failed sling to be retried; successful dispatch keeps
+// its lease so stale convoy reads cannot resling the same work.
+func (b *convoyDispatchCircuitBreaker) ReleaseLease(convoyID, issueID string) error {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	key := convoyDispatchCircuitKey(convoyID, issueID)
+	if b.state.Leases[key] == nil {
+		return nil
+	}
+	delete(b.state.Leases, key)
+	return b.saveLocked()
 }
 
 func (b *convoyDispatchCircuitBreaker) corruptionAlertWasDelivered() bool {

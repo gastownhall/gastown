@@ -21,6 +21,8 @@ func writeValidationPolicy(t *testing.T, townRoot, rigName string) {
 		"rules": [],
 		"validation_failure": {
 			"enabled": true,
+			"local_agent": "opencode-local",
+			"max_local_attempts": 1,
 			"to_agent": "opencode-go",
 			"max_hosted_attempts": 1,
 			"repair_priority": 1
@@ -66,11 +68,11 @@ func TestProcessValidationFailureDispatchDeduplicateEscalate(t *testing.T) {
 		escalateValidationFn = originalEscalate
 	})
 
-	dispatches := 0
+	var dispatchedAgents []string
 	escalations := 0
 	dispatchValidationRepairFn = func(townRoot, beadID, rigName, branch, agent, incidentID string) error {
-		dispatches++
-		if beadID != "c-123" || rigName != "canary" || branch != "polecat/test" || agent != "opencode-go" {
+		dispatchedAgents = append(dispatchedAgents, agent)
+		if beadID != "c-123" || rigName != "canary" || branch != "polecat/test" {
 			t.Fatalf("unexpected dispatch: bead=%s rig=%s branch=%s agent=%s", beadID, rigName, branch, agent)
 		}
 		return nil
@@ -97,27 +99,38 @@ func TestProcessValidationFailureDispatchDeduplicateEscalate(t *testing.T) {
 	if result.Action != "dispatched" || result.Error != nil {
 		t.Fatalf("first result = %+v", result)
 	}
-	if dispatches != 1 || escalations != 0 {
-		t.Fatalf("dispatches=%d escalations=%d", dispatches, escalations)
+	if len(dispatchedAgents) != 1 || dispatchedAgents[0] != "opencode-local" || escalations != 0 {
+		t.Fatalf("dispatches=%v escalations=%d", dispatchedAgents, escalations)
 	}
 
 	duplicate := ProcessValidationFailure(townRoot, first)
 	if duplicate.Action != "duplicate" {
 		t.Fatalf("duplicate action = %q", duplicate.Action)
 	}
-	if dispatches != 1 || escalations != 0 {
-		t.Fatalf("duplicate caused side effect: dispatches=%d escalations=%d", dispatches, escalations)
+	if len(dispatchedAgents) != 1 || escalations != 0 {
+		t.Fatalf("duplicate caused side effect: dispatches=%v escalations=%d", dispatchedAgents, escalations)
 	}
 
 	second := first
 	second.Commit = "bbbbbbbb"
 	second.Evidence = "hosted repair still fails"
 	secondResult := ProcessValidationFailure(townRoot, second)
-	if secondResult.Action != "escalated" || secondResult.Error != nil {
+	if secondResult.Action != "dispatched" || secondResult.Error != nil {
 		t.Fatalf("second result = %+v", secondResult)
 	}
-	if dispatches != 1 || escalations != 1 {
-		t.Fatalf("dispatches=%d escalations=%d", dispatches, escalations)
+	if len(dispatchedAgents) != 2 || dispatchedAgents[1] != "opencode-go" || escalations != 0 {
+		t.Fatalf("dispatches=%v escalations=%d", dispatchedAgents, escalations)
+	}
+
+	third := second
+	third.Commit = "cccccccc"
+	third.Evidence = "Go repair still fails"
+	thirdResult := ProcessValidationFailure(townRoot, third)
+	if thirdResult.Action != "escalated" || thirdResult.Error != nil {
+		t.Fatalf("third result = %+v", thirdResult)
+	}
+	if len(dispatchedAgents) != 2 || escalations != 1 {
+		t.Fatalf("dispatches=%v escalations=%d", dispatchedAgents, escalations)
 	}
 
 	state, err := LoadValidationState(townRoot)
@@ -125,11 +138,11 @@ func TestProcessValidationFailureDispatchDeduplicateEscalate(t *testing.T) {
 		t.Fatal(err)
 	}
 	incident := state.Incidents[result.IncidentID]
-	if incident == nil || incident.HostedAttempts != 1 || incident.Status != "escalated" {
+	if incident == nil || incident.LocalAttempts != 1 || incident.HostedAttempts != 1 || incident.Status != "escalated" {
 		t.Fatalf("unexpected incident: %+v", incident)
 	}
-	if len(incident.Observations) != 2 {
-		t.Fatalf("observations=%d, want 2", len(incident.Observations))
+	if len(incident.Observations) != 3 {
+		t.Fatalf("observations=%d, want 3", len(incident.Observations))
 	}
 }
 
