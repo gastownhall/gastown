@@ -2314,11 +2314,85 @@ func (g *Git) WorktreeAddExisting(path, branch string) error {
 
 // WorktreeAddExistingForce creates a new worktree even if the branch is already checked out elsewhere.
 // This is useful for cross-rig worktrees where multiple clones need to be on main.
+//
+// DO NOT use this to attach a worker to a branch another worker may be on. It
+// forces past git's "already used by worktree at ..." check without asking
+// whether the holder is live, which puts two worktrees on one ref; a commit in
+// either then shows up in the other as a delta to re-commit, and an auto-saver
+// will commit that delta with no agent acting. That is si-d6kw, which cost a
+// fleet-wide sweep and three armed worktrees (7767 / 6824 / 434 staged
+// deletions). Use WorktreeAddExistingSafe for anything worker-facing.
 func (g *Git) WorktreeAddExistingForce(path, branch string) error {
 	if _, err := g.run("worktree", "add", "--force", path, branch); err != nil {
 		return err
 	}
 	return InitSubmodules(path, g.submoduleReferencePath())
+}
+
+// BranchHeldError reports that a branch is checked out by a live worktree, so
+// attaching a second one would put two workers on a single ref.
+type BranchHeldError struct {
+	Branch string
+	Path   string
+}
+
+func (e *BranchHeldError) Error() string {
+	return fmt.Sprintf("branch %s is already checked out by a live worktree at %s", e.Branch, e.Path)
+}
+
+// LiveWorktreeForBranch returns the worktree that currently has branch checked
+// out, or nil if none does. Worktrees git reports as prunable — the record
+// survives but the directory does not — are NOT live and are not returned.
+func (g *Git) LiveWorktreeForBranch(branch string) (*Worktree, error) {
+	branch = strings.TrimPrefix(branch, "refs/heads/")
+	worktrees, err := g.WorktreeList()
+	if err != nil {
+		return nil, err
+	}
+	for i := range worktrees {
+		wt := worktrees[i]
+		if wt.Branch != branch || wt.Prunable {
+			continue
+		}
+		// Belt and braces: a record can be current-looking and still point at a
+		// directory that is gone, if the list ran before something removed it.
+		if _, statErr := os.Stat(wt.Path); statErr != nil {
+			continue
+		}
+		return &wt, nil
+	}
+	return nil, nil
+}
+
+// WorktreeAddExistingSafe attaches a worktree to an existing branch, refusing
+// when a LIVE worktree already holds that branch and clearing the way when the
+// only thing holding it is a stale record.
+//
+// This is the distinction plain git does not make for you. "git worktree add"
+// refuses both cases with the same message, which is why callers reached for
+// --force; but --force cannot tell "the previous worker was reaped" (safe, and
+// the case the resume workflow is built on) from "another worker is on this ref
+// right now" (si-d6kw: mutual reversion, and an auto-saver that commits a mass
+// deletion nobody authored).
+//
+// Live holder  -> *BranchHeldError, nothing created.
+// Stale holder -> prune the dead record, then attach normally.
+// No holder    -> attach normally.
+func (g *Git) WorktreeAddExistingSafe(path, branch string) error {
+	holder, err := g.LiveWorktreeForBranch(branch)
+	if err != nil {
+		return fmt.Errorf("checking whether %s is already checked out: %w", branch, err)
+	}
+	if holder != nil {
+		return &BranchHeldError{Branch: branch, Path: holder.Path}
+	}
+	// No live holder. A stale record may still make git refuse, so drop dead
+	// records first. Prune only removes worktrees whose directory is already
+	// gone; it cannot touch a live one.
+	if err := g.WorktreePrune(); err != nil {
+		return fmt.Errorf("pruning stale worktree records before attaching %s: %w", branch, err)
+	}
+	return g.WorktreeAddExisting(path, branch)
 }
 
 // submoduleReferencePath returns the mayor/rig path to use as --reference
@@ -2430,10 +2504,19 @@ func (g *Git) WorktreePrune() error {
 }
 
 // Worktree represents a git worktree.
+//
+// Prunable distinguishes a worktree git still has an administrative record for
+// but whose directory is gone (reaped, moved, deleted) from one that is live on
+// disk. Git refuses "worktree add" for a branch held by EITHER kind with the
+// same "already used by worktree at ..." message, so callers that want to
+// tolerate the first without tolerating the second must read this field —
+// see WorktreeAddExistingSafe.
 type Worktree struct {
-	Path   string
-	Branch string
-	Commit string
+	Path           string
+	Branch         string
+	Commit         string
+	Prunable       bool
+	PrunableReason string
 }
 
 // WorktreeList returns all worktrees for this repository.
@@ -2462,6 +2545,9 @@ func (g *Git) WorktreeList() ([]Worktree, error) {
 			current.Commit = strings.TrimPrefix(line, "HEAD ")
 		case strings.HasPrefix(line, "branch "):
 			current.Branch = strings.TrimPrefix(line, "branch refs/heads/")
+		case line == "prunable" || strings.HasPrefix(line, "prunable "):
+			current.Prunable = true
+			current.PrunableReason = strings.TrimSpace(strings.TrimPrefix(line, "prunable"))
 		}
 	}
 
