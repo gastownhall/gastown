@@ -112,12 +112,17 @@ func runMailDirectory(cmd *cobra.Command, args []string) error {
 		{Address: "mayor/", Type: "well-known"},
 		{Address: "--human", Type: "well-known"},
 		{Address: "--self", Type: "well-known"},
-		{Address: "@town", Type: "special"},
-		{Address: "@crew", Type: "special"},
-		{Address: "@witnesses", Type: "special"},
-		{Address: "@overseer", Type: "special"},
 	}
 	entries = append(entries, wellKnown...)
+
+	// 6. Group addresses — DERIVED from mail.GroupVocabulary, never re-listed here ([si-zgo]).
+	// This block used to be four hardcoded literals: @town, @crew, @witnesses, @overseer. It
+	// advertised `@crew` bare, which the send path rejects because crew is arity-1 (crew of WHICH
+	// rig?), and it omitted @dogs/@refineries/@deacons entirely — three sendable audiences no
+	// reader could discover. Deriving fixes both directions at once and keeps them fixed.
+	for _, addr := range mail.GroupAddresses() {
+		entries = append(entries, DirectoryEntry{Address: addr, Type: "special"})
+	}
 
 	// Deduplicate (e.g., mayor/ may appear as both agent and well-known)
 	seen := make(map[string]bool)
