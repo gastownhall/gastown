@@ -2704,20 +2704,86 @@ func (t *Tmux) matchesPaneRuntime(session, cmd, pid string, processNames []strin
 // falling back to GT_AGENT-based lookup for legacy sessions.
 // This is the preferred method for zombie detection across all agent types.
 func (t *Tmux) IsAgentAlive(session string) bool {
-	return t.IsRuntimeRunning(session, t.resolveSessionProcessNames(session))
+	alive, _ := t.IsAgentAliveChecked(session)
+	return alive
+}
+
+// IsAgentAliveChecked is like IsAgentAlive, but preserves liveness-query errors
+// for callers that must not treat unknown state as confirmed death.
+//
+// Backported from upstream (steveyegge/gastown) to fix hq-txikg, where a failed
+// or ambiguous liveness query was collapsed into "dead" and used to kill working
+// polecat sessions. Upstream threads errors through a full set of *Checked pane
+// helpers; this tree is far enough behind that porting all of them verbatim is
+// not viable, so the CONTRACT is reproduced at this boundary instead: a negative
+// result is only returned when the session was actually reachable. Any query
+// failure surfaces as an error so callers can decline to conclude death.
+func (t *Tmux) IsAgentAliveChecked(session string) (bool, error) {
+	names, err := t.resolveSessionProcessNamesChecked(session)
+	if err != nil {
+		return false, err
+	}
+	if len(names) == 0 {
+		return false, nil
+	}
+	if t.IsRuntimeRunning(session, names) {
+		return true, nil
+	}
+	// Negative result: corroborate that the session is genuinely reachable before
+	// reporting it as dead. Under load a tmux query can fail internally and read
+	// as "not running", which is exactly the false positive this guards against.
+	if _, err := t.run("list-panes", "-s", "-t", session, "-F", "#{pane_pid}"); err != nil {
+		return false, err
+	}
+	return false, nil
 }
 
 // resolveSessionProcessNames returns the process names to check for a session.
 // Prefers GT_PROCESS_NAMES (set at startup, handles custom agents that shadow
 // built-in presets). Falls back to GT_AGENT-based lookup for legacy sessions.
 func (t *Tmux) resolveSessionProcessNames(session string) []string {
+	names, _ := t.resolveSessionProcessNamesChecked(session)
+	return names
+}
+
+// resolveSessionProcessNamesChecked is resolveSessionProcessNames with errors
+// preserved. A genuinely absent variable is not an error (the fallback applies);
+// a failed tmux query is, so callers do not mistake it for "no agent".
+func (t *Tmux) resolveSessionProcessNamesChecked(session string) ([]string, error) {
 	// Prefer explicit process names set at startup (handles custom agents correctly)
-	if names, err := t.GetEnvironment(session, "GT_PROCESS_NAMES"); err == nil && names != "" {
-		return strings.Split(names, ",")
+	if names, ok, err := t.getEnvironmentOptional(session, "GT_PROCESS_NAMES"); err != nil {
+		return nil, err
+	} else if ok && names != "" {
+		return strings.Split(names, ","), nil
 	}
 	// Fallback: resolve from agent name (built-in presets only)
-	agentName, _ := t.GetEnvironment(session, "GT_AGENT")
-	return config.GetProcessNames(agentName) // Returns Claude defaults if empty
+	agentName, _, err := t.getEnvironmentOptional(session, "GT_AGENT")
+	if err != nil {
+		return nil, err
+	}
+	return config.GetProcessNames(agentName), nil // Returns Claude defaults if empty
+}
+
+// getEnvironmentOptional distinguishes "variable is not set" (ok=false, no error)
+// from "the query itself failed" (error). Ported from upstream.
+func (t *Tmux) getEnvironmentOptional(session, key string) (string, bool, error) {
+	value, err := t.GetEnvironment(session, key)
+	if err == nil {
+		return value, value != "", nil
+	}
+	if isMissingEnvironmentError(err, key) {
+		return "", false, nil
+	}
+	return "", false, err
+}
+
+func isMissingEnvironmentError(err error, key string) bool {
+	if err == nil {
+		return false
+	}
+	msg := err.Error()
+	return strings.Contains(msg, "unknown variable") ||
+		strings.Contains(msg, fmt.Sprintf("environment variable %s not found", key))
 }
 
 // WaitForCommand polls until the pane is NOT running one of the excluded commands.
