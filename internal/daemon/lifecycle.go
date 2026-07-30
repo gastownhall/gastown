@@ -961,7 +961,12 @@ const GUPPViolationTimeout = constants.GUPPViolationTimeout
 // The wisps query is best-effort (gracefully ignored if table doesn't exist).
 func (d *Daemon) listAgentBeadsJSON(dest interface{}) error {
 	// Query issues table (backward compat during migration)
-	cmd := exec.Command(d.bdPath, "list", "--label=gt:agent", "--json", "--flat") //nolint:gosec // G204: bd is a trusted internal tool
+	// --limit=0 is REQUIRED: bd's default page size is 50, and there are >100 agent
+	// beads fleet-wide. Without it this silently returns the first 50 and any agent
+	// sorting past that row looks non-existent, so await-event falls back to flat
+	// timeouts with no error. Same defect as 14396bbc (hq-p1jeb) in ListAgentBeads;
+	// this call site was missed. See ds-gxbr.
+	cmd := exec.Command(d.bdPath, "list", "--label=gt:agent", "--json", "--flat", "--limit=0") //nolint:gosec // G204: bd is a trusted internal tool
 	cmd.Dir = d.config.TownRoot
 	cmd.Env = os.Environ()
 	util.SetDetachedProcessGroup(cmd)
