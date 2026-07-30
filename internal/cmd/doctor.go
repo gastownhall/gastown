@@ -321,6 +321,9 @@ func newDoctorForCommand(rig string) *doctor.Doctor {
 	// accumulate silently and the armed delta GROWS while unobserved.
 	d.Register(doctor.NewWorktreeSharedRefCheck())
 	d.Register(doctor.NewWorktreeArmedStagingCheck())
+	// And the durable record of an auto-save that refused (si-9wu1): the refusal
+	// prints at session end, when nobody is reading stdout.
+	d.Register(doctor.NewAutosaveRefusalCheck())
 
 	// Rig-specific checks (only when --rig is specified)
 	if rig != "" {

@@ -9,6 +9,7 @@ func TestDoctorRegistersWorktreeRefSafetyChecks(t *testing.T) {
 	want := map[string]bool{
 		"worktree-shared-ref":    false,
 		"worktree-armed-staging": false,
+		"autosave-refusal":       false,
 	}
 	for _, check := range newDoctorForCommand("").Checks() {
 		if _, ok := want[check.Name()]; ok {
