@@ -1132,7 +1132,7 @@ func (m *Manager) RemoveWithOptions(name string, force, nuclear, selfNuke bool) 
 	}
 	defer func() { _ = fl.Unlock() }()
 
-	return m.removeWithOptionsLocked(name, force, nuclear, selfNuke)
+	return m.removeWithOptionsLocked(name, force, nuclear, selfNuke, false)
 }
 
 func (m *Manager) removeWithOptionsLocked(name string, force, nuclear, selfNuke, skipRecoveryCheck bool) error {
@@ -1411,7 +1411,7 @@ func (m *Manager) ReclaimBrokenIdlePolecat(name string) (retErr error) {
 		return fmt.Errorf("not safe to reclaim: %s", blocker)
 	}
 
-	return m.removeWithOptionsLocked(name, false, false, false)
+	return m.removeWithOptionsLocked(name, false, false, false, true)
 }
 
 // verifyRemovalComplete checks that polecat directories were actually removed.
