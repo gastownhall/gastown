@@ -96,10 +96,20 @@ func reclaimBrokenIdlePolecatForSling(polecatMgr *polecat.Manager) (bool, error)
 	return false, nil
 }
 
-// SpawnPolecatForSling creates a fresh polecat and optionally starts its session.
-// This is used by gt sling when the target is a rig name.
-// The caller (sling) handles hook attachment and nudging.
-func SpawnPolecatForSling(rigName string, opts SlingSpawnOptions) (*SpawnedPolecatInfo, error) {
+// slingPolecatEnv holds the town, rig and manager handles that every sling
+// polecat path needs. Resolved in one place so a preflight added for the spawn
+// path cannot go missing from the resume path.
+type slingPolecatEnv struct {
+	townRoot   string
+	rigName    string
+	rig        *rig.Rig
+	tmux       *tmux.Tmux
+	polecatMgr *polecat.Manager
+}
+
+// resolveSlingPolecatEnv loads the rig and polecat manager for a sling and runs
+// the preflight checks that must pass before any polecat is touched.
+func resolveSlingPolecatEnv(rigName string, opts SlingSpawnOptions) (*slingPolecatEnv, error) {
 	// Find workspace
 	townRoot := opts.TownRoot
 	if townRoot == "" {
@@ -149,6 +159,193 @@ func SpawnPolecatForSling(rigName string, opts SlingSpawnOptions) (*SpawnedPolec
 		return nil, fmt.Errorf("cannot sling to %s rig %q\n%s %s", reason, rigName, undoCmd, rigName)
 	}
 
+	return &slingPolecatEnv{townRoot: townRoot, rigName: rigName, rig: r, tmux: t, polecatMgr: polecatMgr}, nil
+}
+
+// errReuseUnavailable marks a reuse failure the caller may recover from by
+// allocating a different polecat. Failures that happen AFTER reuse succeeded are
+// returned bare: allocating around those would hide a broken polecat record.
+var errReuseUnavailable = errors.New("cannot reuse idle polecat")
+
+// Seams for tests. Production uses the functions they are initialised with.
+var (
+	resolveSlingPolecatEnvFn   = resolveSlingPolecatEnv
+	polecatResumableBranchFn   = polecatResumableBranch
+	reuseIdlePolecatForSlingFn = reuseIdlePolecatForSling
+)
+
+// resolveSlingBaseBranch computes the base branch a sling should start from,
+// origin-qualified for the polecat manager.
+//
+// ResumeBranch (gh#3602) takes precedence: when resuming an existing branch we
+// must not start from main or auto-detect an integration branch.
+func resolveSlingBaseBranch(r *rig.Rig, opts SlingSpawnOptions) string {
+	baseBranch := opts.BaseBranch
+	if opts.ResumeBranch != "" {
+		return baseBranch
+	}
+	if baseBranch == "" && opts.HookBead != "" {
+		// Auto-detect: check if the hooked bead's parent epic has an integration branch
+		settingsPath := filepath.Join(r.Path, "settings", "config.json")
+		polecatIntegrationEnabled := true
+		if settings, err := config.LoadRigSettings(settingsPath); err == nil && settings.MergeQueue != nil {
+			polecatIntegrationEnabled = settings.MergeQueue.IsPolecatIntegrationEnabled()
+		}
+		if polecatIntegrationEnabled {
+			repoGit, repoErr := getRigGit(r.Path)
+			if repoErr == nil {
+				bd := beads.New(r.Path)
+				detected, detectErr := beads.DetectIntegrationBranch(bd, repoGit, opts.HookBead)
+				if detectErr == nil && detected != "" {
+					baseBranch = "origin/" + detected
+					fmt.Printf("  Auto-detected integration branch: %s\n", detected)
+				}
+			}
+		}
+	}
+	if baseBranch != "" && !strings.HasPrefix(baseBranch, "origin/") {
+		baseBranch = "origin/" + baseBranch
+	}
+	return baseBranch
+}
+
+// reuseIdlePolecatForSling puts work on an existing polecat using branch-only
+// operations — its own worktree, no worktree add/remove. Phase 3 of
+// persistent-polecat-pool: eliminates ~5s worktree creation overhead.
+//
+// A reuse that is unsafe or fails returns an error wrapping errReuseUnavailable,
+// which the pool path treats as "allocate a different polecat instead of
+// repairing this worktree destructively".
+func reuseIdlePolecatForSling(env *slingPolecatEnv, polecatName string, opts SlingSpawnOptions) (*SpawnedPolecatInfo, error) {
+	r := env.rig
+	rigName := env.rigName
+	baseBranch := resolveSlingBaseBranch(r, opts)
+
+	addOpts := polecat.AddOptions{
+		HookBead:     opts.HookBead,
+		BaseBranch:   baseBranch,
+		ResumeBranch: opts.ResumeBranch,
+	}
+	if _, err := env.polecatMgr.ReuseIdlePolecat(polecatName, addOpts); err != nil {
+		return nil, fmt.Errorf("%w %s: %w", errReuseUnavailable, polecatName, err)
+	}
+
+	polecatObj, err := env.polecatMgr.Get(polecatName)
+	if err != nil {
+		return nil, fmt.Errorf("getting idle polecat after reuse: %w", err)
+	}
+	if err := verifyWorktreeExists(polecatObj.ClonePath); err != nil {
+		return nil, fmt.Errorf("worktree verification failed for reused %s: %w", polecatName, err)
+	}
+
+	polecatSessMgr := polecat.NewSessionManager(env.tmux, r)
+	sessionName := polecatSessMgr.SessionName(polecatName)
+
+	fmt.Printf("%s Polecat %s reused (idle → working, session start deferred)\n", style.Bold.Render("✓"), polecatName)
+	_ = events.LogFeed(events.TypeSpawn, "gt", events.SpawnPayload(rigName, polecatName))
+
+	effectiveBranch := strings.TrimPrefix(baseBranch, "origin/")
+	if effectiveBranch == "" {
+		effectiveBranch = r.DefaultBranch()
+	}
+	if opts.ResumeBranch != "" {
+		effectiveBranch = opts.ResumeBranch
+	}
+
+	return &SpawnedPolecatInfo{
+		RigName:     rigName,
+		PolecatName: polecatName,
+		ClonePath:   polecatObj.ClonePath,
+		SessionName: sessionName,
+		Pane:        "",
+		BaseBranch:  effectiveBranch,
+		Branch:      polecatObj.Branch,
+		account:     opts.Account,
+		agent:       opts.Agent,
+	}, nil
+}
+
+// resumeOptionsForPolecat fills in the branch a resume of a NAMED polecat should
+// land on, given the branch its worktree is currently sitting on.
+//
+// With no --branch and no --base-branch, that branch is the polecat's own. This
+// is the point of si-n7vl: recovering an idle polecat must not require the
+// caller to name a branch, because naming one is what put two worktrees on a
+// single ref (si-d6kw). A worktree parked on the rig default branch, or on a
+// detached HEAD, has nothing to resume and takes the normal fresh-branch path.
+func resumeOptionsForPolecat(currentBranch, defaultBranch string, opts SlingSpawnOptions) SlingSpawnOptions {
+	if opts.ResumeBranch != "" || opts.BaseBranch != "" {
+		return opts
+	}
+	if currentBranch == "" || currentBranch == defaultBranch {
+		return opts
+	}
+	opts.ResumeBranch = currentBranch
+	return opts
+}
+
+// ResumePolecatForSling reattaches work to a polecat named explicitly in a sling
+// target, on ITS worktree and ITS branch. Used by gt sling when the target names
+// a polecat whose tmux session is gone but whose sandbox is intact.
+//
+// The idle polecat keeps its worktree and its branch when its session dies;
+// only the session is missing. Spawning a fresh polecat instead — which is what
+// gt did before si-n7vl — silently substitutes a different polecat on a fresh
+// branch off main, so the work being recovered is never reattached.
+func ResumePolecatForSling(rigName, polecatName string, opts SlingSpawnOptions) (*SpawnedPolecatInfo, error) {
+	env, err := resolveSlingPolecatEnvFn(rigName, opts)
+	if err != nil {
+		return nil, err
+	}
+
+	currentBranch, err := polecatResumableBranchFn(env, polecatName)
+	if err != nil {
+		return nil, err
+	}
+
+	requestedBranch := opts.ResumeBranch
+	opts = resumeOptionsForPolecat(currentBranch, env.rig.DefaultBranch(), opts)
+	if opts.ResumeBranch != requestedBranch {
+		fmt.Printf("Resuming polecat %s on its existing branch %s\n", polecatName, opts.ResumeBranch)
+	}
+
+	return reuseIdlePolecatForSlingFn(env, polecatName, opts)
+}
+
+// polecatResumableBranch checks that a named polecat still has a usable worktree
+// and reports the branch that worktree is currently on. An error means there is
+// nothing to resume and the caller should allocate a fresh polecat instead.
+func polecatResumableBranch(env *slingPolecatEnv, polecatName string) (string, error) {
+	polecatObj, err := env.polecatMgr.Get(polecatName)
+	if err != nil {
+		return "", fmt.Errorf("polecat '%s' not found in rig '%s': %w", polecatName, env.rigName, err)
+	}
+	if err := verifyWorktreeExists(polecatObj.ClonePath); err != nil {
+		return "", fmt.Errorf("polecat '%s' has no usable worktree at %s: %w", polecatName, polecatObj.ClonePath, err)
+	}
+
+	// Read the branch off the worktree, not off the polecat record: the worktree
+	// is the thing being resumed, and the record can lag it.
+	branch, err := git.NewGit(polecatObj.ClonePath).CurrentBranch()
+	if err != nil {
+		// Not fatal: an unreadable HEAD just means there is no branch to carry
+		// over, and reuse falls back to minting a fresh one.
+		style.PrintWarning("could not read current branch of %s: %v", polecatName, err)
+		return "", nil
+	}
+	return branch, nil
+}
+
+// SpawnPolecatForSling creates a fresh polecat and optionally starts its session.
+// This is used by gt sling when the target is a rig name.
+// The caller (sling) handles hook attachment and nudging.
+func SpawnPolecatForSling(rigName string, opts SlingSpawnOptions) (*SpawnedPolecatInfo, error) {
+	env, err := resolveSlingPolecatEnv(rigName, opts)
+	if err != nil {
+		return nil, err
+	}
+	townRoot, r, t, polecatMgr := env.townRoot, env.rig, env.tmux, env.polecatMgr
+
 	var admission *polecatAdmissionHandle
 	if !opts.SkipAdmission {
 		admission, _, err = acquirePolecatAdmissionFn(townRoot, rigName, opts.HookBead, "spawn-or-reuse")
@@ -188,89 +385,17 @@ func SpawnPolecatForSling(rigName string, opts SlingSpawnOptions) (*SpawnedPolec
 		polecatName := idlePolecat.Name
 		fmt.Printf("Reusing idle polecat: %s\n", polecatName)
 
-		// ResumeBranch takes precedence over BaseBranch / integration auto-detection:
-		// when the user (or scheduler) wants to resume an existing PR branch, we
-		// must not start from main or an integration branch.
-		baseBranch := opts.BaseBranch
-		if opts.ResumeBranch == "" {
-			if baseBranch == "" && opts.HookBead != "" {
-				settingsPath := filepath.Join(r.Path, "settings", "config.json")
-				polecatIntegrationEnabled := true
-				if settings, err := config.LoadRigSettings(settingsPath); err == nil && settings.MergeQueue != nil {
-					polecatIntegrationEnabled = settings.MergeQueue.IsPolecatIntegrationEnabled()
-				}
-				if polecatIntegrationEnabled {
-					repoGit, repoErr := getRigGit(r.Path)
-					if repoErr == nil {
-						bd := beads.New(r.Path)
-						detected, detectErr := beads.DetectIntegrationBranch(bd, repoGit, opts.HookBead)
-						if detectErr == nil && detected != "" {
-							baseBranch = "origin/" + detected
-							fmt.Printf("  Auto-detected integration branch: %s\n", detected)
-						}
-					}
-				}
-			}
-			if baseBranch != "" && !strings.HasPrefix(baseBranch, "origin/") {
-				baseBranch = "origin/" + baseBranch
-			}
+		info, reuseErr := reuseIdlePolecatForSling(env, polecatName, opts)
+		if reuseErr == nil {
+			return info, nil
 		}
-
-		// Reuse the idle polecat with branch-only operations (no worktree add/remove).
-		// Phase 3 of persistent-polecat-pool: eliminates ~5s worktree creation overhead.
-		// If reuse is unsafe or fails, allocate a new polecat instead of repairing
-		// this worktree destructively.
-		addOpts := polecat.AddOptions{
-			HookBead:     opts.HookBead,
-			BaseBranch:   baseBranch,
-			ResumeBranch: opts.ResumeBranch,
+		// Only an unsafe-or-failed reuse falls through to a fresh allocation.
+		// A failure AFTER reuse succeeded (missing polecat record, unverifiable
+		// worktree) is a hard error: allocating around it would hide it.
+		if !errors.Is(reuseErr, errReuseUnavailable) {
+			return nil, reuseErr
 		}
-		reuseOK := false
-		if _, err := polecatMgr.ReuseIdlePolecat(polecatName, addOpts); err != nil {
-			if errors.Is(err, polecat.ErrPolecatNeedsRecovery) {
-				fmt.Printf("  Idle polecat %s needs recovery before reuse: %v; allocating new...\n", polecatName, err)
-			} else {
-				fmt.Printf("  Branch-only reuse failed for idle polecat %s: %v; allocating new...\n", polecatName, err)
-			}
-		} else {
-			reuseOK = true
-		}
-
-		if reuseOK {
-			polecatObj, err := polecatMgr.Get(polecatName)
-			if err != nil {
-				return nil, fmt.Errorf("getting idle polecat after reuse: %w", err)
-			}
-			if err := verifyWorktreeExists(polecatObj.ClonePath); err != nil {
-				return nil, fmt.Errorf("worktree verification failed for reused %s: %w", polecatName, err)
-			}
-
-			polecatSessMgr := polecat.NewSessionManager(t, r)
-			sessionName := polecatSessMgr.SessionName(polecatName)
-
-			fmt.Printf("%s Polecat %s reused (idle → working, session start deferred)\n", style.Bold.Render("✓"), polecatName)
-			_ = events.LogFeed(events.TypeSpawn, "gt", events.SpawnPayload(rigName, polecatName))
-
-			effectiveBranch := strings.TrimPrefix(baseBranch, "origin/")
-			if effectiveBranch == "" {
-				effectiveBranch = r.DefaultBranch()
-			}
-			if opts.ResumeBranch != "" {
-				effectiveBranch = opts.ResumeBranch
-			}
-
-			return &SpawnedPolecatInfo{
-				RigName:     rigName,
-				PolecatName: polecatName,
-				ClonePath:   polecatObj.ClonePath,
-				SessionName: sessionName,
-				Pane:        "",
-				BaseBranch:  effectiveBranch,
-				Branch:      polecatObj.Branch,
-				account:     opts.Account,
-				agent:       opts.Agent,
-			}, nil
-		}
+		fmt.Printf("  %v; allocating new...\n", reuseErr)
 	}
 
 	// Per-rig directory cap: prevent unbounded worktree accumulation, but only
@@ -293,33 +418,7 @@ func SpawnPolecatForSling(rigName string, opts SlingSpawnOptions) (*SpawnedPolec
 	}
 
 	// Determine base branch for polecat worktree.
-	// ResumeBranch (gh#3602) takes precedence: when resuming an existing branch
-	// we must not start from main or auto-detect an integration branch.
-	baseBranch := opts.BaseBranch
-	if opts.ResumeBranch == "" {
-		if baseBranch == "" && opts.HookBead != "" {
-			// Auto-detect: check if the hooked bead's parent epic has an integration branch
-			settingsPath := filepath.Join(r.Path, "settings", "config.json")
-			polecatIntegrationEnabled := true
-			if settings, err := config.LoadRigSettings(settingsPath); err == nil && settings.MergeQueue != nil {
-				polecatIntegrationEnabled = settings.MergeQueue.IsPolecatIntegrationEnabled()
-			}
-			if polecatIntegrationEnabled {
-				repoGit, repoErr := getRigGit(r.Path)
-				if repoErr == nil {
-					bd := beads.New(r.Path)
-					detected, detectErr := beads.DetectIntegrationBranch(bd, repoGit, opts.HookBead)
-					if detectErr == nil && detected != "" {
-						baseBranch = "origin/" + detected
-						fmt.Printf("  Auto-detected integration branch: %s\n", detected)
-					}
-				}
-			}
-		}
-		if baseBranch != "" && !strings.HasPrefix(baseBranch, "origin/") {
-			baseBranch = "origin/" + baseBranch
-		}
-	}
+	baseBranch := resolveSlingBaseBranch(r, opts)
 
 	// Build add options with hook_bead set atomically at spawn time
 	addOpts := polecat.AddOptions{
