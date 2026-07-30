@@ -1140,6 +1140,18 @@ func (m *Manager) removeWithOptionsLocked(name string, force, nuclear, selfNuke 
 		return ErrPolecatNotFound
 	}
 
+	current, err := m.loadFromBeads(name)
+	if err != nil {
+		return err
+	}
+
+	// Enforce recovery verdict before any destructive teardown.
+	if !force && !nuclear {
+		if decision := m.WorkstateDispositionForPolecat(name, current.State, current.Issue); decision.Verdict == WorkstateVerdictNeedsRecovery {
+			return fmt.Errorf("%w: %s (use --force to override, risks data loss)", ErrPolecatNeedsRecovery, decision.Reason)
+		}
+	}
+
 	// Clone path is where the git worktree lives (new or old structure)
 	clonePath := m.clonePath(name)
 	// Polecat dir is the parent directory (polecats/<name>/)
