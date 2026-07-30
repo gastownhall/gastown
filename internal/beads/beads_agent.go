@@ -638,7 +638,14 @@ func (b *Beads) ListAgentBeads() (map[string]*Issue, error) {
 	// doctor checks (for example, validating gt:agent labels).
 	// Agent beads are type=agent (infrastructure), hidden by bd list default filter.
 	// Use --include-infra so they appear in results.
-	out, err := b.run("list", "--label=gt:agent", "--include-infra", "--json", "--flat", "--no-pager")
+	//
+	// --limit 0 (unlimited) is REQUIRED: bd's default list limit is 50, and this
+	// fleet has 100+ open agent beads. Without it the map is silently truncated
+	// and every caller — doctor's agent-beads-exist check, mail address
+	// resolution, stuck-agent detection, polecat identity — treats the beads it
+	// never saw as nonexistent. That produced days of phantom "N agent bead(s)
+	// missing" reports against beads that were present and correctly labelled.
+	out, err := b.run("list", "--label=gt:agent", "--include-infra", "--json", "--flat", "--no-pager", "--limit", "0")
 	if err != nil {
 		return nil, err
 	}
