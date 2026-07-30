@@ -268,16 +268,35 @@ func reuseIdlePolecatForSling(env *slingPolecatEnv, polecatName string, opts Sli
 // resumeOptionsForPolecat fills in the branch a resume of a NAMED polecat should
 // land on, given the branch its worktree is currently sitting on.
 //
-// With no --branch and no --base-branch, that branch is the polecat's own. This
-// is the point of si-n7vl: recovering an idle polecat must not require the
-// caller to name a branch, because naming one is what put two worktrees on a
-// single ref (si-d6kw). A worktree parked on the rig default branch, or on a
-// detached HEAD, has nothing to resume and takes the normal fresh-branch path.
+// With no --branch and no --base-branch, that branch is the polecat's own — but
+// only when it holds THIS bead's work. This is the point of si-n7vl: recovering
+// an idle polecat must not require the caller to name a branch, because naming
+// one is what put two worktrees on a single ref (si-d6kw).
+//
+// The test is "does the branch encode the bead being slung", not "does the
+// branch look like work". Those differ, and the difference is a live failure:
+// idle keeper sits on polecat/keeper/si-aka.37+ms43gm2z, so slinging a NEW bead
+// si-aka.99 to keeper under the looser test would land si-aka.99's work on
+// si-aka.37's branch and contaminate its MR — with the sling reporting success
+// and no symptom but two beads on one ref (Mayor's ruling, 2026-07-29).
+//
+// Ambiguity resolves to fresh: an unparseable branch, a detached HEAD, the rig
+// default branch, or a parent/child id that does not match exactly. A fresh
+// branch is recoverable; contamination is not.
 func resumeOptionsForPolecat(currentBranch, defaultBranch string, opts SlingSpawnOptions) SlingSpawnOptions {
 	if opts.ResumeBranch != "" || opts.BaseBranch != "" {
 		return opts
 	}
 	if currentBranch == "" || currentBranch == defaultBranch {
+		return opts
+	}
+	// Decode with the inverse of the producer (FormatGeneratedBranchName), so a
+	// change to the branch convention cannot leave this reading the old one.
+	meta, ok := polecat.ParseBranchName(currentBranch)
+	if !ok {
+		return opts
+	}
+	if opts.HookBead != "" && meta.Issue != opts.HookBead {
 		return opts
 	}
 	opts.ResumeBranch = currentBranch

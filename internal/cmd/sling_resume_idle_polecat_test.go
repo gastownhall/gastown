@@ -130,6 +130,62 @@ func TestResumeOptionsForPolecat_DefaultsToThePolecatsOwnBranch(t *testing.T) {
 	}
 }
 
+// D, and the narrowing the Mayor ruled on 2026-07-29: carrying the branch over
+// because it merely LOOKS like work admits cross-bead contamination. Idle keeper
+// sits on si-aka.37's branch; slinging si-aka.99 to keeper must NOT land
+// si-aka.99's work there. Nothing fails loudly if it does — the sling succeeds
+// and the only symptom is two beads' work on one ref, with si-aka.37's MR
+// contaminated.
+func TestResumeOptionsForPolecat_DoesNotCarryAnotherBeadsBranch(t *testing.T) {
+	got := resumeOptionsForPolecat("polecat/keeper/si-aka.37+ms43gm2z", "main", SlingSpawnOptions{HookBead: "si-aka.99"})
+	if got.ResumeBranch != "" {
+		t.Fatalf("ResumeBranch = %q for a sling of si-aka.99: si-aka.37's branch was carried over, "+
+			"which puts two beads on one ref and contaminates si-aka.37's MR", got.ResumeBranch)
+	}
+}
+
+// The parent/child case the ruling calls out: si-aka.9 and si-aka.9.1 are
+// different beads. Prefer an exact match; ambiguity resolves to fresh.
+func TestResumeOptionsForPolecat_ParentAndChildIdsAreNotTheSameBead(t *testing.T) {
+	got := resumeOptionsForPolecat("polecat/dag/si-aka.9+ms43eli5", "main", SlingSpawnOptions{HookBead: "si-aka.9.1"})
+	if got.ResumeBranch != "" {
+		t.Fatalf("ResumeBranch = %q: si-aka.9.1 is a different bead from si-aka.9", got.ResumeBranch)
+	}
+}
+
+// A branch that does not decode carries no answer about which bead it holds, so
+// it is not resumable either.
+func TestResumeOptionsForPolecat_UnparseableBranchIsNotResumed(t *testing.T) {
+	got := resumeOptionsForPolecat("wip/experiment", "main", SlingSpawnOptions{HookBead: "si-aka.9"})
+	if got.ResumeBranch != "" {
+		t.Fatalf("ResumeBranch = %q for a branch whose bead cannot be read; fresh is recoverable, "+
+			"contamination is not", got.ResumeBranch)
+	}
+}
+
+// ...including when no bead is being slung, which is the only case where the
+// unparseable check is doing the work on its own. With a bead present the
+// bead-match test already rejects an undecodable branch, so a test that passes
+// a bead cannot tell whether this check exists. The two rules in the ruling
+// overlap here — "no bead slung -> carry over" and "ambiguous -> fresh" — and
+// ambiguity wins.
+func TestResumeOptionsForPolecat_UnparseableBranchIsNotResumedWithNoBeadEither(t *testing.T) {
+	got := resumeOptionsForPolecat("wip/experiment", "main", SlingSpawnOptions{})
+	if got.ResumeBranch != "" {
+		t.Fatalf("ResumeBranch = %q: a branch whose bead cannot be read is ambiguous, and ambiguity "+
+			"resolves to a fresh branch even when no bead is being slung", got.ResumeBranch)
+	}
+}
+
+// With no bead being slung there is nothing to contaminate, so a plain wake of
+// an idle polecat still lands on its own branch.
+func TestResumeOptionsForPolecat_NoBeadSlungStillResumesItsBranch(t *testing.T) {
+	got := resumeOptionsForPolecat("polecat/dag/si-aka.9+ms43eli5", "main", SlingSpawnOptions{})
+	if got.ResumeBranch != "polecat/dag/si-aka.9+ms43eli5" {
+		t.Fatalf("ResumeBranch = %q, want the polecat's own branch when no bead is being slung", got.ResumeBranch)
+	}
+}
+
 // D, denominator: a polecat parked on the rig default branch has nothing to
 // resume, so reuse must mint a fresh polecat/<name>/<bead> branch as usual.
 func TestResumeOptionsForPolecat_DefaultBranchIsNotResumed(t *testing.T) {
