@@ -377,7 +377,7 @@ func runDone(cmd *cobra.Command, args []string) (retErr error) {
 	// skip those stages to avoid repeating work or hitting errors.
 	checkpoints := map[DoneCheckpoint]string{}
 	if agentBeadID != "" {
-		bd := beads.New(cwd)
+		bd := agentBeadClient(townRoot, cwd)
 		setDoneIntentLabel(bd, agentBeadID, exitType)
 		checkpoints = readDoneCheckpoints(bd, agentBeadID)
 		if len(checkpoints) > 0 {
@@ -753,7 +753,7 @@ func runDone(cmd *cobra.Command, args []string) (retErr error) {
 
 		// Write push checkpoint for resume (gt-aufru)
 		if agentBeadID != "" {
-			cpBd := beads.New(cwd)
+			cpBd := agentBeadClient(townRoot, cwd)
 			writeDoneCheckpoint(cpBd, agentBeadID, CheckpointPushed, branch)
 		}
 
@@ -1147,7 +1147,7 @@ func runDone(cmd *cobra.Command, args []string) (retErr error) {
 
 		// Write MR checkpoint for resume (gt-aufru)
 		if mrID != "" && agentBeadID != "" {
-			cpBd := beads.New(cwd)
+			cpBd := agentBeadClient(townRoot, cwd)
 			writeDoneCheckpoint(cpBd, agentBeadID, CheckpointMRCreated, mrID)
 		}
 
@@ -1182,7 +1182,7 @@ notifyWitness:
 	// longer processes routine completions from these fields.
 	fmt.Printf("\nNotifying Witness...\n")
 	if agentBeadID != "" {
-		completionBd := beads.New(cwd)
+		completionBd := agentBeadClient(townRoot, cwd)
 		meta := &beads.CompletionMetadata{
 			ExitType:       exitType,
 			MRID:           mrID,
@@ -1206,7 +1206,7 @@ notifyWitness:
 
 	// Write witness notification checkpoint for resume (gt-aufru)
 	if agentBeadID != "" {
-		cpBd := beads.New(cwd)
+		cpBd := agentBeadClient(townRoot, cwd)
 		writeDoneCheckpoint(cpBd, agentBeadID, CheckpointWitnessNotified, "ok")
 	}
 
@@ -1357,6 +1357,28 @@ func pushSubmoduleChanges(g *git.Git, defaultBranch string) {
 //
 // Follows the existing idle:N / backoff-until:TIMESTAMP label pattern.
 // Non-fatal: if this fails, gt done continues without the safety net.
+// agentBeadClient returns a beads client that can actually reach agent beads.
+//
+// CreateAgentBead (beads_agent.go:224-228) redirects ANY prefixed agent bead ID
+// to the town beads dir, so agent beads physically live in the town database.
+// A client built from cwd — which for gt done is the polecat's clone — resolves
+// to the RIG database instead, and Beads.Update (beads.go:1430) does not route:
+// it runs `bd update <id>` wherever the client points. bd's own prefix router
+// does not rescue it either, because routes.jsonl maps e.g. "ns-" to
+// <rig>/mayor/rig, whose metadata.json names the rig database — the very
+// database that holds no agent bead rows.
+//
+// The result was that every gt done cleanup write ("issue not found") failed
+// while gt done still exited 0: work completed, hook never cleared, bead hung.
+// navigation_server had ZERO agent bead rows locally, which is why it could not
+// land anything at all. See hq-11042.
+func agentBeadClient(townRoot, cwd string) *beads.Beads {
+	if townRoot == "" {
+		return beads.New(cwd)
+	}
+	return beads.NewWithBeadsDir(townRoot, beads.GetTownBeadsPath(townRoot))
+}
+
 func setDoneIntentLabel(bd *beads.Beads, agentBeadID, exitType string) {
 	if agentBeadID == "" {
 		return
