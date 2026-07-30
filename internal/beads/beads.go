@@ -329,6 +329,17 @@ type Beads struct {
 	// for closing the store.
 	store beadsdk.Storage
 
+	// noRoute pins this client to beadsDir, suppressing the prefix-based
+	// re-routing that Show() otherwise applies.
+	//
+	// Needed for agent beads. They live in the TOWN database, but prefix
+	// routing sends an ID like "ns-navigation_server-polecat-dementus" to
+	// <town>/navigation_server/mayor/rig — the rig database, which holds no
+	// agent bead rows. Because Show() re-resolves routing itself, handing it a
+	// town-rooted client was not enough: it routed straight back to the rig and
+	// returned "issue not found". See agentBeadClient and hq-11042.
+	noRoute bool
+
 	// Lazy-cached town root for routing resolution.
 	// Populated on first call to getTownRoot() to avoid filesystem walk on every operation.
 	townRoot     string
@@ -1080,8 +1091,12 @@ func (b *Beads) ReadyWithType(issueType string) ([]*Issue, error) {
 func (b *Beads) Show(id string) (*Issue, error) {
 	// Route cross-rig queries via routes.jsonl so that rig-level bead IDs
 	// (e.g., "gt-abc123") resolve to the correct rig database.
+	//
+	// noRoute clients are already pinned to the right database and must not be
+	// re-routed — prefix routing would send agent bead IDs to a rig database
+	// that holds no agent beads (hq-11042).
 	targetDir := ResolveRoutingTarget(b.getTownRoot(), id, b.getResolvedBeadsDir())
-	if targetDir != b.getResolvedBeadsDir() {
+	if !b.noRoute && targetDir != b.getResolvedBeadsDir() {
 		target := NewWithBeadsDir(filepath.Dir(targetDir), targetDir)
 		return target.Show(id)
 	}

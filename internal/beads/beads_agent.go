@@ -194,6 +194,42 @@ func ParseAgentFields(description string) *AgentFields {
 	return fields
 }
 
+// agentBeadClient returns a client pointed at the database where agent beads
+// actually live: the TOWN database.
+//
+// This exists because ResolveRoutingTarget is the WRONG resolver for agent
+// beads. It routes by prefix, so "ns-navigation_server-polecat-capable" is sent
+// to <town>/navigation_server/mayor/rig — the rig database — while
+// CreateAgentBead's own town override (below) actually writes it to the town
+// database. Readers and updaters therefore looked somewhere the writer never
+// wrote, and every update failed with "issue not found" while still exiting 0.
+//
+// Verified against the live fleet before centralising this: for every rig
+// checked (navigation_server, pr_sdk, dashboard, robot_infra) EVERY agent bead
+// is town-only — not one exists solely in a rig database — so resolving agent
+// beads to the town database is safe as well as correct.
+//
+// Work beads are unaffected: they legitimately live in rig databases and must
+// keep using the normal prefix routing.
+//
+// See hq-11042.
+func (b *Beads) agentBeadClient(id string) *Beads {
+	townRoot := b.getTownRoot()
+	if townRoot == "" || ExtractPrefix(id) == "" {
+		return b
+	}
+	townBeads := GetTownBeadsPath(townRoot)
+	if townBeads == b.getResolvedBeadsDir() && b.noRoute {
+		return b
+	}
+	// noRoute is essential: Show() re-resolves prefix routing on its own, so a
+	// plain town-rooted client would be routed straight back to the rig
+	// database and fail with "issue not found".
+	ab := NewWithBeadsDir(townRoot, townBeads)
+	ab.noRoute = true
+	return ab
+}
+
 // CreateAgentBead creates an agent bead for tracking agent lifecycle.
 // The ID format is: <prefix>-<rig>-<role>-<name> (e.g., gt-gastown-polecat-Toast)
 // Use AgentBeadID() helper to generate correct IDs.
@@ -423,12 +459,9 @@ func (b *Beads) ResetAgentBeadForReuse(id, reason string) error {
 // when the agent bead routes to a different beads dir via routes.jsonl.
 func (b *Beads) UpdateAgentState(id string, state string) (retErr error) {
 	defer func() { telemetry.RecordAgentStateChange(context.Background(), id, state, nil, retErr) }()
-	targetDir := ResolveRoutingTarget(b.getTownRoot(), id, b.getResolvedBeadsDir())
-	target := b
-	if targetDir != b.getResolvedBeadsDir() {
-		target = NewWithBeadsDir(filepath.Dir(targetDir), targetDir)
-	}
-	return target.UpdateAgentDescriptionFields(id, AgentFieldUpdates{AgentState: &state})
+	// Agent beads live in the town database, NOT where prefix routing points.
+	// See agentBeadClient / hq-11042.
+	return b.agentBeadClient(id).UpdateAgentDescriptionFields(id, AgentFieldUpdates{AgentState: &state})
 }
 
 // SetHookBead and ClearHookBead removed (hq-l6mm5).
@@ -460,6 +493,12 @@ type AgentFieldUpdates struct {
 // condition where concurrent callers updating different fields overwrite each
 // other because the entire description is replaced.
 func (b *Beads) UpdateAgentDescriptionFields(id string, updates AgentFieldUpdates) error {
+	// Agent beads live in the town database (hq-11042). Route before locking so
+	// direct callers get the same target UpdateAgentState does.
+	if ab := b.agentBeadClient(id); ab != b {
+		return ab.UpdateAgentDescriptionFields(id, updates)
+	}
+
 	// Validate notification level if provided
 	if updates.NotificationLevel != nil {
 		level := *updates.NotificationLevel
@@ -610,7 +649,8 @@ func (b *Beads) GetAgentNotificationLevel(id string) (string, error) {
 // GetAgentBead retrieves an agent bead by ID.
 // Returns nil if not found.
 func (b *Beads) GetAgentBead(id string) (*Issue, *AgentFields, error) {
-	issue, err := b.Show(id)
+	// Agent beads live in the town database (hq-11042).
+	issue, err := b.agentBeadClient(id).Show(id)
 	if err != nil {
 		if errors.Is(err, ErrNotFound) {
 			return nil, nil, nil
