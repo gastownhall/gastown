@@ -7,10 +7,12 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 
 	"github.com/steveyegge/gastown/internal/beads"
+	"github.com/steveyegge/gastown/internal/config"
 	"github.com/steveyegge/gastown/internal/util"
 )
 
@@ -80,13 +82,44 @@ type ModelEscalationRule struct {
 // ModelEscalationConfig defines per-rig agent promotion rules for re-dispatch.
 // Loaded from <rig>/refinery/rig/.gastown/model-escalation.json.
 type ModelEscalationConfig struct {
-	Type             string                `json:"type"`
-	Version          int                   `json:"version"`
-	Enabled          bool                  `json:"enabled"`
-	Description      string                `json:"description,omitempty"`
-	Rules            []ModelEscalationRule `json:"rules"`
-	MaxTotalAttempts int                   `json:"max_total_attempts,omitempty"`
-	Fallback         string                `json:"fallback,omitempty"`
+	Type              string                    `json:"type"`
+	Version           int                       `json:"version"`
+	Enabled           bool                      `json:"enabled"`
+	Description       string                    `json:"description,omitempty"`
+	Rules             []ModelEscalationRule     `json:"rules"`
+	Recovery          *RecoveryPolicy           `json:"recovery,omitempty"`
+	ValidationFailure *ValidationRecoveryConfig `json:"validation_failure,omitempty"`
+	MaxTotalAttempts  int                       `json:"max_total_attempts,omitempty"`
+	Fallback          string                    `json:"fallback,omitempty"`
+}
+
+// RecoveryPolicy configures the bounded local-first recovery ladder. Duration
+// values use Go duration syntax. Omitted values retain daemon defaults.
+type RecoveryPolicy struct {
+	NudgeAfter        string           `json:"nudge_after,omitempty"`
+	LocalRestartAfter string           `json:"local_restart_after,omitempty"`
+	GoEscalateAfter   string           `json:"go_escalate_after,omitempty"`
+	MaxLocalRestarts  int              `json:"max_local_restarts,omitempty"`
+	MaxGoAttempts     int              `json:"max_go_attempts,omitempty"`
+	BreakGlass        BreakGlassPolicy `json:"break_glass,omitempty"`
+}
+
+// BreakGlassPolicy is deliberately scoped to restoring infrastructure.
+// Ordinary product work stops after its bounded Go attempt.
+type BreakGlassPolicy struct {
+	Enabled     bool                            `json:"enabled,omitempty"`
+	Scope       string                          `json:"scope,omitempty"`
+	Agents      []string                        `json:"agents,omitempty"`
+	MaxAttempts int                             `json:"max_attempts_per_agent,omitempty"`
+	Timeout     string                          `json:"timeout,omitempty"`
+	Automatic   bool                            `json:"automatic,omitempty"`
+	TierPolicy  map[string]BreakGlassTierPolicy `json:"tier_policy,omitempty"`
+}
+
+type BreakGlassTierPolicy struct {
+	MaxAttempts int    `json:"max_attempts"`
+	Timeout     string `json:"timeout"`
+	Mode        string `json:"mode"` // automatic or approval
 }
 
 // ModelEscalationConfigPath is the path within a rig project directory where
@@ -302,8 +335,28 @@ func Redispatch(townRoot, beadID, sourceRig string, maxAttempts int, cooldown ti
 		return result
 	}
 
+	// Determine the agent that failed. After a re-dispatch, LastAgent is the
+	// durable source of truth. On the first recovery, use the configured polecat
+	// agent for the rig. This lets from_agent rules prevent a hosted worker from
+	// being sent back to the hosted relief valve indefinitely.
+	fromAgent := beadState.LastAgent
+	if fromAgent == "" {
+		fromAgent = configuredPolecatAgent(townRoot, targetRig)
+	}
+
 	// Determine agent override from model escalation config (if any).
-	escalationAgent := resolveAgentForRedispatch(townRoot, targetRig, beadState)
+	escalationAgent, matchedRule := resolveAgentDecision(townRoot, targetRig, beadState, fromAgent)
+	if fromAgent != "" && !matchedRule {
+		result.Action = "escalated"
+		result.Message = fmt.Sprintf("no crash-recovery rule matches failed agent %q; escalated to Mayor", fromAgent)
+		if err := escalateToMayor(townRoot, beadID, beadState); err != nil {
+			result.Error = fmt.Errorf("escalating unmatched agent to mayor: %w", err)
+		} else {
+			beadState.RecordEscalation()
+		}
+		_ = SaveRedispatchState(townRoot, state)
+		return result
+	}
 
 	// Re-dispatch via gt sling
 	err = slingBead(townRoot, beadID, targetRig, escalationAgent)
@@ -408,7 +461,81 @@ func LoadModelEscalationConfig(rigProjectDir string) (*ModelEscalationConfig, er
 	if err := json.Unmarshal(data, &cfg); err != nil {
 		return nil, fmt.Errorf("parsing model escalation config %s: %w", path, err)
 	}
+	if err := validateRecoveryPolicy(cfg.Recovery); err != nil {
+		return nil, fmt.Errorf("invalid recovery policy %s: %w", path, err)
+	}
 	return &cfg, nil
+}
+
+func validateRecoveryPolicy(policy *RecoveryPolicy) error {
+	if policy == nil {
+		return nil
+	}
+	parse := func(name, value string) (time.Duration, error) {
+		if value == "" {
+			return 0, nil
+		}
+		result, err := time.ParseDuration(value)
+		if err != nil || result <= 0 {
+			return 0, fmt.Errorf("%s must be a positive duration", name)
+		}
+		return result, nil
+	}
+	nudge, err := parse("nudge_after", policy.NudgeAfter)
+	if err != nil {
+		return err
+	}
+	restart, err := parse("local_restart_after", policy.LocalRestartAfter)
+	if err != nil {
+		return err
+	}
+	hosted, err := parse("go_escalate_after", policy.GoEscalateAfter)
+	if err != nil {
+		return err
+	}
+	if nudge > 0 && restart > 0 && restart < nudge {
+		return fmt.Errorf("local_restart_after must not precede nudge_after")
+	}
+	if restart > 0 && hosted > 0 && hosted < restart {
+		return fmt.Errorf("go_escalate_after must not precede local_restart_after")
+	}
+	if policy.MaxLocalRestarts < 0 || policy.MaxLocalRestarts > 1 {
+		return fmt.Errorf("max_local_restarts must be 0 or 1")
+	}
+	if policy.MaxGoAttempts < 0 || policy.MaxGoAttempts > 1 {
+		return fmt.Errorf("max_go_attempts must be 0 or 1")
+	}
+	bg := policy.BreakGlass
+	if bg.Enabled {
+		if bg.Scope != "infrastructure-only" {
+			return fmt.Errorf("break_glass.scope must be infrastructure-only")
+		}
+		if !slices.Equal(bg.Agents, []string{"claude", "codex"}) {
+			return fmt.Errorf("break_glass.agents must be [claude, codex]")
+		}
+		if bg.MaxAttempts != 1 {
+			return fmt.Errorf("break_glass.max_attempts_per_agent must be 1")
+		}
+		if _, err := parse("break_glass.timeout", bg.Timeout); err != nil {
+			return err
+		}
+		for _, agent := range bg.Agents {
+			tier, ok := bg.TierPolicy[agent]
+			if !ok {
+				return fmt.Errorf("break_glass.tier_policy.%s is required", agent)
+			}
+			if tier.MaxAttempts != 1 {
+				return fmt.Errorf("break_glass.tier_policy.%s.max_attempts must be 1", agent)
+			}
+			if _, err := parse("break_glass.tier_policy."+agent+".timeout", tier.Timeout); err != nil {
+				return err
+			}
+			if tier.Mode != "automatic" && tier.Mode != "approval" {
+				return fmt.Errorf("break_glass.tier_policy.%s.mode must be automatic or approval", agent)
+			}
+		}
+	}
+	return nil
 }
 
 // resolveAgentForRedispatch determines which agent alias to use when re-dispatching
@@ -420,13 +547,25 @@ func LoadModelEscalationConfig(rigProjectDir string) (*ModelEscalationConfig, er
 //
 // Returns "" (empty) if no escalation is configured or no rule applies — the caller
 // should omit the --agent flag and let the rig use its default.
-func resolveAgentForRedispatch(townRoot, targetRig string, beadState *BeadRedispatchState) string {
+func resolveAgentForRedispatch(townRoot, targetRig string, beadState *BeadRedispatchState, fromAgent ...string) string {
+	source := ""
+	if len(fromAgent) > 0 {
+		source = fromAgent[0]
+	}
+	agent, _ := resolveAgentDecision(townRoot, targetRig, beadState, source)
+	return agent
+}
+
+// resolveAgentDecision returns the target agent and whether an escalation rule
+// matched. fromAgent is enforced when present; an empty from_agent in config is
+// a wildcard for backwards compatibility.
+func resolveAgentDecision(townRoot, targetRig string, beadState *BeadRedispatchState, fromAgent string) (string, bool) {
 	// Rig project dir is <townRoot>/<rig>/refinery/rig
 	rigProjectDir := filepath.Join(townRoot, targetRig, "refinery", "rig")
 
 	cfg, err := LoadModelEscalationConfig(rigProjectDir)
 	if err != nil || cfg == nil || !cfg.Enabled || len(cfg.Rules) == 0 {
-		return ""
+		return "", true
 	}
 
 	// Total failures = prior re-dispatch attempts + 1 (initial failure that triggered
@@ -434,12 +573,31 @@ func resolveAgentForRedispatch(townRoot, targetRig string, beadState *BeadRedisp
 	// it reflects the number of completed re-dispatches, not the current one.
 	totalFailures := beadState.AttemptCount + 1
 
+	matchedSource := false
 	for _, rule := range cfg.Rules {
+		if rule.FromAgent != "" && fromAgent != "" && rule.FromAgent != fromAgent {
+			continue
+		}
+		matchedSource = true
 		if totalFailures >= rule.PromoteAfterFailures {
-			return rule.ToAgent
+			return rule.ToAgent, true
 		}
 	}
-	return ""
+	return "", matchedSource
+}
+
+// configuredPolecatAgent returns the rig's effective local worker alias when it
+// is explicitly configured. Validation setups pin this value so a first crash
+// can be matched against from_agent without relying on a dead tmux session.
+func configuredPolecatAgent(townRoot, rigName string) string {
+	settings, err := config.LoadRigSettings(config.RigSettingsPath(filepath.Join(townRoot, rigName)))
+	if err != nil || settings == nil {
+		return ""
+	}
+	if agent := strings.TrimSpace(settings.RoleAgents["polecat"]); agent != "" {
+		return agent
+	}
+	return strings.TrimSpace(settings.Agent)
 }
 
 // slingBead dispatches a bead to a rig via gt sling.

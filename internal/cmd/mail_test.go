@@ -30,6 +30,41 @@ func TestMailHelpUsesTownRootMessagingConfig(t *testing.T) {
 	}
 }
 
+func TestMailSendHumanFlagIsPermanentOverseerRoute(t *testing.T) {
+	flag := mailSendCmd.Flags().Lookup("human")
+	if flag == nil {
+		t.Fatal("mail send command missing --human flag")
+	}
+	if !strings.Contains(flag.Usage, "urgent") || !strings.Contains(flag.Usage, "permanent") {
+		t.Fatalf("--human help does not describe urgent permanent delivery: %q", flag.Usage)
+	}
+
+	oldHuman, oldSelf, oldTo, oldPermanent, oldUrgent := mailSendHuman, mailSendSelf, mailTo, mailPermanent, mailUrgent
+	t.Cleanup(func() {
+		mailSendHuman, mailSendSelf, mailTo, mailPermanent = oldHuman, oldSelf, oldTo, oldPermanent
+		mailUrgent = oldUrgent
+	})
+
+	mailSendHuman = true
+	mailSendSelf = false
+	mailTo = ""
+	mailPermanent = false
+	mailUrgent = false
+
+	to, handled, err := resolveHumanMailTarget(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !handled || to != "overseer" || !mailPermanent || !mailUrgent {
+		t.Fatalf("--human handled=%v target=%q permanent=%v urgent=%v, want true/overseer/true/true",
+			handled, to, mailPermanent, mailUrgent)
+	}
+
+	if _, _, err := resolveHumanMailTarget([]string{"mayor/"}); err == nil {
+		t.Fatal("--human accepted a conflicting positional address")
+	}
+}
+
 // TestClaimPatternMatching tests claim pattern matching via the beads package.
 // This verifies that the pattern matching used for queue eligibility works correctly.
 func TestClaimPatternMatching(t *testing.T) {

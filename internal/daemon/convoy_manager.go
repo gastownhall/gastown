@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os/exec"
+	"sort"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -112,6 +113,11 @@ type ConvoyManager struct {
 	// been handled. This allows the 1s overlap window above without replaying
 	// the same lifecycle events on every poll.
 	processedLifecycleEvents sync.Map // map[string]bool
+
+	// dispatchCircuits persist permanent dispatch failures so the 30-second
+	// stranded scan stays quiet until the relevant route or respawn state
+	// changes.
+	dispatchCircuits *convoyDispatchCircuitBreaker
 }
 
 // NewConvoyManager creates a new convoy manager.
@@ -131,15 +137,16 @@ func NewConvoyManager(townRoot string, logger func(format string, args ...interf
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	return &ConvoyManager{
-		townRoot:     townRoot,
-		scanInterval: scanInterval,
-		ctx:          ctx,
-		cancel:       cancel,
-		logger:       logger,
-		stores:       stores,
-		openStores:   openStores,
-		isRigParked:  isRigParked,
-		gtPath:       gtPath,
+		townRoot:         townRoot,
+		scanInterval:     scanInterval,
+		ctx:              ctx,
+		cancel:           cancel,
+		logger:           logger,
+		stores:           stores,
+		openStores:       openStores,
+		isRigParked:      isRigParked,
+		gtPath:           gtPath,
+		dispatchCircuits: newConvoyDispatchCircuitBreaker(townRoot, time.Now),
 	}
 }
 
@@ -539,7 +546,19 @@ func (m *ConvoyManager) feedFirstReady(c strandedConvoyInfo) {
 	if len(c.ReadyIssues) == 0 {
 		return
 	}
+	if loadErr := m.dispatchCircuits.LoadError(); loadErr != nil {
+		if m.dispatchCircuits.CorruptionAlertPending() {
+			m.logger("Convoy dispatch circuit state load failed; failing closed: %v", loadErr)
+			if err := m.alertConvoyCircuitCorruption(loadErr); err == nil {
+				if err := m.dispatchCircuits.MarkCorruptionAlertDelivered(); err != nil {
+					m.logger("Convoy dispatch circuit corruption alert marker could not persist: %v", err)
+				}
+			}
+		}
+		return
+	}
 
+	nonCircuitCandidate := false
 	for _, issueID := range c.ReadyIssues {
 		prefix := beads.ExtractPrefix(issueID)
 		if prefix == "" {
@@ -548,13 +567,57 @@ func (m *ConvoyManager) feedFirstReady(c strandedConvoyInfo) {
 		}
 
 		rig := beads.GetRigNameForPrefix(m.townRoot, prefix)
+		if kind := m.dispatchCircuits.FailureKind(c.ID, issueID); kind != "" {
+			m.retryPermanentConvoyDispatchAlert(c.ID, issueID, kind)
+			fingerprint := m.convoyDispatchFingerprint(c, issueID, prefix, rig, kind)
+			if suppress, _ := m.dispatchCircuits.ShouldSuppress(c.ID, issueID, fingerprint); suppress {
+				continue
+			}
+		}
+		nonCircuitCandidate = true
+
 		if rig == "" {
-			m.logger("Convoy %s: no rig for %s (prefix %s), skipping", c.ID, issueID, prefix)
+			kind := classifyUnresolvedConvoyRig(prefix, rig)
+			fingerprint := m.convoyDispatchFingerprint(c, issueID, prefix, rig, kind)
+			duplicate, err := m.dispatchCircuits.Record(
+				c.ID, issueID, kind, fingerprint,
+				fmt.Sprintf("no rig for prefix %s", prefix),
+			)
+			if err != nil {
+				m.logger("Convoy %s: failed to persist dispatch circuit for %s: %v", c.ID, issueID, err)
+			}
+			if !duplicate {
+				message := fmt.Sprintf("unknown or removed rig prefix %s", prefix)
+				m.logger("Convoy %s: permanent dispatch failure for %s: %s; circuit opened, skipping until state changes", c.ID, issueID, message)
+			}
+			m.retryPermanentConvoyDispatchAlert(c.ID, issueID, kind)
 			continue
 		}
 
 		if m.isRigParked(rig) {
 			m.logger("Convoy %s: rig %s is parked, skipping %s", c.ID, rig, issueID)
+			continue
+		}
+
+		churnFingerprint := m.convoyDispatchFingerprint(
+			c, issueID, prefix, rig, convoyDispatchAssignmentChurn,
+		)
+		leased, churned, leaseErr := m.dispatchCircuits.TryAcquireLease(
+			c.ID, issueID, "convoy/"+c.ID+"@"+rig, churnFingerprint,
+		)
+		if leaseErr != nil {
+			m.logger("Convoy %s: assignment lease persistence failed for %s; failing closed: %v",
+				c.ID, issueID, leaseErr)
+			continue
+		}
+		if churned {
+			m.logger("Convoy %s: repeated assignment churn for %s; circuit opened and work parked",
+				c.ID, issueID)
+			m.retryPermanentConvoyDispatchAlert(c.ID, issueID, convoyDispatchAssignmentChurn)
+			continue
+		}
+		if !leased {
+			m.logger("Convoy %s: active assignment lease suppresses resling of %s", c.ID, issueID)
 			continue
 		}
 
@@ -572,13 +635,138 @@ func (m *ConvoyManager) feedFirstReady(c strandedConvoyInfo) {
 		cmd.Stderr = &stderr
 
 		if err := cmd.Run(); err != nil {
-			m.logger("Convoy %s: sling %s failed: %s", c.ID, issueID, util.FirstLine(stderr.String()))
+			if releaseErr := m.dispatchCircuits.ReleaseLease(c.ID, issueID); releaseErr != nil {
+				m.logger("Convoy %s: failed to release assignment lease for %s: %v",
+					c.ID, issueID, releaseErr)
+			}
+			errText := util.FirstLine(stderr.String())
+			if kind := classifyPermanentConvoyDispatchError(errText); kind != "" {
+				fingerprint := m.convoyDispatchFingerprint(c, issueID, prefix, rig, kind)
+				duplicate, persistErr := m.dispatchCircuits.Record(c.ID, issueID, kind, fingerprint, errText)
+				if persistErr != nil {
+					m.logger("Convoy %s: failed to persist dispatch circuit for %s: %v", c.ID, issueID, persistErr)
+				}
+				if !duplicate {
+					m.logger("Convoy %s: permanent dispatch failure for %s: %s; circuit opened", c.ID, issueID, errText)
+				}
+				m.retryPermanentConvoyDispatchAlert(c.ID, issueID, kind)
+				continue
+			}
+			m.logger("Convoy %s: sling %s failed: %s", c.ID, issueID, errText)
 			continue
 		}
 		return // Successfully dispatched one issue
 	}
 
-	m.logger("Convoy %s: no dispatchable issues (all %d skipped)", c.ID, len(c.ReadyIssues))
+	if nonCircuitCandidate {
+		m.logger("Convoy %s: no dispatchable issues (all %d skipped)", c.ID, len(c.ReadyIssues))
+	}
+}
+
+func (m *ConvoyManager) convoyDispatchFingerprint(
+	c strandedConvoyInfo,
+	issueID, prefix, rig string,
+	kind convoyDispatchFailureKind,
+) string {
+	var failureState string
+	switch kind {
+	case convoyDispatchRigPrefixUnresolved:
+		failureState = convoyRouteFingerprint(m.townRoot, prefix)
+	case convoyDispatchRespawnExhausted:
+		failureState = convoyRespawnFingerprint(m.townRoot, issueID)
+	}
+	return strings.Join([]string{
+		failureState,
+		m.convoyIssueStateFingerprint(issueID, rig),
+		convoyTrackedStateFingerprint(c),
+	}, "|")
+}
+
+func (m *ConvoyManager) convoyIssueStateFingerprint(issueID, rig string) string {
+	m.storesMu.Lock()
+	store := m.stores[rig]
+	if store == nil && rig == "" {
+		store = m.stores["hq"]
+	}
+	m.storesMu.Unlock()
+	if store == nil {
+		return "issue:<unavailable>"
+	}
+	issue, err := store.GetIssue(m.ctx, issueID)
+	if err != nil || issue == nil {
+		return "issue:<unavailable>"
+	}
+	return convoyIssueStateFingerprint(issue)
+}
+
+func convoyIssueStateFingerprint(issue *beadsdk.Issue) string {
+	if issue == nil {
+		return "issue:<unavailable>"
+	}
+	return fmt.Sprintf("issue:%s:%s:%s",
+		issue.Status, issue.Assignee, issue.UpdatedAt.UTC().Format(time.RFC3339Nano))
+}
+
+func convoyTrackedStateFingerprint(c strandedConvoyInfo) string {
+	ready := append([]string(nil), c.ReadyIssues...)
+	sort.Strings(ready)
+	return fmt.Sprintf("convoy:%d:%d:%s:%s",
+		c.TrackedCount, c.ReadyCount, strings.Join(ready, ","), c.BaseBranch)
+}
+
+func (m *ConvoyManager) alertPermanentConvoyDispatch(
+	convoyID, issueID string,
+	kind convoyDispatchFailureKind,
+	detail string,
+) error {
+	subject := fmt.Sprintf("CONVOY_DISPATCH_BLOCKED: %s / %s", convoyID, issueID)
+	body := fmt.Sprintf(
+		"Permanent convoy dispatch failure latched.\n\nconvoy: %s\nissue: %s\nkind: %s\ndetail: %s\n\nAutomatic retry is blocked until the relevant state fingerprint changes.",
+		convoyID, issueID, kind, detail,
+	)
+	cmd := exec.CommandContext(m.ctx, m.gtPath, "mail", "send", "--human", "-s", subject, "-m", body)
+	cmd.Dir = m.townRoot
+	cmd.Env = bdMutationRoutingEnv(m.townRoot)
+	util.SetProcessGroup(cmd)
+	if output, err := cmd.CombinedOutput(); err != nil {
+		m.logger("Convoy %s: permanent dispatch alert failed for %s: %v (%s)",
+			convoyID, issueID, err, util.FirstLine(string(output)))
+		return err
+	}
+	return nil
+}
+
+func (m *ConvoyManager) retryPermanentConvoyDispatchAlert(
+	convoyID, issueID string,
+	kind convoyDispatchFailureKind,
+) {
+	if !m.dispatchCircuits.AlertPending(convoyID, issueID) {
+		return
+	}
+	detail := m.dispatchCircuits.AlertDetail(convoyID, issueID)
+	if err := m.alertPermanentConvoyDispatch(convoyID, issueID, kind, detail); err != nil {
+		return
+	}
+	if err := m.dispatchCircuits.MarkAlertDelivered(convoyID, issueID); err != nil {
+		m.logger("Convoy %s: failed to persist delivered alert for %s: %v", convoyID, issueID, err)
+	}
+}
+
+func (m *ConvoyManager) alertConvoyCircuitCorruption(loadErr error) error {
+	subject := "CONVOY_DISPATCH_CIRCUIT_STATE_CORRUPT"
+	body := fmt.Sprintf(
+		"Convoy dispatch circuit state could not be loaded and dispatch is failing closed.\n\nstate: %s\nerror: %v",
+		convoyDispatchCircuitStateFile(m.townRoot), loadErr,
+	)
+	cmd := exec.CommandContext(m.ctx, m.gtPath, "mail", "send", "--human", "-s", subject, "-m", body)
+	cmd.Dir = m.townRoot
+	cmd.Env = bdMutationRoutingEnv(m.townRoot)
+	util.SetProcessGroup(cmd)
+	if output, err := cmd.CombinedOutput(); err != nil {
+		m.logger("Convoy dispatch circuit corruption alert failed: %v (%s)", err, util.FirstLine(string(output)))
+		return err
+	}
+	return nil
 }
 
 // checkConvoyCompletion runs gt convoy check to auto-close a convoy whose

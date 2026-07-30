@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"encoding/json"
+	"fmt"
 	"io"
 	"os"
 	"testing"
@@ -81,6 +82,120 @@ func TestSessionHealthCmdFlagWiring(t *testing.T) {
 	}
 }
 
+func TestSessionRestartCmdAgentFlagWiring(t *testing.T) {
+	f := sessionRestartCmd.Flags().Lookup("agent")
+	if f == nil {
+		t.Fatal("session restart command missing --agent flag")
+	}
+	if f.DefValue != "" {
+		t.Errorf("--agent default = %q, want empty", f.DefValue)
+	}
+}
+
+type fakeSessionRestartManager struct {
+	running    bool
+	stopped    bool
+	started    bool
+	force      bool
+	startName  string
+	startOpts  polecat.SessionStartOptions
+	worktree   string
+	branch     string
+	hook       string
+	assignment string
+}
+
+func (m *fakeSessionRestartManager) IsRunning(string) (bool, error) {
+	return m.running && !m.stopped, nil
+}
+
+func (m *fakeSessionRestartManager) Stop(_ string, force bool) error {
+	m.stopped = true
+	m.force = force
+	return nil
+}
+
+func (m *fakeSessionRestartManager) Start(name string, opts polecat.SessionStartOptions) error {
+	m.started = true
+	m.startName = name
+	m.startOpts = opts
+	return nil
+}
+
+func TestRunSessionRestartAgentOverridePreservesPolecatState(t *testing.T) {
+	manager := &fakeSessionRestartManager{
+		running:    true,
+		worktree:   "/town/rig/polecats/toast",
+		branch:     "polecat/toast",
+		hook:       "gt-work",
+		assignment: "gt-work",
+	}
+	originalFactory := sessionRestartManagerForRig
+	originalValidator := sessionRestartValidateAgent
+	originalAgent := sessionRestartAgent
+	originalForce := sessionForce
+	t.Cleanup(func() {
+		sessionRestartManagerForRig = originalFactory
+		sessionRestartValidateAgent = originalValidator
+		sessionRestartAgent = originalAgent
+		sessionForce = originalForce
+	})
+	var requestedRig string
+	sessionRestartManagerForRig = func(rigName string) (sessionRestartManager, error) {
+		requestedRig = rigName
+		return manager, nil
+	}
+	sessionRestartValidateAgent = func(string, string) error { return nil }
+	sessionRestartAgent = "opencode-go"
+	sessionForce = true
+
+	if err := runSessionRestart(nil, []string{"rig/toast"}); err != nil {
+		t.Fatal(err)
+	}
+	if requestedRig != "rig" || !manager.stopped || !manager.force || !manager.started || manager.startName != "toast" {
+		t.Fatalf("restart lifecycle rig=%q manager=%#v", requestedRig, manager)
+	}
+	wantOpts := polecat.SessionStartOptions{Agent: "opencode-go"}
+	if manager.startOpts != wantOpts {
+		t.Fatalf("restart options = %#v, want only agent override %#v", manager.startOpts, wantOpts)
+	}
+	if manager.worktree != "/town/rig/polecats/toast" || manager.branch != "polecat/toast" ||
+		manager.hook != "gt-work" || manager.assignment != "gt-work" {
+		t.Fatalf("restart mutated polecat state: %#v", manager)
+	}
+}
+
+func TestRunSessionRestartValidatesAgentBeforeStopping(t *testing.T) {
+	manager := &fakeSessionRestartManager{running: true}
+	originalFactory := sessionRestartManagerForRig
+	originalValidator := sessionRestartValidateAgent
+	originalAgent := sessionRestartAgent
+	t.Cleanup(func() {
+		sessionRestartManagerForRig = originalFactory
+		sessionRestartValidateAgent = originalValidator
+		sessionRestartAgent = originalAgent
+	})
+	sessionRestartManagerForRig = func(string) (sessionRestartManager, error) {
+		return manager, nil
+	}
+	validated := false
+	sessionRestartValidateAgent = func(rigName, agent string) error {
+		validated = rigName == "rig" && agent == "not-configured"
+		return fmt.Errorf("unknown agent %q", agent)
+	}
+	sessionRestartAgent = "not-configured"
+
+	if err := runSessionRestart(nil, []string{"rig/toast"}); err == nil {
+		t.Fatal("invalid agent override restarted session")
+	}
+	if !validated {
+		t.Fatal("agent override was not validated")
+	}
+	if manager.stopped || manager.started {
+		t.Fatalf("invalid agent stopped or started session: %#v", manager)
+	}
+}
+
 func TestSessionHealthReportJSONContract(t *testing.T) {
 	report := newSessionHealthReport("gt-vault", tmux.AgentDead, 30*time.Minute)
 	data, err := json.Marshal(report)
@@ -106,6 +221,29 @@ func TestSessionHealthReportJSONContract(t *testing.T) {
 	}
 	if parsed["max_inactivity_seconds"] != float64(1800) {
 		t.Errorf("max_inactivity_seconds = %v, want 1800", parsed["max_inactivity_seconds"])
+	}
+	if _, ok := parsed["model_crash"]; !ok {
+		t.Fatal("session health JSON missing additive model_crash visibility")
+	}
+	for _, field := range []string{"incident_id", "recovery_action", "recovery_exhausted"} {
+		if _, ok := parsed[field]; !ok {
+			t.Fatalf("session health JSON missing additive %s visibility", field)
+		}
+	}
+}
+
+func TestSessionHealthCurrentModelCrashOverridesProcessHealth(t *testing.T) {
+	report := newSessionHealthReport("gt-vault", tmux.SessionHealthy, 0)
+	applyModelCrashHealth(&report, "sha256:fatal")
+
+	if report.Healthy {
+		t.Fatal("current model crash retained healthy=true")
+	}
+	if report.Status != "model-crashed" {
+		t.Fatalf("status = %q, want model-crashed", report.Status)
+	}
+	if !report.ModelCrash || report.ModelCrashFingerprint != "sha256:fatal" {
+		t.Fatalf("model crash visibility = %#v", report)
 	}
 }
 

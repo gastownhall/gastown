@@ -53,6 +53,27 @@ func (c *Config) ConfigPath() string {
 	return c.filePath
 }
 
+// Ensure creates an empty config file when one does not already exist.
+// Existing configuration is never overwritten. The write uses the same
+// atomic-file helper as normal config updates, so readers never observe a
+// partially written JSON document.
+func (c *Config) Ensure() error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	if _, err := os.Stat(c.filePath); err == nil {
+		return nil
+	} else if !os.IsNotExist(err) {
+		return fmt.Errorf("stat config: %w", err)
+	}
+
+	return c.save(&ConfigFile{
+		Rig:     c.rigName,
+		Values:  make(map[string]interface{}),
+		Blocked: []string{},
+	})
+}
+
 // load reads the config file from disk.
 // Returns a new empty ConfigFile if the file doesn't exist.
 func (c *Config) load() (*ConfigFile, error) {
@@ -290,4 +311,3 @@ func (c *Config) Clear() error {
 	}
 	return c.save(cfg)
 }
-
