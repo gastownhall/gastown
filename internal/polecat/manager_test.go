@@ -2923,10 +2923,20 @@ func TestRemoveWithOptions_RefusesNeedRecovery(t *testing.T) {
 		t.Fatalf("AddWithOptions: %v", err)
 	}
 
-	// Dirt the worktree so DecideWorkstate returns NEEDS_RECOVERY
+	// Dirt the worktree so DecideWorkstate returns NEEDS_RECOVERY when idle
 	dirtyPath := filepath.Join(polecat.ClonePath, "dirty-file.txt")
 	if err := os.WriteFile(dirtyPath, []byte("uncommitted work\n"), 0644); err != nil {
 		t.Fatalf("write dirty file: %v", err)
+	}
+
+	// Set polecat idle so the worktree dirtiness triggers NEEDS_RECOVERY
+	if err := mgr.SetState("toast", StateIdle); err != nil {
+		t.Fatalf("SetState idle: %v", err)
+	}
+
+	polecat, err = mgr.Get("toast")
+	if err != nil {
+		t.Fatalf("Get after SetState: %v", err)
 	}
 
 	// Verify disposition shows NEEDS_RECOVERY
