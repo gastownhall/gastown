@@ -1135,7 +1135,7 @@ func (m *Manager) RemoveWithOptions(name string, force, nuclear, selfNuke bool) 
 	return m.removeWithOptionsLocked(name, force, nuclear, selfNuke)
 }
 
-func (m *Manager) removeWithOptionsLocked(name string, force, nuclear, selfNuke bool) error {
+func (m *Manager) removeWithOptionsLocked(name string, force, nuclear, selfNuke, skipRecoveryCheck bool) error {
 	if !m.exists(name) {
 		return ErrPolecatNotFound
 	}
@@ -1146,7 +1146,7 @@ func (m *Manager) removeWithOptionsLocked(name string, force, nuclear, selfNuke 
 	}
 
 	// Enforce recovery verdict before any destructive teardown.
-	if !force && !nuclear {
+	if !force && !nuclear && !skipRecoveryCheck {
 		if decision := m.WorkstateDispositionForPolecat(name, current.State, current.Issue); decision.Verdict == WorkstateVerdictNeedsRecovery {
 			return fmt.Errorf("%w: %s (use --force to override, risks data loss)", ErrPolecatNeedsRecovery, decision.Reason)
 		}
