@@ -11,6 +11,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"time"
 
@@ -1145,6 +1146,49 @@ func (g *Git) StagedDeletions() ([]string, error) {
 		return nil, nil
 	}
 	return strings.Split(trimmed, "\n"), nil
+}
+
+// StagedLineDeletions returns the number of LINES staged for removal.
+//
+// This exists because StagedDeletions above cannot see the state that matters.
+// When a branch is rebased under a second worktree, the other worktree's index
+// is left staged to remove the entire rebase delta — as MODIFICATIONS to files
+// that still exist, not as file deletions. --diff-filter=D therefore reports
+// nothing while thousands of lines are staged to disappear, and the auto-save
+// commits them with no agent acting (si-d6kw: keeper armed with 7767, coma with
+// 6824, both found only because the Mayor's sweep counted lines).
+//
+// Counting lines is the whole point. A caller that wants "is this worktree
+// armed" must use this and not a file-status check.
+func (g *Git) StagedLineDeletions() (int, error) {
+	out, err := g.run("diff", "--cached", "--shortstat")
+	if err != nil {
+		return 0, err
+	}
+	return parseShortstatDeletions(out), nil
+}
+
+// parseShortstatDeletions reads the deletions field out of a --shortstat line:
+//
+//	" 5 files changed, 26 insertions(+), 434 deletions(-)"
+//	" 3 files changed, 7767 deletions(-)"        <- no insertions clause at all
+//
+// Keyed off the label rather than the field position, because the insertions
+// clause is omitted entirely when there are none and a positional parser then
+// reads the insertions count as deletions.
+func parseShortstatDeletions(shortstat string) int {
+	for _, field := range strings.Split(shortstat, ",") {
+		field = strings.TrimSpace(field)
+		if !strings.Contains(field, "deletion") {
+			continue
+		}
+		n, err := strconv.Atoi(strings.Fields(field)[0])
+		if err != nil {
+			return 0
+		}
+		return n
+	}
+	return 0
 }
 
 // ShowFile returns the contents of a file at a given ref (e.g., "origin/main:CLAUDE.md").
