@@ -1225,7 +1225,9 @@ func setTmuxWorkContext(workRig, workBead, workMol string) {
 // This is called on Mayor startup to surface issues needing human attention.
 func checkPendingEscalations(ctx RoleContext) {
 	// Query for open escalations using bd list with tag filter
-	cmd := exec.Command("bd", "list", "--status=open", "--tag=escalation", "--json")
+	// --limit=0: bd truncates at 50 silently; a dropped escalation is one an
+	// agent never sees at prime. hq-is5vd
+	cmd := exec.Command("bd", "list", "--status=open", "--tag=escalation", "--json", "--limit=0")
 	cmd.Dir = ctx.WorkDir
 	cmd.Env = os.Environ()
 

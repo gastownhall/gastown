@@ -1486,7 +1486,9 @@ func collectHandoffState() string {
 	}
 
 	// Get in-progress beads
-	inProgressOutput, err := exec.Command("bd", "list", "--status=in_progress").Output()
+	// --limit=0: bd truncates at 50 silently, which would quietly drop
+	// in-progress work from the handoff summary. hq-is5vd
+	inProgressOutput, err := exec.Command("bd", "list", "--status=in_progress", "--limit=0").Output()
 	if err == nil {
 		ipStr := strings.TrimSpace(string(inProgressOutput))
 		if ipStr != "" && !strings.Contains(ipStr, "No issues") {

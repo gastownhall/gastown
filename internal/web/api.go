@@ -1280,6 +1280,9 @@ func (h *APIHandler) runBdCommand(ctx context.Context, timeout time.Duration, ar
 		return "", fmt.Errorf("command slot unavailable: %w", ctx.Err())
 	}
 
+	// bd list defaults to 50 rows and truncates silently. See hq-is5vd.
+	args = beads.InjectDefaultLimit(args)
+
 	cmd := exec.CommandContext(ctx, "bd", args...)
 	if h.workDir != "" {
 		cmd.Dir = h.workDir

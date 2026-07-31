@@ -69,6 +69,9 @@ func runBdCommand(ctx context.Context, args []string, workDir, beadsDir string, 
 	// own injection. (GH#2746)
 	args = beads.InjectFlatForListJSON(args)
 
+	// bd list defaults to 50 rows and truncates silently. See hq-is5vd.
+	args = beads.InjectDefaultLimit(args)
+
 	cmd := exec.CommandContext(ctx, "bd", args...) //nolint:gosec // G204: bd is a trusted internal tool
 	cmd.Dir = workDir
 	util.SetDetachedProcessGroup(cmd)

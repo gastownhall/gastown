@@ -452,6 +452,8 @@ func runBdJSON(dir string, args ...string) ([]byte, error) {
 		}
 		args = filtered
 	}
+	// bd list defaults to 50 rows and truncates silently. See hq-is5vd.
+	args = beads.InjectDefaultLimit(args)
 	cmd := exec.Command("bd", args...)
 	cmd.Dir = dir
 	// Strip BEADS_DIR so bd discovers the correct database from cmd.Dir

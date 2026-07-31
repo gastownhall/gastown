@@ -1724,7 +1724,10 @@ func (m *Manager) seedPatrolMoleculesManually(rigPath string) error {
 
 	for _, mol := range patrolMols {
 		// Check if already exists by title
-		checkCmd := exec.Command("bd", "list", "--type=molecule", "--format=json")
+		// --limit=0: this is an existence check by title. bd truncates at 50
+		// silently, so a missed row reads as "not present" and the patrol
+		// molecule gets created a second time. hq-is5vd
+		checkCmd := exec.Command("bd", "list", "--type=molecule", "--format=json", "--limit=0")
 		checkCmd.Dir = rigPath
 		output, _ := checkCmd.Output()
 		if strings.Contains(string(output), mol.title) {

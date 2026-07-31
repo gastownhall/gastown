@@ -103,7 +103,9 @@ func FetchConvoys(townRoot string) (*ConvoyState, error) {
 
 // listConvoys returns convoys with the given status
 func listConvoys(beadsDir, status string) ([]convoyListItem, error) {
-	listArgs := []string{"list", "--type=convoy", "--status=" + status, "--json"}
+	// --limit=0: bd truncates at 50 silently. This slice is exec'd directly
+	// below rather than routed through a chokepoint, so it needs its own. hq-is5vd
+	listArgs := []string{"list", "--type=convoy", "--status=" + status, "--json", "--limit=0"}
 
 	ctx, cancel := context.WithTimeout(context.Background(), constants.BdSubprocessTimeout)
 	defer cancel()
@@ -407,6 +409,7 @@ func listMQBeads(rigPath, status string) []mqListItem {
 		"--label=gt:merge-request",
 		"--status="+status,
 		"--json",
+		"--limit=0", // bd truncates at 50; a partial MQ list reads as a short queue. hq-is5vd
 	)
 	util.SetDetachedProcessGroup(cmd)
 	cmd.Dir = rigPath

@@ -2664,7 +2664,11 @@ func (d *Daemon) isBeadClosed(beadID string) bool {
 // kills working polecats whose agent bead hook_bead is stale.
 func (d *Daemon) hasAssignedOpenWork(rigName, assignee string) bool {
 	for _, status := range []string{"hooked", "in_progress", "open"} {
-		cmd := exec.Command(d.bdPath, "list", "--rig="+rigName, "--assignee="+assignee, "--status="+status, "--json") //nolint:gosec // G204: args are constructed internally
+		// --limit=0 is REQUIRED here: bd truncates at 50 silently, and this result
+		// decides whether a WORKING polecat gets killed. A truncated page that
+		// omits the assignee's row is indistinguishable from "no assigned open
+		// work", so the polecat is reaped mid-task. hq-is5vd
+		cmd := exec.Command(d.bdPath, "list", "--rig="+rigName, "--assignee="+assignee, "--status="+status, "--json", "--limit=0") //nolint:gosec // G204: args are constructed internally
 		cmd.Dir = d.config.TownRoot
 		cmd.Env = os.Environ()
 		output, err := cmd.Output()
