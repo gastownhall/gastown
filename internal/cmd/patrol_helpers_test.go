@@ -1234,3 +1234,165 @@ func TestBurnPreviousPatrolWisps_IgnoresOtherBeads(t *testing.T) {
 		t.Errorf("non-patrol bead status = %q, want %q (should not be burned)", otherIssue.Status, beads.StatusHooked)
 	}
 }
+
+// --- dbt-as8: the rig var must reach every patrol wisp, and a wisp that cannot
+// name its own rig must be refused rather than cooked. ---
+
+// TestRenderPatrolWispDescription_WitnessSubstitutesRig is the witness twin of
+// TestRenderPatrolWispDescription_RefinerySubstitutesRigAndEmptyDefaults. The
+// witness arm is the one dbt-as8 was filed against and had no test of its own,
+// which is how three callers came to disagree about whether to pass rig.
+func TestRenderPatrolWispDescription_WitnessSubstitutesRig(t *testing.T) {
+	desc, err := renderPatrolWispDescription(PatrolConfig{
+		PatrolMolName: constants.MolWitnessPatrol,
+		BeadsDir:      t.TempDir(),
+		Assignee:      "gastown/witness",
+	})
+	if err != nil {
+		t.Fatalf("renderPatrolWispDescription: %v", err)
+	}
+	if !strings.Contains(desc, "gt agents resolve --role witness --rig gastown") {
+		t.Fatalf("description did not substitute witness rig:\n%s", desc)
+	}
+	if strings.Contains(desc, constants.UnsetRigSentinel) {
+		t.Fatalf("description still carries %s:\n%s", constants.UnsetRigSentinel, desc)
+	}
+}
+
+// TestAssertPatrolRigSubstituted_BothVerdictsInOneRun exercises the guard in
+// both directions in a single run. A guard that can only refuse is not a guard —
+// it is the absence of the step printing a reassuring sentence — so the SAFE arm
+// is as load-bearing as the refusing one.
+func TestAssertPatrolRigSubstituted_BothVerdictsInOneRun(t *testing.T) {
+	cfg := PatrolConfig{PatrolMolName: constants.MolWitnessPatrol, Assignee: "gastown/witness"}
+
+	safe := "gt agents resolve --role witness --rig gastown --json"
+	if err := assertPatrolRigSubstituted(cfg, safe); err != nil {
+		t.Fatalf("SAFE arm: guard refused a substituted description: %v", err)
+	}
+
+	poisoned := "gt agents resolve --role witness --rig " + constants.UnsetRigSentinel + " --json"
+	err := assertPatrolRigSubstituted(cfg, poisoned)
+	if err == nil {
+		t.Fatal("UNSAFE arm: guard accepted a description carrying the sentinel")
+	}
+	if !errors.Is(err, errPatrolRigUnsubstituted) {
+		t.Fatalf("UNSAFE arm: error does not wrap errPatrolRigUnsubstituted: %v", err)
+	}
+	// The message must name the inputs that produced the failure, not just the
+	// fact of it: the caller who forgot the var reads this line, not the code.
+	for _, want := range []string{constants.MolWitnessPatrol, constants.UnsetRigSentinel, "gastown/witness"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error message missing %q: %v", want, err)
+		}
+	}
+}
+
+// TestRenderPatrolWispDescription_RefusesRigScopedPatrolWithNoRig covers the
+// failure this bead is about: a caller that supplies no rig at all. Both a
+// refusing arm and a permitted arm run here, and the permitted arm is the
+// deacon patrol — a formula with no rig var — which proves the guard keys on
+// the rendered text rather than on "is this a patrol".
+func TestRenderPatrolWispDescription_RefusesRigScopedPatrolWithNoRig(t *testing.T) {
+	townRoot := t.TempDir()
+
+	for _, molName := range []string{constants.MolWitnessPatrol, constants.MolRefineryPatrol} {
+		// Assignee with no "/" yields an empty rig, so no rig var is derived and
+		// the formula default (the sentinel) survives rendering.
+		_, err := renderPatrolWispDescription(PatrolConfig{
+			PatrolMolName: molName,
+			BeadsDir:      townRoot,
+			Assignee:      "orphaned-agent",
+		})
+		if err == nil {
+			t.Fatalf("%s: rendered a description with no rig instead of refusing", molName)
+		}
+		if !errors.Is(err, errPatrolRigUnsubstituted) {
+			t.Fatalf("%s: error does not wrap errPatrolRigUnsubstituted: %v", molName, err)
+		}
+	}
+
+	// In-run control: the same rig-less assignee on a formula that has no rig
+	// var must still render. Without this arm an always-refusing guard passes.
+	if _, err := renderPatrolWispDescription(PatrolConfig{
+		PatrolMolName: constants.MolDeaconPatrol,
+		BeadsDir:      townRoot,
+		Assignee:      "deacon",
+	}); err != nil {
+		t.Fatalf("CONTROL: deacon patrol has no rig var and must still render: %v", err)
+	}
+}
+
+// TestPatrolFormulaVars_SingleSourceForSpawnAndDescription pins the invariant
+// that broke: the wisp used to be CREATED from cfg.ExtraVars while its
+// description was RENDERED from a different set, so a caller that forgot rig
+// produced a wisp whose stored vars and instructions disagreed.
+func TestPatrolFormulaVars_SingleSourceForSpawnAndDescription(t *testing.T) {
+	townRoot := t.TempDir()
+
+	witness := patrolFormulaVars(PatrolConfig{
+		PatrolMolName: constants.MolWitnessPatrol,
+		BeadsDir:      townRoot,
+		Assignee:      "testrig/witness",
+	})
+	if !slicesContains(witness, "rig=testrig") {
+		t.Errorf("witness vars missing rig=testrig: %v", witness)
+	}
+
+	refineryVars := patrolFormulaVars(PatrolConfig{
+		PatrolMolName: constants.MolRefineryPatrol,
+		BeadsDir:      townRoot,
+		Assignee:      "testrig/refinery",
+	})
+	if !slicesContains(refineryVars, "rig=testrig") {
+		t.Errorf("refinery vars missing rig=testrig: %v", refineryVars)
+	}
+
+	// ExtraVars come last so an explicit caller override still wins.
+	overridden := patrolFormulaVars(PatrolConfig{
+		PatrolMolName: constants.MolWitnessPatrol,
+		BeadsDir:      townRoot,
+		Assignee:      "testrig/witness",
+		ExtraVars:     []string{"rig=explicit"},
+	})
+	if got := overridden[len(overridden)-1]; got != "rig=explicit" {
+		t.Errorf("ExtraVars must be appended last so they win, got last=%q in %v", got, overridden)
+	}
+
+	// Control: a formula with no rig var derives nothing, so the guard above has
+	// nothing to refuse and deacon patrols are unaffected.
+	deacon := patrolFormulaVars(PatrolConfig{
+		PatrolMolName: constants.MolDeaconPatrol,
+		BeadsDir:      townRoot,
+		Assignee:      "deacon",
+		ExtraVars:     []string{"idle_effort_threshold=7"},
+	})
+	if len(deacon) != 1 || deacon[0] != "idle_effort_threshold=7" {
+		t.Errorf("deacon vars = %v, want only the caller's ExtraVars", deacon)
+	}
+}
+
+func slicesContains(haystack []string, needle string) bool {
+	for _, s := range haystack {
+		if s == needle {
+			return true
+		}
+	}
+	return false
+}
+
+// TestDedupeFormulaVars_LastWinsAtLastPosition pins the precedence that
+// buildFormulaVarMap already applies, so collapsing duplicate --var args can
+// never change a resolved value.
+func TestDedupeFormulaVars_LastWinsAtLastPosition(t *testing.T) {
+	got := dedupeFormulaVars([]string{"rig=a", "prefix=gt", "rig=b", "bare"})
+	want := []string{"prefix=gt", "rig=b", "bare"}
+	if len(got) != len(want) {
+		t.Fatalf("dedupeFormulaVars = %v, want %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("dedupeFormulaVars = %v, want %v", got, want)
+		}
+	}
+}
