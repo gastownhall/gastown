@@ -1459,6 +1459,24 @@ func (t *Tmux) dismissRewindMode(target string) {
 // Max 3 retries before returning an error.
 //
 // Falls back to best-effort (no verification) if pane capture fails.
+// getPaneInputLength returns the length of unsubmitted input in a pane.
+// Returns 0 if the input line is empty or if the length cannot be determined.
+// Pane targets can be session names, window:pane indexes, or pane IDs.
+func (t *Tmux) getPaneInputLength(target string) int {
+	out, err := t.run("display-message", "-p", "-t", target, "#{pane_input_length}")
+	if err != nil {
+		return 0
+	}
+	length, err := strconv.Atoi(strings.TrimSpace(out))
+	if err != nil {
+		return 0
+	}
+	if length < 0 {
+		return 0
+	}
+	return length
+}
+
 func (t *Tmux) sendEnterVerified(target string) error {
 	const (
 		maxRetries     = 3
@@ -1484,17 +1502,24 @@ func (t *Tmux) sendEnterVerified(target string) error {
 		time.Sleep(backoff)
 
 		postSnapshot, err := t.CapturePane(target, verifyLines)
+		postInputLen := t.getPaneInputLength(target)
 		if err != nil {
 			// Can't verify — assume success.
 			return nil
 		}
 
-		if postSnapshot != preSnapshot {
-			// Content changed — Enter was processed.
+		// Primary check: input line is empty (text was submitted)
+		if postInputLen == 0 {
 			return nil
 		}
 
-		// Content unchanged — Enter may not have been processed. Retry.
+		// Secondary check: pane content changed (command was executed)
+		if postSnapshot != preSnapshot {
+			return nil
+		}
+
+		// Both checks failed: input still has text and pane didn't change.
+		// Enter may not have been processed. Retry.
 		if _, err := t.run("send-keys", "-t", target, "Enter"); err != nil {
 			return fmt.Errorf("send Enter (retry %d): %w", retry+1, err)
 		}
@@ -1506,11 +1531,16 @@ func (t *Tmux) sendEnterVerified(target string) error {
 	// Final verification after last retry.
 	time.Sleep(500 * time.Millisecond)
 	postSnapshot, err := t.CapturePane(target, verifyLines)
+	postInputLen := t.getPaneInputLength(target)
+	if postInputLen == 0 {
+		return nil // Input is empty — success.
+	}
 	if err != nil || postSnapshot != preSnapshot {
 		return nil // Can't verify or content changed — consider success.
 	}
 
-	return fmt.Errorf("nudge Enter not processed after %d retries: pane content unchanged", maxRetries)
+	// Input still has unsubmitted text after all retries - this is a race condition
+	return fmt.Errorf("nudge Enter not processed after %d retries: input still has %d chars", maxRetries, postInputLen)
 }
 
 // adaptiveTextDelay returns the post-text-delivery delay for a message.
@@ -2370,6 +2400,58 @@ func (t *Tmux) CapturePaneLines(session string, lines int) ([]string, error) {
 		return nil, nil
 	}
 	return strings.Split(out, "\n"), nil
+}
+
+// SessionInputStatus describes the input state of a session's agent pane.
+type SessionInputStatus struct {
+	Session      string
+	InputLength  int  // bytes of unsubmitted input
+	HasInput     bool // true if InputLength > 0
+	PaneTarget   string
+	Error        string // non-empty if status check failed
+}
+
+// CheckSessionInput checks if a session has unsubmitted input in its agent pane.
+// Returns a SessionInputStatus describing the input state.
+// If the session cannot be checked, Error will be non-empty but the function won't fail.
+func (t *Tmux) CheckSessionInput(session string) SessionInputStatus {
+	result := SessionInputStatus{Session: session}
+
+	// Find the agent pane if it exists (for multi-pane sessions)
+	target := session
+	if agentPane, err := t.FindAgentPane(session); err == nil && agentPane != "" {
+		target = t.canonicalPaneTarget(session, agentPane)
+		result.PaneTarget = target
+	}
+
+	// Get the input length
+	inputLen := t.getPaneInputLength(target)
+	result.InputLength = inputLen
+	result.HasInput = inputLen > 0
+
+	return result
+}
+
+// CheckAllSessionsInput checks all tmux sessions for unsubmitted input.
+// Returns a list of SessionInputStatus for each session.
+// Sessions with errors are still included in the result.
+func (t *Tmux) CheckAllSessionsInput() ([]SessionInputStatus, error) {
+	sessions, err := t.ListSessions()
+	if err != nil {
+		return nil, fmt.Errorf("listing sessions: %w", err)
+	}
+
+	if sessions == nil {
+		return nil, nil
+	}
+
+	results := make([]SessionInputStatus, 0)
+	for _, session := range sessions {
+		status := t.CheckSessionInput(session)
+		results = append(results, status)
+	}
+
+	return results, nil
 }
 
 // AttachSession attaches to an existing session.
