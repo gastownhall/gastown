@@ -1508,7 +1508,7 @@ func (d *Daemon) checkDeaconHeartbeat() {
 
 		d.logger.Printf("Deacon stuck for %s - nudging session", age.Round(time.Minute))
 		if err := d.tmux.NudgeSession(sessionName, "HEALTH_CHECK: heartbeat stale, respond to confirm responsiveness"); err != nil {
-			d.logger.Printf("Error nudging stuck Deacon: %v", err)
+			d.logger.Printf("WARNING: Deacon nudge failed (Enter verification): %v — text may be stranded in input buffer", err)
 		}
 	}
 }
