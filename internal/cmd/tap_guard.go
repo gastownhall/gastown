@@ -50,12 +50,15 @@ This guard blocks:
   - git switch -c (feature branches)
 
 Exit codes:
-  0 - Operation allowed (not in Gas Town agent context, not maintainer origin)
+  0 - Operation allowed (Refinery, or not in Gas Town agent context with a non-maintainer origin)
   2 - Operation BLOCKED (in agent context OR maintainer origin)
 
 The guard blocks in two scenarios:
   1. Running as a Gas Town agent (crew, polecat, witness, etc.)
   2. Origin remote is steveyegge/gastown (maintainer should push directly)
+
+The Refinery is exempt: rebasing a merge candidate requires creating a local
+branch, so blocking it would stop the merge queue entirely.
 
 Humans running outside Gas Town with a fork origin can still use PRs.`,
 	RunE: runTapGuardPRWorkflow,
@@ -67,6 +70,22 @@ func init() {
 }
 
 func runTapGuardPRWorkflow(cmd *cobra.Command, args []string) error {
+	// The Refinery is exempt. It does not author work - it rebases and merges
+	// candidates that a crew agent already approved, and rebasing requires
+	// `git checkout -b`. Blocking that made the Refinery structurally unable to
+	// merge anything: on 2026-08-03 the ad_unica_sw_opus queue stalled with
+	// approved MRs while every rebase checkout was denied here.
+	//
+	// The exemption is wholesale rather than per-command because the guard
+	// cannot see which command triggered it - some provider templates consume
+	// the hook payload from stdin before invoking gt. That is acceptable: this
+	// guard exists to stop authoring agents from routing work around `gt done`,
+	// and on fork-backed rigs where PRs are the intended path the Refinery is
+	// skipped entirely.
+	if isRefineryContext() {
+		return nil
+	}
+
 	// Check if we're in a Gas Town agent context
 	if isGasTownAgentContext() {
 		fmt.Fprintln(os.Stderr, "")
@@ -103,6 +122,22 @@ func runTapGuardPRWorkflow(cmd *cobra.Command, args []string) error {
 
 	// Not in Gas Town context and not maintainer origin - allow PRs
 	return nil
+}
+
+// isRefineryContext returns true if we're running as the Refinery, the merge
+// queue processor. GT_REFINERY is set by Gas Town session management; GT_ROLE
+// is matched on its final path segment so that an agent merely named something
+// like "refinery-helper" does not inherit the exemption.
+func isRefineryContext() bool {
+	if os.Getenv("GT_REFINERY") != "" {
+		return true
+	}
+
+	role := os.Getenv("GT_ROLE")
+	if idx := strings.LastIndex(role, "/"); idx >= 0 {
+		role = role[idx+1:]
+	}
+	return role == "refinery"
 }
 
 // isGasTownAgentContext returns true if we're running as a Gas Town managed agent.
