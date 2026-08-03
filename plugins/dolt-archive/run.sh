@@ -173,6 +173,27 @@ fi
 
 # --- Step 3: Dolt native push ------------------------------------------------
 
+# is_backup_remote returns 0 only for remotes that are genuine backup
+# destinations. Dolt remotes frequently record where a database was cloned
+# FROM; pushing production data to those would publish it. Local file://
+# targets are the approved destination. Additional destinations can be
+# allowlisted by URL prefix via DOLT_ARCHIVE_ALLOWED_REMOTES (comma separated).
+is_backup_remote() {
+  local url="$1"
+  [[ -n "$url" ]] || return 1
+
+  local allowed
+  local allowlist="${DOLT_ARCHIVE_ALLOWED_REMOTES:-}"
+  for allowed in ${allowlist//,/ }; do
+    [[ -n "$allowed" && "$url" == "$allowed"* ]] && return 0
+  done
+
+  case "$url" in
+    file://*) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
 DOLT_PUSHED=0
 DOLT_PUSH_FAILED=0
 
@@ -198,6 +219,15 @@ if ! $SKIP_DOLT_PUSH; then
     cd "$DB_DIR"
 
     for REMOTE_NAME in $(dolt remote -v 2>/dev/null | awk '{print $1}' | sort -u || true); do
+      # Only push to backup destinations. A configured remote is often the
+      # clone source the database came from (e.g. the upstream gastown repo),
+      # never a place production data should be sent.
+      REMOTE_URL=$(dolt remote -v 2>/dev/null | awk -v r="$REMOTE_NAME" '$1 == r {print $2; exit}')
+      if ! is_backup_remote "$REMOTE_URL"; then
+        log "    $REMOTE_NAME: skipped, not a backup destination ($REMOTE_URL)"
+        continue
+      fi
+
       if timeout 120 dolt push "$REMOTE_NAME" main 2>/dev/null; then
         log "    $REMOTE_NAME: pushed"
         DOLT_PUSHED=$((DOLT_PUSHED + 1))
