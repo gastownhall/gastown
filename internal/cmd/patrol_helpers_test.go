@@ -1396,3 +1396,103 @@ func TestDedupeFormulaVars_LastWinsAtLastPosition(t *testing.T) {
 		}
 	}
 }
+
+// TestAutoSpawnPatrol_RigLessRefusalCreatesNothing pins the safety claim the
+// dbt-as8 fix actually rests on: when the rig cannot be named, autoSpawnPatrol
+// must refuse BEFORE it burns the previous cycle's wisp or creates a new one, so
+// nothing is left behind. Code ordering alone does not demonstrate that — a later
+// edit could move the render below the burn and every existing test would still
+// pass — so this asserts it against the bd command log.
+//
+// The CONTROL arm is load-bearing and runs in the same test: a properly-rigged
+// config on the identical town and mocks must reach `mol wisp create`. Without it,
+// an empty log is indistinguishable from a mock that was never invoked, and the
+// refusing arm would pass for the wrong reason.
+func TestAutoSpawnPatrol_RigLessRefusalCreatesNothing(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("mock bd/gt scripts use POSIX shell")
+	}
+
+	run := func(t *testing.T, assignee string) (string, error, string) {
+		t.Helper()
+		townRoot := setupRefinerySafetyStopTown(t)
+		logPath := installPatrolSpawnMockBD(t)
+		id, err := autoSpawnPatrol(PatrolConfig{
+			RoleName:      "witness",
+			PatrolMolName: constants.MolWitnessPatrol,
+			BeadsDir:      townRoot,
+			Assignee:      assignee,
+		})
+		data, readErr := os.ReadFile(logPath)
+		if readErr != nil && !os.IsNotExist(readErr) {
+			t.Fatalf("read bd log: %v", readErr)
+		}
+		return id, err, string(data)
+	}
+
+	t.Run("rig-less refuses and mutates nothing", func(t *testing.T) {
+		id, err, log := run(t, "orphaned-agent")
+		if !errors.Is(err, errPatrolRigUnsubstituted) {
+			t.Fatalf("autoSpawnPatrol error = %v, want errPatrolRigUnsubstituted", err)
+		}
+		if id != "" {
+			t.Errorf("returned patrol id %q, want empty — nothing should have been created", id)
+		}
+		for _, forbidden := range []string{"mol wisp create", "--status=hooked", "--body-file"} {
+			if strings.Contains(log, forbidden) {
+				t.Errorf("bd log contains %q; autoSpawnPatrol mutated state before refusing:\n%s", forbidden, log)
+			}
+		}
+	})
+
+	t.Run("CONTROL rigged config reaches wisp create", func(t *testing.T) {
+		_, _, log := run(t, "testrig/witness")
+		// Not asserting success end-to-end — the mocks do not model the whole
+		// flow. Only that creation was ATTEMPTED, which is what makes the
+		// refusing arm's absence meaningful.
+		if !strings.Contains(log, "mol wisp create") {
+			t.Fatalf("CONTROL: bd log lacks \"mol wisp create\", so the log probe is blind and the refusing arm proves nothing:\n%s", log)
+		}
+	})
+}
+
+// installPatrolSpawnMockBD installs a bd whose agent bead carries NO safety_stop
+// (so autoSpawnPatrol proceeds to the render) plus a gt that reports the witness
+// patrol formula, and logs every bd invocation.
+func installPatrolSpawnMockBD(t *testing.T) string {
+	t.Helper()
+	binDir := t.TempDir()
+	logPath := filepath.Join(binDir, "bd.log")
+	bd := `#!/bin/sh
+printf '%s\n' "$*" >> "` + logPath + `"
+cmd=""
+for arg in "$@"; do
+  case "$arg" in
+    --*) ;;
+    *) cmd="$arg"; break ;;
+  esac
+done
+case "$cmd" in
+  version) echo "bd test" ;;
+  show)
+    printf '%s\n' '[{"id":"gt-testrig-witness","title":"Witness","issue_type":"task","labels":["gt:agent"],"status":"open","description":"role_type: witness\nrig: testrig\nagent_state: idle"}]'
+    ;;
+  mol) echo "Root issue: testrig-wisp-ctl" ;;
+  *) exit 0 ;;
+esac
+`
+	if err := os.WriteFile(filepath.Join(binDir, "bd"), []byte(bd), 0o755); err != nil {
+		t.Fatalf("write fake bd: %v", err)
+	}
+	gt := `#!/bin/sh
+case "$1 $2" in
+  "formula list") echo "mol-witness-patrol    Witness patrol" ;;
+  *) exit 0 ;;
+esac
+`
+	if err := os.WriteFile(filepath.Join(binDir, "gt"), []byte(gt), 0o755); err != nil {
+		t.Fatalf("write fake gt: %v", err)
+	}
+	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	return logPath
+}
