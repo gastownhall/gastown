@@ -105,6 +105,13 @@ id = "inbox-check"
 title = "Handle callbacks from agents"
 needs = ["heartbeat"]
 description = """
+REMOVED (si-e90, 2026-07-27): this step used to run `bd mol wisp gc --closed --force`
+on every cycle. IT IS GONE. DO NOT RESTORE IT, AND DO NOT ADD AN EQUIVALENT UNDER A
+DIFFERENT SPELLING — the reasons below apply to ANY predicate that reaches closed wisps,
+not only to that one flag. This note exists because a silent deletion is how the command
+comes back: deacon is the reaper, so "clean up wisps here" is exactly the step someone
+will reasonably propose adding, and nothing else in this file would tell them not to.
+
 First, clean up ABANDONED wisps from previous cycles.
 
 *** NEVER RUN `--closed`, `--all`, OR ANY PREDICATE THAT INCLUDES CLOSED WISPS. ***
