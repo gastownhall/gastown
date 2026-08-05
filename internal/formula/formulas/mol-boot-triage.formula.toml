@@ -82,6 +82,7 @@ Analyze observations and decide what action to take.
 | Alive, idle 5-15 min | Has mail | NUDGE |
 | Alive, idle > 15 min | Any | WAKE |
 | Alive, stuck (errors) | Any | INTERRUPT |
+| Alive, blocking interactive prompt (see below) | Any, including idle < 5 min | INTERRUPT |
 
 **Judgment Guidance**
 
@@ -93,6 +94,21 @@ Signs of stuck:
 - Tool prompt waiting indefinitely
 - Silence with pending mail
 - Agent reporting issues but not progressing
+- **Blocking interactive prompt awaiting human input** — pane output ends in a
+  prompt the agent cannot answer itself, e.g.:
+  - Claude usage-limit modal ("What do you want to do? 1. Stop and wait for
+    limit to reset  2. Upgrade your plan")
+  - A permission/confirmation prompt ("Enter to confirm · Esc to cancel", or
+    similar footer)
+  - Any other menu-style prompt with numbered options waiting for a keypress
+  This is NOT the same as "idle" — idle means no activity because there is
+  nothing to do; this means activity is impossible until a human answers.
+  Treat it as INTERRUPT-worthy even if idle duration is short: waiting
+  longer will never resolve it on its own, so the normal "give it a few
+  minutes" judgment guidance above does not apply here. Escalate to the
+  human (via INTERRUPT's mail path) rather than re-checking on the next
+  tick — do NOT pick an option on the human's behalf (e.g. never choose
+  "upgrade your plan", a billing decision).
 
 Signs of working:
 - Tool calls in progress
@@ -130,6 +146,8 @@ gt nudge --mode=immediate deacon "Boot wake: please check your inbox and pending
 ```
 
 **INTERRUPT**
+
+For a stuck state Deacon can act on itself (errors, silence with pending mail):
 ```bash
 # This is more aggressive - signals Deacon to restart
 gt mail send deacon -s "INTERRUPT: Boot detected stuck state" \
@@ -140,6 +158,19 @@ Observations:
 
 If you're making progress, please update your agent bead to reflect activity."
 ```
+
+For a blocking interactive prompt (usage-limit modal, permission prompt, etc.):
+mailing Deacon does NOT help — its pane is frozen waiting on a keypress, so it
+cannot read or act on mail until a human answers the prompt. Escalate to the
+human directly instead:
+```bash
+gt escalate "Deacon session frozen on an interactive prompt — cannot proceed without human input" \
+  --severity high \
+  --source deacon-boot \
+  --reason "Pane shows: <exact prompt text observed>. Needs a human at the terminal (tmux attach -t hq-deacon) to answer it; no agent action can clear this."
+```
+Do not attempt to answer the prompt yourself (e.g. never pick "upgrade your
+plan" — that is a billing decision only the human can make).
 
 **START**
 ```bash
