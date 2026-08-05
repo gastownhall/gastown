@@ -863,3 +863,45 @@ func runCmd(t *testing.T, dir, name string, args ...string) {
 		t.Fatalf("%s %v: %v\n%s", name, args, err, out)
 	}
 }
+
+// safeToNukeMarker is the human-readable line the operator reads before deciding
+// to destroy a polecat. It must appear only for a genuine SAFE_TO_NUKE verdict.
+const safeToNukeMarker = "Safe to nuke"
+
+// TestRenderRecoveryVerdict pins #4631: the text renderer must not present any
+// non-SAFE_TO_NUKE verdict — WORKING in particular — as a green "Safe to nuke",
+// and an unrecognised verdict must fail loud rather than inherit that arm.
+func TestRenderRecoveryVerdict(t *testing.T) {
+	// Range over the exported constant list so a verdict added to workstate.go is
+	// exercised here automatically instead of silently inheriting a default arm.
+	for _, verdict := range polecat.WorkstateVerdicts {
+		t.Run(verdict, func(t *testing.T) {
+			var buf bytes.Buffer
+			renderRecoveryVerdict(&buf, RecoveryStatus{Verdict: verdict})
+			out := buf.String()
+
+			if !strings.Contains(out, verdict) {
+				t.Errorf("output does not name verdict %q:\n%s", verdict, out)
+			}
+			gotSafe := strings.Contains(out, safeToNukeMarker)
+			wantSafe := verdict == polecat.WorkstateVerdictSafeToNuke
+			if gotSafe != wantSafe {
+				t.Errorf("verdict %q: %q present = %v, want %v:\n%s",
+					verdict, safeToNukeMarker, gotSafe, wantSafe, out)
+			}
+		})
+	}
+
+	// An unrecognised verdict must never render as safe-to-nuke.
+	t.Run("unknown", func(t *testing.T) {
+		var buf bytes.Buffer
+		renderRecoveryVerdict(&buf, RecoveryStatus{Verdict: "MADE_UP_VERDICT"})
+		out := buf.String()
+		if strings.Contains(out, safeToNukeMarker) {
+			t.Errorf("unrecognised verdict rendered as safe-to-nuke:\n%s", out)
+		}
+		if !strings.Contains(out, "Unrecognised") {
+			t.Errorf("unrecognised verdict not flagged as unrecognised:\n%s", out)
+		}
+	})
+}

@@ -10,6 +10,18 @@ const (
 	WorkstateVerdictNeedsMQSubmit = "NEEDS_MQ_SUBMIT"
 )
 
+// WorkstateVerdicts enumerates every verdict a WorkstateDisposition can carry.
+// Any consumer that renders or branches on a verdict must handle each entry;
+// ranging over this slice in tests catches a new verdict that a switch forgot
+// to cover, instead of letting it inherit a default arm (see #4631).
+var WorkstateVerdicts = []string{
+	WorkstateVerdictWorking,
+	WorkstateVerdictSafeToNuke,
+	WorkstateVerdictPendingMR,
+	WorkstateVerdictNeedsRecovery,
+	WorkstateVerdictNeedsMQSubmit,
+}
+
 // WorkstateInput contains the lifecycle, git, and merge-queue facts needed to
 // classify a polecat consistently across list, recovery, witness, and capacity.
 type WorkstateInput struct {
