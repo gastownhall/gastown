@@ -101,7 +101,7 @@ func runRemember(cmd *cobra.Command, args []string) error {
 		verb = "Updated"
 	}
 
-	if err := bdKvSet(fullKey, content); err != nil {
+	if err := bdRemember(fullKey, content); err != nil {
 		return fmt.Errorf("storing memory: %w", err)
 	}
 
@@ -192,9 +192,31 @@ func sanitizeKey(key string) string {
 	return key
 }
 
-// bdKvSet calls bd kv set <key> <value>.
-func bdKvSet(key, value string) error {
-	cmd := exec.Command("bd", "kv", "set", key, value)
+// memoryWriteArgs builds the bd argv storing content under fullKey.
+//
+// bd owns the "memory." kv namespace: it rejects `bd kv set memory.*` and
+// prepends the prefix itself, so fullKey (memory.<type>.<key>) must have it
+// stripped before it goes to --key, or the memory lands at memory.memory.*
+// — accepted by bd and invisible to every reader.
+func memoryWriteArgs(fullKey, content string) []string {
+	return []string{"remember", "--key", strings.TrimPrefix(fullKey, memoryKeyPrefix), content}
+}
+
+// memoryClearArgs builds the bd argv removing the memory under fullKey.
+func memoryClearArgs(fullKey string) []string {
+	return []string{"forget", strings.TrimPrefix(fullKey, memoryKeyPrefix)}
+}
+
+// bdRemember stores a memory via the sanctioned `bd remember` path.
+func bdRemember(fullKey, content string) error {
+	cmd := exec.Command("bd", memoryWriteArgs(fullKey, content)...)
+	cmd.Stderr = os.Stderr
+	return cmd.Run()
+}
+
+// bdForget removes a memory via the sanctioned `bd forget` path.
+func bdForget(fullKey string) error {
+	cmd := exec.Command("bd", memoryClearArgs(fullKey)...)
 	cmd.Stderr = os.Stderr
 	return cmd.Run()
 }
@@ -207,13 +229,6 @@ func bdKvGet(key string) (string, error) {
 		return "", err
 	}
 	return strings.TrimSpace(string(out)), nil
-}
-
-// bdKvClear calls bd kv clear <key>.
-func bdKvClear(key string) error {
-	cmd := exec.Command("bd", "kv", "clear", key)
-	cmd.Stderr = os.Stderr
-	return cmd.Run()
 }
 
 // parseBdKvListJSON parses bd kv list --json output into displayable string values.
