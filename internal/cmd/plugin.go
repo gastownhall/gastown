@@ -542,7 +542,7 @@ func runPluginSync(cmd *cobra.Command, args []string) error {
 	targetDir := filepath.Join(townRoot, "plugins")
 
 	if pluginSyncDryRun {
-		report, err := plugin.DetectDrift(sourceDir, targetDir)
+		report, err := plugin.DetectDrift(townRoot, sourceDir, targetDir)
 		if err != nil {
 			return fmt.Errorf("detecting drift: %w", err)
 		}
@@ -550,6 +550,8 @@ func runPluginSync(cmd *cobra.Command, args []string) error {
 		fmt.Printf("%s Plugin sync dry run\n", style.Bold.Render("Plugin sync:"))
 		fmt.Printf("  Source: %s\n", sourceDir)
 		fmt.Printf("  Target: %s\n\n", targetDir)
+
+		printDisabledPlugins(report.Disabled)
 
 		if !report.HasDrift() && len(report.Extra) == 0 {
 			fmt.Printf("  %s All plugins up to date\n", style.Success.Render("✓"))
@@ -570,10 +572,12 @@ func runPluginSync(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 
-	result, err := plugin.SyncPlugins(sourceDir, targetDir, pluginSyncClean)
+	result, err := plugin.SyncPlugins(townRoot, sourceDir, targetDir, pluginSyncClean)
 	if err != nil {
 		return fmt.Errorf("syncing plugins: %w", err)
 	}
+
+	printDisabledPlugins(result.Disabled)
 
 	if len(result.Copied) == 0 && len(result.Removed) == 0 {
 		fmt.Printf("%s Plugins already up to date (%d checked)\n",
@@ -597,6 +601,25 @@ func runPluginSync(cmd *cobra.Command, args []string) error {
 	}
 
 	return nil
+}
+
+// printDisabledPlugins names every plugin sync refused to install and the
+// marker directory that vetoed it, so an operator never has to guess why a
+// plugin present in the source did not appear in the runtime.
+//
+// A marker for a plugin that is currently installed gets a louder line: the
+// skip-list is append-only and nobody prunes it, so that combination usually
+// means the marker is stale and the plugin is being frozen by accident.
+func printDisabledPlugins(disabled []plugin.DisabledPlugin) {
+	for _, d := range disabled {
+		if d.Installed {
+			fmt.Printf("  %s %s (skipped, but currently INSTALLED — marker %s/%s may be stale; %s will not receive source updates)\n",
+				style.Warning.Render("⚠"), d.Name, plugin.DisabledPluginsDir, d.Marker, d.Name)
+			continue
+		}
+		fmt.Printf("  %s %s (skipped: disabled town-wide by %s/%s)\n",
+			style.Warning.Render("⊘"), d.Name, plugin.DisabledPluginsDir, d.Marker)
+	}
 }
 
 func runPluginHistory(cmd *cobra.Command, args []string) error {
