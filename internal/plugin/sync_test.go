@@ -30,7 +30,7 @@ func TestSyncPlugins_CopiesNew(t *testing.T) {
 
 	createTestPlugin(t, srcDir, "my-plugin", "+++\nname = \"my-plugin\"\n+++\ndo stuff", nil)
 
-	result, err := SyncPlugins(srcDir, dstDir, false)
+	result, err := SyncPlugins("", srcDir, dstDir, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -52,7 +52,7 @@ func TestSyncPlugins_SkipsUpToDate(t *testing.T) {
 	createTestPlugin(t, srcDir, "my-plugin", content, nil)
 	createTestPlugin(t, dstDir, "my-plugin", content, nil)
 
-	result, err := SyncPlugins(srcDir, dstDir, false)
+	result, err := SyncPlugins("", srcDir, dstDir, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -71,7 +71,7 @@ func TestSyncPlugins_UpdatesChanged(t *testing.T) {
 	createTestPlugin(t, srcDir, "my-plugin", "+++\nname = \"my-plugin\"\n+++\nv2 instructions", nil)
 	createTestPlugin(t, dstDir, "my-plugin", "+++\nname = \"my-plugin\"\n+++\nv1 instructions", nil)
 
-	result, err := SyncPlugins(srcDir, dstDir, false)
+	result, err := SyncPlugins("", srcDir, dstDir, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -96,7 +96,7 @@ func TestSyncPlugins_CopiesExtraFiles(t *testing.T) {
 	createTestPlugin(t, srcDir, "my-plugin", "+++\nname = \"my-plugin\"\n+++\nstuff",
 		map[string]string{"run.sh": "#!/bin/bash\necho hi"})
 
-	result, err := SyncPlugins(srcDir, dstDir, false)
+	result, err := SyncPlugins("", srcDir, dstDir, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -130,7 +130,7 @@ func TestSyncPlugins_CleanRemovesExtra(t *testing.T) {
 	createTestPlugin(t, dstDir, "keep-me", "+++\nname = \"keep-me\"\n+++\nkeep", nil)
 	createTestPlugin(t, dstDir, "old-plugin", "+++\nname = \"old-plugin\"\n+++\nold", nil)
 
-	result, err := SyncPlugins(srcDir, dstDir, true)
+	result, err := SyncPlugins("", srcDir, dstDir, true)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -151,7 +151,7 @@ func TestSyncPlugins_NoCleanKeepsExtra(t *testing.T) {
 	createTestPlugin(t, srcDir, "new-plugin", "+++\nname = \"new-plugin\"\n+++\nnew", nil)
 	createTestPlugin(t, dstDir, "old-plugin", "+++\nname = \"old-plugin\"\n+++\nold", nil)
 
-	result, err := SyncPlugins(srcDir, dstDir, false)
+	result, err := SyncPlugins("", srcDir, dstDir, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -178,7 +178,7 @@ func TestSyncPlugins_IgnoresNonPluginDirs(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	result, err := SyncPlugins(srcDir, dstDir, false)
+	result, err := SyncPlugins("", srcDir, dstDir, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -195,7 +195,7 @@ func TestDetectDrift_NoDrift(t *testing.T) {
 	createTestPlugin(t, srcDir, "stable", content, nil)
 	createTestPlugin(t, dstDir, "stable", content, nil)
 
-	report, err := DetectDrift(srcDir, dstDir)
+	report, err := DetectDrift("", srcDir, dstDir)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -211,7 +211,7 @@ func TestDetectDrift_ContentDiffers(t *testing.T) {
 	createTestPlugin(t, srcDir, "changed", "+++\nname = \"changed\"\n+++\nv2", nil)
 	createTestPlugin(t, dstDir, "changed", "+++\nname = \"changed\"\n+++\nv1", nil)
 
-	report, err := DetectDrift(srcDir, dstDir)
+	report, err := DetectDrift("", srcDir, dstDir)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -229,7 +229,7 @@ func TestDetectDrift_MissingFromTarget(t *testing.T) {
 
 	createTestPlugin(t, srcDir, "new-one", "+++\nname = \"new-one\"\n+++\nnew", nil)
 
-	report, err := DetectDrift(srcDir, dstDir)
+	report, err := DetectDrift("", srcDir, dstDir)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -247,7 +247,7 @@ func TestDetectDrift_ExtraInTarget(t *testing.T) {
 
 	createTestPlugin(t, dstDir, "orphan", "+++\nname = \"orphan\"\n+++\nold", nil)
 
-	report, err := DetectDrift(srcDir, dstDir)
+	report, err := DetectDrift("", srcDir, dstDir)
 	if err != nil {
 		t.Fatal(err)
 	}
