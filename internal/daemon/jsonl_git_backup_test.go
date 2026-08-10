@@ -282,7 +282,7 @@ func TestVerifyExportCounts_FirstExport(t *testing.T) {
 
 	d := &Daemon{logger: log.New(io.Discard, "", 0)}
 
-	counts := map[string]int{"testdb": 100}
+	counts := tc("testdb", map[string]int{"issues": 100})
 	spikes := d.verifyExportCounts(gitRepo, []string{"testdb"}, counts, 0.20)
 	if len(spikes) != 0 {
 		t.Errorf("expected no spikes on first export, got %v", spikes)
@@ -303,7 +303,7 @@ func TestVerifyExportCounts_WithinThreshold(t *testing.T) {
 
 	// 130 records = 30% increase. With 0.20 threshold and 2x asymmetric
 	// multiplier for increases, effective threshold is 0.40, so 30% is fine.
-	counts := map[string]int{"testdb": 130}
+	counts := tc("testdb", map[string]int{"issues": 130})
 	spikes := d.verifyExportCounts(gitRepo, []string{"testdb"}, counts, 0.20)
 	if len(spikes) != 0 {
 		t.Errorf("expected no spikes for 30%% increase (effective threshold 40%%), got %v", spikes)
@@ -324,7 +324,7 @@ func TestVerifyExportCounts_ExceedsThreshold(t *testing.T) {
 
 	// 200 records = 100% jump. Even with 2x asymmetric multiplier (effective
 	// threshold 0.40), 100% exceeds it.
-	counts := map[string]int{"testdb": 200}
+	counts := tc("testdb", map[string]int{"issues": 200})
 	spikes := d.verifyExportCounts(gitRepo, []string{"testdb"}, counts, 0.20)
 	if len(spikes) != 1 {
 		t.Fatalf("expected 1 spike, got %d", len(spikes))
@@ -350,7 +350,7 @@ func TestVerifyExportCounts_Drop(t *testing.T) {
 
 	// 60 records = 40% drop. Drops use the base threshold (no 2x multiplier)
 	// because losing data is more suspicious than gaining it.
-	counts := map[string]int{"testdb": 60}
+	counts := tc("testdb", map[string]int{"issues": 60})
 	spikes := d.verifyExportCounts(gitRepo, []string{"testdb"}, counts, 0.20)
 	if len(spikes) != 1 {
 		t.Fatalf("expected 1 spike for drop, got %d", len(spikes))
@@ -374,7 +374,7 @@ func TestVerifyExportCounts_SmallAbsoluteChangeIgnored(t *testing.T) {
 
 	// 5 records = 50% drop, but only 5 records absolute change.
 	// Below minAbsoluteDelta (20), so should NOT spike.
-	counts := map[string]int{"testdb": 5}
+	counts := tc("testdb", map[string]int{"issues": 5})
 	spikes := d.verifyExportCounts(gitRepo, []string{"testdb"}, counts, 0.20)
 	if len(spikes) != 0 {
 		t.Errorf("expected no spikes for small absolute change (<20 records), got %v", spikes)
@@ -393,14 +393,14 @@ func TestVerifyExportCounts_AsymmetricThreshold(t *testing.T) {
 	d := &Daemon{logger: log.New(io.Discard, "", 0)}
 
 	// 70 records = 30% drop at 0.20 threshold → should spike (drops use base threshold)
-	counts := map[string]int{"testdb": 70}
+	counts := tc("testdb", map[string]int{"issues": 70})
 	spikes := d.verifyExportCounts(gitRepo, []string{"testdb"}, counts, 0.20)
 	if len(spikes) != 1 {
 		t.Fatalf("expected 1 spike for 30%% drop at 20%% threshold, got %d", len(spikes))
 	}
 
 	// 130 records = 30% increase at 0.20 threshold → should NOT spike (increases use 2x = 0.40)
-	counts = map[string]int{"testdb": 130}
+	counts = tc("testdb", map[string]int{"issues": 130})
 	spikes = d.verifyExportCounts(gitRepo, []string{"testdb"}, counts, 0.20)
 	if len(spikes) != 0 {
 		t.Errorf("expected no spike for 30%% increase at 40%% effective threshold, got %v", spikes)
@@ -420,7 +420,7 @@ func TestVerifyExportCounts_SpikeBaselineRecovery(t *testing.T) {
 	d := &Daemon{logger: log.New(io.Discard, "", 0)}
 
 	// First run: 400 records = 60% drop → should spike and save baseline.
-	counts := map[string]int{"testdb": 400}
+	counts := tc("testdb", map[string]int{"issues": 400})
 	spikes := d.verifyExportCounts(gitRepo, []string{"testdb"}, counts, 0.50)
 	if len(spikes) != 1 {
 		t.Fatalf("expected 1 spike on first detection, got %d", len(spikes))
@@ -431,12 +431,12 @@ func TestVerifyExportCounts_SpikeBaselineRecovery(t *testing.T) {
 	if sb == nil {
 		t.Fatal("expected spike baseline to be saved after spike detection")
 	}
-	if sb.Counts["testdb"] != 400 {
-		t.Errorf("expected baseline count 400, got %d", sb.Counts["testdb"])
+	if sb.Counts["testdb/issues"] != 400 {
+		t.Errorf("expected baseline count 400, got %d", sb.Counts["testdb/issues"])
 	}
 
 	// Second run: same count (400) → stable vs spike baseline → should NOT spike.
-	counts = map[string]int{"testdb": 400}
+	counts = tc("testdb", map[string]int{"issues": 400})
 	spikes = d.verifyExportCounts(gitRepo, []string{"testdb"}, counts, 0.50)
 	if len(spikes) != 0 {
 		t.Errorf("expected no spikes on second run (stable vs baseline), got %v", spikes)
@@ -455,7 +455,7 @@ func TestVerifyExportCounts_SpikeBaselineUnstable(t *testing.T) {
 	d := &Daemon{logger: log.New(io.Discard, "", 0)}
 
 	// First run: 400 records = 60% drop → spikes and saves baseline at 400.
-	counts := map[string]int{"testdb": 400}
+	counts := tc("testdb", map[string]int{"issues": 400})
 	spikes := d.verifyExportCounts(gitRepo, []string{"testdb"}, counts, 0.50)
 	if len(spikes) != 1 {
 		t.Fatalf("expected 1 spike, got %d", len(spikes))
@@ -463,10 +463,249 @@ func TestVerifyExportCounts_SpikeBaselineUnstable(t *testing.T) {
 
 	// Second run: 100 records = still a spike vs HEAD, AND unstable vs baseline
 	// (400 → 100 = 75% drop, exceeds threshold). Should still spike.
-	counts = map[string]int{"testdb": 100}
+	counts = tc("testdb", map[string]int{"issues": 100})
 	spikes = d.verifyExportCounts(gitRepo, []string{"testdb"}, counts, 0.50)
 	if len(spikes) != 1 {
 		t.Errorf("expected 1 spike for unstable count vs baseline, got %d", len(spikes))
+	}
+}
+
+// TestVerifyExportCounts_NoFalseSpikeAfterFullExport is the gt-e1u regression.
+// The baseline used to be read from issues.jsonl alone (71 lines) while the
+// current count was the total across all seven tables (2181), so every cycle
+// after the first full export looked like a ~2972% jump and halted the backup.
+// Compared per table, the honest delta is issues 71 → 73: not a spike.
+func TestVerifyExportCounts_NoFalseSpikeAfterFullExport(t *testing.T) {
+	gitRepo := t.TempDir()
+	initGitRepo(t, gitRepo)
+
+	// Run 1: full export of every table, committed. This is what arms the bug.
+	writeTableFiles(t, gitRepo, "hq", incidentCounts())
+	commitAll(t, gitRepo, "backup: full export of all 7 tables")
+
+	d := &Daemon{logger: log.New(io.Discard, "", 0)}
+
+	// Run 2: two new issues filed, every other table unchanged.
+	current := incidentCounts()
+	current["issues"] = 73
+
+	spikes := d.verifyExportCounts(gitRepo, []string{"hq"}, tc("hq", current), defaultSpikeThreshold)
+	if len(spikes) != 0 {
+		t.Fatalf("expected no spikes on the cycle after a full export, got %+v", spikes)
+	}
+
+	// And no spike baseline should have been written — nothing was halted.
+	if sb := loadSpikeBaseline(gitRepo); sb != nil {
+		t.Errorf("expected no spike baseline to be saved, got %+v", sb)
+	}
+
+	// Guard the guard: confirm this fixture still reproduces the original
+	// mismatch, so the test can't quietly stop covering the bug. Comparing the
+	// committed issues.jsonl against the blended all-tables total must exceed
+	// even the 2x growth tolerance.
+	prev, err := previousCommitLineCount(gitRepo, filepath.Join("hq", "issues.jsonl"))
+	if err != nil {
+		t.Fatalf("reading baseline: %v", err)
+	}
+	if prev != 71 {
+		t.Fatalf("expected committed issues.jsonl to have 71 lines, got %d", prev)
+	}
+	blendedDelta := float64(sumTableCounts(current)-prev) / float64(prev)
+	if blendedDelta <= defaultSpikeThreshold*2 {
+		t.Fatalf("fixture no longer reproduces the mismatch: blended delta %.2f is within tolerance", blendedDelta)
+	}
+}
+
+// TestVerifyExportCounts_SupplementalTableJumpCaught proves the per-table check
+// still catches a genuine pollution event — one that an issues-only baseline
+// would have been blind to.
+func TestVerifyExportCounts_SupplementalTableJumpCaught(t *testing.T) {
+	gitRepo := t.TempDir()
+	initGitRepo(t, gitRepo)
+
+	writeTableFiles(t, gitRepo, "hq", incidentCounts())
+	commitAll(t, gitRepo, "baseline")
+
+	d := &Daemon{logger: log.New(io.Discard, "", 0)}
+
+	// comments 86 → 900: a >900% jump, far past the 2x growth tolerance.
+	// The issues table is untouched, so the old issues-only check saw nothing.
+	current := incidentCounts()
+	current["comments"] = 900
+
+	spikes := d.verifyExportCounts(gitRepo, []string{"hq"}, tc("hq", current), defaultSpikeThreshold)
+	if len(spikes) != 1 {
+		t.Fatalf("expected 1 spike for the comments table, got %d: %+v", len(spikes), spikes)
+	}
+	if spikes[0].Table != "comments" {
+		t.Errorf("expected spike on comments, got %q", spikes[0].Table)
+	}
+	if spikes[0].File != "hq/comments.jsonl" {
+		t.Errorf("expected file hq/comments.jsonl, got %q", spikes[0].File)
+	}
+	if spikes[0].Previous != 86 || spikes[0].Current != 900 {
+		t.Errorf("expected 86→900, got %d→%d", spikes[0].Previous, spikes[0].Current)
+	}
+
+	// The report should name the file, not just the database, so a reader can
+	// reproduce the comparison.
+	if report := formatSpikeReport(spikes); !contains(report, "hq/comments.jsonl") {
+		t.Errorf("report should name the compared file: %s", report)
+	}
+}
+
+// TestVerifyExportCounts_SupplementalTableDropCaught covers data loss in a
+// supplemental table (drops use the base threshold, no 2x tolerance).
+func TestVerifyExportCounts_SupplementalTableDropCaught(t *testing.T) {
+	gitRepo := t.TempDir()
+	initGitRepo(t, gitRepo)
+
+	writeTableFiles(t, gitRepo, "hq", incidentCounts())
+	commitAll(t, gitRepo, "baseline")
+
+	d := &Daemon{logger: log.New(io.Discard, "", 0)}
+
+	// events 1796 → 100: catastrophic loss that a blended total would have
+	// dominated in the other direction.
+	current := incidentCounts()
+	current["events"] = 100
+
+	spikes := d.verifyExportCounts(gitRepo, []string{"hq"}, tc("hq", current), defaultSpikeThreshold)
+	if len(spikes) != 1 {
+		t.Fatalf("expected 1 spike for the events table, got %d: %+v", len(spikes), spikes)
+	}
+	if spikes[0].Table != "events" {
+		t.Errorf("expected spike on events, got %q", spikes[0].Table)
+	}
+	if spikes[0].Current >= spikes[0].Previous {
+		t.Errorf("expected a drop, got %d→%d", spikes[0].Previous, spikes[0].Current)
+	}
+}
+
+// TestVerifyExportCounts_FailedTableSkipped ensures a supplemental table whose
+// export failed (absent from the counts map) is not read as "dropped to zero".
+func TestVerifyExportCounts_FailedTableSkipped(t *testing.T) {
+	gitRepo := t.TempDir()
+	initGitRepo(t, gitRepo)
+
+	writeTableFiles(t, gitRepo, "hq", incidentCounts())
+	commitAll(t, gitRepo, "baseline")
+
+	d := &Daemon{logger: log.New(io.Discard, "", 0)}
+
+	current := incidentCounts()
+	delete(current, "events") // export failed this cycle
+
+	spikes := d.verifyExportCounts(gitRepo, []string{"hq"}, tc("hq", current), defaultSpikeThreshold)
+	if len(spikes) != 0 {
+		t.Errorf("expected no spikes when a table export failed, got %+v", spikes)
+	}
+}
+
+// TestVerifyExportCounts_PerTableBaselineRecovery checks that the halt/accept
+// recovery path keys off the same per-table units as the check itself.
+func TestVerifyExportCounts_PerTableBaselineRecovery(t *testing.T) {
+	gitRepo := t.TempDir()
+	initGitRepo(t, gitRepo)
+
+	writeTableFiles(t, gitRepo, "hq", incidentCounts())
+	commitAll(t, gitRepo, "baseline")
+
+	d := &Daemon{logger: log.New(io.Discard, "", 0)}
+
+	// A real bulk import triples the comments table — halts and records the level.
+	current := incidentCounts()
+	current["comments"] = 900
+
+	spikes := d.verifyExportCounts(gitRepo, []string{"hq"}, tc("hq", current), defaultSpikeThreshold)
+	if len(spikes) != 1 {
+		t.Fatalf("expected 1 spike on first detection, got %d", len(spikes))
+	}
+	sb := loadSpikeBaseline(gitRepo)
+	if sb == nil {
+		t.Fatal("expected a spike baseline after detection")
+	}
+	if sb.Counts["hq/comments"] != 900 {
+		t.Errorf("expected per-table baseline hq/comments=900, got %d", sb.Counts["hq/comments"])
+	}
+	if sb.Counts["hq/issues"] != 71 {
+		t.Errorf("expected per-table baseline hq/issues=71, got %d", sb.Counts["hq/issues"])
+	}
+
+	// Next cycle: count holds at the new level, so it is accepted.
+	spikes = d.verifyExportCounts(gitRepo, []string{"hq"}, tc("hq", current), defaultSpikeThreshold)
+	if len(spikes) != 0 {
+		t.Errorf("expected the stable new level to be accepted, got %+v", spikes)
+	}
+}
+
+// TestVerifyExportCounts_StaleDBKeyedBaselineIgnored covers upgrade from a build
+// that keyed the baseline by database. The stale key must not match a per-table
+// lookup and must not suppress a real spike.
+func TestVerifyExportCounts_StaleDBKeyedBaselineIgnored(t *testing.T) {
+	gitRepo := t.TempDir()
+	initGitRepo(t, gitRepo)
+
+	writeTableFiles(t, gitRepo, "hq", incidentCounts())
+	commitAll(t, gitRepo, "baseline")
+
+	// Old-format baseline: keyed by database, holding the blended total.
+	if err := saveSpikeBaseline(gitRepo, map[string]int{"hq": 2181}); err != nil {
+		t.Fatalf("save baseline: %v", err)
+	}
+
+	d := &Daemon{logger: log.New(io.Discard, "", 0)}
+
+	current := incidentCounts()
+	current["comments"] = 900
+
+	spikes := d.verifyExportCounts(gitRepo, []string{"hq"}, tc("hq", current), defaultSpikeThreshold)
+	if len(spikes) != 1 {
+		t.Fatalf("expected the stale db-keyed baseline to be ignored and the spike reported, got %d", len(spikes))
+	}
+	// The stale entry is replaced by per-table keys.
+	sb := loadSpikeBaseline(gitRepo)
+	if sb == nil {
+		t.Fatal("expected a rewritten spike baseline")
+	}
+	if _, stale := sb.Counts["hq"]; stale {
+		t.Errorf("expected the db-keyed entry to be gone, got %v", sb.Counts)
+	}
+}
+
+func TestRecountAfterFilter_UpdatesIssuesAndTotal(t *testing.T) {
+	gitRepo := t.TempDir()
+
+	// On-disk issues.jsonl reflects the post-filter state (3 records removed).
+	perTable := incidentCounts()
+	writeTableFiles(t, gitRepo, "hq", map[string]int{"issues": 68})
+
+	tableCounts := map[string]map[string]int{"hq": perTable}
+	counts := map[string]int{"hq": sumTableCounts(perTable)}
+
+	recountAfterFilter(gitRepo, []string{"hq"}, tableCounts, counts)
+
+	if got := tableCounts["hq"]["issues"]; got != 68 {
+		t.Errorf("expected issues recounted to 68, got %d", got)
+	}
+	// Supplemental tables are not filtered, so only the issues delta moves the total.
+	if want := sumTableCounts(incidentCounts()) - 3; counts["hq"] != want {
+		t.Errorf("expected total %d, got %d", want, counts["hq"])
+	}
+}
+
+func TestExportedTablesCoversEveryExportedFile(t *testing.T) {
+	tables := exportedTables()
+	if len(tables) != 1+len(supplementalTables) {
+		t.Fatalf("expected %d tables, got %d", 1+len(supplementalTables), len(tables))
+	}
+	if tables[0] != issuesTable {
+		t.Errorf("expected issues first, got %q", tables[0])
+	}
+	// Mutating the result must not corrupt supplementalTables.
+	tables[1] = "mutated"
+	if supplementalTables[0] == "mutated" {
+		t.Error("exportedTables aliases supplementalTables backing array")
 	}
 }
 
@@ -588,6 +827,38 @@ func containsHelper(s, substr string) bool {
 		}
 	}
 	return false
+}
+
+// tc wraps a single database's per-table counts in the map shape
+// verifyExportCounts expects.
+func tc(db string, perTable map[string]int) map[string]map[string]int {
+	return map[string]map[string]int{db: perTable}
+}
+
+// incidentCounts is the per-table shape captured from the gt-e1u incident on
+// the hq database. Returned fresh each call so callers can mutate it.
+func incidentCounts() map[string]int {
+	return map[string]int{
+		"issues":       71,
+		"comments":     86,
+		"config":       60,
+		"dependencies": 1,
+		"events":       1796,
+		"labels":       161,
+		"metadata":     4,
+	}
+}
+
+// writeTableFiles writes one JSONL file per table into {gitRepo}/{db}/.
+func writeTableFiles(t *testing.T, gitRepo, db string, perTable map[string]int) {
+	t.Helper()
+	dbDir := filepath.Join(gitRepo, db)
+	if err := os.MkdirAll(dbDir, 0755); err != nil {
+		t.Fatalf("mkdir %s: %v", dbDir, err)
+	}
+	for table, n := range perTable {
+		writeNLines(t, filepath.Join(dbDir, table+".jsonl"), n)
+	}
 }
 
 func initGitRepo(t *testing.T, dir string) {
