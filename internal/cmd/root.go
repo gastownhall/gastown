@@ -190,8 +190,14 @@ func isRoleCommand(cmd *cobra.Command) bool {
 }
 
 func isDoneCommand(cmd *cobra.Command) bool {
+	// Only the root-level "gt done" command (polecat completion) triggers the
+	// polecat worktree ownership check in persistentPreRun and the telemetry
+	// skip. Subcommands named "done" owned by other parents (gt dog done,
+	// gt wl done, gt mol step done) are unrelated and must not be treated as
+	// polecat completion, otherwise their pre-run check fails with
+	// "gt done is for polecats only" before the real handler ever runs.
 	for c := cmd; c != nil; c = c.Parent() {
-		if c.Name() == "done" {
+		if c == doneCmd {
 			return true
 		}
 	}
