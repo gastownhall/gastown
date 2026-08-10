@@ -137,14 +137,19 @@ func (d *Daemon) syncJsonlGitBackup() {
 
 	exported := 0
 	var failed []string
+	// counts holds the per-database total (all tables) used for the commit message.
+	// tableCounts holds the per-table breakdown used for spike detection, which
+	// must compare like with like against the per-table files in HEAD.
 	counts := make(map[string]int)
+	tableCounts := make(map[string]map[string]int)
 	for _, db := range databases {
-		n, err := d.exportDatabaseToJsonl(db, gitRepo, dataDir, scrub)
+		perTable, err := d.exportDatabaseToJsonl(db, gitRepo, dataDir, scrub)
 		if err != nil {
 			d.logger.Printf("jsonl_git_backup: %s: export failed: %v", db, err)
 			failed = append(failed, db)
 		} else {
-			counts[db] = n
+			tableCounts[db] = perTable
+			counts[db] = sumTableCounts(perTable)
 			exported++
 		}
 	}
@@ -162,7 +167,7 @@ func (d *Daemon) syncJsonlGitBackup() {
 	if removed > 0 {
 		d.logger.Printf("jsonl_git_backup: filtered %d total test-pollution record(s)", removed)
 		// Recount after filtering so spike detection uses accurate numbers.
-		recountAfterFilter(gitRepo, databases, counts)
+		recountAfterFilter(gitRepo, databases, tableCounts, counts)
 	}
 
 	// Post-scrub verification: re-scan output for any remaining pollution.
@@ -175,7 +180,7 @@ func (d *Daemon) syncJsonlGitBackup() {
 
 	// Phase D: Spike detection — compare current counts to previous commit.
 	threshold := spikeThreshold(config)
-	spikes := d.verifyExportCounts(gitRepo, databases, counts, threshold)
+	spikes := d.verifyExportCounts(gitRepo, databases, tableCounts, threshold)
 	if len(spikes) > 0 {
 		report := formatSpikeReport(spikes)
 		d.logger.Printf("jsonl_git_backup: HALTING — spike detected:\n%s", report)
@@ -207,6 +212,9 @@ func (d *Daemon) syncJsonlGitBackup() {
 	mol.closeStep("report")
 }
 
+// issuesTable is the primary (scrubbed) table exported for every database.
+const issuesTable = "issues"
+
 // supplementalTables lists non-issues tables to include in JSONL backup.
 // These contain structural data (dependencies, labels, config) that would be
 // lost if we only backed up the issues table. Wisp tables are excluded — they
@@ -220,25 +228,46 @@ var supplementalTables = []string{
 	"metadata",
 }
 
+// exportedTables returns every table exported per database in deterministic
+// order: issues first, then the supplemental tables.
+func exportedTables() []string {
+	tables := make([]string, 0, 1+len(supplementalTables))
+	tables = append(tables, issuesTable)
+	tables = append(tables, supplementalTables...)
+	return tables
+}
+
+// sumTableCounts totals a per-table count map.
+func sumTableCounts(perTable map[string]int) int {
+	total := 0
+	for _, n := range perTable {
+		total += n
+	}
+	return total
+}
+
 // exportDatabaseToJsonl exports the issues table (with optional scrub) and all
 // supplemental tables to JSONL files in {gitRepo}/{db}/ directory.
 //
 // Issues go to {db}/issues.jsonl (scrubbed). Other tables go to {db}/{table}.jsonl.
 // Also writes a legacy {db}.jsonl (symlink to {db}/issues.jsonl) for backward compat.
 //
-// Returns the total number of records exported across all tables.
-func (d *Daemon) exportDatabaseToJsonl(db, gitRepo, dataDir string, scrub bool) (int, error) {
+// Returns the number of records exported per table, keyed by table name.
+// Tables whose export failed (supplemental only — an issues failure is fatal)
+// are absent from the map rather than recorded as zero, so a transient query
+// failure is never mistaken for the table being emptied.
+func (d *Daemon) exportDatabaseToJsonl(db, gitRepo, dataDir string, scrub bool) (map[string]int, error) {
 	if !validDBName.MatchString(db) {
-		return 0, fmt.Errorf("invalid database name: %q", db)
+		return nil, fmt.Errorf("invalid database name: %q", db)
 	}
 
 	// Create per-database subdirectory.
 	dbDir := filepath.Join(gitRepo, db)
 	if err := os.MkdirAll(dbDir, 0755); err != nil {
-		return 0, fmt.Errorf("creating dir %s: %w", dbDir, err)
+		return nil, fmt.Errorf("creating dir %s: %w", dbDir, err)
 	}
 
-	total := 0
+	perTable := make(map[string]int, 1+len(supplementalTables))
 
 	// 1. Export issues table (with scrub filter).
 	var query string
@@ -247,11 +276,11 @@ func (d *Daemon) exportDatabaseToJsonl(db, gitRepo, dataDir string, scrub bool) 
 	} else {
 		query = "SELECT * FROM `" + db + "`.issues ORDER BY id"
 	}
-	n, err := d.exportTableToJsonl("issues", query, dbDir, dataDir)
+	n, err := d.exportTableToJsonl(issuesTable, query, dbDir, dataDir)
 	if err != nil {
-		return 0, fmt.Errorf("issues: %w", err)
+		return nil, fmt.Errorf("issues: %w", err)
 	}
-	total += n
+	perTable[issuesTable] = n
 
 	// 2. Export supplemental tables (no scrub, full export).
 	for _, table := range supplementalTables {
@@ -262,11 +291,11 @@ func (d *Daemon) exportDatabaseToJsonl(db, gitRepo, dataDir string, scrub bool) 
 			d.logger.Printf("jsonl_git_backup: %s/%s: export failed (non-fatal): %v", db, table, err)
 			continue
 		}
-		total += tn
+		perTable[table] = tn
 	}
 
-	d.logger.Printf("jsonl_git_backup: %s: exported %d records across %d tables", db, total, 1+len(supplementalTables))
-	return total, nil
+	d.logger.Printf("jsonl_git_backup: %s: exported %d records across %d tables", db, sumTableCounts(perTable), len(perTable))
+	return perTable, nil
 }
 
 // exportTableToJsonl runs a query and writes the result as JSONL to {dir}/{table}.jsonl.
@@ -604,9 +633,10 @@ func previousCommitLineCount(gitRepo, relPath string) (int, error) {
 	return lines, nil
 }
 
-// spikeInfo holds the result of a spike check for a single database file.
+// spikeInfo holds the result of a spike check for a single exported table file.
 type spikeInfo struct {
 	DB       string
+	Table    string
 	File     string
 	Previous int
 	Current  int
@@ -614,10 +644,18 @@ type spikeInfo struct {
 }
 
 // spikeBaseline records counts from a halted export so that subsequent runs
-// can detect when the count has stabilized at a new level.
+// can detect when the count has stabilized at a new level. Counts are keyed
+// per table via spikeKey ("db/table"); a baseline written by an older build
+// (keyed by database) simply won't match and is treated as absent, which is
+// safe — the file is git-ignored scratch state, rewritten on the next spike.
 type spikeBaseline struct {
 	Counts    map[string]int `json:"counts"`
 	Timestamp string         `json:"timestamp"`
+}
+
+// spikeKey is the per-table key used in the spike baseline file.
+func spikeKey(db, table string) string {
+	return db + "/" + table
 }
 
 const spikeBaselineFile = ".spike-counts.json"
@@ -680,102 +718,130 @@ func removeSpikeBaseline(gitRepo string) {
 }
 
 // verifyExportCounts compares current export line counts against the previous
-// commit for each database. Returns a list of anomalies that exceed the spike
-// threshold. On first export (no baseline), verification is skipped.
+// commit, one exported table at a time. Returns a list of anomalies that exceed
+// the spike threshold. On first export of a file (no baseline), verification is
+// skipped for that file.
+//
+// The comparison is per table — {db}/{table}.jsonl in HEAD against the count
+// this run exported for that same table — so both sides always measure the same
+// set of records. A blended per-database total cannot be compared against any
+// single committed file, and mixing the two guarantees a false spike (gt-e1u).
+// Per-table checks also keep pollution in a supplemental table visible instead
+// of hiding it inside a total dominated by the high-volume events table.
 //
 // Asymmetric thresholds: drops (possible data loss) use the configured threshold;
-// increases (new issues filed) use 2x the threshold since growth is normal.
+// increases (new records) use 2x the threshold since growth is normal.
 // Small absolute changes (<20 records) are always allowed to avoid false alarms
-// on small databases.
+// on small tables.
 //
 // Recovery mechanism: when spike detection fires, a baseline file is saved with
-// the current counts. On the next run, if the current count is stable relative
-// to the spike baseline (within threshold), the spike is cleared and the export
-// proceeds. This prevents permanent blocking after legitimate large changes
+// the current per-table counts. On the next run, if the current count is stable
+// relative to the spike baseline (within threshold), the spike is cleared and the
+// export proceeds. This prevents permanent blocking after legitimate large changes
 // (e.g., Reaper purges, filter updates).
-func (d *Daemon) verifyExportCounts(gitRepo string, databases []string, counts map[string]int, threshold float64) []spikeInfo {
+func (d *Daemon) verifyExportCounts(gitRepo string, databases []string, tableCounts map[string]map[string]int, threshold float64) []spikeInfo {
 	const minAbsoluteDelta = 20 // ignore changes smaller than this many records
 
 	var spikes []spikeInfo
 	spikeBase := loadSpikeBaseline(gitRepo)
 
 	for _, db := range databases {
-		currentCount, ok := counts[db]
+		perTable, ok := tableCounts[db]
 		if !ok {
 			continue // database failed export, skip
 		}
 
-		relPath := filepath.Join(db, "issues.jsonl")
-		prevCount, err := previousCommitLineCount(gitRepo, relPath)
-		if err != nil {
-			d.logger.Printf("jsonl_git_backup: verify: %s: error reading baseline: %v", db, err)
-			continue
-		}
-		if prevCount == 0 {
-			// First export — no baseline to compare against.
-			d.logger.Printf("jsonl_git_backup: verify: %s: first export (%d records), skipping spike check", db, currentCount)
-			continue
-		}
+		for _, table := range exportedTables() {
+			currentCount, ok := perTable[table]
+			if !ok {
+				continue // table export failed or was skipped, no current count to trust
+			}
 
-		absDelta := currentCount - prevCount
-		if absDelta < 0 {
-			absDelta = -absDelta
-		}
-		// Small absolute changes are always fine — avoids false alarms on
-		// small databases where a few issues cause large percentage swings.
-		if absDelta < minAbsoluteDelta {
-			continue
-		}
+			relPath := filepath.Join(db, table+".jsonl")
+			prevCount, err := previousCommitLineCount(gitRepo, relPath)
+			if err != nil {
+				d.logger.Printf("jsonl_git_backup: verify: %s/%s: error reading baseline: %v", db, table, err)
+				continue
+			}
+			if prevCount == 0 {
+				// First export of this file — no baseline to compare against.
+				d.logger.Printf("jsonl_git_backup: verify: %s/%s: first export (%d records), skipping spike check", db, table, currentCount)
+				continue
+			}
 
-		fractionalDelta := math.Abs(float64(currentCount-prevCount)) / float64(prevCount)
+			absDelta := currentCount - prevCount
+			if absDelta < 0 {
+				absDelta = -absDelta
+			}
+			// Small absolute changes are always fine — avoids false alarms on
+			// small tables where a few records cause large percentage swings.
+			if absDelta < minAbsoluteDelta {
+				continue
+			}
 
-		// Asymmetric: increases are less suspicious than drops.
-		// New issues being filed is normal growth; losing issues suggests data loss.
-		effectiveThreshold := threshold
-		if currentCount > prevCount {
-			effectiveThreshold = threshold * 2 // 2x tolerance for growth
-		}
+			fractionalDelta := math.Abs(float64(currentCount-prevCount)) / float64(prevCount)
 
-		if fractionalDelta > effectiveThreshold {
-			// Check spike baseline: if the current count is stable relative
-			// to a previously-halted count, this is a confirmed new level.
-			if spikeBase != nil {
-				if baseCount, ok := spikeBase.Counts[db]; ok && baseCount > 0 {
-					baseDelta := math.Abs(float64(currentCount-baseCount)) / float64(baseCount)
-					if baseDelta <= threshold {
-						d.logger.Printf("jsonl_git_backup: %s: count stable vs spike baseline (%d → %d, %.1f%% vs baseline %d), accepting new level",
-							db, prevCount, currentCount, fractionalDelta*100, baseCount)
-						continue // Stable relative to spike baseline — not a new spike.
+			// Asymmetric: increases are less suspicious than drops.
+			// New records being written is normal growth; losing them suggests data loss.
+			effectiveThreshold := threshold
+			if currentCount > prevCount {
+				effectiveThreshold = threshold * 2 // 2x tolerance for growth
+			}
+
+			if fractionalDelta > effectiveThreshold {
+				// Check spike baseline: if the current count is stable relative
+				// to a previously-halted count, this is a confirmed new level.
+				if spikeBase != nil {
+					if baseCount, ok := spikeBase.Counts[spikeKey(db, table)]; ok && baseCount > 0 {
+						baseDelta := math.Abs(float64(currentCount-baseCount)) / float64(baseCount)
+						if baseDelta <= threshold {
+							d.logger.Printf("jsonl_git_backup: %s/%s: count stable vs spike baseline (%d → %d, %.1f%% vs baseline %d), accepting new level",
+								db, table, prevCount, currentCount, fractionalDelta*100, baseCount)
+							continue // Stable relative to spike baseline — not a new spike.
+						}
 					}
 				}
-			}
 
-			spike := spikeInfo{
-				DB:       db,
-				File:     relPath,
-				Previous: prevCount,
-				Current:  currentCount,
-				Delta:    fractionalDelta,
-			}
-			spikes = append(spikes, spike)
+				spike := spikeInfo{
+					DB:       db,
+					Table:    table,
+					File:     filepath.ToSlash(relPath),
+					Previous: prevCount,
+					Current:  currentCount,
+					Delta:    fractionalDelta,
+				}
+				spikes = append(spikes, spike)
 
-			direction := "jump"
-			if currentCount < prevCount {
-				direction = "drop"
+				direction := "jump"
+				if currentCount < prevCount {
+					direction = "drop"
+				}
+				d.logger.Printf("jsonl_git_backup: SPIKE DETECTED: %s/%s: %s from %d to %d (%.1f%% %s, threshold %.1f%%)",
+					db, table, direction, prevCount, currentCount, fractionalDelta*100, direction, effectiveThreshold*100)
 			}
-			d.logger.Printf("jsonl_git_backup: SPIKE DETECTED: %s: %s from %d to %d (%.1f%% %s, threshold %.1f%%)",
-				db, direction, prevCount, currentCount, fractionalDelta*100, direction, effectiveThreshold*100)
 		}
 	}
 
 	// Save or clear spike baseline depending on results.
 	if len(spikes) > 0 {
-		if err := saveSpikeBaseline(gitRepo, counts); err != nil {
+		if err := saveSpikeBaseline(gitRepo, flattenTableCounts(tableCounts)); err != nil {
 			d.logger.Printf("jsonl_git_backup: failed to save spike baseline: %v", err)
 		}
 	}
 
 	return spikes
+}
+
+// flattenTableCounts converts db → table → count into the flat "db/table" → count
+// form stored in the spike baseline file.
+func flattenTableCounts(tableCounts map[string]map[string]int) map[string]int {
+	flat := make(map[string]int)
+	for db, perTable := range tableCounts {
+		for table, n := range perTable {
+			flat[spikeKey(db, table)] = n
+		}
+	}
+	return flat
 }
 
 // formatSpikeReport creates a human-readable summary of spike anomalies for escalation.
@@ -787,8 +853,14 @@ func formatSpikeReport(spikes []spikeInfo) string {
 		if s.Current < s.Previous {
 			direction = "DROP (possible data loss)"
 		}
+		// Name the exact file compared so the reader can reproduce the check
+		// with `git show HEAD:<file> | wc -l` rather than guessing the units.
+		label := s.File
+		if label == "" {
+			label = s.DB
+		}
 		fmt.Fprintf(&b, "  %s: %d → %d (%.1f%% change) — %s\n",
-			s.DB, s.Previous, s.Current, s.Delta*100, direction)
+			label, s.Previous, s.Current, s.Delta*100, direction)
 	}
 	b.WriteString("Export halted. Manual review required.")
 	return b.String()
@@ -815,18 +887,25 @@ func countFileLines(path string) (int, error) {
 
 // recountAfterFilter re-reads the issues.jsonl file for each database to get
 // accurate post-filter line counts. This is needed because counts from
-// exportDatabaseToJsonl reflect pre-filter totals.
-func recountAfterFilter(gitRepo string, databases []string, counts map[string]int) {
+// exportDatabaseToJsonl reflect pre-filter totals. Only the issues table is
+// filtered, so only that entry is recounted; the database total is then
+// recomputed so the commit message stays consistent with it.
+func recountAfterFilter(gitRepo string, databases []string, tableCounts map[string]map[string]int, counts map[string]int) {
 	for _, db := range databases {
-		if _, ok := counts[db]; !ok {
+		perTable, ok := tableCounts[db]
+		if !ok {
 			continue
 		}
-		issuesPath := filepath.Join(gitRepo, db, "issues.jsonl")
+		if _, ok := perTable[issuesTable]; !ok {
+			continue
+		}
+		issuesPath := filepath.Join(gitRepo, db, issuesTable+".jsonl")
 		n, err := countFileLines(issuesPath)
 		if err != nil {
 			continue
 		}
-		counts[db] = n
+		perTable[issuesTable] = n
+		counts[db] = sumTableCounts(perTable)
 	}
 }
 
