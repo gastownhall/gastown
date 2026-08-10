@@ -24,6 +24,7 @@ import (
 	"github.com/steveyegge/gastown/internal/session"
 	"github.com/steveyegge/gastown/internal/style"
 	"github.com/steveyegge/gastown/internal/telemetry"
+	"github.com/steveyegge/gastown/internal/testmode"
 	"github.com/steveyegge/gastown/internal/tmux"
 	"github.com/steveyegge/gastown/internal/workspace"
 )
@@ -941,6 +942,13 @@ func nudgeWitness(rigName, message string) {
 		return // Don't actually nudge tmux in tests
 	}
 
+	// Test binaries are inert even without the log hook (gt-dog). The suite
+	// runs from inside a live workspace, so falling through here would emit a
+	// town-global event and send keys to a real agent pane.
+	if testmode.Active() {
+		return
+	}
+
 	// Emit a file event so the witness's await-event unblocks instantly.
 	townRoot, _ := workspace.FindFromCwd()
 	if townRoot != "" {
@@ -973,6 +981,14 @@ func nudgeRefinery(rigName, message string) {
 			_ = f.Close()
 		}
 		return // Don't actually nudge tmux in tests
+	}
+
+	// Test binaries are inert even without the log hook (gt-dog). Without
+	// this, `go test ./internal/cmd/...` wrote a real MQ_SUBMIT event into
+	// the town-global refinery channel on every run, waking every rig's
+	// refinery for a merge request that does not exist.
+	if testmode.Active() {
+		return
 	}
 
 	// Emit a file event so the refinery's await-event unblocks instantly.
