@@ -2181,6 +2181,13 @@ func (d *Daemon) getPatrolRigs(patrol string) []string {
 	return operational
 }
 
+// showRigBead resolves a rig identity bead for a rig. It is a package-level
+// seam so tests can exercise the found / not-found / backend-unreachable
+// branches of isRigOperational deterministically.
+var showRigBead = func(townRoot, rigName, prefix string) (*beads.Issue, error) {
+	return beads.ShowRigBead(townRoot, rigName, prefix)
+}
+
 // isRigOperational checks if a rig is in an operational state.
 // Returns true if the rig can have agents auto-started.
 // Returns false (with reason) if the rig is parked, docked, or has auto_restart blocked/disabled.
@@ -2220,25 +2227,37 @@ func (d *Daemon) isRigOperational(rigName string) (bool, string) {
 		prefix = agentconfig.GetRigPrefix(d.config.TownRoot, rigName)
 	}
 
-	rigBeadID := fmt.Sprintf("%s-rig-%s", prefix, rigName)
-	rigBeadsDir := beads.ResolveBeadsDir(rigPath)
-	bd := beads.NewWithBeadsDir(rigPath, rigBeadsDir)
-	if issue, err := bd.Show(rigBeadID); err == nil {
-		for _, label := range issue.Labels {
-			if label == "status:docked" {
-				return false, "rig is docked (global)"
-			}
-			if label == "status:parked" {
-				return false, "rig is parked (global)"
-			}
-		}
+	if prefix == "" {
+		// No prefix means we cannot even name the identity bead. That is a
+		// registry gap, not a docked rig — keep supervising and say so.
+		d.logger.Printf("Warning: no beads prefix for rig %s; skipping docked/parked bead check (assuming operational)", rigName)
 	} else {
-		// Log when rig bead lookup fails - this helps debug transient Dolt issues
-		// FAIL-SAFE: When we can't verify docked status (Dolt down, network issue, etc.),
-		// assume the rig is NOT operational. This prevents wasting API credits starting
-		// witnesses that might be docked. Better to delay work than burn credits unnecessarily.
-		d.logger.Printf("Warning: failed to check rig bead %s for docked/parked status: %v (assuming not operational)", rigBeadID, err)
-		return false, "cannot verify rig status (Dolt unavailable)"
+		rigBeadID := beads.RigBeadIDWithPrefix(prefix, rigName)
+		issue, err := showRigBead(d.config.TownRoot, rigName, prefix)
+		switch {
+		case err == nil:
+			for _, label := range issue.Labels {
+				if label == "status:docked" {
+					return false, "rig is docked (global)"
+				}
+				if label == "status:parked" {
+					return false, "rig is parked (global)"
+				}
+			}
+		case errors.Is(err, beads.ErrNotFound):
+			// No identity bead means no recorded docked/parked state. Treating
+			// that as "not operational" would disable witness/refinery restarts
+			// for a perfectly healthy rig, silently, for as long as the bead is
+			// missing (gt-gf6). A rig we cannot read is not a rig that is docked.
+			d.logger.Printf("Warning: rig identity bead %s not found; assuming operational (no docked/parked state recorded)", rigBeadID)
+		default:
+			// The beads backend itself is unreachable (Dolt down, network
+			// issue). Unlike a lookup miss this really is transient, so keep
+			// the fail-safe that avoids starting agents for a possibly-docked
+			// rig — but report the actual error instead of asserting a cause.
+			d.logger.Printf("Warning: could not read rig identity bead %s for docked/parked status: %v (assuming not operational)", rigBeadID, err)
+			return false, fmt.Sprintf("cannot verify rig status: %v", err)
+		}
 	}
 
 	// Check auto_restart config

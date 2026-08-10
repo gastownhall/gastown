@@ -7,15 +7,16 @@ import (
 	"slices"
 	"testing"
 
+	"github.com/steveyegge/gastown/internal/beads"
 	"github.com/steveyegge/gastown/internal/wisp"
 )
 
-// Regression test for gt-arz:
-// getPatrolRigs should filter parked/docked rigs at list-building time.
-func TestGetPatrolRigs_FiltersNonOperationalRigs(t *testing.T) {
+// newPatrolFilterTown seeds a town with rigs alpha/beta/gamma, marks beta
+// parked and gamma docked via the wisp layer, and returns a daemon for it.
+func newPatrolFilterTown(t *testing.T) *Daemon {
+	t.Helper()
 	townRoot := t.TempDir()
 
-	// Seed known rigs.
 	mayorDir := filepath.Join(townRoot, "mayor")
 	if err := os.MkdirAll(mayorDir, 0o755); err != nil {
 		t.Fatalf("mkdir mayor dir: %v", err)
@@ -33,18 +34,45 @@ func TestGetPatrolRigs_FiltersNonOperationalRigs(t *testing.T) {
 		t.Fatalf("set gamma docked: %v", err)
 	}
 
-	d := &Daemon{
+	return &Daemon{
 		config: &Config{TownRoot: townRoot},
 		logger: log.New(os.Stderr, "[test] ", 0),
 	}
+}
+
+// Regression test for gt-arz:
+// getPatrolRigs should filter parked/docked rigs at list-building time.
+func TestGetPatrolRigs_FiltersNonOperationalRigs(t *testing.T) {
+	d := newPatrolFilterTown(t)
+
+	withStubbedRigBeadLookup(t, func(townRoot, rigName, prefix string) (*beads.Issue, error) {
+		return &beads.Issue{ID: beads.RigBeadIDWithPrefix(prefix, rigName), Labels: []string{"gt:rig"}}, nil
+	})
 
 	got := d.getPatrolRigs("witness")
 	slices.Sort(got)
-	// When Dolt is unavailable, isRigOperational() fails safe and returns false
-	// for all rigs (can't verify docked status). This prevents witnesses from
-	// starting for potentially docked rigs during Dolt outages.
-	want := []string{}
+	want := []string{"alpha"}
 	if !slices.Equal(got, want) {
-		t.Fatalf("getPatrolRigs() = %v, want %v (all rigs excluded when Dolt unavailable - fail-safe)", got, want)
+		t.Fatalf("getPatrolRigs() = %v, want %v", got, want)
+	}
+}
+
+// Regression test for gt-gf6: a rig identity bead that cannot be found must not
+// remove the rig from patrol. The prefix-routing miss made every lookup return
+// "not found", which excluded all four rigs from both the witness and refinery
+// patrols for hours — the daemon stopped supervising the entire town while
+// reporting healthy.
+func TestGetPatrolRigs_MissingRigBeadsDoNotEmptyPatrol(t *testing.T) {
+	d := newPatrolFilterTown(t)
+
+	withStubbedRigBeadLookup(t, func(townRoot, rigName, prefix string) (*beads.Issue, error) {
+		return nil, beads.ErrNotFound
+	})
+
+	got := d.getPatrolRigs("witness")
+	slices.Sort(got)
+	want := []string{"alpha"}
+	if !slices.Equal(got, want) {
+		t.Fatalf("getPatrolRigs() = %v, want %v (missing rig beads must not disable supervision)", got, want)
 	}
 }
