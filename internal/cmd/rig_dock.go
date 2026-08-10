@@ -2,9 +2,7 @@ package cmd
 
 import (
 	"fmt"
-	"os"
 	"os/exec"
-	"path/filepath"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -16,7 +14,6 @@ import (
 	"github.com/steveyegge/gastown/internal/style"
 	"github.com/steveyegge/gastown/internal/tmux"
 	"github.com/steveyegge/gastown/internal/witness"
-	"github.com/steveyegge/gastown/internal/workspace"
 )
 
 // RigDockedLabel is the label set on rig identity beads when docked.
@@ -86,7 +83,7 @@ func runRigDock(cmd *cobra.Command, args []string) error {
 	}
 
 	// Get rig
-	_, r, err := getRig(rigName)
+	townRoot, r, err := getRig(rigName)
 	if err != nil {
 		return err
 	}
@@ -98,8 +95,9 @@ func runRigDock(cmd *cobra.Command, args []string) error {
 	}
 
 	// Find or create the rig identity bead (idempotent; handles duplicates
-	// and Dolt query hiccups gracefully — gt-d8681).
-	bd := beads.New(r.BeadsPath())
+	// and Dolt query hiccups gracefully — gt-d8681). Rig identity beads live in
+	// the town database despite their rig prefix — see beads.NewRigBeadStore.
+	bd := beads.NewRigBeadStore(townRoot)
 	rigBead, err := bd.EnsureRigBead(rigName, &beads.RigFields{
 		Repo:   r.GitURL,
 		Prefix: prefix,
@@ -170,11 +168,8 @@ func runRigDock(cmd *cobra.Command, args []string) error {
 
 	// Remove rig from daemon.json patrol config so daemon stops spawning
 	// witness/refinery sessions for this rig on every heartbeat cycle.
-	townRoot, twErr := workspace.FindFromCwdOrError()
-	if twErr == nil {
-		if err := config.RemoveRigFromDaemonPatrols(townRoot, rigName); err != nil {
-			fmt.Printf("  %s Could not update daemon.json patrols: %v\n", style.Warning.Render("!"), err)
-		}
+	if err := config.RemoveRigFromDaemonPatrols(townRoot, rigName); err != nil {
+		fmt.Printf("  %s Could not update daemon.json patrols: %v\n", style.Warning.Render("!"), err)
 	}
 
 	// Output
@@ -203,7 +198,7 @@ func runRigUndock(cmd *cobra.Command, args []string) error {
 	}
 
 	// Get rig and town root
-	_, r, err := getRig(rigName)
+	townRoot, r, err := getRig(rigName)
 	if err != nil {
 		return err
 	}
@@ -214,9 +209,9 @@ func runRigUndock(cmd *cobra.Command, args []string) error {
 		prefix = r.Config.Prefix
 	}
 
-	// Find the rig identity bead
+	// Find the rig identity bead (town database — see beads.NewRigBeadStore)
 	rigBeadID := beads.RigBeadIDWithPrefix(prefix, rigName)
-	bd := beads.New(r.BeadsPath())
+	bd := beads.NewRigBeadStore(townRoot)
 
 	// Check if rig bead exists, create if not
 	rigBead, err := bd.Show(rigBeadID)
@@ -248,11 +243,8 @@ func runRigUndock(cmd *cobra.Command, args []string) error {
 
 	// Re-add rig to daemon.json patrol config so daemon resumes spawning
 	// witness/refinery sessions for this rig.
-	townRoot, twErr := workspace.FindFromCwdOrError()
-	if twErr == nil {
-		if err := config.AddRigToDaemonPatrols(townRoot, rigName); err != nil {
-			fmt.Printf("  %s Could not update daemon.json patrols: %v\n", style.Warning.Render("!"), err)
-		}
+	if err := config.AddRigToDaemonPatrols(townRoot, rigName); err != nil {
+		fmt.Printf("  %s Could not update daemon.json patrols: %v\n", style.Warning.Render("!"), err)
 	}
 
 	fmt.Printf("%s Rig %s undocked\n", style.Success.Render("✓"), rigName)
@@ -266,17 +258,7 @@ func runRigUndock(cmd *cobra.Command, args []string) error {
 // IsRigDocked checks if a rig is docked by checking for the status:docked label
 // on the rig identity bead. This function is exported for use by the daemon.
 func IsRigDocked(townRoot, rigName, prefix string) bool {
-	// Construct the rig beads path
-	rigPath := filepath.Join(townRoot, rigName)
-	beadsPath := filepath.Join(rigPath, "mayor", "rig")
-	if _, err := os.Stat(beadsPath); err != nil {
-		beadsPath = rigPath
-	}
-
-	bd := beads.New(beadsPath)
-	rigBeadID := beads.RigBeadIDWithPrefix(prefix, rigName)
-
-	rigBead, err := bd.Show(rigBeadID)
+	rigBead, err := beads.ShowRigBead(townRoot, rigName, prefix)
 	if err != nil {
 		return false
 	}

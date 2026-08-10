@@ -2357,14 +2357,9 @@ func getRigOperationalState(townRoot, rigName string) (state string, source stri
 	}
 
 	// Check rig bead labels (global/synced)
-	// Rig identity bead ID: <prefix>-rig-<name>
-	// Look for status:docked or status:parked labels
+	// Look for status:docked or status:parked labels on the rig identity bead.
 	rigPath := filepath.Join(townRoot, rigName)
-	rigBeadsDir := beads.ResolveBeadsDir(rigPath)
-	bd := beads.NewWithBeadsDir(rigPath, rigBeadsDir)
 
-	// Try to find the rig identity bead
-	// Convention: <prefix>-rig-<rigName>
 	// Try to get prefix from rig config.json, fall back to rigs.json registry
 	var prefix string
 	if rigCfg, err := rig.LoadRigConfig(rigPath); err == nil && rigCfg.Beads != nil {
@@ -2375,8 +2370,7 @@ func getRigOperationalState(townRoot, rigName string) (state string, source stri
 	}
 
 	if prefix != "" {
-		rigBeadID := fmt.Sprintf("%s-rig-%s", prefix, rigName)
-		if issue, err := bd.Show(rigBeadID); err == nil {
+		if issue, err := beads.ShowRigBead(townRoot, rigName, prefix); err == nil {
 			for _, label := range issue.Labels {
 				if strings.HasPrefix(label, "status:") {
 					statusValue := strings.TrimPrefix(label, "status:")

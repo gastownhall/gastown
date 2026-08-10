@@ -2,7 +2,6 @@ package cmd
 
 import (
 	"fmt"
-	"os"
 	"path/filepath"
 	"strings"
 
@@ -74,15 +73,7 @@ func hasRigBeadLabel(townRoot, rigName, label string) bool {
 		return false
 	}
 
-	beadsPath := filepath.Join(rigPath, "mayor", "rig")
-	if _, err := os.Stat(beadsPath); err != nil {
-		beadsPath = rigPath
-	}
-
-	bd := beads.New(beadsPath)
-	rigBeadID := beads.RigBeadIDWithPrefix(prefix, rigName)
-
-	rigBead, err := bd.Show(rigBeadID)
+	rigBead, err := beads.ShowRigBead(townRoot, rigName, prefix)
 	if err != nil {
 		return false
 	}
@@ -121,14 +112,7 @@ func IsRigParkedOrDocked(townRoot, rigName string) (bool, string) {
 		return false, ""
 	}
 
-	beadsPath := filepath.Join(rigPath, "mayor", "rig")
-	if _, err := os.Stat(beadsPath); err != nil {
-		beadsPath = rigPath
-	}
-
-	bd := beads.New(beadsPath)
-	rigBeadID := beads.RigBeadIDWithPrefix(prefix, rigName)
-	rigBead, err := bd.Show(rigBeadID)
+	rigBead, err := beads.ShowRigBead(townRoot, rigName, prefix)
 	if err != nil {
 		return false, ""
 	}
