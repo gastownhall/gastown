@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
@@ -25,26 +26,26 @@ var (
 
 // HealthReport is the machine-readable output of gt health --json.
 type HealthReport struct {
-	Timestamp string              `json:"timestamp"`
-	Server    *ServerHealth       `json:"server"`
-	Databases []DatabaseHealth    `json:"databases"`
-	Pollution []PollutionRecord   `json:"pollution,omitempty"`
-	Backups   *BackupHealth       `json:"backups"`
-	Processes *ProcessHealth      `json:"processes"`
-	Orphans   []OrphanDB          `json:"orphans,omitempty"`
+	Timestamp string            `json:"timestamp"`
+	Server    *ServerHealth     `json:"server"`
+	Databases []DatabaseHealth  `json:"databases"`
+	Pollution []PollutionRecord `json:"pollution,omitempty"`
+	Backups   *BackupHealth     `json:"backups"`
+	Processes *ProcessHealth    `json:"processes"`
+	Orphans   []OrphanDB        `json:"orphans,omitempty"`
 }
 
 type ServerHealth struct {
-	Running            bool    `json:"running"`
-	PID                int     `json:"pid,omitempty"`
-	Port               int     `json:"port,omitempty"`
-	LatencyMs          int64   `json:"latency_ms,omitempty"`
-	Connections        int     `json:"connections,omitempty"`
-	MaxConnections     int     `json:"max_connections,omitempty"`
-	DiskUsageBytes     int64   `json:"disk_usage_bytes,omitempty"`
-	DiskUsageHuman     string  `json:"disk_usage_human,omitempty"`
-	LastCommitAgeSec   float64 `json:"last_commit_age_seconds,omitempty"`
-	LastCommitDB       string  `json:"last_commit_db,omitempty"`
+	Running          bool    `json:"running"`
+	PID              int     `json:"pid,omitempty"`
+	Port             int     `json:"port,omitempty"`
+	LatencyMs        int64   `json:"latency_ms,omitempty"`
+	Connections      int     `json:"connections,omitempty"`
+	MaxConnections   int     `json:"max_connections,omitempty"`
+	DiskUsageBytes   int64   `json:"disk_usage_bytes,omitempty"`
+	DiskUsageHuman   string  `json:"disk_usage_human,omitempty"`
+	LastCommitAgeSec float64 `json:"last_commit_age_seconds,omitempty"`
+	LastCommitDB     string  `json:"last_commit_db,omitempty"`
 }
 
 type DatabaseHealth struct {
@@ -183,31 +184,44 @@ func checkServerHealth(townRoot string) *ServerHealth {
 	return sh
 }
 
-// knownProductionDBs is the set of database names gt treats as production.
-// A town only ever has the subset that actually exists — see discoverProductionDBs.
-var knownProductionDBs = []string{"hq", "gt", "mo"}
+// fallbackProductionDBs is the historical hardcoded list, used ONLY when
+// enumeration fails so that a broken query degrades to the old behaviour
+// rather than to reporting nothing.
+var fallbackProductionDBs = []string{"hq", "gt", "mo"}
 
-// discoverProductionDBs returns the known production databases that actually
-// exist on the server, in knownProductionDBs order.
+// systemDBs are server-internal databases that hold no town data.
+var systemDBs = map[string]bool{
+	"information_schema": true,
+	"mysql":              true,
+	"performance_schema": true,
+	"sys":                true,
+	"dolt":               true,
+	"dolt_cluster":       true,
+}
+
+// discoverProductionDBs returns the town databases that actually exist on the
+// server, sorted, excluding server-internal ones.
 //
-// Previously callers iterated knownProductionDBs directly and opened a
-// connection per name. In a town with only 'hq' that made every gt health
-// invocation attempt 'gt' and 'mo', which do not exist: each attempt failed
-// with "database not found" and was silently swallowed by the `_ =` on every
-// query, so health reported the absent databases as healthy all-zero rows.
-// It also wrote 22 "database not found" lines per missing database into
-// dolt.log on every call — 2376 lines, 62% of that log, in one day on an idle
-// town. dolt.log is the first artifact the runbook says to capture when
-// diagnosing a hung Dolt server, so the noise degraded the diagnostic that
-// matters most.
+// This replaces a hardcoded {hq, gt, mo} list that was wrong in BOTH directions.
 //
-// On any enumeration error we fall back to the full known set, preserving the
-// old behaviour rather than reporting nothing.
+// Too many: a town with only 'hq' still had health open connections to 'gt' and
+// 'mo'. Every query failed with "database not found" and was swallowed by the
+// `_ =` assignments, so the absent databases were reported as healthy all-zero
+// rows — indistinguishable from real but empty ones. Each invocation also wrote
+// 44 "database not found" lines into dolt.log (22 per absent database), which
+// reached 2376 lines — 62% of that log — on one idle town in a day. dolt.log is
+// the first artifact the runbook says to capture when diagnosing a hung Dolt
+// server, so the noise degraded the diagnostic that matters most.
+//
+// Too few: every rig gets its own database, and none of them are named hq, gt
+// or mo. On a town with four rigs, health reported one database and silently
+// omitted the other four — so rig data had no health coverage at all, and the
+// omission was invisible because nothing said a database was missing.
 func discoverProductionDBs(port int) []string {
 	dsn := buildDoltDSN("root", port, "", dsnOpts{Timeout: "5s", ReadTimeout: "10s"})
 	db, err := sql.Open("mysql", dsn)
 	if err != nil {
-		return knownProductionDBs
+		return fallbackProductionDBs
 	}
 	defer db.Close()
 
@@ -216,28 +230,25 @@ func discoverProductionDBs(port int) []string {
 
 	rows, err := db.QueryContext(ctx, "SHOW DATABASES")
 	if err != nil {
-		return knownProductionDBs
+		return fallbackProductionDBs
 	}
 	defer rows.Close()
 
-	present := make(map[string]bool)
+	var found []string
 	for rows.Next() {
 		var name string
 		if err := rows.Scan(&name); err != nil {
-			return knownProductionDBs
+			return fallbackProductionDBs
 		}
-		present[name] = true
-	}
-	if err := rows.Err(); err != nil {
-		return knownProductionDBs
-	}
-
-	var found []string
-	for _, name := range knownProductionDBs {
-		if present[name] {
+		if !systemDBs[name] {
 			found = append(found, name)
 		}
 	}
+	if err := rows.Err(); err != nil {
+		return fallbackProductionDBs
+	}
+
+	sort.Strings(found)
 	return found
 }
 
