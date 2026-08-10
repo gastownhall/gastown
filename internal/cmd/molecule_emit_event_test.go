@@ -1,7 +1,9 @@
 package cmd
 
 import (
+	"bytes"
 	"encoding/json"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -138,10 +140,17 @@ func TestEmitEventChannelValidation(t *testing.T) {
 		t.Error("expected error for path traversal channel name, got nil")
 	}
 
-	// Slash in channel should be rejected
+	// Slash in channel is now valid (rig-scoped namespace, e.g. gastown/refinery)
 	_, err = channelevents.EmitToTown(townRoot, "foo/bar", "TEST", nil)
-	if err == nil {
-		t.Error("expected error for channel with slash, got nil")
+	if err != nil {
+		t.Errorf("channel with slash should be accepted for rig-scoping: %v", err)
+	}
+
+	// Double-slash / trailing-slash / leading-slash segments should be rejected
+	for _, bad := range []string{"a//b", "a/", "/a"} {
+		if _, err := channelevents.EmitToTown(townRoot, bad, "TEST", nil); err == nil {
+			t.Errorf("expected error for malformed channel %q with slash segments, got nil", bad)
+		}
 	}
 
 	// Empty channel should be rejected
@@ -193,5 +202,125 @@ func TestEmitEventResult(t *testing.T) {
 	}
 	if decoded.Type != result.Type {
 		t.Errorf("type = %q, want %q", decoded.Type, result.Type)
+	}
+}
+
+func TestEmitEventCommandRigScopesChannel(t *testing.T) {
+	townRoot := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(townRoot, "mayor"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(townRoot, "mayor", "town.json"), []byte("{}"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	rigDir := filepath.Join(townRoot, "gastown", "polecats", "nux")
+	if err := os.MkdirAll(rigDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	oldCwd, _ := os.Getwd()
+	oldChannel, oldType, oldPayload, oldJSON := emitEventChannel, emitEventType, emitEventPayload, moleculeJSON
+	t.Cleanup(func() {
+		_ = os.Chdir(oldCwd)
+		emitEventChannel, emitEventType, emitEventPayload, moleculeJSON = oldChannel, oldType, oldPayload, oldJSON
+	})
+	if err := os.Chdir(rigDir); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("GT_RIG", "gastown")
+
+	emitEventChannel = "refinery"
+	emitEventType = "MQ_SUBMIT"
+	emitEventPayload = []string{"branch=feat/x"}
+	moleculeJSON = false
+
+	var out bytes.Buffer
+	r, w, _ := os.Pipe()
+	oldStdout := os.Stdout
+	os.Stdout = w
+	runErr := runMoleculeEmitEvent(nil, nil)
+	w.Close()
+	os.Stdout = oldStdout
+	_, _ = io.Copy(&out, r)
+
+	if runErr != nil {
+		t.Fatalf("runMoleculeEmitEvent: %v", runErr)
+	}
+
+	// Rig-scoped dir must contain the event; bare dir must NOT exist.
+	scopedDir := filepath.Join(townRoot, "events", "gastown", "refinery")
+	entries, err := os.ReadDir(scopedDir)
+	if err != nil {
+		t.Fatalf("rig-scoped event dir not created: %v", err)
+	}
+	found := false
+	for _, e := range entries {
+		if strings.HasSuffix(e.Name(), ".event") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("no .event file in %s", scopedDir)
+	}
+	if _, err := os.Stat(filepath.Join(townRoot, "events", "refinery")); !os.IsNotExist(err) {
+		t.Errorf("bare refinery dir should not exist for rig-scoped emit")
+	}
+}
+
+func TestEmitEventCommandBareChannelBackwardCompat(t *testing.T) {
+	townRoot := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(townRoot, "mayor"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(townRoot, "mayor", "town.json"), []byte("{}"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	oldCwd, _ := os.Getwd()
+	oldChannel, oldType, oldPayload, oldJSON := emitEventChannel, emitEventType, emitEventPayload, moleculeJSON
+	t.Cleanup(func() {
+		_ = os.Chdir(oldCwd)
+		emitEventChannel, emitEventType, emitEventPayload, moleculeJSON = oldChannel, oldType, oldPayload, oldJSON
+	})
+	if err := os.Chdir(townRoot); err != nil {
+		t.Fatal(err)
+	}
+	// No GT_RIG and cwd is the town root -> no rig context resolves.
+	t.Setenv("GT_RIG", "")
+
+	emitEventChannel = "refinery"
+	emitEventType = "MQ_SUBMIT"
+	emitEventPayload = nil
+	moleculeJSON = false
+
+	var out bytes.Buffer
+	r, w, _ := os.Pipe()
+	oldStdout := os.Stdout
+	os.Stdout = w
+	runErr := runMoleculeEmitEvent(nil, nil)
+	w.Close()
+	os.Stdout = oldStdout
+	_, _ = io.Copy(&out, r)
+
+	if runErr != nil {
+		t.Fatalf("runMoleculeEmitEvent: %v", runErr)
+	}
+
+	// Bare channel dir must be used (backward compat).
+	bareDir := filepath.Join(townRoot, "events", "refinery")
+	entries, err := os.ReadDir(bareDir)
+	if err != nil {
+		t.Fatalf("bare event dir not created for backward compat: %v", err)
+	}
+	found := false
+	for _, e := range entries {
+		if strings.HasSuffix(e.Name(), ".event") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("no .event file in %s", bareDir)
 	}
 }

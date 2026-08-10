@@ -139,7 +139,7 @@ func init() {
 func runMoleculeAwaitEvent(cmd *cobra.Command, args []string) error {
 	// Validate channel name (prevent path traversal)
 	if !validChannelName.MatchString(awaitEventChannel) {
-		return fmt.Errorf("invalid channel name %q: must match [a-zA-Z0-9_-]", awaitEventChannel)
+		return fmt.Errorf("invalid channel name %q: must match [a-zA-Z0-9_-] optionally joined by '/' (e.g. gastown/refinery)", awaitEventChannel)
 	}
 
 	// Resolve event directory
