@@ -67,9 +67,15 @@ type BackupHealth struct {
 	DoltFreshness  string `json:"dolt_freshness,omitempty"`
 	DoltAgeSeconds int    `json:"dolt_age_seconds,omitempty"`
 	DoltStale      bool   `json:"dolt_stale"`
-	JSONLFreshness string `json:"jsonl_freshness,omitempty"`
-	JSONLAgeSeconds int   `json:"jsonl_age_seconds,omitempty"`
-	JSONLStale     bool   `json:"jsonl_stale"`
+	// DoltPresent reports whether a Dolt backup was found at all. Without it,
+	// dolt_stale:false is ambiguous between "backed up recently" and "never
+	// backed up", which are opposite conditions.
+	DoltPresent     bool   `json:"dolt_present"`
+	JSONLFreshness  string `json:"jsonl_freshness,omitempty"`
+	JSONLAgeSeconds int    `json:"jsonl_age_seconds,omitempty"`
+	JSONLStale      bool   `json:"jsonl_stale"`
+	// JSONLPresent reports whether a JSONL archive was found at all.
+	JSONLPresent bool `json:"jsonl_present"`
 }
 
 type ProcessHealth struct {
@@ -177,8 +183,66 @@ func checkServerHealth(townRoot string) *ServerHealth {
 	return sh
 }
 
+// knownProductionDBs is the set of database names gt treats as production.
+// A town only ever has the subset that actually exists — see discoverProductionDBs.
+var knownProductionDBs = []string{"hq", "gt", "mo"}
+
+// discoverProductionDBs returns the known production databases that actually
+// exist on the server, in knownProductionDBs order.
+//
+// Previously callers iterated knownProductionDBs directly and opened a
+// connection per name. In a town with only 'hq' that made every gt health
+// invocation attempt 'gt' and 'mo', which do not exist: each attempt failed
+// with "database not found" and was silently swallowed by the `_ =` on every
+// query, so health reported the absent databases as healthy all-zero rows.
+// It also wrote 22 "database not found" lines per missing database into
+// dolt.log on every call — 2376 lines, 62% of that log, in one day on an idle
+// town. dolt.log is the first artifact the runbook says to capture when
+// diagnosing a hung Dolt server, so the noise degraded the diagnostic that
+// matters most.
+//
+// On any enumeration error we fall back to the full known set, preserving the
+// old behaviour rather than reporting nothing.
+func discoverProductionDBs(port int) []string {
+	dsn := buildDoltDSN("root", port, "", dsnOpts{Timeout: "5s", ReadTimeout: "10s"})
+	db, err := sql.Open("mysql", dsn)
+	if err != nil {
+		return knownProductionDBs
+	}
+	defer db.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	rows, err := db.QueryContext(ctx, "SHOW DATABASES")
+	if err != nil {
+		return knownProductionDBs
+	}
+	defer rows.Close()
+
+	present := make(map[string]bool)
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			return knownProductionDBs
+		}
+		present[name] = true
+	}
+	if err := rows.Err(); err != nil {
+		return knownProductionDBs
+	}
+
+	var found []string
+	for _, name := range knownProductionDBs {
+		if present[name] {
+			found = append(found, name)
+		}
+	}
+	return found
+}
+
 func checkDatabaseHealth(port int) []DatabaseHealth {
-	productionDBs := []string{"hq", "gt", "mo"}
+	productionDBs := discoverProductionDBs(port)
 	var results []DatabaseHealth
 
 	for _, dbName := range productionDBs {
@@ -219,7 +283,7 @@ func checkDatabaseHealth(port int) []DatabaseHealth {
 }
 
 func checkPollution(port int) []PollutionRecord {
-	productionDBs := []string{"hq", "gt", "mo"}
+	productionDBs := discoverProductionDBs(port)
 	var records []PollutionRecord
 
 	// Known pollution patterns to check in the issues table.
@@ -279,7 +343,20 @@ func checkPollution(port int) []PollutionRecord {
 }
 
 func checkBackupHealth(townRoot string) *BackupHealth {
-	bh := &BackupHealth{}
+	// A missing backup is STALE, not fresh.
+	//
+	// Both Stale fields used to be assigned only inside the "backup exists"
+	// branches, so a town with no backup at all reported dolt_stale:false and
+	// jsonl_stale:false — identical to a town backed up seconds ago. On
+	// 2026-08-09 a town ran a full day with zero backups on either leg (no
+	// Dolt backup ever taken, and the JSONL ticker skipping 14/14 firings on a
+	// missing archive dir) while health reported both legs not-stale
+	// throughout. Nobody could have noticed from health output, because the
+	// instrument reads the same whether it works or not.
+	//
+	// Defaulting to stale means the absent case is loud, and *Present
+	// disambiguates "no backup" from "old backup" without overloading a bool.
+	bh := &BackupHealth{DoltStale: true, JSONLStale: true}
 
 	// Dolt filesystem backup freshness.
 	backupDir := filepath.Join(townRoot, ".dolt-backup")
@@ -287,6 +364,7 @@ func checkBackupHealth(townRoot string) *BackupHealth {
 		newest := findNewestFile(backupDir)
 		if !newest.IsZero() {
 			age := time.Since(newest)
+			bh.DoltPresent = true
 			bh.DoltAgeSeconds = int(age.Seconds())
 			bh.DoltFreshness = age.Round(time.Second).String()
 			bh.DoltStale = age > 30*time.Minute
@@ -306,6 +384,7 @@ func checkBackupHealth(townRoot string) *BackupHealth {
 				commitTimeStr := strings.TrimSpace(string(output))
 				if commitTime, err := time.Parse("2006-01-02 15:04:05 -0700", commitTimeStr); err == nil {
 					age := time.Since(commitTime)
+					bh.JSONLPresent = true
 					bh.JSONLAgeSeconds = int(age.Seconds())
 					bh.JSONLFreshness = age.Round(time.Second).String()
 					bh.JSONLStale = age > 30*time.Minute
@@ -390,7 +469,7 @@ func printHealthReport(r *HealthReport) {
 		}
 		fmt.Printf("  %s Dolt filesystem: %s ago\n", icon, r.Backups.DoltFreshness)
 	} else {
-		fmt.Printf("  %s Dolt filesystem: not found\n", style.Dim.Render("○"))
+		fmt.Printf("  %s Dolt filesystem: NO BACKUP FOUND\n", style.Bold.Render("!"))
 	}
 	if r.Backups.JSONLFreshness != "" {
 		icon := style.Bold.Render("✓")
@@ -399,7 +478,7 @@ func printHealthReport(r *HealthReport) {
 		}
 		fmt.Printf("  %s JSONL git: %s ago\n", icon, r.Backups.JSONLFreshness)
 	} else {
-		fmt.Printf("  %s JSONL git: not found\n", style.Dim.Render("○"))
+		fmt.Printf("  %s JSONL git: NO BACKUP FOUND\n", style.Bold.Render("!"))
 	}
 
 	// 5. Processes
