@@ -2181,6 +2181,23 @@ func (t *Tmux) AcceptBypassPermissionsWarning(session string) error {
 	return nil
 }
 
+// DetectStartupDialog reports whether a session's pane is currently showing a
+// blocking startup dialog (workspace trust, bypass permissions, agent update),
+// returning a human-readable reason when one is found.
+//
+// This is the safety interlock for DismissStartupDialogsBlind: callers must
+// confirm a dialog is actually on screen before injecting keystrokes into a
+// live agent session. A stall verdict derived from timers alone is not
+// sufficient evidence (gt-czb).
+func (t *Tmux) DetectStartupDialog(session string) (string, bool, error) {
+	content, err := t.CapturePane(session, 30)
+	if err != nil {
+		return "", false, fmt.Errorf("capturing pane for %s: %w", session, err)
+	}
+	reason, found := containsBlockingStartupDialog(content)
+	return reason, found, nil
+}
+
 // DismissStartupDialogsBlind sends the key sequences needed to dismiss all
 // known Claude Code startup dialogs without screen-scraping pane content.
 // This avoids coupling to third-party TUI strings that can change with any update.
@@ -2189,13 +2206,15 @@ func (t *Tmux) AcceptBypassPermissionsWarning(session string) error {
 //  1. Workspace trust dialog — Enter (option 1 "Yes, I trust this folder" is pre-selected)
 //  2. Bypass permissions warning — Down+Enter (select "Yes, I accept" then confirm)
 //
-// Safe to call on sessions where no dialog is showing: Enter sends a blank input
-// to an idle Claude prompt (harmless for a stalled session), and Down+Enter either
-// does nothing or sends another blank input.
+// DANGER: this is raw keystroke injection into whatever the pane is showing. It
+// is only safe on a session that really is parked on a startup dialog. On a
+// working agent, Down+Enter blindly selects the second option of any focused
+// dialog — answering, for example, a permission prompt without reading it.
+// Callers MUST confirm a dialog is present via DetectStartupDialog first; do
+// not reach this from a timer-derived verdict alone (gt-czb).
 //
-// This is intended for remediation of stalled sessions detected via structured
-// signals (session age + activity). For startup-time dialog handling where
-// precision matters, use AcceptStartupDialogs instead.
+// For startup-time dialog handling where precision matters, use
+// AcceptStartupDialogs instead.
 func (t *Tmux) DismissStartupDialogsBlind(session string) error {
 	// Step 1: Send Enter to dismiss trust dialog (if present)
 	if _, err := t.run("send-keys", "-t", session, "Enter"); err != nil {
@@ -2355,19 +2374,39 @@ func (t *Tmux) GetPanePID(target string) (string, error) {
 	return result, nil
 }
 
-// GetSessionActivity returns the last activity time for a session.
-// This is updated whenever there's any activity in the session (input/output).
+// GetSessionActivity returns the most recent activity time across every window
+// in a session. tmux stamps #{window_activity} on pane output, so the maximum
+// over a session's windows is the "last output" signal callers want.
+//
+// This deliberately does NOT read #{session_activity} (gt-czb): in practice that
+// field is stamped when the session is created and never advances afterward, so
+// every long-lived agent session reports activity == creation time forever. Any
+// caller comparing it against a staleness threshold would classify a busy agent
+// as idle after the threshold elapsed, and never recover.
 func (t *Tmux) GetSessionActivity(session string) (time.Time, error) {
-	out, err := t.run("display-message", "-t", session, "-p", "#{session_activity}")
+	out, err := t.run("list-windows", "-t", session, "-F", "#{window_activity}")
 	if err != nil {
 		return time.Time{}, err
 	}
 
-	timestamp, err := strconv.ParseInt(strings.TrimSpace(out), 10, 64)
-	if err != nil {
-		return time.Time{}, fmt.Errorf("parsing session activity: %w", err)
+	var latest int64
+	for _, line := range strings.Split(out, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		timestamp, err := strconv.ParseInt(line, 10, 64)
+		if err != nil {
+			continue // Skip unparseable rows rather than failing the whole query
+		}
+		if timestamp > latest {
+			latest = timestamp
+		}
 	}
-	return time.Unix(timestamp, 0), nil
+	if latest == 0 {
+		return time.Time{}, fmt.Errorf("no window activity for session %s", session)
+	}
+	return time.Unix(latest, 0), nil
 }
 
 // ZombieStatus describes the liveness state of a tmux agent session.
@@ -3538,7 +3577,9 @@ func (t *Tmux) IsIdle(session string) bool {
 
 // GetSessionInfo returns detailed information about a session.
 func (t *Tmux) GetSessionInfo(name string) (*SessionInfo, error) {
-	format := "#{session_name}|#{session_windows}|#{session_created}|#{session_attached}|#{session_activity}|#{session_last_attached}"
+	// window_activity, not session_activity: the latter never advances past
+	// session creation, so Activity would always equal Created (gt-czb).
+	format := "#{session_name}|#{session_windows}|#{session_created}|#{session_attached}|#{window_activity}|#{session_last_attached}"
 	out, err := t.run("list-sessions", "-F", format, "-f", fmt.Sprintf("#{==:#{session_name},%s}", name))
 	if err != nil {
 		return nil, err
