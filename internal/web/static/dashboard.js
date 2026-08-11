@@ -682,6 +682,18 @@
         var matchedCmd = allCommands.find(function(c) { return cmdName.indexOf(c.name) === 0; });
         saveRecentCommand(matchedCmd ? matchedCmd.name : baseName);
 
+        // Terminal-only commands (e.g. tmux attach) can never succeed as a
+        // buffered dashboard subprocess - copy them to the clipboard instead.
+        if (matchedCmd && matchedCmd.terminalOnly) {
+            var terminalCmd = 'gt ' + cmdName;
+            navigator.clipboard.writeText(terminalCmd).then(function() {
+                showToast('success', 'Copied', terminalCmd + ' — run in a terminal');
+            }).catch(function() {
+                showToast('info', 'Run in terminal', terminalCmd);
+            });
+            return;
+        }
+
         executionLock = true;
         console.log('Running command:', cmdName);
 
