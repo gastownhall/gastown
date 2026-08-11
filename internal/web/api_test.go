@@ -90,6 +90,14 @@ func TestValidateCommand(t *testing.T) {
 			errSubstr: "blocked pattern",
 		},
 
+		// Terminal-only commands cannot run as a buffered subprocess
+		{
+			name:      "mayor attach is terminal-only",
+			command:   "mayor attach",
+			wantErr:   true,
+			errSubstr: "interactive terminal",
+		},
+
 		// Not in whitelist
 		{
 			name:      "unknown command",

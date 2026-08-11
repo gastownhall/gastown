@@ -20,6 +20,10 @@ type CommandMeta struct {
 	Args string
 	// ArgType specifies what kind of options to show (rigs, polecats, convoys, agents, hooks)
 	ArgType string
+	// TerminalOnly marks commands that hand off the TTY (e.g. tmux attach via
+	// syscall.Exec) and can therefore never succeed as a buffered dashboard
+	// subprocess. The UI copies these to the clipboard instead of running them.
+	TerminalOnly bool
 }
 
 // AllowedCommands defines which gt commands can be executed from the dashboard.
@@ -77,7 +81,7 @@ var AllowedCommands = map[string]CommandMeta{
 	// Agent lifecycle (careful)
 	"witness start":  {Confirm: true, Desc: "Start witness", Category: "Agents", Args: "<rig-name>", ArgType: "rigs"},
 	"refinery start": {Confirm: true, Desc: "Start refinery", Category: "Agents", Args: "<rig-name>", ArgType: "rigs"},
-	"mayor attach":   {Confirm: true, Desc: "Attach mayor", Category: "Agents"},
+	"mayor attach":   {TerminalOnly: true, Desc: "Attach mayor", Category: "Agents"},
 	"deacon start":   {Confirm: true, Desc: "Start deacon", Category: "Agents"},
 
 	// Polecat actions
@@ -130,6 +134,10 @@ func ValidateCommand(rawCommand string) (*CommandMeta, error) {
 	meta, ok := AllowedCommands[baseCmd]
 	if !ok {
 		return nil, fmt.Errorf("command not in whitelist: %s", baseCmd)
+	}
+
+	if meta.TerminalOnly {
+		return nil, fmt.Errorf("%s requires an interactive terminal and cannot run from the dashboard; copy it and run it in a real terminal", baseCmd)
 	}
 
 	return &meta, nil
@@ -191,13 +199,14 @@ func GetCommandList() []CommandInfo {
 	commands := make([]CommandInfo, 0, len(AllowedCommands))
 	for name, meta := range AllowedCommands {
 		commands = append(commands, CommandInfo{
-			Name:     name,
-			Desc:     meta.Desc,
-			Category: meta.Category,
-			Safe:     meta.Safe,
-			Confirm:  meta.Confirm,
-			Args:     meta.Args,
-			ArgType:  meta.ArgType,
+			Name:         name,
+			Desc:         meta.Desc,
+			Category:     meta.Category,
+			Safe:         meta.Safe,
+			Confirm:      meta.Confirm,
+			Args:         meta.Args,
+			ArgType:      meta.ArgType,
+			TerminalOnly: meta.TerminalOnly,
 		})
 	}
 	return commands
@@ -205,11 +214,12 @@ func GetCommandList() []CommandInfo {
 
 // CommandInfo is the JSON-serializable form of a command for the UI.
 type CommandInfo struct {
-	Name     string `json:"name"`
-	Desc     string `json:"desc"`
-	Category string `json:"category"`
-	Safe     bool   `json:"safe"`
-	Confirm  bool   `json:"confirm"`
-	Args     string `json:"args,omitempty"`
-	ArgType  string `json:"argType,omitempty"`
+	Name         string `json:"name"`
+	Desc         string `json:"desc"`
+	Category     string `json:"category"`
+	Safe         bool   `json:"safe"`
+	Confirm      bool   `json:"confirm"`
+	Args         string `json:"args,omitempty"`
+	ArgType      string `json:"argType,omitempty"`
+	TerminalOnly bool   `json:"terminalOnly,omitempty"`
 }
