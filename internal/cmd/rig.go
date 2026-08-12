@@ -1200,17 +1200,12 @@ func runRigAdopt(_ *cobra.Command, args []string) error {
 
 	// Check for tracked beads and initialize database if missing (Issue #72)
 	rigPath := filepath.Join(townRoot, name)
-	beadsDirCandidates := []string{
-		filepath.Join(rigPath, ".beads"),
-		filepath.Join(rigPath, "mayor", "rig", ".beads"),
-	}
-	foundBeadsCandidate := false
+	beadsDirCandidates := rigBeadsDirCandidates(rigPath)
+	foundBeadsCandidate := hasRigBeadsCandidate(rigPath)
 	for _, beadsDir := range beadsDirCandidates {
 		if _, err := os.Stat(beadsDir); err != nil {
 			continue
 		}
-		foundBeadsCandidate = true
-
 		// Detect prefix from Dolt metadata: try "bd config get issue_prefix" first,
 		// then extract from metadata.json dolt_database name as fallback.
 		// metadata.json survives clone (dolt/ is gitignored since bd v0.50+).
@@ -1300,7 +1295,7 @@ func runRigAdopt(_ *cobra.Command, args []string) error {
 
 	// If no existing .beads/ candidate was found, initialize a fresh database
 	// to match the behavior of the normal (non-adopt) gt rig add path.
-	if !foundBeadsCandidate && result.BeadsPrefix != "" {
+	if shouldInitializeAdoptedRigBeads(foundBeadsCandidate, result.BeadsPrefix) {
 		// Dolt server is required for beads init.
 		if running, _, sErr := doltserver.IsRunning(townRoot); sErr != nil || !running {
 			fmt.Printf("  %s Could not init beads database: Dolt server is not running\n", style.Warning.Render("!"))
@@ -1385,6 +1380,26 @@ func runRigAdopt(_ *cobra.Command, args []string) error {
 	}
 
 	return nil
+}
+
+func rigBeadsDirCandidates(rigPath string) []string {
+	return []string{
+		filepath.Join(rigPath, ".beads"),
+		filepath.Join(rigPath, "mayor", "rig", ".beads"),
+	}
+}
+
+func hasRigBeadsCandidate(rigPath string) bool {
+	for _, beadsDir := range rigBeadsDirCandidates(rigPath) {
+		if _, err := os.Stat(beadsDir); err == nil {
+			return true
+		}
+	}
+	return false
+}
+
+func shouldInitializeAdoptedRigBeads(hasCandidate bool, beadsPrefix string) bool {
+	return !hasCandidate && beadsPrefix != ""
 }
 
 func runRigReset(cmd *cobra.Command, args []string) error {

@@ -80,42 +80,25 @@ func TestIsInternalBead(t *testing.T) {
 	}
 }
 
-// TestChangelogSinceTime verifies --today, --week, and --since flag behavior.
+// TestChangelogSinceTime verifies --today, --since, and default weekly cutoff behavior.
 func TestChangelogSinceTime(t *testing.T) {
-	// Compute expected today and week start at test time (same logic as the implementation).
-	now := time.Now()
-	y, m, d := now.Date()
-	expectedToday := time.Date(y, m, d, 0, 0, 0, 0, time.Local)
-
-	weekday := int(now.Weekday())
-	if weekday == 0 {
-		weekday = 7
-	}
-	monday := now.AddDate(0, 0, -(weekday - 1))
-	monY, monM, monD := monday.Date()
-	expectedWeekStart := time.Date(monY, monM, monD, 0, 0, 0, 0, time.Local)
+	now := time.Date(2026, 1, 18, 14, 30, 0, 0, time.Local) // Sunday
 
 	tests := []struct {
-		name        string
-		today       bool
-		week        bool
-		since       string
-		wantTime    time.Time
-		wantErrSub  string
+		name       string
+		today      bool
+		since      string
+		wantTime   time.Time
+		wantErrSub string
 	}{
 		{
 			name:     "--today returns start of today",
 			today:    true,
-			wantTime: expectedToday,
-		},
-		{
-			name:     "--week returns Monday of current week",
-			week:     true,
-			wantTime: expectedWeekStart,
+			wantTime: time.Date(2026, 1, 18, 0, 0, 0, 0, time.Local),
 		},
 		{
 			name:     "default (no flags) also returns Monday of current week",
-			wantTime: expectedWeekStart,
+			wantTime: time.Date(2026, 1, 12, 0, 0, 0, 0, time.Local),
 		},
 		{
 			name:     "--since parses YYYY-MM-DD",
@@ -131,24 +114,10 @@ func TestChangelogSinceTime(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			// Save and restore global flag vars.
-			origToday := changelogToday
-			origWeek := changelogWeek
-			origSince := changelogSince
-			t.Cleanup(func() {
-				changelogToday = origToday
-				changelogWeek = origWeek
-				changelogSince = origSince
-			})
-
-			changelogToday = tt.today
-			changelogWeek = tt.week
-			changelogSince = tt.since
-
-			got, err := changelogSinceTime()
+			got, err := changelogSinceTimeAt(now, tt.today, tt.since)
 			if tt.wantErrSub != "" {
 				if err == nil {
-					t.Fatalf("changelogSinceTime() returned nil error, want error containing %q", tt.wantErrSub)
+					t.Fatalf("changelogSinceTimeAt() returned nil error, want error containing %q", tt.wantErrSub)
 				}
 				if !strings.Contains(err.Error(), tt.wantErrSub) {
 					t.Errorf("error = %q, want substring %q", err.Error(), tt.wantErrSub)
@@ -156,10 +125,10 @@ func TestChangelogSinceTime(t *testing.T) {
 				return
 			}
 			if err != nil {
-				t.Fatalf("changelogSinceTime() unexpected error: %v", err)
+				t.Fatalf("changelogSinceTimeAt() unexpected error: %v", err)
 			}
 			if !got.Equal(tt.wantTime) {
-				t.Errorf("changelogSinceTime() = %v, want %v", got, tt.wantTime)
+				t.Errorf("changelogSinceTimeAt() = %v, want %v", got, tt.wantTime)
 			}
 		})
 	}
@@ -317,4 +286,3 @@ func writeFakeBD(t *testing.T, binDir, output string) {
 		t.Fatalf("write fake bd: %v", err)
 	}
 }
-

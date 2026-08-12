@@ -1,11 +1,11 @@
 package cmd
 
 import (
-	"fmt"
 	"strings"
 	"testing"
 
 	"github.com/steveyegge/gastown/internal/beads"
+	convoyops "github.com/steveyegge/gastown/internal/convoy"
 )
 
 // ---------------------------------------------------------------------------
@@ -27,10 +27,7 @@ func TestConvoyCreate_FromEpicFlagExists(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestCollectEpicChildren_NotAnEpic(t *testing.T) {
-	// bdShow is package-level and uses real bd; for unit tests we test
-	// the error message format when the type check fails.
-	// This test validates the error message construction.
-	err := checkEpicTypeError("gt-task-1", "task")
+	err := validateEpicType("gt-task-1", "task")
 	if err == nil {
 		t.Fatal("expected error for non-epic type")
 	}
@@ -40,15 +37,6 @@ func TestCollectEpicChildren_NotAnEpic(t *testing.T) {
 	if !strings.Contains(err.Error(), "task") {
 		t.Errorf("error should mention actual type 'task', got: %s", err)
 	}
-}
-
-// checkEpicTypeError replicates the type check from collectEpicChildren
-// for unit testing without bd.
-func checkEpicTypeError(id, issueType string) error {
-	if issueType != "epic" {
-		return fmt.Errorf("'%s' is not an epic (type: %s); --from-epic only works with epic beads", id, issueType)
-	}
-	return nil
 }
 
 // ---------------------------------------------------------------------------
@@ -70,18 +58,7 @@ func TestConvoyCreate_InvalidMergeFlag(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		convoyMerge = tt.value
-		// We can't call runConvoyCreate without bd, but we can test the
-		// validation logic directly.
-		var err error
-		if convoyMerge != "" {
-			switch convoyMerge {
-			case "direct", "mr", "local":
-				// Valid
-			default:
-				err = fmt.Errorf("invalid --merge value %q: must be direct, mr, or local", convoyMerge)
-			}
-		}
+		err := validateConvoyMerge(tt.value)
 
 		if tt.wantErr && err == nil {
 			t.Errorf("merge=%q: expected error, got nil", tt.value)
@@ -137,25 +114,14 @@ func TestFromEpic_SlingableTypeFiltering(t *testing.T) {
 	nonSlingable := []string{"epic", "decision"}
 
 	for _, typ := range slingable {
-		if !convoyops_IsSlingableType(typ) {
+		if !convoyops.IsSlingableType(typ) {
 			t.Errorf("type %q should be slingable", typ)
 		}
 	}
 	for _, typ := range nonSlingable {
-		if convoyops_IsSlingableType(typ) {
+		if convoyops.IsSlingableType(typ) {
 			t.Errorf("type %q should NOT be slingable", typ)
 		}
-	}
-}
-
-// convoyops_IsSlingableType wraps the real function to avoid import cycle issues
-// in test. Uses the same logic as convoyops.IsSlingableType.
-func convoyops_IsSlingableType(issueType string) bool {
-	switch issueType {
-	case "task", "bug", "feature", "chore":
-		return true
-	default:
-		return false
 	}
 }
 

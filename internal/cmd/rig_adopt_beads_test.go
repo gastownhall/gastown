@@ -52,18 +52,7 @@ func TestRigAdoptBeadsCandidateDetection(t *testing.T) {
 				}
 			}
 
-			// Replicate the candidate detection logic from runRigAdopt
-			candidates := []string{
-				filepath.Join(rigPath, ".beads"),
-				filepath.Join(rigPath, "mayor", "rig", ".beads"),
-			}
-			found := false
-			for _, candidate := range candidates {
-				if _, err := os.Stat(candidate); err == nil {
-					found = true
-					break
-				}
-			}
+			found := hasRigBeadsCandidate(rigPath)
 
 			if found != tt.wantFoundBeads {
 				t.Errorf("beads candidate found = %v, want %v", found, tt.wantFoundBeads)
@@ -76,7 +65,7 @@ func TestRigAdoptBeadsCandidateDetection(t *testing.T) {
 // and a prefix is available, the fallback init path is triggered.
 func TestRigAdoptFallbackInitNeeded(t *testing.T) {
 	tests := []struct {
-		name       string
+		name         string
 		hasDotBeads  bool
 		hasPrefix    bool
 		wantFallback bool
@@ -103,18 +92,16 @@ func TestRigAdoptFallbackInitNeeded(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			// Simulate the decision logic from runRigAdopt
-			foundBeadsCandidate := tt.hasDotBeads
 			beadsPrefix := ""
 			if tt.hasPrefix {
 				beadsPrefix = "test"
 			}
 
-			needsFallback := !foundBeadsCandidate && beadsPrefix != ""
+			needsFallback := shouldInitializeAdoptedRigBeads(tt.hasDotBeads, beadsPrefix)
 
 			if needsFallback != tt.wantFallback {
 				t.Errorf("needsFallback = %v, want %v (foundBeads=%v, prefix=%q)",
-					needsFallback, tt.wantFallback, foundBeadsCandidate, beadsPrefix)
+					needsFallback, tt.wantFallback, tt.hasDotBeads, beadsPrefix)
 			}
 		})
 	}

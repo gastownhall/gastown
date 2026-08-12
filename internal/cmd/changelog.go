@@ -64,12 +64,12 @@ type ChangelogEntry struct {
 
 // closedBead is the raw shape from bd list --status=closed --json.
 type closedBead struct {
-	ID          string `json:"id"`
-	Title       string `json:"title"`
-	IssueType   string `json:"issue_type"`
-	Ephemeral   bool   `json:"ephemeral"`
-	ClosedAt    string `json:"closed_at"`
-	CloseReason string `json:"close_reason"`
+	ID          string   `json:"id"`
+	Title       string   `json:"title"`
+	IssueType   string   `json:"issue_type"`
+	Ephemeral   bool     `json:"ephemeral"`
+	ClosedAt    string   `json:"closed_at"`
+	CloseReason string   `json:"close_reason"`
 	Labels      []string `json:"labels"`
 }
 
@@ -97,16 +97,18 @@ func runChangelog(_ *cobra.Command, _ []string) error {
 
 // changelogSinceTime returns the cutoff time based on flags.
 func changelogSinceTime() (time.Time, error) {
-	now := time.Now()
+	return changelogSinceTimeAt(time.Now(), changelogToday, changelogSince)
+}
 
-	if changelogSince != "" {
-		t, err := time.ParseInLocation("2006-01-02", changelogSince, time.Local)
+func changelogSinceTimeAt(now time.Time, today bool, since string) (time.Time, error) {
+	if since != "" {
+		t, err := time.ParseInLocation("2006-01-02", since, time.Local)
 		if err != nil {
-			return time.Time{}, fmt.Errorf("invalid date %q: use YYYY-MM-DD", changelogSince)
+			return time.Time{}, fmt.Errorf("invalid date %q: use YYYY-MM-DD", since)
 		}
 		return t, nil
 	}
-	if changelogToday {
+	if today {
 		y, m, d := now.Date()
 		return time.Date(y, m, d, 0, 0, 0, 0, time.Local), nil
 	}

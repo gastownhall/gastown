@@ -669,8 +669,8 @@ func collectEpicChildren(epicID string) ([]string, error) {
 	if err != nil {
 		return nil, fmt.Errorf("epic '%s' not found: %w", epicID, err)
 	}
-	if epic.IssueType != "epic" {
-		return nil, fmt.Errorf("'%s' is not an epic (type: %s); --from-epic only works with epic beads", epicID, epic.IssueType)
+	if err := validateEpicType(epicID, epic.IssueType); err != nil {
+		return nil, err
 	}
 
 	var issueIDs []string
@@ -709,15 +709,25 @@ func collectEpicChildren(epicID string) ([]string, error) {
 	return issueIDs, nil
 }
 
+func validateEpicType(id, issueType string) error {
+	if issueType != "epic" {
+		return fmt.Errorf("'%s' is not an epic (type: %s); --from-epic only works with epic beads", id, issueType)
+	}
+	return nil
+}
+
+func validateConvoyMerge(merge string) error {
+	switch merge {
+	case "", "direct", "mr", "local":
+		return nil
+	default:
+		return fmt.Errorf("invalid --merge value %q: must be direct, mr, or local", merge)
+	}
+}
+
 func runConvoyCreate(cmd *cobra.Command, args []string) error {
-	// Validate --merge flag if provided
-	if convoyMerge != "" {
-		switch convoyMerge {
-		case "direct", "mr", "local":
-			// Valid
-		default:
-			return fmt.Errorf("invalid --merge value %q: must be direct, mr, or local", convoyMerge)
-		}
+	if err := validateConvoyMerge(convoyMerge); err != nil {
+		return err
 	}
 
 	var name string

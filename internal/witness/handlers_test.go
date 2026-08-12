@@ -734,73 +734,28 @@ func TestSessionRecreated_DetectedAtEdgeCases(t *testing.T) {
 	}
 }
 
-func TestZombieClassification_SpawningState(t *testing.T) {
+func TestIsZombieState(t *testing.T) {
 	t.Parallel()
-	// Verify that "spawning" agent state is treated as a zombie indicator.
-	// This tests the classification logic inline in DetectZombiePolecats.
-	// We can't easily test this via the full function without mocking,
-	// so we test the boolean logic directly.
-	states := map[string]bool{
-		"working":  true,
-		"running":  true,
-		"spawning": true,
-		"idle":     false,
-		"done":     false,
-		"":         false,
+	tests := []struct {
+		name     string
+		state    beads.AgentState
+		hookBead string
+		want     bool
+	}{
+		{name: "active state", state: beads.AgentStateWorking, want: true},
+		{name: "running state", state: beads.AgentStateRunning, want: true},
+		{name: "spawning state", state: beads.AgentStateSpawning, want: true},
+		{name: "idle without hook", state: beads.AgentStateIdle, want: false},
+		{name: "done without hook", state: beads.AgentStateDone, want: false},
+		{name: "hooked idle polecat", state: beads.AgentStateIdle, hookBead: "gt-work", want: true},
 	}
 
-	for state, wantZombie := range states {
-		hookBead := ""
-		isZombie := false
-		if hookBead != "" {
-			isZombie = true
-		}
-		if state == "working" || state == "running" || state == "spawning" {
-			isZombie = true
-		}
-
-		if isZombie != wantZombie {
-			t.Errorf("agent_state=%q: isZombie=%v, want %v", state, isZombie, wantZombie)
-		}
-	}
-}
-
-func TestZombieClassification_HookBeadAlwaysZombie(t *testing.T) {
-	t.Parallel()
-	// Any polecat with a hook_bead and dead session should be classified as zombie,
-	// regardless of agent_state.
-	for _, state := range []string{"", "idle", "done", "working"} {
-		hookBead := "gt-some-issue"
-		isZombie := false
-		if hookBead != "" {
-			isZombie = true
-		}
-		if state == "working" || state == "running" || state == "spawning" {
-			isZombie = true
-		}
-
-		if !isZombie {
-			t.Errorf("agent_state=%q with hook_bead=%q: isZombie=false, want true", state, hookBead)
-		}
-	}
-}
-
-func TestZombieClassification_NoHookNoActiveState(t *testing.T) {
-	t.Parallel()
-	// Polecats with no hook_bead and non-active agent_state should NOT be zombies.
-	for _, state := range []string{"", "idle", "done", "completed"} {
-		hookBead := ""
-		isZombie := false
-		if hookBead != "" {
-			isZombie = true
-		}
-		if state == "working" || state == "running" || state == "spawning" {
-			isZombie = true
-		}
-
-		if isZombie {
-			t.Errorf("agent_state=%q with no hook_bead: isZombie=true, want false", state)
-		}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := isZombieState(tt.state, tt.hookBead); got != tt.want {
+				t.Errorf("isZombieState(%q, %q) = %v, want %v", tt.state, tt.hookBead, got, tt.want)
+			}
+		})
 	}
 }
 

@@ -47,8 +47,30 @@ func runPatrolNew(cmd *cobra.Command, args []string) error {
 	}
 
 	// Build config based on role
+	cfg, err := patrolConfigForRole(Role(roleName), roleInfo)
+	if err != nil {
+		return err
+	}
+
+	// Create and hook the wisp
+	patrolID, err := autoSpawnPatrol(cfg)
+	if err != nil {
+		if patrolID != "" {
+			// Created but failed to hook
+			fmt.Fprintf(os.Stderr, "warning: %s\n", err.Error())
+			fmt.Println(patrolID)
+			return nil
+		}
+		return err
+	}
+
+	fmt.Println(patrolID)
+	return nil
+}
+
+func patrolConfigForRole(role Role, roleInfo RoleInfo) (PatrolConfig, error) {
 	var cfg PatrolConfig
-	switch Role(roleName) {
+	switch role {
 	case RoleDeacon:
 		cfg = PatrolConfig{
 			RoleName:      "deacon",
@@ -72,21 +94,7 @@ func runPatrolNew(cmd *cobra.Command, args []string) error {
 			ExtraVars:     buildRefineryPatrolVars(roleInfo),
 		}
 	default:
-		return fmt.Errorf("unsupported role for patrol: %q (expected deacon, witness, or refinery)", roleName)
+		return PatrolConfig{}, fmt.Errorf("unsupported role for patrol: %q (expected deacon, witness, or refinery)", role)
 	}
-
-	// Create and hook the wisp
-	patrolID, err := autoSpawnPatrol(cfg)
-	if err != nil {
-		if patrolID != "" {
-			// Created but failed to hook
-			fmt.Fprintf(os.Stderr, "warning: %s\n", err.Error())
-			fmt.Println(patrolID)
-			return nil
-		}
-		return err
-	}
-
-	fmt.Println(patrolID)
-	return nil
+	return cfg, nil
 }
