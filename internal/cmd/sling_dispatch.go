@@ -359,6 +359,9 @@ func executeSling(params SlingParams) (*SlingResult, error) {
 		ReviewOnly:       params.ReviewOnly,
 		Mode:             &params.Mode,
 		FormulaVars:      formulaVarsForAttachment,
+		ConvoyID:         convoyID,      // GH#4512: propagate convoy fields to issue
+		MergeStrategy:    params.Merge,  // so gt done's issue-level fallback check works
+		ConvoyOwned:      params.Owned,  // for queue/batch-dispatched issues
 	}
 	if params.FormulaName != "" {
 		if attachedMoleculeID != "" {
