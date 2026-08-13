@@ -351,8 +351,8 @@ if [ "$TOTAL_ISSUES" -ge "$MASS_DEATH_THRESHOLD" ]; then
   log ""
   log "Mass-death candidate threshold reached ($TOTAL_ISSUES); re-checking live health before escalation"
   confirm_polecat_outages
-  CRASHED=("${CONFIRMED_CRASHED[@]}")
-  STUCK=("${CONFIRMED_STUCK[@]}")
+  CRASHED=(${CONFIRMED_CRASHED[@]+"${CONFIRMED_CRASHED[@]}"})
+  STUCK=(${CONFIRMED_STUCK[@]+"${CONFIRMED_STUCK[@]}"})
   CONFIRMED_TOTAL=$(( ${#CRASHED[@]} + ${#STUCK[@]} ))
 
   if [ "$CONFIRMED_TOTAL" -ge "$MASS_DEATH_THRESHOLD" ]; then
