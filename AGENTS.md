@@ -224,3 +224,14 @@ and full-suite parallelism — they all pass when isolated:
   `TMP=$(mktemp); printf '[user]\n\tname=t\n\temail=t@t' >$TMP; GIT_CONFIG_GLOBAL=$TMP go test ./internal/git/ ./internal/doctor/`.
 - `internal/config` `TestBuiltinPresets` can flake under `./...` (a sibling parallel test mutates the
   shared agent registry). It passes reliably via `go test ./internal/config/`.
+
+### mattpocock/skills
+
+The update script also installs [`mattpocock/skills`](https://github.com/mattpocock/skills) via the
+vercel `skills` CLI (`npx skills@latest add mattpocock/skills --agent cursor --skill '*' -g -y --copy`),
+which lands them under `~/.agents/skills/`. Because the Cursor Cloud agent discovers global skills from
+`~/.cursor/skills-cursor/` (not `~/.cursor/skills`, which is where the `skills` CLI's cursor preset
+points), the update script then mirrors each skill folder into `~/.cursor/skills-cursor/` so they are
+discoverable next session. This is deliberately global (user-level), not project-level, to avoid leaving
+untracked files in the repo working tree. The skills-refresh step is best-effort (`|| true`); a prior
+copy persists in the VM snapshot if the network fetch fails.
