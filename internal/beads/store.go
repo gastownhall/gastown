@@ -489,7 +489,7 @@ func (b *Beads) storeReady() ([]*Issue, error) {
 		return nil, fmt.Errorf("store ready: %w", err)
 	}
 
-	return sdkIssuesToIssues(sdkIssues), nil
+	return b.filterReadyIssues(ctx, sdkIssuesToIssues(sdkIssues))
 }
 
 // storeReadyWithFilter implements Ready with a WorkFilter using the in-process store.
@@ -502,7 +502,28 @@ func (b *Beads) storeReadyWithFilter(filter beadsdk.WorkFilter) ([]*Issue, error
 		return nil, fmt.Errorf("store ready: %w", err)
 	}
 
-	return sdkIssuesToIssues(sdkIssues), nil
+	return b.filterReadyIssues(ctx, sdkIssuesToIssues(sdkIssues))
+}
+
+// filterReadyIssues drops issues whose merge-blocks dependencies are not yet
+// merge-confirmed. Beads GetReadyWork does not honor merge-blocks (#1893).
+func (b *Beads) filterReadyIssues(ctx context.Context, issues []*Issue) ([]*Issue, error) {
+	if len(issues) == 0 {
+		return issues, nil
+	}
+
+	ready := make([]*Issue, 0, len(issues))
+	for _, issue := range issues {
+		hydrated, err := b.storeHydrateIssueDetails(ctx, issue)
+		if err != nil {
+			return nil, err
+		}
+		if HasUnresolvedBlockers(hydrated) {
+			continue
+		}
+		ready = append(ready, hydrated)
+	}
+	return ready, nil
 }
 
 // storeBlocked implements Blocked using the in-process store.

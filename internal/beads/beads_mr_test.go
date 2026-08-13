@@ -270,6 +270,29 @@ func TestIssueDepUnmarshalPreservesNonblockingRelationTypes(t *testing.T) {
 	}
 }
 
+func TestMergeConfirmed(t *testing.T) {
+	tests := []struct {
+		reason string
+		want   bool
+	}{
+		{"", false},
+		{"done", false},
+		{"MR rejected", false},
+		{"Merged in mr-xyz", true},
+		{"Merged in gt-wisp", true},
+		{"Direct merge to main (convoy strategy)", true},
+		{"Direct merge to main (convoy strategy, late detection)", true},
+		{"Completed with no code changes (already fixed or already merged)", true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.reason, func(t *testing.T) {
+			if got := MergeConfirmed(tt.reason); got != tt.want {
+				t.Fatalf("MergeConfirmed(%q) = %v, want %v", tt.reason, got, tt.want)
+			}
+		})
+	}
+}
+
 func TestIssueDepUnmarshalMergeBlocksRequireMergedCloseReason(t *testing.T) {
 	issue := unmarshalIssueForTest(t, `{
 		"id":"gt-target",

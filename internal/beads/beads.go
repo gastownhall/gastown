@@ -481,6 +481,24 @@ func isBlockingDependencyType(depType string) bool {
 	return blockingDependencyTypes[strings.ToLower(strings.TrimSpace(depType))]
 }
 
+// MergeConfirmed reports whether a close reason means the blocker's code is
+// already on the integration branch. merge-blocks dependencies stay blocking
+// until this is true, so a plain gt-done close cannot dispatch downstream
+// work against an unmerged MR (#1893).
+func MergeConfirmed(closeReason string) bool {
+	reason := strings.TrimSpace(closeReason)
+	switch {
+	case strings.HasPrefix(reason, "Merged in "):
+		return true
+	case strings.Contains(reason, "Direct merge"):
+		return true
+	case strings.Contains(reason, "no code changes"):
+		return true
+	default:
+		return false
+	}
+}
+
 func isResolvedDependency(dep IssueDep) bool {
 	status := strings.ToLower(strings.TrimSpace(dep.Status))
 	switch status {
@@ -488,7 +506,7 @@ func isResolvedDependency(dep IssueDep) bool {
 		return true
 	case "closed":
 		if strings.EqualFold(strings.TrimSpace(dep.DependencyType), "merge-blocks") {
-			return strings.HasPrefix(dep.CloseReason, "Merged in ")
+			return MergeConfirmed(dep.CloseReason)
 		}
 		return true
 	default:

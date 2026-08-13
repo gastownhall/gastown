@@ -11,6 +11,7 @@ import (
 	"time"
 
 	beadsdk "github.com/steveyegge/beads"
+	"github.com/steveyegge/gastown/internal/beads"
 )
 
 func TestExtractIssueID(t *testing.T) {
@@ -686,19 +687,9 @@ func TestIsIssueBlocked_MergeBlocksNoCodeChangesUnblocks(t *testing.T) {
 	}
 }
 
-func readyIDs(issues []*beadsdk.Issue) map[string]bool {
-	ids := make(map[string]bool, len(issues))
-	for _, issue := range issues {
-		if issue != nil {
-			ids[issue.ID] = true
-		}
-	}
-	return ids
-}
-
-// TestGetReadyWork_MergeBlocksNotReadyUntilMerged is the #1893 scheduler
-// seam: bd ready / GetReadyWork must not treat gt-done closure as merge.
-func TestGetReadyWork_MergeBlocksNotReadyUntilMerged(t *testing.T) {
+// TestReady_MergeBlocksNotReadyUntilMerged is the #1893 scheduler seam:
+// gt ready / Beads.Ready must not treat gt-done closure as merge.
+func TestReady_MergeBlocksNotReadyUntilMerged(t *testing.T) {
 	store, cleanup := setupTestStore(t)
 	defer cleanup()
 
@@ -740,13 +731,15 @@ func TestGetReadyWork_MergeBlocksNotReadyUntilMerged(t *testing.T) {
 		t.Fatalf("AddDependency: %v", err)
 	}
 
-	ready, err := store.GetReadyWork(ctx, beadsdk.WorkFilter{Status: beadsdk.StatusOpen})
+	b := beads.NewWithStore(t.TempDir(), store)
+	issues, err := b.Ready()
 	if err != nil {
-		t.Fatalf("GetReadyWork: %v", err)
+		t.Fatalf("Ready: %v", err)
 	}
-	ids := readyIDs(ready)
-	if ids[blocked.ID] {
-		t.Fatalf("GetReadyWork included %s while merge-blocks blocker is closed without merge confirmation; ready=%v", blocked.ID, ids)
+	for _, issue := range issues {
+		if issue.ID == blocked.ID {
+			t.Fatalf("Ready() included %s while merge-blocks blocker is closed without merge confirmation", blocked.ID)
+		}
 	}
 
 	if err := store.UpdateIssue(ctx, blocker.ID, map[string]interface{}{
@@ -755,13 +748,19 @@ func TestGetReadyWork_MergeBlocksNotReadyUntilMerged(t *testing.T) {
 		t.Fatalf("UpdateIssue close_reason: %v", err)
 	}
 
-	ready, err = store.GetReadyWork(ctx, beadsdk.WorkFilter{Status: beadsdk.StatusOpen})
+	issues, err = b.Ready()
 	if err != nil {
-		t.Fatalf("GetReadyWork after merge: %v", err)
+		t.Fatalf("Ready after merge: %v", err)
 	}
-	ids = readyIDs(ready)
-	if !ids[blocked.ID] {
-		t.Fatalf("GetReadyWork omitted %s after merge confirmation; ready=%v", blocked.ID, ids)
+	found := false
+	for _, issue := range issues {
+		if issue.ID == blocked.ID {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("Ready() omitted %s after merge confirmation", blocked.ID)
 	}
 }
 

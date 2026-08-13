@@ -2615,18 +2615,20 @@ type issueDetails struct {
 }
 
 func (d issueDetails) IsBlocked() bool {
-	if d.BlockedByCount > 0 || len(d.BlockedBy) > 0 {
-		return true
+	issue := &beads.Issue{
+		BlockedBy:      d.BlockedBy,
+		BlockedByCount: d.BlockedByCount,
+		Dependencies:   make([]beads.IssueDep, len(d.Dependencies)),
 	}
-
-	// bd show can omit blocked_by_count; fall back to live dependency edges.
-	for _, dep := range d.Dependencies {
-		if dep.DependencyType == "blocks" && dep.Status != "closed" && dep.Status != "tombstone" {
-			return true
+	for i, dep := range d.Dependencies {
+		issue.Dependencies[i] = beads.IssueDep{
+			ID:             dep.ID,
+			Status:         dep.Status,
+			DependencyType: dep.DependencyType,
+			CloseReason:    dep.CloseReason,
 		}
 	}
-
-	return false
+	return beads.HasUnresolvedBlockers(issue)
 }
 
 // getIssueDetailsBatch fetches details through the central routed beads lookup.
@@ -2702,6 +2704,7 @@ func issueToDetails(issue *beads.Issue) *issueDetails {
 			ID:             dep.ID,
 			Status:         dep.Status,
 			DependencyType: dep.DependencyType,
+			CloseReason:    dep.CloseReason,
 		})
 	}
 

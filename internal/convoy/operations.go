@@ -190,9 +190,8 @@ var blockingDepTypes = map[string]bool{
 // dependency targets an issue that is not closed/tombstone.
 //
 // For merge-blocks dependencies, "closed" alone is not sufficient — the
-// blocker must have a CloseReason starting with "Merged in " to confirm
-// that the code was actually integrated. This prevents dispatching work
-// against un-merged code (see #1893).
+// blocker must have a merge-confirmed CloseReason (see beads.MergeConfirmed)
+// so downstream work is not dispatched against un-merged code (#1893).
 //
 // When a StoreResolver is provided, cross-database dependencies are resolved
 // by querying the appropriate rig store for fresh status. Without a resolver,
@@ -234,7 +233,7 @@ func isIssueBlocked(ctx context.Context, store beadsdk.Storage, issueID string, 
 		}
 		if status == "closed" {
 			// For merge-blocks: "closed" alone is not enough — need merge confirmation
-			if depType == "merge-blocks" && !strings.HasPrefix(d.CloseReason, "Merged in ") {
+			if depType == "merge-blocks" && !beads.MergeConfirmed(d.CloseReason) {
 				return true // closed but not merged = still blocked
 			}
 			continue // closed = unblocked for non-merge-blocks
@@ -265,7 +264,7 @@ func isIssueBlocked(ctx context.Context, store beadsdk.Storage, issueID string, 
 				return true // confirmed not closed
 			}
 			// For merge-blocks: check close reason from fresh data
-			if staleCandidateTypes[i] == "merge-blocks" && !strings.HasPrefix(fresh.CloseReason, "Merged in ") {
+			if staleCandidateTypes[i] == "merge-blocks" && !beads.MergeConfirmed(fresh.CloseReason) {
 				return true
 			}
 		}
