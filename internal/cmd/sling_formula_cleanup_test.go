@@ -36,7 +36,7 @@ func TestRunSlingFormulaCleansDelayedDogFailure(t *testing.T) {
 	for _, want := range []string{
 		") (err error)",
 		"defer func()",
-		"cleanupDelayedDogFormulaFailure(err, delayedDogInfo, wispRootID, formulaWorkDir)",
+		"cleanupDelayedDogFormulaFailure(err, delayedDogInfo, cleanupID, formulaWorkDir)",
 	} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("runSlingFormula missing %q", want)

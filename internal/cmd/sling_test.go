@@ -2139,6 +2139,9 @@ case "$cmd" in
   formula)
     echo '{"name":"mol-anything"}'
     ;;
+  create)
+    echo '{"id":"gt-dispatch-xyz","title":"mol-anything","status":"open"}'
+    ;;
   cook)
     exit 0
     ;;
@@ -2161,6 +2164,10 @@ set "cmd=%1"
 set "sub=%2"
 if "%cmd%"=="formula" (
   echo {"name":"mol-anything"}
+  exit /b 0
+)
+if "%cmd%"=="create" (
+  echo {"id":"gt-dispatch-xyz","title":"mol-anything","status":"open"}
   exit /b 0
 )
 if "%cmd%"=="cook" exit /b 0
@@ -2222,6 +2229,16 @@ exit /b 0
 
 	if !strings.Contains(attachment, "attached_formula: mol-anything") {
 		t.Fatalf("formula attachment missing from persisted description:\n%s", attachment)
+	}
+	if !strings.Contains(attachment, "attached_molecule: gt-wisp-xyz") {
+		t.Fatalf("durable dispatch bead does not point to formula wisp:\n%s", attachment)
+	}
+	bdLog, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatalf("read bd log: %v", err)
+	}
+	if !strings.Contains(string(bdLog), "update gt-dispatch-xyz --status=hooked --assignee=mayor/") {
+		t.Fatalf("standalone formula hooked the wisp instead of durable dispatch bead:\n%s", bdLog)
 	}
 	if !strings.Contains(attachment, "version=1.2.3") || !strings.Contains(attachment, "channel=stable") {
 		t.Fatalf("formula vars missing from persisted description:\n%s", attachment)

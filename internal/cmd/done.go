@@ -2245,6 +2245,10 @@ func clearDoneCheckpoints(bd *beads.Beads, agentBeadID string) {
 // BUG FIX (hq-3xaxy): This function must be resilient to working directory deletion.
 // If the polecat's worktree is deleted before gt done finishes, we use env vars as fallback.
 // All errors are warnings, not failures - gt done must complete even if bead ops fail.
+func isFormulaCompletionBead(id string, issue *beads.Issue) bool {
+	return strings.Contains(id, "-wfs-") || issue != nil && beads.HasLabel(issue, formulaDispatchLabel)
+}
+
 func updateAgentStateOnDone(cwd, townRoot, exitType, issueID string) error {
 	// Get role context - try multiple sources for resilience
 	roleInfo, err := GetRoleWithContext(cwd, townRoot)
@@ -2316,21 +2320,28 @@ func updateAgentStateOnDone(cwd, townRoot, exitType, issueID string) error {
 		}
 	}
 
-	// Workflow step beads (*-wfs-*) are ephemeral formula steps managed by the workflow
-	// engine. For these, DEFERRED means "step complete, no code commits" not "work
-	// paused for resumption". Close them on DEFERRED so the convoy can advance.
-	isWorkflowStep := strings.Contains(hookedBeadID, "-wfs-")
+	// Workflow step beads (*-wfs-*) and standalone formula dispatch beads are
+	// formula-engine work. For these, DEFERRED means "formula complete, no code
+	// commits" rather than "work paused for resumption". Close them on DEFERRED.
+	isFormulaCompletion := isFormulaCompletionBead(hookedBeadID, nil)
+	if exitType == ExitDeferred && !isFormulaCompletion && hookedBeadID != "" {
+		hookBd, _, _ := routedIssueBeads(beadsPath, hookedBeadID)
+		hookedBead, err := hookBd.Show(hookedBeadID)
+		if err != nil {
+			return fmt.Errorf("classifying deferred work %s before completion: %w", hookedBeadID, err)
+		}
+		isFormulaCompletion = isFormulaCompletionBead(hookedBeadID, hookedBead)
+	}
 
-	if hookedBeadID != "" && (exitType != ExitDeferred || isWorkflowStep) {
+	if hookedBeadID != "" && (exitType != ExitDeferred || isFormulaCompletion) {
 		// BUG FIX (gt-pftz): Close hooked bead unless already terminal (closed/tombstone).
 		// Previously checked hookedBead.Status == StatusHooked, but polecats update
 		// their work bead to in_progress during work. The exact-match check caused
 		// gt done to skip closing the bead, leaving it as unassigned open work after
 		// the hook was cleared — triggering infinite dispatch loops.
 		//
-		// DEFERRED exits preserve the bead: work is paused, not done. The bead
-		// stays open/in_progress so it can be resumed on the next session.
-		// Exception: workflow step beads (*-wfs-*) are always closed — see above.
+		// DEFERRED exits preserve ordinary work for resumption. Formula workflow
+		// steps and durable standalone-formula dispatch beads are closed — see above.
 		hookBd, _, _ := routedIssueBeads(beadsPath, hookedBeadID)
 		if hookBd == nil {
 			hookBd = bd
