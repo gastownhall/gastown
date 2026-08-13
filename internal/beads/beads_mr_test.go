@@ -120,6 +120,32 @@ func TestUnresolvedBlockingDependencyIDs(t *testing.T) {
 			want: []string{"gt-closed-only"},
 		},
 		{
+			name: "merge-blocks gt done close reason stays blocked",
+			deps: []IssueDep{
+				{ID: "gt-done", Status: "closed", DependencyType: "merge-blocks", CloseReason: "done"},
+			},
+			want: []string{"gt-done"},
+		},
+		{
+			name: "merge-blocks rejected MR stays blocked",
+			deps: []IssueDep{
+				{ID: "gt-rejected", Status: "closed", DependencyType: "merge-blocks", CloseReason: "MR rejected"},
+			},
+			want: []string{"gt-rejected"},
+		},
+		{
+			name: "merge-blocks direct merge is satisfied",
+			deps: []IssueDep{
+				{ID: "gt-direct", Status: "closed", DependencyType: "merge-blocks", CloseReason: "Direct merge to main (convoy strategy)"},
+			},
+		},
+		{
+			name: "merge-blocks no code changes is satisfied",
+			deps: []IssueDep{
+				{ID: "gt-noop", Status: "closed", DependencyType: "merge-blocks", CloseReason: "Completed with no code changes (already fixed or already merged)"},
+			},
+		},
+		{
 			name: "nonblocking dependency types do not block",
 			deps: []IssueDep{
 				{ID: "gt-empty", Status: "open"},

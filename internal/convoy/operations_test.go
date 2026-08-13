@@ -582,6 +582,283 @@ func TestIsIssueBlocked_MergeBlocksUnblockedOnTombstone(t *testing.T) {
 	}
 }
 
+func TestIsIssueBlocked_MergeBlocksDirectMergeUnblocks(t *testing.T) {
+	store, cleanup := setupTestStore(t)
+	defer cleanup()
+
+	ctx := context.Background()
+	now := time.Now().UTC()
+
+	blocker := &beadsdk.Issue{
+		ID:          "test-mblkr-direct",
+		Title:       "Direct Merged Blocker",
+		Status:      beadsdk.StatusClosed,
+		CloseReason: "Direct merge to main (convoy strategy)",
+		Priority:    2,
+		IssueType:   beadsdk.TypeTask,
+		CreatedAt:   now,
+		UpdatedAt:   now,
+	}
+	blocked := &beadsdk.Issue{
+		ID:        "test-mblkd-direct",
+		Title:     "Merge-Blocked By Direct Merge",
+		Status:    beadsdk.StatusOpen,
+		Priority:  2,
+		IssueType: beadsdk.TypeTask,
+		CreatedAt: now,
+		UpdatedAt: now,
+	}
+
+	if err := store.CreateIssue(ctx, blocker, "test"); err != nil {
+		t.Fatalf("CreateIssue blocker: %v", err)
+	}
+	if err := store.CreateIssue(ctx, blocked, "test"); err != nil {
+		t.Fatalf("CreateIssue blocked: %v", err)
+	}
+	if err := store.AddDependency(ctx, &beadsdk.Dependency{
+		IssueID:     blocked.ID,
+		DependsOnID: blocker.ID,
+		Type:        beadsdk.DependencyType("merge-blocks"),
+		CreatedAt:   now,
+		CreatedBy:   "test",
+	}, "test"); err != nil {
+		t.Fatalf("AddDependency: %v", err)
+	}
+
+	if isIssueBlocked(ctx, store, blocked.ID, nil) {
+		_, metaErr := store.GetDependenciesWithMetadata(ctx, blocked.ID)
+		if metaErr != nil {
+			t.Skipf("GetDependenciesWithMetadata not supported in embedded mode: %v", metaErr)
+		}
+		t.Error("isIssueBlocked should return false when merge-blocks blocker was direct-merged")
+	}
+}
+
+func TestIsIssueBlocked_MergeBlocksNoCodeChangesUnblocks(t *testing.T) {
+	store, cleanup := setupTestStore(t)
+	defer cleanup()
+
+	ctx := context.Background()
+	now := time.Now().UTC()
+
+	blocker := &beadsdk.Issue{
+		ID:          "test-mblkr-noop",
+		Title:       "No Code Changes Blocker",
+		Status:      beadsdk.StatusClosed,
+		CloseReason: "Completed with no code changes (already fixed or already merged)",
+		Priority:    2,
+		IssueType:   beadsdk.TypeTask,
+		CreatedAt:   now,
+		UpdatedAt:   now,
+	}
+	blocked := &beadsdk.Issue{
+		ID:        "test-mblkd-noop",
+		Title:     "Merge-Blocked By Noop",
+		Status:    beadsdk.StatusOpen,
+		Priority:  2,
+		IssueType: beadsdk.TypeTask,
+		CreatedAt: now,
+		UpdatedAt: now,
+	}
+
+	if err := store.CreateIssue(ctx, blocker, "test"); err != nil {
+		t.Fatalf("CreateIssue blocker: %v", err)
+	}
+	if err := store.CreateIssue(ctx, blocked, "test"); err != nil {
+		t.Fatalf("CreateIssue blocked: %v", err)
+	}
+	if err := store.AddDependency(ctx, &beadsdk.Dependency{
+		IssueID:     blocked.ID,
+		DependsOnID: blocker.ID,
+		Type:        beadsdk.DependencyType("merge-blocks"),
+		CreatedAt:   now,
+		CreatedBy:   "test",
+	}, "test"); err != nil {
+		t.Fatalf("AddDependency: %v", err)
+	}
+
+	if isIssueBlocked(ctx, store, blocked.ID, nil) {
+		_, metaErr := store.GetDependenciesWithMetadata(ctx, blocked.ID)
+		if metaErr != nil {
+			t.Skipf("GetDependenciesWithMetadata not supported in embedded mode: %v", metaErr)
+		}
+		t.Error("isIssueBlocked should return false when merge-blocks blocker completed with no code changes")
+	}
+}
+
+func readyIDs(issues []*beadsdk.Issue) map[string]bool {
+	ids := make(map[string]bool, len(issues))
+	for _, issue := range issues {
+		if issue != nil {
+			ids[issue.ID] = true
+		}
+	}
+	return ids
+}
+
+// TestGetReadyWork_MergeBlocksNotReadyUntilMerged is the #1893 scheduler
+// seam: bd ready / GetReadyWork must not treat gt-done closure as merge.
+func TestGetReadyWork_MergeBlocksNotReadyUntilMerged(t *testing.T) {
+	store, cleanup := setupTestStore(t)
+	defer cleanup()
+
+	ctx := context.Background()
+	now := time.Now().UTC()
+
+	blocker := &beadsdk.Issue{
+		ID:        "test-ready-a",
+		Title:     "Upstream closed at gt done",
+		Status:    beadsdk.StatusClosed,
+		Priority:  2,
+		IssueType: beadsdk.TypeTask,
+		CreatedAt: now,
+		UpdatedAt: now,
+	}
+	blocked := &beadsdk.Issue{
+		ID:        "test-ready-b",
+		Title:     "Downstream merge-blocked",
+		Status:    beadsdk.StatusOpen,
+		Priority:  2,
+		IssueType: beadsdk.TypeTask,
+		CreatedAt: now,
+		UpdatedAt: now,
+	}
+
+	if err := store.CreateIssue(ctx, blocker, "test"); err != nil {
+		t.Fatalf("CreateIssue blocker: %v", err)
+	}
+	if err := store.CreateIssue(ctx, blocked, "test"); err != nil {
+		t.Fatalf("CreateIssue blocked: %v", err)
+	}
+	if err := store.AddDependency(ctx, &beadsdk.Dependency{
+		IssueID:     blocked.ID,
+		DependsOnID: blocker.ID,
+		Type:        beadsdk.DependencyType("merge-blocks"),
+		CreatedAt:   now,
+		CreatedBy:   "test",
+	}, "test"); err != nil {
+		t.Fatalf("AddDependency: %v", err)
+	}
+
+	ready, err := store.GetReadyWork(ctx, beadsdk.WorkFilter{Status: beadsdk.StatusOpen})
+	if err != nil {
+		t.Fatalf("GetReadyWork: %v", err)
+	}
+	ids := readyIDs(ready)
+	if ids[blocked.ID] {
+		t.Fatalf("GetReadyWork included %s while merge-blocks blocker is closed without merge confirmation; ready=%v", blocked.ID, ids)
+	}
+
+	if err := store.UpdateIssue(ctx, blocker.ID, map[string]interface{}{
+		"close_reason": "Merged in mr-xyz",
+	}, "test"); err != nil {
+		t.Fatalf("UpdateIssue close_reason: %v", err)
+	}
+
+	ready, err = store.GetReadyWork(ctx, beadsdk.WorkFilter{Status: beadsdk.StatusOpen})
+	if err != nil {
+		t.Fatalf("GetReadyWork after merge: %v", err)
+	}
+	ids = readyIDs(ready)
+	if !ids[blocked.ID] {
+		t.Fatalf("GetReadyWork omitted %s after merge confirmation; ready=%v", blocked.ID, ids)
+	}
+}
+
+func TestFeedNextReadyIssue_SkipsMergeBlocksUntilMerged(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("skipping on windows")
+	}
+
+	store, cleanup := setupTestStore(t)
+	defer cleanup()
+
+	ctx := context.Background()
+	now := time.Now().UTC()
+
+	convoy := &beadsdk.Issue{
+		ID:        "test-convoy-mb",
+		Title:     "Convoy Merge-Blocks Feed",
+		Status:    beadsdk.StatusOpen,
+		Priority:  2,
+		IssueType: beadsdk.TypeTask,
+		CreatedAt: now,
+		UpdatedAt: now,
+	}
+	blocker := &beadsdk.Issue{
+		ID:        "test-feed-a",
+		Title:     "Upstream closed at gt done",
+		Status:    beadsdk.StatusClosed,
+		Priority:  1,
+		IssueType: beadsdk.TypeTask,
+		CreatedAt: now,
+		UpdatedAt: now,
+	}
+	blocked := &beadsdk.Issue{
+		ID:        "test-feed-b",
+		Title:     "Downstream merge-blocked",
+		Status:    beadsdk.StatusOpen,
+		Priority:  2,
+		IssueType: beadsdk.TypeTask,
+		CreatedAt: now,
+		UpdatedAt: now,
+	}
+
+	for _, iss := range []*beadsdk.Issue{convoy, blocker, blocked} {
+		if err := store.CreateIssue(ctx, iss, "test"); err != nil {
+			t.Fatalf("CreateIssue %s: %v", iss.ID, err)
+		}
+	}
+	if err := store.AddDependency(ctx, &beadsdk.Dependency{
+		IssueID:     convoy.ID,
+		DependsOnID: blocked.ID,
+		Type:        beadsdk.DependencyType("tracks"),
+		CreatedAt:   now,
+		CreatedBy:   "test",
+	}, "test"); err != nil {
+		t.Fatalf("AddDependency tracks: %v", err)
+	}
+	if err := store.AddDependency(ctx, &beadsdk.Dependency{
+		IssueID:     blocked.ID,
+		DependsOnID: blocker.ID,
+		Type:        beadsdk.DependencyType("merge-blocks"),
+		CreatedAt:   now,
+		CreatedBy:   "test",
+	}, "test"); err != nil {
+		t.Fatalf("AddDependency merge-blocks: %v", err)
+	}
+
+	townRoot := setupTownRoot(t)
+	gtPath, logPath := makeGTStub(t, 0)
+	logger, logMsgs := makeLogger()
+
+	feedNextReadyIssue(ctx, store, townRoot, convoy.ID, "test", logger, gtPath, func(string) bool { return false }, nil)
+
+	if _, err := os.ReadFile(logPath); err == nil {
+		t.Fatalf("gt stub should not sling %s while merge-blocks blocker is unmerged; logs=%v", blocked.ID, *logMsgs)
+	}
+
+	if err := store.UpdateIssue(ctx, blocker.ID, map[string]interface{}{
+		"close_reason": "Merged in mr-xyz",
+	}, "test"); err != nil {
+		t.Fatalf("UpdateIssue close_reason: %v", err)
+	}
+
+	feedNextReadyIssue(ctx, store, townRoot, convoy.ID, "test", logger, gtPath, func(string) bool { return false }, nil)
+
+	logData, err := os.ReadFile(logPath)
+	if err != nil {
+		_, metaErr := store.GetDependenciesWithMetadata(ctx, blocked.ID)
+		if metaErr != nil {
+			t.Skipf("GetDependenciesWithMetadata not supported in embedded mode: %v", metaErr)
+		}
+		t.Fatalf("gt stub was not called after merge confirmation; logs=%v", *logMsgs)
+	}
+	if !strings.Contains(string(logData), "sling test-feed-b testrig --no-boot") {
+		t.Errorf("expected dispatch of %s after merge, got %q; logs=%v", blocked.ID, string(logData), *logMsgs)
+	}
+}
+
 // ---------------------------------------------------------------------------
 // rigForIssue tests
 // ---------------------------------------------------------------------------

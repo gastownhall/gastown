@@ -4,6 +4,8 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/steveyegge/gastown/internal/beads"
 )
 
 func TestIsReadyIssue_BlockingAndStatus(t *testing.T) {
@@ -148,6 +150,88 @@ func TestIssueDetailsIsBlocked(t *testing.T) {
 			},
 			want: false,
 		},
+		// #1893: merge-blocks stays blocked until merge is confirmed, not merely closed.
+		{
+			name: "open merge-blocks dependency marks blocked",
+			in: issueDetails{
+				Dependencies: []issueDependency{
+					{DependencyType: "merge-blocks", Status: "open"},
+				},
+			},
+			want: true,
+		},
+		{
+			name: "closed merge-blocks without merge confirmation still blocked",
+			in: issueDetails{
+				Dependencies: []issueDependency{
+					{DependencyType: "merge-blocks", Status: "closed"},
+				},
+			},
+			want: true,
+		},
+		{
+			name: "closed merge-blocks with gt done close reason still blocked",
+			in: issueDetails{
+				Dependencies: []issueDependency{
+					{DependencyType: "merge-blocks", Status: "closed", CloseReason: "done"},
+				},
+			},
+			want: true,
+		},
+		{
+			name: "rejected merge-blocks stays blocked",
+			in: issueDetails{
+				Dependencies: []issueDependency{
+					{DependencyType: "merge-blocks", Status: "closed", CloseReason: "MR rejected"},
+				},
+			},
+			want: true,
+		},
+		{
+			name: "merged merge-blocks does not mark blocked",
+			in: issueDetails{
+				Dependencies: []issueDependency{
+					{DependencyType: "merge-blocks", Status: "closed", CloseReason: "Merged in mr-xyz"},
+				},
+			},
+			want: false,
+		},
+		{
+			name: "direct-merge merge-blocks does not mark blocked",
+			in: issueDetails{
+				Dependencies: []issueDependency{
+					{DependencyType: "merge-blocks", Status: "closed", CloseReason: "Direct merge to main (convoy strategy)"},
+				},
+			},
+			want: false,
+		},
+		{
+			name: "no-code-changes merge-blocks does not mark blocked",
+			in: issueDetails{
+				Dependencies: []issueDependency{
+					{DependencyType: "merge-blocks", Status: "closed", CloseReason: "Completed with no code changes (already fixed or already merged)"},
+				},
+			},
+			want: false,
+		},
+		{
+			name: "tombstone merge-blocks does not mark blocked",
+			in: issueDetails{
+				Dependencies: []issueDependency{
+					{DependencyType: "merge-blocks", Status: "tombstone"},
+				},
+			},
+			want: false,
+		},
+		{
+			name: "closed blocks dependency still unblocks (existing semantics)",
+			in: issueDetails{
+				Dependencies: []issueDependency{
+					{DependencyType: "blocks", Status: "closed"},
+				},
+			},
+			want: false,
+		},
 	}
 
 	for _, tc := range tests {
@@ -157,6 +241,41 @@ func TestIssueDetailsIsBlocked(t *testing.T) {
 				t.Fatalf("IsBlocked() = %v, want %v", got, tc.want)
 			}
 		})
+	}
+}
+
+func TestIssueToDetails_PreservesMergeBlocksCloseReason(t *testing.T) {
+	issue := &beads.Issue{
+		ID:     "gt-downstream",
+		Title:  "Downstream",
+		Status: "open",
+		Type:   "task",
+		Dependencies: []beads.IssueDep{
+			{
+				ID:             "gt-upstream",
+				Status:         "closed",
+				DependencyType: "merge-blocks",
+				CloseReason:    "Merged in mr-xyz",
+			},
+		},
+	}
+
+	details := issueToDetails(issue)
+	if details == nil {
+		t.Fatal("issueToDetails returned nil")
+	}
+	if len(details.Dependencies) != 1 {
+		t.Fatalf("Dependencies len = %d, want 1", len(details.Dependencies))
+	}
+	dep := details.Dependencies[0]
+	if dep.DependencyType != "merge-blocks" {
+		t.Fatalf("DependencyType = %q, want merge-blocks", dep.DependencyType)
+	}
+	if dep.CloseReason != "Merged in mr-xyz" {
+		t.Fatalf("CloseReason = %q, want %q", dep.CloseReason, "Merged in mr-xyz")
+	}
+	if details.IsBlocked() {
+		t.Fatal("issueToDetails should preserve merge confirmation so IsBlocked is false")
 	}
 }
 

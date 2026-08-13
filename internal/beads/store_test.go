@@ -597,6 +597,51 @@ func TestStoreReady(t *testing.T) {
 	}
 }
 
+func TestStoreReady_MergeBlocksNotReadyUntilMerged(t *testing.T) {
+	store := newMockStorage()
+	b := newTestBeads(store)
+
+	store.issues["gt-upstream"] = &beadsdk.Issue{
+		ID:     "gt-upstream",
+		Title:  "closed at gt done",
+		Status: beadsdk.StatusClosed,
+	}
+	store.issues["gt-downstream"] = &beadsdk.Issue{
+		ID:     "gt-downstream",
+		Title:  "merge-blocked downstream",
+		Status: beadsdk.StatusOpen,
+		Dependencies: []*beadsdk.Dependency{
+			{IssueID: "gt-downstream", DependsOnID: "gt-upstream", Type: beadsdk.DependencyType("merge-blocks")},
+		},
+	}
+
+	issues, err := b.Ready()
+	if err != nil {
+		t.Fatalf("Ready: %v", err)
+	}
+	for _, issue := range issues {
+		if issue.ID == "gt-downstream" {
+			t.Fatalf("Ready() included merge-blocked %s while upstream is closed without merge confirmation", issue.ID)
+		}
+	}
+
+	store.issues["gt-upstream"].CloseReason = "Merged in mr-xyz"
+	issues, err = b.Ready()
+	if err != nil {
+		t.Fatalf("Ready after merge: %v", err)
+	}
+	found := false
+	for _, issue := range issues {
+		if issue.ID == "gt-downstream" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatal("Ready() omitted downstream after merge confirmation")
+	}
+}
+
 func TestStoreUpdate(t *testing.T) {
 	store := newMockStorage()
 	b := newTestBeads(store)
