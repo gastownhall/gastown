@@ -96,6 +96,11 @@ func buildAgentBeadID(identity string, role Role, townRoot string) string {
 			return beads.CrewBeadIDWithPrefix(getPrefix(parts[0]), parts[0], parts[2])
 		}
 		return ""
+	case RoleDog:
+		if len(parts) == 3 && parts[0] == "deacon" && parts[1] == "dogs" {
+			return beads.DogBeadIDTown(parts[2])
+		}
+		return ""
 	case RoleBoot:
 		// Boot is a deacon dog — uses town-level dog bead ID
 		return beads.DogBeadIDTown("boot")

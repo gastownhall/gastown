@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/steveyegge/gastown/internal/constants"
+	"github.com/steveyegge/gastown/internal/dog"
 )
 
 // TestIsDogTarget verifies the dog target pattern matching.
@@ -34,10 +35,10 @@ func TestIsDogTarget(t *testing.T) {
 		// Invalid patterns - not dog targets
 		{"deacon", "", false},
 		{"deacon/", "", false},
-		{"deacon/dogs/", "", false},      // trailing slash, empty name
+		{"deacon/dogs/", "", false},            // trailing slash, empty name
 		{"deacon/dogs/alpha/extra", "", false}, // too many segments
-		{"dog", "", false},               // missing colon
-		{"dogs:alpha", "", false},        // wrong prefix
+		{"dog", "", false},                     // missing colon
+		{"dogs:alpha", "", false},              // wrong prefix
 		{"polecat:alpha", "", false},
 		{"gastown/polecats/alpha", "", false},
 		{"mayor", "", false},
@@ -61,13 +62,14 @@ func TestIsDogTarget(t *testing.T) {
 // When DelaySessionStart is true:
 //   - DispatchToDog returns with Pane="" and sessionDelayed=true
 //   - StartDelayedSession() must be called to actually start the session
+//
 // This prevents the race condition where dogs start before their hook is set.
 func TestDogDispatchInfoDelayedSession(t *testing.T) {
 	// Test that DogDispatchInfo correctly tracks delayed state
 	info := &DogDispatchInfo{
 		DogName:        "alpha",
 		AgentID:        "deacon/dogs/alpha",
-		Pane:           "",    // Empty when delayed
+		Pane:           "", // Empty when delayed
 		Spawned:        false,
 		sessionDelayed: true,
 		townRoot:       "/tmp/test",
@@ -91,6 +93,7 @@ func TestDogDispatchOptionsStruct(t *testing.T) {
 	opts := DogDispatchOptions{
 		Create:            true,
 		WorkDesc:          constants.MolConvoyFeed,
+		WorkKind:          dog.WorkKindFormula,
 		DelaySessionStart: true,
 	}
 

@@ -122,6 +122,10 @@ func (d *Daemon) cleanupStuckDogs(mgr *dog.Manager, sm *dog.SessionManager) {
 }
 
 func (d *Daemon) clearDogWorkIfMatches(mgr *dog.Manager, dg *dog.Dog, reason string) {
+	if !dog.CanClearStateOnly(dg.Work, dg.WorkKind) {
+		d.logger.Printf("Handler: preserving source-backed work for dog %s (%s); source ownership requires explicit recovery", dg.Name, reason)
+		return
+	}
 	cleared, err := mgr.ClearWorkIfMatches(dg.Name, dg.Work, dg.WorkStartedAt)
 	if err != nil {
 		d.logger.Printf("Handler: failed to clear work for dog %s (%s): %v", dg.Name, reason, err)
@@ -209,8 +213,14 @@ func (d *Daemon) reapIdleDogs(mgr *dog.Manager, sm *dog.SessionManager, daemonCf
 			}
 			if running {
 				d.logger.Printf("Handler: reaping idle dog %s session (idle %v)", dg.Name, idleDuration.Truncate(time.Minute))
-				if err := sm.Stop(dg.Name, true); err != nil {
+				matched, err := mgr.WithSnapshotIfMatches(dg.Name, dg.Work, dg.WorkStartedAt, dg.LastActive, func() error {
+					return tmux.NewTmux().KillSessionWithProcesses(sm.SessionName(dg.Name))
+				})
+				if err != nil {
 					d.logger.Printf("Handler: failed to stop session for idle dog %s: %v", dg.Name, err)
+				} else if !matched {
+					d.logger.Printf("Handler: skipped reaping idle dog %s session: assignment changed", dg.Name)
+					continue
 				}
 			}
 		}
@@ -220,14 +230,22 @@ func (d *Daemon) reapIdleDogs(mgr *dog.Manager, sm *dog.SessionManager, daemonCf
 			d.logger.Printf("Handler: removing long-idle dog %s from kennel (idle %v, pool %d/%d)",
 				dg.Name, idleDuration.Truncate(time.Minute), poolSize, poolMax)
 
-			// Ensure session is dead before removing.
-			running, _ := sm.IsRunning(dg.Name)
-			if running {
-				_ = sm.Stop(dg.Name, true)
-			}
-
-			if err := mgr.Remove(dg.Name); err != nil {
+			removed, err := mgr.RemoveIfSnapshotMatchesAfter(dg.Name, dg.Work, dg.WorkStartedAt, dg.LastActive, func() error {
+				running, err := sm.IsRunning(dg.Name)
+				if err != nil {
+					return err
+				}
+				if running {
+					return tmux.NewTmux().KillSessionWithProcesses(sm.SessionName(dg.Name))
+				}
+				return nil
+			})
+			if err != nil {
 				d.logger.Printf("Handler: failed to remove idle dog %s: %v", dg.Name, err)
+				continue
+			}
+			if !removed {
+				d.logger.Printf("Handler: skipped removing idle dog %s: assignment changed", dg.Name)
 				continue
 			}
 			poolSize--
@@ -299,9 +317,14 @@ func (d *Daemon) dispatchPlugins(mgr *dog.Manager, sm *dog.SessionManager, rigsC
 
 		// Assign work and start session.
 		workDesc := fmt.Sprintf("plugin:%s", p.Name)
-		if err := mgr.AssignWork(idleDog.Name, workDesc); err != nil {
+		assignedState, err := mgr.AssignWorkIfIdleWithKind(idleDog.Name, workDesc, dog.WorkKindPlugin)
+		if err != nil {
 			d.logger.Printf("Handler: failed to assign work to dog %s: %v", idleDog.Name, err)
 			continue
+		}
+		clearAssignment := func() error {
+			_, err := mgr.ClearWorkIfMatches(idleDog.Name, workDesc, assignedState.WorkStartedAt)
+			return err
 		}
 
 		// Send mail with plugin instructions BEFORE starting the session
@@ -316,8 +339,8 @@ func (d *Daemon) dispatchPlugins(mgr *dog.Manager, sm *dog.SessionManager, rigsC
 		msg.Timestamp = time.Now()
 		if err := router.Send(msg); err != nil {
 			d.logger.Printf("Handler: failed to send mail to dog %s: %v", idleDog.Name, err)
-			// Roll back assignment — no point starting a session without instructions.
-			if clearErr := mgr.ClearWork(idleDog.Name); clearErr != nil {
+			// Roll back only this dispatch's assignment.
+			if clearErr := clearAssignment(); clearErr != nil {
 				d.logger.Printf("Handler: failed to clear work after mail failure for dog %s: %v", idleDog.Name, clearErr)
 			}
 			continue
@@ -327,8 +350,8 @@ func (d *Daemon) dispatchPlugins(mgr *dog.Manager, sm *dog.SessionManager, rigsC
 			WorkDesc: workDesc,
 		}); err != nil {
 			d.logger.Printf("Handler: failed to start session for dog %s: %v", idleDog.Name, err)
-			// Roll back assignment on session start failure.
-			if clearErr := mgr.ClearWork(idleDog.Name); clearErr != nil {
+			// Roll back only this dispatch's assignment on session start failure.
+			if clearErr := clearAssignment(); clearErr != nil {
 				d.logger.Printf("Handler: failed to clear work after start failure for dog %s: %v", idleDog.Name, clearErr)
 			}
 			continue

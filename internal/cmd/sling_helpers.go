@@ -346,6 +346,20 @@ func burnExistingMolecules(molecules []string, beadID, townRoot string) error {
 	return nil
 }
 
+// cleanupRolledBackDogMolecule removes artifacts only after source restoration
+// succeeded. The source CAS already restored its exact original description, so
+// unlike burnExistingMolecules this must not detach or rewrite source metadata.
+func cleanupRolledBackDogMolecule(molID, beadID, townRoot string) {
+	bd := beads.New(beads.ResolveHookDir(townRoot, beadID, ""))
+	if _, err := forceCloseDescendants(bd, molID); err != nil {
+		style.PrintWarning("dog rollback: could not close descendants of %s: %v", molID, err)
+	}
+	removeMoleculeBonds(bd, beadID, molID)
+	if err := bd.ForceCloseWithReason("dog dispatch rollback", molID); err != nil {
+		style.PrintWarning("dog rollback: could not close molecule %s: %v", molID, err)
+	}
+}
+
 func removeMoleculeBonds(bd *beads.Beads, beadID, molID string) {
 	for _, bond := range []struct {
 		from string
@@ -594,36 +608,61 @@ func storeFieldsInBead(beadID string, updates beadFieldUpdates) error {
 }
 
 func storeFieldsInBeadFromTownRoot(townRoot, beadID string, updates beadFieldUpdates) error {
+	_, err := storeFieldsInBeadFromTownRootWithDescription(townRoot, beadID, updates)
+	return err
+}
+
+// storeFieldsInBeadFromTownRootWithDescription returns the exact description
+// submitted to bd, so rollback can conditionally restore only that write.
+func storeFieldsInBeadFromTownRootWithDescription(townRoot, beadID string, updates beadFieldUpdates) (string, error) {
 	logPath := os.Getenv("GT_TEST_ATTACHED_MOLECULE_LOG")
 
 	issue := &beads.Issue{}
 	if logPath == "" {
-		// Read the bead once
 		out, err := bdShowBeadOutputFromTownRoot(townRoot, beadID)
 		if err != nil {
-			return fmt.Errorf("fetching bead: %w", err)
+			return "", fmt.Errorf("fetching bead: %w", err)
 		}
 		if len(out) == 0 {
-			return fmt.Errorf("bead not found")
+			return "", fmt.Errorf("bead not found")
 		}
 
 		var issues []beads.Issue
 		if err := json.Unmarshal(out, &issues); err != nil {
-			return fmt.Errorf("parsing bead: %w", err)
+			return "", fmt.Errorf("parsing bead: %w", err)
 		}
 		if len(issues) == 0 {
-			return fmt.Errorf("bead not found")
+			return "", fmt.Errorf("bead not found")
 		}
 		issue = &issues[0]
 	}
 
-	// Get or create attachment fields
+	newDesc := descriptionWithBeadFieldUpdates(issue, updates)
+	if logPath != "" {
+		_ = os.WriteFile(logPath, []byte(newDesc), 0644)
+		return newDesc, nil
+	}
+
+	updateDir := resolveBeadDir(beadID)
+	if townRoot != "" {
+		updateDir = resolveBeadDirFromTownRoot(townRoot, beadID)
+	}
+	if err := BdCmd("update", beadID, "--description="+newDesc).
+		Dir(updateDir).
+		StripBeadsDir().
+		WithAutoCommit().
+		Run(); err != nil {
+		return "", fmt.Errorf("updating bead description: %w", err)
+	}
+
+	return newDesc, nil
+}
+
+func descriptionWithBeadFieldUpdates(issue *beads.Issue, updates beadFieldUpdates) string {
 	fields := beads.ParseAttachmentFields(issue)
 	if fields == nil {
 		fields = &beads.AttachmentFields{}
 	}
-
-	// Apply all updates in one pass
 	if updates.ClearAttachment {
 		fields.AttachedMolecule = ""
 		fields.AttachedFormula = ""
@@ -672,27 +711,7 @@ func storeFieldsInBeadFromTownRoot(townRoot, beadID string, updates beadFieldUpd
 	if updates.FormulaVars != "" {
 		fields.FormulaVars = updates.FormulaVars
 	}
-
-	// Write back once
-	newDesc := beads.SetAttachmentFields(issue, fields)
-	if logPath != "" {
-		_ = os.WriteFile(logPath, []byte(newDesc), 0644)
-		return nil
-	}
-
-	updateDir := resolveBeadDir(beadID)
-	if townRoot != "" {
-		updateDir = resolveBeadDirFromTownRoot(townRoot, beadID)
-	}
-	if err := BdCmd("update", beadID, "--description="+newDesc).
-		Dir(updateDir).
-		StripBeadsDir().
-		WithAutoCommit().
-		Run(); err != nil {
-		return fmt.Errorf("updating bead description: %w", err)
-	}
-
-	return nil
+	return beads.SetAttachmentFields(issue, fields)
 }
 
 // injectStartPrompt sends a prompt to the target pane to start working.

@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/steveyegge/gastown/internal/dog"
 	"github.com/steveyegge/gastown/internal/session"
 	"github.com/steveyegge/gastown/internal/tmux"
 	"github.com/steveyegge/gastown/internal/workspace"
@@ -181,9 +182,14 @@ func resolveTarget(target string, opts ResolveTargetOptions) (*ResolvedTarget, e
 		if workDesc == "" {
 			workDesc = opts.HookBead
 		}
+		workKind := dog.WorkKindFormula
+		if opts.HookBead != "" && workDesc == opts.HookBead {
+			workKind = dog.WorkKindBead
+		}
 		dispatchOpts := DogDispatchOptions{
 			Create:            opts.Create,
 			WorkDesc:          workDesc,
+			WorkKind:          workKind,
 			DelaySessionStart: true,
 			AgentOverride:     opts.Agent,
 		}

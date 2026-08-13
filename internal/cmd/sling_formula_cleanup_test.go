@@ -50,7 +50,7 @@ func TestRunSlingFormulaCleansDelayedDogFailure(t *testing.T) {
 	}
 }
 
-func TestCleanupDelayedDogFormulaFailureClearsWorkAfterWispCleanupError(t *testing.T) {
+func TestCleanupDelayedDogFormulaFailurePreservesWorkAfterWispCleanupError(t *testing.T) {
 	prevCleanup := cleanupFailedDogFormulaWispFn
 	cleanupFailedDogFormulaWispFn = func(string, string) error {
 		return errors.New("close failed")
@@ -87,8 +87,8 @@ func TestCleanupDelayedDogFormulaFailureClearsWorkAfterWispCleanupError(t *testi
 	if err != nil {
 		t.Fatalf("Get() after cleanup: %v", err)
 	}
-	if got.State != dog.StateIdle || got.Work != "" || !got.WorkStartedAt.IsZero() {
-		t.Fatalf("cleanup did not clear dog assignment: state=%q work=%q started=%v", got.State, got.Work, got.WorkStartedAt)
+	if got.State != dog.StateWorking || got.Work != "mol-dog-reaper" || !got.WorkStartedAt.Equal(startedAt) {
+		t.Fatalf("cleanup erased assignment while source survived: state=%q work=%q started=%v", got.State, got.Work, got.WorkStartedAt)
 	}
 }
 

@@ -86,8 +86,12 @@ func cleanupDelayedDogFormulaFailure(currentErr error, delayedDogInfo *DogDispat
 			cleanupErr = fmt.Errorf("cleaning failed dog formula wisp %s: %w", wispRootID, err)
 		}
 	}
-	if err := delayedDogInfo.clearWorkIfMatches(); err != nil {
-		cleanupErr = errors.Join(cleanupErr, fmt.Errorf("clearing failed dog assignment: %w", err))
+	// Keep typed dog state authoritative if source cleanup failed. Returning the
+	// dog to the pool while its wisp remains hooked would create split ownership.
+	if cleanupErr == nil {
+		if err := delayedDogInfo.clearWorkIfMatches(); err != nil {
+			cleanupErr = fmt.Errorf("clearing failed dog assignment: %w", err)
+		}
 	}
 	if cleanupErr == nil {
 		return currentErr
@@ -429,6 +433,9 @@ func runSlingFormula(ctx context.Context, args []string) (err error) {
 		fmt.Printf("%s Formula %s already hooked to %s via %s, no-op\n",
 			style.Dim.Render("○"), formulaName, targetAgent, existing.ID)
 		if delayedDogInfo != nil {
+			if err := delayedDogInfo.verifyFormulaAssignment(existing.ID); err != nil {
+				return fmt.Errorf("verifying existing dog formula before session start: %w", err)
+			}
 			if _, err := delayedDogInfo.StartDelayedSession(); err != nil {
 				return fmt.Errorf("starting delayed dog session for existing formula: %w", err)
 			}
@@ -527,10 +534,14 @@ func runSlingFormula(ctx context.Context, args []string) (err error) {
 		Args:            slingArgs,
 		Vars:            append([]string(nil), slingVars...),
 		AttachedFormula: formulaName,
+		AttachedAt:      time.Now().UTC().Format(time.RFC3339Nano),
 		Mode:            &mode,
 		FormulaVars:     strings.Join(slingVars, "\n"),
 	}
 	if err := storeFieldsInBeadFromTownRoot(townRoot, wispRootID, fieldUpdates); err != nil {
+		if delayedDogInfo != nil {
+			return fmt.Errorf("storing dog formula attachment metadata: %w", err)
+		}
 		fmt.Printf("%s Could not store fields in bead: %v\n", style.Dim.Render("Warning:"), err)
 	} else if slingArgs != "" {
 		fmt.Printf("%s Args stored in bead (durable)\n", style.Bold.Render("✓"))
@@ -542,6 +553,9 @@ func runSlingFormula(ctx context.Context, args []string) (err error) {
 	// Start delayed dog session now that hook is set
 	// This ensures dog sees the hook when gt prime runs on session start
 	if delayedDogInfo != nil {
+		if err := delayedDogInfo.verifyFormulaAssignment(wispRootID); err != nil {
+			return fmt.Errorf("verifying dog formula before session start: %w", err)
+		}
 		pane, err := delayedDogInfo.StartDelayedSession()
 		if err != nil {
 			return fmt.Errorf("starting delayed dog session: %w", err)
