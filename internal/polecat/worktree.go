@@ -84,3 +84,29 @@ func VerifyWorktreeExists(clonePath string) error {
 
 	return nil
 }
+
+// ResolveClonePath returns the polecat git worktree directory.
+//
+// New layout is polecats/<name>/<rigname>/ and is used only when that path
+// actually contains a .git file or directory. Otherwise we fall back to the
+// old layout polecats/<name>/ when that path is a worktree. Preferring the
+// nested directory merely because it exists (a repo folder named after the
+// rig, or a half-migrated layout) launches the agent outside a git repo —
+// Codex then exits, and gt session start reports "session died during startup"
+// (GH#4670).
+func ResolveClonePath(rigPath, rigName, polecat string) string {
+	newPath := filepath.Join(rigPath, "polecats", polecat, rigName)
+	if hasGitMetadata(newPath) {
+		return newPath
+	}
+	oldPath := filepath.Join(rigPath, "polecats", polecat)
+	if hasGitMetadata(oldPath) {
+		return oldPath
+	}
+	return newPath
+}
+
+func hasGitMetadata(dir string) bool {
+	_, err := os.Stat(filepath.Join(dir, ".git"))
+	return err == nil
+}
