@@ -183,3 +183,55 @@ bd close <id>         # Complete work
 - NEVER say "ready to push when you are" - YOU must push
 - If push fails, resolve and retry until it succeeds
 <!-- END BEADS INTEGRATION -->
+
+---
+
+## Cursor Cloud specific instructions
+
+Gas Town is a Go CLI (`gt`). The environment build already has: Go (base `go1.22.2`, but
+`go.mod` pins `go 1.26.2`, auto-fetched via `GOTOOLCHAIN=auto`), `libicu-dev` (required for the
+`go-icu-regex` CGo dependency), `golangci-lint` v2.11.4, `bd` (beads), and `dolt` v2.0.7. The
+update script runs `go mod download` to refresh module deps after a pull.
+
+### Build / lint / test / run
+
+- Build: `make build` → produces `gt`, `gt-proxy-server`, `gt-proxy-client` at repo root. First
+  build compiles a large dep tree (~1.5 min). `go run ./cmd/gt …` also works.
+- Lint: `golangci-lint run --timeout=5m` (installed at `~/go/bin`).
+  - GOTCHA: `golangci-lint` refuses to run if it was built with an older Go than `go.mod`'s
+    `1.26.2` ("the Go language version go1.25 ... is lower than the targeted Go version 1.26.2").
+    `go install ...@v2.11.4` picks the tool's own toolchain (1.25). It must be built with
+    `GOTOOLCHAIN=go1.26.2 go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.11.4`.
+    The prebuilt binary in the snapshot is already correct.
+- Test (unit): `go test -short ./...`. Full suite is slow (~15-20 min) because many packages spawn
+  real `git`/`tmux` subprocesses.
+- Integration tests are build-tagged and need Dolt: `go test -tags=integration ./internal/cmd/...`.
+  Some use `internal/testutil` helpers that start Dolt Docker containers and skip gracefully when
+  prerequisites are missing.
+- Run the app: `gt install <path>` creates a town HQ and auto-starts a Dolt SQL server; then
+  `gt status`, `bd create/list/update/close` (beads work ledger), `gt rig add`, etc. `gt` must be on
+  `PATH` for hooks/crew workflows (`cp gt ~/go/bin/` or `make install` → `~/.local/bin`).
+
+### Known environment-induced test failures (NOT code bugs)
+
+Under a full `go test ./...` in the cloud VM, these fail purely due to the VM's global git config
+and full-suite parallelism — they all pass when isolated:
+
+- `internal/git` (`TestConfigurePushURL`, `TestGetPushURL_NoPushURL`, `TestClearPushURL`) and
+  `internal/doctor` (`TestBareRepoExistsCheck_*PushURL*`): the cloud VM injects Cursor-managed
+  `url.https://x-access-token:***@github.com/.insteadOf` rewrites into the global git config, so
+  round-tripped remote URLs don't match. Re-run with a clean config to confirm green, e.g.
+  `TMP=$(mktemp); printf '[user]\n\tname=t\n\temail=t@t' >$TMP; GIT_CONFIG_GLOBAL=$TMP go test ./internal/git/ ./internal/doctor/`.
+- `internal/config` `TestBuiltinPresets` can flake under `./...` (a sibling parallel test mutates the
+  shared agent registry). It passes reliably via `go test ./internal/config/`.
+
+### mattpocock/skills
+
+The update script also installs [`mattpocock/skills`](https://github.com/mattpocock/skills) via the
+vercel `skills` CLI (`npx skills@latest add mattpocock/skills --agent cursor --skill '*' -g -y --copy`),
+which lands them under `~/.agents/skills/`. Because the Cursor Cloud agent discovers global skills from
+`~/.cursor/skills-cursor/` (not `~/.cursor/skills`, which is where the `skills` CLI's cursor preset
+points), the update script then mirrors each skill folder into `~/.cursor/skills-cursor/` so they are
+discoverable next session. This is deliberately global (user-level), not project-level, to avoid leaving
+untracked files in the repo working tree. The skills-refresh step is best-effort (`|| true`); a prior
+copy persists in the VM snapshot if the network fetch fails.
