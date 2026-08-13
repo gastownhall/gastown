@@ -190,12 +190,18 @@ func isRoleCommand(cmd *cobra.Command) bool {
 }
 
 func isDoneCommand(cmd *cobra.Command) bool {
-	for c := cmd; c != nil; c = c.Parent() {
-		if c.Name() == "done" {
-			return true
-		}
+	// Only the TOP-LEVEL `gt done`: the command named "done" whose parent is
+	// the root command. A "done" subcommand in another tree — `gt dog done` —
+	// has its own handler and must not be routed through the polecat-only
+	// worktree resolution. The ancestor-walk form of this predicate matched
+	// every command named "done" anywhere in the chain, so `gt dog done`
+	// failed with "gt done is for polecats only (BD_ACTOR=dog)" and dogs
+	// could not return to kennel (regression gt-rwip, cc9aecb1).
+	if cmd.Name() != "done" {
+		return false
 	}
-	return false
+	parent := cmd.Parent()
+	return parent != nil && parent.Parent() == nil
 }
 
 // initCLITheme initializes the CLI color theme based on settings and environment.
