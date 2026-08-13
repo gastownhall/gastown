@@ -15,6 +15,7 @@ import (
 	"github.com/steveyegge/gastown/internal/config"
 	"github.com/steveyegge/gastown/internal/constants"
 	gtgit "github.com/steveyegge/gastown/internal/git"
+	"github.com/steveyegge/gastown/internal/polecat"
 	"github.com/steveyegge/gastown/internal/refinery"
 	"github.com/steveyegge/gastown/internal/rig"
 	"github.com/steveyegge/gastown/internal/session"
@@ -457,13 +458,8 @@ func (d *Daemon) getWorkDir(config *beads.RoleConfig, parsed *ParsedIdentity) st
 	case constants.RoleCrew:
 		return filepath.Join(d.config.TownRoot, parsed.RigName, "crew", parsed.AgentName)
 	case constants.RolePolecat:
-		// New structure: polecats/<name>/<rigname>/ (for LLM ergonomics)
-		// Old structure: polecats/<name>/ (for backward compat)
-		newPath := filepath.Join(d.config.TownRoot, parsed.RigName, "polecats", parsed.AgentName, parsed.RigName)
-		if _, err := os.Stat(newPath); err == nil {
-			return newPath
-		}
-		return filepath.Join(d.config.TownRoot, parsed.RigName, "polecats", parsed.AgentName)
+		rigPath := filepath.Join(d.config.TownRoot, parsed.RigName)
+		return polecat.ResolveClonePath(rigPath, parsed.RigName, parsed.AgentName)
 	default:
 		return ""
 	}

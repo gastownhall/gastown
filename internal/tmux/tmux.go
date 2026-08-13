@@ -486,8 +486,10 @@ func (t *Tmux) checkSessionAfterCreate(name, command string) error {
 		return err
 	}
 
-	// Pane is alive — restore default (no need to keep dead sessions around)
-	_, _ = t.run("set-option", "-t", name, "remain-on-exit", "off")
+	// Keep remain-on-exit on. Agents such as Codex can pass this 250ms window
+	// and then exit (git-repo-check, trust-dialog quit). Turning remain-on-exit
+	// off here destroys the pane before callers can capture the failure —
+	// GH#4670 "session died during startup (agent command may have failed)".
 	return nil
 }
 
@@ -2044,6 +2046,15 @@ func containsWorkspaceTrustDialog(content string) bool {
 }
 
 func containsBlockingStartupDialog(content string) (string, bool) {
+	// Live Codex trust TUIs include a › selector that looks like the ready
+	// prompt. Treat those as blocking before promptAppearsAfterStartupBlocker
+	// can classify them as stale scrollback (GH#4670).
+	if containsWorkspaceTrustDialog(content) && isLiveCodexTrustDialog(content) {
+		return "workspace trust prompt", true
+	}
+	if containsCodexGitRepoCheckError(content) {
+		return "codex git repo check", true
+	}
 	if promptAppearsAfterStartupBlocker(content) {
 		return "", false
 	}
@@ -2057,6 +2068,15 @@ func containsBlockingStartupDialog(content string) (string, bool) {
 		return "bypass permissions prompt", true
 	}
 	return "", false
+}
+
+func isLiveCodexTrustDialog(content string) bool {
+	return strings.Contains(content, "Yes, continue") || strings.Contains(content, "No, quit")
+}
+
+func containsCodexGitRepoCheckError(content string) bool {
+	return strings.Contains(content, "Not inside a trusted directory") &&
+		strings.Contains(content, "--skip-git-repo-check")
 }
 
 func promptAppearsAfterStartupBlocker(content string) bool {
