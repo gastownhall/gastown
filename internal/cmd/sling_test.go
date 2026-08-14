@@ -2223,6 +2223,9 @@ case "$cmd" in
   formula)
     echo '{"name":"mol-anything"}'
     ;;
+  create)
+    echo '{"id":"gt-dispatch-xyz","title":"mol-anything","status":"open"}'
+    ;;
   cook)
     exit 0
     ;;
@@ -2245,6 +2248,10 @@ set "cmd=%1"
 set "sub=%2"
 if "%cmd%"=="formula" (
   echo {"name":"mol-anything"}
+  exit /b 0
+)
+if "%cmd%"=="create" (
+  echo {"id":"gt-dispatch-xyz","title":"mol-anything","status":"open"}
   exit /b 0
 )
 if "%cmd%"=="cook" exit /b 0
@@ -2306,6 +2313,9 @@ exit /b 0
 
 	if !strings.Contains(attachment, "attached_formula: mol-anything") {
 		t.Fatalf("formula attachment missing from persisted description:\n%s", attachment)
+	}
+	if !strings.Contains(attachment, "attached_molecule: gt-wisp-xyz") {
+		t.Fatalf("durable dispatch bead does not point to formula wisp:\n%s", attachment)
 	}
 	if !strings.Contains(attachment, "version=1.2.3") || !strings.Contains(attachment, "channel=stable") {
 		t.Fatalf("formula vars missing from persisted description:\n%s", attachment)
@@ -2387,7 +2397,7 @@ exit /b 0
 	slingNoBoot = true
 	slingForce = false
 	findHookedFormulaSingletonFn = func(workDir, targetAgent, formulaName string) (*beads.Issue, error) {
-		return &beads.Issue{ID: "gt-wisp-existing"}, nil
+		return &beads.Issue{ID: "gt-dispatch-existing", Labels: []string{formulaDispatchLabel}}, nil
 	}
 
 	if err := runSlingFormula(context.Background(), []string{"mol-anything"}); err != nil {
@@ -2464,7 +2474,7 @@ exit /b 0
 	slingForce = false
 	slingRalph = false
 	findHookedFormulaSingletonFn = func(workDir, targetAgent, formulaName string) (*beads.Issue, error) {
-		return &beads.Issue{ID: "gt-wisp-existing", Description: "attached_formula: mol-anything\nmode: ralph"}, nil
+		return &beads.Issue{ID: "gt-dispatch-existing", Labels: []string{formulaDispatchLabel}, Description: "attached_formula: mol-anything\nmode: ralph"}, nil
 	}
 
 	if err := runSlingFormula(context.Background(), []string{"mol-anything"}); err != nil {
