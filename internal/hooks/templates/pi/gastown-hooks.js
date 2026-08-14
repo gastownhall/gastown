@@ -20,14 +20,22 @@ export default (pi) => {
   let lastMailCheck = 0;
 
   // Pi exposes session metadata to model-run bash tools, but pi.exec inherits
-  // only the parent process environment. Forward the current session ID so Gas
-  // Town can persist and resume the session across runtime restarts.
-  const runGT = (context, args) =>
-    pi.exec("env", [
-      `PI_SESSION_ID=${context.sessionManager.getSessionId()}`,
-      "{{GT_BIN}}",
-      ...args,
-    ]);
+  // only the parent process environment. Forward the current session ID using
+  // Gas Town's unconditional hook variable so direct Pi launches work even
+  // when no wrapper supplied GT_AGENT or GT_SESSION_ID_ENV.
+  const runGT = async (context, args) => {
+    const previousSessionId = process.env.GT_SESSION_ID;
+    process.env.GT_SESSION_ID = context.sessionManager.getSessionId();
+    try {
+      return await pi.exec("{{GT_BIN}}", args);
+    } finally {
+      if (previousSessionId === undefined) {
+        delete process.env.GT_SESSION_ID;
+      } else {
+        process.env.GT_SESSION_ID = previousSessionId;
+      }
+    }
+  };
 
   const shouldCheckMail = () =>
     !role.includes("witness") && !role.includes("refinery") && !role.startsWith("deacon") && !role.includes("boot");

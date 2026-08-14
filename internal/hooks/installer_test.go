@@ -255,12 +255,13 @@ func TestPiExtensionPassesSessionIDToGasTown(t *testing.T) {
 	const harness = `
 import { pathToFileURL } from "node:url";
 const { default: extension } = await import(pathToFileURL(process.argv[1]));
+delete process.env.GT_SESSION_ID;
 const handlers = {};
 const calls = [];
 const pi = {
   on(event, handler) { handlers[event] = handler; },
   async exec(command, args) {
-    calls.push({ command, args });
+    calls.push({ command, args, sessionId: process.env.GT_SESSION_ID });
     return { code: 0, stdout: "prime context", stderr: "", killed: false };
   },
 };
@@ -268,7 +269,7 @@ extension(pi);
 await handlers.session_start({}, {
   sessionManager: { getSessionId: () => "pi-session-123" },
 });
-process.stdout.write(JSON.stringify(calls));
+process.stdout.write(JSON.stringify({ calls, sessionIdAfter: process.env.GT_SESSION_ID ?? null }));
 `
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
@@ -280,22 +281,32 @@ process.stdout.write(JSON.stringify(calls));
 		t.Fatalf("exercise Pi extension: %v", err)
 	}
 
-	var calls []struct {
-		Command string   `json:"command"`
-		Args    []string `json:"args"`
+	var result struct {
+		Calls []struct {
+			Command   string   `json:"command"`
+			Args      []string `json:"args"`
+			SessionID string   `json:"sessionId"`
+		} `json:"calls"`
+		SessionIDAfter *string `json:"sessionIdAfter"`
 	}
-	if err := json.Unmarshal(out, &calls); err != nil {
+	if err := json.Unmarshal(out, &result); err != nil {
 		t.Fatalf("decode Pi extension calls: %v", err)
 	}
-	if len(calls) == 0 {
+	if len(result.Calls) == 0 {
 		t.Fatal("Pi session_start did not invoke Gas Town")
 	}
-	if calls[0].Command != "env" {
-		t.Fatalf("Pi session_start command = %q, want env", calls[0].Command)
+	if result.Calls[0].Command != resolveGTBinary() {
+		t.Fatalf("Pi session_start command = %q, want %q", result.Calls[0].Command, resolveGTBinary())
 	}
-	wantArgs := []string{"PI_SESSION_ID=pi-session-123", resolveGTBinary(), "prime", "--hook"}
-	if got := calls[0].Args; strings.Join(got, "\x00") != strings.Join(wantArgs, "\x00") {
+	wantArgs := []string{"prime", "--hook"}
+	if got := result.Calls[0].Args; strings.Join(got, "\x00") != strings.Join(wantArgs, "\x00") {
 		t.Fatalf("Pi session_start args = %q, want %q", got, wantArgs)
+	}
+	if got := result.Calls[0].SessionID; got != "pi-session-123" {
+		t.Fatalf("GT_SESSION_ID during Pi session_start = %q, want %q", got, "pi-session-123")
+	}
+	if result.SessionIDAfter != nil {
+		t.Fatalf("GT_SESSION_ID leaked after Pi session_start: %q", *result.SessionIDAfter)
 	}
 }
 
