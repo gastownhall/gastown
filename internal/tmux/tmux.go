@@ -182,6 +182,7 @@ func BuildCommandContext(ctx context.Context, args ...string) *exec.Cmd {
 // Tmux wraps tmux operations.
 type Tmux struct {
 	socketName string // tmux socket name (-L flag), empty = default socket
+	binary     string // optional tmux executable override; empty means "tmux"
 }
 
 // noTownSocket is a sentinel socket name used when no town socket is configured.
@@ -217,6 +218,19 @@ func NewTmuxWithSocket(socket string) *Tmux {
 	return &Tmux{socketName: socket}
 }
 
+// NewTmuxWithSocketAndBinary is like NewTmuxWithSocket but invokes a specific
+// tmux executable. Tests use this to wrap the host tmux without mutating PATH.
+func NewTmuxWithSocketAndBinary(socket, binary string) *Tmux {
+	return &Tmux{socketName: socket, binary: binary}
+}
+
+func (t *Tmux) tmuxBinary() string {
+	if t != nil && t.binary != "" {
+		return t.binary
+	}
+	return "tmux"
+}
+
 // run executes a tmux command and returns stdout.
 // All commands include -u flag for UTF-8 support regardless of locale settings.
 // See: https://github.com/steveyegge/gastown/issues/1219
@@ -230,7 +244,7 @@ func (t *Tmux) commandContext(ctx context.Context, args ...string) *exec.Cmd {
 		allArgs = append(allArgs, "-L", t.socketName)
 	}
 	allArgs = append(allArgs, args...)
-	cmd := exec.CommandContext(ctx, "tmux", allArgs...)
+	cmd := exec.CommandContext(ctx, t.tmuxBinary(), allArgs...)
 	hideConsoleWindow(cmd)
 	return cmd
 }
