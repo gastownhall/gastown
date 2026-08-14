@@ -1532,14 +1532,20 @@ func (t *Tmux) dismissRewindMode(target string) {
 	time.Sleep(300 * time.Millisecond)
 }
 
-// sendEnterVerified sends Enter to a tmux target and verifies it was processed
-// by checking that the pane content changes. Under load, tmux may buffer
-// keystrokes, causing Enter to race with text delivery — Enter arrives while
-// tmux is still processing text/Escape and gets treated as part of the text
-// stream rather than a separate submit action.
+// sendLiteralCR submits the current line with a literal carriage return.
+// Named-key Enter/C-m/KPEnter are not delivered on some tmux builds
+// (tmux 3.7b on macOS Homebrew); send-keys -l with CR is. (GH#4666)
+func (t *Tmux) sendLiteralCR(target string) error {
+	_, err := t.run("send-keys", "-t", target, "-l", "\r")
+	return err
+}
+
+// sendEnterVerified sends a submit keystroke to a tmux target and verifies it
+// was processed by checking that the pane content changes. Under load, tmux may
+// buffer keystrokes, causing the submit to race with text delivery.
 //
-// After sending Enter, polls the pane content with exponential backoff. If the
-// content hasn't changed (Enter wasn't processed), retries the Enter keystroke.
+// After sending CR, polls the pane content with exponential backoff. If the
+// content hasn't changed (submit wasn't processed), retries the keystroke.
 // Max 3 retries before returning an error.
 //
 // Falls back to best-effort (no verification) if pane capture fails.
@@ -1550,11 +1556,10 @@ func (t *Tmux) sendEnterVerified(target string) error {
 		verifyLines    = 5 // capture last N lines for comparison
 	)
 
-	// Snapshot pane content before Enter so we can detect processing.
+	// Snapshot pane content before submit so we can detect processing.
 	preSnapshot, preErr := t.CapturePane(target, verifyLines)
 
-	// Send Enter
-	if _, err := t.run("send-keys", "-t", target, "Enter"); err != nil {
+	if err := t.sendLiteralCR(target); err != nil {
 		return fmt.Errorf("send Enter: %w", err)
 	}
 
@@ -1574,12 +1579,12 @@ func (t *Tmux) sendEnterVerified(target string) error {
 		}
 
 		if postSnapshot != preSnapshot {
-			// Content changed — Enter was processed.
+			// Content changed — submit was processed.
 			return nil
 		}
 
-		// Content unchanged — Enter may not have been processed. Retry.
-		if _, err := t.run("send-keys", "-t", target, "Enter"); err != nil {
+		// Content unchanged — CR may not have been processed. Retry.
+		if err := t.sendLiteralCR(target); err != nil {
 			return fmt.Errorf("send Enter (retry %d): %w", retry+1, err)
 		}
 

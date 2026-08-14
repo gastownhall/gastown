@@ -288,8 +288,10 @@ func deliverNudge(t *tmux.Tmux, sessionName, message, sender string) error {
 		// this watcher. It exits on: delivery, session death, or timeout.
 		// Must be synchronous (not a goroutine) because gt nudge is a CLI
 		// command — the process exits after return, killing any goroutines.
-		watchAndDeliver(t, townRoot, sessionName)
-		return nil
+		// Hard delivery errors (e.g. tmux send-keys rejecting unknown flags)
+		// must propagate so the CLI does not print ✓ Nudged after the
+		// watcher has already logged a failed delivery. (GH#4666)
+		return watchAndDeliver(t, townRoot, sessionName)
 
 	default: // NudgeModeImmediate
 		opts := tmux.NudgeOpts{TownRoot: townRoot}
@@ -312,15 +314,17 @@ func deliverNudge(t *tmux.Tmux, sessionName, message, sender string) error {
 // send-keys input, so we cannot rely on it.
 //
 // This runs synchronously — gt nudge blocks until the watcher exits.
-// Errors are logged to stderr rather than returned since delivery failure
-// after successful queue write is non-fatal (queue persists for next drain).
+// Timeout and "someone else drained the queue" are non-errors: the nudge
+// remains queued. A hard delivery error after drain is returned so callers
+// do not report success; drained nudges are requeued first. (GH#4666)
 //
 // Exit conditions:
 //   - Agent becomes idle: drain queue and deliver formatted content, exit.
 //   - Queue is empty (someone else drained it): exit.
 //   - Session disappears: exit (nothing to deliver to).
 //   - Timeout: exit (queue stays for next input or watcher cycle).
-func watchAndDeliver(t *tmux.Tmux, townRoot, sessionName string) {
+//   - Delivery fails: requeue drained nudges and return the error.
+func watchAndDeliver(t *tmux.Tmux, townRoot, sessionName string) error {
 	fmt.Fprintf(os.Stderr, "Watching %s for idle (up to %s)...\n", sessionName, idleWatcherTimeout)
 	deadline := time.Now().Add(idleWatcherTimeout)
 	for time.Now().Before(deadline) {
@@ -328,12 +332,12 @@ func watchAndDeliver(t *tmux.Tmux, townRoot, sessionName string) {
 
 		// If queue is already empty, someone else drained it.
 		if nudge.QueueLen(townRoot, sessionName) == 0 {
-			return
+			return nil
 		}
 
 		// Check if session still exists — no point watching a dead session.
 		if exists, _ := t.HasSession(sessionName); !exists {
-			return
+			return nil
 		}
 
 		// Use WaitForIdle with a short timeout instead of single-snapshot
@@ -346,17 +350,19 @@ func watchAndDeliver(t *tmux.Tmux, townRoot, sessionName string) {
 			// empty slice and skip delivery to avoid duplicates.
 			drained, _ := nudge.Drain(townRoot, sessionName)
 			if len(drained) == 0 {
-				return
+				return nil
 			}
 			formatted := nudge.FormatForInjection(drained)
 			if err := t.NudgeSessionWithOpts(sessionName, formatted, tmux.NudgeOpts{TownRoot: townRoot}); err != nil {
 				fmt.Fprintf(os.Stderr, "idle-watcher: delivery for %s failed: %v\n", sessionName, err)
 				requeueDrainedNudges(townRoot, sessionName, "idle-watcher", drained)
+				return err
 			}
-			return
+			return nil
 		}
 	}
 	// Timeout — nudge stays in queue for next watcher or manual drain.
+	return nil
 }
 
 func requeueDrainedNudges(townRoot, sessionName, source string, drained []nudge.QueuedNudge) {
