@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Mail notification no longer cancels in-flight tool calls** (gh#4607).
+  `gt mail send` used to wake idle recipients with `tmux.NudgeSession`
+  (send-keys + Enter), which creates a new turn. Mail notification now
+  always uses the queued-nudge channel; the agent reads it on the next
+  turn via `gt mail inbox` / hook injection. The mail bead is unchanged.
+
 ## [1.2.1] - 2026-06-06
 
 ### Fixed

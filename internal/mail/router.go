@@ -30,10 +30,6 @@ var ErrUnknownQueue = errors.New("unknown queue")
 // ErrUnknownAnnounce indicates an announce channel name was not found in configuration.
 var ErrUnknownAnnounce = errors.New("unknown announce channel")
 
-// DefaultIdleNotifyTimeout is how long the router waits for a recipient's
-// session to become idle before falling back to a queued nudge.
-const DefaultIdleNotifyTimeout = 3 * time.Second
-
 // Router handles message delivery via beads.
 // It routes messages to the correct beads database based on address:
 // - Town-level (mayor/, deacon/) -> {townRoot}/.beads
@@ -42,10 +38,6 @@ type Router struct {
 	workDir  string // fallback directory to run bd commands in
 	townRoot string // town root directory (e.g., ~/gt)
 	tmux     *tmux.Tmux
-
-	// IdleNotifyTimeout controls how long to wait for a session to become
-	// idle before falling back to a queued nudge. Zero uses the default.
-	IdleNotifyTimeout time.Duration
 
 	notifyWg sync.WaitGroup // tracks in-flight async notifications
 }
@@ -1589,13 +1581,15 @@ func (r *Router) GetMailbox(address string) (*Mailbox, error) {
 	return NewMailboxFromAddress(address, workDir), nil
 }
 
-// notifyRecipient sends a notification to a recipient's tmux session.
+// notifyRecipient notifies a recipient that mail is waiting.
 //
-// Notification strategy (idle-aware):
-//  1. If the session is idle (prompt visible), send an immediate nudge.
-//  2. If the session is busy, enqueue a nudge for cooperative delivery at
-//     the next turn boundary.
-//  3. For the overseer (human operator), always use a visible banner.
+// Notification strategy (GH#4607):
+//  1. For agent sessions, enqueue a nudge for cooperative delivery at the
+//     next turn boundary. Direct tmux NudgeSession submits a new turn and
+//     cancels in-flight tool calls; the queued-nudge channel appends instead.
+//  2. For the overseer (human operator), always use a visible banner.
+//  3. If no town root is available, last-resort direct delivery is used
+//     because the queue cannot be written.
 //
 // After a successful notification, a deferred reply-reminder nudge is also
 // enqueued (after a configurable delay, default 30s) to prompt the recipient
@@ -1607,11 +1601,6 @@ func (r *Router) notifyRecipient(msg *Message) error {
 	sessionIDs := AddressToSessionIDs(msg.To)
 	if len(sessionIDs) == 0 {
 		return nil // Unable to determine session ID
-	}
-
-	timeout := r.IdleNotifyTimeout
-	if timeout == 0 {
-		timeout = DefaultIdleNotifyTimeout
 	}
 
 	notification := formatNotificationMessage(msg)
@@ -1652,50 +1641,15 @@ func (r *Router) notifyRecipient(msg *Message) error {
 			continue
 		}
 
-		// Wait-idle-first delivery: try direct nudge if the agent is idle,
-		// fall back to cooperative queue if busy. WaitForIdle requires 2
-		// consecutive idle polls (prompt visible + no "esc to interrupt"
-		// in the status bar) to distinguish genuine idle from brief
-		// inter-tool-call gaps. See: https://github.com/steveyegge/gastown/issues/2032
-		waitErr := r.tmux.WaitForIdle(sessionID, timeout)
-		if waitErr == nil {
-			// Agent is idle — deliver directly for immediate wakeup.
-			if err := r.tmux.NudgeSession(sessionID, notification); err == nil {
-				r.enqueueReplyReminder(msg, sessionID)
-				notified++
-				continue
-			} else if errors.Is(err, tmux.ErrSessionNotFound) {
-				continue
-			} else if errors.Is(err, tmux.ErrNoServer) {
-				noTmuxServer = true
-				break
-			} else {
+		if r.townRoot != "" {
+			if err := r.enqueueMailNotification(msg, sessionID, notification, priority); err != nil {
 				errs = append(errs, fmt.Sprintf("%s: %v", sessionID, err))
 				continue
 			}
-		} else if errors.Is(waitErr, tmux.ErrSessionNotFound) {
-			continue
-		} else if errors.Is(waitErr, tmux.ErrNoServer) {
-			noTmuxServer = true
-			break
-		} else if r.townRoot != "" {
-			// Timeout (agent busy) — queue for cooperative delivery
-			// at the next turn boundary.
-			if err := nudge.Enqueue(r.townRoot, sessionID, nudge.QueuedNudge{
-				Sender:   msg.From,
-				Message:  notification,
-				Priority: priority,
-				Kind:     nudgeKindForMessage(msg),
-				ThreadID: msg.ThreadID,
-				Severity: prioritySeverityLabel(msg.Priority),
-			}); err != nil {
-				errs = append(errs, fmt.Sprintf("%s: %v", sessionID, err))
-				continue
-			}
-			r.enqueueReplyReminder(msg, sessionID)
 			notified++
 			continue
 		}
+
 		// No town root available — last resort direct delivery.
 		err = r.tmux.NudgeSession(sessionID, notification)
 		if err == nil {
@@ -1790,6 +1744,23 @@ func prioritySeverityLabel(priority Priority) string {
 	default:
 		return "medium"
 	}
+}
+
+// enqueueMailNotification writes the mail wake-up onto the turn-appending
+// nudge queue and schedules the deferred reply reminder.
+func (r *Router) enqueueMailNotification(msg *Message, sessionID, notification, priority string) error {
+	if err := nudge.Enqueue(r.townRoot, sessionID, nudge.QueuedNudge{
+		Sender:   msg.From,
+		Message:  notification,
+		Priority: priority,
+		Kind:     nudgeKindForMessage(msg),
+		ThreadID: msg.ThreadID,
+		Severity: prioritySeverityLabel(msg.Priority),
+	}); err != nil {
+		return err
+	}
+	r.enqueueReplyReminder(msg, sessionID)
+	return nil
 }
 
 // enqueueReplyReminder queues a deferred nudge reminding the recipient to reply

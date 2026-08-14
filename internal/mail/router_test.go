@@ -1694,8 +1694,8 @@ func createNotifyTestSession(t *testing.T, socket, sessionName, command string) 
 	t.Fatalf("session %q never appeared on socket %q", sessionName, socket)
 }
 
-// TestNotifyRecipient_IdleAgent verifies that an idle agent (prompt visible)
-// receives a direct nudge instead of a queued one.
+// TestNotifyRecipient_IdleAgent verifies that an idle agent still gets a
+// queued mail notification (GH#4607) rather than a direct tmux new-turn.
 func TestNotifyRecipient_IdleAgent(t *testing.T) {
 	socket := requireNotifyTestSocket(t)
 	sessionName := "gt-crew-idletest"
@@ -1709,10 +1709,9 @@ func TestNotifyRecipient_IdleAgent(t *testing.T) {
 
 	townRoot := t.TempDir()
 	r := &Router{
-		workDir:           t.TempDir(),
-		townRoot:          townRoot,
-		tmux:              tmux.NewTmuxWithSocket(socket),
-		IdleNotifyTimeout: 3 * time.Second,
+		workDir:  t.TempDir(),
+		townRoot: townRoot,
+		tmux:     tmux.NewTmuxWithSocket(socket),
 	}
 
 	msg := &Message{
@@ -1726,21 +1725,23 @@ func TestNotifyRecipient_IdleAgent(t *testing.T) {
 		t.Fatalf("notifyRecipient returned error: %v", err)
 	}
 
-	// The main notification was delivered directly (no immediate queue).
-	// But the reply-reminder is deferred — it should be in the queue with a
-	// future DeliverAfter, waiting for the configured delay to elapse.
+	// Two nudges should be queued even when the agent is idle:
+	//   1. The immediate "you have mail" notification (deliverable now).
+	//   2. The deferred reply-reminder (not ready until configured delay elapses).
 	pending, _ := nudge.Pending(townRoot, sessionName)
-	if pending != 1 {
-		t.Errorf("expected 1 queued nudge (deferred reply-reminder) for idle agent, got %d", pending)
+	if pending != 2 {
+		t.Errorf("expected 2 queued nudges (notification + reply-reminder) for idle agent, got %d", pending)
 	}
 
-	// Confirm the queued nudge is deferred, not a missed immediate notification.
 	nudges, err := nudge.Drain(townRoot, sessionName)
 	if err != nil {
 		t.Fatalf("Drain: %v", err)
 	}
-	if len(nudges) != 0 {
-		t.Errorf("expected 0 immediately-deliverable nudges (reminder should be deferred), got %d", len(nudges))
+	if len(nudges) != 1 {
+		t.Fatalf("expected 1 immediately-deliverable queued mail nudge, got %d", len(nudges))
+	}
+	if nudges[0].Kind != "mail" {
+		t.Errorf("queued nudge kind = %q, want mail", nudges[0].Kind)
 	}
 }
 
@@ -1758,10 +1759,9 @@ func TestNotifyRecipient_IdleAgentDoesNotSubmitNewTurn(t *testing.T) {
 	townRoot := t.TempDir()
 	tm := tmux.NewTmuxWithSocket(socket)
 	r := &Router{
-		workDir:           t.TempDir(),
-		townRoot:          townRoot,
-		tmux:              tm,
-		IdleNotifyTimeout: 3 * time.Second,
+		workDir:  t.TempDir(),
+		townRoot: townRoot,
+		tmux:     tm,
 	}
 
 	msg := &Message{
@@ -1808,10 +1808,9 @@ func TestNotifyRecipient_BusyAgent(t *testing.T) {
 
 	townRoot := t.TempDir()
 	r := &Router{
-		workDir:           t.TempDir(),
-		townRoot:          townRoot,
-		tmux:              tmux.NewTmuxWithSocket(socket),
-		IdleNotifyTimeout: 1 * time.Second, // short timeout for test speed
+		workDir:  t.TempDir(),
+		townRoot: townRoot,
+		tmux:     tmux.NewTmuxWithSocket(socket),
 	}
 
 	msg := &Message{
@@ -1861,10 +1860,9 @@ func TestNotifyRecipient_CanonicalAliasFansOutToBusyCandidates(t *testing.T) {
 
 	townRoot := t.TempDir()
 	r := &Router{
-		workDir:           t.TempDir(),
-		townRoot:          townRoot,
-		tmux:              tmux.NewTmuxWithSocket(socket),
-		IdleNotifyTimeout: 10 * time.Millisecond,
+		workDir:  t.TempDir(),
+		townRoot: townRoot,
+		tmux:     tmux.NewTmuxWithSocket(socket),
 	}
 
 	msg := &Message{
@@ -1979,10 +1977,9 @@ func TestNotifyRecipient_BusyAgentEscalationUsesUrgentQueuedNudge(t *testing.T) 
 
 	townRoot := t.TempDir()
 	r := &Router{
-		workDir:           t.TempDir(),
-		townRoot:          townRoot,
-		tmux:              tmux.NewTmuxWithSocket(socket),
-		IdleNotifyTimeout: 1 * time.Second,
+		workDir:  t.TempDir(),
+		townRoot: townRoot,
+		tmux:     tmux.NewTmuxWithSocket(socket),
 	}
 
 	msg := &Message{
