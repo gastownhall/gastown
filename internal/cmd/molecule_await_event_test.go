@@ -659,22 +659,8 @@ func updateLines(log string) []string {
 }
 
 func TestEffortLevelContextYield(t *testing.T) {
-	// context-yield must produce EffortLevel "full" so context-check is
-	// not abbreviated.
-	result := &AwaitEventResult{
-		Reason:     "context-yield",
-		IdleCycles: 5, // high idle count that would normally produce "abbreviated"
-	}
-
-	// Replicate the effort-level logic from runMoleculeAwaitEvent.
-	if result.Reason == "event" || result.Reason == "context-yield" || result.IdleCycles == 0 {
-		result.EffortLevel = "full"
-	} else {
-		result.EffortLevel = "abbreviated"
-	}
-
-	if result.EffortLevel != "full" {
-		t.Errorf("context-yield should produce EffortLevel 'full', got %q", result.EffortLevel)
+	if got := effortLevelForAwaitResult("context-yield", 5); got != "full" {
+		t.Errorf("context-yield effort level = %q, want full", got)
 	}
 }
 

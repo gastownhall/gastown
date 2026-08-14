@@ -1,9 +1,6 @@
 package cmd
 
-import (
-	"strings"
-	"testing"
-)
+import "testing"
 
 // TestSlingTrimsTrailingSlash verifies that trailing slashes in target arguments
 // are trimmed to handle tab-completion artifacts like "slingshot/" -> "slingshot".
@@ -27,10 +24,9 @@ func TestSlingTrimsTrailingSlash(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			// Simulate what runSling does: trim trailing slashes
-			got := strings.TrimRight(tt.input, "/")
+			got := normalizeSlingTarget(tt.input)
 			if got != tt.expected {
-				t.Errorf("TrimRight(%q, '/') = %q, want %q", tt.input, got, tt.expected)
+				t.Errorf("normalizeSlingTarget(%q) = %q, want %q", tt.input, got, tt.expected)
 			}
 		})
 	}

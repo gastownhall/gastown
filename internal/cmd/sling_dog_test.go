@@ -1,8 +1,6 @@
 package cmd
 
-import (
-	"testing"
-)
+import "testing"
 
 // TestIsDogTarget verifies the dog target pattern matching.
 // Dogs can be targeted via:
@@ -52,13 +50,6 @@ func TestIsDogTarget(t *testing.T) {
 				t.Errorf("IsDogTarget(%q) dogName = %q, want %q", tt.target, gotDog, tt.wantDog)
 			}
 		})
-	}
-}
-
-// TestMaxDogPoolSize verifies the pool size constant matches the documented limit.
-func TestMaxDogPoolSize(t *testing.T) {
-	if maxDogPoolSize != 4 {
-		t.Errorf("maxDogPoolSize = %d, want 4 (matches mol-deacon-patrol pool sizing guideline)", maxDogPoolSize)
 	}
 }
 

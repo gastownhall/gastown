@@ -308,7 +308,7 @@ func runSling(cmd *cobra.Command, args []string) (retErr error) {
 	// This makes sling more forgiving without breaking existing functionality.
 	// Note: Internal agent IDs like "mayor/" are outputs, not user inputs.
 	for i := range args {
-		args[i] = strings.TrimRight(args[i], "/")
+		args[i] = normalizeSlingTarget(args[i])
 	}
 
 	// --crew flag: expand target from "<rig>" to "<rig>/crew/<name>"
@@ -1197,6 +1197,10 @@ func runSling(cmd *cobra.Command, args []string) (retErr error) {
 	}
 
 	return nil
+}
+
+func normalizeSlingTarget(target string) string {
+	return strings.TrimRight(target, "/")
 }
 
 // checkCrossRigGuard validates that a bead's prefix matches the target rig.

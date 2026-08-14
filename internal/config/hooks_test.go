@@ -195,18 +195,6 @@ func TestRegistrySessionPrimeIncludesAllRoles(t *testing.T) {
 	}
 }
 
-// TestPreCompactPrimeDoesNotNeedHookFlag documents that PreCompact hooks
-// don't need --hook (session already started, ID already persisted).
-func TestPreCompactPrimeDoesNotNeedHookFlag(t *testing.T) {
-	// This test documents the intentional difference:
-	// - SessionStart: needs --hook to capture session ID from stdin
-	// - PreCompact: session already running, ID already persisted
-	//
-	// If this test fails, it means someone added --hook to PreCompact
-	// which is harmless but unnecessary.
-	t.Log("PreCompact hooks don't need --hook (session ID already persisted at SessionStart)")
-}
-
 // --- Cross-agent settings validation ---
 //
 // These tests ensure all agent settings templates (not just Claude) maintain

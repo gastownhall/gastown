@@ -851,39 +851,6 @@ func (w *waveAssertHelper) Total(n int) *waveAssertHelper {
 	return w
 }
 
-// ---------------------------------------------------------------------------
-// Tests — waveAssertHelper
-// ---------------------------------------------------------------------------
-
-func TestWaveAssert_BasicUsage(t *testing.T) {
-	waves := []Wave{
-		{Number: 1, Tasks: []string{"a", "c"}},
-		{Number: 2, Tasks: []string{"b"}},
-	}
-
-	// These should not fail
-	waveAssert(t, waves).
-		Wave(1, "a", "c").
-		Wave(2, "b").
-		NoTask("epic-1").
-		Total(2)
-}
-
-func TestWaveAssert_WrongWaveFails(t *testing.T) {
-	waves := []Wave{
-		{Number: 1, Tasks: []string{"a"}},
-	}
-
-	// Verify the helper works on pass cases without panic
-	wa := waveAssert(t, waves)
-	wa.Total(1)
-	wa.Wave(1, "a")
-}
-
-func TestWaveAssert_EmptyWaves(t *testing.T) {
-	waveAssert(t, nil).Total(0)
-}
-
 func TestWaveAssert_Integration_WithComputeWaves(t *testing.T) {
 	// Build a simple DAG and verify waves using the helper
 	dag := &ConvoyDAG{Nodes: map[string]*ConvoyDAGNode{

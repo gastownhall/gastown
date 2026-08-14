@@ -1386,7 +1386,7 @@ func runDone(cmd *cobra.Command, args []string) (retErr error) {
 		// Validate checkpoint branch matches current branch (ge-sbo: stale checkpoint
 		// on polecat reassignment causes new work to skip push for old branch).
 		if checkpoints[CheckpointPushed] != "" {
-			if checkpoints[CheckpointPushed] == branch {
+			if pushCheckpointMatchesBranch(checkpoints, branch) {
 				fmt.Printf("%s Branch already pushed (resumed from checkpoint)\n", style.Bold.Render("✓"))
 				goto afterPush
 			}
@@ -2124,7 +2124,7 @@ func setDoneIntentLabel(bd *beads.Beads, agentBeadID, exitType string) {
 	if agentBeadID == "" {
 		return
 	}
-	label := fmt.Sprintf("done-intent:%s:%d", exitType, time.Now().Unix())
+	label := doneIntentLabel(exitType, time.Now())
 	if err := bd.Update(agentBeadID, beads.UpdateOptions{
 		AddLabels: []string{label},
 	}); err != nil {
@@ -2145,12 +2145,7 @@ func clearDoneIntentLabel(bd *beads.Beads, agentBeadID string) {
 		return // Agent bead gone, nothing to clear
 	}
 
-	var toRemove []string
-	for _, label := range issue.Labels {
-		if strings.HasPrefix(label, "done-intent:") {
-			toRemove = append(toRemove, label)
-		}
-	}
+	toRemove := labelsWithPrefix(issue.Labels, "done-intent:")
 	if len(toRemove) == 0 {
 		return // No done-intent label to clear
 	}
@@ -2160,6 +2155,10 @@ func clearDoneIntentLabel(bd *beads.Beads, agentBeadID string) {
 	}); err != nil {
 		fmt.Fprintf(os.Stderr, "Warning: couldn't clear done-intent label on %s: %v\n", agentBeadID, err)
 	}
+}
+
+func doneIntentLabel(exitType string, now time.Time) string {
+	return fmt.Sprintf("done-intent:%s:%d", exitType, now.Unix())
 }
 
 // DoneCheckpoint represents a checkpoint stage in the gt done flow (gt-aufru).
@@ -2180,7 +2179,7 @@ func writeDoneCheckpoint(bd *beads.Beads, agentBeadID string, cp DoneCheckpoint,
 	if agentBeadID == "" {
 		return
 	}
-	label := fmt.Sprintf("done-cp:%s:%s:%d", cp, value, time.Now().Unix())
+	label := doneCheckpointLabel(cp, value, time.Now())
 	if err := bd.Update(agentBeadID, beads.UpdateOptions{
 		AddLabels: []string{label},
 	}); err != nil {
@@ -2199,18 +2198,7 @@ func readDoneCheckpoints(bd *beads.Beads, agentBeadID string) map[DoneCheckpoint
 	if err != nil {
 		return checkpoints
 	}
-	for _, label := range issue.Labels {
-		if strings.HasPrefix(label, "done-cp:") {
-			// Format: done-cp:<stage>:<value>:<ts>
-			parts := strings.SplitN(label, ":", 4)
-			if len(parts) >= 3 {
-				stage := DoneCheckpoint(parts[1])
-				value := parts[2]
-				checkpoints[stage] = value
-			}
-		}
-	}
-	return checkpoints
+	return parseDoneCheckpointLabels(issue.Labels)
 }
 
 // clearDoneCheckpoints removes all done-cp:* labels from the agent bead.
@@ -2223,12 +2211,7 @@ func clearDoneCheckpoints(bd *beads.Beads, agentBeadID string) {
 	if err != nil {
 		return
 	}
-	var toRemove []string
-	for _, label := range issue.Labels {
-		if strings.HasPrefix(label, "done-cp:") {
-			toRemove = append(toRemove, label)
-		}
-	}
+	toRemove := labelsWithPrefix(issue.Labels, "done-cp:")
 	if len(toRemove) == 0 {
 		return
 	}
@@ -2237,6 +2220,35 @@ func clearDoneCheckpoints(bd *beads.Beads, agentBeadID string) {
 	}); err != nil {
 		fmt.Fprintf(os.Stderr, "Warning: couldn't clear done checkpoints on %s: %v\n", agentBeadID, err)
 	}
+}
+
+func doneCheckpointLabel(cp DoneCheckpoint, value string, now time.Time) string {
+	return fmt.Sprintf("done-cp:%s:%s:%d", cp, value, now.Unix())
+}
+
+func pushCheckpointMatchesBranch(checkpoints map[DoneCheckpoint]string, branch string) bool {
+	return checkpoints[CheckpointPushed] != "" && checkpoints[CheckpointPushed] == branch
+}
+
+func parseDoneCheckpointLabels(labels []string) map[DoneCheckpoint]string {
+	checkpoints := make(map[DoneCheckpoint]string)
+	for _, label := range labelsWithPrefix(labels, "done-cp:") {
+		parts := strings.SplitN(label, ":", 4)
+		if len(parts) >= 3 {
+			checkpoints[DoneCheckpoint(parts[1])] = parts[2]
+		}
+	}
+	return checkpoints
+}
+
+func labelsWithPrefix(labels []string, prefix string) []string {
+	var matches []string
+	for _, label := range labels {
+		if strings.HasPrefix(label, prefix) {
+			matches = append(matches, label)
+		}
+	}
+	return matches
 }
 
 // updateAgentStateOnDone closes the hooked work bead and reports cleanup status.
@@ -2280,7 +2292,7 @@ func shouldCloseHookedWorkOnDone(exitType, hookedBeadID, beadsPath string, bd *b
 
 func closeHookedWorkOnDone(hookBd *beads.Beads, hookedBeadID, townRoot, rig string) error {
 	hookedBead, err := hookBd.Show(hookedBeadID)
-	if err != nil || beads.IssueStatus(hookedBead.Status).IsTerminal() {
+	if err != nil || !isClosableHookedBead(hookedBead.Status) {
 		return nil
 	}
 
@@ -2452,6 +2464,10 @@ func updateAgentStateOnDone(cwd, townRoot, exitType, issueID string) error {
 	clearDoneIntentLabel(agentBd, agentBeadID)
 	clearDoneCheckpoints(agentBd, agentBeadID)
 	return nil
+}
+
+func isClosableHookedBead(status string) bool {
+	return !beads.IssueStatus(status).IsTerminal()
 }
 
 // ensureAgentBeadExists recreates a missing agent bead so done-intent labels,

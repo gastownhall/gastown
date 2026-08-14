@@ -280,11 +280,7 @@ func runMoleculeAwaitEvent(cmd *cobra.Command, args []string) error {
 
 	// Set effort level based on idle cycles.
 	// context-yield forces full effort: context-check must not be abbreviated.
-	if result.Reason == "event" || result.Reason == "context-yield" || result.IdleCycles == 0 {
-		result.EffortLevel = "full"
-	} else {
-		result.EffortLevel = "abbreviated"
-	}
+	result.EffortLevel = effortLevelForAwaitResult(result.Reason, result.IdleCycles)
 
 	// Output
 	if moleculeJSON {
@@ -329,6 +325,13 @@ func runMoleculeAwaitEvent(cmd *cobra.Command, args []string) error {
 	}
 
 	return nil
+}
+
+func effortLevelForAwaitResult(reason string, idleCycles int) string {
+	if reason == "event" || reason == "context-yield" || idleCycles == 0 {
+		return "full"
+	}
+	return "abbreviated"
 }
 
 // calculateEventTimeout mirrors calculateEffectiveTimeout for await-event.
