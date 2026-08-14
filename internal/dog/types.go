@@ -39,6 +39,7 @@ type Dog struct {
 	LastActive    time.Time         // Last activity timestamp
 	Work          string            // Current work assignment (bead ID or molecule)
 	WorkKind      WorkKind          // Whether Work is a source bead or formula name
+	WorkSourceID  string            // Exact source bead ID for bead/formula work
 	WorkStartedAt time.Time         // When current work was assigned
 	CreatedAt     time.Time         // When dog was added to kennel
 }
@@ -50,6 +51,7 @@ type DogState struct {
 	LastActive    time.Time         `json:"last_active"`
 	Work          string            `json:"work,omitempty"`            // Current work assignment
 	WorkKind      WorkKind          `json:"work_kind,omitempty"`       // bead or formula
+	WorkSourceID  string            `json:"work_source_id,omitempty"`  // Exact source bead ID
 	WorkStartedAt time.Time         `json:"work_started_at,omitempty"` // When work was assigned
 	Worktrees     map[string]string `json:"worktrees,omitempty"`       // Rig -> path (for verification)
 	CreatedAt     time.Time         `json:"created_at"`

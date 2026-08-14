@@ -401,7 +401,9 @@ func executeSling(params SlingParams) (*SlingResult, error) {
 	_ = events.LogFeed(events.TypeSling, actor, events.SlingPayload(beadToHook, targetAgent))
 
 	// 9. Update agent hook_bead state
-	updateAgentHookBead(targetAgent, beadToHook, hookWorkDir, beadsDir)
+	if err := updateAgentHookBead(targetAgent, beadToHook, hookWorkDir, beadsDir); err != nil {
+		fmt.Printf("%s Could not update agent hook: %v\n", style.Dim.Render("Warning:"), err)
+	}
 
 	// 10. Store fields in bead (dispatcher, args, attached_molecule, no_merge, mode)
 	// Use beadToHook for the update target (may differ from beadID when formula-on-bead)

@@ -204,58 +204,77 @@ func (d *Daemon) reapIdleDogs(mgr *dog.Manager, sm *dog.SessionManager, daemonCf
 
 		idleDuration := now.Sub(dg.LastActive)
 
-		// Phase 1: kill stale tmux sessions for idle dogs.
-		if idleDuration >= idleSessionTimeout {
-			running, err := sm.IsRunning(dg.Name)
-			if err != nil {
-				d.logger.Printf("Handler: error checking session for idle dog %s: %v", dg.Name, err)
-				continue
-			}
-			if running {
-				d.logger.Printf("Handler: reaping idle dog %s session (idle %v)", dg.Name, idleDuration.Truncate(time.Minute))
-				matched, err := mgr.WithSnapshotIfMatches(dg.Name, dg.Work, dg.WorkStartedAt, dg.LastActive, func() error {
-					return tmux.NewTmux().KillSessionWithProcesses(sm.SessionName(dg.Name))
-				})
-				if err != nil {
-					d.logger.Printf("Handler: failed to stop session for idle dog %s: %v", dg.Name, err)
-				} else if !matched {
-					d.logger.Printf("Handler: skipped reaping idle dog %s session: assignment changed", dg.Name)
-					continue
-				}
-			}
+		if d.reapIdleDogSession(mgr, sm, dg, idleDuration, idleSessionTimeout) {
+			continue
 		}
-
-		// Phase 2: remove long-idle dogs when pool is oversized.
-		if poolSize > poolMax && idleDuration >= idleRemoveTimeout {
-			d.logger.Printf("Handler: removing long-idle dog %s from kennel (idle %v, pool %d/%d)",
-				dg.Name, idleDuration.Truncate(time.Minute), poolSize, poolMax)
-
-			removed, err := mgr.RemoveIfSnapshotMatchesAfter(dg.Name, dg.Work, dg.WorkStartedAt, dg.LastActive, func() error {
-				running, err := sm.IsRunning(dg.Name)
-				if err != nil {
-					return err
-				}
-				if running {
-					return tmux.NewTmux().KillSessionWithProcesses(sm.SessionName(dg.Name))
-				}
-				return nil
-			})
-			if err != nil {
-				d.logger.Printf("Handler: failed to remove idle dog %s: %v", dg.Name, err)
-				continue
-			}
-			if !removed {
-				d.logger.Printf("Handler: skipped removing idle dog %s: assignment changed", dg.Name)
-				continue
-			}
+		if d.removeOversizedIdleDog(mgr, sm, dg, idleDuration, idleRemoveTimeout, poolSize, poolMax) {
 			poolSize--
 		}
 	}
 }
 
+func (d *Daemon) reapIdleDogSession(mgr *dog.Manager, sm *dog.SessionManager, dg *dog.Dog, idleDuration, idleSessionTimeout time.Duration) bool {
+	if idleDuration < idleSessionTimeout {
+		return false
+	}
+	running, err := sm.IsRunning(dg.Name)
+	if err != nil {
+		d.logger.Printf("Handler: error checking session for idle dog %s: %v", dg.Name, err)
+		return true
+	}
+	if !running {
+		return false
+	}
+	d.logger.Printf("Handler: reaping idle dog %s session (idle %v)", dg.Name, idleDuration.Truncate(time.Minute))
+	matched, err := mgr.WithSnapshotIfMatches(dg.Name, dg.Work, dg.WorkStartedAt, dg.LastActive, func() error {
+		return tmux.NewTmux().KillSessionWithProcesses(sm.SessionName(dg.Name))
+	})
+	if err != nil {
+		d.logger.Printf("Handler: failed to stop session for idle dog %s: %v", dg.Name, err)
+		return false
+	}
+	if !matched {
+		d.logger.Printf("Handler: skipped reaping idle dog %s session: assignment changed", dg.Name)
+		return true
+	}
+	return false
+}
+
+func (d *Daemon) removeOversizedIdleDog(mgr *dog.Manager, sm *dog.SessionManager, dg *dog.Dog, idleDuration, idleRemoveTimeout time.Duration, poolSize, poolMax int) bool {
+	if poolSize <= poolMax || idleDuration < idleRemoveTimeout {
+		return false
+	}
+	d.logger.Printf("Handler: removing long-idle dog %s from kennel (idle %v, pool %d/%d)",
+		dg.Name, idleDuration.Truncate(time.Minute), poolSize, poolMax)
+
+	removed, err := mgr.RemoveIfSnapshotMatchesAfter(dg.Name, dg.Work, dg.WorkStartedAt, dg.LastActive, func() error {
+		running, err := sm.IsRunning(dg.Name)
+		if err != nil {
+			return err
+		}
+		if running {
+			return tmux.NewTmux().KillSessionWithProcesses(sm.SessionName(dg.Name))
+		}
+		return nil
+	})
+	if err != nil {
+		d.logger.Printf("Handler: failed to remove idle dog %s: %v", dg.Name, err)
+		return false
+	}
+	if !removed {
+		d.logger.Printf("Handler: skipped removing idle dog %s: assignment changed", dg.Name)
+		return false
+	}
+	return true
+}
+
 // dispatchPlugins scans for plugins, evaluates cooldown gates, and dispatches
 // eligible plugins to idle dogs.
 func (d *Daemon) dispatchPlugins(mgr *dog.Manager, sm *dog.SessionManager, rigsConfig *config.RigsConfig) {
+	if err := dog.RequireDispatchAllowed(d.config.TownRoot); err != nil {
+		d.logger.Printf("Handler: guardian blocked plugin dog dispatch: %v", err)
+		return
+	}
 	// Get rig names for scanner
 	var rigNames []string
 	if rigsConfig != nil {

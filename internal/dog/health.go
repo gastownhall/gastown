@@ -66,49 +66,28 @@ func (hc *HealthChecker) Check(d *Dog, maxInactivity time.Duration, autoClear bo
 			// Zombie: state says working but session is gone.
 			result.NeedsAttention = true
 			result.Recommendation = "zombie: session dead but state=working"
-			if autoClear && CanClearStateOnly(d.Work, d.WorkKind) {
-				if cleared, err := hc.mgr.ClearWorkIfMatches(d.Name, d.Work, d.WorkStartedAt); err == nil && cleared {
-					result.AutoCleared = true
-					result.Recommendation = "zombie auto-cleared (session dead)"
-				}
-			} else if autoClear {
-				result.Recommendation = "zombie: source-backed work requires explicit recovery"
-			}
+			hc.maybeClearStateOnly(d, &result, autoClear, false, session,
+				"zombie: source-backed work requires explicit recovery",
+				"zombie auto-cleared (session dead)")
 
 		case tmux.AgentDead:
 			// Zombie: session exists but agent process died.
 			result.NeedsAttention = true
 			result.Recommendation = "zombie: agent dead in session"
-			if autoClear {
-				_ = hc.checker.KillSession(session)
-				if CanClearStateOnly(d.Work, d.WorkKind) {
-					if cleared, err := hc.mgr.ClearWorkIfMatches(d.Name, d.Work, d.WorkStartedAt); err == nil && cleared {
-						result.AutoCleared = true
-						result.Recommendation = "zombie auto-cleared (agent dead, session killed)"
-					}
-				} else {
-					result.Recommendation = "zombie: session killed; source-backed work requires explicit recovery"
-				}
-			}
+			hc.maybeClearStateOnly(d, &result, autoClear, true, session,
+				"zombie: session killed; source-backed work requires explicit recovery",
+				"zombie auto-cleared (agent dead, session killed)")
 
 		case tmux.AgentHung:
 			// Hung: process alive but no tmux activity for maxInactivity.
 			result.NeedsAttention = true
-			if autoClear {
-				_ = hc.checker.KillSession(session)
-				if CanClearStateOnly(d.Work, d.WorkKind) {
-					if cleared, err := hc.mgr.ClearWorkIfMatches(d.Name, d.Work, d.WorkStartedAt); err == nil && cleared {
-						result.AutoCleared = true
-						result.Recommendation = "hung dog auto-cleared (idle prompt, session killed)"
-					} else if err != nil {
-						result.Recommendation = "hung: auto-clear failed: " + err.Error()
-					}
-				} else {
-					result.Recommendation = "hung: session killed; source-backed work requires explicit recovery"
-				}
-			} else {
+			if !autoClear {
 				result.Recommendation = "hung: agent alive but no tmux activity"
+				break
 			}
+			hc.maybeClearStateOnly(d, &result, true, true, session,
+				"hung: session killed; source-backed work requires explicit recovery",
+				"hung dog auto-cleared (idle prompt, session killed)")
 
 		default: // SessionHealthy — status.String() already set above
 		}
@@ -132,6 +111,28 @@ func (hc *HealthChecker) Check(d *Dog, maxInactivity time.Duration, autoClear bo
 	}
 
 	return result
+}
+
+func (hc *HealthChecker) maybeClearStateOnly(d *Dog, result *DogHealthResult, autoClear, killSession bool, session, blockedRec, clearedRec string) {
+	if !autoClear {
+		return
+	}
+	if killSession {
+		_ = hc.checker.KillSession(session)
+	}
+	if !CanClearStateOnly(d.Work, d.WorkKind) {
+		result.Recommendation = blockedRec
+		return
+	}
+	cleared, err := hc.mgr.ClearWorkIfMatches(d.Name, d.Work, d.WorkStartedAt)
+	if err != nil {
+		result.Recommendation = "auto-clear failed: " + err.Error()
+		return
+	}
+	if cleared {
+		result.AutoCleared = true
+		result.Recommendation = clearedRec
+	}
 }
 
 // CheckAll performs health checks on all dogs.

@@ -109,15 +109,14 @@ func formulaSlingPrompt(formulaName string) string {
 	return fmt.Sprintf("Formula %s slung. Run `"+cli.Name()+" hook` to see your hook, then execute the steps.", formulaName)
 }
 
-func nudgeFormulaDog(delayedDogInfo *DogDispatchInfo, prompt string) {
+func nudgeFormulaDog(delayedDogInfo *DogDispatchInfo, prompt string) error {
 	dogSession := fmt.Sprintf("hq-dog-%s", delayedDogInfo.DogName)
 	t := tmux.NewTmux()
 	if err := t.NudgeSession(dogSession, prompt); err != nil {
-		fmt.Printf("%s Could not nudge dog %s: %v (will discover work via gt prime)\n",
-			style.Dim.Render("○"), delayedDogInfo.DogName, err)
-	} else {
-		fmt.Printf("%s Nudged dog %s\n", style.Bold.Render("▶"), delayedDogInfo.DogName)
+		return fmt.Errorf("nudging dog %s: %w", delayedDogInfo.DogName, err)
 	}
+	fmt.Printf("%s Nudged dog %s\n", style.Bold.Render("▶"), delayedDogInfo.DogName)
+	return nil
 }
 
 // findHookedFormulaSingleton returns the existing hooked bead for an assignee
@@ -433,16 +432,15 @@ func runSlingFormula(ctx context.Context, args []string) (err error) {
 		fmt.Printf("%s Formula %s already hooked to %s via %s, no-op\n",
 			style.Dim.Render("○"), formulaName, targetAgent, existing.ID)
 		if delayedDogInfo != nil {
-			if err := delayedDogInfo.verifyFormulaAssignment(existing.ID); err != nil {
-				return fmt.Errorf("verifying existing dog formula before session start: %w", err)
+			if _, err := delayedDogInfo.completeFormulaStartup(existing.ID); err != nil {
+				return fmt.Errorf("completing existing dog formula dispatch: %w", err)
 			}
-			if _, err := delayedDogInfo.StartDelayedSession(); err != nil {
-				return fmt.Errorf("starting delayed dog session for existing formula: %w", err)
+			if os.Getenv("GT_TEST_NO_NUDGE") == "" {
+				if err := nudgeFormulaDog(delayedDogInfo, formulaSlingPrompt(formulaName)); err != nil {
+					return err
+				}
 			}
 			delayedDogComplete = true
-			if os.Getenv("GT_TEST_NO_NUDGE") == "" {
-				nudgeFormulaDog(delayedDogInfo, formulaSlingPrompt(formulaName))
-			}
 		}
 		return nil
 	}
@@ -506,6 +504,12 @@ func runSlingFormula(ctx context.Context, args []string) (err error) {
 
 	fmt.Printf("%s Wisp created: %s\n", style.Bold.Render("✓"), wispRootID)
 
+	if delayedDogInfo != nil {
+		if err := delayedDogInfo.persistWorkSource(wispRootID); err != nil {
+			return fmt.Errorf("recording dog formula source: %w", err)
+		}
+	}
+
 	// Step 3: Hook the wisp bead with retry and verification.
 	// See: https://github.com/steveyegge/gastown/issues/148.
 	hookDir := beads.ResolveHookDir(townRoot, wispRootID, "")
@@ -522,7 +526,12 @@ func runSlingFormula(ctx context.Context, args []string) (err error) {
 
 	// Update agent bead's hook_bead field (ZFC: agents track their current work)
 	// Note: formula slinging uses town root as workDir (no polecat-specific path)
-	updateAgentHookBead(targetAgent, wispRootID, "", townBeadsDir)
+	if err := updateAgentHookBead(targetAgent, wispRootID, "", townBeadsDir); err != nil {
+		if delayedDogInfo != nil {
+			return fmt.Errorf("updating dog agent hook: %w", err)
+		}
+		fmt.Printf("%s Could not update agent hook: %v\n", style.Dim.Render("Warning:"), err)
+	}
 
 	// Store all attachment fields in a single read-modify-write cycle.
 	// NOTE: For standalone formula sling, the wisp IS the work - do NOT store
@@ -553,14 +562,10 @@ func runSlingFormula(ctx context.Context, args []string) (err error) {
 	// Start delayed dog session now that hook is set
 	// This ensures dog sees the hook when gt prime runs on session start
 	if delayedDogInfo != nil {
-		if err := delayedDogInfo.verifyFormulaAssignment(wispRootID); err != nil {
-			return fmt.Errorf("verifying dog formula before session start: %w", err)
-		}
-		pane, err := delayedDogInfo.StartDelayedSession()
+		pane, err := delayedDogInfo.completeFormulaStartup(wispRootID)
 		if err != nil {
-			return fmt.Errorf("starting delayed dog session: %w", err)
+			return fmt.Errorf("completing dog formula dispatch: %w", err)
 		}
-		delayedDogComplete = true
 		targetPane = pane
 	}
 
@@ -586,6 +591,9 @@ func runSlingFormula(ctx context.Context, args []string) (err error) {
 
 	// Skip nudge during tests to prevent agent self-interruption
 	if os.Getenv("GT_TEST_NO_NUDGE") != "" {
+		if delayedDogInfo != nil {
+			delayedDogComplete = true
+		}
 		return nil
 	}
 
@@ -596,7 +604,10 @@ func runSlingFormula(ctx context.Context, args []string) (err error) {
 	// IDs are not globally unique). Use NudgeSession which qualifies the target
 	// with the session name. (gt-etc)
 	if delayedDogInfo != nil {
-		nudgeFormulaDog(delayedDogInfo, prompt)
+		if err := nudgeFormulaDog(delayedDogInfo, prompt); err != nil {
+			return err
+		}
+		delayedDogComplete = true
 		return nil
 	}
 

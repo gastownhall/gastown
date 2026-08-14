@@ -115,18 +115,18 @@ func TestRunSlingFormulaExistingHookedDogStartsDelayedSession(t *testing.T) {
 		t.Fatal("could not isolate existing hooked formula block")
 	}
 	existingBlock = existingBlock[:stepIdx]
-	startIdx := strings.Index(existingBlock, "delayedDogInfo.StartDelayedSession()")
+	startIdx := strings.Index(existingBlock, "delayedDogInfo.completeFormulaStartup(existing.ID)")
 	completeIdx := strings.Index(existingBlock, "delayedDogComplete = true")
 	nudgeIdx := strings.Index(existingBlock, "nudgeFormulaDog(delayedDogInfo, formulaSlingPrompt(formulaName))")
 	returnIdx := strings.LastIndex(existingBlock, "return nil")
 	if startIdx == -1 {
 		t.Fatal("existing hooked formula path must start the delayed dog session")
 	}
-	if completeIdx == -1 || completeIdx < startIdx {
-		t.Fatal("existing hooked formula path must mark delayed dog startup complete")
+	if nudgeIdx == -1 || nudgeIdx < startIdx {
+		t.Fatal("existing hooked formula path must nudge the dog after session start")
 	}
-	if nudgeIdx == -1 || nudgeIdx < completeIdx {
-		t.Fatal("existing hooked formula path must nudge the dog before returning")
+	if completeIdx == -1 || completeIdx < nudgeIdx {
+		t.Fatal("existing hooked formula path must mark delayed dog startup complete after notify")
 	}
 	if returnIdx != -1 && returnIdx < nudgeIdx {
 		t.Fatal("existing hooked formula path returns before starting/nudging dog")

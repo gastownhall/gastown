@@ -8,6 +8,7 @@ import (
 
 	agentconfig "github.com/steveyegge/gastown/internal/config"
 	"github.com/steveyegge/gastown/internal/constants"
+	"github.com/steveyegge/gastown/internal/dog"
 	"github.com/steveyegge/gastown/internal/doltserver"
 	"github.com/steveyegge/gastown/internal/reaper"
 	"github.com/steveyegge/gastown/internal/util"
@@ -85,6 +86,11 @@ func (d *Daemon) reapWisps() {
 		return
 	}
 
+	if err := dog.RequireDispatchAllowed(d.config.TownRoot); err != nil {
+		d.logger.Printf("wisp_reaper: guardian blocked dog dispatch: %v", err)
+		return
+	}
+
 	config := d.patrolConfig.Patrols.WispReaper
 	maxAge := wispReaperMaxAge(d.patrolConfig)
 	deleteAge := wispDeleteAge(d.patrolConfig)
@@ -114,6 +120,11 @@ func (d *Daemon) reapWisps() {
 
 	// Try dispatching to a Dog for formula-driven execution.
 	if err := d.dispatchReaperDog(vars); err != nil {
+		if actErr := dog.RequireActivationAllowed(d.config.TownRoot); actErr != nil {
+			d.logger.Printf("wisp_reaper: Dog dispatch failed (%v); inline fallback blocked by guardian: %v", err, actErr)
+			mol.failStep("dispatch", actErr.Error())
+			return
+		}
 		d.logger.Printf("wisp_reaper: Dog dispatch failed (%v), running inline fallback", err)
 		d.reapWispsInline(config, maxAge, deleteAge, mol)
 		return

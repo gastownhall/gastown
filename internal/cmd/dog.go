@@ -86,7 +86,9 @@ var dogRemoveCmd = &cobra.Command{
 	Long: `Remove one or more dogs from the kennel.
 
 Removes all worktrees and the dog directory.
-Use --force to remove even if dog is in working state.
+Source-backed bead or formula work cannot be removed while assigned.
+Recover or complete that work first; --force only overrides plugin work
+and live-session checks.
 
 Examples:
   gt dog remove alpha
@@ -145,8 +147,10 @@ var dogDoneCmd = &cobra.Command{
 	Long: `Mark a dog as done with its current work and return to idle state.
 
 Dogs should call this when they complete their work assignment.
-This clears the work field and sets state to idle, making the dog
-available for new work.
+Plugin work is cleared from dog state only. Source-backed bead or formula
+work also closes the authoritative hooked source before the dog becomes idle.
+The tmux session is killed only if the dog is still idle after a short delay,
+so a newer assignment is not terminated.
 
 Without a name argument, auto-detects the current dog from the working
 directory (must be run from within a dog's worktree).
@@ -165,6 +169,9 @@ var dogClearCmd = &cobra.Command{
 
 Use this when a dog is stuck in "working" state but its session has died.
 The Deacon uses this during patrol to clear dogs that have timed out.
+
+Plugin work can be cleared from dog state. Source-backed bead or formula
+work cannot; recover or re-sling the source first.
 
 By default, refuses to clear a dog if its tmux session still exists.
 Use --force to clear even if the session is alive.
@@ -714,35 +721,8 @@ func runDogDone(cmd *cobra.Command, args []string) error {
 		if !cleared {
 			return fmt.Errorf("dog %s assignment changed during completion; state preserved", name)
 		}
-	} else {
-		townRoot, err := workspace.FindFromCwd()
-		if err != nil {
-			return fmt.Errorf("finding town for dog completion: %w", err)
-		}
-		source, sourceDir, err := resolveDogAuthoritativeSource(townRoot, d)
-		if err != nil {
-			return err
-		}
-		unlock, err := tryAcquireSlingBeadLock(townRoot, source.ID)
-		if err != nil {
-			return fmt.Errorf("serializing dog completion: %w", err)
-		}
-		defer unlock()
-
-		var completeErr error
-		cleared, err := mgr.ClearWorkIfMatchesAfter(name, d.Work, d.WorkStartedAt, func() bool {
-			completeErr = closeDogAuthoritativeSource(sourceDir, d, source.ID)
-			return completeErr == nil
-		})
-		if completeErr != nil {
-			return completeErr
-		}
-		if err != nil {
-			return fmt.Errorf("clearing completed dog work: %w", err)
-		}
-		if !cleared {
-			return fmt.Errorf("dog %s assignment changed during completion; state preserved", name)
-		}
+	} else if err := completeSourceBackedDogWork(mgr, name, d); err != nil {
+		return err
 	}
 
 	fmt.Printf("✓ Dog %s returned to kennel (idle)\n", name)
@@ -755,26 +735,57 @@ func runDogDone(cmd *cobra.Command, args []string) error {
 	//
 	// We disable remain-on-exit first — otherwise kill-session leaves a
 	// dead pane that the deacon's health-check reports as an orphan.
+	scheduleCompletedDogSessionKill(mgr, name)
+	return nil
+}
+
+func completeSourceBackedDogWork(mgr *dog.Manager, name string, d *dog.Dog) error {
+	townRoot, err := workspace.FindFromCwd()
+	if err != nil {
+		return fmt.Errorf("finding town for dog completion: %w", err)
+	}
+	source, sourceDir, err := resolveDogAuthoritativeSource(townRoot, d)
+	if err != nil {
+		return err
+	}
+	unlock, err := tryAcquireSlingBeadLock(townRoot, source.ID)
+	if err != nil {
+		return fmt.Errorf("serializing dog completion: %w", err)
+	}
+	defer unlock()
+
+	var completeErr error
+	cleared, err := mgr.ClearWorkIfMatchesAfter(name, d.Work, d.WorkStartedAt, func() bool {
+		completeErr = closeDogAuthoritativeSource(sourceDir, d, source.ID)
+		return completeErr == nil
+	})
+	if completeErr != nil {
+		return completeErr
+	}
+	if err != nil {
+		return fmt.Errorf("clearing completed dog work: %w", err)
+	}
+	if !cleared {
+		return fmt.Errorf("dog %s assignment changed during completion; state preserved", name)
+	}
+	return nil
+}
+
+func scheduleCompletedDogSessionKill(mgr *dog.Manager, name string) {
 	sessionID := fmt.Sprintf("hq-dog-%s", name)
 	t := tmux.NewTmux()
 	_ = t.SetRemainOnExit(sessionID, false)
-	fmt.Printf("  Session %s will terminate in 3s\n", sessionID)
+	fmt.Printf("  Session %s will terminate in 3s if still idle\n", sessionID)
 
-	// Kill the tmux session after a short delay using a goroutine.
-	// Previous approach used bash -c "sleep 3 && tmux kill-session" which
-	// fails silently on Windows. The goroutine is cross-platform and uses
-	// the tmux package which handles the socket name automatically.
 	go func() {
 		time.Sleep(3 * time.Second)
-		if err := t.KillSession(sessionID); err != nil {
+		if err := dog.KillCompletedDogSession(mgr, name, sessionID, t.KillSession); err != nil {
 			fmt.Fprintf(os.Stderr, "warning: failed to kill session %s: %v\n", sessionID, err)
 		}
 	}()
 
 	// Wait for the goroutine to finish (the process will exit after kill).
 	time.Sleep(4 * time.Second)
-
-	return nil
 }
 
 func splitPathComponents(path string) []string {

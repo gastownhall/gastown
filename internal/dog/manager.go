@@ -311,6 +311,7 @@ func (m *Manager) Get(name string) (*Dog, error) {
 		LastActive:    state.LastActive,
 		Work:          state.Work,
 		WorkKind:      state.WorkKind,
+		WorkSourceID:  state.WorkSourceID,
 		WorkStartedAt: state.WorkStartedAt,
 		CreatedAt:     state.CreatedAt,
 	}, nil
@@ -373,11 +374,20 @@ func (m *Manager) AssignWorkWithKind(name, work string, kind WorkKind) error {
 	state.State = StateWorking
 	state.Work = work
 	state.WorkKind = kind
+	applyWorkSourceID(state, work, kind)
 	state.WorkStartedAt = time.Now()
 	state.LastActive = time.Now()
 	state.UpdatedAt = time.Now()
 
 	return m.saveState(name, state)
+}
+
+func applyWorkSourceID(state *DogState, work string, kind WorkKind) {
+	if kind == WorkKindBead {
+		state.WorkSourceID = work
+		return
+	}
+	state.WorkSourceID = ""
 }
 
 // AssignWorkIfIdle assigns work only if the dog is still idle, returning the
@@ -412,6 +422,7 @@ func (m *Manager) AssignWorkIfIdleWithKind(name, work string, kind WorkKind) (*D
 	state.State = StateWorking
 	state.Work = work
 	state.WorkKind = kind
+	applyWorkSourceID(state, work, kind)
 	state.WorkStartedAt = time.Now()
 	state.LastActive = time.Now()
 	state.UpdatedAt = time.Now()
@@ -420,6 +431,39 @@ func (m *Manager) AssignWorkIfIdleWithKind(name, work string, kind WorkKind) (*D
 		return nil, err
 	}
 	return state, nil
+}
+
+// SetWorkSourceIfMatches records the exact source bead ID for formula work
+// after the source is hooked. Bead dispatches already store the source ID in
+// Work at assignment time.
+func (m *Manager) SetWorkSourceIfMatches(name, expectedWork string, expectedStartedAt time.Time, sourceID string) (bool, error) {
+	if err := validateDogName(name); err != nil {
+		return false, err
+	}
+	if !m.exists(name) {
+		return false, ErrDogNotFound
+	}
+
+	fl, err := m.lockDog(name)
+	if err != nil {
+		return false, err
+	}
+	defer func() { _ = fl.Unlock() }()
+
+	state, err := m.loadState(name)
+	if err != nil {
+		return false, fmt.Errorf("loading state: %w", err)
+	}
+	if state.Work != expectedWork || !state.WorkStartedAt.Equal(expectedStartedAt) {
+		return false, nil
+	}
+
+	state.WorkSourceID = sourceID
+	state.UpdatedAt = time.Now()
+	if err := m.saveState(name, state); err != nil {
+		return false, err
+	}
+	return true, nil
 }
 
 // ClearWork clears a dog's work assignment and sets it to idle.
@@ -443,14 +487,19 @@ func (m *Manager) ClearWork(name string) error {
 		return fmt.Errorf("loading state: %w", err)
 	}
 
+	clearWorkFields(state)
+
+	return m.saveState(name, state)
+}
+
+func clearWorkFields(state *DogState) {
 	state.State = StateIdle
 	state.Work = ""
 	state.WorkKind = ""
+	state.WorkSourceID = ""
 	state.WorkStartedAt = time.Time{}
 	state.LastActive = time.Now()
 	state.UpdatedAt = time.Now()
-
-	return m.saveState(name, state)
 }
 
 // ClearWorkIfMatches clears a dog's work assignment only if it still matches
@@ -478,12 +527,7 @@ func (m *Manager) ClearWorkIfMatches(name, expectedWork string, expectedStartedA
 		return false, nil
 	}
 
-	state.State = StateIdle
-	state.Work = ""
-	state.WorkKind = ""
-	state.WorkStartedAt = time.Time{}
-	state.LastActive = time.Now()
-	state.UpdatedAt = time.Now()
+	clearWorkFields(state)
 
 	return true, m.saveState(name, state)
 }
@@ -517,12 +561,7 @@ func (m *Manager) ClearWorkIfMatchesAfter(name, expectedWork string, expectedSta
 		return false, nil
 	}
 
-	state.State = StateIdle
-	state.Work = ""
-	state.WorkKind = ""
-	state.WorkStartedAt = time.Time{}
-	state.LastActive = time.Now()
-	state.UpdatedAt = time.Now()
+	clearWorkFields(state)
 
 	return true, m.saveState(name, state)
 }

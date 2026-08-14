@@ -101,6 +101,9 @@ func TestDogState_OmitEmptyFields(t *testing.T) {
 	if _, exists := raw["work"]; exists {
 		t.Error("Field 'work' should be omitted when empty")
 	}
+	if _, exists := raw["work_source_id"]; exists {
+		t.Error("Field 'work_source_id' should be omitted when empty")
+	}
 	if _, exists := raw["worktrees"]; exists {
 		t.Error("Field 'worktrees' should be omitted when empty")
 	}
@@ -144,5 +147,26 @@ func TestDogState_WithWorktrees(t *testing.T) {
 
 	if len(worktreesMap) != 2 {
 		t.Errorf("worktrees should have 2 entries, got %d", len(worktreesMap))
+	}
+}
+
+func TestCanClearStateOnly(t *testing.T) {
+	tests := []struct {
+		name string
+		work string
+		kind WorkKind
+		want bool
+	}{
+		{name: "plugin kind", work: "plugin:rebuild", kind: WorkKindPlugin, want: true},
+		{name: "legacy plugin prefix", work: "plugin:rebuild", kind: "", want: true},
+		{name: "bead kind", work: "gt-abc", kind: WorkKindBead, want: false},
+		{name: "formula kind", work: "mol-dog-reaper", kind: WorkKindFormula, want: false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := CanClearStateOnly(tt.work, tt.kind); got != tt.want {
+				t.Fatalf("CanClearStateOnly(%q, %q) = %v, want %v", tt.work, tt.kind, got, tt.want)
+			}
+		})
 	}
 }

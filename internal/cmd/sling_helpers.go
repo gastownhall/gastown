@@ -663,13 +663,24 @@ func descriptionWithBeadFieldUpdates(issue *beads.Issue, updates beadFieldUpdate
 	if fields == nil {
 		fields = &beads.AttachmentFields{}
 	}
-	if updates.ClearAttachment {
-		fields.AttachedMolecule = ""
-		fields.AttachedFormula = ""
-		fields.AttachedAt = ""
-		fields.AttachedVars = nil
-		fields.FormulaVars = ""
+	applyAttachmentClears(fields, updates)
+	applyAttachmentMetadata(fields, updates)
+	applyConvoyFields(fields, updates)
+	return beads.SetAttachmentFields(issue, fields)
+}
+
+func applyAttachmentClears(fields *beads.AttachmentFields, updates beadFieldUpdates) {
+	if !updates.ClearAttachment {
+		return
 	}
+	fields.AttachedMolecule = ""
+	fields.AttachedFormula = ""
+	fields.AttachedAt = ""
+	fields.AttachedVars = nil
+	fields.FormulaVars = ""
+}
+
+func applyAttachmentMetadata(fields *beads.AttachmentFields, updates beadFieldUpdates) {
 	if updates.Dispatcher != "" {
 		fields.DispatchedBy = updates.Dispatcher
 	}
@@ -699,6 +710,12 @@ func descriptionWithBeadFieldUpdates(issue *beads.Issue, updates beadFieldUpdate
 	if updates.Mode != nil {
 		fields.Mode = *updates.Mode
 	}
+	if updates.FormulaVars != "" {
+		fields.FormulaVars = updates.FormulaVars
+	}
+}
+
+func applyConvoyFields(fields *beads.AttachmentFields, updates beadFieldUpdates) {
 	if updates.ConvoyID != "" {
 		fields.ConvoyID = updates.ConvoyID
 	}
@@ -708,10 +725,6 @@ func descriptionWithBeadFieldUpdates(issue *beads.Issue, updates beadFieldUpdate
 	if updates.ConvoyOwned {
 		fields.ConvoyOwned = true
 	}
-	if updates.FormulaVars != "" {
-		fields.FormulaVars = updates.FormulaVars
-	}
-	return beads.SetAttachmentFields(issue, fields)
 }
 
 // injectStartPrompt sends a prompt to the target pane to start working.
@@ -904,14 +917,34 @@ func agentIDToBeadID(agentID, townRoot string) string {
 	}
 }
 
-// updateAgentHookBead is a no-op. Previously set the hook_bead slot on agent beads
-// when work was slung, but this was redundant: the work bead itself tracks
-// status=hooked and assignee=<agent>. Agent bead slot writes caused warnings
-// in cross-database scenarios and added unnecessary Dolt load.
-// Removed per hq-l6mm5: replace bd slot hooks with direct bead tracking.
-func updateAgentHookBead(agentID, beadID, workDir, townBeadsDir string) {
-	// No-op: work bead status=hooked + assignee is the authoritative source.
-	// Agent bead hook_bead slot is no longer maintained.
+// updateAgentHookBead writes hook_bead onto the agent bead description so the
+// dog agent hook agrees with the hooked source. Fail-closed callers treat a
+// write error as a dispatch failure.
+func updateAgentHookBead(agentID, beadID, workDir, townBeadsDir string) error {
+	townRoot, err := workspace.FindFromCwd()
+	if err != nil && townBeadsDir != "" {
+		townRoot = filepath.Dir(townBeadsDir)
+		err = nil
+	}
+	if err != nil {
+		return fmt.Errorf("finding town root for agent hook: %w", err)
+	}
+	agentBeadID := agentIDToBeadID(agentID, townRoot)
+	if agentBeadID == "" {
+		return fmt.Errorf("unknown agent bead for %s", agentID)
+	}
+	beadsDir := townBeadsDir
+	if beadsDir == "" && workDir != "" {
+		beadsDir = workDir
+	}
+	if beadsDir == "" {
+		beadsDir = filepath.Join(townRoot, ".beads")
+	}
+	hook := beadID
+	if err := beads.New(beadsDir).UpdateAgentDescriptionFields(agentBeadID, beads.AgentFieldUpdates{HookBead: &hook}); err != nil {
+		return fmt.Errorf("updating agent hook %s: %w", agentBeadID, err)
+	}
+	return nil
 }
 
 // wakeRigAgents wakes the witness for a rig after polecat dispatch.

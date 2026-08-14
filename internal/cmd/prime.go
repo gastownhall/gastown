@@ -841,9 +841,9 @@ func findAgentWorkOnce(ctx RoleContext, agentID string) (*beads.Issue, error) {
 		return assigned, nil
 	}
 
-	// Agent bead's hook_bead field. NOTE: updateAgentHookBead was made a no-op
-	// (see sling_helpers.go), so HookBead is typically empty. Kept for backward
-	// compatibility with agent beads that still have hook_bead set.
+	// Agent bead's hook_bead field. Dog dispatch writes this field so the
+	// agent hook agrees with the hooked source. Other roles still consult it
+	// for backward compatibility.
 	agentBeadID := buildAgentBeadID(agentID, ctx.Role, ctx.TownRoot)
 	var staleHookErr error
 	if agentBeadID != "" {
@@ -914,57 +914,13 @@ func findAssignedDogWork(ctx RoleContext, agentID string) (*beads.Issue, error) 
 	if currentErr != nil && !errors.Is(currentErr, dog.ErrDogNotFound) {
 		return nil, fmt.Errorf("reading dog state: %w", currentErr)
 	}
-	if current != nil && current.State == dog.StateWorking && current.Work != "" &&
-		(current.WorkKind == dog.WorkKindPlugin || (current.WorkKind == "" && strings.HasPrefix(current.Work, "plugin:"))) {
-		// Plugin work is delivered by mail and intentionally has no source hook.
-		return nil, nil
-	}
-	if current != nil && current.State == dog.StateWorking && current.Work != "" && current.WorkKind != dog.WorkKindFormula {
-		// Bare-bead dispatch records the exact source ID in dog state. Resolve it
-		// directly through routes instead of scanning every database.
-		workDir := beads.ResolveHookDir(ctx.TownRoot, current.Work, ctx.WorkDir)
-		if issue, err := beads.New(workDir).Show(current.Work); err == nil && issue != nil &&
-			(issue.Status == beads.StatusHooked || issue.Status == string(beads.StatusInProgress)) &&
-			issue.Assignee == agentID {
-			return issue, nil
-		}
+	if issue, done, err := resolveDogWorkFromState(ctx, agentID, current); done {
+		return issue, err
 	}
 
-	roots := []string{filepath.Join(ctx.TownRoot, ".beads")}
-	rigNames := make([]string, 0, len(rigsConfig.Rigs))
-	for rigName := range rigsConfig.Rigs {
-		rigNames = append(rigNames, rigName)
-	}
-	sort.Strings(rigNames)
-	for _, rigName := range rigNames {
-		rigDir := beads.GetRigDirForName(ctx.TownRoot, rigName)
-		if rigDir == "" {
-			// A partially repaired town may not have routes yet, but the standard
-			// rig directory is still a safe, bounded fallback.
-			rigDir = filepath.Join(ctx.TownRoot, rigName, "mayor", "rig")
-		}
-		roots = append(roots, rigDir)
-	}
-
-	var assigned []*beads.Issue
-	var queryErr error
-	for _, root := range roots {
-		work, err := listAssignedActiveWorkAcrossStatuses(beads.New(root), agentID)
-		if err != nil {
-			queryErr = errors.Join(queryErr, fmt.Errorf("querying %s: %w", root, err))
-			continue
-		}
-		if current != nil && current.State == dog.StateWorking && current.Work != "" {
-			for _, issue := range work {
-				fields := beads.ParseAttachmentFields(issue)
-				formulaMatches := fields != nil && fields.AttachedFormula == current.Work &&
-					(current.WorkStartedAt.IsZero() || dogWorksOnHook(current, current.Work, issue))
-				if issue.ID == current.Work || formulaMatches {
-					return issue, nil
-				}
-			}
-		}
-		assigned = append(assigned, work...)
+	matched, assigned, queryErr := collectAssignedDogWork(ctx, agentID, current, rigsConfig)
+	if matched != nil {
+		return matched, nil
 	}
 	assigned = mergeBeadLists(assigned, nil)
 
@@ -981,6 +937,82 @@ func findAssignedDogWork(ctx RoleContext, agentID string) (*beads.Issue, error) 
 		return nil, fmt.Errorf("querying dog work: %w", queryErr)
 	}
 	return nil, fmt.Errorf("dog %s state names %q but no authoritative assigned hook resolves to it", ctx.Polecat, current.Work)
+}
+
+func collectAssignedDogWork(ctx RoleContext, agentID string, current *dog.Dog, rigsConfig *config.RigsConfig) (*beads.Issue, []*beads.Issue, error) {
+	var assigned []*beads.Issue
+	var queryErr error
+	for _, root := range dogWorkLookupRoots(ctx.TownRoot, rigsConfig) {
+		work, err := listAssignedActiveWorkAcrossStatuses(beads.New(root), agentID)
+		if err != nil {
+			queryErr = errors.Join(queryErr, fmt.Errorf("querying %s: %w", root, err))
+			continue
+		}
+		if issue := matchWorkingDogIssue(current, work); issue != nil {
+			return issue, nil, nil
+		}
+		assigned = append(assigned, work...)
+	}
+	return nil, assigned, queryErr
+}
+
+func dogWorkLookupRoots(townRoot string, rigsConfig *config.RigsConfig) []string {
+	roots := []string{filepath.Join(townRoot, ".beads")}
+	rigNames := make([]string, 0, len(rigsConfig.Rigs))
+	for rigName := range rigsConfig.Rigs {
+		rigNames = append(rigNames, rigName)
+	}
+	sort.Strings(rigNames)
+	for _, rigName := range rigNames {
+		rigDir := beads.GetRigDirForName(townRoot, rigName)
+		if rigDir == "" {
+			// A partially repaired town may not have routes yet, but the standard
+			// rig directory is still a safe, bounded fallback.
+			rigDir = filepath.Join(townRoot, rigName, "mayor", "rig")
+		}
+		roots = append(roots, rigDir)
+	}
+	return roots
+}
+
+func matchWorkingDogIssue(current *dog.Dog, work []*beads.Issue) *beads.Issue {
+	if current == nil || current.State != dog.StateWorking || current.Work == "" {
+		return nil
+	}
+	for _, issue := range work {
+		fields := beads.ParseAttachmentFields(issue)
+		formulaMatches := fields != nil && fields.AttachedFormula == current.Work &&
+			(current.WorkStartedAt.IsZero() || dogWorksOnHook(current, current.Work, issue))
+		if issue.ID == current.Work || formulaMatches {
+			return issue
+		}
+	}
+	return nil
+}
+
+func resolveDogWorkFromState(ctx RoleContext, agentID string, current *dog.Dog) (*beads.Issue, bool, error) {
+	if current == nil || current.State != dog.StateWorking || current.Work == "" {
+		return nil, false, nil
+	}
+	if current.WorkKind == dog.WorkKindPlugin || (current.WorkKind == "" && strings.HasPrefix(current.Work, "plugin:")) {
+		return nil, true, nil
+	}
+	sourceID := current.WorkSourceID
+	if sourceID == "" && current.WorkKind != dog.WorkKindFormula {
+		sourceID = current.Work
+	}
+	if sourceID == "" {
+		return nil, false, nil
+	}
+	workDir := beads.ResolveHookDir(ctx.TownRoot, sourceID, ctx.WorkDir)
+	issue, err := beads.New(workDir).Show(sourceID)
+	if err != nil || issue == nil {
+		return nil, false, nil
+	}
+	if (issue.Status == beads.StatusHooked || issue.Status == string(beads.StatusInProgress)) && issue.Assignee == agentID {
+		return issue, true, nil
+	}
+	return nil, false, nil
 }
 
 // rigBeadsRoot returns the route-owned directory to use for beads queries.

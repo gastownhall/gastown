@@ -394,8 +394,8 @@ func runMoleculeStatus(cmd *cobra.Command, args []string) error {
 	// Called in a retry loop for polecats to handle Dolt propagation lag.
 	lookupHookedWork := func() *beads.Issue {
 		// Resolve agent bead ID for display purposes only.
-		// Agent bead's hook_bead field is no longer maintained (updateAgentHookBead is
-		// a no-op since hq-l6mm5), so reading it returns stale data. See GH#2371.
+		// Dog dispatch still writes hook_bead onto the agent description so
+		// assignment verification can require hook/source agreement.
 		agentBeadID := buildAgentBeadID(target, roleCtx.Role, townRoot)
 		if agentBeadID != "" {
 			agentBeadPath := beads.ResolveHookDir(townRoot, agentBeadID, workDir)
