@@ -1200,12 +1200,9 @@ func runRigAdopt(_ *cobra.Command, args []string) error {
 
 	// Check for tracked beads and initialize database if missing (Issue #72)
 	rigPath := filepath.Join(townRoot, name)
-	beadsDirCandidates := rigBeadsDirCandidates(rigPath)
-	foundBeadsCandidate := hasRigBeadsCandidate(rigPath)
-	for _, beadsDir := range beadsDirCandidates {
-		if _, err := os.Stat(beadsDir); err != nil {
-			continue
-		}
+	existingBeadsDirs := listExistingRigBeadsDirs(rigPath)
+	beadsDir, initFresh := adoptedRigBeadsPlan(existingBeadsDirs, result.BeadsPrefix)
+	if beadsDir != "" {
 		// Detect prefix from Dolt metadata: try "bd config get issue_prefix" first,
 		// then extract from metadata.json dolt_database name as fallback.
 		// metadata.json survives clone (dolt/ is gitignored since bd v0.50+).
@@ -1276,26 +1273,22 @@ func runRigAdopt(_ *cobra.Command, args []string) error {
 		}
 		if needsInit {
 			prefix := result.BeadsPrefix
-			if prefix == "" {
-				break
-			}
-			// Dolt server is required for beads init.
-			if running, _, sErr := doltserver.IsRunning(townRoot); sErr != nil || !running {
-				fmt.Printf("  %s Could not init bd database: Dolt server is not running\n", style.Warning.Render("!"))
-				break
-			}
-			if err := mgr.InitBeads(rigPath, prefix, name); err != nil {
-				fmt.Printf("  %s Could not init bd database: %v\n", style.Warning.Render("!"), err)
-			} else {
-				fmt.Printf("  %s Initialized beads database (Dolt)\n", style.Success.Render("✓"))
+			if prefix != "" {
+				// Dolt server is required for beads init.
+				if running, _, sErr := doltserver.IsRunning(townRoot); sErr != nil || !running {
+					fmt.Printf("  %s Could not init bd database: Dolt server is not running\n", style.Warning.Render("!"))
+				} else if err := mgr.InitBeads(rigPath, prefix, name); err != nil {
+					fmt.Printf("  %s Could not init bd database: %v\n", style.Warning.Render("!"), err)
+				} else {
+					fmt.Printf("  %s Initialized beads database (Dolt)\n", style.Success.Render("✓"))
+				}
 			}
 		}
-		break
 	}
 
 	// If no existing .beads/ candidate was found, initialize a fresh database
 	// to match the behavior of the normal (non-adopt) gt rig add path.
-	if shouldInitializeAdoptedRigBeads(foundBeadsCandidate, result.BeadsPrefix) {
+	if initFresh {
 		// Dolt server is required for beads init.
 		if running, _, sErr := doltserver.IsRunning(townRoot); sErr != nil || !running {
 			fmt.Printf("  %s Could not init beads database: Dolt server is not running\n", style.Warning.Render("!"))
@@ -1389,17 +1382,21 @@ func rigBeadsDirCandidates(rigPath string) []string {
 	}
 }
 
-func hasRigBeadsCandidate(rigPath string) bool {
+func listExistingRigBeadsDirs(rigPath string) []string {
+	var existing []string
 	for _, beadsDir := range rigBeadsDirCandidates(rigPath) {
 		if _, err := os.Stat(beadsDir); err == nil {
-			return true
+			existing = append(existing, beadsDir)
 		}
 	}
-	return false
+	return existing
 }
 
-func shouldInitializeAdoptedRigBeads(hasCandidate bool, beadsPrefix string) bool {
-	return !hasCandidate && beadsPrefix != ""
+func adoptedRigBeadsPlan(existing []string, beadsPrefix string) (dirToHandle string, initFresh bool) {
+	if len(existing) > 0 {
+		return existing[0], false
+	}
+	return "", beadsPrefix != ""
 }
 
 func runRigReset(cmd *cobra.Command, args []string) error {

@@ -1,29 +1,75 @@
 package cmd
 
 import (
+	"reflect"
 	"testing"
+
+	"github.com/steveyegge/gastown/internal/constants"
 )
 
-func TestRunPatrolNew_UnsupportedRole(t *testing.T) {
-	validRoles := []string{"deacon", "witness", "refinery"}
-	invalidRoles := []string{"mayor", "polecat", "crew", "unknown", ""}
+func TestPatrolConfigForRole(t *testing.T) {
 	roleInfo := RoleInfo{TownRoot: "/town", Rig: "testrig"}
 
-	for _, role := range validRoles {
-		if _, err := patrolConfigForRole(Role(role), roleInfo); err != nil {
-			t.Errorf("patrolConfigForRole(%q) returned error: %v", role, err)
-		}
+	tests := []struct {
+		role    Role
+		want    PatrolConfig
+		wantErr bool
+	}{
+		{
+			role: RoleDeacon,
+			want: PatrolConfig{
+				RoleName:      "deacon",
+				PatrolMolName: constants.MolDeaconPatrol,
+				BeadsDir:      "/town",
+				Assignee:      "deacon",
+			},
+		},
+		{
+			role: RoleWitness,
+			want: PatrolConfig{
+				RoleName:      "witness",
+				PatrolMolName: constants.MolWitnessPatrol,
+				BeadsDir:      "/town",
+				Assignee:      "testrig/witness",
+			},
+		},
+		{
+			role: RoleRefinery,
+			want: PatrolConfig{
+				RoleName:      "refinery",
+				PatrolMolName: constants.MolRefineryPatrol,
+				BeadsDir:      "/town",
+				Assignee:      "testrig/refinery",
+				ExtraVars:     []string{"rig=testrig", "target_branch=main"},
+			},
+		},
+		{role: RoleMayor, wantErr: true},
+		{role: RolePolecat, wantErr: true},
+		{role: RoleCrew, wantErr: true},
+		{role: RoleUnknown, wantErr: true},
+		{role: Role(""), wantErr: true},
 	}
 
-	for _, role := range invalidRoles {
-		if _, err := patrolConfigForRole(Role(role), roleInfo); err == nil {
-			t.Errorf("patrolConfigForRole(%q) returned nil error", role)
-		}
+	for _, tt := range tests {
+		t.Run(string(tt.role), func(t *testing.T) {
+			got, err := patrolConfigForRole(tt.role, roleInfo)
+			if tt.wantErr {
+				if err == nil {
+					t.Fatalf("patrolConfigForRole(%q) returned nil error", tt.role)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("patrolConfigForRole(%q) returned error: %v", tt.role, err)
+			}
+			if !reflect.DeepEqual(got, tt.want) {
+				t.Fatalf("patrolConfigForRole(%q) = %+v, want %+v", tt.role, got, tt.want)
+			}
+		})
 	}
 }
 
 func TestPatrolNewCmd_Registered(t *testing.T) {
-	// Verify the command is properly registered
 	found := false
 	for _, cmd := range patrolCmd.Commands() {
 		if cmd.Use == "new" {

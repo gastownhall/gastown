@@ -8,12 +8,13 @@ import (
 	"io"
 	"os"
 	"reflect"
-	"sort"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
+
+	_ "modernc.org/sqlite"
 )
 
 func TestValidateDBName(t *testing.T) {
@@ -74,6 +75,58 @@ func TestFormatJSON(t *testing.T) {
 	}
 	if result[0] != '{' {
 		t.Errorf("FormatJSON should return JSON object, got %q", result[:10])
+	}
+}
+
+func TestParentExcludeJoin(t *testing.T) {
+	joinClause, whereCondition := parentExcludeJoin("testdb")
+
+	if joinClause == "" {
+		t.Error("parentExcludeJoin joinClause should not be empty")
+	}
+	if !strings.Contains(joinClause, "wisp_dependencies") {
+		t.Error("parentExcludeJoin should query wisp_dependencies")
+	}
+	if !strings.Contains(joinClause, "wd.depends_on_wisp_id") {
+		t.Error("parentExcludeJoin should join wisp parents through depends_on_wisp_id")
+	}
+	if !strings.Contains(joinClause, "wd.depends_on_issue_id") {
+		t.Error("parentExcludeJoin should join issue parents through depends_on_issue_id")
+	}
+	if strings.Contains(joinClause, "wd.depends_on_id") {
+		t.Error("parentExcludeJoin should not use legacy depends_on_id")
+	}
+	if !strings.Contains(joinClause, "parent-child") {
+		t.Error("parentExcludeJoin should filter on parent-child type")
+	}
+	if !strings.Contains(joinClause, "'open', 'hooked', 'in_progress'") {
+		t.Error("parentExcludeJoin should check for open parent statuses")
+	}
+	if whereCondition == "" {
+		t.Error("parentExcludeJoin whereCondition should not be empty")
+	}
+	if !strings.Contains(whereCondition, "IS NULL") {
+		t.Error("parentExcludeJoin whereCondition should use IS NULL for anti-join")
+	}
+}
+
+func TestReapQueryUsesParentExcludeJoin(t *testing.T) {
+	dbName := "gt"
+	parentJoin, parentWhere := parentExcludeJoin(dbName)
+	whereClause := fmt.Sprintf(
+		"w.status IN ('open', 'hooked', 'in_progress') AND w.created_at < ? AND %s", parentWhere)
+	idQuery := fmt.Sprintf(
+		"SELECT w.id FROM wisps w %s WHERE %s LIMIT %d",
+		parentJoin, whereClause, DefaultBatchSize)
+
+	if strings.Contains(idQuery, "wisps w gt") {
+		t.Errorf("Reap idQuery contains injected database name: %s", idQuery)
+	}
+	if !strings.Contains(idQuery, "LEFT JOIN") {
+		t.Errorf("Reap idQuery should contain LEFT JOIN from parentExcludeJoin, got: %s", idQuery)
+	}
+	if !strings.Contains(idQuery, fmt.Sprintf("LIMIT %d", DefaultBatchSize)) {
+		t.Errorf("Reap idQuery should end with LIMIT %d, got: %s", DefaultBatchSize, idQuery)
 	}
 }
 
@@ -232,6 +285,17 @@ var fakeReaperDriverID uint64
 
 func openFakeReaperDB(t *testing.T, state *fakeReaperState) *sql.DB {
 	t.Helper()
+	dsn := fmt.Sprintf("file:reaper_%d?mode=memory&cache=shared", atomic.AddUint64(&fakeReaperDriverID, 1))
+	inner, err := sql.Open("sqlite", dsn)
+	if err != nil {
+		t.Fatalf("open sqlite: %v", err)
+	}
+	t.Cleanup(func() { _ = inner.Close() })
+	if err := seedReaperSQL(inner, state); err != nil {
+		t.Fatalf("seed sqlite: %v", err)
+	}
+	state.inner = inner
+
 	driverName := fmt.Sprintf("fake_reaper_%d", atomic.AddUint64(&fakeReaperDriverID, 1))
 	sql.Register(driverName, &fakeReaperDriver{state: state})
 	db, err := sql.Open(driverName, "")
@@ -239,6 +303,71 @@ func openFakeReaperDB(t *testing.T, state *fakeReaperState) *sql.DB {
 		t.Fatalf("open fake db: %v", err)
 	}
 	return db
+}
+
+func seedReaperSQL(db *sql.DB, state *fakeReaperState) error {
+	schema := []string{
+		`CREATE TABLE wisps (
+			id TEXT PRIMARY KEY,
+			status TEXT NOT NULL,
+			issue_type TEXT,
+			created_at DATETIME NOT NULL,
+			closed_at DATETIME,
+			wisp_type TEXT
+		)`,
+		`CREATE TABLE issues (
+			id TEXT PRIMARY KEY,
+			status TEXT,
+			closed_at DATETIME,
+			updated_at DATETIME,
+			priority INTEGER,
+			issue_type TEXT
+		)`,
+		`CREATE TABLE labels (
+			issue_id TEXT NOT NULL,
+			label TEXT NOT NULL
+		)`,
+		`CREATE TABLE dependencies (
+			issue_id TEXT NOT NULL,
+			depends_on_issue_id TEXT
+		)`,
+		`CREATE TABLE wisp_dependencies (
+			issue_id TEXT NOT NULL,
+			depends_on_wisp_id TEXT,
+			depends_on_issue_id TEXT,
+			depends_on_external TEXT,
+			type TEXT NOT NULL
+		)`,
+	}
+	for _, stmt := range schema {
+		if _, err := db.Exec(stmt); err != nil {
+			return err
+		}
+	}
+	for _, w := range state.wisps {
+		if _, err := db.Exec(
+			`INSERT INTO wisps (id, status, issue_type, created_at) VALUES (?, ?, ?, ?)`,
+			w.id, w.status, w.issueType, w.createdAt,
+		); err != nil {
+			return err
+		}
+	}
+	for _, dep := range state.deps {
+		var wispParent, issueParent, external any
+		if dep.dependsOnID != "" {
+			wispParent = dep.dependsOnID
+		}
+		if dep.dependsOnExternal != "" {
+			external = dep.dependsOnExternal
+		}
+		if _, err := db.Exec(
+			`INSERT INTO wisp_dependencies (issue_id, depends_on_wisp_id, depends_on_issue_id, depends_on_external, type) VALUES (?, ?, ?, ?, ?)`,
+			dep.issueID, wispParent, issueParent, external, dep.depType,
+		); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 type fakeWisp struct {
@@ -257,6 +386,7 @@ type fakeDep struct {
 
 type fakeReaperState struct {
 	mu       sync.Mutex
+	inner    *sql.DB
 	wisps    map[string]*fakeWisp
 	deps     []fakeDep
 	nextConn int
@@ -264,17 +394,26 @@ type fakeReaperState struct {
 }
 
 func (s *fakeReaperState) status(id string) string {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	return s.wisps[id].status
+	var status string
+	if err := s.inner.QueryRow(`SELECT status FROM wisps WHERE id = ?`, id).Scan(&status); err != nil {
+		return ""
+	}
+	return status
 }
 
 func (s *fakeReaperState) statuses() map[string]string {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	statuses := make(map[string]string, len(s.wisps))
-	for id, w := range s.wisps {
-		statuses[id] = w.status
+	rows, err := s.inner.Query(`SELECT id, status FROM wisps`)
+	if err != nil {
+		return nil
+	}
+	defer rows.Close()
+	statuses := map[string]string{}
+	for rows.Next() {
+		var id, status string
+		if err := rows.Scan(&id, &status); err != nil {
+			return nil
+		}
+		statuses[id] = status
 	}
 	return statuses
 }
@@ -306,84 +445,6 @@ func (s *fakeReaperState) record(connID int, op string) {
 	s.ops[connID] = append(s.ops[connID], normalizeSQL(op))
 }
 
-func (s *fakeReaperState) moleculeStepCandidatesLocked() []string {
-	var ids []string
-	for id := range s.wisps {
-		if s.isMoleculeStepCandidateLocked(id) {
-			ids = append(ids, id)
-		}
-	}
-	sort.Strings(ids)
-	return ids
-}
-
-func (s *fakeReaperState) isMoleculeStepCandidateLocked(id string) bool {
-	w := s.wisps[id]
-	if w == nil || !isOpenWispStatus(w.status) || w.issueType == "agent" {
-		return false
-	}
-	for _, dep := range s.deps {
-		if dep.issueID != id || dep.depType != "parent-child" {
-			continue
-		}
-		if dep.dependsOnExternal != "" {
-			return false
-		}
-		if s.hasOpenParentLocked(id) {
-			return false
-		}
-		parent := s.wisps[dep.dependsOnID]
-		if parent != nil && parent.issueType == "molecule" && parent.status == "closed" {
-			return true
-		}
-	}
-	return false
-}
-
-func (s *fakeReaperState) staleCandidatesLocked(cutoff time.Time, excludeMoleculeSteps bool) []string {
-	var ids []string
-	for id, w := range s.wisps {
-		if !isOpenWispStatus(w.status) || w.issueType == "agent" || !w.createdAt.Before(cutoff) {
-			continue
-		}
-		if s.hasOpenParentLocked(id) {
-			continue
-		}
-		if excludeMoleculeSteps && s.isMoleculeStepCandidateLocked(id) {
-			continue
-		}
-		ids = append(ids, id)
-	}
-	sort.Strings(ids)
-	return ids
-}
-
-func (s *fakeReaperState) hasOpenParentLocked(id string) bool {
-	for _, dep := range s.deps {
-		if dep.issueID != id || dep.depType != "parent-child" {
-			continue
-		}
-		if dep.dependsOnExternal != "" {
-			return true
-		}
-		parent := s.wisps[dep.dependsOnID]
-		if parent != nil && isOpenWispStatus(parent.status) {
-			return true
-		}
-	}
-	return false
-}
-
-func (s *fakeReaperState) openCountLocked() int {
-	count := 0
-	for _, w := range s.wisps {
-		if isOpenWispStatus(w.status) {
-			count++
-		}
-	}
-	return count
-}
-
 type fakeReaperDriver struct {
 	state *fakeReaperState
 }
@@ -412,68 +473,94 @@ func (c *fakeReaperConn) Begin() (driver.Tx, error) { return fakeReaperTx{}, nil
 
 func (c *fakeReaperConn) CheckNamedValue(*driver.NamedValue) error { return nil }
 
-func (c *fakeReaperConn) QueryContext(_ context.Context, query string, args []driver.NamedValue) (driver.Rows, error) {
+func (c *fakeReaperConn) QueryContext(ctx context.Context, query string, args []driver.NamedValue) (driver.Rows, error) {
 	normalized := normalizeSQL(query)
 	c.state.mu.Lock()
-	defer c.state.mu.Unlock()
 	c.state.record(c.id, "QUERY "+normalized)
+	c.state.mu.Unlock()
 
-	switch {
-	case strings.Contains(normalized, "SELECT COUNT(*) FROM wisps w") && strings.Contains(normalized, "created_at <"):
+	if strings.Contains(normalized, "created_at <") {
 		if err := validateStaleWispQuery(normalized); err != nil {
 			return nil, err
 		}
-		return fakeCountRows(len(c.state.staleCandidatesLocked(namedTime(args), strings.Contains(normalized, "closed_molecule_step.issue_id IS NULL")))), nil
-	case strings.Contains(normalized, "SELECT COUNT(*) FROM wisps w") && strings.Contains(normalized, "pm.issue_type = 'molecule'"):
-		if err := validateMoleculeStepQuery(normalized); err != nil {
-			return nil, err
-		}
-		return fakeCountRows(len(c.state.moleculeStepCandidatesLocked())), nil
-	case strings.Contains(normalized, "SELECT COUNT(*) FROM wisps WHERE status IN"):
-		return fakeCountRows(c.state.openCountLocked()), nil
-	case strings.Contains(normalized, "SELECT COUNT(*) FROM wisps w WHERE w.status = 'closed'"):
-		return fakeCountRows(0), nil
-	case strings.Contains(normalized, "SELECT COUNT(*) FROM issues"):
-		return fakeCountRows(0), nil
-	case strings.Contains(normalized, "SELECT COUNT(*) FROM wisp_dependencies wd"):
-		return fakeCountRows(0), nil
-	case strings.Contains(normalized, "SELECT w.id FROM wisps w") && strings.Contains(normalized, "created_at <"):
-		if err := validateStaleWispQuery(normalized); err != nil {
-			return nil, err
-		}
-		return fakeIDRows(c.state.staleCandidatesLocked(namedTime(args), strings.Contains(normalized, "closed_molecule_step.issue_id IS NULL"))), nil
-	case strings.Contains(normalized, "SELECT w.id FROM wisps w") && strings.Contains(normalized, "pm.issue_type = 'molecule'"):
-		if err := validateMoleculeStepQuery(normalized); err != nil {
-			return nil, err
-		}
-		return fakeIDRows(c.state.moleculeStepCandidatesLocked()), nil
-	default:
-		return nil, fmt.Errorf("unexpected query: %s", normalized)
 	}
+	if strings.Contains(normalized, "pm.issue_type = 'molecule'") {
+		if err := validateMoleculeStepQuery(normalized); err != nil {
+			return nil, err
+		}
+	}
+
+	rows, err := c.state.inner.QueryContext(ctx, rewriteReaperSQL(query), namedValues(args)...)
+	if err != nil {
+		return nil, err
+	}
+	return collectDriverRows(rows)
 }
 
-func (c *fakeReaperConn) ExecContext(_ context.Context, query string, args []driver.NamedValue) (driver.Result, error) {
+func (c *fakeReaperConn) ExecContext(ctx context.Context, query string, args []driver.NamedValue) (driver.Result, error) {
 	normalized := normalizeSQL(query)
 	c.state.mu.Lock()
-	defer c.state.mu.Unlock()
 	c.state.record(c.id, "EXEC "+normalized)
+	c.state.mu.Unlock()
 
-	switch {
-	case strings.HasPrefix(normalized, "UPDATE wisps SET status='closed'"):
-		affected := int64(0)
-		for _, arg := range args {
-			id, _ := arg.Value.(string)
-			if w := c.state.wisps[id]; w != nil && isOpenWispStatus(w.status) {
-				w.status = "closed"
-				affected++
-			}
-		}
-		return fakeReaperResult(affected), nil
-	case normalized == "SET @@autocommit = 0" || normalized == "SET @@autocommit = 1" || normalized == "ROLLBACK" || normalized == "COMMIT" || strings.HasPrefix(normalized, "CALL DOLT_COMMIT"):
+	if isSessionSQL(normalized) {
 		return fakeReaperResult(0), nil
-	default:
-		return nil, fmt.Errorf("unexpected exec: %s", normalized)
 	}
+
+	result, err := c.state.inner.ExecContext(ctx, rewriteReaperSQL(query), namedValues(args)...)
+	if err != nil {
+		return nil, err
+	}
+	affected, _ := result.RowsAffected()
+	return fakeReaperResult(affected), nil
+}
+
+func rewriteReaperSQL(query string) string {
+	return strings.ReplaceAll(query, "NOW()", "datetime('now')")
+}
+
+func isSessionSQL(query string) bool {
+	return query == "SET @@autocommit = 0" ||
+		query == "SET @@autocommit = 1" ||
+		query == "ROLLBACK" ||
+		query == "COMMIT" ||
+		strings.HasPrefix(query, "CALL DOLT_COMMIT")
+}
+
+func namedValues(args []driver.NamedValue) []any {
+	out := make([]any, len(args))
+	for i, arg := range args {
+		out[i] = arg.Value
+	}
+	return out
+}
+
+func collectDriverRows(rows *sql.Rows) (driver.Rows, error) {
+	defer rows.Close()
+	cols, err := rows.Columns()
+	if err != nil {
+		return nil, err
+	}
+	var collected [][]driver.Value
+	for rows.Next() {
+		raw := make([]any, len(cols))
+		ptrs := make([]any, len(cols))
+		for i := range raw {
+			ptrs[i] = &raw[i]
+		}
+		if err := rows.Scan(ptrs...); err != nil {
+			return nil, err
+		}
+		dest := make([]driver.Value, len(cols))
+		for i, v := range raw {
+			dest[i] = v
+		}
+		collected = append(collected, dest)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return &fakeReaperRows{cols: cols, rows: collected}, nil
 }
 
 type fakeReaperTx struct{}
@@ -492,18 +579,6 @@ type fakeReaperRows struct {
 	next int
 }
 
-func fakeCountRows(count int) *fakeReaperRows {
-	return &fakeReaperRows{cols: []string{"count"}, rows: [][]driver.Value{{int64(count)}}}
-}
-
-func fakeIDRows(ids []string) *fakeReaperRows {
-	rows := make([][]driver.Value, len(ids))
-	for i, id := range ids {
-		rows[i] = []driver.Value{id}
-	}
-	return &fakeReaperRows{cols: []string{"id"}, rows: rows}
-}
-
 func (r *fakeReaperRows) Columns() []string { return r.cols }
 func (r *fakeReaperRows) Close() error      { return nil }
 
@@ -514,20 +589,6 @@ func (r *fakeReaperRows) Next(dest []driver.Value) error {
 	copy(dest, r.rows[r.next])
 	r.next++
 	return nil
-}
-
-func namedTime(args []driver.NamedValue) time.Time {
-	if len(args) == 0 {
-		return time.Time{}
-	}
-	if value, ok := args[0].Value.(time.Time); ok {
-		return value
-	}
-	return time.Time{}
-}
-
-func isOpenWispStatus(status string) bool {
-	return status == "open" || status == "hooked" || status == "in_progress"
 }
 
 func normalizeSQL(query string) string {
