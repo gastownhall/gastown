@@ -162,7 +162,7 @@ func runBatchSling(beadIDs []string, rigName string, townBeadsDir string) error 
 			ReviewOnly:       slingReviewOnly,
 			Force:            slingForce,
 			HookRawBead:      slingHookRawBead,
-			NoBoot:           slingNoBoot,
+			NoBoot:           true, // coalesced after the loop
 			Mode:             slingMode,
 			SkipCook:         formulaCooked,
 			FormulaFailFatal: false, // Batch: warn + hook raw on formula failure
@@ -171,7 +171,7 @@ func runBatchSling(beadIDs []string, rigName string, townBeadsDir string) error 
 			BeadsDir:         townBeadsDir,
 		}
 
-		result, err := executeSling(params)
+		result, err := executeSlingIntent(params)
 		if err != nil {
 			errMsg := ""
 			if result != nil {

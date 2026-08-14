@@ -96,6 +96,11 @@ func buildAgentBeadID(identity string, role Role, townRoot string) string {
 			return beads.CrewBeadIDWithPrefix(getPrefix(parts[0]), parts[0], parts[2])
 		}
 		return ""
+	case RoleDog:
+		if len(parts) == 3 && parts[0] == "deacon" && parts[1] == "dogs" {
+			return beads.DogBeadIDTown(parts[2])
+		}
+		return ""
 	case RoleBoot:
 		// Boot is a deacon dog — uses town-level dog bead ID
 		return beads.DogBeadIDTown("boot")
@@ -389,8 +394,8 @@ func runMoleculeStatus(cmd *cobra.Command, args []string) error {
 	// Called in a retry loop for polecats to handle Dolt propagation lag.
 	lookupHookedWork := func() *beads.Issue {
 		// Resolve agent bead ID for display purposes only.
-		// Agent bead's hook_bead field is no longer maintained (updateAgentHookBead is
-		// a no-op since hq-l6mm5), so reading it returns stale data. See GH#2371.
+		// Dog dispatch still writes hook_bead onto the agent description so
+		// assignment verification can require hook/source agreement.
 		agentBeadID := buildAgentBeadID(target, roleCtx.Role, townRoot)
 		if agentBeadID != "" {
 			agentBeadPath := beads.ResolveHookDir(townRoot, agentBeadID, workDir)

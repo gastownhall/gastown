@@ -278,3 +278,20 @@ func TestFindSkipsNestedWorkspaceInCrew(t *testing.T) {
 		t.Errorf("Find = %q, want %q (should skip nested workspace in crew/)", found, root)
 	}
 }
+
+func TestGetTownNameReadsNameWithoutConfigPackage(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "mayor"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "mayor", "town.json"), []byte(`{"name":"demo-town"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	name, err := GetTownName(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if name != "demo-town" {
+		t.Fatalf("GetTownName = %q, want demo-town", name)
+	}
+}

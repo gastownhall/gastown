@@ -236,9 +236,11 @@ func TestRemoveACPPid_RemovesStalePid(t *testing.T) {
 		t.Fatalf("failed to create mayor dir: %v", err)
 	}
 
-	initialPid := unusedACPPid(t)
+	// Getpid()-10000 can be live (or collapse to PID 1). Probe for a PID
+	// that is actually unused — 999999 can still be allocated on Linux.
+	stalePid := unusedACPPid(t)
 	pidPath := ACPPidFilePath(tmpDir)
-	if err := os.WriteFile(pidPath, []byte(strconv.Itoa(initialPid)), 0644); err != nil {
+	if err := os.WriteFile(pidPath, []byte(strconv.Itoa(stalePid)), 0644); err != nil {
 		t.Fatalf("failed to write stale PID file: %v", err)
 	}
 

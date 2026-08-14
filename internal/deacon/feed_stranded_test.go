@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"testing"
 	"time"
+
+	"github.com/steveyegge/gastown/internal/dog"
 )
 
 func TestFeedStrandedStateFile(t *testing.T) {
@@ -217,5 +219,82 @@ func TestSaveFeedStrandedState_CreatesDirectory(t *testing.T) {
 	stateFile := FeedStrandedStateFile(tmpDir)
 	if _, err := os.Stat(stateFile); os.IsNotExist(err) {
 		t.Fatal("state file not created")
+	}
+}
+
+func TestAdmitConvoyFeed_RejectsBlockedHookedOrAssigned(t *testing.T) {
+	tests := []struct {
+		name     string
+		children []ConvoyChild
+		wantOK   bool
+	}{
+		{name: "all open unassigned", children: []ConvoyChild{{ID: "gt-a", Status: "open"}}, wantOK: true},
+		{name: "blocked sibling", children: []ConvoyChild{{ID: "gt-a", Status: "open"}, {ID: "gt-b", Blocked: true}}, wantOK: false},
+		{name: "hooked sibling", children: []ConvoyChild{{ID: "gt-a", Status: "open"}, {ID: "gt-b", Status: "hooked"}}, wantOK: false},
+		{name: "assigned sibling", children: []ConvoyChild{{ID: "gt-a", Status: "open"}, {ID: "gt-b", Status: "open", Assignee: "gastown/polecats/nux"}}, wantOK: false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ok, _ := AdmitConvoyFeed(tt.children)
+			if ok != tt.wantOK {
+				t.Fatalf("AdmitConvoyFeed() = %v, want %v", ok, tt.wantOK)
+			}
+		})
+	}
+}
+
+func TestFeedStranded_GuardianDenied_NoDispatch(t *testing.T) {
+	townRoot := t.TempDir()
+	path := dog.GuardianFile(townRoot)
+	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte(`{"dispatch_allowed":false,"activation_allowed":false,"reason":"red"}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	result := FeedStranded(townRoot, 3, time.Minute)
+	if result.Fed != 0 {
+		t.Fatalf("Fed = %d, want 0 when guardian denies dispatch", result.Fed)
+	}
+	if result.Closed != 0 {
+		t.Fatalf("Closed = %d, want 0 when guardian denies dispatch", result.Closed)
+	}
+	if len(result.Details) == 0 || result.Details[0].Action != "blocked" {
+		t.Fatalf("details = %+v, want blocked guardian result", result.Details)
+	}
+}
+
+func TestFeedStranded_RejectsConvoyWithAssignedChild(t *testing.T) {
+	prevFind := findStrandedConvoys
+	prevList := listConvoyChildren
+	prevDispatch := dispatchFeedDog
+	t.Cleanup(func() {
+		findStrandedConvoys = prevFind
+		listConvoyChildren = prevList
+		dispatchFeedDog = prevDispatch
+	})
+
+	dispatched := 0
+	findStrandedConvoys = func(string) ([]StrandedConvoy, error) {
+		return []StrandedConvoy{{ID: "hq-cv-1", ReadyCount: 1, TrackedCount: 2, ReadyIssues: []string{"gt-a"}}}, nil
+	}
+	listConvoyChildren = func(string, string) ([]ConvoyChild, error) {
+		return []ConvoyChild{
+			{ID: "gt-a", Status: "open"},
+			{ID: "gt-b", Status: "open", Assignee: "deacon/dogs/alpha"},
+		}, nil
+	}
+	dispatchFeedDog = func(string, string) error {
+		dispatched++
+		return nil
+	}
+
+	result := FeedStranded(t.TempDir(), 3, time.Minute)
+	if dispatched != 0 {
+		t.Fatalf("dispatched = %d, want 0 for assigned sibling", dispatched)
+	}
+	if len(result.Details) != 1 || result.Details[0].Action != "rejected" {
+		t.Fatalf("details = %+v, want rejected", result.Details)
 	}
 }

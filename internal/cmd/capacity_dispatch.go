@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -17,6 +18,7 @@ import (
 	"github.com/steveyegge/gastown/internal/doltserver"
 	"github.com/steveyegge/gastown/internal/events"
 	"github.com/steveyegge/gastown/internal/scheduler/capacity"
+	"github.com/steveyegge/gastown/internal/sling"
 	"github.com/steveyegge/gastown/internal/style"
 )
 
@@ -566,7 +568,10 @@ func groupBeadIDsByResolvedBeadsDir(townRoot string, ids []string) map[string][]
 		if id == "" {
 			continue
 		}
-		beadsDir := beads.ResolveBeadsDirForID(townBeadsDir, id)
+		beadsDir := beads.NewAuthority(townRoot).ForBead(id).BeadsDir()
+		if beadsDir == "" {
+			beadsDir = townBeadsDir
+		}
 		key := beadsDir + "\x00" + id
 		if seen[key] {
 			continue
@@ -679,52 +684,44 @@ func readySlingContextsFromAssessments(assessments []scheduledContextAssessment)
 	return result
 }
 
-// dispatchSingleBead dispatches one scheduled bead via executeSling.
-// Context fields are already parsed (from PendingBead.Context).
-// Returns the SlingResult (including PolecatName) on success.
+// dispatchSingleBead dispatches one scheduled bead through the deep Slinging
+// lifecycle. Durable context is reconstructed into Intent; the adapter does
+// not re-project lifecycle fields.
 func dispatchSingleBead(b capacity.PendingBead, townRoot, _ string) (*SlingResult, error) {
 	if b.Context == nil {
 		return nil, fmt.Errorf("missing sling context for %s", b.ID)
 	}
 
-	dp := capacity.ReconstructFromContext(b.Context)
+	intent := sling.FromContext(b.Context)
 	targetBeadsDir := filepath.Join(townRoot, ".beads")
-	if dp.RigName != "" {
-		resolved, ok := beads.ResolveRepoAliasBeadsDir(townRoot, dp.RigName)
+	if intent.RigName != "" {
+		resolved, ok := beads.ResolveRepoAliasBeadsDir(townRoot, intent.RigName)
 		if !ok {
-			return nil, fmt.Errorf("cannot resolve target rig %q beads database for %s", dp.RigName, b.WorkBeadID)
+			return nil, fmt.Errorf("cannot resolve target rig %q beads database for %s", intent.RigName, b.WorkBeadID)
 		}
 		targetBeadsDir = resolved
 	}
-	params := SlingParams{
-		BeadID:           dp.BeadID,
-		RigName:          dp.RigName,
-		FormulaName:      dp.FormulaName,
-		Args:             dp.Args,
-		Vars:             dp.Vars,
-		Merge:            dp.Merge,
-		BaseBranch:       dp.BaseBranch,
-		ResumeBranch:     dp.ResumeBranch,
-		NoMerge:          dp.NoMerge,
-		ReviewOnly:       dp.ReviewOnly,
-		Account:          dp.Account,
-		Agent:            dp.Agent,
-		HookRawBead:      dp.HookRawBead,
-		Mode:             dp.Mode,
-		FormulaFailFatal: true,
-		CallerContext:    "scheduler-dispatch",
-		NoConvoy:         true,
-		NoBoot:           true,
-		TownRoot:         townRoot,
-		BeadsDir:         targetBeadsDir,
-	}
+	intent.FormulaFailFatal = true
+	intent.CallerContext = "scheduler-dispatch"
+	intent.NoBoot = true
+	intent.TownRoot = townRoot
+	intent.BeadsDir = targetBeadsDir
+	// Convoy was created at schedule time. Reuse the recorded identity; do not
+	// create another. Empty Convoy still means no new auto-convoy here.
+	intent.NoConvoy = true
 
 	fmt.Printf("  Dispatching %s → %s...\n", b.WorkBeadID, b.TargetRig)
-	result, err := executeSling(params)
+	outcome, err := executeDeepSling(context.Background(), intent)
 	if err != nil {
-		return nil, fmt.Errorf("sling failed: %w", err)
+		return nil, fmt.Errorf("sling failed for %s → %s: %w", b.WorkBeadID, b.TargetRig, err)
 	}
-
+	result := &SlingResult{
+		BeadID:           outcome.BeadID,
+		PolecatName:      outcome.PolecatName,
+		ConvoyID:         outcome.ConvoyID,
+		Success:          outcome.Success,
+		AttachedMolecule: outcome.AttachedMolecule,
+	}
 	return result, nil
 }
 

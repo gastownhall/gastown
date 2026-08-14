@@ -2,12 +2,13 @@
 package workspace
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 
-	"github.com/steveyegge/gastown/internal/config"
+	"github.com/steveyegge/gastown/internal/townroot"
 )
 
 // ErrNotFound indicates no workspace was found.
@@ -26,9 +27,8 @@ const (
 )
 
 // Find locates the town root by walking up from the given directory.
-// It prefers mayor/town.json over mayor/ directory as workspace marker.
-// Always continues to the outermost workspace, correctly handling nested
-// workspace structures (e.g., rig directories with their own mayor/town.json).
+// Primary detection uses townroot.Find (outermost mayor/town.json).
+// If no town.json exists, Find falls back to the outermost mayor/ directory.
 // Does not resolve symlinks to stay consistent with os.Getwd().
 func Find(startDir string) (string, error) {
 	absDir, err := filepath.Abs(startDir)
@@ -36,27 +36,19 @@ func Find(startDir string) (string, error) {
 		return "", fmt.Errorf("resolving path: %w", err)
 	}
 
-	var primaryMatch, secondaryMatch string
+	if primary := townroot.Find(absDir); primary != "" {
+		return primary, nil
+	}
 
+	var secondaryMatch string
 	current := absDir
 	for {
-		// Always keep updating primaryMatch and secondaryMatch to find the outermost
-		// directory with the respective markers. This handles nested workspace
-		// structures where inner workspaces (e.g., rig directories or worktrees)
-		// have their own mayor/town.json, ensuring we return the actual town root.
-		if _, err := os.Stat(filepath.Join(current, PrimaryMarker)); err == nil {
-			primaryMatch = current
-		}
-
 		if info, err := os.Stat(filepath.Join(current, SecondaryMarker)); err == nil && info.IsDir() {
 			secondaryMatch = current
 		}
 
 		parent := filepath.Dir(current)
 		if parent == current {
-			if primaryMatch != "" {
-				return primaryMatch, nil
-			}
 			return secondaryMatch, nil
 		}
 		current = parent
@@ -166,11 +158,17 @@ func IsWorkspace(dir string) (bool, error) {
 // when running multiple Gas Town instances.
 func GetTownName(townRoot string) (string, error) {
 	townConfigPath := filepath.Join(townRoot, PrimaryMarker)
-	townConfig, err := config.LoadTownConfig(townConfigPath)
+	data, err := os.ReadFile(townConfigPath) //nolint:gosec // G304: path is the town marker
 	if err != nil {
 		return "", fmt.Errorf("loading town config: %w", err)
 	}
-	return townConfig.Name, nil
+	var cfg struct {
+		Name string `json:"name"`
+	}
+	if err := json.Unmarshal(data, &cfg); err != nil {
+		return "", fmt.Errorf("parsing town config: %w", err)
+	}
+	return cfg.Name, nil
 }
 
 // GetTownNameFromCwd locates the town root from the current working directory

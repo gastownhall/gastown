@@ -162,77 +162,6 @@ func TestNoRetryPolicy(t *testing.T) {
 	}
 }
 
-func TestReconstructFromContext(t *testing.T) {
-	ctx := &SlingContextFields{
-		WorkBeadID:  "bead-123",
-		TargetRig:   "prod-rig",
-		Formula:     "mol-polecat-work",
-		Args:        "do stuff",
-		Vars:        "x=1\ny=2",
-		Merge:       "mr",
-		BaseBranch:  "main",
-		Account:     "acme",
-		Agent:       "codex",
-		Mode:        "ralph",
-		NoMerge:     true,
-		ReviewOnly:  true,
-		HookRawBead: true,
-	}
-
-	params := ReconstructFromContext(ctx)
-
-	if params.BeadID != "bead-123" {
-		t.Errorf("BeadID: got %q, want %q", params.BeadID, "bead-123")
-	}
-	if params.RigName != "prod-rig" {
-		t.Errorf("RigName: got %q, want %q", params.RigName, "prod-rig")
-	}
-	if params.FormulaName != "mol-polecat-work" {
-		t.Errorf("FormulaName: got %q, want %q", params.FormulaName, "mol-polecat-work")
-	}
-	if params.Args != "do stuff" {
-		t.Errorf("Args: got %q, want %q", params.Args, "do stuff")
-	}
-	if len(params.Vars) != 2 || params.Vars[0] != "x=1" || params.Vars[1] != "y=2" {
-		t.Errorf("Vars: got %v, want [x=1 y=2]", params.Vars)
-	}
-	if params.Merge != "mr" {
-		t.Errorf("Merge: got %q, want %q", params.Merge, "mr")
-	}
-	if params.BaseBranch != "main" {
-		t.Errorf("BaseBranch: got %q, want %q", params.BaseBranch, "main")
-	}
-	if params.Account != "acme" {
-		t.Errorf("Account: got %q, want %q", params.Account, "acme")
-	}
-	if params.Agent != "codex" {
-		t.Errorf("Agent: got %q, want %q", params.Agent, "codex")
-	}
-	if params.Mode != "ralph" {
-		t.Errorf("Mode: got %q, want %q", params.Mode, "ralph")
-	}
-	if !params.NoMerge {
-		t.Error("NoMerge: expected true")
-	}
-	if !params.ReviewOnly {
-		t.Error("ReviewOnly: expected true")
-	}
-	if !params.HookRawBead {
-		t.Error("HookRawBead: expected true")
-	}
-}
-
-func TestReconstructFromContext_EmptyVars(t *testing.T) {
-	ctx := &SlingContextFields{
-		WorkBeadID: "bead-1",
-		TargetRig:  "rig1",
-	}
-	params := ReconstructFromContext(ctx)
-	if params.Vars != nil {
-		t.Errorf("Vars should be nil when ctx.Vars is empty, got %v", params.Vars)
-	}
-}
-
 func TestIsMessagingBead(t *testing.T) {
 	tests := []struct {
 		name   string
@@ -321,40 +250,5 @@ func TestPlanDispatch_OnlyMessagingBeads(t *testing.T) {
 	}
 	if plan.Reason != "messaging-filtered" {
 		t.Errorf("Reason = %q, want %q", plan.Reason, "messaging-filtered")
-	}
-}
-
-func TestSplitVars(t *testing.T) {
-	tests := []struct {
-		name  string
-		input string
-		want  []string
-	}{
-		{"empty", "", nil},
-		{"single", "a=1", []string{"a=1"}},
-		{"two newline-separated", "a=1\nb=2", []string{"a=1", "b=2"}},
-		{"three newline-separated", "x=hello\ny=world\nz=42", []string{"x=hello", "y=world", "z=42"}},
-		{"blank lines filtered", "a=1\n\nb=2\n", []string{"a=1", "b=2"}},
-		{"whitespace trimmed", "  a=1  \n  b=2  ", []string{"a=1", "b=2"}},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got := splitVars(tt.input)
-			if tt.want == nil {
-				if got != nil {
-					t.Errorf("splitVars(%q) = %v, want nil", tt.input, got)
-				}
-				return
-			}
-			if len(got) != len(tt.want) {
-				t.Fatalf("splitVars(%q) = %v (len %d), want %v (len %d)",
-					tt.input, got, len(got), tt.want, len(tt.want))
-			}
-			for i := range tt.want {
-				if got[i] != tt.want[i] {
-					t.Errorf("splitVars(%q)[%d] = %q, want %q", tt.input, i, got[i], tt.want[i])
-				}
-			}
-		})
 	}
 }

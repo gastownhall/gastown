@@ -510,6 +510,9 @@ The `kiro` preset launches `kiro-cli chat --trust-all-tools`, supports Kiro's
 documented `--resume` / `--resume-id` session flags, and does not install Kiro
 hooks or `.kiro` project files.
 
+The `pi` preset installs `.pi/extensions/gastown-hooks.js`, records Pi's session
+ID during lifecycle hooks, and resumes interrupted sessions with `pi --session`.
+
 ### Convoy (Work Tracking)
 
 ```bash

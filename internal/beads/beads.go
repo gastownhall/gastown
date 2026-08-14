@@ -702,16 +702,17 @@ func (b *Beads) forIssueID(id string) *Beads {
 	if b.noRoute {
 		return b
 	}
-	resolved := ResolveBeadsDirForID(b.getResolvedBeadsDir(), id)
+	s := NewAuthorityFromBeadsDir(b.getResolvedBeadsDir()).ForBead(id)
+	resolved := s.BeadsDir()
 	if resolved == "" || resolved == b.getResolvedBeadsDir() {
 		return b
 	}
 	return &Beads{
-		workDir:    filepath.Dir(resolved),
+		workDir:    s.WorkDir(),
 		beadsDir:   resolved,
 		isolated:   b.isolated,
 		serverPort: b.serverPort,
-		townRoot:   b.townRoot,
+		townRoot:   s.townRoot,
 		noRoute:    true,
 	}
 }

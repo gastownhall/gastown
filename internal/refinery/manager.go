@@ -1,7 +1,6 @@
 package refinery
 
 import (
-	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -13,7 +12,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/google/uuid"
 	"github.com/steveyegge/gastown/internal/beads"
 	"github.com/steveyegge/gastown/internal/config"
 	"github.com/steveyegge/gastown/internal/constants"
@@ -178,20 +176,12 @@ func (m *Manager) start(foreground bool, agentOverride string, allowForkRig bool
 	}
 
 	// Check if session already exists
-	running, _ := t.HasSession(sessionID)
-	if running {
-		// Session exists - check if agent is actually running (healthy vs zombie)
-		if t.IsAgentAlive(sessionID) {
+	if _, err := session.KillExistingSession(t, sessionID, true); err != nil {
+		if errors.Is(err, session.ErrSessionAlive) {
 			return ErrAlreadyRunning
 		}
-		// Zombie - tmux alive but agent dead. Kill and recreate.
-		_, _ = fmt.Fprintln(m.output, "⚠ Detected zombie session (tmux alive, agent dead). Recreating...")
-		if err := t.KillSession(sessionID); err != nil {
-			return fmt.Errorf("killing zombie session: %w", err)
-		}
+		return err
 	}
-
-	// Note: No PID check per ZFC - tmux session is the source of truth
 
 	// Background mode: spawn a Claude agent in a tmux session
 	// The Claude agent handles MR processing using git commands and beads
@@ -222,21 +212,10 @@ func (m *Manager) start(foreground bool, agentOverride string, allowForkRig bool
 		}
 	}
 
-	// Ensure runtime settings exist in the shared refinery parent directory.
-	// Settings are passed to Claude Code via --settings flag.
-
-	// Resolve CLAUDE_CONFIG_DIR from accounts.json so refinery sessions
-	// use the correct account. Mirrors the daemon restart path (lifecycle.go).
 	accountsPath := constants.MayorAccountsPath(townRoot)
 	runtimeConfigDir, _, _ := config.ResolveAccountConfigDir(accountsPath, "")
 	if runtimeConfigDir == "" {
 		runtimeConfigDir = os.Getenv("CLAUDE_CONFIG_DIR")
-	}
-
-	runtimeConfig := config.ResolveRoleAgentConfig("refinery", townRoot, m.rig.Path)
-	refinerySettingsDir := config.RoleSettingsDir("refinery", m.rig.Path)
-	if err := runtime.EnsureSettingsForRole(refinerySettingsDir, refineryRigDir, "refinery", runtimeConfig); err != nil {
-		return fmt.Errorf("ensuring runtime settings: %w", err)
 	}
 
 	// Ensure .gitignore has required Gas Town patterns
@@ -244,92 +223,46 @@ func (m *Manager) start(foreground bool, agentOverride string, allowForkRig bool
 		style.PrintWarning("could not update refinery .gitignore: %v", err)
 	}
 
-	initialPrompt := session.BuildStartupPrompt(session.BeaconConfig{
+	beacon := session.BeaconConfig{
 		Recipient: session.BeaconRecipient("refinery", "", m.rig.Name),
 		Sender:    "deacon",
 		Topic:     "patrol",
-	}, "Run `gt prime --hook` and begin patrol.")
-
-	command, err := config.BuildStartupCommandFromConfig(config.AgentEnvConfig{
-		Role:             "refinery",
-		Rig:              m.rig.Name,
-		TownRoot:         townRoot,
-		RuntimeConfigDir: runtimeConfigDir,
-		Prompt:           initialPrompt,
-		Topic:            "patrol",
-		SessionName:      sessionID,
-	}, m.rig.Path, initialPrompt, agentOverride)
-	if err != nil {
-		return fmt.Errorf("building startup command: %w", err)
 	}
-
-	// Compute environment BEFORE creating the session so it can be passed to
-	// tmux via -e flags. Setting env via SetEnvironment after session creation
-	// only affects newly spawned panes — the running pane (and Claude's
-	// subprocesses like bd) keeps its original environment (gt-neycp).
-	envVars := config.AgentEnv(config.AgentEnvConfig{
+	result, err := session.StartSession(t, session.SessionConfig{
+		SessionID:        sessionID,
+		WorkDir:          refineryRigDir,
 		Role:             "refinery",
-		Rig:              m.rig.Name,
 		TownRoot:         townRoot,
+		RigPath:          m.rig.Path,
+		RigName:          m.rig.Name,
+		AgentName:        "refinery",
+		AgentOverride:    agentOverride,
 		RuntimeConfigDir: runtimeConfigDir,
-		Agent:            agentOverride,
-		SessionName:      sessionID,
+		ExtraEnv:         map[string]string{"GT_REFINERY": "1"},
+		Theme:            tmux.ResolveSessionTheme(townRoot, m.rig.Name, "refinery", ""),
+		Beacon:           beacon,
+		Instructions:     "Run `gt prime --hook` and begin patrol.",
+		AcceptBypass:     true,
+		TrackPID:         true,
 	})
-	envVars = session.MergeRuntimeLivenessEnv(envVars, runtimeConfig)
-	envVars["GT_REFINERY"] = "1"
-
-	// Generate the GASTA run ID for this refinery session.
-	runID := uuid.New().String()
-	envVars["GT_RUN"] = runID
-
-	// Create session with command and env vars via -e flags so the initial
-	// shell — and Claude's subprocesses — inherit them from the start.
-	// See: https://github.com/anthropics/gastown/issues/280 (race condition fix)
-	if err := t.NewSessionWithCommandAndEnv(sessionID, refineryRigDir, command, envVars); err != nil {
-		return fmt.Errorf("creating tmux session: %w", err)
+	if err != nil {
+		return err
 	}
 
-	// Apply theme (non-fatal: theming failure doesn't affect operation)
-	theme := tmux.ResolveSessionTheme(townRoot, m.rig.Name, "refinery", "")
-	_ = t.ConfigureGasTownSession(sessionID, theme, m.rig.Name, "refinery", "refinery")
-
-	// Accept startup dialogs (workspace trust + bypass permissions) if they appear.
-	// Must be before WaitForRuntimeReady to avoid race where dialog blocks prompt detection.
-	_ = t.AcceptStartupDialogs(sessionID)
-
-	// Wait for Claude to start and show its prompt - fatal if Claude fails to launch
-	// WaitForRuntimeReady waits for the runtime to be ready
-	if err := t.WaitForRuntimeReady(sessionID, runtimeConfig, constants.ClaudeStartTimeout); err != nil {
-		// Kill the zombie session before returning error
+	// WaitForRuntimeReady is fatal for refinery. StartSession's ReadyDelay
+	// only warns, so the caller owns this wait.
+	if err := t.WaitForRuntimeReady(sessionID, result.RuntimeConfig, constants.ClaudeStartTimeout); err != nil {
 		_ = t.KillSessionWithProcesses(sessionID)
 		return fmt.Errorf("waiting for refinery to start: %w", err)
 	}
 
-	// Start nudge-queue poller (gt-dgf). Claude's UserPromptSubmit hook only
-	// drains when the agent submits a prompt. Idle agents never submit, so
-	// queued nudges deadlock. The poller breaks the cycle by polling every 10s.
 	if _, pollerErr := nudge.StartPoller(townRoot, sessionID); pollerErr != nil {
 		log.Printf("warning: could not start nudge poller for %s: %v", sessionID, pollerErr)
 	}
 
-	_ = runtime.RunStartupFallback(t, sessionID, "refinery", runtimeConfig)
-	_ = runtime.DeliverStartupPromptFallback(t, sessionID, initialPrompt, runtimeConfig, constants.ClaudeStartTimeout)
-
-	// Track PID for defense-in-depth orphan cleanup (non-fatal)
-	if err := session.TrackSessionPID(townRoot, sessionID, t); err != nil {
-		log.Printf("warning: tracking session PID for %s: %v", sessionID, err)
-	}
-
-	// Stream refinery's Claude Code JSONL conversation log to VictoriaLogs (opt-in).
-	if os.Getenv("GT_LOG_AGENT_OUTPUT") == "true" && os.Getenv("GT_OTEL_LOGS_URL") != "" {
-		if err := session.ActivateAgentLogging(sessionID, refineryRigDir, runID); err != nil {
-			log.Printf("warning: agent log watcher setup failed for %s: %v", sessionID, err)
-		}
-	}
-
-	// Record the agent instantiation event (GASTA root span).
-	session.RecordAgentInstantiateFromDir(context.Background(), runID, runtimeConfig.ResolvedAgent,
-		"refinery", "refinery", sessionID, m.rig.Name, townRoot, "", refineryRigDir)
+	_ = runtime.RunStartupFallback(t, sessionID, "refinery", result.RuntimeConfig)
+	initialPrompt := session.BuildStartupPrompt(beacon, "Run `gt prime --hook` and begin patrol.")
+	_ = runtime.DeliverStartupPromptFallback(t, sessionID, initialPrompt, result.RuntimeConfig, constants.ClaudeStartTimeout)
 
 	return nil
 }

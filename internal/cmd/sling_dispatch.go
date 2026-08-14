@@ -13,9 +13,8 @@ import (
 )
 
 // SlingParams captures everything needed to sling one bead to a rig.
-// This is the serialization boundary for queue dispatch: at enqueue time,
-// these fields are stored as queue metadata; at dispatch time, they are
-// reconstructed into a SlingParams and passed to executeSling().
+// Adapters convert CLI flags or durable sling.Intent into this type for the
+// lifecycle body. Prefer sling.Intent at new call sites.
 type SlingParams struct {
 	// What to sling
 	BeadID      string // Base bead
@@ -30,6 +29,7 @@ type SlingParams struct {
 	ResumeBranch string   // --branch / --pr (resume existing PR branch, gh#3602)
 	Account      string   // --account
 	Agent        string   // --agent
+	Convoy       string   // recorded Convoy identity to reuse (deferred dispatch)
 	NoConvoy     bool     // --no-convoy
 	Owned        bool     // --owned
 	NoMerge      bool     // --no-merge
@@ -52,24 +52,27 @@ type SlingResult struct {
 	BeadID           string
 	PolecatName      string
 	SpawnInfo        *SpawnedPolecatInfo
+	ConvoyID         string
 	Success          bool
+	NoOp             bool
 	ErrMsg           string
 	AttachedMolecule string
 }
 
 // executeSling performs the unified per-bead polecat/rig dispatch.
-// Batch sling and queue dispatch call this function. The single-sling path
-// (runSling) retains its own implementation for now (handles dogs, mayor,
-// nudge, and other non-rig targets). See TODO in sling.go.
+// Adapters (CLI, batch, queue) convert Intent into SlingParams and call
+// this through defaultSlingLifecycle. The 12-step flow plus the duties that
+// used to leak to callers live here:
 //
-// Caller responsibilities (NOT handled by executeSling):
-//   - Cross-rig guard: callers must call checkCrossRigGuard() before executeSling
-//     to verify the bead's prefix matches the target rig. Batch sling does this
-//     pre-loop; queue dispatch skips the guard because the bead prefix was
-//     validated at enqueue time and is immutable.
-//   - wakeRigAgents: callers must call wakeRigAgents() after the dispatch loop
-//     when NoBoot is false. Batch sling calls it post-loop; queue dispatch sets
-//     NoBoot=true to avoid lock contention in the daemon.
+//   - per-bead flock
+//   - parked/docked, flag-like title, closed/tombstone, deferred
+//   - cross-rig guard (unless Force)
+//   - dead-agent auto-force and rig-level idempotent no-op
+//   - spawn, convoy, formula, hook, compensation
+//   - witness wake unless NoBoot
+//
+// Batch, epic, convoy, and queue adapters pass NoBoot=true and coalesce
+// wake after the loop. Single-bead CLI dispatch lets this function wake.
 //
 // Steps:
 //  1. Get bead info + status check
@@ -84,6 +87,11 @@ type SlingResult struct {
 //  10. Store fields in bead (dispatcher, args, attached_molecule, no_merge)
 //  11. Create Dolt branch
 //  12. Start polecat session
+//  13. Wake witness unless NoBoot
+//
+// executeSling is the deep Slinging lifecycle body. Adapters must invoke it
+// through defaultSlingLifecycle / executeDeepSling / executeSlingIntent so
+// Convoy reuse, Formula, Hook, attachment, and compensation stay in one place.
 func executeSling(params SlingParams) (*SlingResult, error) {
 	townRoot := params.TownRoot
 	if townRoot == "" {
@@ -132,37 +140,28 @@ func executeSling(params SlingParams) (*SlingResult, error) {
 		return result, fmt.Errorf("could not get bead info: %w", err)
 	}
 
-	// Guard against dispatching closed/tombstone beads (defense-in-depth).
-	// Not bypassed by --force — if you need to re-dispatch, reopen the bead first.
-	if info.Status == "closed" || info.Status == "tombstone" {
-		result.ErrMsg = "already " + info.Status
-		return result, fmt.Errorf("bead %s is %s (work already completed)", params.BeadID, info.Status)
-	}
-
-	// Save explicit force state before dead-agent auto-force, so the deferred
-	// gate below still requires an explicit --force for deferred beads.
 	explicitForce := params.Force
-
-	if (info.Status == "pinned" || info.Status == "hooked" || info.Status == "in_progress") && !params.Force {
-		// Auto-force when hooked/in_progress agent's session is confirmed dead (gt-npzy, GH#1380).
-		// Mirrors the dead-agent detection in runSling (sling.go) so that
-		// programmatic dispatch also handles stale hooks from nuked polecats.
-		if (info.Status == "hooked" || info.Status == "in_progress") && info.Assignee != "" && isHookedAgentDeadFn(info.Assignee) {
-			fmt.Printf("  %s Hooked agent %s has no active session, auto-forcing dispatch...\n",
-				style.Warning.Render("⚠"), info.Assignee)
-			params.Force = true
-		} else {
-			result.ErrMsg = "already " + info.Status
-			return result, fmt.Errorf("already %s (use --force to re-sling)", info.Status)
-		}
+	status := evaluateSlingStatus(info, params.BeadID, explicitForce, params.Merge, isDefaultRigSlingNoop(params, info, townRoot), false)
+	if status.Err != nil {
+		result.ErrMsg = status.ErrMsg
+		return result, status.Err
 	}
+	if status.NoOp {
+		result.Success = true
+		result.NoOp = true
+		if name, ok := polecatNameFromAssignee(params.RigName, info.Assignee); ok {
+			result.PolecatName = name
+		}
+		return result, nil
+	}
+	params.Force = status.Force
+	params.Merge = status.Merge
 
-	// Guard against slinging deferred beads (gt-1326mw).
-	// Uses explicitForce (not params.Force) so dead-agent auto-force doesn't
-	// accidentally bypass the deferred gate.
-	if isDeferredBead(info) && !explicitForce {
-		result.ErrMsg = "deferred"
-		return result, fmt.Errorf("bead %s is deferred (use --force to override)", params.BeadID)
+	if params.RigName != "" && !explicitForce {
+		if err := checkCrossRigGuard(params.BeadID, params.RigName+"/polecats/_", townRoot); err != nil {
+			result.ErrMsg = err.Error()
+			return result, err
+		}
 	}
 
 	if params.RigName != "" {
@@ -258,29 +257,24 @@ func executeSling(params SlingParams) (*SlingResult, error) {
 	targetAgent := spawnInfo.AgentID()
 	hookWorkDir := spawnInfo.ClonePath
 
-	// 4. Auto-convoy (if !NoConvoy)
-	convoyID := ""
-	rollbackSpawnedPolecat := func(rollbackBeadID, reason string) {
-		fmt.Printf("  %s %s, rolling back spawned polecat %s...\n", style.Warning.Render("⚠"), reason, spawnInfo.PolecatName)
-		rollbackSlingArtifactsFn(spawnInfo, rollbackBeadID, hookWorkDir, convoyID)
-		restoreRollbackRawWorkflowFieldsFromCurrent(rollbackBeadID, townRoot, hookWorkDir, info)
-		if params.Force && info.Status == "pinned" {
-			restorePinnedBead(townRoot, params.BeadID, info.Assignee)
-		}
+	// 4. Convoy: reuse a recorded identity, reuse an existing tracker, or create.
+	convoyID, createdConvoy := resolveSlingConvoy(params, info)
+	result.ConvoyID = convoyID
+	rollbackConvoyID := ""
+	if createdConvoy {
+		rollbackConvoyID = convoyID
 	}
-	if !params.NoConvoy {
-		existingConvoy := isTrackedByConvoy(params.BeadID)
-		if existingConvoy == "" {
-			var err error
-			convoyID, err = createAutoConvoy(params.BeadID, info.Title, params.Owned, params.Merge, params.BaseBranch)
-			if err != nil {
-				fmt.Printf("  %s Could not create auto-convoy: %v\n", style.Dim.Render("Warning:"), err)
-			} else {
-				fmt.Printf("  %s Created convoy %s\n", style.Bold.Render("→"), convoyID)
-			}
-		} else {
-			fmt.Printf("  %s Already tracked by convoy %s\n", style.Dim.Render("○"), existingConvoy)
-		}
+	rollbackSpawnedPolecat := func(rollbackBeadID, reason string) {
+		compensateSlingAttempt(slingCompensation{
+			reason:        reason,
+			spawnInfo:     spawnInfo,
+			beadID:        rollbackBeadID,
+			hookWorkDir:   hookWorkDir,
+			createdConvoy: rollbackConvoyID,
+			townRoot:      townRoot,
+			originalInfo:  info,
+			force:         params.Force,
+		})
 	}
 
 	// 5. Cook formula (unless SkipCook)
@@ -313,6 +307,9 @@ func executeSling(params SlingParams) (*SlingResult, error) {
 		allVars = append(rigCmdVars, params.Vars...)
 		if spawnInfo.BaseBranch != "" && spawnInfo.BaseBranch != "main" {
 			allVars = append(allVars, fmt.Sprintf("base_branch=%s", spawnInfo.BaseBranch))
+		}
+		if params.ResumeBranch != "" {
+			allVars = append(allVars, fmt.Sprintf("resume_branch=%s", params.ResumeBranch))
 		}
 
 		// GH#gt-zqvj: Inject prior attempt context when re-dispatching an issue
@@ -350,39 +347,20 @@ func executeSling(params SlingParams) (*SlingResult, error) {
 	result.AttachedMolecule = attachedMoleculeID
 
 	actor := detectActor()
-	fieldUpdates := beadFieldUpdates{
-		Dispatcher:       actor,
-		Args:             params.Args,
-		Vars:             varsForAttachment,
-		AttachedMolecule: attachedMoleculeID,
-		NoMerge:          params.NoMerge,
-		ReviewOnly:       params.ReviewOnly,
-		Mode:             &params.Mode,
-		FormulaVars:      formulaVarsForAttachment,
-	}
-	if params.FormulaName != "" {
-		if attachedMoleculeID != "" {
-			fieldUpdates.AttachedFormula = params.FormulaName
-		} else {
-			fieldUpdates.ClearAttachment = true
-			fieldUpdates.Vars = nil
-			fieldUpdates.FormulaVars = ""
-		}
-	}
+	fieldUpdates := newSlingDispatchFieldUpdates(actor, params, varsForAttachment, formulaVarsForAttachment, convoyID, attachedMoleculeID)
 
 	// 7. Hook bead with retry
 	// Acquire per-assignee lock to serialize concurrent hook writes (issue #3114).
-	assigneeUnlock, assigneeLockErr := tryAcquireSlingAssigneeLock(townRoot, targetAgent)
+	assigneeUnlock, assigneeLockErr := tryAcquireSlingAssigneeLockFn(townRoot, targetAgent)
 	if assigneeLockErr != nil {
-		cleanupSpawnedPolecat(spawnInfo, params.RigName, convoyID)
+		rollbackSpawnedPolecat(params.BeadID, "Assignee lock failed")
 		result.ErrMsg = "assignee lock failed"
 		return result, fmt.Errorf("serializing hook write for %s: %w", targetAgent, assigneeLockErr)
 	}
 	defer assigneeUnlock()
-	if attachedMoleculeID == "" && (params.NoMerge || params.ReviewOnly) {
+	if attachedMoleculeID == "" && slingFieldsRequireDurableWrite(fieldUpdates) {
 		if err := storeFieldsInBeadFromTownRoot(townRoot, beadToHook, fieldUpdates); err != nil {
-			cleanupSpawnedPolecat(spawnInfo, params.RigName, convoyID)
-			restoreRollbackRawWorkflowFieldsFromCurrent(beadToHook, townRoot, hookWorkDir, info)
+			rollbackSpawnedPolecat(beadToHook, "Raw sling metadata failed")
 			result.ErrMsg = "raw sling metadata failed"
 			return result, fmt.Errorf("storing raw sling metadata before hook: %w", err)
 		}
@@ -401,11 +379,18 @@ func executeSling(params SlingParams) (*SlingResult, error) {
 	_ = events.LogFeed(events.TypeSling, actor, events.SlingPayload(beadToHook, targetAgent))
 
 	// 9. Update agent hook_bead state
-	updateAgentHookBead(targetAgent, beadToHook, hookWorkDir, beadsDir)
+	if err := updateAgentHookBead(targetAgent, beadToHook, hookWorkDir, beadsDir); err != nil {
+		fmt.Printf("%s Could not update agent hook: %v\n", style.Dim.Render("Warning:"), err)
+	}
 
 	// 10. Store fields in bead (dispatcher, args, attached_molecule, no_merge, mode)
 	// Use beadToHook for the update target (may differ from beadID when formula-on-bead)
 	if err := storeFieldsInBeadFromTownRoot(townRoot, beadToHook, fieldUpdates); err != nil {
+		if slingFieldsRequireDurableWrite(fieldUpdates) {
+			rollbackSpawnedPolecat(beadToHook, "Durable sling metadata failed")
+			result.ErrMsg = "sling metadata failed"
+			return result, fmt.Errorf("storing sling metadata: %w", err)
+		}
 		fmt.Printf("  %s Could not store fields in bead: %v\n", style.Dim.Render("Warning:"), err)
 	}
 
@@ -425,8 +410,26 @@ func executeSling(params SlingParams) (*SlingResult, error) {
 	fmt.Printf("  %s Session started for %s\n", style.Bold.Render("▶"), spawnInfo.PolecatName)
 	_ = pane
 
+	if !params.NoBoot && params.RigName != "" {
+		wakeRigAgents(params.RigName)
+	}
+
 	result.Success = true
 	return result, nil
+}
+
+// isDefaultRigSlingNoop reports whether this rig dispatch would only repeat
+// work already hooked to a live polecat in the same rig. Auto-applied
+// mol-polecat-work (or the rig default formula) is not new formula work.
+func isDefaultRigSlingNoop(params SlingParams, info *beadInfo, townRoot string) bool {
+	if params.RigName == "" || info == nil {
+		return false
+	}
+	if !matchesSlingTarget(params.RigName, info.Assignee, "") {
+		return false
+	}
+	defaultFormula := resolveFormula("", params.HookRawBead, townRoot, params.RigName)
+	return params.FormulaName == "" || params.FormulaName == defaultFormula
 }
 
 // findTownRoot is defined in hook.go

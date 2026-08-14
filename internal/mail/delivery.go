@@ -177,7 +177,7 @@ func deliveryAckLabelsToWrite(recipientIdentity string, at time.Time, existingLa
 // cross-rig ids return "" so bd's own prefix routing (via routes.jsonl in
 // the town's .beads) dispatches to the correct database. See au-ofe, au-b9d.
 func routedBeadsDirForID(currentBeadsDir, beadID string) string {
-	target := beads.ResolveBeadsDirForID(currentBeadsDir, beadID)
+	target := beads.NewAuthorityFromBeadsDir(currentBeadsDir).ForBead(beadID).BeadsDir()
 	if target == "" || target == currentBeadsDir {
 		return currentBeadsDir
 	}

@@ -1,7 +1,5 @@
 package capacity
 
-import "strings"
-
 // PendingBead represents a bead that is scheduled and ready for dispatch evaluation.
 type PendingBead struct {
 	ID              string // Context bead ID (sling context)
@@ -209,61 +207,4 @@ func FilterCircuitBroken(beads []PendingBead, maxFailures int) ([]PendingBead, i
 		result = append(result, b)
 	}
 	return result, removed
-}
-
-// DispatchParams captures what the scheduler needs to tell the dispatcher.
-// Mirrors the relevant fields from cmd.SlingParams but is scheduler-owned.
-type DispatchParams struct {
-	BeadID       string
-	FormulaName  string
-	RigName      string
-	Args         string
-	Vars         []string
-	Merge        string
-	BaseBranch   string
-	ResumeBranch string
-	Account      string
-	Agent        string
-	Mode         string
-	NoMerge      bool
-	ReviewOnly   bool
-	HookRawBead  bool
-}
-
-// ReconstructFromContext builds DispatchParams from sling context fields.
-func ReconstructFromContext(ctx *SlingContextFields) DispatchParams {
-	p := DispatchParams{
-		BeadID:       ctx.WorkBeadID,
-		RigName:      ctx.TargetRig,
-		FormulaName:  ctx.Formula,
-		Args:         ctx.Args,
-		Merge:        ctx.Merge,
-		BaseBranch:   ctx.BaseBranch,
-		ResumeBranch: ctx.ResumeBranch,
-		Account:      ctx.Account,
-		Agent:        ctx.Agent,
-		Mode:         ctx.Mode,
-		NoMerge:      ctx.NoMerge,
-		ReviewOnly:   ctx.ReviewOnly,
-		HookRawBead:  ctx.HookRawBead,
-	}
-	if ctx.Vars != "" {
-		p.Vars = splitVars(ctx.Vars)
-	}
-	return p
-}
-
-// splitVars splits a newline-separated vars string into individual key=value pairs.
-func splitVars(vars string) []string {
-	if vars == "" {
-		return nil
-	}
-	var result []string
-	for _, line := range strings.Split(vars, "\n") {
-		line = strings.TrimSpace(line)
-		if line != "" {
-			result = append(result, line)
-		}
-	}
-	return result
 }

@@ -29,15 +29,37 @@ func TestBuiltInAgentPresetSummary(t *testing.T) {
 	}
 }
 
+func TestInitRegistryClonesBuiltins(t *testing.T) {
+	ResetRegistryForTesting()
+	t.Cleanup(ResetRegistryForTesting)
+
+	live := GetAgentPreset(AgentCodex)
+	builtin := builtinPresets[AgentCodex]
+	if live == nil || builtin == nil {
+		t.Fatal("codex preset missing")
+	}
+	if live == builtin {
+		t.Fatal("initRegistryLocked must clone builtins, not share pointers")
+	}
+	if len(live.ProcessNames) == 0 || len(builtin.ProcessNames) == 0 {
+		t.Fatal("codex ProcessNames must be non-empty")
+	}
+	if &live.ProcessNames[0] == &builtin.ProcessNames[0] {
+		t.Fatal("ProcessNames slice must be cloned")
+	}
+}
+
 func TestBuiltinPresets(t *testing.T) {
 	t.Parallel()
-	// Ensure all built-in presets are accessible
+	// Read the compile-time table, not the live registry. GetAgentPreset
+	// races with sibling tests that ResetRegistryForTesting / overlay
+	// agents.json (flakes under go test ./... with -race).
 	presets := []AgentPreset{AgentClaude, AgentGemini, AgentCodex, AgentKiro, AgentCursor, AgentAuggie, AgentAmp, AgentOpenCode, AgentCopilot, AgentPi, AgentOmp}
 
 	for _, preset := range presets {
-		info := GetAgentPreset(preset)
+		info := builtinPresets[preset]
 		if info == nil {
-			t.Errorf("GetAgentPreset(%s) returned nil", preset)
+			t.Errorf("builtinPresets[%s] is missing", preset)
 			continue
 		}
 
@@ -92,6 +114,9 @@ func TestGetAgentPresetByName(t *testing.T) {
 
 func TestRuntimeConfigFromPreset(t *testing.T) {
 	t.Parallel()
+	// Read the compile-time table, not the live registry. RuntimeConfigFromPreset
+	// follows overlays; sibling tests register claude with Command "env"
+	// (CI: "RuntimeConfigFromPreset(claude).Command = env, want claude").
 	tests := []struct {
 		preset      AgentPreset
 		wantCommand string
@@ -108,7 +133,7 @@ func TestRuntimeConfigFromPreset(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(string(tt.preset), func(t *testing.T) {
-			rc := RuntimeConfigFromPreset(tt.preset)
+			rc := runtimeConfigFromAgentInfo(tt.preset, builtinPresets[tt.preset])
 			// For claude, command may be full path due to resolveClaudePath
 			if tt.preset == AgentClaude {
 				if !isClaudeCmd(rc.Command) {
@@ -125,11 +150,11 @@ func TestRuntimeConfigFromPreset(t *testing.T) {
 
 func TestRuntimeConfigFromPresetReturnsNilEnvForPresetsWithoutEnv(t *testing.T) {
 	t.Parallel()
-	// Built-in presets like Claude don't have Env set
-	// This verifies nil Env handling in RuntimeConfigFromPreset
-	rc := RuntimeConfigFromPreset(AgentClaude)
+	// Built-in presets like Claude don't have Env set.
+	// Use the compile-time table; the live registry is overlaid by sibling tests.
+	rc := runtimeConfigFromAgentInfo(AgentClaude, builtinPresets[AgentClaude])
 	if rc == nil {
-		t.Fatal("RuntimeConfigFromPreset returned nil")
+		t.Fatal("runtimeConfigFromAgentInfo returned nil")
 	}
 
 	// Claude preset doesn't have Env, so it should be nil
@@ -278,7 +303,9 @@ func TestGetProcessNamesRespectsRegistryOverride(t *testing.T) {
 }
 
 func TestResolveProcessNames(t *testing.T) {
-	t.Parallel()
+	// Mutates the process-wide agent registry (ResetRegistryForTesting and
+	// RegisterAgentForTesting), including overlays named "claude". Must not
+	// run in parallel with readers such as TestRuntimeConfigFromPreset.
 	ResetRegistryForTesting()
 	t.Cleanup(ResetRegistryForTesting)
 
@@ -551,7 +578,7 @@ func TestAgentPresetApprovalFlags(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(string(tt.preset), func(t *testing.T) {
-			info := GetAgentPreset(tt.preset)
+			info := builtinPresets[tt.preset]
 			if info == nil {
 				t.Fatalf("preset %s not found", tt.preset)
 			}
@@ -657,6 +684,13 @@ func TestBuildResumeCommand(t *testing.T) {
 			contains:  []string{"copilot", "--yolo", "--resume", "cea0d5f0-662a-4a98-9585-060b9d2a7a19"},
 		},
 		{
+			name:      "pi flag style",
+			agentName: "pi",
+			sessionID: "0198f6c0-5d4f-7e21-9f44-8ea633dfe998",
+			wantEmpty: false,
+			contains:  []string{"pi", "-e", ".pi/extensions/gastown-hooks.js", "--session", "0198f6c0-5d4f-7e21-9f44-8ea633dfe998"},
+		},
+		{
 			name:      "unknown agent",
 			agentName: "unknown-agent",
 			sessionID: "session-123",
@@ -697,6 +731,7 @@ func TestSupportsSessionResume(t *testing.T) {
 		{"auggie", true},
 		{"amp", true},
 		{"copilot", true},
+		{"pi", true},
 		{"unknown", false},
 	}
 
@@ -1319,6 +1354,12 @@ func TestPiAgentPreset(t *testing.T) {
 
 	if info.SessionIDEnv != "PI_SESSION_ID" {
 		t.Errorf("pi SessionIDEnv = %q, want PI_SESSION_ID", info.SessionIDEnv)
+	}
+	if info.ResumeFlag != "--session" {
+		t.Errorf("pi ResumeFlag = %q, want --session", info.ResumeFlag)
+	}
+	if info.ResumeStyle != "flag" {
+		t.Errorf("pi ResumeStyle = %q, want flag", info.ResumeStyle)
 	}
 
 	if info.NonInteractive == nil {

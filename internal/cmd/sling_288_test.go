@@ -285,65 +285,6 @@ func TestSlingHookRawBeadFlag(t *testing.T) {
 	}
 }
 
-// TestAutoApplyLogic verifies the auto-apply detection logic.
-// When formulaName is empty and target contains "/polecats/", mol-polecat-work should be applied.
-func TestAutoApplyLogic(t *testing.T) {
-	tests := []struct {
-		name          string
-		formulaName   string
-		hookRawBead   bool
-		targetAgent   string
-		wantAutoApply bool
-	}{
-		{
-			name:          "bare bead to polecat - should auto-apply",
-			formulaName:   "",
-			hookRawBead:   false,
-			targetAgent:   "gastown/polecats/Toast",
-			wantAutoApply: true,
-		},
-		{
-			name:          "bare bead with --hook-raw-bead - should not auto-apply",
-			formulaName:   "",
-			hookRawBead:   true,
-			targetAgent:   "gastown/polecats/Toast",
-			wantAutoApply: false,
-		},
-		{
-			name:          "formula already specified - should not auto-apply",
-			formulaName:   "mol-review",
-			hookRawBead:   false,
-			targetAgent:   "gastown/polecats/Toast",
-			wantAutoApply: false,
-		},
-		{
-			name:          "non-polecat target - should not auto-apply",
-			formulaName:   "",
-			hookRawBead:   false,
-			targetAgent:   "gastown/witness",
-			wantAutoApply: false,
-		},
-		{
-			name:          "mayor target - should not auto-apply",
-			formulaName:   "",
-			hookRawBead:   false,
-			targetAgent:   "mayor",
-			wantAutoApply: false,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			// This mirrors the logic in sling.go
-			shouldAutoApply := tt.formulaName == "" && !tt.hookRawBead && strings.Contains(tt.targetAgent, "/polecats/")
-
-			if shouldAutoApply != tt.wantAutoApply {
-				t.Errorf("auto-apply logic: got %v, want %v", shouldAutoApply, tt.wantAutoApply)
-			}
-		})
-	}
-}
-
 // TestFormulaOnBeadPassesVariables verifies that feature and issue variables are passed.
 func TestFormulaOnBeadPassesVariables(t *testing.T) {
 	townRoot := t.TempDir()

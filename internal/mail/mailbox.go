@@ -87,6 +87,19 @@ func NewMailboxWithBeadsDir(address, workDir, beadsDir string) *Mailbox {
 	}
 }
 
+// beadsDirForID returns the Beads directory that owns id.
+func (m *Mailbox) beadsDirForID(id string) string {
+	dir := m.beadsDir
+	if dir == "" {
+		dir = beads.ResolveBeadsDir(m.workDir)
+	}
+	s := beads.NewAuthorityFromBeadsDir(dir).ForBead(id)
+	if s.BeadsDir() == "" {
+		return m.beadsDir
+	}
+	return s.BeadsDir()
+}
+
 // Identity returns the beads identity for this mailbox.
 func (m *Mailbox) Identity() string {
 	return m.identity
@@ -508,7 +521,7 @@ func (m *Mailbox) Get(id string) (*Message, error) {
 
 func (m *Mailbox) getBeads(id string) (*Message, error) {
 	// Resolve correct beadsDir based on bead ID prefix (GH#2423)
-	primary := beads.ResolveBeadsDirForID(m.beadsDir, id)
+	primary := m.beadsDirForID(id)
 	msg, err := m.getFromDir(id, primary)
 	if errors.Is(err, ErrMessageNotFound) && primary != m.beadsDir {
 		// Cross-rig bead IDs (e.g. ne-*) may live in the home DB when created
@@ -580,7 +593,7 @@ func (m *Mailbox) markReadBeads(id string) error {
 	}
 
 	// Resolve correct beadsDir based on bead ID prefix (GH#2423)
-	primary := beads.ResolveBeadsDirForID(m.beadsDir, id)
+	primary := m.beadsDirForID(id)
 	err := m.closeInDir(id, primary)
 	if errors.Is(err, ErrMessageNotFound) && primary != m.beadsDir {
 		// Cross-rig bead IDs (e.g. ne-*) may live in the home DB when created
@@ -669,7 +682,7 @@ func (m *Mailbox) markReadOnlyBeads(id string) error {
 
 	// Add "read" label to mark as read without closing
 	args := []string{"label", "add", id, "read"}
-	primary := beads.ResolveBeadsDirForID(m.beadsDir, id)
+	primary := m.beadsDirForID(id)
 
 	ctx, cancel := bdWriteCtx()
 	defer cancel()
@@ -737,7 +750,7 @@ func (m *Mailbox) markUnreadOnlyBeads(id string) error {
 
 	// Remove "read" label to mark as unread
 	args := []string{"label", "remove", id, "read"}
-	primary := beads.ResolveBeadsDirForID(m.beadsDir, id)
+	primary := m.beadsDirForID(id)
 
 	ctx, cancel := bdWriteCtx()
 	defer cancel()
@@ -786,7 +799,7 @@ func (m *Mailbox) markUnreadBeads(id string) error {
 	}
 
 	args := []string{"reopen", id}
-	primary := beads.ResolveBeadsDirForID(m.beadsDir, id)
+	primary := m.beadsDirForID(id)
 
 	ctx, cancel := bdWriteCtx()
 	defer cancel()

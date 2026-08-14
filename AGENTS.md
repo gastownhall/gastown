@@ -222,16 +222,28 @@ and full-suite parallelism — they all pass when isolated:
   `url.https://x-access-token:***@github.com/.insteadOf` rewrites into the global git config, so
   round-tripped remote URLs don't match. Re-run with a clean config to confirm green, e.g.
   `TMP=$(mktemp); printf '[user]\n\tname=t\n\temail=t@t' >$TMP; GIT_CONFIG_GLOBAL=$TMP go test ./internal/git/ ./internal/doctor/`.
-- `internal/config` `TestBuiltinPresets` can flake under `./...` (a sibling parallel test mutates the
-  shared agent registry). It passes reliably via `go test ./internal/config/`.
+- `internal/config` `TestBuiltinPresets` / `TestRuntimeConfigFromPreset` can flake under
+  `./...` when a sibling test overlays the live agent registry (`Command = env`,
+  empty `ProcessNames`). Those tests now read the compile-time `builtinPresets`
+  table. They pass reliably via `go test ./internal/config/`.
 
-### mattpocock/skills
+### Agent skills
 
-The update script also installs [`mattpocock/skills`](https://github.com/mattpocock/skills) via the
-vercel `skills` CLI (`npx skills@latest add mattpocock/skills --agent cursor --skill '*' -g -y --copy`),
-which lands them under `~/.agents/skills/`. Because the Cursor Cloud agent discovers global skills from
-`~/.cursor/skills-cursor/` (not `~/.cursor/skills`, which is where the `skills` CLI's cursor preset
-points), the update script then mirrors each skill folder into `~/.cursor/skills-cursor/` so they are
-discoverable next session. This is deliberately global (user-level), not project-level, to avoid leaving
-untracked files in the repo working tree. The skills-refresh step is best-effort (`|| true`); a prior
-copy persists in the VM snapshot if the network fetch fails.
+Project skills live in `.agents/skills/`. That tree vendors
+[`mattpocock/skills`](https://github.com/mattpocock/skills) and
+[`jonbaldie/skills`](https://github.com/jonbaldie/skills) so `/ship-spec` can
+reach `/implement` in the same directory. See `.agents/skills/NOTICE` for the
+pinned commits and license.
+
+Refresh from the collection installer:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/jonbaldie/skills/main/install.sh | bash -s -- --project --agent universal --copy --with-prereqs --yes
+```
+
+The environment snapshot may still install the same collections globally under
+`~/.agents/skills/` and mirror them to `~/.cursor/skills-cursor/` (Cursor Cloud
+discovers global skills there, not `~/.cursor/skills`). That snapshot copy is a
+fallback for sessions that boot before a pull. The in-repo tree is the source of
+truth for this project. The snapshot refresh is best-effort (`|| true`). Changes
+under `.agents/` skip the Go CI workflows.

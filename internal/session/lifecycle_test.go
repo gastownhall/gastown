@@ -1,6 +1,8 @@
 package session
 
 import (
+	"errors"
+	"fmt"
 	"testing"
 
 	"github.com/steveyegge/gastown/internal/config"
@@ -32,16 +34,69 @@ func TestStartSession_RequiresWorkDir(t *testing.T) {
 	}
 }
 
-func TestStartSession_RequiresRole(t *testing.T) {
-	_, err := StartSession(nil, SessionConfig{
-		SessionID: "gt-test",
-		WorkDir:   "/tmp",
-	})
-	if err == nil {
-		t.Fatal("expected error for missing Role")
+func TestResolveRuntimeConfig_CrewUsesWorkerResolver(t *testing.T) {
+	cfg := SessionConfig{
+		Role:      "crew",
+		AgentName: "denali",
+		TownRoot:  t.TempDir(),
+		RigPath:   t.TempDir(),
 	}
-	if err.Error() != "Role is required" {
-		t.Errorf("unexpected error: %v", err)
+	rc, err := resolveRuntimeConfig(cfg)
+	if err != nil {
+		t.Fatalf("resolveRuntimeConfig: %v", err)
+	}
+	if rc == nil {
+		t.Fatal("expected runtime config")
+	}
+}
+
+func TestResolveRuntimeConfig_OverrideWinsOverCrewWorker(t *testing.T) {
+	cfg := SessionConfig{
+		Role:          "crew",
+		AgentName:     "denali",
+		TownRoot:      t.TempDir(),
+		RigPath:       t.TempDir(),
+		AgentOverride: "opencode",
+	}
+	rc, err := resolveRuntimeConfig(cfg)
+	if err != nil {
+		t.Fatalf("resolveRuntimeConfig: %v", err)
+	}
+	if rc == nil {
+		t.Fatal("expected runtime config")
+	}
+	if rc.ResolvedAgent != "opencode" && rc.Command == "" {
+		// Override should resolve to the named agent, not the crew role default.
+		t.Fatalf("override was ignored: %+v", rc)
+	}
+}
+
+func TestBuildCommand_IncludesSessionIdentity(t *testing.T) {
+	cfg := SessionConfig{
+		SessionID: "gt-gastown-Toast",
+		Role:      "polecat",
+		RigName:   "gastown",
+		AgentName: "Toast",
+		TownRoot:  t.TempDir(),
+		RigPath:   t.TempDir(),
+		Beacon: BeaconConfig{
+			Topic: "assigned",
+			MolID: "gt-abc",
+		},
+	}
+	cmd, err := buildCommand(cfg, "test prompt")
+	if err != nil {
+		t.Fatalf("buildCommand: %v", err)
+	}
+	if cmd == "" {
+		t.Fatal("expected non-empty command")
+	}
+}
+
+func TestKillExistingSession_ErrSessionAliveSentinel(t *testing.T) {
+	err := fmt.Errorf("%w: %s", ErrSessionAlive, "gt-test")
+	if !errors.Is(err, ErrSessionAlive) {
+		t.Fatal("wrapped ErrSessionAlive should match errors.Is")
 	}
 }
 

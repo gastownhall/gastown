@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/steveyegge/gastown/internal/constants"
+	"github.com/steveyegge/gastown/internal/dog"
 )
 
 func TestWispReaperInterval(t *testing.T) {
@@ -145,5 +146,22 @@ func TestDoltServerHostUsesConfiguredTownHost(t *testing.T) {
 	d := &Daemon{config: &Config{TownRoot: townRoot}}
 	if got := d.doltServerHost(); got != "127.0.0.2" {
 		t.Fatalf("doltServerHost() = %q, want configured host", got)
+	}
+}
+
+func TestRequireActivationAllowedBlocksInlineFallback(t *testing.T) {
+	townRoot := t.TempDir()
+	path := dog.GuardianFile(townRoot)
+	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte(`{"dispatch_allowed":true,"activation_allowed":false,"reason":"activation red"}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := dog.RequireDispatchAllowed(townRoot); err != nil {
+		t.Fatalf("dispatch should be allowed: %v", err)
+	}
+	if err := dog.RequireActivationAllowed(townRoot); err == nil {
+		t.Fatal("activation must be denied so inline reaper fallback cannot run")
 	}
 }

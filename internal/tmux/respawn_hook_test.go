@@ -88,6 +88,9 @@ func TestAutoRespawnHookCmd_Format(t *testing.T) {
 // TestAutoRespawnHook_RespawnWorks is the primary regression test: pane dies,
 // hook fires on the correct socket, pane comes back alive.
 func TestAutoRespawnHook_RespawnWorks(t *testing.T) {
+	if testing.Short() {
+		t.Skip("live tmux respawn waits on pane death")
+	}
 	socket := requireTestSocket(t)
 	session := "test-respawn"
 

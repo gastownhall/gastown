@@ -182,6 +182,7 @@ func BuildCommandContext(ctx context.Context, args ...string) *exec.Cmd {
 // Tmux wraps tmux operations.
 type Tmux struct {
 	socketName string // tmux socket name (-L flag), empty = default socket
+	binary     string // optional tmux executable override; empty means "tmux"
 }
 
 // noTownSocket is a sentinel socket name used when no town socket is configured.
@@ -217,6 +218,12 @@ func NewTmuxWithSocket(socket string) *Tmux {
 	return &Tmux{socketName: socket}
 }
 
+// NewTmuxWithSocketAndBinary is like NewTmuxWithSocket but invokes a specific
+// tmux executable. Tests use this to wrap the host tmux without mutating PATH.
+func NewTmuxWithSocketAndBinary(socket, binary string) *Tmux {
+	return &Tmux{socketName: socket, binary: binary}
+}
+
 // run executes a tmux command and returns stdout.
 // All commands include -u flag for UTF-8 support regardless of locale settings.
 // See: https://github.com/steveyegge/gastown/issues/1219
@@ -230,7 +237,11 @@ func (t *Tmux) commandContext(ctx context.Context, args ...string) *exec.Cmd {
 		allArgs = append(allArgs, "-L", t.socketName)
 	}
 	allArgs = append(allArgs, args...)
-	cmd := exec.CommandContext(ctx, "tmux", allArgs...)
+	binary := "tmux"
+	if t != nil && t.binary != "" {
+		binary = t.binary
+	}
+	cmd := exec.CommandContext(ctx, binary, allArgs...)
 	hideConsoleWindow(cmd)
 	return cmd
 }
@@ -1518,14 +1529,20 @@ func (t *Tmux) dismissRewindMode(target string) {
 	time.Sleep(300 * time.Millisecond)
 }
 
-// sendEnterVerified sends Enter to a tmux target and verifies it was processed
-// by checking that the pane content changes. Under load, tmux may buffer
-// keystrokes, causing Enter to race with text delivery — Enter arrives while
-// tmux is still processing text/Escape and gets treated as part of the text
-// stream rather than a separate submit action.
+// sendLiteralCR submits the current line with a literal carriage return.
+// Named-key Enter/C-m/KPEnter are not delivered on some tmux builds
+// (tmux 3.7b on macOS Homebrew); send-keys -l with CR is. (GH#4666)
+func sendLiteralCR(t *Tmux, target string) error {
+	_, err := t.run("send-keys", "-t", target, "-l", "\r")
+	return err
+}
+
+// sendEnterVerified sends a submit keystroke to a tmux target and verifies it
+// was processed by checking that the pane content changes. Under load, tmux may
+// buffer keystrokes, causing the submit to race with text delivery.
 //
-// After sending Enter, polls the pane content with exponential backoff. If the
-// content hasn't changed (Enter wasn't processed), retries the Enter keystroke.
+// After sending CR, polls the pane content with exponential backoff. If the
+// content hasn't changed (submit wasn't processed), retries the keystroke.
 // Max 3 retries before returning an error.
 //
 // Falls back to best-effort (no verification) if pane capture fails.
@@ -1536,11 +1553,10 @@ func (t *Tmux) sendEnterVerified(target string) error {
 		verifyLines    = 5 // capture last N lines for comparison
 	)
 
-	// Snapshot pane content before Enter so we can detect processing.
+	// Snapshot pane content before submit so we can detect processing.
 	preSnapshot, preErr := t.CapturePane(target, verifyLines)
 
-	// Send Enter
-	if _, err := t.run("send-keys", "-t", target, "Enter"); err != nil {
+	if err := sendLiteralCR(t, target); err != nil {
 		return fmt.Errorf("send Enter: %w", err)
 	}
 
@@ -1560,12 +1576,12 @@ func (t *Tmux) sendEnterVerified(target string) error {
 		}
 
 		if postSnapshot != preSnapshot {
-			// Content changed — Enter was processed.
+			// Content changed — submit was processed.
 			return nil
 		}
 
-		// Content unchanged — Enter may not have been processed. Retry.
-		if _, err := t.run("send-keys", "-t", target, "Enter"); err != nil {
+		// Content unchanged — CR may not have been processed. Retry.
+		if err := sendLiteralCR(t, target); err != nil {
 			return fmt.Errorf("send Enter (retry %d): %w", retry+1, err)
 		}
 

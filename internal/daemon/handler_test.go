@@ -79,6 +79,7 @@ func testSetupWorkingDogState(t *testing.T, townRoot, name, work string, lastAct
 		Name:       name,
 		State:      dog.StateWorking,
 		Work:       work,
+		WorkKind:   dog.WorkKindPlugin, // state-only fixture; source-backed recovery is tested separately
 		LastActive: lastActive,
 		Worktrees:  map[string]string{},
 		CreatedAt:  lastActive,

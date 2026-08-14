@@ -17,7 +17,10 @@ type submitSourceIssue struct {
 
 func routedIssueBeads(cwd, issueID string) (*beads.Beads, string, string) {
 	currentBeadsDir := beads.ResolveBeadsDir(cwd)
-	routedBeadsDir := beads.ResolveBeadsDirForID(currentBeadsDir, issueID)
+	routedBeadsDir := beads.NewAuthorityFromBeadsDir(currentBeadsDir).ForBead(issueID).BeadsDir()
+	if routedBeadsDir == "" {
+		routedBeadsDir = currentBeadsDir
+	}
 	return beads.NewWithBeadsDir(cwd, routedBeadsDir), currentBeadsDir, routedBeadsDir
 }
 

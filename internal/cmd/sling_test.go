@@ -111,11 +111,26 @@ case "$cmd" in
   update)
     for arg in "$@"; do
       case "$arg" in
-        --description=*) printf "%s" "${arg#--description=}" > "$BD_DESC_FILE" ;;
+        --description=*)
+          if [ "${BD_FAIL_DESCRIPTION_UPDATE:-}" = "1" ]; then
+            echo "forced description update failure" >&2
+            exit 1
+          fi
+          printf "%s" "${arg#--description=}" > "$BD_DESC_FILE"
+          ;;
         --status=*) printf "%s" "${arg#--status=}" > "$BD_STATUS_FILE" ;;
         --assignee=*) printf "%s" "${arg#--assignee=}" > "$BD_ASSIGNEE_FILE" ;;
       esac
     done
+    ;;
+  create)
+    if [ -n "${BD_CREATE_DESC_FILE:-}" ]; then
+      for arg in "$@"; do
+        case "$arg" in
+          --description=*) printf "%s" "${arg#--description=}" > "$BD_CREATE_DESC_FILE" ;;
+        esac
+      done
+    fi
     ;;
   version)
     echo "bd test"
@@ -597,7 +612,9 @@ exit /b 0
 			assertTargetRig("review-only metadata update", dir, beadsDir, database, beadsDB, bdDB, dataDir, gtData, args)
 		case strings.Contains(args, "update "+newBeadID) && strings.Contains(args, "--description="):
 			assertTargetRig("description update", dir, beadsDir, database, beadsDB, bdDB, dataDir, gtData, args)
-		case args == "--version" || strings.HasPrefix(args, "version") || strings.Contains(args, " version") || strings.Contains(args, "show gt-rig-") || strings.Contains(args, "show mol-"):
+		case strings.Contains(args, "show gt-gastown-polecat-") || strings.Contains(args, "update gt-gastown-polecat-"):
+			assertTargetRig("polecat agent hook", dir, beadsDir, database, beadsDB, bdDB, dataDir, gtData, args)
+		case args == "--version" || strings.HasPrefix(args, "version") || strings.Contains(args, " version") || strings.Contains(args, "show gt-rig-") || strings.Contains(args, "show mol-") || strings.Contains(args, "show hq-") || strings.Contains(args, "update hq-"):
 			// Explicitly exempt non-target-bead lookups; every gt-new123 operation
 			// above must still prove it is pinned to the gastown database.
 		default:
@@ -1973,6 +1990,75 @@ func TestExecuteSlingRawReviewOnlySuccessKeepsMetadata(t *testing.T) {
 	assertHasRawReviewMetadata(t, readMutableBDDescription(t, descPath))
 }
 
+// TestExecuteSlingStoresLocalMergeStrategyOnIssue is the regression test for
+// GH#4512. Queue and batch dispatch use executeSling; the local-only intent must
+// be persisted on the issue so gt done can recover it after a re-dispatch.
+func TestExecuteSlingStoresLocalMergeStrategyOnIssue(t *testing.T) {
+	townRoot, rigPath, descPath := setupMutableBDRawSlingTest(t, "Keep this body.")
+
+	prevSpawn := spawnPolecatForSling
+	prevHook := hookBeadWithRetryWithTownRootFn
+	prevAddTracking := addTrackingRelationFn
+	t.Cleanup(func() {
+		spawnPolecatForSling = prevSpawn
+		hookBeadWithRetryWithTownRootFn = prevHook
+		addTrackingRelationFn = prevAddTracking
+	})
+	spawnPolecatForSling = func(rigName string, opts SlingSpawnOptions) (*SpawnedPolecatInfo, error) {
+		return &SpawnedPolecatInfo{
+			RigName:     rigName,
+			PolecatName: "toast",
+			ClonePath:   filepath.Join(townRoot, "gastown", "polecats", "toast"),
+			Pane:        "%1",
+		}, nil
+	}
+	hookBeadWithRetryWithTownRootFn = func(beadID, targetAgent, hookDir, townRoot string) error {
+		return nil
+	}
+	var trackedConvoyID string
+	addTrackingRelationFn = func(gotTownRoot, convoyID, issueID string) error {
+		if gotTownRoot != townRoot {
+			t.Errorf("tracking town root = %q, want %q", gotTownRoot, townRoot)
+		}
+		if issueID != "gt-rawrollback" {
+			t.Errorf("tracked issue = %q, want gt-rawrollback", issueID)
+		}
+		trackedConvoyID = convoyID
+		return nil
+	}
+
+	result, err := executeSling(SlingParams{
+		BeadID:      "gt-rawrollback",
+		RigName:     "gastown",
+		TownRoot:    townRoot,
+		BeadsDir:    filepath.Join(rigPath, ".beads"),
+		HookRawBead: true,
+		Merge:       "local",
+		Owned:       true,
+		NoBoot:      true,
+	})
+	if err != nil {
+		t.Fatalf("executeSling: %v", err)
+	}
+	if result == nil || !result.Success {
+		t.Fatalf("executeSling result not successful: %+v", result)
+	}
+
+	fields := beads.ParseAttachmentFields(&beads.Issue{Description: readMutableBDDescription(t, descPath)})
+	if fields == nil {
+		t.Fatal("issue has no attachment fields")
+	}
+	if trackedConvoyID == "" || fields.ConvoyID != trackedConvoyID {
+		t.Fatalf("ConvoyID = %q, want tracked convoy %q", fields.ConvoyID, trackedConvoyID)
+	}
+	if fields.MergeStrategy != "local" {
+		t.Fatalf("MergeStrategy = %q, want local", fields.MergeStrategy)
+	}
+	if !fields.ConvoyOwned {
+		t.Fatal("ConvoyOwned = false, want true")
+	}
+}
+
 func TestSlingFormulaRollsBackSpawnedPolecatOnWispFailure(t *testing.T) {
 	townRoot := t.TempDir()
 
@@ -2139,6 +2225,9 @@ case "$cmd" in
   formula)
     echo '{"name":"mol-anything"}'
     ;;
+  create)
+    echo '{"id":"gt-dispatch-xyz","title":"mol-anything","status":"open"}'
+    ;;
   cook)
     exit 0
     ;;
@@ -2161,6 +2250,10 @@ set "cmd=%1"
 set "sub=%2"
 if "%cmd%"=="formula" (
   echo {"name":"mol-anything"}
+  exit /b 0
+)
+if "%cmd%"=="create" (
+  echo {"id":"gt-dispatch-xyz","title":"mol-anything","status":"open"}
   exit /b 0
 )
 if "%cmd%"=="cook" exit /b 0
@@ -2222,6 +2315,9 @@ exit /b 0
 
 	if !strings.Contains(attachment, "attached_formula: mol-anything") {
 		t.Fatalf("formula attachment missing from persisted description:\n%s", attachment)
+	}
+	if !strings.Contains(attachment, "attached_molecule: gt-wisp-xyz") {
+		t.Fatalf("durable dispatch bead does not point to formula wisp:\n%s", attachment)
 	}
 	if !strings.Contains(attachment, "version=1.2.3") || !strings.Contains(attachment, "channel=stable") {
 		t.Fatalf("formula vars missing from persisted description:\n%s", attachment)
@@ -2303,7 +2399,7 @@ exit /b 0
 	slingNoBoot = true
 	slingForce = false
 	findHookedFormulaSingletonFn = func(workDir, targetAgent, formulaName string) (*beads.Issue, error) {
-		return &beads.Issue{ID: "gt-wisp-existing"}, nil
+		return &beads.Issue{ID: "gt-dispatch-existing", Labels: []string{formulaDispatchLabel}}, nil
 	}
 
 	if err := runSlingFormula(context.Background(), []string{"mol-anything"}); err != nil {
@@ -2380,7 +2476,7 @@ exit /b 0
 	slingForce = false
 	slingRalph = false
 	findHookedFormulaSingletonFn = func(workDir, targetAgent, formulaName string) (*beads.Issue, error) {
-		return &beads.Issue{ID: "gt-wisp-existing", Description: "attached_formula: mol-anything\nmode: ralph"}, nil
+		return &beads.Issue{ID: "gt-dispatch-existing", Labels: []string{formulaDispatchLabel}, Description: "attached_formula: mol-anything\nmode: ralph"}, nil
 	}
 
 	if err := runSlingFormula(context.Background(), []string{"mol-anything"}); err != nil {

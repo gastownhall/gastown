@@ -3,6 +3,7 @@ package session
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"sort"
@@ -129,7 +130,7 @@ type StartResult struct {
 // StartSession creates a tmux session following the standard Gas Town lifecycle.
 //
 // The lifecycle handles:
-//  1. Resolve runtime config for the role
+//  1. Resolve runtime config for the role (crew uses per-worker resolution)
 //  2. Ensure settings/plugins exist for the agent
 //  3. Build startup command (if not provided)
 //  4. Create tmux session with command
@@ -139,8 +140,9 @@ type StartResult struct {
 //     auto-respawn, PID tracking, verify survived
 //
 // Role-specific concerns (issue validation, fallback nudges, pane-died hooks,
-// crew cycle bindings, etc.) should be handled by the caller before/after
-// calling StartSession.
+// crew cycle bindings, nudge pollers, fatal ready-wait) stay with the caller
+// before/after StartSession. Boot, Dog, Mayor, Polecat, Witness, Refinery,
+// and Crew are adapters of this module.
 func StartSession(t *tmux.Tmux, cfg SessionConfig) (_ *StartResult, retErr error) {
 	// Generate the GASTA run ID — the root identifier for all telemetry emitted
 	// by this agent session and its subprocesses (bd, mail, …).
@@ -159,13 +161,9 @@ func StartSession(t *tmux.Tmux, cfg SessionConfig) (_ *StartResult, retErr error
 	}
 
 	// 1. Resolve runtime config.
-	runtimeConfig := config.ResolveRoleAgentConfig(cfg.Role, cfg.TownRoot, cfg.RigPath)
-	if cfg.AgentOverride != "" {
-		rc, _, err := config.ResolveAgentConfigWithOverride(cfg.TownRoot, cfg.RigPath, cfg.AgentOverride)
-		if err != nil {
-			return nil, fmt.Errorf("resolving agent config for %s: %w", cfg.AgentOverride, err)
-		}
-		runtimeConfig = rc
+	runtimeConfig, err := resolveRuntimeConfig(cfg)
+	if err != nil {
+		return nil, err
 	}
 
 	// 2. Ensure settings/plugins exist for the agent.
@@ -311,7 +309,7 @@ func StartSession(t *tmux.Tmux, cfg SessionConfig) (_ *StartResult, retErr error
 	// Record the agent instantiation event (GASTA root span).
 	// Done after session creation so we only emit on success.
 	RecordAgentInstantiateFromDir(ctx, runID, runtimeConfig.ResolvedAgent,
-		cfg.Role, cfg.AgentName, cfg.SessionID, cfg.RigName, cfg.TownRoot, "", cfg.WorkDir)
+		cfg.Role, cfg.AgentName, cfg.SessionID, cfg.RigName, cfg.TownRoot, cfg.Beacon.MolID, cfg.WorkDir)
 
 	return &StartResult{RuntimeConfig: runtimeConfig, RunID: runID}, nil
 }
@@ -431,11 +429,15 @@ func MergeRuntimeLivenessEnv(envVars map[string]string, runtimeConfig *config.Ru
 	return envVars
 }
 
+// ErrSessionAlive is returned by KillExistingSession when checkAlive is true
+// and the tmux session still has a live agent.
+var ErrSessionAlive = errors.New("session already running")
+
 // KillExistingSession kills an existing session if one is found.
 // Returns true if a session was killed.
 //
 // If checkAlive is true, only kills zombie sessions (tmux alive but agent dead).
-// If the session exists and the agent is alive, returns ErrAlreadyRunning.
+// If the session exists and the agent is alive, returns ErrSessionAlive.
 // If checkAlive is false, kills any existing session unconditionally.
 func KillExistingSession(t *tmux.Tmux, sessionID string, checkAlive bool) (bool, error) {
 	running, err := t.HasSession(sessionID)
@@ -447,7 +449,7 @@ func KillExistingSession(t *tmux.Tmux, sessionID string, checkAlive bool) (bool,
 	}
 
 	if checkAlive && t.IsAgentAlive(sessionID) {
-		return false, fmt.Errorf("session already running: %s", sessionID)
+		return false, fmt.Errorf("%w: %s", ErrSessionAlive, sessionID)
 	}
 
 	if err := t.KillSessionWithProcesses(sessionID); err != nil {
@@ -455,6 +457,23 @@ func KillExistingSession(t *tmux.Tmux, sessionID string, checkAlive bool) (bool,
 	}
 
 	return true, nil
+}
+
+// resolveRuntimeConfig chooses the agent config for this session.
+// An explicit AgentOverride wins. Crew members without an override use
+// per-worker resolution. Every other role uses the role default.
+func resolveRuntimeConfig(cfg SessionConfig) (*config.RuntimeConfig, error) {
+	if cfg.AgentOverride != "" {
+		rc, _, err := config.ResolveAgentConfigWithOverride(cfg.TownRoot, cfg.RigPath, cfg.AgentOverride)
+		if err != nil {
+			return nil, fmt.Errorf("resolving agent config for %s: %w", cfg.AgentOverride, err)
+		}
+		return rc, nil
+	}
+	if cfg.Role == constants.RoleCrew && cfg.AgentName != "" {
+		return config.ResolveWorkerAgentConfig(cfg.AgentName, cfg.TownRoot, cfg.RigPath), nil
+	}
+	return config.ResolveRoleAgentConfig(cfg.Role, cfg.TownRoot, cfg.RigPath), nil
 }
 
 // buildPrompt creates the startup prompt from beacon + instructions.
@@ -467,12 +486,18 @@ func buildPrompt(cfg SessionConfig) string {
 
 // buildCommand creates the startup command using the config package.
 func buildCommand(cfg SessionConfig, prompt string) (string, error) {
-	if cfg.AgentOverride != "" {
-		return config.BuildAgentStartupCommandWithAgentOverride(
-			cfg.Role, cfg.RigName, cfg.TownRoot, cfg.RigPath, prompt, cfg.AgentOverride)
-	}
-	return config.BuildAgentStartupCommand(
-		cfg.Role, cfg.RigName, cfg.TownRoot, cfg.RigPath, prompt), nil
+	return config.BuildStartupCommandFromConfig(config.AgentEnvConfig{
+		Role:             cfg.Role,
+		Rig:              cfg.RigName,
+		AgentName:        cfg.AgentName,
+		TownRoot:         cfg.TownRoot,
+		RuntimeConfigDir: cfg.RuntimeConfigDir,
+		Agent:            cfg.AgentOverride,
+		Prompt:           prompt,
+		Issue:            cfg.Beacon.MolID,
+		Topic:            cfg.Beacon.Topic,
+		SessionName:      cfg.SessionID,
+	}, cfg.RigPath, prompt, cfg.AgentOverride)
 }
 
 // ShutdownDelay is the standard delay after session creation.

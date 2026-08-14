@@ -6,10 +6,12 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/steveyegge/gastown/internal/beads"
 	"github.com/steveyegge/gastown/internal/constants"
+	"github.com/steveyegge/gastown/internal/dog"
 	"github.com/steveyegge/gastown/internal/util"
 )
 
@@ -83,7 +85,7 @@ type FeedResult struct {
 // FeedConvoyResult describes the outcome for a single convoy.
 type FeedConvoyResult struct {
 	ConvoyID     string `json:"convoy_id"`
-	Action       string `json:"action"` // "fed", "closed", "cooldown", "error", "limit", "needs_attention"
+	Action       string `json:"action"` // "fed", "closed", "cooldown", "error", "limit", "needs_attention", "rejected", "blocked"
 	Message      string `json:"message"`
 	TrackedCount int    `json:"tracked_count,omitempty"` // Raw data for agent inspection
 	ReadyCount   int    `json:"ready_count,omitempty"`   // Raw data for agent inspection
@@ -200,6 +202,8 @@ func FindStrandedConvoys(townRoot string) ([]StrandedConvoy, error) {
 	return stranded, nil
 }
 
+var findStrandedConvoys = FindStrandedConvoys
+
 // FeedStranded detects stranded convoys and takes mechanical actions where safe.
 // Empty convoys (0 tracked) are auto-closed. Feedable convoys get a dog dispatched.
 // Convoys with tracked-but-not-ready issues are surfaced as "needs_attention" with
@@ -207,6 +211,15 @@ func FindStrandedConvoys(townRoot string) ([]StrandedConvoy, error) {
 // Rate limits by maxPerCycle and per-convoy cooldown.
 func FeedStranded(townRoot string, maxPerCycle int, cooldown time.Duration) *FeedResult {
 	result := &FeedResult{}
+
+	if err := dog.RequireDispatchAllowed(townRoot); err != nil {
+		result.Errors++
+		result.Details = append(result.Details, FeedConvoyResult{
+			Action:  "blocked",
+			Message: fmt.Sprintf("guardian blocked dog dispatch: %v", err),
+		})
+		return result
+	}
 
 	if maxPerCycle <= 0 {
 		maxPerCycle = DefaultMaxFeedsPerCycle
@@ -216,7 +229,7 @@ func FeedStranded(townRoot string, maxPerCycle int, cooldown time.Duration) *Fee
 	}
 
 	// Find stranded convoys
-	stranded, err := FindStrandedConvoys(townRoot)
+	stranded, err := findStrandedConvoys(townRoot)
 	if err != nil {
 		result.Errors++
 		result.Details = append(result.Details, FeedConvoyResult{
@@ -262,6 +275,15 @@ func FeedStranded(townRoot string, maxPerCycle int, cooldown time.Duration) *Fee
 			}
 
 			// Truly empty convoy (0 tracked issues) — auto-close
+			if err := dog.RequireActivationAllowed(townRoot); err != nil {
+				result.Errors++
+				result.Details = append(result.Details, FeedConvoyResult{
+					ConvoyID: convoy.ID,
+					Action:   "blocked",
+					Message:  fmt.Sprintf("guardian blocked empty-convoy close: %v", err),
+				})
+				continue
+			}
 			if err := closeEmptyConvoy(townRoot, convoy.ID); err != nil {
 				result.Errors++
 				result.Details = append(result.Details, FeedConvoyResult{
@@ -299,6 +321,23 @@ func FeedStranded(townRoot string, maxPerCycle int, cooldown time.Duration) *Fee
 				ConvoyID: convoy.ID,
 				Action:   "cooldown",
 				Message:  fmt.Sprintf("in cooldown (remaining: %s)", remaining.Round(time.Second)),
+			})
+			continue
+		}
+
+		if ok, reason, err := admitConvoyFeed(townRoot, convoy.ID); err != nil {
+			result.Errors++
+			result.Details = append(result.Details, FeedConvoyResult{
+				ConvoyID: convoy.ID,
+				Action:   "error",
+				Message:  fmt.Sprintf("failed to admit convoy feed: %v", err),
+			})
+			continue
+		} else if !ok {
+			result.Details = append(result.Details, FeedConvoyResult{
+				ConvoyID: convoy.ID,
+				Action:   "rejected",
+				Message:  reason,
 			})
 			continue
 		}
@@ -347,7 +386,9 @@ func closeEmptyConvoy(townRoot, convoyID string) error {
 }
 
 // dispatchFeedDog dispatches a dog to feed a stranded convoy via gt sling.
-func dispatchFeedDog(townRoot, convoyID string) error {
+var dispatchFeedDog = defaultDispatchFeedDog
+
+func defaultDispatchFeedDog(townRoot, convoyID string) error {
 	cmd := exec.Command("gt", "sling", constants.MolConvoyFeed, "deacon/dogs",
 		"--var", fmt.Sprintf("convoy=%s", convoyID))
 	cmd.Dir = townRoot
@@ -356,6 +397,81 @@ func dispatchFeedDog(townRoot, convoyID string) error {
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	return cmd.Run()
+}
+
+// ConvoyChild is a tracked convoy issue used for feed admission.
+type ConvoyChild struct {
+	ID       string
+	Status   string
+	Assignee string
+	Blocked  bool
+}
+
+var listConvoyChildren = defaultListConvoyChildren
+
+// AdmitConvoyFeed rejects a convoy when any tracked child is blocked, hooked,
+// or assigned. Readiness cannot be inferred from a shallow ready-count.
+func AdmitConvoyFeed(children []ConvoyChild) (ok bool, reason string) {
+	for _, child := range children {
+		if child.Blocked {
+			return false, fmt.Sprintf("tracked child %s is blocked", child.ID)
+		}
+		if child.Status == "hooked" || child.Status == "in_progress" {
+			return false, fmt.Sprintf("tracked child %s is %s", child.ID, child.Status)
+		}
+		if strings.TrimSpace(child.Assignee) != "" {
+			return false, fmt.Sprintf("tracked child %s is assigned to %s", child.ID, child.Assignee)
+		}
+	}
+	return true, ""
+}
+
+func admitConvoyFeed(townRoot, convoyID string) (bool, string, error) {
+	children, err := listConvoyChildren(townRoot, convoyID)
+	if err != nil {
+		return false, "", err
+	}
+	ok, reason := AdmitConvoyFeed(children)
+	return ok, reason, nil
+}
+
+func defaultListConvoyChildren(townRoot, convoyID string) ([]ConvoyChild, error) {
+	cmd := beads.Command(townRoot, townBeadsDir(townRoot), beads.ReadOnlyRouting, "show", convoyID, "--json")
+	output, err := cmd.Output()
+	if err != nil {
+		return nil, fmt.Errorf("showing convoy %s: %w", convoyID, err)
+	}
+	var issues []struct {
+		Dependencies []beads.IssueDep `json:"dependencies"`
+	}
+	if err := json.Unmarshal(output, &issues); err != nil || len(issues) == 0 {
+		return nil, fmt.Errorf("parsing convoy %s: %w", convoyID, err)
+	}
+	var children []ConvoyChild
+	for _, dep := range issues[0].Dependencies {
+		if dep.DependencyType != "" && dep.DependencyType != "tracks" {
+			continue
+		}
+		child := ConvoyChild{ID: dep.ID, Status: dep.Status}
+		show := beads.Command(townRoot, townBeadsDir(townRoot), beads.ReadOnlyRouting, "show", dep.ID, "--json")
+		out, showErr := show.Output()
+		if showErr != nil {
+			return nil, fmt.Errorf("showing tracked child %s: %w", dep.ID, showErr)
+		}
+		var details []struct {
+			Status   string `json:"status"`
+			Assignee string `json:"assignee"`
+			Blocked  bool   `json:"blocked"`
+		}
+		if err := json.Unmarshal(out, &details); err != nil || len(details) == 0 {
+			return nil, fmt.Errorf("parsing tracked child %s: %w", dep.ID, err)
+		}
+		child.Status = details[0].Status
+		child.Assignee = details[0].Assignee
+		child.Blocked = details[0].Blocked
+		children = append(children, child)
+	}
+	return children, nil
 }
 
 // PruneFeedStrandedState removes entries for convoys that are no longer open.

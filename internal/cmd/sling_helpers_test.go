@@ -339,3 +339,37 @@ exit 1
 		t.Fatalf("bd update invoked %s times, want 1", got)
 	}
 }
+
+func TestResolveBeadDirFromTownRootUsesAuthority(t *testing.T) {
+	root := t.TempDir()
+	townBeads := filepath.Join(root, ".beads")
+	rigDir := filepath.Join(root, "gastown", "mayor", "rig")
+	if err := os.MkdirAll(townBeads, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(rigDir, ".beads"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(root, "mayor"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "mayor", "town.json"), []byte("{}"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	routes := `{"prefix": "gt-", "path": "gastown/mayor/rig"}
+{"prefix": "hq-", "path": "."}
+`
+	if err := os.WriteFile(filepath.Join(townBeads, "routes.jsonl"), []byte(routes), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	if got := resolveBeadDirFromTownRoot(root, "gt-abc"); got != rigDir {
+		t.Fatalf("rig bead work dir = %q, want %q", got, rigDir)
+	}
+	if got := resolveBeadDirFromTownRoot(root, "hq-mayor"); got != root {
+		t.Fatalf("town bead work dir = %q, want %q", got, root)
+	}
+	if got := resolveBeadDirFromTownRoot("", "gt-abc"); got != "." {
+		t.Fatalf("empty town work dir = %q, want .", got)
+	}
+}

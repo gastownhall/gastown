@@ -160,10 +160,12 @@ func runAssign(_ *cobra.Command, args []string) error {
 		break
 	}
 
-	// Step 3: Update agent hook_bead field (currently a no-op but maintains contract)
+	// Step 3: Update agent hook_bead field so gt hook / gt mol status can find the work.
 	townBeadsDir := filepath.Join(townRoot, ".beads")
 	rigBeadsDir := filepath.Join(townRoot, rigName, ".beads")
-	updateAgentHookBead(agentID, beadID, rigBeadsDir, townBeadsDir)
+	if err := updateAgentHookBead(agentID, beadID, rigBeadsDir, townBeadsDir); err != nil {
+		fmt.Printf("%s Could not update agent hook: %v\n", style.Dim.Render("Warning:"), err)
+	}
 
 	// Step 4: Log event
 	if err := events.LogFeed(events.TypeHook, agentID, events.HookPayload(beadID)); err != nil {
