@@ -1,6 +1,7 @@
 package mayor
 
 import (
+	"math"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -235,10 +236,9 @@ func TestRemoveACPPid_RemovesStalePid(t *testing.T) {
 		t.Fatalf("failed to create mayor dir: %v", err)
 	}
 
-	// Use a PID that cannot be live. Getpid()-10000 collapses to 1 when the
-	// test process PID is below 10000 (common on GitHub runners), and PID 1
-	// is always alive.
-	stalePid := 999999
+	// Getpid()-10000 can be live (or collapse to PID 1). Probe for a PID
+	// that is actually unused — 999999 can still be allocated on Linux.
+	stalePid := unusedACPPid(t)
 	pidPath := ACPPidFilePath(tmpDir)
 	if err := os.WriteFile(pidPath, []byte(strconv.Itoa(stalePid)), 0644); err != nil {
 		t.Fatalf("failed to write stale PID file: %v", err)
@@ -264,4 +264,18 @@ func TestRemoveACPPid_RemovesStalePid(t *testing.T) {
 	if _, err := os.Stat(pidPath); !os.IsNotExist(err) {
 		t.Error("CleanupStaleACP should have removed the stale PID file")
 	}
+}
+
+// unusedACPPid returns a PID that is not currently alive. Getpid()-N can still
+// refer to a live process on a busy CI runner, which makes "stale PID" tests
+// fail closed.
+func unusedACPPid(t *testing.T) int {
+	t.Helper()
+	for pid := math.MaxInt32; pid > 1; pid-- {
+		if !acpProcessAlive(pid) {
+			return pid
+		}
+	}
+	t.Fatal("could not find an unused PID")
+	return 0
 }

@@ -66,8 +66,10 @@ Each touch point lists:
   nudges as `<system-reminder>` blocks for Claude Code hook injection
 - `internal/cmd/mail_check.go` — `runMailCheck()` (line ~16): UserPromptSubmit hook
   drains queue + checks mail, outputs injection block
-- `internal/mail/router.go` — `NotifyRecipient()` (line ~1568): wait-idle-first
-  strategy with 3s timeout, queue fallback
+- `internal/mail/router.go` — `notifyRecipient()`: enqueue mail notification
+  onto the turn-appending nudge queue (GH#4607). Agent mail never uses
+  `NudgeSession`; if no town root exists to write the queue, notification
+  is skipped. The overseer still gets a visible banner.
 
 **Flow**: GT→Agent. Immediate: terminal injection. Queue: file→hook→injection.
 

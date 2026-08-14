@@ -4,6 +4,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -1694,25 +1695,109 @@ func createNotifyTestSession(t *testing.T, socket, sessionName, command string) 
 	t.Fatalf("session %q never appeared on socket %q", sessionName, socket)
 }
 
-// TestNotifyRecipient_IdleAgent verifies that an idle agent (prompt visible)
-// receives a direct nudge instead of a queued one.
-func TestNotifyRecipient_IdleAgent(t *testing.T) {
-	socket := requireNotifyTestSocket(t)
-	sessionName := "gt-crew-idletest"
+func waitForPaneContains(t *testing.T, tm *tmux.Tmux, sessionName, want string) string {
+	t.Helper()
+	deadline := time.Now().Add(3 * time.Second)
+	var pane string
+	var err error
+	for time.Now().Before(deadline) {
+		pane, err = tm.CapturePane(sessionName, 50)
+		if err == nil && strings.Contains(pane, want) {
+			return pane
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	if err != nil {
+		t.Fatalf("CapturePane(%s): %v", sessionName, err)
+	}
+	t.Fatalf("pane %s never contained %q; last:\n%s", sessionName, want, pane)
+	return pane
+}
 
-	// Create a session that displays the Claude Code prompt prefix, simulating idle.
-	// "printf" prints the prompt, then "cat" blocks keeping the session alive.
+func startIdleMailSession(t *testing.T, sessionName string) (socket string, tm *tmux.Tmux) {
+	t.Helper()
+	socket = requireNotifyTestSocket(t)
 	createNotifyTestSession(t, socket, sessionName, `sh -c 'printf "❯ \n" && cat'`)
+	tm = tmux.NewTmuxWithSocket(socket)
+	waitForPaneContains(t, tm, sessionName, "❯")
+	return socket, tm
+}
 
-	// Wait briefly for printf output to appear in the pane.
-	time.Sleep(500 * time.Millisecond)
+func assertNoSubmittedMailTurn(t *testing.T, tm *tmux.Tmux, sessionName string) {
+	t.Helper()
+	pane, err := tm.CapturePane(sessionName, 50)
+	if err != nil {
+		t.Fatalf("CapturePane: %v", err)
+	}
+	if strings.Contains(pane, "You have new mail") {
+		t.Errorf("mail notification was submitted as a new turn in the pane (GH#4607); pane:\n%s", pane)
+	}
+}
+
+func assertQueuedMailWakeup(t *testing.T, townRoot, sessionName string) {
+	t.Helper()
+	pending, err := nudge.Pending(townRoot, sessionName)
+	if err != nil {
+		t.Fatalf("Pending: %v", err)
+	}
+	if pending != 2 {
+		t.Errorf("expected 2 queued nudges (notification + reply-reminder), got %d", pending)
+	}
+	nudges, err := nudge.Drain(townRoot, sessionName)
+	if err != nil {
+		t.Fatalf("Drain: %v", err)
+	}
+	if len(nudges) != 1 {
+		t.Fatalf("expected 1 immediately-deliverable queued mail nudge, got %d", len(nudges))
+	}
+	if nudges[0].Kind != "mail" {
+		t.Errorf("queued nudge kind = %q, want mail", nudges[0].Kind)
+	}
+	if !strings.Contains(nudges[0].Message, "You have new mail") {
+		t.Errorf("queued nudge message = %q, want mail notification", nudges[0].Message)
+	}
+}
+
+func installBdCreateStub(t *testing.T) {
+	t.Helper()
+	if runtime.GOOS == "windows" {
+		t.Skip("test uses a bash bd stub")
+	}
+	binDir := t.TempDir()
+	script := `#!/usr/bin/env bash
+set -euo pipefail
+case "${1:-}" in
+  config|init) exit 0 ;;
+  list) echo "[]"; exit 0 ;;
+  create) echo "hq-testmail-1"; exit 0 ;;
+esac
+if [[ "${1:-}" == "mol" && "${2:-}" == "wisp" && "${3:-}" == "list" ]]; then
+  echo "[]"
+  exit 0
+fi
+echo "unsupported bd args: $*" >&2
+exit 1
+`
+	bdStub := filepath.Join(binDir, "bd")
+	if err := os.WriteFile(bdStub, []byte(script), 0755); err != nil {
+		t.Fatalf("write bd stub: %v", err)
+	}
+	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+}
+
+// TestNotifyRecipient_IdleAgentDoesNotSubmitNewTurn is the GH#4607 feedback
+// loop: mail notification must not be submitted as a new tmux turn (which
+// cancels in-flight tool calls). It must land on the queued-nudge channel
+// that gt nudge already uses for turn-appending delivery.
+func TestNotifyRecipient_IdleAgentDoesNotSubmitNewTurn(t *testing.T) {
+	sessionName := "gt-crew-idletest"
+	_, tm := startIdleMailSession(t, sessionName)
 
 	townRoot := t.TempDir()
 	r := &Router{
-		workDir:           t.TempDir(),
-		townRoot:          townRoot,
-		tmux:              tmux.NewTmuxWithSocket(socket),
-		IdleNotifyTimeout: 3 * time.Second,
+		workDir:  t.TempDir(),
+		townRoot: townRoot,
+		tmux:     tm,
 	}
 
 	msg := &Message{
@@ -1721,26 +1806,108 @@ func TestNotifyRecipient_IdleAgent(t *testing.T) {
 		Subject: "test idle delivery",
 	}
 
-	err := r.notifyRecipient(msg)
-	if err != nil {
+	if err := r.notifyRecipient(msg); err != nil {
 		t.Fatalf("notifyRecipient returned error: %v", err)
 	}
 
-	// The main notification was delivered directly (no immediate queue).
-	// But the reply-reminder is deferred — it should be in the queue with a
-	// future DeliverAfter, waiting for the configured delay to elapse.
-	pending, _ := nudge.Pending(townRoot, sessionName)
-	if pending != 1 {
-		t.Errorf("expected 1 queued nudge (deferred reply-reminder) for idle agent, got %d", pending)
+	assertNoSubmittedMailTurn(t, tm, sessionName)
+	assertQueuedMailWakeup(t, townRoot, sessionName)
+}
+
+// TestNotifyRecipient_NoTownRootDoesNotSubmitNewTurn is the remaining GH#4607
+// gap: without a queue root, mail must fail safely rather than NudgeSession.
+func TestNotifyRecipient_NoTownRootDoesNotSubmitNewTurn(t *testing.T) {
+	sessionName := "gt-crew-noroottown"
+	_, tm := startIdleMailSession(t, sessionName)
+
+	r := &Router{
+		workDir:  t.TempDir(),
+		townRoot: "",
+		tmux:     tm,
+	}
+	msg := &Message{
+		From:    "gastown/crew/sender",
+		To:      "gastown/crew/noroottown",
+		Subject: "test no town root",
+	}
+	if err := r.notifyRecipient(msg); err != nil {
+		t.Fatalf("notifyRecipient returned error: %v", err)
+	}
+	assertNoSubmittedMailTurn(t, tm, sessionName)
+}
+
+// TestSend_IdleAgentDoesNotSubmitNewTurn exercises the public Router.Send
+// path that `gt mail send` uses, not notifyRecipient directly.
+func TestSend_IdleAgentDoesNotSubmitNewTurn(t *testing.T) {
+	installBdCreateStub(t)
+
+	townRoot := t.TempDir()
+	mayorDir := filepath.Join(townRoot, "mayor")
+	beadsDir := filepath.Join(townRoot, ".beads")
+	for _, dir := range []string{mayorDir, beadsDir} {
+		if err := os.MkdirAll(dir, 0755); err != nil {
+			t.Fatalf("mkdir %s: %v", dir, err)
+		}
+	}
+	if err := os.WriteFile(filepath.Join(mayorDir, "town.json"), []byte(`{"name":"test"}`), 0644); err != nil {
+		t.Fatalf("write town.json: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(beadsDir, "beads.db"), []byte{}, 0644); err != nil {
+		t.Fatalf("write beads.db: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(beadsDir, ".gt-types-configured"), []byte(beads.TypeConfigSentinelValue()+"\n"), 0644); err != nil {
+		t.Fatalf("write types sentinel: %v", err)
 	}
 
-	// Confirm the queued nudge is deferred, not a missed immediate notification.
-	nudges, err := nudge.Drain(townRoot, sessionName)
-	if err != nil {
-		t.Fatalf("Drain: %v", err)
+	sessionName := session.MayorSessionName()
+	_, tm := startIdleMailSession(t, sessionName)
+
+	r := NewRouterWithTownRoot(townRoot, townRoot)
+	r.tmux = tm
+
+	msg := &Message{
+		From:    "deacon/",
+		To:      "mayor/",
+		Subject: "test send idle new-turn",
+		Body:    "hello",
 	}
-	if len(nudges) != 0 {
-		t.Errorf("expected 0 immediately-deliverable nudges (reminder should be deferred), got %d", len(nudges))
+	if err := r.Send(msg); err != nil {
+		t.Fatalf("Send: %v", err)
+	}
+	r.WaitPendingNotifications()
+
+	assertNoSubmittedMailTurn(t, tm, sessionName)
+	assertQueuedMailWakeup(t, townRoot, sessionName)
+}
+
+func TestNotifyRecipient_EnqueueErrorWrapsCause(t *testing.T) {
+	townRoot := filepath.Join(t.TempDir(), "not-a-dir")
+	if err := os.WriteFile(townRoot, []byte("x"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	r := &Router{
+		workDir:  t.TempDir(),
+		townRoot: townRoot,
+		tmux:     tmux.NewTmuxWithSocket("gt-test-missing-socket-enqueue-wrap"),
+	}
+	msg := &Message{
+		From:    "mayor/",
+		To:      "gastown/crew/wraperr",
+		Subject: "wrap",
+	}
+	err := r.notifyRecipient(msg)
+	if err == nil {
+		t.Fatal("expected enqueue error")
+	}
+	if !strings.Contains(err.Error(), "enqueue mail notification for session") {
+		t.Errorf("error missing operation context: %v", err)
+	}
+	if !strings.Contains(err.Error(), "gt-crew-wraperr") {
+		t.Errorf("error missing session id: %v", err)
+	}
+	var pathErr *os.PathError
+	if !errors.As(err, &pathErr) {
+		t.Errorf("enqueue cause not preserved with %%w: %v", err)
 	}
 }
 
@@ -1755,10 +1922,9 @@ func TestNotifyRecipient_BusyAgent(t *testing.T) {
 
 	townRoot := t.TempDir()
 	r := &Router{
-		workDir:           t.TempDir(),
-		townRoot:          townRoot,
-		tmux:              tmux.NewTmuxWithSocket(socket),
-		IdleNotifyTimeout: 1 * time.Second, // short timeout for test speed
+		workDir:  t.TempDir(),
+		townRoot: townRoot,
+		tmux:     tmux.NewTmuxWithSocket(socket),
 	}
 
 	msg := &Message{
@@ -1808,10 +1974,9 @@ func TestNotifyRecipient_CanonicalAliasFansOutToBusyCandidates(t *testing.T) {
 
 	townRoot := t.TempDir()
 	r := &Router{
-		workDir:           t.TempDir(),
-		townRoot:          townRoot,
-		tmux:              tmux.NewTmuxWithSocket(socket),
-		IdleNotifyTimeout: 10 * time.Millisecond,
+		workDir:  t.TempDir(),
+		townRoot: townRoot,
+		tmux:     tmux.NewTmuxWithSocket(socket),
 	}
 
 	msg := &Message{
@@ -1926,10 +2091,9 @@ func TestNotifyRecipient_BusyAgentEscalationUsesUrgentQueuedNudge(t *testing.T) 
 
 	townRoot := t.TempDir()
 	r := &Router{
-		workDir:           t.TempDir(),
-		townRoot:          townRoot,
-		tmux:              tmux.NewTmuxWithSocket(socket),
-		IdleNotifyTimeout: 1 * time.Second,
+		workDir:  t.TempDir(),
+		townRoot: townRoot,
+		tmux:     tmux.NewTmuxWithSocket(socket),
 	}
 
 	msg := &Message{
