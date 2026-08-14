@@ -2200,7 +2200,9 @@ func (h *APIHandler) handleSSE(w http.ResponseWriter, r *http.Request) {
 	flusher.Flush()
 
 	var lastHash string
-	ticker := time.NewTicker(2 * time.Second)
+	// 10s matches #1805. A 2s ticker was restored accidentally by #1810 and
+	// re-created the process storm (#2618, #3396): 3 gt subprocesses per tick.
+	ticker := time.NewTicker(10 * time.Second)
 	defer ticker.Stop()
 
 	// Send keepalive comment every 15 seconds to prevent connection timeouts
@@ -2231,49 +2233,43 @@ func (h *APIHandler) computeDashboardHash(ctx context.Context) string {
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 
-	var mu sync.Mutex
-	var parts []string
-
-	var wg sync.WaitGroup
+	// Fixed slots so identical command output hashes identically regardless of
+	// goroutine completion order. Append-order hashing emitted a new
+	// dashboard-update on every tick, which HTMX treats as a full page refetch.
+	var (
+		statusPart string
+		hooksPart  string
+		mailPart   string
+		wg         sync.WaitGroup
+	)
 	wg.Add(3)
 
-	// Check worker/polecat state
 	go func() {
 		defer wg.Done()
 		if out, err := h.runGtCommand(ctx, 3*time.Second, []string{"status", "--json"}); err == nil {
-			mu.Lock()
-			parts = append(parts, "status:"+out)
-			mu.Unlock()
+			statusPart = "status:" + out
 		}
 	}()
-
-	// Check hooks state
 	go func() {
 		defer wg.Done()
 		if out, err := h.runGtCommand(ctx, 3*time.Second, []string{"hooks", "list"}); err == nil {
-			mu.Lock()
-			parts = append(parts, "hooks:"+out)
-			mu.Unlock()
+			hooksPart = "hooks:" + out
 		}
 	}()
-
-	// Check mail count
 	go func() {
 		defer wg.Done()
 		if out, err := h.runGtCommand(ctx, 3*time.Second, []string{"mail", "inbox"}); err == nil {
-			mu.Lock()
-			parts = append(parts, "mail:"+out)
-			mu.Unlock()
+			mailPart = "mail:" + out
 		}
 	}()
 
 	wg.Wait()
 
-	if len(parts) == 0 {
+	if statusPart == "" && hooksPart == "" && mailPart == "" {
 		return ""
 	}
 
-	h256 := sha256.Sum256([]byte(strings.Join(parts, "|")))
+	h256 := sha256.Sum256([]byte(statusPart + "|" + hooksPart + "|" + mailPart))
 	return fmt.Sprintf("%x", h256[:8])
 }
 
