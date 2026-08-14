@@ -95,6 +95,7 @@ func outcomeFromSlingResult(result *SlingResult) *sling.Outcome {
 		ConvoyID:         result.ConvoyID,
 		AttachedMolecule: result.AttachedMolecule,
 		Success:          result.Success,
+		NoOp:             result.NoOp,
 	}
 }
 
@@ -112,6 +113,7 @@ func executeSlingIntent(params SlingParams) (*SlingResult, error) {
 		PolecatName:      outcome.PolecatName,
 		ConvoyID:         outcome.ConvoyID,
 		Success:          outcome.Success,
+		NoOp:             outcome.NoOp,
 		AttachedMolecule: outcome.AttachedMolecule,
 		ErrMsg:           errMsg(err),
 	}
@@ -183,11 +185,6 @@ func intentFromCLIFlags(beadID, rigName, formula, townRoot, beadsDir string) sli
 
 // runRigBeadSling is the direct-command adapter: flags → Intent → Lifecycle.
 func runRigBeadSling(ctx context.Context, beadID, rigName, formula, townRoot, beadsDir string) error {
-	if !slingForce {
-		if err := checkCrossRigGuard(beadID, rigName+"/polecats/_", townRoot); err != nil {
-			return err
-		}
-	}
 	intent := intentFromCLIFlags(beadID, rigName, formula, townRoot, beadsDir)
 	_, err := executeDeepSling(ctx, intent)
 	return err

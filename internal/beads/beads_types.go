@@ -15,6 +15,7 @@ import (
 
 	"github.com/steveyegge/gastown/internal/config"
 	"github.com/steveyegge/gastown/internal/constants"
+	"github.com/steveyegge/gastown/internal/townroot"
 	"github.com/steveyegge/gastown/internal/util"
 )
 
@@ -33,25 +34,9 @@ var (
 )
 
 // FindTownRoot walks up from startDir to find the Gas Town root directory.
-// The town root is identified by the presence of mayor/town.json.
-// Returns the outermost town root found, so that rig repos which were
-// originally standalone towns (and still contain mayor/town.json) don't
-// shadow the real town root above them.
-// Returns empty string if not found (reached filesystem root).
+// Delegates to townroot.Find so every caller shares the outermost-town.json rule.
 func FindTownRoot(startDir string) string {
-	dir := startDir
-	candidate := ""
-	for {
-		townFile := filepath.Join(dir, "mayor", "town.json")
-		if _, err := os.Stat(townFile); err == nil {
-			candidate = dir
-		}
-		parent := filepath.Dir(dir)
-		if parent == dir {
-			return candidate // Reached filesystem root — return outermost found
-		}
-		dir = parent
-	}
+	return townroot.Find(startDir)
 }
 
 // ResolveRoutingTarget determines which beads directory a bead ID will route to.

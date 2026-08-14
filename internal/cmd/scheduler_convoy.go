@@ -247,7 +247,7 @@ func runConvoySlingByID(convoyID string, opts convoyScheduleOpts) error {
 			HookRawBead:   opts.HookRawBead,
 			Convoy:        convoyID,
 			NoConvoy:      true, // Already tracked by this convoy
-			NoBoot:        opts.NoBoot,
+			NoBoot:        true, // coalesced after the loop
 			CallerContext: "convoy-sling",
 			TownRoot:      townRoot,
 			BeadsDir:      filepath.Join(townRoot, ".beads"),

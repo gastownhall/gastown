@@ -15,6 +15,7 @@ import (
 
 	"github.com/steveyegge/gastown/internal/atomicfile"
 	"github.com/steveyegge/gastown/internal/constants"
+	"github.com/steveyegge/gastown/internal/townroot"
 )
 
 // resolveConfigMu serializes agent config resolution across all callers.
@@ -2140,33 +2141,18 @@ func GetRuntimeCommandWithPromptAndAgentOverride(rigPath, prompt, agentOverride 
 }
 
 // findTownRootFromCwd locates the town root by walking up from cwd.
-// It looks for the mayor/town.json marker file.
-// Returns empty string and no error if not found (caller should use defaults).
+// It uses townroot.Find so nested rigs that still have mayor/town.json
+// do not shadow the outermost town.
 func findTownRootFromCwd() (string, error) {
 	cwd, err := os.Getwd()
 	if err != nil {
 		return "", fmt.Errorf("getting cwd: %w", err)
 	}
-
-	absDir, err := filepath.Abs(cwd)
-	if err != nil {
-		return "", fmt.Errorf("resolving path: %w", err)
+	root := townroot.Find(cwd)
+	if root == "" {
+		return "", fmt.Errorf("town root not found (no %s marker)", townroot.Marker)
 	}
-
-	const marker = "mayor/town.json"
-
-	current := absDir
-	for {
-		if _, err := os.Stat(filepath.Join(current, marker)); err == nil {
-			return current, nil
-		}
-
-		parent := filepath.Dir(current)
-		if parent == current {
-			return "", fmt.Errorf("town root not found (no %s marker)", marker)
-		}
-		current = parent
-	}
+	return root, nil
 }
 
 // ExtractSimpleRole extracts the simple role name from a GT_ROLE value.

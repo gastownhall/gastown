@@ -246,7 +246,7 @@ func runEpicSlingByID(epicID string, opts epicScheduleOpts) error {
 			Force:         opts.Force,
 			HookRawBead:   opts.HookRawBead,
 			NoConvoy:      true, // Epic is the organizing structure
-			NoBoot:        opts.NoBoot,
+			NoBoot:        true, // coalesced after the loop
 			CallerContext: "epic-sling",
 			TownRoot:      townRoot,
 			BeadsDir:      filepath.Join(townRoot, ".beads"),

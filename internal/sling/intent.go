@@ -3,8 +3,9 @@
 //
 // Direct `gt sling` and deferred scheduler dispatch are adapters. They convert
 // arguments or durable context into Intent, invoke Lifecycle, and present the
-// Outcome. Lifecycle owns validation, Convoy reuse, Polecat spawn, Formula and
-// Molecule work, Hook placement, Bead attachment, and compensation.
+// Outcome. Lifecycle owns validation, cross-rig guard, Convoy reuse, Polecat
+// spawn, Formula and Molecule work, Hook placement, Bead attachment,
+// compensation, and witness wake.
 package sling
 
 import (
@@ -49,6 +50,7 @@ type Outcome struct {
 	ConvoyID         string
 	AttachedMolecule string
 	Success          bool
+	NoOp             bool // already hooked to a live polecat in the target rig
 }
 
 // FromContext reconstructs Intent from durable sling-context fields.
