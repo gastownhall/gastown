@@ -186,7 +186,7 @@ func (m *Manager) start(foreground bool, agentOverride string, allowForkRig bool
 		}
 		// Zombie - tmux alive but agent dead. Kill and recreate.
 		_, _ = fmt.Fprintln(m.output, "⚠ Detected zombie session (tmux alive, agent dead). Recreating...")
-		if err := t.KillSession(sessionID); err != nil {
+		if err := t.KillSessionWithProcesses(sessionID); err != nil {
 			return fmt.Errorf("killing zombie session: %w", err)
 		}
 	}
@@ -233,7 +233,15 @@ func (m *Manager) start(foreground bool, agentOverride string, allowForkRig bool
 		runtimeConfigDir = os.Getenv("CLAUDE_CONFIG_DIR")
 	}
 
-	runtimeConfig := config.ResolveRoleAgentConfig("refinery", townRoot, m.rig.Path)
+	var runtimeConfig *config.RuntimeConfig
+	if agentOverride != "" {
+		runtimeConfig, _, err = config.ResolveAgentConfigWithOverride(townRoot, m.rig.Path, agentOverride)
+		if err != nil {
+			return fmt.Errorf("resolving refinery agent %s: %w", agentOverride, err)
+		}
+	} else {
+		runtimeConfig = config.ResolveRoleAgentConfig("refinery", townRoot, m.rig.Path)
+	}
 	refinerySettingsDir := config.RoleSettingsDir("refinery", m.rig.Path)
 	if err := runtime.EnsureSettingsForRole(refinerySettingsDir, refineryRigDir, "refinery", runtimeConfig); err != nil {
 		return fmt.Errorf("ensuring runtime settings: %w", err)
@@ -308,7 +316,11 @@ func (m *Manager) start(foreground bool, agentOverride string, allowForkRig bool
 	// Start nudge-queue poller (gt-dgf). Claude's UserPromptSubmit hook only
 	// drains when the agent submits a prompt. Idle agents never submit, so
 	// queued nudges deadlock. The poller breaks the cycle by polling every 10s.
-	if _, pollerErr := nudge.StartPoller(townRoot, sessionID); pollerErr != nil {
+	if runtimeConfig.ManagesNudgeQueue {
+		if pollerErr := nudge.StopPoller(townRoot, sessionID); pollerErr != nil {
+			log.Printf("warning: could not stop stale nudge poller for %s: %v", sessionID, pollerErr)
+		}
+	} else if _, pollerErr := nudge.StartPoller(townRoot, sessionID); pollerErr != nil {
 		log.Printf("warning: could not start nudge poller for %s: %v", sessionID, pollerErr)
 	}
 
@@ -415,7 +427,7 @@ func (m *Manager) Stop() error {
 	}
 
 	// Kill the tmux session
-	return t.KillSession(sessionID)
+	return t.KillSessionWithProcesses(sessionID)
 }
 
 // Queue returns the current merge queue.

@@ -247,8 +247,15 @@ func runHandoff(cmd *cobra.Command, args []string) error {
 		}
 	}
 
+	buildOpts := buildRestartCommandOpts{}
+	var targetEnvironment map[string]string
+	if targetSession != currentSession {
+		targetEnvironment = handoffSessionEnvironment(townTmux, targetSession)
+		buildOpts.Environment = targetEnvironment
+	}
+
 	// Build the restart command
-	restartCmd, err := buildRestartCommand(targetSession)
+	restartCmd, err := buildRestartCommandWithOpts(targetSession, buildOpts)
 	if err != nil {
 		return err
 	}
@@ -257,7 +264,9 @@ func runHandoff(cmd *cobra.Command, args []string) error {
 	// Remote sessions live on the town socket, so use townTmux for their operations.
 	if targetSession != currentSession {
 		// Update tmux session env before respawn (not during dry-run — see below)
-		updateSessionEnvForHandoff(townTmux, targetSession, "")
+		if targetAgent := targetEnvironment["GT_AGENT"]; !handoffDryRun && targetAgent != "" {
+			updateSessionEnvForHandoff(townTmux, targetSession, targetAgent)
+		}
 		return handoffRemoteSession(townTmux, targetSession, restartCmd)
 	}
 
@@ -786,6 +795,9 @@ type buildRestartCommandOpts struct {
 	// ContinueSession is true. If empty, falls back to a generic
 	// continuation message.
 	ContinuePrompt string
+	// Environment, when non-nil, is the target session's environment. Remote
+	// handoffs must never inherit runtime selection from the caller process.
+	Environment map[string]string
 }
 
 func buildRestartCommand(sessionName string) (string, error) {
@@ -859,8 +871,8 @@ func buildRestartCommandWithOpts(sessionName string, opts buildRestartCommandOpt
 	// If so, preserve it across handoff by using the override variant.
 	// Fall back to tmux session environment if process env doesn't have it,
 	// since exec env vars may not propagate through all agent runtimes.
-	currentAgent, agentInEnv := os.LookupEnv("GT_AGENT")
-	if !agentInEnv {
+	currentAgent, agentInEnv := restartEnvironmentValue(opts, "GT_AGENT")
+	if !agentInEnv && opts.Environment == nil {
 		// GT_AGENT not in process env at all — try tmux session environment
 		// as fallback, since exec env vars may not propagate through all runtimes.
 		t := tmux.NewTmux()
@@ -887,12 +899,7 @@ func buildRestartCommandWithOpts(sessionName string, opts buildRestartCommandOpt
 	// Note: runtimeCmd starts with the command name (e.g., "claude --settings ..."),
 	// not "exec claude" — the "exec" prefix is added later in the Sprintf.
 	if opts.ContinueSession {
-		// Handle both Unix ("claude ") and Windows ("claude.exe ") binary names
-		if n := strings.Replace(runtimeCmd, "claude.exe ", "claude.exe --continue ", 1); n != runtimeCmd {
-			runtimeCmd = n
-		} else {
-			runtimeCmd = strings.Replace(runtimeCmd, "claude ", "claude --continue ", 1)
-		}
+		runtimeCmd = addClaudeContinueFlag(runtimeCmd)
 	}
 
 	// Build environment variables map — role vars first, then Claude vars.
@@ -929,17 +936,23 @@ func buildRestartCommandWithOpts(sessionName string, opts buildRestartCommandOpt
 	// Propagate GT_ROOT so subsequent handoffs can use it as fallback
 	// when cwd-based detection fails (broken state recovery)
 	envMap["GT_ROOT"] = townRoot
+	// Structured runtimes identify their durable transport by the tmux session
+	// name. Preserve it across respawn-pane handoffs.
+	envMap["GT_SESSION"] = sessionName
 
 	// Preserve GT_AGENT across handoff so agent override persists
 	if currentAgent != "" {
 		envMap["GT_AGENT"] = currentAgent
+	}
+	if workKey := resolveOpenCodeWorkKey(workDir, ""); workKey != "" {
+		envMap["GT_BRANCH"] = workKey
 	}
 
 	// Preserve GT_PROCESS_NAMES across handoff for accurate liveness detection.
 	// Without this, custom agents that shadow built-in presets (e.g., custom
 	// "codex" running "opencode") would revert to GT_AGENT-based lookup after
 	// handoff, causing false liveness failures.
-	if processNames := os.Getenv("GT_PROCESS_NAMES"); processNames != "" {
+	if processNames, _ := restartEnvironmentValue(opts, "GT_PROCESS_NAMES"); processNames != "" {
 		envMap["GT_PROCESS_NAMES"] = processNames
 	} else if currentAgent != "" {
 		resolved := config.ResolveProcessNames(currentAgent, "")
@@ -948,8 +961,13 @@ func buildRestartCommandWithOpts(sessionName string, opts buildRestartCommandOpt
 
 	// Add Claude-related env vars from current environment
 	for _, name := range claudeEnvVars {
-		if val := os.Getenv(name); val != "" {
+		if val, _ := restartEnvironmentValue(opts, name); val != "" {
 			envMap[name] = val
+		}
+	}
+	for _, name := range config.OpenCodeOverrideEnvVars {
+		if value, ok := restartEnvironmentValue(opts, name); ok {
+			envMap[name] = value
 		}
 	}
 
@@ -991,6 +1009,51 @@ func buildRestartCommandWithOpts(sessionName string, opts buildRestartCommandOpt
 
 	envCmd := config.PrependEnv(execPrefix+runtimeCmd, envMap)
 	return cdPrefix + envCmd, nil
+}
+
+func restartEnvironmentValue(opts buildRestartCommandOpts, name string) (string, bool) {
+	if opts.Environment != nil {
+		value, ok := opts.Environment[name]
+		return value, ok
+	}
+	return os.LookupEnv(name)
+}
+
+func handoffSessionEnvironment(t *tmux.Tmux, sessionName string) map[string]string {
+	names := append([]string{"GT_AGENT", "GT_PROCESS_NAMES"}, claudeEnvVars...)
+	names = append(names, config.OpenCodeOverrideEnvVars...)
+	environment := make(map[string]string)
+	for _, name := range names {
+		if value, err := t.GetEnvironment(sessionName, name); err == nil {
+			environment[name] = value
+		}
+	}
+	return environment
+}
+
+func addClaudeContinueFlag(command string) string {
+	lower := strings.ToLower(command)
+	for _, name := range []string{"claude.exe", "claude.cmd", "claude"} {
+		searchFrom := 0
+		for {
+			relative := strings.Index(lower[searchFrom:], name)
+			if relative < 0 {
+				break
+			}
+			start := searchFrom + relative
+			end := start + len(name)
+			beforeOK := start == 0 || strings.ContainsRune(" \\/'\"", rune(command[start-1]))
+			afterOK := end == len(command) || strings.ContainsRune(" '\"", rune(command[end]))
+			if beforeOK && afterOK {
+				if end < len(command) && (command[end] == '\'' || command[end] == '"') {
+					end++
+				}
+				return command[:end] + " --continue" + command[end:]
+			}
+			searchFrom = end
+		}
+	}
+	return command
 }
 
 // updateSessionEnvForHandoff updates the tmux session environment with the
@@ -1100,6 +1163,11 @@ func sessionWorkDir(sessionName, townRoot string) (string, error) {
 		case session.RoleRefinery:
 			return fmt.Sprintf("%s/%s/refinery/rig", townRoot, identity.Rig), nil
 		case session.RolePolecat:
+			parent := filepath.Join(townRoot, identity.Rig, "polecats", identity.Name)
+			nested := filepath.Join(parent, identity.Rig)
+			if info, statErr := os.Stat(nested); statErr == nil && info.IsDir() {
+				return nested, nil
+			}
 			return fmt.Sprintf("%s/%s/polecats/%s", townRoot, identity.Rig, identity.Name), nil
 		case session.RoleDog:
 			return fmt.Sprintf("%s/deacon/dogs/%s", townRoot, identity.Name), nil

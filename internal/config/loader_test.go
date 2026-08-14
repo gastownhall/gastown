@@ -44,13 +44,35 @@ func writeAgentStub(t *testing.T, binDir, name string) {
 	}
 }
 
-// isClaudeCommand checks if a command is claude (either "claude" or a path ending in "/claude").
-// This handles the case where resolveClaudePath returns the full path to the claude binary.
-// Also handles Windows paths with .exe extension.
+// isClaudeCommand accepts either a raw executable path or a shell command line.
 func isClaudeCommand(cmd string) bool {
-	base := filepath.Base(cmd)
-	base = strings.TrimSuffix(base, filepath.Ext(base))
-	return base == "claude"
+	isClaudePath := func(path string) bool {
+		base := filepath.Base(path)
+		base = strings.TrimSuffix(base, filepath.Ext(base))
+		return base == "claude"
+	}
+	if isClaudePath(cmd) {
+		return true
+	}
+
+	cmd = strings.TrimSpace(cmd)
+	cmd = strings.TrimSpace(strings.TrimPrefix(cmd, "& "))
+	if strings.HasPrefix(cmd, "'") {
+		for i := 1; i < len(cmd); i++ {
+			if cmd[i] != '\'' {
+				continue
+			}
+			if i+1 < len(cmd) && cmd[i+1] == '\'' {
+				i++
+				continue
+			}
+			return isClaudePath(strings.ReplaceAll(cmd[1:i], "''", "'"))
+		}
+	}
+	if fields := strings.Fields(cmd); len(fields) > 0 {
+		return isClaudePath(fields[0])
+	}
+	return false
 }
 
 func TestTownConfigRoundTrip(t *testing.T) {
@@ -1054,11 +1076,8 @@ func TestRuntimeConfigBuildCommand(t *testing.T) {
 				}
 			}
 			// Check if command starts with claude (or path to claude)
-			if tt.isClaudeCmd {
-				parts := strings.Fields(got)
-				if len(parts) > 0 && !isClaudeCommand(parts[0]) {
-					t.Errorf("BuildCommand() = %q, command should be claude or path to claude", got)
-				}
+			if tt.isClaudeCmd && !isClaudeCommand(got) {
+				t.Errorf("BuildCommand() = %q, command should be claude or path to claude", got)
 			}
 		})
 	}
@@ -1084,35 +1103,35 @@ func TestRuntimeConfigBuildCommandWithPrompt(t *testing.T) {
 			name:         "with prompt",
 			rc:           DefaultRuntimeConfig(),
 			prompt:       "gt prime",
-			wantContains: []string{"--dangerously-skip-permissions", `"gt prime"`},
+			wantContains: []string{"--dangerously-skip-permissions", quoteForShell("gt prime")},
 			isClaudeCmd:  true,
 		},
 		{
 			name:         "prompt with quotes",
 			rc:           DefaultRuntimeConfig(),
 			prompt:       `Hello "world"`,
-			wantContains: []string{"--dangerously-skip-permissions", `"Hello \"world\""`},
+			wantContains: []string{"--dangerously-skip-permissions", quoteForShell(`Hello "world"`)},
 			isClaudeCmd:  true,
 		},
 		{
 			name:         "config initial prompt used if no override",
 			rc:           &RuntimeConfig{Command: "aider", Args: []string{}, InitialPrompt: "/help"},
 			prompt:       "",
-			wantContains: []string{"aider", `"/help"`},
+			wantContains: []string{"aider", quoteForShell("/help")},
 			isClaudeCmd:  false,
 		},
 		{
 			name:         "override takes precedence over config",
 			rc:           &RuntimeConfig{Command: "aider", Args: []string{}, InitialPrompt: "/help"},
 			prompt:       "custom prompt",
-			wantContains: []string{"aider", `"custom prompt"`},
+			wantContains: []string{"aider", quoteForShell("custom prompt")},
 			isClaudeCmd:  false,
 		},
 		{
 			name:         "copilot uses -i flag for prompt",
 			rc:           &RuntimeConfig{Command: "copilot", Args: []string{"--yolo"}, PromptMode: "arg"},
 			prompt:       "test prompt",
-			wantContains: []string{"copilot", "--yolo", "-i", `"test prompt"`},
+			wantContains: []string{"copilot", "--yolo", "-i", quoteForShell("test prompt")},
 			isClaudeCmd:  false,
 		},
 	}
@@ -1127,11 +1146,8 @@ func TestRuntimeConfigBuildCommandWithPrompt(t *testing.T) {
 				}
 			}
 			// Check if command starts with claude (or path to claude)
-			if tt.isClaudeCmd {
-				parts := strings.Fields(got)
-				if len(parts) > 0 && !isClaudeCommand(parts[0]) {
-					t.Errorf("BuildCommandWithPrompt(%q) = %q, command should be claude or path to claude", tt.prompt, got)
-				}
+			if tt.isClaudeCmd && !isClaudeCommand(got) {
+				t.Errorf("BuildCommandWithPrompt(%q) = %q, command should be claude or path to claude", tt.prompt, got)
 			}
 		})
 	}
@@ -1153,19 +1169,19 @@ func TestBuildAgentStartupCommand(t *testing.T) {
 	// Test without rig config (uses defaults)
 	// New signature: (role, rig, townRoot, rigPath, prompt)
 	cmd := BuildAgentStartupCommand("witness", "gastown", "", "", "")
+	cmd = startupCommandBody(t, cmd)
 
-	// Should contain environment variables (via 'exec env') and claude command
-	if !strings.Contains(cmd, "exec env") {
-		t.Error("expected 'exec env' in command")
-	}
-	if !strings.Contains(cmd, "GT_ROLE=gastown/witness") {
+	if !strings.Contains(cmd, startupEnvAssignment("GT_ROLE", "gastown/witness")) {
 		t.Error("expected GT_ROLE=gastown/witness in command")
 	}
-	if !strings.Contains(cmd, "BD_ACTOR=gastown/witness") {
+	if !strings.Contains(cmd, startupEnvAssignment("BD_ACTOR", "gastown/witness")) {
 		t.Error("expected BD_ACTOR in command")
 	}
-	parts := strings.Fields(cmd)
-	if len(parts) < 2 || !isClaudeCommand(parts[len(parts)-2]) || parts[len(parts)-1] != "--dangerously-skip-permissions" {
+	agentCommand := strings.TrimSpace(cmd)
+	if newline := strings.LastIndex(agentCommand, "\n"); newline >= 0 {
+		agentCommand = agentCommand[newline+1:]
+	}
+	if !isClaudeCommand(agentCommand) || !strings.HasSuffix(strings.TrimSpace(agentCommand), "--dangerously-skip-permissions") {
 		t.Error("expected claude command in output")
 	}
 }
@@ -1173,17 +1189,18 @@ func TestBuildAgentStartupCommand(t *testing.T) {
 func TestBuildPolecatStartupCommand(t *testing.T) {
 	t.Parallel()
 	cmd := BuildPolecatStartupCommand("gastown", "toast", "", "")
+	cmd = startupCommandBody(t, cmd)
 
-	if !strings.Contains(cmd, "GT_ROLE=gastown/polecats/toast") {
+	if !strings.Contains(cmd, startupEnvAssignment("GT_ROLE", "gastown/polecats/toast")) {
 		t.Error("expected GT_ROLE=gastown/polecats/toast in command")
 	}
-	if !strings.Contains(cmd, "GT_RIG=gastown") {
+	if !strings.Contains(cmd, startupEnvAssignment("GT_RIG", "gastown")) {
 		t.Error("expected GT_RIG=gastown in command")
 	}
-	if !strings.Contains(cmd, "GT_POLECAT=toast") {
+	if !strings.Contains(cmd, startupEnvAssignment("GT_POLECAT", "toast")) {
 		t.Error("expected GT_POLECAT=toast in command")
 	}
-	if !strings.Contains(cmd, "BD_ACTOR=gastown/polecats/toast") {
+	if !strings.Contains(cmd, startupEnvAssignment("BD_ACTOR", "gastown/polecats/toast")) {
 		t.Error("expected BD_ACTOR in command")
 	}
 }
@@ -1191,17 +1208,18 @@ func TestBuildPolecatStartupCommand(t *testing.T) {
 func TestBuildCrewStartupCommand(t *testing.T) {
 	t.Parallel()
 	cmd := BuildCrewStartupCommand("gastown", "max", "", "")
+	cmd = startupCommandBody(t, cmd)
 
-	if !strings.Contains(cmd, "GT_ROLE=gastown/crew/max") {
+	if !strings.Contains(cmd, startupEnvAssignment("GT_ROLE", "gastown/crew/max")) {
 		t.Error("expected GT_ROLE=gastown/crew/max in command")
 	}
-	if !strings.Contains(cmd, "GT_RIG=gastown") {
+	if !strings.Contains(cmd, startupEnvAssignment("GT_RIG", "gastown")) {
 		t.Error("expected GT_RIG=gastown in command")
 	}
-	if !strings.Contains(cmd, "GT_CREW=max") {
+	if !strings.Contains(cmd, startupEnvAssignment("GT_CREW", "max")) {
 		t.Error("expected GT_CREW=max in command")
 	}
-	if !strings.Contains(cmd, "BD_ACTOR=gastown/crew/max") {
+	if !strings.Contains(cmd, startupEnvAssignment("BD_ACTOR", "gastown/crew/max")) {
 		t.Error("expected BD_ACTOR in command")
 	}
 }
@@ -1366,13 +1384,14 @@ func TestBuildPolecatStartupCommandWithAgentOverride(t *testing.T) {
 	if err != nil {
 		t.Fatalf("BuildPolecatStartupCommandWithAgentOverride: %v", err)
 	}
-	if !strings.Contains(cmd, "GT_ROLE=testrig/polecats/toast") {
+	cmd = startupCommandBody(t, cmd)
+	if !strings.Contains(cmd, startupEnvAssignment("GT_ROLE", "testrig/polecats/toast")) {
 		t.Fatalf("expected GT_ROLE export in command: %q", cmd)
 	}
-	if !strings.Contains(cmd, "GT_RIG=testrig") {
+	if !strings.Contains(cmd, startupEnvAssignment("GT_RIG", "testrig")) {
 		t.Fatalf("expected GT_RIG export in command: %q", cmd)
 	}
-	if !strings.Contains(cmd, "GT_POLECAT=toast") {
+	if !strings.Contains(cmd, startupEnvAssignment("GT_POLECAT", "toast")) {
 		t.Fatalf("expected GT_POLECAT export in command: %q", cmd)
 	}
 	if !strings.Contains(cmd, "gemini --approval-mode yolo") {
@@ -1408,10 +1427,11 @@ func TestBuildAgentStartupCommandWithAgentOverride(t *testing.T) {
 		if err != nil {
 			t.Fatalf("BuildAgentStartupCommandWithAgentOverride: %v", err)
 		}
-		if !strings.Contains(cmd, "GT_ROLE=mayor") {
+		cmd = startupCommandBody(t, cmd)
+		if !strings.Contains(cmd, startupEnvAssignment("GT_ROLE", "mayor")) {
 			t.Fatalf("expected GT_ROLE export in command: %q", cmd)
 		}
-		if !strings.Contains(cmd, "BD_ACTOR=mayor") {
+		if !strings.Contains(cmd, startupEnvAssignment("BD_ACTOR", "mayor")) {
 			t.Fatalf("expected BD_ACTOR export in command: %q", cmd)
 		}
 		if !strings.Contains(cmd, "gemini --approval-mode yolo") {
@@ -1425,6 +1445,7 @@ func TestBuildAgentStartupCommandWithAgentOverride(t *testing.T) {
 		if err != nil {
 			t.Fatalf("BuildAgentStartupCommandWithAgentOverride: %v", err)
 		}
+		cmd = startupCommandBody(t, cmd)
 		if !strings.Contains(cmd, "codex") {
 			t.Fatalf("expected codex command in output: %q", cmd)
 		}
@@ -1449,16 +1470,17 @@ func TestBuildCrewStartupCommandWithAgentOverride(t *testing.T) {
 	if err != nil {
 		t.Fatalf("BuildCrewStartupCommandWithAgentOverride: %v", err)
 	}
-	if !strings.Contains(cmd, "GT_ROLE=testrig/crew/max") {
+	cmd = startupCommandBody(t, cmd)
+	if !strings.Contains(cmd, startupEnvAssignment("GT_ROLE", "testrig/crew/max")) {
 		t.Fatalf("expected GT_ROLE export in command: %q", cmd)
 	}
-	if !strings.Contains(cmd, "GT_RIG=testrig") {
+	if !strings.Contains(cmd, startupEnvAssignment("GT_RIG", "testrig")) {
 		t.Fatalf("expected GT_RIG export in command: %q", cmd)
 	}
-	if !strings.Contains(cmd, "GT_CREW=max") {
+	if !strings.Contains(cmd, startupEnvAssignment("GT_CREW", "max")) {
 		t.Fatalf("expected GT_CREW export in command: %q", cmd)
 	}
-	if !strings.Contains(cmd, "BD_ACTOR=testrig/crew/max") {
+	if !strings.Contains(cmd, startupEnvAssignment("BD_ACTOR", "testrig/crew/max")) {
 		t.Fatalf("expected BD_ACTOR export in command: %q", cmd)
 	}
 	if !strings.Contains(cmd, "gemini --approval-mode yolo") {
@@ -1484,6 +1506,7 @@ func TestBuildStartupCommand_UsesRigAgentWhenRigPathProvided(t *testing.T) {
 	}
 
 	cmd := BuildStartupCommand(map[string]string{"GT_ROLE": "witness"}, rigPath, "")
+	cmd = startupCommandBody(t, cmd)
 	if !strings.Contains(cmd, "codex") {
 		t.Fatalf("expected rig agent (codex) in command: %q", cmd)
 	}
@@ -1533,9 +1556,10 @@ func TestBuildStartupCommand_ClearsBDTargetSelectors(t *testing.T) {
 		"GT_DOLT_PORT":               "1444",
 		"GT_DOLT_HOST":               "caller-host",
 	}, rigPath, "")
+	cmd = startupCommandBody(t, cmd)
 
 	for _, key := range bdTargetSelectorEnvVars {
-		if !strings.Contains(cmd, key+"=") {
+		if !strings.Contains(cmd, startupEnvAssignment(key, "")) {
 			t.Fatalf("startup command missing cleared %s assignment: %q", key, cmd)
 		}
 	}
@@ -1544,16 +1568,20 @@ func TestBuildStartupCommand_ClearsBDTargetSelectors(t *testing.T) {
 			t.Fatalf("startup command leaked stale bd selector value %q: %q", stale, cmd)
 		}
 	}
-	for _, want := range []string{
-		"GT_DOLT_PORT=1555",
-		"GT_DOLT_HOST=agent-host",
-		"BEADS_DOLT_PORT=1555",
-		"BEADS_DOLT_SERVER_PORT=1555",
-		"BEADS_DOLT_SERVER_HOST=agent-host",
-		"BEADS_DOLT_AUTO_START=0",
+	for _, want := range []struct {
+		key   string
+		value string
+	}{
+		{"GT_DOLT_PORT", "1555"},
+		{"GT_DOLT_HOST", "agent-host"},
+		{"BEADS_DOLT_PORT", "1555"},
+		{"BEADS_DOLT_SERVER_PORT", "1555"},
+		{"BEADS_DOLT_SERVER_HOST", "agent-host"},
+		{"BEADS_DOLT_AUTO_START", "0"},
 	} {
-		if !strings.Contains(cmd, want) {
-			t.Fatalf("startup command missing preserved connection env %q: %q", want, cmd)
+		expected := startupEnvAssignment(want.key, want.value)
+		if !strings.Contains(cmd, expected) {
+			t.Fatalf("startup command missing preserved connection env %q: %q", expected, cmd)
 		}
 	}
 }
@@ -1597,6 +1625,7 @@ func TestBuildStartupCommand_UsesRoleAgentsFromTownSettings(t *testing.T) {
 
 	t.Run("refinery role gets gemini from role_agents", func(t *testing.T) {
 		cmd := BuildStartupCommand(map[string]string{"GT_ROLE": constants.RoleRefinery}, rigPath, "")
+		cmd = startupCommandBody(t, cmd)
 		if !strings.Contains(cmd, "gemini") {
 			t.Fatalf("expected gemini for refinery role, got: %q", cmd)
 		}
@@ -1604,6 +1633,7 @@ func TestBuildStartupCommand_UsesRoleAgentsFromTownSettings(t *testing.T) {
 
 	t.Run("witness role gets codex from role_agents", func(t *testing.T) {
 		cmd := BuildStartupCommand(map[string]string{"GT_ROLE": constants.RoleWitness}, rigPath, "")
+		cmd = startupCommandBody(t, cmd)
 		if !strings.Contains(cmd, "codex") {
 			t.Fatalf("expected codex for witness role, got: %q", cmd)
 		}
@@ -1611,6 +1641,7 @@ func TestBuildStartupCommand_UsesRoleAgentsFromTownSettings(t *testing.T) {
 
 	t.Run("crew role falls back to default_agent (not in role_agents)", func(t *testing.T) {
 		cmd := BuildStartupCommand(map[string]string{"GT_ROLE": constants.RoleCrew}, rigPath, "")
+		cmd = startupCommandBody(t, cmd)
 		if !strings.Contains(cmd, "claude") {
 			t.Fatalf("expected claude fallback for crew role, got: %q", cmd)
 		}
@@ -1618,6 +1649,7 @@ func TestBuildStartupCommand_UsesRoleAgentsFromTownSettings(t *testing.T) {
 
 	t.Run("no role falls back to default resolution", func(t *testing.T) {
 		cmd := BuildStartupCommand(map[string]string{}, rigPath, "")
+		cmd = startupCommandBody(t, cmd)
 		if !strings.Contains(cmd, "claude") {
 			t.Fatalf("expected claude for no role, got: %q", cmd)
 		}
@@ -1650,6 +1682,7 @@ func TestBuildStartupCommand_RigRoleAgentsOverridesTownRoleAgents(t *testing.T) 
 	}
 
 	cmd := BuildStartupCommand(map[string]string{"GT_ROLE": constants.RoleWitness}, rigPath, "")
+	cmd = startupCommandBody(t, cmd)
 	if !strings.Contains(cmd, "codex") {
 		t.Fatalf("expected codex from rig role_agents override, got: %q", cmd)
 	}
@@ -1682,10 +1715,11 @@ func TestBuildAgentStartupCommand_UsesRoleAgents(t *testing.T) {
 
 	// BuildAgentStartupCommand passes role via GT_ROLE env var (compound format)
 	cmd := BuildAgentStartupCommand(constants.RoleRefinery, "testrig", townRoot, rigPath, "")
+	cmd = startupCommandBody(t, cmd)
 	if !strings.Contains(cmd, "codex") {
 		t.Fatalf("expected codex for refinery role, got: %q", cmd)
 	}
-	if !strings.Contains(cmd, "GT_ROLE=testrig/refinery") {
+	if !strings.Contains(cmd, startupEnvAssignment("GT_ROLE", "testrig/refinery")) {
 		t.Fatalf("expected GT_ROLE=testrig/refinery in command: %q", cmd)
 	}
 }
@@ -1714,7 +1748,8 @@ func TestBuildAgentStartupCommand_DogUsesRoleAgents(t *testing.T) {
 	}
 
 	cmd := BuildAgentStartupCommand("dog", "", townRoot, "", "")
-	if !strings.Contains(cmd, "GT_ROLE=dog") {
+	cmd = startupCommandBody(t, cmd)
+	if !strings.Contains(cmd, startupEnvAssignment("GT_ROLE", "dog")) {
 		t.Fatalf("expected GT_ROLE=dog in command, got: %q", cmd)
 	}
 	if !strings.Contains(cmd, "--model haiku") {
@@ -1961,6 +1996,7 @@ func TestBuildStartupCommand_WorkerAgentsViaCrew(t *testing.T) {
 			"GT_CREW": "denali",
 		}
 		cmd := BuildStartupCommand(envVars, rigPath, "")
+		cmd = startupCommandBody(t, cmd)
 		if !strings.Contains(cmd, "codex") {
 			t.Errorf("expected codex for crew worker denali, got: %q", cmd)
 		}
@@ -1972,6 +2008,7 @@ func TestBuildStartupCommand_WorkerAgentsViaCrew(t *testing.T) {
 			"GT_CREW": "glacier",
 		}
 		cmd := BuildStartupCommand(envVars, rigPath, "")
+		cmd = startupCommandBody(t, cmd)
 		if strings.Contains(cmd, "codex") {
 			t.Errorf("expected non-codex for crew worker glacier (not in worker_agents), got: %q", cmd)
 		}
@@ -1982,6 +2019,7 @@ func TestBuildStartupCommand_WorkerAgentsViaCrew(t *testing.T) {
 			"GT_ROLE": constants.RoleCrew,
 		}
 		cmd := BuildStartupCommand(envVars, rigPath, "")
+		cmd = startupCommandBody(t, cmd)
 		if strings.Contains(cmd, "codex") {
 			t.Errorf("expected non-codex when GT_CREW not set, got: %q", cmd)
 		}
@@ -4803,6 +4841,7 @@ func TestBuildStartupCommandWithAgentOverride_PriorityOverRoleAgents(t *testing.
 	if err != nil {
 		t.Fatalf("BuildStartupCommandWithAgentOverride: %v", err)
 	}
+	cmd = startupCommandBody(t, cmd)
 
 	if !strings.Contains(cmd, "gemini") {
 		t.Errorf("expected gemini (override) in command, got: %q", cmd)
@@ -4835,9 +4874,10 @@ func TestBuildStartupCommandWithAgentOverride_IncludesGTRoot(t *testing.T) {
 	if err != nil {
 		t.Fatalf("BuildStartupCommandWithAgentOverride: %v", err)
 	}
+	cmd = startupCommandBody(t, cmd)
 
 	// Should include GT_ROOT in export
-	expected := "GT_ROOT=" + ShellQuote(townRoot)
+	expected := startupEnvAssignment("GT_ROOT", townRoot)
 	if !strings.Contains(cmd, expected) {
 		t.Errorf("expected %s in command, got: %q", expected, cmd)
 	}
@@ -4846,57 +4886,70 @@ func TestBuildStartupCommandWithAgentOverride_IncludesGTRoot(t *testing.T) {
 func TestQuoteForShell(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
-		name  string
-		input string
-		want  string
+		name        string
+		input       string
+		wantPOSIX   string
+		wantWindows string
 	}{
 		{
-			name:  "simple string",
-			input: "hello",
-			want:  `"hello"`,
+			name:        "simple string",
+			input:       "hello",
+			wantPOSIX:   `"hello"`,
+			wantWindows: `'hello'`,
 		},
 		{
-			name:  "string with double quote",
-			input: `say "hello"`,
-			want:  `"say \"hello\""`,
+			name:        "string with double quote",
+			input:       `say "hello"`,
+			wantPOSIX:   `"say \"hello\""`,
+			wantWindows: `'say "hello"'`,
 		},
 		{
-			name:  "string with backslash",
-			input: `path\to\file`,
-			want:  `"path\\to\\file"`,
+			name:        "string with backslash",
+			input:       `path\to\file`,
+			wantPOSIX:   `"path\\to\\file"`,
+			wantWindows: `'path\to\file'`,
 		},
 		{
-			name:  "string with backtick",
-			input: "run `cmd`",
-			want:  "\"run \\`cmd\\`\"",
+			name:        "string with backtick",
+			input:       "run `cmd`",
+			wantPOSIX:   "\"run \\`cmd\\`\"",
+			wantWindows: "'run `cmd`'",
 		},
 		{
-			name:  "string with dollar sign",
-			input: "cost is $100",
-			want:  `"cost is \$100"`,
+			name:        "string with dollar sign",
+			input:       "cost is $100",
+			wantPOSIX:   `"cost is \$100"`,
+			wantWindows: `'cost is $100'`,
 		},
 		{
-			name:  "variable expansion prevented",
-			input: "$HOME/path",
-			want:  `"\$HOME/path"`,
+			name:        "variable expansion prevented",
+			input:       "$HOME/path",
+			wantPOSIX:   `"\$HOME/path"`,
+			wantWindows: `'$HOME/path'`,
 		},
 		{
-			name:  "empty string",
-			input: "",
-			want:  `""`,
+			name:        "empty string",
+			input:       "",
+			wantPOSIX:   `""`,
+			wantWindows: `''`,
 		},
 		{
-			name:  "combined special chars",
-			input: "`$HOME`",
-			want:  "\"\\`\\$HOME\\`\"",
+			name:        "combined special chars",
+			input:       "`$HOME`",
+			wantPOSIX:   "\"\\`\\$HOME\\`\"",
+			wantWindows: "'`$HOME`'",
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			want := tt.wantPOSIX
+			if runtime.GOOS == "windows" {
+				want = tt.wantWindows
+			}
 			got := quoteForShell(tt.input)
-			if got != tt.want {
-				t.Errorf("quoteForShell(%q) = %q, want %q", tt.input, got, tt.want)
+			if got != want {
+				t.Errorf("quoteForShell(%q) = %q, want %q", tt.input, got, want)
 			}
 		})
 	}
@@ -4925,9 +4978,10 @@ func TestBuildStartupCommandWithAgentOverride_SetsGTAgent(t *testing.T) {
 	if err != nil {
 		t.Fatalf("BuildStartupCommandWithAgentOverride: %v", err)
 	}
+	cmd = startupCommandBody(t, cmd)
 
 	// Should include GT_AGENT=gemini in export so handoff can preserve it
-	if !strings.Contains(cmd, "GT_AGENT=gemini") {
+	if !strings.Contains(cmd, startupEnvAssignment("GT_AGENT", "gemini")) {
 		t.Errorf("expected GT_AGENT=gemini in command, got: %q", cmd)
 	}
 }
@@ -4955,9 +5009,10 @@ func TestBuildStartupCommandWithAgentOverride_SetsGTProcessNames(t *testing.T) {
 	if err != nil {
 		t.Fatalf("BuildStartupCommandWithAgentOverride: %v", err)
 	}
+	cmd = startupCommandBody(t, cmd)
 
 	// Should include GT_PROCESS_NAMES with gemini's process names
-	if !strings.Contains(cmd, "GT_PROCESS_NAMES=gemini") {
+	if !strings.Contains(cmd, startupEnvAssignment("GT_PROCESS_NAMES", "gemini")) {
 		t.Errorf("expected GT_PROCESS_NAMES=gemini in command, got: %q", cmd)
 	}
 }
@@ -4980,9 +5035,14 @@ func TestBuildStartupCommand_SetsGTProcessNames(t *testing.T) {
 		rigPath,
 		"",
 	)
+	cmd = startupCommandBody(t, cmd)
 
-	// Default agent is claude — GT_PROCESS_NAMES should include node,claude
-	if !strings.Contains(cmd, "GT_PROCESS_NAMES=") {
+	// Default agent startup should publish GT_PROCESS_NAMES for liveness detection.
+	expectedPrefix := "GT_PROCESS_NAMES="
+	if runtime.GOOS == "windows" {
+		expectedPrefix = "$env:GT_PROCESS_NAMES="
+	}
+	if !strings.Contains(cmd, expectedPrefix) {
 		t.Errorf("expected GT_PROCESS_NAMES in command, got: %q", cmd)
 	}
 }
@@ -5019,6 +5079,7 @@ func TestBuildStartupCommandWithAgentOverride_UsesOverrideWhenNoTownRoot(t *test
 	if err != nil {
 		t.Fatalf("BuildStartupCommandWithAgentOverride: %v", err)
 	}
+	cmd = startupCommandBody(t, cmd)
 
 	// Should use codex, NOT claude (the default)
 	if !strings.Contains(cmd, "codex") {
@@ -5032,7 +5093,7 @@ func TestBuildStartupCommandWithAgentOverride_UsesOverrideWhenNoTownRoot(t *test
 		t.Errorf("expected command to contain '--dangerously-bypass-approvals-and-sandbox' (codex flag) but got: %q", cmd)
 	}
 	// Should set GT_AGENT=codex
-	if !strings.Contains(cmd, "GT_AGENT=codex") {
+	if !strings.Contains(cmd, startupEnvAssignment("GT_AGENT", "codex")) {
 		t.Errorf("expected command to contain 'GT_AGENT=codex' but got: %q", cmd)
 	}
 }
@@ -5060,10 +5121,11 @@ func TestBuildStartupCommandWithAgentOverride_GTAgentFromResolvedAgent(t *testin
 	if err != nil {
 		t.Fatalf("BuildStartupCommandWithAgentOverride: %v", err)
 	}
+	cmd = startupCommandBody(t, cmd)
 
 	// GT_AGENT should be set from the resolved agent for liveness detection,
 	// even when no explicit override is used.
-	if !strings.Contains(cmd, "GT_AGENT=") {
+	if !strings.Contains(cmd, startupEnvAssignment("GT_AGENT", "claude")) {
 		t.Errorf("expected GT_AGENT in command for liveness detection, got: %q", cmd)
 	}
 }
@@ -5095,9 +5157,10 @@ func TestBuildStartupCommand_RoleAgentsSetGTAgent(t *testing.T) {
 	}
 
 	cmd := BuildPolecatStartupCommand("testrig", "furiosa", rigPath, "do work")
+	cmd = startupCommandBody(t, cmd)
 
 	// GT_AGENT must be set to "opencode" so IsAgentAlive detects the process
-	if !strings.Contains(cmd, "GT_AGENT=opencode") {
+	if !strings.Contains(cmd, startupEnvAssignment("GT_AGENT", "opencode")) {
 		t.Errorf("expected GT_AGENT=opencode in command, got: %q", cmd)
 	}
 }
@@ -5126,9 +5189,10 @@ func TestBuildStartupCommand_RoleAgentsCustomAgentSetGTAgent(t *testing.T) {
 	}
 
 	cmd := BuildPolecatStartupCommand("testrig", "furiosa", rigPath, "do work")
+	cmd = startupCommandBody(t, cmd)
 
 	// GT_AGENT must be set to the custom agent name "codex"
-	if !strings.Contains(cmd, "GT_AGENT=codex") {
+	if !strings.Contains(cmd, startupEnvAssignment("GT_AGENT", "codex")) {
 		t.Errorf("expected GT_AGENT=codex in command, got: %q", cmd)
 	}
 }
@@ -5162,6 +5226,7 @@ func TestBuildStartupCommand_UsesGTRootFromEnvVars(t *testing.T) {
 		"GT_ROOT": townRoot,
 	}
 	cmd := BuildStartupCommand(envVars, "", "")
+	cmd = startupCommandBody(t, cmd)
 
 	if !strings.Contains(cmd, "--model sonnet") {
 		t.Errorf("expected --model sonnet from role_agents[deacon], got: %q", cmd)
@@ -5195,6 +5260,7 @@ func TestBuildStartupCommandWithAgentOverride_UsesGTRootFromEnvVars(t *testing.T
 	if err != nil {
 		t.Fatalf("BuildStartupCommandWithAgentOverride: %v", err)
 	}
+	cmd = startupCommandBody(t, cmd)
 
 	if !strings.Contains(cmd, "--model sonnet") {
 		t.Errorf("expected --model sonnet from role_agents[deacon], got: %q", cmd)
@@ -5613,23 +5679,29 @@ func TestBuildStartupCommand_ExecWrapper(t *testing.T) {
 	}
 
 	cmd := BuildStartupCommand(map[string]string{"GT_ROLE": "polecat"}, rigPath, "hello")
-
-	// Must contain exec wrapper tokens
-	if !strings.Contains(cmd, "exitbox run --profile=gastown-polecat --") {
-		t.Errorf("expected exec wrapper in command, got: %q", cmd)
+	cmd = startupCommandBody(t, cmd)
+	if strings.Contains(cmd, "-- & ") {
+		t.Fatalf("exec wrapper must receive the agent command as arguments, got malformed PowerShell: %q", cmd)
 	}
 
-	// The wrapper + agent command should appear as a contiguous sequence
-	// "exitbox run --profile=gastown-polecat -- claude"
-	if !strings.Contains(cmd, "exitbox run --profile=gastown-polecat -- claude") {
+	wantWrapper := "exitbox run --profile=gastown-polecat -- claude"
+	wrapperMarker := "exitbox run"
+	if runtime.GOOS == "windows" {
+		if !strings.Contains(cmd, "$__gtStartInfo.FileName="+psQuote("exitbox")) {
+			t.Errorf("expected exec wrapper executable in command, got: %q", cmd)
+		}
+		wantWrapper = "run --profile=gastown-polecat -- claude"
+		wrapperMarker = "$__gtStartInfo.FileName=" + psQuote("exitbox")
+	}
+	if !strings.Contains(cmd, wantWrapper) {
 		t.Errorf("expected wrapper immediately before claude command, got: %q", cmd)
 	}
 
-	// Env vars (exec env ...) must appear before the wrapper
-	envIdx := strings.Index(cmd, "exec env")
-	wrapperIdx := strings.Index(cmd, "exitbox run")
+	// Environment setup must appear before the wrapper.
+	envIdx := strings.Index(cmd, startupEnvAssignment("GT_ROLE", "polecat"))
+	wrapperIdx := strings.Index(cmd, wrapperMarker)
 	if envIdx == -1 || wrapperIdx == -1 || envIdx >= wrapperIdx {
-		t.Errorf("expected 'exec env' before wrapper, got: %q", cmd)
+		t.Errorf("expected environment setup before wrapper, got: %q", cmd)
 	}
 }
 
@@ -5655,14 +5727,122 @@ func TestBuildStartupCommandWithAgentOverride_ExecWrapper(t *testing.T) {
 	if err != nil {
 		t.Fatalf("BuildStartupCommandWithAgentOverride: %v", err)
 	}
-
-	if !strings.Contains(cmd, "daytona exec furiosa-ws --") {
-		t.Errorf("expected exec wrapper in command, got: %q", cmd)
+	cmd = startupCommandBody(t, cmd)
+	if strings.Contains(cmd, "-- & ") {
+		t.Fatalf("exec wrapper must receive the agent command as arguments, got malformed PowerShell: %q", cmd)
 	}
 
-	// The wrapper + agent command should appear as a contiguous sequence
-	if !strings.Contains(cmd, "daytona exec furiosa-ws -- claude") {
+	wantWrapper := "daytona exec furiosa-ws -- claude"
+	if runtime.GOOS == "windows" {
+		if !strings.Contains(cmd, "$__gtStartInfo.FileName="+psQuote("daytona")) {
+			t.Errorf("expected exec wrapper executable in command, got: %q", cmd)
+		}
+		wantWrapper = "exec furiosa-ws -- claude"
+	}
+	if !strings.Contains(cmd, wantWrapper) {
 		t.Errorf("expected wrapper immediately before claude command, got: %q", cmd)
+	}
+}
+
+func TestPowerShellRuntimeCommandQuotesEveryArgument(t *testing.T) {
+	runtimeConfig := &RuntimeConfig{
+		Provider:   "generic",
+		Command:    `C:\Program Files\Claude's\claude.exe`,
+		Args:       []string{"", "@agent", "--%", "line\rbreak", "two words", "it's"},
+		PromptMode: "arg",
+		ExecWrapper: []string{
+			`C:\Program Files\Wrapper's\wrap.exe`,
+			"",
+			"@wrapper",
+		},
+	}
+	got := powerShellRuntimeCommand(runtimeConfig, "prompt with 'quote'")
+	argv := append([]string(nil), runtimeConfig.ExecWrapper...)
+	argv = append(argv, runtimeConfig.BuildArgsWithPrompt("prompt with 'quote'")...)
+	escapedArgs := make([]string, 0, len(argv)-1)
+	for _, arg := range argv[1:] {
+		escapedArgs = append(escapedArgs, escapeWindowsArg(arg))
+	}
+	want := strings.Join([]string{
+		"$__gtStartInfo=New-Object System.Diagnostics.ProcessStartInfo",
+		"$__gtStartInfo.FileName=" + psQuote(argv[0]),
+		"$__gtStartInfo.Arguments=" + psQuote(strings.Join(escapedArgs, " ")),
+		"$__gtStartInfo.UseShellExecute=$false",
+		"$__gtProcess=[System.Diagnostics.Process]::Start($__gtStartInfo)",
+		"if ($null -eq $__gtProcess) { exit 1 }",
+		"$__gtProcess.WaitForExit()",
+		"exit $__gtProcess.ExitCode",
+	}, "\n")
+	if got != want {
+		t.Fatalf("powerShellRuntimeCommand = %q, want %q", got, want)
+	}
+}
+
+func TestPowerShellRuntimeCommandPreservesNativeArguments(t *testing.T) {
+	if runtime.GOOS != "windows" {
+		t.Skip("PowerShell native argument regression")
+	}
+	outputPath := filepath.Join(t.TempDir(), "args.json")
+	runtimeConfig := &RuntimeConfig{
+		Provider:   "generic",
+		Command:    "agent.exe",
+		Args:       []string{"", "@agent", "--%", "line\rbreak", "two words", "it's"},
+		PromptMode: "arg",
+		ExecWrapper: []string{
+			os.Args[0],
+			"-test.run=^TestPowerShellNativeArgumentHelper$",
+			"--",
+		},
+	}
+	command := powerShellRuntimeCommand(runtimeConfig, "prompt with 'quote'")
+	cmd := exec.Command("powershell.exe", "-NoProfile", "-NoLogo", "-ExecutionPolicy", "Bypass", "-Command", command)
+	cmd.Env = append(os.Environ(),
+		"GO_WANT_POWERSHELL_NATIVE_ARGUMENT_HELPER=1",
+		"GO_POWERSHELL_NATIVE_ARGUMENT_OUTPUT="+outputPath,
+	)
+	if output, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("execute PowerShell runtime command: %v\n%s\ncommand: %s", err, output, command)
+	}
+	data, err := os.ReadFile(outputPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got []string
+	if err := json.Unmarshal(data, &got); err != nil {
+		t.Fatal(err)
+	}
+	want := append([]string{runtimeConfig.Command}, runtimeConfig.Args...)
+	want = append(want, "prompt with 'quote'")
+	if len(got) != len(want) {
+		t.Fatalf("native arguments = %#v, want %#v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("native argument %d = %q, want %q; all=%#v", i, got[i], want[i], got)
+		}
+	}
+}
+
+func TestPowerShellNativeArgumentHelper(t *testing.T) {
+	if os.Getenv("GO_WANT_POWERSHELL_NATIVE_ARGUMENT_HELPER") != "1" {
+		return
+	}
+	separator := -1
+	for i, arg := range os.Args {
+		if arg == "--" {
+			separator = i
+			break
+		}
+	}
+	if separator < 0 {
+		t.Fatal("native argument helper missing separator")
+	}
+	data, err := json.Marshal(os.Args[separator+1:])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(os.Getenv("GO_POWERSHELL_NATIVE_ARGUMENT_OUTPUT"), data, 0644); err != nil {
+		t.Fatal(err)
 	}
 }
 
@@ -5719,6 +5899,7 @@ func TestBuildStartupCommandWithAgentOverride_SettingsFlagForClaudeOverride(t *t
 	if err != nil {
 		t.Fatalf("BuildStartupCommandWithAgentOverride: %v", err)
 	}
+	cmd = startupCommandBody(t, cmd)
 
 	if !strings.Contains(cmd, "--settings") {
 		t.Errorf("Claude override on polecat role should include --settings, got: %q", cmd)
@@ -5750,6 +5931,7 @@ func TestBuildPolecatStartupCommandWithAgentOverride_IncludesSettingsFlag(t *tes
 	if err != nil {
 		t.Fatalf("BuildPolecatStartupCommandWithAgentOverride: %v", err)
 	}
+	cmd = startupCommandBody(t, cmd)
 
 	if !strings.Contains(cmd, "--settings") {
 		t.Errorf("polecat with Claude override must get --settings for hooks to fire, got: %q", cmd)
@@ -5782,6 +5964,7 @@ func TestBuildStartupCommandWithAgentOverride_NoSettingsFlagForNonClaude(t *test
 	if err != nil {
 		t.Fatalf("BuildStartupCommandWithAgentOverride: %v", err)
 	}
+	cmd = startupCommandBody(t, cmd)
 
 	if strings.Contains(cmd, "--settings") {
 		t.Errorf("non-Claude override (gemini) should NOT get --settings, got: %q", cmd)
@@ -5813,6 +5996,7 @@ func TestBuildStartupCommandWithAgentOverride_NoDoubleSettingsOnNonOverridePath(
 	if err != nil {
 		t.Fatalf("BuildStartupCommandWithAgentOverride: %v", err)
 	}
+	cmd = startupCommandBody(t, cmd)
 
 	count := strings.Count(cmd, "--settings")
 	if count > 1 {
@@ -5870,11 +6054,16 @@ func TestBuildStartupCommandWithAgentOverrideSetsGTAgentForOpenCode(t *testing.T
 	if err != nil {
 		t.Fatalf("BuildStartupCommandWithAgentOverride: %v", err)
 	}
+	cmd = startupCommandBody(t, cmd)
 
-	if !strings.Contains(cmd, "GT_AGENT=opencode") {
+	if !strings.Contains(cmd, startupEnvAssignment("GT_AGENT", "opencode")) {
 		t.Errorf("expected GT_AGENT=opencode in command, got: %q", cmd)
 	}
-	if !strings.Contains(cmd, "GT_PROCESS_NAMES=opencode") {
+	expectedProcessPrefix := "GT_PROCESS_NAMES=opencode"
+	if runtime.GOOS == "windows" {
+		expectedProcessPrefix = "$env:GT_PROCESS_NAMES='opencode"
+	}
+	if !strings.Contains(cmd, expectedProcessPrefix) {
 		t.Errorf("expected GT_PROCESS_NAMES=opencode in command, got: %q", cmd)
 	}
 	if strings.Contains(cmd, "--settings") {

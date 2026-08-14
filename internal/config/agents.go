@@ -37,6 +37,8 @@ const (
 	AgentAmp AgentPreset = "amp"
 	// AgentOpenCode is OpenCode multi-model CLI.
 	AgentOpenCode AgentPreset = "opencode"
+	// AgentOpenCodeServer runs OpenCode through its authenticated HTTP server.
+	AgentOpenCodeServer AgentPreset = "opencode-server"
 	// AgentCopilot is GitHub Copilot CLI.
 	AgentCopilot AgentPreset = "copilot"
 	// AgentPi is Pi Coding Agent (extension-based lifecycle).
@@ -77,6 +79,10 @@ type AgentPresetInfo struct {
 	// Used by tmux.IsAgentRunning to check pane_current_command.
 	// E.g., ["node"] for Claude, ["cursor-agent", "agent"] for Cursor (install script symlinks both names).
 	ProcessNames []string `json:"process_names,omitempty"`
+
+	// ManagesNudgeQueue indicates the runtime consumes Gas Town's nudge queue
+	// through its own structured transport and must not receive a tmux poller.
+	ManagesNudgeQueue bool `json:"manages_nudge_queue,omitempty"`
 
 	// SessionIDEnv is the environment variable for session ID.
 	// Used for resuming sessions across restarts.
@@ -402,6 +408,26 @@ var builtinPresets = map[AgentPreset]*AgentPresetInfo{
 		ACP: &ACPConfig{
 			Command: "acp",
 		},
+	},
+	AgentOpenCodeServer: {
+		Name:    AgentOpenCodeServer,
+		Command: resolveGTPath(),
+		Args:    []string{"opencode-worker"},
+		Env: map[string]string{
+			"OPENCODE_PERMISSION":     `{"*":"allow"}`,
+			"OPENCODE_CONFIG_CONTENT": `{"lsp":true}`,
+		},
+		ProcessNames:        []string{"gt", "opencode", "node", "bun"},
+		ManagesNudgeQueue:   true,
+		SupportsHooks:       true,
+		SupportsForkSession: false,
+		PromptMode:          "arg",
+		ConfigDir:           ".opencode",
+		HooksProvider:       "opencode",
+		HooksDir:            ".opencode/plugins",
+		HooksSettingsFile:   "gastown.js",
+		ReadyDelayMs:        1000,
+		InstructionsFile:    "AGENTS.md",
 	},
 	AgentCopilot: {
 		Name:                AgentCopilot,
@@ -740,10 +766,11 @@ func runtimeConfigFromAgentInfo(preset AgentPreset, info *AgentPresetInfo) *Runt
 	}
 
 	rc := &RuntimeConfig{
-		Provider: string(info.Name),
-		Command:  info.Command,
-		Args:     append([]string(nil), info.Args...),
-		Env:      envCopy,
+		Provider:          string(info.Name),
+		Command:           info.Command,
+		Args:              append([]string(nil), info.Args...),
+		Env:               envCopy,
+		ManagesNudgeQueue: info.ManagesNudgeQueue,
 	}
 
 	if preset == AgentClaude && rc.Command == "claude" {

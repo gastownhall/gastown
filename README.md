@@ -504,7 +504,13 @@ gt feed                     # Real-time activity feed (TUI)
 gt feed --problems          # Start in problems view (stuck agent detection)
 ```
 
-**Built-in agent presets**: `claude`, `gemini`, `codex`, `kiro`, `cursor`, `auggie`, `amp`, `opencode`, `copilot`, `pi`, `omp`
+**Built-in agent presets**: `claude`, `gemini`, `codex`, `kiro`, `cursor`, `auggie`, `amp`, `opencode`, `opencode-server`, `copilot`, `pi`, `omp`
+
+`opencode-server` is an opt-in OpenCode transport that keeps tmux as the
+process supervisor but sends prompts and nudges through an authenticated,
+worktree-local OpenCode HTTP server. Use it for workers with
+`gt sling <bead-id> <rig> --agent opencode-server`. Set
+`GT_OPENCODE_MODEL=opencode-go/<model>` to pin an OpenCode Go model.
 
 The `kiro` preset launches `kiro-cli chat --trust-all-tools`, supports Kiro's
 documented `--resume` / `--resume-id` session flags, and does not install Kiro

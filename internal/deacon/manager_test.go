@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/steveyegge/gastown/internal/config"
 	"github.com/steveyegge/gastown/internal/tmux"
 )
 
@@ -20,6 +21,7 @@ type mockTmux struct {
 	sessionInfo      *tmux.SessionInfo
 	sessionInfoErr   error
 	sendKeysErr      error
+	agentEnvironment string
 
 	// Call tracking
 	killCalls       []string
@@ -51,7 +53,13 @@ func (m *mockTmux) NewSessionWithCommandAndEnv(_, _, _ string, _ map[string]stri
 
 func (m *mockTmux) SetRemainOnExit(_ string, _ bool) error { return nil }
 func (m *mockTmux) SetEnvironment(_, _, _ string) error    { return nil }
-func (m *mockTmux) GetPaneID(_ string) (string, error)     { return "%0", nil }
+func (m *mockTmux) GetEnvironment(_, key string) (string, error) {
+	if key == "GT_AGENT" {
+		return m.agentEnvironment, nil
+	}
+	return "", nil
+}
+func (m *mockTmux) GetPaneID(_ string) (string, error) { return "%0", nil }
 func (m *mockTmux) ConfigureGasTownSession(_ string, _ *tmux.Theme, _, _, _ string) error {
 	return nil
 }
@@ -147,6 +155,40 @@ func TestStart_AlreadyRunningRepairsNudgePoller(t *testing.T) {
 	}
 }
 
+func TestStartAlreadyRunningUsesActualManagedAlias(t *testing.T) {
+	townRoot := t.TempDir()
+	settings := config.NewTownSettings()
+	settings.Agents = map[string]*config.RuntimeConfig{
+		"server-alias": {Provider: string(config.AgentOpenCodeServer)},
+	}
+	if err := config.SaveTownSettings(config.TownSettingsPath(townRoot), settings); err != nil {
+		t.Fatal(err)
+	}
+	mock := &mockTmux{
+		hasSessionResult: true,
+		agentAlive:       true,
+		agentEnvironment: "server-alias",
+	}
+	m := newTestManager(townRoot, mock)
+	var starts, stops int
+	m.startPoller = func(_, _ string) (int, error) {
+		starts++
+		return 0, nil
+	}
+	m.stopPoller = func(_, _ string) error {
+		stops++
+		return nil
+	}
+
+	err := m.Start("claude")
+	if !errors.Is(err, ErrAlreadyRunning) {
+		t.Fatalf("Start = %v, want ErrAlreadyRunning", err)
+	}
+	if starts != 0 || stops != 1 {
+		t.Fatalf("poller calls = start %d, stop %d; want start 0, stop 1", starts, stops)
+	}
+}
+
 func TestStart_ZombieDetected_KillFails(t *testing.T) {
 	killErr := errors.New("kill failed: session locked")
 	mock := &mockTmux{
@@ -231,6 +273,27 @@ func TestStart_SuccessStartsNudgePoller(t *testing.T) {
 	}
 	if calls != 1 {
 		t.Errorf("startPoller calls = %d, want 1", calls)
+	}
+}
+
+func TestStart_ManagedRuntimeStopsNudgePoller(t *testing.T) {
+	mock := &mockTmux{hasSessionResult: false}
+	m := newTestManager(t.TempDir(), mock)
+	var starts, stops int
+	m.startPoller = func(_, _ string) (int, error) {
+		starts++
+		return 123, nil
+	}
+	m.stopPoller = func(_, _ string) error {
+		stops++
+		return nil
+	}
+
+	if err := m.Start(string(config.AgentOpenCodeServer)); err != nil {
+		t.Fatalf("Start() error = %v", err)
+	}
+	if starts != 0 || stops != 1 {
+		t.Fatalf("poller calls = start %d, stop %d; want start 0, stop 1", starts, stops)
 	}
 }
 

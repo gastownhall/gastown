@@ -7,8 +7,7 @@ import (
 	"runtime"
 	"strconv"
 	"testing"
-
-	"github.com/steveyegge/gastown/internal/util"
+	"time"
 )
 
 func TestPollerPidFile(t *testing.T) {
@@ -170,14 +169,40 @@ func TestBuildPollerCommand_UsesDetachedProcessGroup(t *testing.T) {
 	}
 }
 
-func TestSetProcessGroup_InstallsCancelHook(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("SetProcessGroup is a no-op on Windows")
+func TestStopPollerTerminatesTrackedProcess(t *testing.T) {
+	cmd := exec.Command(os.Args[0], "-test.run=^TestPollerHelperProcess$")
+	cmd.Env = append(os.Environ(), "GO_WANT_POLLER_HELPER=1")
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
 	}
-	cmd := exec.Command("true")
-	util.SetProcessGroup(cmd)
+	t.Cleanup(func() { _ = cmd.Process.Kill() })
 
-	if cmd.Cancel == nil {
-		t.Fatal("SetProcessGroup() should install a cancel hook")
+	townRoot := t.TempDir()
+	session := "gt-gastown-crew-test"
+	if err := os.MkdirAll(pollerPidDir(townRoot), 0755); err != nil {
+		t.Fatal(err)
 	}
+	if err := os.WriteFile(pollerPidFile(townRoot, session), []byte(strconv.Itoa(cmd.Process.Pid)), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := StopPoller(townRoot, session); err != nil {
+		t.Fatalf("StopPoller: %v", err)
+	}
+	done := make(chan error, 1)
+	go func() { done <- cmd.Wait() }()
+	select {
+	case <-done:
+	case <-time.After(3 * time.Second):
+		t.Fatal("tracked poller process was not terminated")
+	}
+	if _, err := os.Stat(pollerPidFile(townRoot, session)); !os.IsNotExist(err) {
+		t.Fatal("poller PID file remained after termination")
+	}
+}
+
+func TestPollerHelperProcess(t *testing.T) {
+	if os.Getenv("GO_WANT_POLLER_HELPER") != "1" {
+		return
+	}
+	time.Sleep(30 * time.Second)
 }

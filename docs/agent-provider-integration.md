@@ -533,6 +533,24 @@ Current agent capabilities at a glance:
 | Auggie | No | `--resume` (flag) | No | No | arg | auggie |
 | AMP | No | `threads continue` (subcmd) | No | No | arg | amp |
 | OpenCode | Yes (plugin JS) | No | `run` subcmd | No | none | opencode, node, bun |
+| OpenCode Server | Yes (plugin JS) | Same work key | Native HTTP worker | No | arg | gt, opencode, node, bun |
+
+### Native OpenCode Server Worker
+
+Gas Town also ships the opt-in `opencode-server` preset. It supervises the
+worker in tmux, but readiness, status, startup prompts, and nudges use
+OpenCode's authenticated HTTP API instead of TUI screen scraping and
+`send-keys`. The current adapter is pinned to OpenCode 1.18.16 or newer 1.x and
+fails closed on unsupported API generations.
+
+```bash
+gt sling <bead-id> <rig> --agent opencode-server
+```
+
+Set `GT_OPENCODE_MODEL=provider/model` and optionally
+`GT_OPENCODE_VARIANT=<variant>` to override OpenCode's configured defaults.
+This transport keeps model prose separate from Gas Town completion evidence;
+beads, commits, tests, CI, and merge state remain authoritative.
 
 ---
 
@@ -703,8 +721,11 @@ Create `~/gt/settings/agents.json` (or add to existing):
 ### Step 2: Test basic launch (5 minutes)
 
 ```bash
-# Set your agent as default for a rig
-gt config set agent your-agent --rig <rigname>
+# Set your agent as the town default
+gt config default-agent your-agent
+
+# For one rig, set "agent": "your-agent" in
+# <town>/<rig>/settings/config.json
 
 # Or test with a one-off override
 gt crew start jack --agent your-agent

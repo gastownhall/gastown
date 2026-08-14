@@ -461,7 +461,7 @@ gt config agent remove <name>     # Remove custom agent (built-ins protected)
 gt config default-agent [name]    # Get or set town default agent
 ```
 
-**Built-in agents**: `claude`, `gemini`, `codex`, `kiro`, `cursor`, `auggie`, `amp`, `opencode`, `copilot`
+**Built-in agents**: `claude`, `gemini`, `codex`, `kiro`, `cursor`, `auggie`, `amp`, `opencode`, `opencode-server`, `copilot`
 
 The `kiro` preset launches `kiro-cli chat --trust-all-tools` and uses Kiro's
 documented `--resume` / `--resume-id` session flags. Gas Town does not install
@@ -547,6 +547,28 @@ For OpenCode autonomous mode, set env var in your shell profile:
 ```bash
 export OPENCODE_PERMISSION='{"*":"allow"}'
 ```
+
+**Native OpenCode worker transport**:
+```bash
+# One worker
+gt sling <bead-id> <rig> --agent opencode-server
+
+# Or make it the town default
+gt config default-agent opencode-server
+
+# For one rig, set "agent": "opencode-server" in
+# <town>/<rig>/settings/config.json
+
+# Optional OpenCode Go model selection
+export GT_OPENCODE_MODEL="opencode-go/grok-4.5"
+export GT_OPENCODE_VARIANT="high"
+```
+
+The `opencode-server` preset starts a loopback-only, Basic-authenticated
+OpenCode server per worker and routes Gas Town nudges through the server API.
+Its runtime mapping is stored with credentials under
+`<town>/.runtime/opencode-server/`. The existing `opencode` preset remains the
+interactive TUI integration.
 
 ### Rig Management
 

@@ -1131,7 +1131,7 @@ func runSling(cmd *cobra.Command, args []string) (retErr error) {
 			}
 		}
 
-		if err := injectStartPrompt(targetPane, beadID, slingSubject, slingArgs); err != nil {
+		if err := injectStartPrompt(townRoot, targetPane, beadID, slingSubject, slingArgs); err != nil {
 			// Graceful fallback for no-tmux mode
 			fmt.Printf("%s Could not nudge (no tmux?): %v\n", style.Dim.Render("○"), err)
 			fmt.Printf("  Agent will discover work via gt prime / bd show\n")
