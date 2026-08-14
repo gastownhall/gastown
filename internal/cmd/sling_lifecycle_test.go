@@ -565,3 +565,175 @@ exit 0
 	writeBDStub(t, binDir, bdScript, "")
 	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
 }
+
+func TestLifecycleNamedTargetHooksWithoutSpawningPolecat(t *testing.T) {
+	townRoot, rigPath, descPath := setupMutableBDRawSlingTest(t, "Keep this body.")
+	workDir := filepath.Join(townRoot, "gastown", "crew", "toast")
+	if err := os.MkdirAll(workDir, 0755); err != nil {
+		t.Fatalf("mkdir workDir: %v", err)
+	}
+
+	spawned := false
+	prevSpawn := spawnPolecatForSling
+	prevResolve := resolveTargetAgentFn
+	prevHook := hookBeadWithRetryFn
+	t.Cleanup(func() {
+		spawnPolecatForSling = prevSpawn
+		resolveTargetAgentFn = prevResolve
+		hookBeadWithRetryFn = prevHook
+	})
+	spawnPolecatForSling = func(string, SlingSpawnOptions) (*SpawnedPolecatInfo, error) {
+		spawned = true
+		return nil, errors.New("named target must not spawn a polecat")
+	}
+	resolveTargetAgentFn = func(target string) (string, string, string, error) {
+		if target != "gastown/crew/toast" {
+			t.Errorf("resolve target = %q", target)
+		}
+		return "gastown/crew/toast", "%1", workDir, nil
+	}
+	hookBeadWithRetryFn = func(beadID, targetAgent, hookDir string) error {
+		return nil
+	}
+
+	outcome, err := executeDeepSling(context.Background(), sling.Intent{
+		BeadID:           "gt-rawrollback",
+		Target:           "gastown/crew/toast",
+		HookRawBead:      true,
+		NoConvoy:         true,
+		NoBoot:           true,
+		FormulaFailFatal: true,
+		CallerContext:    "sling",
+		TownRoot:         townRoot,
+		BeadsDir:         filepath.Join(rigPath, ".beads"),
+	})
+	if err != nil {
+		t.Fatalf("Execute named target: %v", err)
+	}
+	if spawned {
+		t.Fatal("named target dispatched through polecat spawn")
+	}
+	if outcome == nil || !outcome.Success {
+		t.Fatalf("outcome = %+v", outcome)
+	}
+	desc := readMutableBDDescription(t, descPath)
+	if !strings.Contains(desc, "Keep this body.") {
+		t.Fatalf("named sling dropped bead body:\n%s", desc)
+	}
+}
+
+func TestLifecycleNamedTargetRejectsClosedBead(t *testing.T) {
+	townRoot, rigPath, _ := setupMutableBDRawSlingTest(t, "Keep this body.")
+	statusPath := filepath.Join(townRoot, "status.txt")
+	if err := os.WriteFile(statusPath, []byte("closed"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	spawned := false
+	prevSpawn := spawnPolecatForSling
+	t.Cleanup(func() { spawnPolecatForSling = prevSpawn })
+	spawnPolecatForSling = func(string, SlingSpawnOptions) (*SpawnedPolecatInfo, error) {
+		spawned = true
+		return nil, errors.New("closed named target must not spawn")
+	}
+
+	_, err := executeDeepSling(context.Background(), sling.Intent{
+		BeadID:   "gt-rawrollback",
+		Target:   "gastown/crew/toast",
+		Force:    true,
+		NoConvoy: true,
+		NoBoot:   true,
+		TownRoot: townRoot,
+		BeadsDir: filepath.Join(rigPath, ".beads"),
+	})
+	if err == nil {
+		t.Fatal("expected closed bead to be refused")
+	}
+	if !strings.Contains(err.Error(), "closed") {
+		t.Fatalf("error = %v", err)
+	}
+	if spawned {
+		t.Fatal("closed named target spawned a polecat")
+	}
+}
+
+func TestLifecycleNamedTargetIdempotentNoOp(t *testing.T) {
+	townRoot, rigPath, _ := setupMutableBDRawSlingTest(t, "Keep this body.")
+	if err := os.WriteFile(filepath.Join(townRoot, "status.txt"), []byte("hooked"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(townRoot, "assignee.txt"), []byte("gastown/crew/toast"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	prevDead := isHookedAgentDeadFn
+	prevResolve := resolveTargetAgentFn
+	t.Cleanup(func() {
+		isHookedAgentDeadFn = prevDead
+		resolveTargetAgentFn = prevResolve
+	})
+	isHookedAgentDeadFn = func(string) bool { return false }
+	resolveTargetAgentFn = func(string) (string, string, string, error) {
+		t.Fatal("idempotent named sling must not resolve a target")
+		return "", "", "", nil
+	}
+
+	outcome, err := executeDeepSling(context.Background(), sling.Intent{
+		BeadID:   "gt-rawrollback",
+		Target:   "gastown/crew/toast",
+		NoConvoy: true,
+		NoBoot:   true,
+		TownRoot: townRoot,
+		BeadsDir: filepath.Join(rigPath, ".beads"),
+	})
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	if outcome == nil || !outcome.NoOp || !outcome.Success {
+		t.Fatalf("outcome = %+v, want successful no-op", outcome)
+	}
+}
+
+func TestLifecycleNamedTargetDeadAgentAutoForce(t *testing.T) {
+	townRoot, rigPath, _ := setupMutableBDRawSlingTest(t, "Keep this body.")
+	workDir := filepath.Join(townRoot, "gastown", "crew", "toast")
+	if err := os.MkdirAll(workDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(townRoot, "status.txt"), []byte("hooked"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(townRoot, "assignee.txt"), []byte("gastown/crew/old"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	prevDead := isHookedAgentDeadFn
+	prevResolve := resolveTargetAgentFn
+	prevHook := hookBeadWithRetryFn
+	t.Cleanup(func() {
+		isHookedAgentDeadFn = prevDead
+		resolveTargetAgentFn = prevResolve
+		hookBeadWithRetryFn = prevHook
+	})
+	isHookedAgentDeadFn = func(assignee string) bool { return assignee == "gastown/crew/old" }
+	resolveTargetAgentFn = func(target string) (string, string, string, error) {
+		return "gastown/crew/toast", "", workDir, nil
+	}
+	hookBeadWithRetryFn = func(string, string, string) error { return nil }
+
+	outcome, err := executeDeepSling(context.Background(), sling.Intent{
+		BeadID:      "gt-rawrollback",
+		Target:      "gastown/crew/toast",
+		HookRawBead: true,
+		NoConvoy:    true,
+		NoBoot:      true,
+		TownRoot:    townRoot,
+		BeadsDir:    filepath.Join(rigPath, ".beads"),
+	})
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	if outcome == nil || !outcome.Success || outcome.NoOp {
+		t.Fatalf("outcome = %+v, want successful re-sling", outcome)
+	}
+}

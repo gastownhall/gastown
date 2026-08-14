@@ -22,7 +22,10 @@ var tryAcquireSlingAssigneeLockFn = tryAcquireSlingAssigneeLock
 type townSlingLifecycle struct{}
 
 func (townSlingLifecycle) Execute(ctx context.Context, intent sling.Intent) (*sling.Outcome, error) {
-	_ = ctx
+	if intent.RigName == "" {
+		result, err := executeNamedTargetSling(ctx, intent)
+		return outcomeFromSlingResult(result), err
+	}
 	result, err := executeSling(paramsFromIntent(intent))
 	return outcomeFromSlingResult(result), err
 }
@@ -180,6 +183,10 @@ func intentFromCLIFlags(beadID, rigName, formula, townRoot, beadsDir string) sli
 		CallerContext:    "sling",
 		TownRoot:         townRoot,
 		BeadsDir:         beadsDir,
+		DryRun:           slingDryRun,
+		Create:           slingCreate,
+		Subject:          slingSubject,
+		Message:          slingMessage,
 	}
 }
 

@@ -140,54 +140,22 @@ func executeSling(params SlingParams) (*SlingResult, error) {
 		return result, fmt.Errorf("could not get bead info: %w", err)
 	}
 
-	if beads.IsFlagLikeTitle(info.Title) {
-		result.ErrMsg = "flag-like title"
-		return result, fmt.Errorf("refusing to sling bead %s: title %q looks like a CLI flag (garbage bead from flag-parsing bug)", params.BeadID, info.Title)
-	}
-
-	// Guard against dispatching closed/tombstone beads (defense-in-depth).
-	// Not bypassed by --force — if you need to re-dispatch, reopen the bead first.
-	if info.Status == "closed" || info.Status == "tombstone" {
-		result.ErrMsg = "already " + info.Status
-		return result, fmt.Errorf("bead %s is %s (work already completed)", params.BeadID, info.Status)
-	}
-
-	params.Merge = resolveBeadMergeStrategy(params.Merge, info)
-
-	// Save explicit force state before dead-agent auto-force, so the deferred
-	// gate below still requires an explicit --force for deferred beads.
 	explicitForce := params.Force
-
-	if (info.Status == "pinned" || info.Status == "hooked" || info.Status == "in_progress") && !params.Force {
-		// Auto-force when hooked/in_progress agent's session is confirmed dead (gt-npzy, GH#1380).
-		// Mirrors the dead-agent detection in runSling (sling.go) so that
-		// programmatic dispatch also handles stale hooks from nuked polecats.
-		if (info.Status == "hooked" || info.Status == "in_progress") && info.Assignee != "" && isHookedAgentDeadFn(info.Assignee) {
-			fmt.Printf("  %s Hooked agent %s has no active session, auto-forcing dispatch...\n",
-				style.Warning.Render("⚠"), info.Assignee)
-			params.Force = true
-		} else if isDefaultRigSlingNoop(params, info, townRoot) {
-			fmt.Printf("  %s Bead %s is already %s to %s, no-op\n",
-				style.Dim.Render("○"), params.BeadID, info.Status, info.Assignee)
-			result.Success = true
-			result.NoOp = true
-			if name, ok := polecatNameFromAssignee(params.RigName, info.Assignee); ok {
-				result.PolecatName = name
-			}
-			return result, nil
-		} else {
-			result.ErrMsg = "already " + info.Status
-			return result, fmt.Errorf("already %s (use --force to re-sling)", info.Status)
+	status := evaluateSlingStatus(info, params.BeadID, explicitForce, params.Merge, isDefaultRigSlingNoop(params, info, townRoot), false)
+	if status.Err != nil {
+		result.ErrMsg = status.ErrMsg
+		return result, status.Err
+	}
+	if status.NoOp {
+		result.Success = true
+		result.NoOp = true
+		if name, ok := polecatNameFromAssignee(params.RigName, info.Assignee); ok {
+			result.PolecatName = name
 		}
+		return result, nil
 	}
-
-	// Guard against slinging deferred beads (gt-1326mw).
-	// Uses explicitForce (not params.Force) so dead-agent auto-force doesn't
-	// accidentally bypass the deferred gate.
-	if isDeferredBead(info) && !explicitForce {
-		result.ErrMsg = "deferred"
-		return result, fmt.Errorf("bead %s is deferred (use --force to override)", params.BeadID)
-	}
+	params.Force = status.Force
+	params.Merge = status.Merge
 
 	if params.RigName != "" && !explicitForce {
 		if err := checkCrossRigGuard(params.BeadID, params.RigName+"/polecats/_", townRoot); err != nil {

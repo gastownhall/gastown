@@ -4,8 +4,8 @@
 // Direct `gt sling` and deferred scheduler dispatch are adapters. They convert
 // arguments or durable context into Intent, invoke Lifecycle, and present the
 // Outcome. Lifecycle owns validation, cross-rig guard, Convoy reuse, Polecat
-// spawn, Formula and Molecule work, Hook placement, Bead attachment,
-// compensation, and witness wake.
+// spawn, named-target dispatch (Mayor, Crew, dogs, self), Formula and Molecule
+// work, Hook placement, Bead attachment, compensation, and witness wake.
 package sling
 
 import (
@@ -18,7 +18,8 @@ import (
 // dispatch must honor lives here so adapters cannot drop a subset.
 type Intent struct {
 	BeadID           string
-	RigName          string
+	RigName          string // Polecat/rig dispatch. Empty means named Target (or self).
+	Target           string // Named Slinging target: mayor, crew path, dog, self ("" / "."). Unused when RigName is set.
 	Formula          string
 	Args             string
 	Vars             []string
@@ -41,6 +42,12 @@ type Intent struct {
 	CallerContext    string
 	TownRoot         string
 	BeadsDir         string
+
+	// Named-target adapter fields. Unused for rig/queue dispatch (RigName set).
+	DryRun  bool
+	Create  bool
+	Subject string
+	Message string
 }
 
 // Outcome is the observable result of one Lifecycle.Execute.
