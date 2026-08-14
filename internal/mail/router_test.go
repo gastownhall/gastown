@@ -1744,6 +1744,59 @@ func TestNotifyRecipient_IdleAgent(t *testing.T) {
 	}
 }
 
+// TestNotifyRecipient_IdleAgentDoesNotSubmitNewTurn is the GH#4607 feedback
+// loop: mail notification must not be submitted as a new tmux turn (which
+// cancels in-flight tool calls). It must land on the queued-nudge channel
+// that gt nudge already uses for turn-appending delivery.
+func TestNotifyRecipient_IdleAgentDoesNotSubmitNewTurn(t *testing.T) {
+	socket := requireNotifyTestSocket(t)
+	sessionName := "gt-crew-idlemailturn"
+
+	createNotifyTestSession(t, socket, sessionName, `sh -c 'printf "❯ \n" && cat'`)
+	time.Sleep(500 * time.Millisecond)
+
+	townRoot := t.TempDir()
+	tm := tmux.NewTmuxWithSocket(socket)
+	r := &Router{
+		workDir:           t.TempDir(),
+		townRoot:          townRoot,
+		tmux:              tm,
+		IdleNotifyTimeout: 3 * time.Second,
+	}
+
+	msg := &Message{
+		From:    "gastown/crew/sender",
+		To:      "gastown/crew/idlemailturn",
+		Subject: "test idle new-turn",
+	}
+
+	if err := r.notifyRecipient(msg); err != nil {
+		t.Fatalf("notifyRecipient returned error: %v", err)
+	}
+
+	pane, err := tm.CapturePane(sessionName, 50)
+	if err != nil {
+		t.Fatalf("CapturePane: %v", err)
+	}
+	if strings.Contains(pane, "You have new mail") {
+		t.Errorf("mail notification was submitted as a new turn in the pane (GH#4607); pane:\n%s", pane)
+	}
+
+	nudges, err := nudge.Drain(townRoot, sessionName)
+	if err != nil {
+		t.Fatalf("Drain: %v", err)
+	}
+	if len(nudges) != 1 {
+		t.Fatalf("expected 1 immediately-deliverable queued mail nudge, got %d", len(nudges))
+	}
+	if nudges[0].Kind != "mail" {
+		t.Errorf("queued nudge kind = %q, want mail", nudges[0].Kind)
+	}
+	if !strings.Contains(nudges[0].Message, "You have new mail") {
+		t.Errorf("queued nudge message = %q, want mail notification", nudges[0].Message)
+	}
+}
+
 // TestNotifyRecipient_BusyAgent verifies that a busy agent (no prompt visible)
 // gets a queued nudge instead of an immediate one.
 func TestNotifyRecipient_BusyAgent(t *testing.T) {
