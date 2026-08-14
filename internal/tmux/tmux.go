@@ -224,13 +224,6 @@ func NewTmuxWithSocketAndBinary(socket, binary string) *Tmux {
 	return &Tmux{socketName: socket, binary: binary}
 }
 
-func (t *Tmux) tmuxBinary() string {
-	if t != nil && t.binary != "" {
-		return t.binary
-	}
-	return "tmux"
-}
-
 // run executes a tmux command and returns stdout.
 // All commands include -u flag for UTF-8 support regardless of locale settings.
 // See: https://github.com/steveyegge/gastown/issues/1219
@@ -244,7 +237,11 @@ func (t *Tmux) commandContext(ctx context.Context, args ...string) *exec.Cmd {
 		allArgs = append(allArgs, "-L", t.socketName)
 	}
 	allArgs = append(allArgs, args...)
-	cmd := exec.CommandContext(ctx, t.tmuxBinary(), allArgs...)
+	binary := "tmux"
+	if t != nil && t.binary != "" {
+		binary = t.binary
+	}
+	cmd := exec.CommandContext(ctx, binary, allArgs...)
 	hideConsoleWindow(cmd)
 	return cmd
 }
@@ -1535,7 +1532,7 @@ func (t *Tmux) dismissRewindMode(target string) {
 // sendLiteralCR submits the current line with a literal carriage return.
 // Named-key Enter/C-m/KPEnter are not delivered on some tmux builds
 // (tmux 3.7b on macOS Homebrew); send-keys -l with CR is. (GH#4666)
-func (t *Tmux) sendLiteralCR(target string) error {
+func sendLiteralCR(t *Tmux, target string) error {
 	_, err := t.run("send-keys", "-t", target, "-l", "\r")
 	return err
 }
@@ -1559,7 +1556,7 @@ func (t *Tmux) sendEnterVerified(target string) error {
 	// Snapshot pane content before submit so we can detect processing.
 	preSnapshot, preErr := t.CapturePane(target, verifyLines)
 
-	if err := t.sendLiteralCR(target); err != nil {
+	if err := sendLiteralCR(t, target); err != nil {
 		return fmt.Errorf("send Enter: %w", err)
 	}
 
@@ -1584,7 +1581,7 @@ func (t *Tmux) sendEnterVerified(target string) error {
 		}
 
 		// Content unchanged — CR may not have been processed. Retry.
-		if err := t.sendLiteralCR(target); err != nil {
+		if err := sendLiteralCR(t, target); err != nil {
 			return fmt.Errorf("send Enter (retry %d): %w", retry+1, err)
 		}
 
