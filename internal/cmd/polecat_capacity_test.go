@@ -480,7 +480,7 @@ func TestStandaloneFormulaRigTargetAcquiresSingleAdmission(t *testing.T) {
 		}, nil
 	}
 	findHookedFormulaSingletonFn = func(workDir, targetAgent, formulaName string) (*beads.Issue, error) {
-		return &beads.Issue{ID: "gt-wisp-existing"}, nil
+		return &beads.Issue{ID: "gt-dispatch-existing", Labels: []string{formulaDispatchLabel}}, nil
 	}
 
 	if err := runSlingFormula(context.Background(), []string{"test-formula", "gastown"}); err != nil {
@@ -515,7 +515,7 @@ func TestStandaloneFormulaExistingPolecatNoopDoesNotRequireCapacity(t *testing.T
 		return "gastown/polecats/toast", "%1", filepath.Join(townRoot, "gastown", "polecats", "toast", "gastown"), nil
 	}
 	findHookedFormulaSingletonFn = func(workDir, targetAgent, formulaName string) (*beads.Issue, error) {
-		return &beads.Issue{ID: "gt-wisp-existing"}, nil
+		return &beads.Issue{ID: "gt-dispatch-existing", Labels: []string{formulaDispatchLabel}}, nil
 	}
 
 	if err := runSlingFormula(context.Background(), []string{"test-formula", "gastown/polecats/toast"}); err != nil {

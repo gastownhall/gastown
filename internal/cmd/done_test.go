@@ -793,6 +793,26 @@ func TestShouldNudgeRefinery(t *testing.T) {
 	}
 }
 
+func TestIsFormulaCompletionBead(t *testing.T) {
+	tests := []struct {
+		name  string
+		id    string
+		issue *beads.Issue
+		want  bool
+	}{
+		{name: "workflow step", id: "gt-wisp-wfs-abc", want: true},
+		{name: "durable formula dispatch", id: "gt-abc", issue: &beads.Issue{Labels: []string{formulaDispatchLabel}}, want: true},
+		{name: "ordinary deferred work", id: "gt-abc", issue: &beads.Issue{Labels: []string{"gt:task"}}, want: false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := isFormulaCompletionBead(tt.id, tt.issue); got != tt.want {
+				t.Fatalf("isFormulaCompletionBead(%q) = %v, want %v", tt.id, got, tt.want)
+			}
+		})
+	}
+}
+
 func TestShouldUpdateAgentStateOnDone(t *testing.T) {
 	tests := []struct {
 		name       string
