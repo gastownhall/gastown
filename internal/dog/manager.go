@@ -47,11 +47,13 @@ func NewManager(townRoot string, rigsConfig *config.RigsConfig) *Manager {
 // This prevents concurrent load-modify-save races on .dog.json.
 // Caller must defer fl.Unlock().
 func (m *Manager) lockDog(name string) (*flock.Flock, error) {
-	lockDir := m.dogDir(name)
+	// Keep lock files outside removable dog directories. A dog may be removed
+	// and recreated while callers wait; one stable inode preserves exclusion.
+	lockDir := filepath.Join(m.kennelPath, ".locks")
 	if err := os.MkdirAll(lockDir, 0755); err != nil {
 		return nil, fmt.Errorf("creating dog lock dir: %w", err)
 	}
-	lockPath := filepath.Join(lockDir, ".dog.lock")
+	lockPath := filepath.Join(lockDir, name+".lock")
 	fl := flock.New(lockPath)
 	if err := fl.Lock(); err != nil {
 		return nil, fmt.Errorf("acquiring dog lock for %s: %w", name, err)
@@ -308,6 +310,8 @@ func (m *Manager) Get(name string) (*Dog, error) {
 		Worktrees:     state.Worktrees,
 		LastActive:    state.LastActive,
 		Work:          state.Work,
+		WorkKind:      state.WorkKind,
+		WorkSourceID:  state.WorkSourceID,
 		WorkStartedAt: state.WorkStartedAt,
 		CreatedAt:     state.CreatedAt,
 	}, nil
@@ -341,8 +345,13 @@ func (m *Manager) SetState(name string, state State) error {
 	return m.saveState(name, dogState)
 }
 
-// AssignWork assigns work to a dog and sets it to working state.
+// AssignWork assigns untyped legacy work to a dog and sets it to working state.
 func (m *Manager) AssignWork(name, work string) error {
+	return m.AssignWorkWithKind(name, work, "")
+}
+
+// AssignWorkWithKind assigns typed work to a dog and sets it to working state.
+func (m *Manager) AssignWorkWithKind(name, work string, kind WorkKind) error {
 	if err := validateDogName(name); err != nil {
 		return err
 	}
@@ -364,6 +373,8 @@ func (m *Manager) AssignWork(name, work string) error {
 
 	state.State = StateWorking
 	state.Work = work
+	state.WorkKind = kind
+	applyWorkSourceID(state, work, kind)
 	state.WorkStartedAt = time.Now()
 	state.LastActive = time.Now()
 	state.UpdatedAt = time.Now()
@@ -371,9 +382,22 @@ func (m *Manager) AssignWork(name, work string) error {
 	return m.saveState(name, state)
 }
 
+func applyWorkSourceID(state *DogState, work string, kind WorkKind) {
+	if kind == WorkKindBead {
+		state.WorkSourceID = work
+		return
+	}
+	state.WorkSourceID = ""
+}
+
 // AssignWorkIfIdle assigns work only if the dog is still idle, returning the
 // saved state so callers can later perform exact compare-and-clear cleanup.
 func (m *Manager) AssignWorkIfIdle(name, work string) (*DogState, error) {
+	return m.AssignWorkIfIdleWithKind(name, work, "")
+}
+
+// AssignWorkIfIdleWithKind records whether work is a source bead or formula.
+func (m *Manager) AssignWorkIfIdleWithKind(name, work string, kind WorkKind) (*DogState, error) {
 	if err := validateDogName(name); err != nil {
 		return nil, err
 	}
@@ -397,6 +421,8 @@ func (m *Manager) AssignWorkIfIdle(name, work string) (*DogState, error) {
 
 	state.State = StateWorking
 	state.Work = work
+	state.WorkKind = kind
+	applyWorkSourceID(state, work, kind)
 	state.WorkStartedAt = time.Now()
 	state.LastActive = time.Now()
 	state.UpdatedAt = time.Now()
@@ -405,6 +431,39 @@ func (m *Manager) AssignWorkIfIdle(name, work string) (*DogState, error) {
 		return nil, err
 	}
 	return state, nil
+}
+
+// SetWorkSourceIfMatches records the exact source bead ID for formula work
+// after the source is hooked. Bead dispatches already store the source ID in
+// Work at assignment time.
+func (m *Manager) SetWorkSourceIfMatches(name, expectedWork string, expectedStartedAt time.Time, sourceID string) (bool, error) {
+	if err := validateDogName(name); err != nil {
+		return false, err
+	}
+	if !m.exists(name) {
+		return false, ErrDogNotFound
+	}
+
+	fl, err := m.lockDog(name)
+	if err != nil {
+		return false, err
+	}
+	defer func() { _ = fl.Unlock() }()
+
+	state, err := m.loadState(name)
+	if err != nil {
+		return false, fmt.Errorf("loading state: %w", err)
+	}
+	if state.Work != expectedWork || !state.WorkStartedAt.Equal(expectedStartedAt) {
+		return false, nil
+	}
+
+	state.WorkSourceID = sourceID
+	state.UpdatedAt = time.Now()
+	if err := m.saveState(name, state); err != nil {
+		return false, err
+	}
+	return true, nil
 }
 
 // ClearWork clears a dog's work assignment and sets it to idle.
@@ -428,13 +487,19 @@ func (m *Manager) ClearWork(name string) error {
 		return fmt.Errorf("loading state: %w", err)
 	}
 
+	clearWorkFields(state)
+
+	return m.saveState(name, state)
+}
+
+func clearWorkFields(state *DogState) {
 	state.State = StateIdle
 	state.Work = ""
+	state.WorkKind = ""
+	state.WorkSourceID = ""
 	state.WorkStartedAt = time.Time{}
 	state.LastActive = time.Now()
 	state.UpdatedAt = time.Now()
-
-	return m.saveState(name, state)
 }
 
 // ClearWorkIfMatches clears a dog's work assignment only if it still matches
@@ -462,13 +527,142 @@ func (m *Manager) ClearWorkIfMatches(name, expectedWork string, expectedStartedA
 		return false, nil
 	}
 
-	state.State = StateIdle
-	state.Work = ""
-	state.WorkStartedAt = time.Time{}
-	state.LastActive = time.Now()
-	state.UpdatedAt = time.Now()
+	clearWorkFields(state)
 
 	return true, m.saveState(name, state)
+}
+
+// ClearWorkIfMatchesAfter runs beforeClear and clears the matching assignment
+// while holding the dog lock. This lets callers update external authoritative
+// state before making the dog idle, without a concurrent reassignment racing
+// between the two operations. If beforeClear returns false, state is preserved.
+func (m *Manager) ClearWorkIfMatchesAfter(name, expectedWork string, expectedStartedAt time.Time, beforeClear func() bool) (bool, error) {
+	if err := validateDogName(name); err != nil {
+		return false, err
+	}
+	if !m.exists(name) {
+		return false, ErrDogNotFound
+	}
+
+	fl, err := m.lockDog(name)
+	if err != nil {
+		return false, err
+	}
+	defer func() { _ = fl.Unlock() }()
+
+	state, err := m.loadState(name)
+	if err != nil {
+		return false, fmt.Errorf("loading state: %w", err)
+	}
+	if state.Work != expectedWork || !state.WorkStartedAt.Equal(expectedStartedAt) {
+		return false, nil
+	}
+	if beforeClear != nil && !beforeClear() {
+		return false, nil
+	}
+
+	clearWorkFields(state)
+
+	return true, m.saveState(name, state)
+}
+
+// RemoveIfMatches removes a dog only if its assignment still matches the
+// caller's snapshot. Idle dogs are matched by empty work and a zero timestamp.
+func (m *Manager) RemoveIfMatches(name, expectedWork string, expectedStartedAt time.Time) (bool, error) {
+	return m.RemoveIfMatchesAfter(name, expectedWork, expectedStartedAt, nil)
+}
+
+// RemoveIfMatchesAfter runs beforeRemove and removes the dog while holding its
+// assignment lock. Dispatch cannot assign work between session teardown and
+// kennel removal.
+func (m *Manager) RemoveIfMatchesAfter(name, expectedWork string, expectedStartedAt time.Time, beforeRemove func() error) (bool, error) {
+	return m.RemoveIfSnapshotMatchesAfter(name, expectedWork, expectedStartedAt, time.Time{}, beforeRemove)
+}
+
+// RemoveIfSnapshotMatchesAfter also checks LastActive when expectedLastActive
+// is non-zero, preventing a stale idle snapshot from matching a dog that was
+// assigned and completed in the meantime.
+func (m *Manager) RemoveIfSnapshotMatchesAfter(name, expectedWork string, expectedStartedAt, expectedLastActive time.Time, beforeRemove func() error) (bool, error) {
+	if err := validateDogName(name); err != nil {
+		return false, err
+	}
+	if !m.exists(name) {
+		return false, ErrDogNotFound
+	}
+
+	fl, err := m.lockDog(name)
+	if err != nil {
+		return false, err
+	}
+	defer func() { _ = fl.Unlock() }()
+
+	state, err := m.loadState(name)
+	if err != nil {
+		return false, fmt.Errorf("loading state: %w", err)
+	}
+	if state.Work != expectedWork || !state.WorkStartedAt.Equal(expectedStartedAt) ||
+		(!expectedLastActive.IsZero() && !state.LastActive.Equal(expectedLastActive)) {
+		return false, nil
+	}
+	if beforeRemove != nil {
+		if err := beforeRemove(); err != nil {
+			return false, err
+		}
+	}
+
+	// Mirror Remove's registered worktree cleanup while the assignment lock is
+	// held, so dispatch cannot race removal between revalidation and deletion.
+	for rigName, worktreePath := range state.Worktrees {
+		rigPath := filepath.Join(m.townRoot, rigName)
+		repoGit, err := m.findRepoBase(rigPath)
+		if err != nil {
+			style.PrintWarning("could not find repo base for %s: %v", rigName, err)
+			continue
+		}
+		if err := repoGit.WorktreeRemove(worktreePath, true); err != nil {
+			style.PrintWarning("could not remove worktree %s: %v", worktreePath, err)
+		}
+		_ = repoGit.WorktreePrune()
+	}
+	if err := os.RemoveAll(m.dogDir(name)); err != nil {
+		return false, fmt.Errorf("removing dog directory: %w", err)
+	}
+	return true, nil
+}
+
+// WithWorkIfMatches runs action under the dog lock only when the assignment
+// still matches the caller's snapshot.
+func (m *Manager) WithWorkIfMatches(name, expectedWork string, expectedStartedAt time.Time, action func() error) (bool, error) {
+	return m.WithSnapshotIfMatches(name, expectedWork, expectedStartedAt, time.Time{}, action)
+}
+
+// WithSnapshotIfMatches optionally includes LastActive in snapshot matching.
+func (m *Manager) WithSnapshotIfMatches(name, expectedWork string, expectedStartedAt, expectedLastActive time.Time, action func() error) (bool, error) {
+	if err := validateDogName(name); err != nil {
+		return false, err
+	}
+	if !m.exists(name) {
+		return false, ErrDogNotFound
+	}
+	fl, err := m.lockDog(name)
+	if err != nil {
+		return false, err
+	}
+	defer func() { _ = fl.Unlock() }()
+	state, err := m.loadState(name)
+	if err != nil {
+		return false, fmt.Errorf("loading state: %w", err)
+	}
+	if state.Work != expectedWork || !state.WorkStartedAt.Equal(expectedStartedAt) ||
+		(!expectedLastActive.IsZero() && !state.LastActive.Equal(expectedLastActive)) {
+		return false, nil
+	}
+	if action != nil {
+		if err := action(); err != nil {
+			return false, err
+		}
+	}
+	return true, nil
 }
 
 // Refresh recreates all worktrees for a dog with fresh branches.

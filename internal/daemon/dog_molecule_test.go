@@ -1,8 +1,16 @@
 package daemon
 
 import (
+	"bytes"
+	"log"
+	"os"
+	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
+
+	"github.com/steveyegge/gastown/internal/constants"
+	"github.com/steveyegge/gastown/internal/dog"
 )
 
 func TestParseWispID(t *testing.T) {
@@ -196,4 +204,29 @@ func TestDogMolGracefulDegradation(t *testing.T) {
 	dm.closeStep("scan")
 	dm.failStep("scan", "test failure")
 	dm.close()
+}
+
+func TestPourDogMolecule_GuardianDeniedDoesNotPour(t *testing.T) {
+	townRoot := t.TempDir()
+	path := dog.GuardianFile(townRoot)
+	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte(`{"dispatch_allowed":false,"activation_allowed":false,"reason":"red"}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	var buf bytes.Buffer
+	d := &Daemon{
+		config: &Config{TownRoot: townRoot},
+		logger: log.New(&buf, "", 0),
+		bdPath: "/nonexistent/bd",
+	}
+	mol := d.pourDogMolecule(constants.MolDogReaper, nil)
+	if mol.rootID != "" {
+		t.Fatalf("poured %q while guardian denied dispatch", mol.rootID)
+	}
+	if !strings.Contains(buf.String(), "guardian") {
+		t.Fatalf("log = %q, want guardian mention", buf.String())
+	}
 }

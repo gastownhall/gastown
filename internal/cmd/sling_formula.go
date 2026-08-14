@@ -113,8 +113,12 @@ func cleanupDelayedDogFormulaFailure(currentErr error, delayedDogInfo *DogDispat
 			cleanupErr = fmt.Errorf("cleaning failed dog formula wisp %s: %w", wispRootID, err)
 		}
 	}
-	if err := delayedDogInfo.clearWorkIfMatches(); err != nil {
-		cleanupErr = errors.Join(cleanupErr, fmt.Errorf("clearing failed dog assignment: %w", err))
+	// Keep typed dog state authoritative if source cleanup failed. Returning the
+	// dog to the pool while its wisp remains hooked would create split ownership.
+	if cleanupErr == nil {
+		if err := delayedDogInfo.clearWorkIfMatches(); err != nil {
+			cleanupErr = fmt.Errorf("clearing failed dog assignment: %w", err)
+		}
 	}
 	if cleanupErr == nil {
 		return currentErr
@@ -132,15 +136,14 @@ func formulaSlingPrompt(formulaName string) string {
 	return fmt.Sprintf("Formula %s slung. Run `"+cli.Name()+" hook` to see your hook, then execute the steps.", formulaName)
 }
 
-func nudgeFormulaDog(delayedDogInfo *DogDispatchInfo, prompt string) {
+func nudgeFormulaDog(delayedDogInfo *DogDispatchInfo, prompt string) error {
 	dogSession := fmt.Sprintf("hq-dog-%s", delayedDogInfo.DogName)
 	t := tmux.NewTmux()
 	if err := t.NudgeSession(dogSession, prompt); err != nil {
-		fmt.Printf("%s Could not nudge dog %s: %v (will discover work via gt prime)\n",
-			style.Dim.Render("○"), delayedDogInfo.DogName, err)
-	} else {
-		fmt.Printf("%s Nudged dog %s\n", style.Bold.Render("▶"), delayedDogInfo.DogName)
+		return fmt.Errorf("nudging dog %s: %w", delayedDogInfo.DogName, err)
 	}
+	fmt.Printf("%s Nudged dog %s\n", style.Bold.Render("▶"), delayedDogInfo.DogName)
+	return nil
 }
 
 // findHookedFormulaSingleton returns the existing hooked bead for an assignee
@@ -579,13 +582,15 @@ func runSlingFormula(ctx context.Context, args []string) (err error) {
 		fmt.Printf("%s Formula %s already hooked to %s via %s, no-op\n",
 			style.Dim.Render("○"), formulaName, targetAgent, existing.ID)
 		if delayedDogInfo != nil {
-			if _, err := delayedDogInfo.StartDelayedSession(); err != nil {
-				return fmt.Errorf("starting delayed dog session for existing formula: %w", err)
+			if _, err := delayedDogInfo.completeFormulaStartup(existing.ID); err != nil {
+				return fmt.Errorf("completing existing dog formula dispatch: %w", err)
+			}
+			if os.Getenv("GT_TEST_NO_NUDGE") == "" {
+				if err := nudgeFormulaDog(delayedDogInfo, formulaSlingPrompt(formulaName)); err != nil {
+					return err
+				}
 			}
 			delayedDogComplete = true
-			if os.Getenv("GT_TEST_NO_NUDGE") == "" {
-				nudgeFormulaDog(delayedDogInfo, formulaSlingPrompt(formulaName))
-			}
 		}
 		return nil
 	}
@@ -666,6 +671,12 @@ func runSlingFormula(ctx context.Context, args []string) (err error) {
 	dispatchBeadID = dispatchBead.ID
 	fmt.Printf("%s Durable dispatch bead created: %s\n", style.Bold.Render("✓"), dispatchBeadID)
 
+	if delayedDogInfo != nil {
+		if err := delayedDogInfo.persistWorkSource(dispatchBeadID); err != nil {
+			return fmt.Errorf("recording dog formula source: %w", err)
+		}
+	}
+
 	if err := persistAndHookFormulaDispatch(townRoot, formulaWorkDir, dispatchBeadID, targetAgent, formulaName, wispRootID, mode); err != nil {
 		return err
 	}
@@ -673,17 +684,21 @@ func runSlingFormula(ctx context.Context, args []string) (err error) {
 }
 
 func finishFormulaSling(resolved *ResolvedTarget, delayedDogInfo *DogDispatchInfo, delayedDogComplete, formulaWorkComplete *bool, townBeadsDir, formulaName, dispatchBeadID, targetAgent string, targetPane *string, isSelfSling bool, mode string) error {
-	updateAgentHookBead(targetAgent, dispatchBeadID, "", townBeadsDir)
+	if err := updateAgentHookBead(targetAgent, dispatchBeadID, "", townBeadsDir); err != nil {
+		if delayedDogInfo != nil {
+			return fmt.Errorf("updating dog agent hook: %w", err)
+		}
+		fmt.Printf("%s Could not update agent hook: %v\n", style.Dim.Render("Warning:"), err)
+	}
 	if mode != "" {
 		updateAgentMode(targetAgent, mode, "", townBeadsDir)
 	}
 
 	if delayedDogInfo != nil {
-		pane, err := delayedDogInfo.StartDelayedSession()
+		pane, err := delayedDogInfo.completeFormulaStartup(dispatchBeadID)
 		if err != nil {
-			return fmt.Errorf("starting delayed dog session: %w", err)
+			return fmt.Errorf("completing dog formula dispatch: %w", err)
 		}
-		*delayedDogComplete = true
 		*targetPane = pane
 	}
 
@@ -704,6 +719,9 @@ func finishFormulaSling(resolved *ResolvedTarget, delayedDogInfo *DogDispatchInf
 	}
 
 	if os.Getenv("GT_TEST_NO_NUDGE") != "" {
+		if delayedDogInfo != nil {
+			*delayedDogComplete = true
+		}
 		return nil
 	}
 
@@ -714,7 +732,10 @@ func finishFormulaSling(resolved *ResolvedTarget, delayedDogInfo *DogDispatchInf
 	// IDs are not globally unique). Use NudgeSession which qualifies the target
 	// with the session name. (gt-etc)
 	if delayedDogInfo != nil {
-		nudgeFormulaDog(delayedDogInfo, prompt)
+		if err := nudgeFormulaDog(delayedDogInfo, prompt); err != nil {
+			return err
+		}
+		*delayedDogComplete = true
 		return nil
 	}
 

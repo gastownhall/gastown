@@ -97,10 +97,10 @@ A comprehensive catalog of all cleanup-related commands in the gastown/beads eco
 
 | Command | What it does |
 |---------|-------------|
-| `gt dog remove <name>` | Removes worktrees and dog directory |
-| `gt dog remove --all` | Removes all dogs |
-| `gt dog clear <name>` | Resets stuck dog to idle state |
-| `gt dog done [name]` | Marks dog as done, clears work field |
+| `gt dog remove <name>` | Removes worktrees and dog directory. Source-backed bead/formula work must be recovered or completed first. |
+| `gt dog remove --all` | Removes all dogs that are idle or hold only plugin work |
+| `gt dog clear <name>` | Resets stuck plugin work to idle. Source-backed work is refused. |
+| `gt dog done [name]` | Completes work, closes the authoritative source when present, and kills the session only if the dog is still idle |
 
 ## Convoy Cleanup
 

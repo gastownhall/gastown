@@ -181,7 +181,7 @@ func TestHealth_Hung_AutoCleared(t *testing.T) {
 	m, _ := testManager(t)
 	now := time.Now()
 	setupDogWithState(t, m, "alpha", &DogState{
-		Name: "alpha", State: StateWorking, Work: "task-1",
+		Name: "alpha", State: StateWorking, Work: "plugin:task-1", WorkKind: WorkKindPlugin,
 		WorkStartedAt: now.Add(-2 * time.Hour), LastActive: now,
 		CreatedAt: now, UpdatedAt: now,
 	})
@@ -218,7 +218,7 @@ func TestHealth_AutoClear_SessionDead(t *testing.T) {
 	m, _ := testManager(t)
 	now := time.Now()
 	setupDogWithState(t, m, "alpha", &DogState{
-		Name: "alpha", State: StateWorking, Work: "task-1",
+		Name: "alpha", State: StateWorking, Work: "plugin:task-1", WorkKind: WorkKindPlugin,
 		WorkStartedAt: now.Add(-1 * time.Hour), LastActive: now,
 		CreatedAt: now, UpdatedAt: now,
 	})
@@ -248,7 +248,7 @@ func TestHealth_AutoClear_AgentDead(t *testing.T) {
 	m, _ := testManager(t)
 	now := time.Now()
 	setupDogWithState(t, m, "alpha", &DogState{
-		Name: "alpha", State: StateWorking, Work: "task-1",
+		Name: "alpha", State: StateWorking, Work: "plugin:task-1", WorkKind: WorkKindPlugin,
 		WorkStartedAt: now.Add(-1 * time.Hour), LastActive: now,
 		CreatedAt: now, UpdatedAt: now,
 	})

@@ -12,12 +12,15 @@ import (
 
 	"github.com/spf13/cobra"
 	"github.com/steveyegge/gastown/internal/beads"
+	"github.com/steveyegge/gastown/internal/config"
+	"github.com/steveyegge/gastown/internal/dog"
 	"github.com/steveyegge/gastown/internal/events"
 	"github.com/steveyegge/gastown/internal/lock"
 	"github.com/steveyegge/gastown/internal/mail"
 	"github.com/steveyegge/gastown/internal/nudge"
 	"github.com/steveyegge/gastown/internal/style"
 	"github.com/steveyegge/gastown/internal/telemetry"
+	"github.com/steveyegge/gastown/internal/tmux"
 	"github.com/steveyegge/gastown/internal/witness"
 	"github.com/steveyegge/gastown/internal/workspace"
 )
@@ -725,6 +728,7 @@ func runSling(cmd *cobra.Command, args []string) (retErr error) {
 		NoBoot:       slingNoBoot,
 		HookBead:     beadID,
 		BeadID:       beadID,
+		WorkDesc:     formulaName,
 		TownRoot:     townRoot,
 		BaseBranch:   slingBaseBranch,
 		ResumeBranch: slingResumeBranch,
@@ -754,6 +758,28 @@ func runSling(cmd *cobra.Command, args []string) (retErr error) {
 	delayedDogInfo := resolved.DelayedDogInfo
 	newPolecatInfo := resolved.NewPolecatInfo
 	isSelfSling := resolved.IsSelfSling
+	var convoyID string
+	dogDispatchDescription := info.Description
+	previousDogCleared := false
+	dogDispatchComplete := delayedDogInfo == nil
+	defer func() {
+		if dogDispatchComplete {
+			return
+		}
+		rollbackStatus, rollbackAssignee := originalStatus, originalAssignee
+		oldAssigneeParts := strings.Split(originalAssignee, "/")
+		oldPolecatShuttingDown := len(oldAssigneeParts) >= 3 && oldAssigneeParts[1] == "polecats"
+		if force && (oldPolecatShuttingDown || previousDogCleared) && (originalStatus == "hooked" || originalStatus == "in_progress") {
+			// The old worker is shutting down or its matching state was released.
+			// Do not restore ownership to an agent that no longer owns the work.
+			rollbackStatus, rollbackAssignee = "open", ""
+		}
+		restored := rollbackFailedDogDispatch(delayedDogInfo, townRoot, beadID, hookWorkDir, dogDispatchDescription, rollbackStatus, rollbackAssignee, convoyID, info)
+		cleanupSafe := restored || dogFormulaSourceStillOriginal(townRoot, beadID, info)
+		if cleanupSafe && attachedMoleculeID != "" {
+			cleanupRolledBackDogMolecule(attachedMoleculeID, beadID, townRoot)
+		}
+	}()
 	rollbackSpawnedPolecat := func(reason string) {
 		if newPolecatInfo != nil {
 			fmt.Printf("%s %s, rolling back spawned polecat %s...\n", style.Warning.Render("⚠"), reason, newPolecatInfo.PolecatName)
@@ -850,7 +876,6 @@ func runSling(cmd *cobra.Command, args []string) (retErr error) {
 
 	// Auto-convoy: check if issue is already tracked by a convoy
 	// If not, create one for dashboard visibility (unless --no-convoy is set)
-	var convoyID string
 	if !slingNoConvoy && formulaName == "" {
 		if slingDryRun {
 			fmt.Printf("Would create convoy 'Work: %s' if needed\n", info.Title)
@@ -864,7 +889,9 @@ func runSling(cmd *cobra.Command, args []string) (retErr error) {
 				var err error
 				convoyID, err = createAutoConvoy(beadID, info.Title, slingOwned, mergeStrategy, slingBaseBranch)
 				if err != nil {
-					// Log warning but don't fail - convoy is optional
+					if delayedDogInfo != nil {
+						return fmt.Errorf("creating dog dispatch convoy: %w", err)
+					}
 					fmt.Printf("%s Could not create auto-convoy: %v\n", style.Dim.Render("Warning:"), err)
 				} else {
 					fmt.Printf("%s Created convoy 🚚 %s\n", style.Bold.Render("→"), convoyID)
@@ -877,6 +904,7 @@ func runSling(cmd *cobra.Command, args []string) (retErr error) {
 					}
 				}
 			} else {
+				convoyID = existingConvoy
 				fmt.Printf("%s Already tracked by convoy %s\n", style.Dim.Render("○"), existingConvoy)
 			}
 		}
@@ -919,6 +947,13 @@ func runSling(cmd *cobra.Command, args []string) (retErr error) {
 				if err := burnExistingMolecules(existingMolecules, beadID, townRoot); err != nil {
 					return fmt.Errorf("burning stale molecules: %w", err)
 				}
+				// A later dog rollback must restore the post-burn description, not
+				// resurrect attachment metadata for the closed stale molecule.
+				cleaned, err := getBeadInfoFromTownRoot(townRoot, beadID)
+				if err != nil {
+					return fmt.Errorf("reading bead after burning stale molecules: %w", err)
+				}
+				info.Description = cleaned.Description
 			} else {
 				return fmt.Errorf("bead %s already has %d attached molecule(s): %s\nUse --force to replace, or --hook-raw-bead to skip formula",
 					beadID, len(existingMolecules), strings.Join(existingMolecules, ", "))
@@ -1016,7 +1051,6 @@ func runSling(cmd *cobra.Command, args []string) (retErr error) {
 		mergeStrategy,
 		slingOwned,
 	)
-
 	// Hook the bead with retry and verification.
 	// See: https://github.com/steveyegge/gastown/issues/148
 	//
@@ -1029,13 +1063,17 @@ func runSling(cmd *cobra.Command, args []string) (retErr error) {
 	}
 	defer assigneeUnlock()
 	if attachedMoleculeID == "" && slingFieldsRequireDurableWrite(fieldUpdates) {
-		if err := storeFieldsInBeadFromTownRoot(townRoot, beadID, fieldUpdates); err != nil {
+		storedDescription, err := storeFieldsInBeadFromTownRootWithDescription(townRoot, beadID, fieldUpdates)
+		if err != nil {
 			if newPolecatInfo != nil {
 				fmt.Printf("%s Raw sling metadata failed, cleaning up spawned polecat %s...\n", style.Warning.Render("⚠"), newPolecatInfo.PolecatName)
 				cleanupSpawnedPolecat(newPolecatInfo, newPolecatInfo.RigName, convoyID)
 			}
 			restoreRollbackRawWorkflowFieldsFromCurrent(beadID, townRoot, hookWorkDir, info)
 			return fmt.Errorf("storing raw sling metadata before hook: %w", err)
+		}
+		if delayedDogInfo != nil {
+			dogDispatchDescription = storedDescription
 		}
 	}
 	hookDir := beads.ResolveHookDir(townRoot, beadID, hookWorkDir)
@@ -1068,20 +1106,32 @@ func runSling(cmd *cobra.Command, args []string) (retErr error) {
 	// error when polecat redirect setup fails (GH #gt-mzyk5: agent bead created in rig beads
 	// but updateAgentHookBead looks in polecat's local beads if redirect is missing).
 	if !hookSetAtomically {
-		updateAgentHookBead(targetAgent, beadID, hookWorkDir, townBeadsDir)
+		if err := updateAgentHookBead(targetAgent, beadID, hookWorkDir, townBeadsDir); err != nil {
+			if delayedDogInfo != nil {
+				return fmt.Errorf("updating dog agent hook: %w", err)
+			}
+			fmt.Printf("%s Could not update agent hook: %v\n", style.Dim.Render("Warning:"), err)
+		}
 	}
 
 	// Store all attachment fields in a single read-modify-write cycle.
 	// This eliminates the race condition where sequential independent updates
 	// (dispatcher, args, no_merge, attached_molecule) could overwrite each other.
-	if err := storeFieldsInBeadFromTownRoot(townRoot, beadID, fieldUpdates); err != nil {
+	storedDescription, storeErr := storeFieldsInBeadFromTownRootWithDescription(townRoot, beadID, fieldUpdates)
+	if storeErr != nil {
+		if delayedDogInfo != nil && attachedMoleculeID != "" {
+			return fmt.Errorf("storing dog formula attachment metadata: %w", storeErr)
+		}
 		if slingFieldsRequireDurableWrite(fieldUpdates) {
 			rollbackSpawnedPolecat("Durable sling metadata failed")
-			return fmt.Errorf("storing sling metadata: %w", err)
+			return fmt.Errorf("storing sling metadata: %w", storeErr)
 		}
 		// Warn but don't fail - polecat will still complete work
-		fmt.Printf("%s Could not store fields in bead: %v\n", style.Dim.Render("Warning:"), err)
+		fmt.Printf("%s Could not store fields in bead: %v\n", style.Dim.Render("Warning:"), storeErr)
 	} else {
+		if delayedDogInfo != nil {
+			dogDispatchDescription = storedDescription
+		}
 		if slingArgs != "" {
 			fmt.Printf("%s Args stored in bead (durable)\n", style.Bold.Render("✓"))
 		}
@@ -1096,14 +1146,13 @@ func runSling(cmd *cobra.Command, args []string) (retErr error) {
 		updateAgentMode(targetAgent, mode, hookWorkDir, townBeadsDir)
 	}
 
-	// Start delayed dog session now that hook is set
-	// This ensures dog sees the hook when gt prime runs on session start
-	if delayedDogInfo != nil {
-		pane, err := delayedDogInfo.StartDelayedSession()
-		if err != nil {
-			return fmt.Errorf("starting delayed dog session: %w", err)
+	// A forced dog-to-dog handoff must release the old dog's matching state
+	// before the new dog becomes runnable. Failure rolls the source back.
+	if delayedDogInfo != nil && force && strings.HasPrefix(originalAssignee, "deacon/dogs/") && originalAssignee != targetAgent {
+		if err := clearPreviousDogAssignment(townRoot, originalAssignee, beadID, info.Description); err != nil {
+			return fmt.Errorf("clearing previous dog assignment: %w", err)
 		}
-		targetPane = pane
+		previousDogCleared = true
 	}
 
 	// Start polecat session now that attached_molecule is set.
@@ -1112,38 +1161,34 @@ func runSling(cmd *cobra.Command, args []string) (retErr error) {
 	if freshlySpawned {
 		pane, err := newPolecatInfo.StartSession()
 		if err != nil {
-			// Rollback: session failed, clean up zombie artifacts (worktree, hooked bead).
-			// Without rollback, next sling attempt fails with "bead already hooked" (gt-jn40ft).
 			rollbackSpawnedPolecat("Session failed")
 			return fmt.Errorf("starting polecat session: %w", err)
 		}
 		targetPane = pane
 	}
 
-	// Try to inject the "start now" prompt (graceful if no tmux)
-	// Skip for freshly spawned polecats - SessionManager.Start() already sent StartupNudge.
-	// Skip for self-sling - agent is currently processing the sling command and will see
-	// the hooked work on next turn. Nudging would inject text while agent is busy.
-	if freshlySpawned {
+	if delayedDogInfo != nil {
+		pane, err := completeBareDogDispatch(delayedDogInfo, beadID, convoyID, attachedMoleculeID, slingSubject, slingArgs)
+		if err != nil {
+			return err
+		}
+		targetPane = pane
+		dogDispatchComplete = true
+	} else if freshlySpawned {
 		// Fresh polecat already got StartupNudge from SessionManager.Start()
 	} else if isSelfSling {
-		// Self-sling: agent already knows about the work (just slung it)
 		fmt.Printf("%s Self-sling: work hooked, will process on next turn\n", style.Dim.Render("○"))
 	} else if targetPane == "" {
 		fmt.Printf("%s No pane to nudge (agent will discover work via gt prime)\n", style.Dim.Render("○"))
 	} else {
-		// Ensure agent is ready before nudging (prevents race condition where
-		// message arrives before Claude has fully started - see issue #115)
 		sessionName := getSessionFromPane(targetPane)
 		if sessionName != "" {
 			if err := ensureAgentReady(sessionName); err != nil {
-				// Non-fatal: warn and continue, agent will discover work via gt prime
 				fmt.Printf("%s Could not verify agent ready: %v\n", style.Dim.Render("○"), err)
 			}
 		}
 
 		if err := injectStartPrompt(targetPane, beadID, slingSubject, slingArgs); err != nil {
-			// Graceful fallback for no-tmux mode
 			fmt.Printf("%s Could not nudge (no tmux?): %v\n", style.Dim.Render("○"), err)
 			fmt.Printf("  Agent will discover work via gt prime / bd show\n")
 		} else {
@@ -1296,6 +1341,157 @@ func restorePinnedBead(townRoot, beadID, assignee string) {
 	} else {
 		fmt.Printf("  %s Restored pinned state for bead %s\n", style.Dim.Render("○"), beadID)
 	}
+}
+
+func rollbackFailedDogDispatch(dispatch *DogDispatchInfo, townRoot, beadID, hookWorkDir, expectedDescription, status, assignee, convoyID string, originalInfo *beadInfo) bool {
+	if dispatch == nil {
+		return false
+	}
+	fmt.Printf("%s Dog dispatch did not complete; rolling back %s...\n", style.Warning.Render("⚠"), dispatch.DogName)
+	restored := false
+	cleared, err := dispatch.clearWorkIfMatchesAfter(func() bool {
+		restored = restoreFailedDogSlingSource(townRoot, beadID, hookWorkDir, dispatch.AgentID, expectedDescription, status, assignee, originalInfo)
+		return restored
+	})
+	if err != nil {
+		fmt.Printf("%s Could not clear dog assignment after source restoration: %v\n", style.Dim.Render("Warning:"), err)
+		return restored
+	}
+	if !cleared {
+		fmt.Printf("  %s Dog or source assignment changed after dispatch; preserving dog state\n", style.Dim.Render("○"))
+		return restored
+	}
+	clearRolledBackDogAgentHook(dispatch)
+	_ = dog.KillCompletedDogSession(
+		dog.NewManager(dispatch.townRoot, dispatch.rigsConfig),
+		dispatch.DogName,
+		fmt.Sprintf("hq-dog-%s", dispatch.DogName),
+		tmux.NewTmux().KillSession,
+	)
+	if convoyID != "" {
+		closeConvoy(convoyID, "Sling rollback - dog dispatch failed")
+	}
+	return restored
+}
+
+func clearRolledBackDogAgentHook(dispatch *DogDispatchInfo) {
+	if dispatch == nil || dispatch.townRoot == "" || dispatch.DogName == "" {
+		return
+	}
+	empty := ""
+	agentBeadID := beads.DogBeadIDTown(dispatch.DogName)
+	if err := beads.New(filepath.Join(dispatch.townRoot, ".beads")).UpdateAgentDescriptionFields(agentBeadID, beads.AgentFieldUpdates{HookBead: &empty}); err != nil {
+		fmt.Printf("%s Could not clear dog agent hook after rollback: %v\n", style.Dim.Render("Warning:"), err)
+	}
+}
+
+func restoreFailedDogSlingSource(townRoot, beadID, hookWorkDir, expectedAssignee, expectedDescription, status, assignee string, originalInfo *beadInfo) bool {
+	if townRoot == "" || beadID == "" || originalInfo == nil {
+		return false
+	}
+	current, err := getBeadInfoFromTownRoot(townRoot, beadID)
+	if err != nil {
+		fmt.Printf("  %s Could not verify source bead %s before dog rollback: %v\n", style.Dim.Render("Warning:"), beadID, err)
+		return false
+	}
+	if current != nil && current.Status == originalInfo.Status && current.Assignee == originalInfo.Assignee &&
+		current.Description == originalInfo.Description {
+		// Dispatch failed before changing the source; it is already restored.
+		return true
+	}
+	newHookOwned := current != nil && current.Status == "hooked" && current.Assignee == expectedAssignee && current.Description == expectedDescription
+	forceTransitionOwned := current != nil && current.Status == "open" && current.Assignee == "" && current.Description == originalInfo.Description
+	if !newHookOwned && !forceTransitionOwned {
+		fmt.Printf("  %s Source bead %s changed after dispatch; preserving its ownership and metadata\n",
+			style.Dim.Render("○"), beadID)
+		return false
+	}
+
+	// Restore source ownership and workflow metadata with a storage-level CAS.
+	// The description predicate prevents rollback from overwriting any concurrent
+	// source edit between readback and update.
+	dir := beads.ResolveHookDir(townRoot, beadID, hookWorkDir)
+	for _, table := range []string{"issues", "wisps"} {
+		query := fmt.Sprintf(
+			"UPDATE %s SET status=%s, assignee=%s, description=%s, updated_at=CURRENT_TIMESTAMP WHERE id=%s AND status=%s AND assignee=%s AND description=%s",
+			table,
+			sqlStringLiteral(status), sqlStringLiteral(assignee), sqlStringLiteral(originalInfo.Description),
+			sqlStringLiteral(beadID), sqlStringLiteral(current.Status), sqlStringLiteral(current.Assignee), sqlStringLiteral(current.Description),
+		)
+		if err := BdCmd("sql", query).Dir(dir).StripBeadsDir().WithAutoCommit().Run(); err != nil {
+			fmt.Printf("  %s Could not restore source bead %s in %s after dog dispatch failure: %v\n",
+				style.Dim.Render("Warning:"), beadID, table, err)
+			return false
+		}
+	}
+
+	updated, err := getBeadInfoFromTownRoot(townRoot, beadID)
+	if err != nil {
+		fmt.Printf("  %s Could not verify source bead %s after dog rollback: %v\n", style.Dim.Render("Warning:"), beadID, err)
+		return false
+	}
+	if updated.Status == status && updated.Assignee == assignee && updated.Description == originalInfo.Description {
+		fmt.Printf("  %s Restored source bead %s to status=%s assignee=%s\n", style.Dim.Render("○"), beadID, status, assignee)
+		return true
+	}
+	fmt.Printf("  %s Source bead %s changed during rollback; preserved status=%s assignee=%s\n",
+		style.Dim.Render("○"), beadID, updated.Status, updated.Assignee)
+	return false
+}
+
+func clearPreviousDogAssignment(townRoot, assignee, beadID, originalDescription string) error {
+	name := strings.TrimPrefix(assignee, "deacon/dogs/")
+	rigsConfig, err := config.LoadRigsConfig(filepath.Join(townRoot, "mayor", "rigs.json"))
+	if err != nil {
+		return err
+	}
+	mgr := dog.NewManager(townRoot, rigsConfig)
+	previous, err := mgr.Get(name)
+	if err != nil {
+		return err
+	}
+	fields := beads.ParseAttachmentFields(&beads.Issue{Description: originalDescription})
+	matches := previous.Work == beadID || (fields != nil && fields.AttachedFormula != "" && previous.Work == fields.AttachedFormula)
+	if !matches {
+		return fmt.Errorf("previous dog %s state names %q, not source %s", name, previous.Work, beadID)
+	}
+	cleared, err := mgr.ClearWorkIfMatchesAfter(name, previous.Work, previous.WorkStartedAt, func() bool {
+		t := tmux.NewTmux()
+		running, err := t.HasSession("hq-dog-" + name)
+		if err != nil {
+			return false
+		}
+		if !running {
+			return true
+		}
+		return t.KillSessionWithProcesses("hq-dog-"+name) == nil
+	})
+	if err != nil {
+		return err
+	}
+	if !cleared {
+		return fmt.Errorf("previous dog %s assignment changed or its session could not stop during handoff", name)
+	}
+	return nil
+}
+
+func dogFormulaSourceStillOriginal(townRoot, beadID string, originalInfo *beadInfo) bool {
+	if originalInfo == nil {
+		return false
+	}
+	current, err := getBeadInfoFromTownRoot(townRoot, beadID)
+	if err != nil || current == nil {
+		return false
+	}
+	return current.Status == originalInfo.Status && current.Assignee == originalInfo.Assignee &&
+		current.Description == originalInfo.Description
+}
+
+func sqlStringLiteral(value string) string {
+	// Dolt uses MySQL string semantics: backslashes are escapes unless the
+	// session enables NO_BACKSLASH_ESCAPES. Escape them before SQL quotes.
+	value = strings.ReplaceAll(value, `\`, `\\`)
+	return "'" + strings.ReplaceAll(value, "'", "''") + "'"
 }
 
 func tryAcquireSlingBeadLock(townRoot, beadID string) (func(), error) {

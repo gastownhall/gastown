@@ -346,6 +346,20 @@ func burnExistingMolecules(molecules []string, beadID, townRoot string) error {
 	return nil
 }
 
+// cleanupRolledBackDogMolecule removes artifacts only after source restoration
+// succeeded. The source CAS already restored its exact original description, so
+// unlike burnExistingMolecules this must not detach or rewrite source metadata.
+func cleanupRolledBackDogMolecule(molID, beadID, townRoot string) {
+	bd := beads.New(beads.ResolveHookDir(townRoot, beadID, ""))
+	if _, err := forceCloseDescendants(bd, molID); err != nil {
+		style.PrintWarning("dog rollback: could not close descendants of %s: %v", molID, err)
+	}
+	removeMoleculeBonds(bd, beadID, molID)
+	if err := bd.ForceCloseWithReason("dog dispatch rollback", molID); err != nil {
+		style.PrintWarning("dog rollback: could not close molecule %s: %v", molID, err)
+	}
+}
+
 func removeMoleculeBonds(bd *beads.Beads, beadID, molID string) {
 	for _, bond := range []struct {
 		from string
@@ -654,43 +668,79 @@ func storeFieldsInBead(beadID string, updates beadFieldUpdates) error {
 }
 
 func storeFieldsInBeadFromTownRoot(townRoot, beadID string, updates beadFieldUpdates) error {
+	_, err := storeFieldsInBeadFromTownRootWithDescription(townRoot, beadID, updates)
+	return err
+}
+
+// storeFieldsInBeadFromTownRootWithDescription returns the exact description
+// submitted to bd, so rollback can conditionally restore only that write.
+func storeFieldsInBeadFromTownRootWithDescription(townRoot, beadID string, updates beadFieldUpdates) (string, error) {
 	logPath := os.Getenv("GT_TEST_ATTACHED_MOLECULE_LOG")
 
 	issue := &beads.Issue{}
 	if logPath == "" {
-		// Read the bead once
 		out, err := bdShowBeadOutputFromTownRoot(townRoot, beadID)
 		if err != nil {
-			return fmt.Errorf("fetching bead: %w", err)
+			return "", fmt.Errorf("fetching bead: %w", err)
 		}
 		if len(out) == 0 {
-			return fmt.Errorf("bead not found")
+			return "", fmt.Errorf("bead not found")
 		}
 
 		var issues []beads.Issue
 		if err := json.Unmarshal(out, &issues); err != nil {
-			return fmt.Errorf("parsing bead: %w", err)
+			return "", fmt.Errorf("parsing bead: %w", err)
 		}
 		if len(issues) == 0 {
-			return fmt.Errorf("bead not found")
+			return "", fmt.Errorf("bead not found")
 		}
 		issue = &issues[0]
 	}
 
-	// Get or create attachment fields
+	newDesc := descriptionWithBeadFieldUpdates(issue, updates)
+	if logPath != "" {
+		_ = os.WriteFile(logPath, []byte(newDesc), 0644)
+		return newDesc, nil
+	}
+
+	updateDir := resolveBeadDir(beadID)
+	if townRoot != "" {
+		updateDir = resolveBeadDirFromTownRoot(townRoot, beadID)
+	}
+	if err := BdCmd("update", beadID, "--description="+newDesc).
+		Dir(updateDir).
+		StripBeadsDir().
+		WithAutoCommit().
+		Run(); err != nil {
+		return "", fmt.Errorf("updating bead description: %w", err)
+	}
+
+	return newDesc, nil
+}
+
+func descriptionWithBeadFieldUpdates(issue *beads.Issue, updates beadFieldUpdates) string {
 	fields := beads.ParseAttachmentFields(issue)
 	if fields == nil {
 		fields = &beads.AttachmentFields{}
 	}
+	applyAttachmentClears(fields, updates)
+	applyAttachmentMetadata(fields, updates)
+	applyConvoyFields(fields, updates)
+	return beads.SetAttachmentFields(issue, fields)
+}
 
-	// Apply all updates in one pass
-	if updates.ClearAttachment {
-		fields.AttachedMolecule = ""
-		fields.AttachedFormula = ""
-		fields.AttachedAt = ""
-		fields.AttachedVars = nil
-		fields.FormulaVars = ""
+func applyAttachmentClears(fields *beads.AttachmentFields, updates beadFieldUpdates) {
+	if !updates.ClearAttachment {
+		return
 	}
+	fields.AttachedMolecule = ""
+	fields.AttachedFormula = ""
+	fields.AttachedAt = ""
+	fields.AttachedVars = nil
+	fields.FormulaVars = ""
+}
+
+func applyAttachmentMetadata(fields *beads.AttachmentFields, updates beadFieldUpdates) {
 	if updates.Dispatcher != "" {
 		fields.DispatchedBy = updates.Dispatcher
 	}
@@ -720,6 +770,12 @@ func storeFieldsInBeadFromTownRoot(townRoot, beadID string, updates beadFieldUpd
 	if updates.Mode != nil {
 		fields.Mode = *updates.Mode
 	}
+	if updates.FormulaVars != "" {
+		fields.FormulaVars = updates.FormulaVars
+	}
+}
+
+func applyConvoyFields(fields *beads.AttachmentFields, updates beadFieldUpdates) {
 	if updates.ConvoyID != "" {
 		fields.ConvoyID = updates.ConvoyID
 	}
@@ -729,30 +785,6 @@ func storeFieldsInBeadFromTownRoot(townRoot, beadID string, updates beadFieldUpd
 	if updates.ConvoyOwned {
 		fields.ConvoyOwned = true
 	}
-	if updates.FormulaVars != "" {
-		fields.FormulaVars = updates.FormulaVars
-	}
-
-	// Write back once
-	newDesc := beads.SetAttachmentFields(issue, fields)
-	if logPath != "" {
-		_ = os.WriteFile(logPath, []byte(newDesc), 0644)
-		return nil
-	}
-
-	updateDir := resolveBeadDir(beadID)
-	if townRoot != "" {
-		updateDir = resolveBeadDirFromTownRoot(townRoot, beadID)
-	}
-	if err := BdCmd("update", beadID, "--description="+newDesc).
-		Dir(updateDir).
-		StripBeadsDir().
-		WithAutoCommit().
-		Run(); err != nil {
-		return fmt.Errorf("updating bead description: %w", err)
-	}
-
-	return nil
 }
 
 // injectStartPrompt sends a prompt to the target pane to start working.
@@ -945,14 +977,34 @@ func agentIDToBeadID(agentID, townRoot string) string {
 	}
 }
 
-// updateAgentHookBead is a no-op. Previously set the hook_bead slot on agent beads
-// when work was slung, but this was redundant: the work bead itself tracks
-// status=hooked and assignee=<agent>. Agent bead slot writes caused warnings
-// in cross-database scenarios and added unnecessary Dolt load.
-// Removed per hq-l6mm5: replace bd slot hooks with direct bead tracking.
-func updateAgentHookBead(agentID, beadID, workDir, townBeadsDir string) {
-	// No-op: work bead status=hooked + assignee is the authoritative source.
-	// Agent bead hook_bead slot is no longer maintained.
+// updateAgentHookBead writes hook_bead onto the agent bead description so the
+// dog agent hook agrees with the hooked source. Fail-closed callers treat a
+// write error as a dispatch failure.
+func updateAgentHookBead(agentID, beadID, workDir, townBeadsDir string) error {
+	townRoot, err := workspace.FindFromCwd()
+	if err != nil && townBeadsDir != "" {
+		townRoot = filepath.Dir(townBeadsDir)
+		err = nil
+	}
+	if err != nil {
+		return fmt.Errorf("finding town root for agent hook: %w", err)
+	}
+	agentBeadID := agentIDToBeadID(agentID, townRoot)
+	if agentBeadID == "" {
+		return fmt.Errorf("unknown agent bead for %s", agentID)
+	}
+	beadsDir := townBeadsDir
+	if beadsDir == "" && workDir != "" {
+		beadsDir = workDir
+	}
+	if beadsDir == "" {
+		beadsDir = filepath.Join(townRoot, ".beads")
+	}
+	hook := beadID
+	if err := beads.New(beadsDir).UpdateAgentDescriptionFields(agentBeadID, beads.AgentFieldUpdates{HookBead: &hook}); err != nil {
+		return fmt.Errorf("updating agent hook %s: %w", agentBeadID, err)
+	}
+	return nil
 }
 
 // wakeRigAgents wakes the witness for a rig after polecat dispatch.
