@@ -481,40 +481,11 @@ func GetRigNameForPrefix(townRoot, prefix string) string {
 // rig via routes.jsonl, the resolved rig's beads directory is returned.
 // Returns currentBeadsDir if no routing is needed or prefix can't be resolved.
 func ResolveBeadsDirForID(currentBeadsDir, beadID string) string {
-	prefix := ExtractPrefix(beadID)
-	if prefix == "" {
+	s := NewAuthorityFromBeadsDir(currentBeadsDir).ForBead(beadID)
+	if s.BeadsDir() == "" {
 		return currentBeadsDir
 	}
-
-	routesBeadsDir := currentBeadsDir
-	routes, err := LoadRoutes(routesBeadsDir)
-	if (err != nil || routes == nil) && currentBeadsDir != "" {
-		if townRoot := FindTownRoot(filepath.Dir(currentBeadsDir)); townRoot != "" {
-			townBeadsDir := filepath.Join(townRoot, ".beads")
-			if townBeadsDir != currentBeadsDir {
-				routesBeadsDir = townBeadsDir
-				routes, err = LoadRoutes(routesBeadsDir)
-			}
-		}
-	}
-	if err != nil || routes == nil {
-		return currentBeadsDir
-	}
-
-	for _, r := range routes {
-		if r.Prefix == prefix {
-			if r.Path == "." {
-				return routesBeadsDir
-			}
-			// Rig-level bead — resolve to rig's beads directory.
-			// Derive town root from the routes directory we actually used.
-			townRoot := filepath.Dir(routesBeadsDir)
-			rigDir := filepath.Join(townRoot, r.Path)
-			return ResolveBeadsDir(rigDir)
-		}
-	}
-
-	return currentBeadsDir
+	return s.BeadsDir()
 }
 
 // ValidateRigPrefix checks that a newly created bead landed in the expected rig's
@@ -542,12 +513,10 @@ func ValidateRigPrefix(townRoot, rigName, beadID string) error {
 // actual rig directory from the bead's prefix. hookWorkDir is only used as
 // a fallback if prefix resolution fails.
 func ResolveHookDir(townRoot, beadID, hookWorkDir string) string {
-	// Always try prefix resolution first - bd update needs the actual rig dir
-	prefix := ExtractPrefix(beadID)
-	if rigPath := GetRigPathForPrefix(townRoot, prefix); rigPath != "" {
-		return rigPath
+	s := NewAuthority(townRoot).ForBead(beadID)
+	if s.Routed() && s.WorkDir() != "" {
+		return s.WorkDir()
 	}
-	// Fallback to hookWorkDir if provided
 	if hookWorkDir != "" {
 		return hookWorkDir
 	}

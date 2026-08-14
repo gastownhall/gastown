@@ -568,7 +568,10 @@ func groupBeadIDsByResolvedBeadsDir(townRoot string, ids []string) map[string][]
 		if id == "" {
 			continue
 		}
-		beadsDir := beads.ResolveBeadsDirForID(townBeadsDir, id)
+		beadsDir := beads.NewAuthority(townRoot).ForBead(id).BeadsDir()
+		if beadsDir == "" {
+			beadsDir = townBeadsDir
+		}
 		key := beadsDir + "\x00" + id
 		if seen[key] {
 			continue

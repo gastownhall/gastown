@@ -45,31 +45,18 @@ func FindTownRoot(startDir string) string {
 //
 // If townRoot is empty or prefix is not found, falls back to the provided fallbackDir.
 func ResolveRoutingTarget(townRoot, beadID, fallbackDir string) string {
-	if townRoot == "" {
-		return fallbackDir
+	auth := NewAuthority(townRoot).withFallback(fallbackDir)
+	s := auth.ForBead(beadID)
+	if s.Routed() {
+		return s.BeadsDir()
 	}
-
-	// Extract prefix from bead ID (e.g., "gt-gastown-polecat-Toast" -> "gt-")
-	prefix := ExtractPrefix(beadID)
-	if prefix == "" {
-		return fallbackDir
+	if townRoot != "" {
+		prefix := ExtractPrefix(beadID)
+		if prefix != "" {
+			fmt.Fprintf(os.Stderr, "Warning: no route found for prefix %q (bead %s), falling back to %s\n", prefix, beadID, fallbackDir)
+		}
 	}
-
-	// Look up rig path for this prefix
-	rigPath := GetRigPathForPrefix(townRoot, prefix)
-	if rigPath == "" {
-		fmt.Fprintf(os.Stderr, "Warning: no route found for prefix %q (bead %s), falling back to %s\n", prefix, beadID, fallbackDir)
-		return fallbackDir
-	}
-
-	// Resolve redirects and get final beads directory
-	beadsDir := ResolveBeadsDir(rigPath)
-	if beadsDir == "" {
-		fmt.Fprintf(os.Stderr, "Warning: could not resolve beads dir for rig %s (bead %s), falling back to %s\n", rigPath, beadID, fallbackDir)
-		return fallbackDir
-	}
-
-	return beadsDir
+	return fallbackDir
 }
 
 // EnsureCustomTypes ensures the target beads directory has custom types configured.

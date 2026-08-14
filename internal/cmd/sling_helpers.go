@@ -53,12 +53,11 @@ func resolveBeadDirFromTownRoot(townRoot, beadID string) string {
 	if townRoot == "" {
 		return "."
 	}
-	townBeadsDir := filepath.Join(townRoot, ".beads")
-	resolved := beads.ResolveBeadsDirForID(townBeadsDir, beadID)
-	// Return the parent of the .beads directory so bd discovers it naturally.
-	// For town-level beads this returns townRoot; for rig beads it returns
-	// the rig's mayor/rig directory (e.g., gastown/mayor/rig).
-	return filepath.Dir(resolved)
+	workDir := beads.NewAuthority(townRoot).ForBead(beadID).WorkDir()
+	if workDir == "" {
+		return townRoot
+	}
+	return workDir
 }
 
 // resolveBeadDirFromRigsJSON looks up the rig directory from rigs.json using prefix.
@@ -1133,7 +1132,7 @@ type FormulaOnBeadResult struct {
 }
 
 func formulaBeadBdCmd(beadID, formulaWorkDir, townRoot string, args ...string) *bdCmd {
-	targetBeadsDir := beads.ResolveBeadsDirForID(filepath.Join(townRoot, ".beads"), beadID)
+	targetBeadsDir := beads.NewAuthority(townRoot).ForBead(beadID).BeadsDir()
 	return BdCmd(args...).Dir(formulaWorkDir).WithBeadsDir(targetBeadsDir).WithGTRoot(townRoot)
 }
 
