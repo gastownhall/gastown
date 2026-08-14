@@ -19,13 +19,23 @@ export default (pi) => {
   let contextInjected = false;
   let lastMailCheck = 0;
 
+  // Pi exposes session metadata to model-run bash tools, but pi.exec inherits
+  // only the parent process environment. Forward the current session ID so Gas
+  // Town can persist and resume the session across runtime restarts.
+  const runGT = (context, args) =>
+    pi.exec("env", [
+      `PI_SESSION_ID=${context.sessionManager.getSessionId()}`,
+      "{{GT_BIN}}",
+      ...args,
+    ]);
+
   const shouldCheckMail = () =>
     !role.includes("witness") && !role.includes("refinery") && !role.startsWith("deacon") && !role.includes("boot");
 
   // SessionStart — run gt prime and capture context for injection
   pi.on("session_start", async (event, context) => {
     try {
-      const result = await pi.exec("gt", ["prime", "--hook"]);
+      const result = await runGT(context, ["prime", "--hook"]);
       if (result.code === 0 && result.stdout.trim()) {
         primeContext = result.stdout.trim();
         console.error("[gastown] gt prime captured (" + primeContext.length + " chars)");
@@ -47,7 +57,7 @@ export default (pi) => {
     if (shouldCheckMail() && now - lastMailCheck >= 30000) {
       lastMailCheck = now;
       try {
-        const mailResult = await pi.exec("gt", ["mail", "check", "--inject"]);
+        const mailResult = await runGT(context, ["mail", "check", "--inject"]);
         if (mailResult.code === 0 && mailResult.stdout.trim()) {
           mailContext = mailResult.stdout.trim();
           console.error("[gastown] mail check: new mail found");
@@ -99,7 +109,7 @@ export default (pi) => {
         cmd.includes("git checkout -b")
       ) {
         try {
-          const result = await pi.exec("gt", ["tap", "guard", "pr-workflow"]);
+          const result = await runGT(context, ["tap", "guard", "pr-workflow"]);
           if (result.code !== 0) {
             return { block: true, reason: result.stderr || "gt tap guard rejected this operation" };
           }
@@ -113,7 +123,7 @@ export default (pi) => {
   // Stop equivalent — record API costs
   pi.on("session_shutdown", async (event, context) => {
     try {
-      await pi.exec("gt", ["costs", "record"]);
+      await runGT(context, ["costs", "record"]);
     } catch (e) {
       console.error("[gastown] gt costs record failed:", e.message);
     }

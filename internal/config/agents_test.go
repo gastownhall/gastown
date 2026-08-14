@@ -681,6 +681,13 @@ func TestBuildResumeCommand(t *testing.T) {
 			contains:  []string{"copilot", "--yolo", "--resume", "cea0d5f0-662a-4a98-9585-060b9d2a7a19"},
 		},
 		{
+			name:      "pi flag style",
+			agentName: "pi",
+			sessionID: "0198f6c0-5d4f-7e21-9f44-8ea633dfe998",
+			wantEmpty: false,
+			contains:  []string{"pi", "-e", ".pi/extensions/gastown-hooks.js", "--session", "0198f6c0-5d4f-7e21-9f44-8ea633dfe998"},
+		},
+		{
 			name:      "unknown agent",
 			agentName: "unknown-agent",
 			sessionID: "session-123",
@@ -721,6 +728,7 @@ func TestSupportsSessionResume(t *testing.T) {
 		{"auggie", true},
 		{"amp", true},
 		{"copilot", true},
+		{"pi", true},
 		{"unknown", false},
 	}
 
@@ -1343,6 +1351,12 @@ func TestPiAgentPreset(t *testing.T) {
 
 	if info.SessionIDEnv != "PI_SESSION_ID" {
 		t.Errorf("pi SessionIDEnv = %q, want PI_SESSION_ID", info.SessionIDEnv)
+	}
+	if info.ResumeFlag != "--session" {
+		t.Errorf("pi ResumeFlag = %q, want --session", info.ResumeFlag)
+	}
+	if info.ResumeStyle != "flag" {
+		t.Errorf("pi ResumeStyle = %q, want flag", info.ResumeStyle)
 	}
 
 	if info.NonInteractive == nil {

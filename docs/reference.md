@@ -461,11 +461,14 @@ gt config agent remove <name>     # Remove custom agent (built-ins protected)
 gt config default-agent [name]    # Get or set town default agent
 ```
 
-**Built-in agents**: `claude`, `gemini`, `codex`, `kiro`, `cursor`, `auggie`, `amp`, `opencode`, `copilot`
+**Built-in agents**: `claude`, `gemini`, `codex`, `kiro`, `cursor`, `auggie`, `amp`, `opencode`, `copilot`, `pi`, `omp`
 
 The `kiro` preset launches `kiro-cli chat --trust-all-tools` and uses Kiro's
 documented `--resume` / `--resume-id` session flags. Gas Town does not install
 Kiro hooks or `.kiro` project files for this preset.
+
+The `pi` preset installs `.pi/extensions/gastown-hooks.js`, records Pi's session
+ID during lifecycle hooks, and resumes interrupted sessions with `pi --session`.
 
 > **Note on GitHub Copilot**: The `copilot` preset uses executable lifecycle hooks in
 > `.github/hooks/gastown.json` (`sessionStart`, `userPromptSubmitted`, `preToolUse`,

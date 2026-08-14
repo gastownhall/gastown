@@ -30,15 +30,15 @@ type hookInput struct {
 // readHookSessionID reads session ID from available sources in hook mode.
 //
 // Priority (env vars first so non-Claude runtimes skip the stdin read entirely):
-//  1. GT_SESSION_ID / CLAUDE_SESSION_ID env var  — set by the hook command
-//  2. Stdin JSON (Claude Code format)            — Claude sends {"session_id":…,"source":…}
-//  3. Persisted .runtime/session_id              — written by a prior SessionStart hook
+//  1. GT_SESSION_ID / runtime session env var — set by the hook command
+//  2. Stdin JSON (Claude Code format)         — Claude sends {"session_id":…,"source":…}
+//  3. Persisted .runtime/session_id           — written by a prior SessionStart hook
 //  4. Auto-generate UUID
 //
 // Source is resolved from GT_HOOK_SOURCE env, stdin JSON, or empty.
-// Non-Claude runtimes (Gemini CLI, etc.) should set GT_SESSION_ID and
-// GT_HOOK_SOURCE in their hook commands to get full --hook behavior with
-// zero stdin delay. Example:
+// Non-Claude runtimes can use their preset's session ID environment variable
+// (selected through GT_AGENT or GT_SESSION_ID_ENV), or set GT_SESSION_ID
+// directly. Either path avoids the stdin delay. Example:
 //
 //	SessionStart: "export GT_SESSION_ID=$(uuidgen) GT_HOOK_SOURCE=startup && gt prime --hook"
 //	PreCompress:  "export GT_HOOK_SOURCE=compact && gt prime --hook"
@@ -52,7 +52,7 @@ func readHookSessionID() (sessionID, source string) {
 	if id := os.Getenv("GT_SESSION_ID"); id != "" {
 		return id, source
 	}
-	if id := os.Getenv("CLAUDE_SESSION_ID"); id != "" {
+	if id := runtime.SessionIDFromEnv(); id != "" {
 		return id, source
 	}
 	// 2. Try reading stdin JSON (Claude Code format).
