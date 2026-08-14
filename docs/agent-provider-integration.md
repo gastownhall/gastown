@@ -349,40 +349,62 @@ install a plugin file instead of a settings.json.
 Reference: `internal/hooks/templates/opencode/gastown.js`
 
 ```javascript
-export const GasTown = async ({ $, directory }) => {
-  const role = (process.env.GT_ROLE || "").toLowerCase();
-  const autonomousRoles = new Set(["polecat", "witness", "refinery", "deacon"]);
+export const GasTown = async ({ directory }) => {
+  const gtBin = process.env.GT_BIN || "gt";
+  const primePromises = new Map();
 
-  const run = async (cmd) => {
-    try {
-      await $`/bin/sh -lc ${cmd}`.cwd(directory);
-    } catch (err) {
-      console.error(`[gastown] ${cmd} failed`, err?.message || err);
-    }
+  const run = async (args, env = {}) => {
+    const child = Bun.spawn({
+      cmd: [gtBin, ...args],
+      cwd: directory,
+      env: { ...process.env, ...env },
+      stdout: "pipe",
+      stderr: "pipe",
+      timeout: 10_000,
+    });
+    const [stdout, stderr, code] = await Promise.all([
+      new Response(child.stdout).text(),
+      new Response(child.stderr).text(),
+      child.exited,
+    ]);
+    if (code !== 0) throw new Error(stderr || `gt exited with code ${code}`);
+    return stdout;
   };
 
-  const injectContext = async () => {
-    await run("gt prime");
-    if (autonomousRoles.has(role)) {
-      await run("gt mail check --inject");
-    }
+  const prime = (source, sessionID) => {
+    const promise = run(["prime", "--hook"], {
+      GT_HOOK_SOURCE: source,
+      GT_SESSION_ID: sessionID,
+    });
+    primePromises.set(sessionID, promise);
+    return promise;
   };
 
   return {
     event: async ({ event }) => {
-      if (event?.type === "session.created") {
-        await injectContext();
+      const sessionID = event?.properties?.sessionID || event?.properties?.info?.id || "";
+      if (event?.type === "session.created" && !primePromises.has(sessionID)) {
+        prime("startup", sessionID);
       }
-      if (event?.type === "session.compacted") {
-        await injectContext();
-      }
+      if (event?.type === "session.compacted") prime("compact", sessionID);
+      if (event?.type === "session.deleted") primePromises.delete(sessionID);
+    },
+    "experimental.chat.system.transform": async (input, output) => {
+      const sessionID = input?.sessionID || "";
+      const context = await (primePromises.get(sessionID) || prime("startup", sessionID));
+      if (context) output.system.push(context);
     },
   };
 };
 ```
 
-The key commands are the same (`gt prime`, `gt mail check --inject`). The
-delivery mechanism adapts to the agent's plugin API.
+Pass commands as an argv array instead of invoking `/bin/sh`; this keeps the
+plugin portable to Windows and avoids shell interpolation. `gt prime --hook`
+handles startup context and role-appropriate mail injection.
+
+Do not pass an OpenCode `ses_*` ID to `gt costs record --session`; that command
+currently records Claude transcript costs for a Gas Town tmux session. OpenCode
+cost telemetry needs a dedicated adapter.
 
 ### Pattern C: Informational hooks (instructions file)
 

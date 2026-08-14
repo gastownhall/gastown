@@ -242,17 +242,48 @@ func TestOpenCodeTemplateFailureDiagnostics(t *testing.T) {
 	for _, want := range []string{
 		"command: ${cmd}",
 		"exit_code:",
-		"exit code 124",
 		"timeout:",
 		"stdout_tail:",
 		"stderr_tail:",
-		"timeout 10s ${gtCommand()} dolt status 2>&1",
+		"status_timeout_ms: 10000",
 		"dolt_status_tail:",
 		"suggested_recovery:",
 	} {
 		if !strings.Contains(content, want) {
 			t.Fatalf("opencode template missing diagnostic field %q", want)
 		}
+	}
+}
+
+func TestOpenCodeTemplateUsesCrossPlatformProcessExecution(t *testing.T) {
+	template, err := templateFS.ReadFile("templates/opencode/gastown.js")
+	if err != nil {
+		t.Fatalf("read opencode template: %v", err)
+	}
+	content := string(template)
+	for _, want := range []string{
+		"Bun.spawn(options)",
+		"cmd: [gtBin, ...args]",
+		"env: { ...process.env, ...env }",
+		"runGT(args, env, commandTimeoutMs)",
+		`["prime", "--hook"]`,
+		"event?.properties?.sessionID",
+		"const primePromises = new Map()",
+		"primePromises.get(sessionID)",
+		"primePromises.delete(eventSessionID(event))",
+	} {
+		if !strings.Contains(content, want) {
+			t.Fatalf("opencode template missing cross-platform execution field %q", want)
+		}
+	}
+	if strings.Contains(content, "/bin/sh") {
+		t.Fatal("opencode template must not require a POSIX shell")
+	}
+	if strings.Contains(content, `["costs", "record"`) {
+		t.Fatal("opencode template must not call the Claude-only costs recorder")
+	}
+	if strings.Contains(content, "let didInit") {
+		t.Fatal("opencode template must not share initialization state across sessions")
 	}
 }
 
@@ -263,8 +294,8 @@ func TestOpenCodeTemplateUsesHookPrime(t *testing.T) {
 	}
 	content := string(template)
 	for _, want := range []string{
-		"GT_HOOK_SOURCE=",
-		"GT_SESSION_ID=",
+		"GT_HOOK_SOURCE",
+		"GT_SESSION_ID",
 		"prime --hook",
 		"gt prime --hook",
 	} {
@@ -344,6 +375,39 @@ export const GasTown = async ({ $ }) => {
 	}
 }
 
+func TestInstallForRole_UpgradesOpenCodePOSIXShellWrapper(t *testing.T) {
+	dir := t.TempDir()
+	hooksPath := filepath.Join(dir, ".opencode/plugins", "gastown.js")
+	if err := os.MkdirAll(filepath.Dir(hooksPath), 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	stale := `// Gas Town OpenCode plugin: hooks SessionStart/Compaction via events.
+export const GasTown = async ({ $ }) => {
+  const captureRun = async (cmd) => {
+    return await $` + "`" + `/bin/sh -lc ${cmd}` + "`" + `.cwd(directory).text();
+  };
+}`
+	if err := os.WriteFile(hooksPath, []byte(stale), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := InstallForRole("opencode", dir, dir, "crew", ".opencode/plugins", "gastown.js", false); err != nil {
+		t.Fatalf("InstallForRole: %v", err)
+	}
+
+	got, err := os.ReadFile(hooksPath)
+	if err != nil {
+		t.Fatalf("read upgraded hook: %v", err)
+	}
+	if strings.Contains(string(got), "/bin/sh") {
+		t.Fatal("stale POSIX shell wrapper was not upgraded")
+	}
+	if !strings.Contains(string(got), "Bun.spawn(options)") {
+		t.Fatal("upgraded hook does not use cross-platform process execution")
+	}
+}
+
 func TestOpenCodeTemplateUsesHookModeAndCompoundRoles(t *testing.T) {
 	content, err := resolveAndSubstitute("opencode", "gastown.js", "polecat")
 	if err != nil {
@@ -352,8 +416,8 @@ func TestOpenCodeTemplateUsesHookModeAndCompoundRoles(t *testing.T) {
 	s := string(content)
 	for _, want := range []string{
 		"prime --hook",
-		"GT_HOOK_SOURCE=",
-		"GT_SESSION_ID=",
+		"GT_HOOK_SOURCE",
+		"GT_SESSION_ID",
 		`parts[1] === "polecats"`,
 	} {
 		if !strings.Contains(s, want) {
