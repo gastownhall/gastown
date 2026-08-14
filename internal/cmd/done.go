@@ -433,10 +433,16 @@ func doneSourceCloseSkipReason(bd *beads.Beads, issueID string, issue *beads.Iss
 }
 
 func doneSkipPushForLocalStrategy(convoyInfo *ConvoyInfo, sourceIssue *beads.Issue) bool {
-	if convoyInfo != nil && strings.EqualFold(strings.TrimSpace(convoyInfo.MergeStrategy), "local") {
+	if convoyInfo != nil && beads.IsLocalMergeStrategy(convoyInfo.MergeStrategy) {
 		return true
 	}
-	return beads.HasLocalMergeStrategy(beads.ParseAttachmentFields(sourceIssue))
+	if sourceIssue == nil {
+		return false
+	}
+	if beads.HasLocalMergeStrategy(beads.ParseAttachmentFields(sourceIssue)) {
+		return true
+	}
+	return beads.IssueTextImpliesLocalMerge(sourceIssue.Title + "\n" + sourceIssue.Description)
 }
 
 func doneDirectMergeSkipReason(bd *beads.Beads, issueID string, issue *beads.Issue, targetBranch string) string {

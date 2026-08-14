@@ -597,7 +597,7 @@ func resolveBeadMergeStrategy(cliMerge string, info *beadInfo) string {
 }
 
 func slingFieldsRequireDurableWrite(updates beadFieldUpdates) bool {
-	return updates.NoMerge || updates.ReviewOnly || beads.HasLocalMergeStrategy(&beads.AttachmentFields{MergeStrategy: updates.MergeStrategy})
+	return updates.NoMerge || updates.ReviewOnly || beads.IsLocalMergeStrategy(updates.MergeStrategy)
 }
 
 func newSlingDispatchFieldUpdates(actor string, params SlingParams, vars []string, formulaVars, convoyID, attachedMoleculeID string) beadFieldUpdates {

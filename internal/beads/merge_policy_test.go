@@ -91,4 +91,7 @@ func TestHasLocalMergeStrategy(t *testing.T) {
 	if !HasLocalMergeStrategy(&AttachmentFields{MergeStrategy: " LOCAL "}) {
 		t.Fatal("LOCAL with space should be local")
 	}
+	if !IsLocalMergeStrategy("local") {
+		t.Fatal("IsLocalMergeStrategy(local) = false")
+	}
 }

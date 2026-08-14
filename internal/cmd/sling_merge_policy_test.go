@@ -178,6 +178,17 @@ func TestDoneSkipPushForLocalStrategy(t *testing.T) {
 			wantSkip: true,
 		},
 		{
+			name:     "in-flight prose survives convoy without local",
+			convoy:   &ConvoyInfo{ID: "hq-cv-4", MergeStrategy: "mr"},
+			issue:    &beads.Issue{Description: "DO NOT push to GitHub — local commit only"},
+			wantSkip: true,
+		},
+		{
+			name:     "issue prose local with no stored field",
+			issue:    &beads.Issue{Title: "secret work", Description: "DO NOT push to GitHub — local commit only"},
+			wantSkip: true,
+		},
+		{
 			name:     "neither local",
 			convoy:   &ConvoyInfo{ID: "hq-cv-3", MergeStrategy: "mr"},
 			issue:    mrIssue,
