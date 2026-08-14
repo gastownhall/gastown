@@ -114,6 +114,9 @@ func TestGetAgentPresetByName(t *testing.T) {
 
 func TestRuntimeConfigFromPreset(t *testing.T) {
 	t.Parallel()
+	// Read the compile-time table, not the live registry. RuntimeConfigFromPreset
+	// follows overlays; sibling tests register claude with Command "env"
+	// (CI: "RuntimeConfigFromPreset(claude).Command = env, want claude").
 	tests := []struct {
 		preset      AgentPreset
 		wantCommand string
@@ -130,7 +133,7 @@ func TestRuntimeConfigFromPreset(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(string(tt.preset), func(t *testing.T) {
-			rc := RuntimeConfigFromPreset(tt.preset)
+			rc := runtimeConfigFromAgentInfo(tt.preset, builtinPresets[tt.preset])
 			// For claude, command may be full path due to resolveClaudePath
 			if tt.preset == AgentClaude {
 				if !isClaudeCmd(rc.Command) {
@@ -147,11 +150,11 @@ func TestRuntimeConfigFromPreset(t *testing.T) {
 
 func TestRuntimeConfigFromPresetReturnsNilEnvForPresetsWithoutEnv(t *testing.T) {
 	t.Parallel()
-	// Built-in presets like Claude don't have Env set
-	// This verifies nil Env handling in RuntimeConfigFromPreset
-	rc := RuntimeConfigFromPreset(AgentClaude)
+	// Built-in presets like Claude don't have Env set.
+	// Use the compile-time table; the live registry is overlaid by sibling tests.
+	rc := runtimeConfigFromAgentInfo(AgentClaude, builtinPresets[AgentClaude])
 	if rc == nil {
-		t.Fatal("RuntimeConfigFromPreset returned nil")
+		t.Fatal("runtimeConfigFromAgentInfo returned nil")
 	}
 
 	// Claude preset doesn't have Env, so it should be nil
@@ -575,7 +578,7 @@ func TestAgentPresetApprovalFlags(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(string(tt.preset), func(t *testing.T) {
-			info := GetAgentPreset(tt.preset)
+			info := builtinPresets[tt.preset]
 			if info == nil {
 				t.Fatalf("preset %s not found", tt.preset)
 			}

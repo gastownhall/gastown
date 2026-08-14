@@ -222,8 +222,10 @@ and full-suite parallelism — they all pass when isolated:
   `url.https://x-access-token:***@github.com/.insteadOf` rewrites into the global git config, so
   round-tripped remote URLs don't match. Re-run with a clean config to confirm green, e.g.
   `TMP=$(mktemp); printf '[user]\n\tname=t\n\temail=t@t' >$TMP; GIT_CONFIG_GLOBAL=$TMP go test ./internal/git/ ./internal/doctor/`.
-- `internal/config` `TestBuiltinPresets` can flake under `./...` (a sibling parallel test mutates the
-  shared agent registry). It passes reliably via `go test ./internal/config/`.
+- `internal/config` `TestBuiltinPresets` / `TestRuntimeConfigFromPreset` can flake under
+  `./...` when a sibling test overlays the live agent registry (`Command = env`,
+  empty `ProcessNames`). Those tests now read the compile-time `builtinPresets`
+  table. They pass reliably via `go test ./internal/config/`.
 
 ### Agent skills
 
