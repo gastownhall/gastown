@@ -42,6 +42,6 @@
 - Wrap errors with operation and resource context. Preserve causes with `%w`, and do not convert failures into apparent success.
 - Make concurrent output deterministic. Protect shared state, avoid goroutine leaks, and verify concurrency changes with the race detector.
 - Preserve compatibility across documented town, rig, worktree, and configuration layouts unless a migration is part of the change.
-- Run `make build` and `make test` before merge. Run focused package tests during development, tagged integration tests for affected integration paths, and `make test-e2e-container` when changing installation or end-to-end workspace behaviour.
+- Run `make build` and `make test` before merging changes that can affect Go behaviour. Run focused package tests during development, tagged integration tests for affected integration paths, and `make test-e2e-container` when changing installation or end-to-end workspace behaviour. Markdown-only changes do not require Go builds or tests.
 - For releases, keep the release tag and `internal/cmd/version.go` version equal; verify tagged commits with `make check-version-tag`.
 - Use a dedicated branch for every pull request, based on the intended upstream branch. Never open a pull request from a fork's `main` branch.
