@@ -29,15 +29,37 @@ func TestBuiltInAgentPresetSummary(t *testing.T) {
 	}
 }
 
+func TestInitRegistryClonesBuiltins(t *testing.T) {
+	ResetRegistryForTesting()
+	t.Cleanup(ResetRegistryForTesting)
+
+	live := GetAgentPreset(AgentCodex)
+	builtin := builtinPresets[AgentCodex]
+	if live == nil || builtin == nil {
+		t.Fatal("codex preset missing")
+	}
+	if live == builtin {
+		t.Fatal("initRegistryLocked must clone builtins, not share pointers")
+	}
+	if len(live.ProcessNames) == 0 || len(builtin.ProcessNames) == 0 {
+		t.Fatal("codex ProcessNames must be non-empty")
+	}
+	if &live.ProcessNames[0] == &builtin.ProcessNames[0] {
+		t.Fatal("ProcessNames slice must be cloned")
+	}
+}
+
 func TestBuiltinPresets(t *testing.T) {
 	t.Parallel()
-	// Ensure all built-in presets are accessible
+	// Read the compile-time table, not the live registry. GetAgentPreset
+	// races with sibling tests that ResetRegistryForTesting / overlay
+	// agents.json (flakes under go test ./... with -race).
 	presets := []AgentPreset{AgentClaude, AgentGemini, AgentCodex, AgentKiro, AgentCursor, AgentAuggie, AgentAmp, AgentOpenCode, AgentCopilot, AgentPi, AgentOmp}
 
 	for _, preset := range presets {
-		info := GetAgentPreset(preset)
+		info := builtinPresets[preset]
 		if info == nil {
-			t.Errorf("GetAgentPreset(%s) returned nil", preset)
+			t.Errorf("builtinPresets[%s] is missing", preset)
 			continue
 		}
 

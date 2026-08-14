@@ -1,7 +1,6 @@
 package witness
 
 import (
-	"context"
 	"errors"
 	"fmt"
 	"log"
@@ -10,7 +9,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/google/uuid"
 	"github.com/steveyegge/gastown/internal/beads"
 	"github.com/steveyegge/gastown/internal/config"
 	"github.com/steveyegge/gastown/internal/constants"
@@ -155,30 +153,10 @@ func (m *Manager) Start(foreground bool, agentOverride string, envOverrides []st
 
 	// Note: No PID check per ZFC - tmux session is the source of truth
 
-	// Ensure runtime settings exist in the shared witness parent directory.
-	// Settings are passed to Claude Code via --settings flag.
-	// ResolveRoleAgentConfig is internally serialized (resolveConfigMu in
-	// package config) to prevent concurrent rig starts from corrupting the
-	// global agent registry.
-	// Working directory
 	townRoot := m.townRoot()
 	witnessDir, err := m.prepareWitnessDir(townRoot)
 	if err != nil {
 		return err
-	}
-
-	// Resolve CLAUDE_CONFIG_DIR from accounts.json so witness sessions
-	// use the correct account. Mirrors the daemon restart path (lifecycle.go).
-	accountsPath := constants.MayorAccountsPath(townRoot)
-	runtimeConfigDir, _, _ := config.ResolveAccountConfigDir(accountsPath, "")
-	if runtimeConfigDir == "" {
-		runtimeConfigDir = os.Getenv("CLAUDE_CONFIG_DIR")
-	}
-
-	runtimeConfig := config.ResolveRoleAgentConfig("witness", townRoot, m.rig.Path)
-	witnessSettingsDir := config.RoleSettingsDir("witness", m.rig.Path)
-	if err := runtime.EnsureSettingsForRole(witnessSettingsDir, witnessDir, "witness", runtimeConfig); err != nil {
-		return fmt.Errorf("ensuring runtime settings: %w", err)
 	}
 
 	// Ensure .gitignore has required Gas Town patterns
@@ -193,12 +171,23 @@ func (m *Manager) Start(foreground bool, agentOverride string, envOverrides []st
 		roleConfig = nil
 	}
 
-	// Compute environment BEFORE creating the session so it can be passed to
-	// tmux via -e flags. This ensures the initial shell — and any subprocesses
-	// Claude spawns (notably bd) — inherit BEADS_DOLT_PORT and friends.
-	// Setting env after session creation via SetEnvironment only affects newly
-	// spawned panes, not the subprocess tree of the already-running pane (gt-neycp).
-	envVars := config.AgentEnv(config.AgentEnvConfig{
+	accountsPath := constants.MayorAccountsPath(townRoot)
+	runtimeConfigDir, _, _ := config.ResolveAccountConfigDir(accountsPath, "")
+	if runtimeConfigDir == "" {
+		runtimeConfigDir = os.Getenv("CLAUDE_CONFIG_DIR")
+	}
+
+	command, err := buildWitnessStartCommand(m.rig.Path, m.rig.Name, townRoot, sessionID, agentOverride, roleConfig, runtimeConfigDir)
+	if err != nil {
+		return err
+	}
+
+	extraEnv := roleConfigEnvVars(roleConfig, townRoot, m.rig.Name)
+	if extraEnv == nil {
+		extraEnv = map[string]string{}
+	}
+	// Role TOML must not override canonical AgentEnv keys (issue 2492).
+	stdEnv := config.AgentEnv(config.AgentEnvConfig{
 		Role:             "witness",
 		Rig:              m.rig.Name,
 		TownRoot:         townRoot,
@@ -206,92 +195,51 @@ func (m *Manager) Start(foreground bool, agentOverride string, envOverrides []st
 		Agent:            agentOverride,
 		SessionName:      sessionID,
 	})
-	envVars = session.MergeRuntimeLivenessEnv(envVars, runtimeConfig)
-
-	// Generate the GASTA run ID for this witness session.
-	runID := uuid.New().String()
-	envVars["GT_RUN"] = runID
-
-	// Apply role config env vars (non-fatal). Skip keys already set by AgentEnv
-	// to prevent TOML env overriding the canonical qualified GT_ROLE.
-	// See: https://github.com/steveyegge/gastown/issues/2492
-	roleEnv := roleConfigEnvVars(roleConfig, townRoot, m.rig.Name)
-	for key, value := range roleEnv {
-		if _, alreadySet := envVars[key]; alreadySet {
-			continue
-		}
-		envVars[key] = value
+	for key := range stdEnv {
+		delete(extraEnv, key)
 	}
-
-	// Apply CLI env overrides last (highest priority).
 	for _, override := range envOverrides {
 		if key, value, ok := strings.Cut(override, "="); ok {
-			envVars[key] = value
+			extraEnv[key] = value
 		}
 	}
 
-	// Build startup command. The command also embeds env vars via 'exec env'
-	// for WaitForCommand detection — belt-and-suspenders alongside -e flags.
-	// NOTE: No gt prime injection needed - SessionStart hook handles it automatically.
-	// Pass m.rig.Path so rig agent settings are honored (not town-level defaults)
-	command, err := buildWitnessStartCommand(m.rig.Path, m.rig.Name, townRoot, sessionID, agentOverride, roleConfig, runtimeConfigDir)
+	beacon := session.BeaconConfig{
+		Recipient: session.BeaconRecipient("witness", "", m.rig.Name),
+		Sender:    "deacon",
+		Topic:     "patrol",
+	}
+	result, err := session.StartSession(t, session.SessionConfig{
+		SessionID:        sessionID,
+		WorkDir:          witnessDir,
+		Role:             "witness",
+		TownRoot:         townRoot,
+		RigPath:          m.rig.Path,
+		RigName:          m.rig.Name,
+		AgentName:        "witness",
+		Command:          command,
+		AgentOverride:    agentOverride,
+		RuntimeConfigDir: runtimeConfigDir,
+		ExtraEnv:         extraEnv,
+		Theme:            tmux.ResolveSessionTheme(townRoot, m.rig.Name, "witness", ""),
+		Beacon:           beacon,
+		Instructions:     "Run `gt prime --hook` and begin patrol.",
+		WaitForAgent:     true,
+		WaitFatal:        true,
+		AcceptBypass:     true,
+		TrackPID:         true,
+	})
 	if err != nil {
 		return err
 	}
 
-	// Create session with command and env vars via -e flags so the initial
-	// shell (and Claude's subprocesses) inherit them from the start.
-	// See: https://github.com/anthropics/gastown/issues/280 (race condition fix)
-	if err := t.NewSessionWithCommandAndEnv(sessionID, witnessDir, command, envVars); err != nil {
-		return fmt.Errorf("creating tmux session: %w", err)
-	}
-
-	// Apply Gas Town theming (non-fatal: theming failure doesn't affect operation)
-	theme := tmux.ResolveSessionTheme(townRoot, m.rig.Name, "witness", "")
-	_ = t.ConfigureGasTownSession(sessionID, theme, m.rig.Name, "witness", "witness")
-
-	// Wait for Claude to start - fatal if Claude fails to launch
-	if err := t.WaitForCommand(sessionID, constants.SupportedShells, constants.ClaudeStartTimeout); err != nil {
-		// Kill the zombie session before returning error
-		_ = t.KillSessionWithProcesses(sessionID)
-		return fmt.Errorf("waiting for witness to start: %w", err)
-	}
-
-	// Accept startup dialogs (workspace trust + bypass permissions) if they appear.
-	if err := t.AcceptStartupDialogs(sessionID); err != nil {
-		log.Printf("warning: accepting startup dialogs for %s: %v", sessionID, err)
-	}
-
-	// Track PID for defense-in-depth orphan cleanup (non-fatal)
-	if err := session.TrackSessionPID(townRoot, sessionID, t); err != nil {
-		log.Printf("warning: tracking session PID for %s: %v", sessionID, err)
-	}
-
-	// Start nudge-queue poller (gt-dgf). Claude's UserPromptSubmit hook only
-	// drains when the agent submits a prompt. Idle agents never submit, so
-	// queued nudges deadlock. The poller breaks the cycle by polling every 10s.
 	if _, pollerErr := nudge.StartPoller(townRoot, sessionID); pollerErr != nil {
 		log.Printf("warning: could not start nudge poller for %s: %v", sessionID, pollerErr)
 	}
 
-	_ = runtime.RunStartupFallback(t, sessionID, "witness", runtimeConfig)
-	initialPrompt := session.BuildStartupPrompt(session.BeaconConfig{
-		Recipient: session.BeaconRecipient("witness", "", m.rig.Name),
-		Sender:    "deacon",
-		Topic:     "patrol",
-	}, "Run `gt prime --hook` and begin patrol.")
-	_ = runtime.DeliverStartupPromptFallback(t, sessionID, initialPrompt, runtimeConfig, constants.ClaudeStartTimeout)
-
-	// Stream witness's Claude Code JSONL conversation log to VictoriaLogs (opt-in).
-	if os.Getenv("GT_LOG_AGENT_OUTPUT") == "true" && os.Getenv("GT_OTEL_LOGS_URL") != "" {
-		if err := session.ActivateAgentLogging(sessionID, witnessDir, runID); err != nil {
-			log.Printf("warning: agent log watcher setup failed for %s: %v", sessionID, err)
-		}
-	}
-
-	// Record the agent instantiation event (GASTA root span).
-	session.RecordAgentInstantiateFromDir(context.Background(), runID, runtimeConfig.ResolvedAgent,
-		"witness", "witness", sessionID, m.rig.Name, townRoot, "", witnessDir)
+	_ = runtime.RunStartupFallback(t, sessionID, "witness", result.RuntimeConfig)
+	initialPrompt := session.BuildStartupPrompt(beacon, "Run `gt prime --hook` and begin patrol.")
+	_ = runtime.DeliverStartupPromptFallback(t, sessionID, initialPrompt, result.RuntimeConfig, constants.ClaudeStartTimeout)
 
 	time.Sleep(constants.ShutdownNotifyDelay)
 

@@ -14,7 +14,6 @@ import (
 	"github.com/steveyegge/gastown/internal/atomicfile"
 	"github.com/steveyegge/gastown/internal/beads"
 	"github.com/steveyegge/gastown/internal/config"
-	"github.com/steveyegge/gastown/internal/constants"
 	"github.com/steveyegge/gastown/internal/git"
 	"github.com/steveyegge/gastown/internal/nudge"
 	"github.com/steveyegge/gastown/internal/rig"
@@ -721,27 +720,8 @@ func (m *Manager) Start(name string, opts StartOptions) error {
 		return fmt.Errorf("ensuring runtime settings: %w", err)
 	}
 
-	// Compute environment variables BEFORE creating the session.
-	// These are passed via tmux -e flags so the initial shell inherits the correct
-	// env from the start, preventing parent env (e.g., GT_ROLE=mayor) from leaking
-	// into crew sessions. See: https://github.com/steveyegge/gastown/issues/1289
-	envVars := config.AgentEnv(config.AgentEnvConfig{
-		Role:             "crew",
-		Rig:              m.rig.Name,
-		AgentName:        name,
-		TownRoot:         townRoot,
-		RuntimeConfigDir: opts.ClaudeConfigDir,
-		Agent:            opts.AgentOverride,
-	})
-	envVars = session.MergeRuntimeLivenessEnv(envVars, runtimeConfig)
-
-	// Build startup command (also includes env vars via 'exec env' for
-	// WaitForCommand detection — belt and suspenders with -e flags)
-	// SessionStart hook handles context loading (gt prime --hook)
-	//
-	// IMPORTANT: All validation and command building happens BEFORE killing
-	// any existing session, so a validation failure cannot leave the user
-	// without a running session.
+	// Build startup command before killing any existing session so a
+	// validation failure cannot leave the user without a running session.
 	var claudeCmd string
 	if opts.ResumeSessionID != "" {
 		// Validate session ID to prevent shell injection. The ID is interpolated
@@ -805,50 +785,21 @@ func (m *Manager) Start(name string, opts StartOptions) error {
 
 	// Check if session already exists — kill AFTER command is fully built
 	// so validation failures don't destroy the user's running session.
-	running, err := t.HasSession(sessionID)
-	if err != nil {
-		return fmt.Errorf("checking session: %w", err)
-	}
-	if running {
-		if opts.KillExisting {
-			// Restart/resume mode - kill existing session.
-			// Use KillSessionWithProcesses to ensure all descendant processes are killed.
-			if err := t.KillSessionWithProcesses(sessionID); err != nil {
-				return fmt.Errorf("killing existing session: %w", err)
-			}
-		} else {
-			// Normal start - session exists, check if agent is actually running
-			if t.IsAgentAlive(sessionID) {
-				return fmt.Errorf("%w: %s", ErrSessionRunning, sessionID)
-			}
-			// Zombie session - kill and recreate.
-			// Use KillSessionWithProcesses to ensure all descendant processes are killed.
-			if err := t.KillSessionWithProcesses(sessionID); err != nil {
-				return fmt.Errorf("killing zombie session: %w", err)
-			}
+	if opts.KillExisting {
+		if _, err := session.KillExistingSession(t, sessionID, false); err != nil {
+			return err
 		}
+	} else if _, err := session.KillExistingSession(t, sessionID, true); err != nil {
+		if errors.Is(err, session.ErrSessionAlive) {
+			return fmt.Errorf("%w: %s", ErrSessionRunning, sessionID)
+		}
+		return err
 	}
 
-	// For interactive/refresh mode, remove --dangerously-skip-permissions
 	if opts.Interactive {
 		claudeCmd = strings.Replace(claudeCmd, " --dangerously-skip-permissions", "", 1)
 	}
 
-	// Create session with command and env vars via -e flags.
-	// The -e flags set session-level env BEFORE the shell starts, ensuring the
-	// initial shell inherits the correct GT_ROLE (not the parent's).
-	// See: https://github.com/anthropics/gastown/issues/280 (race condition fix)
-	// See: https://github.com/steveyegge/gastown/issues/1289 (env inheritance fix)
-	if err := t.NewSessionWithCommandAndEnv(sessionID, worker.ClonePath, claudeCmd, envVars); err != nil {
-		return fmt.Errorf("creating session: %w", err)
-	}
-
-	// Record agent's pane_id for ZFC-compliant liveness checks (gt-qmsx).
-	if paneID, err := t.GetPaneID(sessionID); err == nil {
-		_ = t.SetEnvironment(sessionID, "GT_PANE_ID", paneID)
-	}
-
-	// Apply rig-based theming (non-fatal: theming failure doesn't affect operation)
 	theme := tmux.ResolveSessionTheme(townRoot, m.rig.Name, "crew", name)
 	if theme != nil {
 		theme.Window = session.ResolveWindowTint(m.rig.Name, "crew")
@@ -860,17 +811,9 @@ func (m *Manager) Start(name string, opts StartOptions) error {
 			}
 		}
 	}
-	_ = t.ConfigureGasTownSession(sessionID, theme, m.rig.Name, name, "crew")
 
-	// Set up C-b n/p keybindings for crew session cycling (non-fatal)
-	_ = t.SetCrewCycleBindings(sessionID)
-
-	// Track PID for defense-in-depth orphan cleanup (non-fatal)
-	_ = session.TrackSessionPID(townRoot, sessionID, t)
-
-	// Wait for the agent to start, then accept any startup dialogs that appear.
-	// Workspace trust dialog is independent of bypass permissions and can appear
-	// for any agent, so we always check for non-interactive sessions.
+	waitForAgent := false
+	acceptBypass := false
 	if !opts.Interactive {
 		agentName := opts.AgentOverride
 		if agentName == "" {
@@ -882,22 +825,44 @@ func (m *Manager) Start(name string, opts StartOptions) error {
 		}
 		preset := config.GetAgentPresetByName(agentName)
 		if preset != nil && preset.EmitsPermissionWarning {
-			if err := t.WaitForCommand(sessionID, constants.SupportedShells, constants.ClaudeStartTimeout); err != nil {
-				// Non-fatal — agent might still start
-				style.PrintWarning("timeout waiting for agent to start: %v", err)
-			}
-			_ = t.AcceptStartupDialogs(sessionID)
+			waitForAgent = true
+			acceptBypass = true
 		}
+	}
 
-		// Start background nudge-queue poller for ALL agents (gt-dgf).
-		// Claude drains its queue via UserPromptSubmit hook, but that hook only
-		// fires when the agent submits a prompt. Idle agents (waiting at prompt
-		// for work) never submit, so queued nudges deadlock: agent waits for
-		// nudge, nudge waits for agent input. The poller breaks this cycle by
-		// polling every 10s and delivering when idle. Drain() is atomic so the
-		// poller and UserPromptSubmit hook coexist safely.
+	topic := opts.Topic
+	if topic == "" {
+		topic = "start"
+	}
+	_, err = session.StartSession(t, session.SessionConfig{
+		SessionID:        sessionID,
+		WorkDir:          worker.ClonePath,
+		Role:             "crew",
+		TownRoot:         townRoot,
+		RigPath:          m.rig.Path,
+		RigName:          m.rig.Name,
+		AgentName:        name,
+		Command:          claudeCmd,
+		AgentOverride:    opts.AgentOverride,
+		RuntimeConfigDir: opts.ClaudeConfigDir,
+		Theme:            theme,
+		Beacon: session.BeaconConfig{
+			Recipient: session.BeaconRecipient("crew", name, m.rig.Name),
+			Sender:    "human",
+			Topic:     topic,
+		},
+		WaitForAgent: waitForAgent,
+		AcceptBypass: acceptBypass,
+		TrackPID:     true,
+	})
+	if err != nil {
+		return err
+	}
+
+	_ = t.SetCrewCycleBindings(sessionID)
+
+	if !opts.Interactive {
 		if _, pollerErr := nudge.StartPoller(townRoot, sessionID); pollerErr != nil {
-			// Non-fatal — nudges may be delayed but the agent still works.
 			style.PrintWarning("could not start nudge poller for %s: %v", name, pollerErr)
 		}
 	}

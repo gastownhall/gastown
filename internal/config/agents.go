@@ -560,9 +560,9 @@ func initRegistryLocked() {
 		Version: CurrentAgentRegistryVersion,
 		Agents:  make(map[string]*AgentPresetInfo),
 	}
-	// Copy built-in presets
+	// Clone built-in presets so registry overlays cannot mutate the table.
 	for name, preset := range builtinPresets {
-		globalRegistry.Agents[string(name)] = preset
+		globalRegistry.Agents[string(name)] = cloneAgentPresetInfo(preset)
 	}
 	registryInitialized = true
 }
