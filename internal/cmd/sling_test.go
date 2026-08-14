@@ -111,11 +111,26 @@ case "$cmd" in
   update)
     for arg in "$@"; do
       case "$arg" in
-        --description=*) printf "%s" "${arg#--description=}" > "$BD_DESC_FILE" ;;
+        --description=*)
+          if [ "${BD_FAIL_DESCRIPTION_UPDATE:-}" = "1" ]; then
+            echo "forced description update failure" >&2
+            exit 1
+          fi
+          printf "%s" "${arg#--description=}" > "$BD_DESC_FILE"
+          ;;
         --status=*) printf "%s" "${arg#--status=}" > "$BD_STATUS_FILE" ;;
         --assignee=*) printf "%s" "${arg#--assignee=}" > "$BD_ASSIGNEE_FILE" ;;
       esac
     done
+    ;;
+  create)
+    if [ -n "${BD_CREATE_DESC_FILE:-}" ]; then
+      for arg in "$@"; do
+        case "$arg" in
+          --description=*) printf "%s" "${arg#--description=}" > "$BD_CREATE_DESC_FILE" ;;
+        esac
+      done
+    fi
     ;;
   version)
     echo "bd test"
@@ -1971,6 +1986,75 @@ func TestExecuteSlingRawReviewOnlySuccessKeepsMetadata(t *testing.T) {
 		t.Fatalf("executeSling result not successful: %+v", result)
 	}
 	assertHasRawReviewMetadata(t, readMutableBDDescription(t, descPath))
+}
+
+// TestExecuteSlingStoresLocalMergeStrategyOnIssue is the regression test for
+// GH#4512. Queue and batch dispatch use executeSling; the local-only intent must
+// be persisted on the issue so gt done can recover it after a re-dispatch.
+func TestExecuteSlingStoresLocalMergeStrategyOnIssue(t *testing.T) {
+	townRoot, rigPath, descPath := setupMutableBDRawSlingTest(t, "Keep this body.")
+
+	prevSpawn := spawnPolecatForSling
+	prevHook := hookBeadWithRetryWithTownRootFn
+	prevAddTracking := addTrackingRelationFn
+	t.Cleanup(func() {
+		spawnPolecatForSling = prevSpawn
+		hookBeadWithRetryWithTownRootFn = prevHook
+		addTrackingRelationFn = prevAddTracking
+	})
+	spawnPolecatForSling = func(rigName string, opts SlingSpawnOptions) (*SpawnedPolecatInfo, error) {
+		return &SpawnedPolecatInfo{
+			RigName:     rigName,
+			PolecatName: "toast",
+			ClonePath:   filepath.Join(townRoot, "gastown", "polecats", "toast"),
+			Pane:        "%1",
+		}, nil
+	}
+	hookBeadWithRetryWithTownRootFn = func(beadID, targetAgent, hookDir, townRoot string) error {
+		return nil
+	}
+	var trackedConvoyID string
+	addTrackingRelationFn = func(gotTownRoot, convoyID, issueID string) error {
+		if gotTownRoot != townRoot {
+			t.Errorf("tracking town root = %q, want %q", gotTownRoot, townRoot)
+		}
+		if issueID != "gt-rawrollback" {
+			t.Errorf("tracked issue = %q, want gt-rawrollback", issueID)
+		}
+		trackedConvoyID = convoyID
+		return nil
+	}
+
+	result, err := executeSling(SlingParams{
+		BeadID:      "gt-rawrollback",
+		RigName:     "gastown",
+		TownRoot:    townRoot,
+		BeadsDir:    filepath.Join(rigPath, ".beads"),
+		HookRawBead: true,
+		Merge:       "local",
+		Owned:       true,
+		NoBoot:      true,
+	})
+	if err != nil {
+		t.Fatalf("executeSling: %v", err)
+	}
+	if result == nil || !result.Success {
+		t.Fatalf("executeSling result not successful: %+v", result)
+	}
+
+	fields := beads.ParseAttachmentFields(&beads.Issue{Description: readMutableBDDescription(t, descPath)})
+	if fields == nil {
+		t.Fatal("issue has no attachment fields")
+	}
+	if trackedConvoyID == "" || fields.ConvoyID != trackedConvoyID {
+		t.Fatalf("ConvoyID = %q, want tracked convoy %q", fields.ConvoyID, trackedConvoyID)
+	}
+	if fields.MergeStrategy != "local" {
+		t.Fatalf("MergeStrategy = %q, want local", fields.MergeStrategy)
+	}
+	if !fields.ConvoyOwned {
+		t.Fatal("ConvoyOwned = false, want true")
+	}
 }
 
 func TestSlingFormulaRollsBackSpawnedPolecatOnWispFailure(t *testing.T) {

@@ -432,6 +432,19 @@ func doneSourceCloseSkipReason(bd *beads.Beads, issueID string, issue *beads.Iss
 	return doneSourceCloseSkipReasonForHead(bd, issueID, issue, currentHead)
 }
 
+func doneSkipPushForLocalStrategy(convoyInfo *ConvoyInfo, sourceIssue *beads.Issue) bool {
+	if convoyInfo != nil && beads.IsLocalMergeStrategy(convoyInfo.MergeStrategy) {
+		return true
+	}
+	if sourceIssue == nil {
+		return false
+	}
+	if beads.HasLocalMergeStrategy(beads.ParseAttachmentFields(sourceIssue)) {
+		return true
+	}
+	return beads.IssueTextImpliesLocalMerge(sourceIssue.Title + "\n" + sourceIssue.Description)
+}
+
 func doneDirectMergeSkipReason(bd *beads.Beads, issueID string, issue *beads.Issue, targetBranch string) string {
 	if strings.TrimSpace(issueID) == "" {
 		return "source issue is required for direct merge"
@@ -1193,8 +1206,10 @@ func runDone(cmd *cobra.Command, args []string) (retErr error) {
 			convoyInfo = getConvoyInfoForIssue(issueID)
 		}
 
-		// Handle "local" strategy: skip push and MR entirely
-		if convoyInfo != nil && convoyInfo.MergeStrategy == "local" {
+		// Handle "local" strategy: skip push and MR entirely.
+		// Check the current convoy and the issue itself so a re-dispatch without
+		// --merge local cannot push a branch that must stay local.
+		if doneSkipPushForLocalStrategy(convoyInfo, sourceIssueForNoMerge) {
 			fmt.Printf("%s Local merge strategy: skipping push and merge queue\n", style.Bold.Render("→"))
 			fmt.Printf("  Branch: %s\n", branch)
 			if issueID != "" {
@@ -1287,14 +1302,6 @@ func runDone(cmd *cobra.Command, args []string) (retErr error) {
 			fmt.Fprintf(os.Stderr, "  MR beads written here will be invisible to the Refinery — run 'gt polecat repair' to fix\n")
 		}
 		bd := beads.NewWithBeadsDir(cwd, resolvedBeads)
-		if attachmentFields := beads.ParseAttachmentFields(sourceIssueForNoMerge); attachmentFields != nil && strings.EqualFold(strings.TrimSpace(attachmentFields.MergeStrategy), "local") {
-			fmt.Printf("%s Local merge strategy: skipping push and merge queue\n", style.Bold.Render("→"))
-			fmt.Printf("  Branch: %s\n", branch)
-			fmt.Printf("  Issue: %s\n", issueID)
-			fmt.Println()
-			fmt.Printf("%s\n", style.Dim.Render("Work stays on local feature branch."))
-			goto notifyWitness
-		}
 
 		// Fallback: check if issue belongs to a direct-merge convoy that the
 		// primary check missed — e.g., issues dispatched before the attachment-field
