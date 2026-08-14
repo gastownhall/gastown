@@ -111,11 +111,26 @@ case "$cmd" in
   update)
     for arg in "$@"; do
       case "$arg" in
-        --description=*) printf "%s" "${arg#--description=}" > "$BD_DESC_FILE" ;;
+        --description=*)
+          if [ "${BD_FAIL_DESCRIPTION_UPDATE:-}" = "1" ]; then
+            echo "forced description update failure" >&2
+            exit 1
+          fi
+          printf "%s" "${arg#--description=}" > "$BD_DESC_FILE"
+          ;;
         --status=*) printf "%s" "${arg#--status=}" > "$BD_STATUS_FILE" ;;
         --assignee=*) printf "%s" "${arg#--assignee=}" > "$BD_ASSIGNEE_FILE" ;;
       esac
     done
+    ;;
+  create)
+    if [ -n "${BD_CREATE_DESC_FILE:-}" ]; then
+      for arg in "$@"; do
+        case "$arg" in
+          --description=*) printf "%s" "${arg#--description=}" > "$BD_CREATE_DESC_FILE" ;;
+        esac
+      done
+    fi
     ;;
   version)
     echo "bd test"

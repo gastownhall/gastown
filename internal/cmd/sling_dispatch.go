@@ -139,6 +139,8 @@ func executeSling(params SlingParams) (*SlingResult, error) {
 		return result, fmt.Errorf("bead %s is %s (work already completed)", params.BeadID, info.Status)
 	}
 
+	params.Merge = resolveBeadMergeStrategy(params.Merge, info)
+
 	// Save explicit force state before dead-agent auto-force, so the deferred
 	// gate below still requires an explicit --force for deferred beads.
 	explicitForce := params.Force
@@ -259,27 +261,13 @@ func executeSling(params SlingParams) (*SlingResult, error) {
 	hookWorkDir := spawnInfo.ClonePath
 
 	// 4. Auto-convoy (if !NoConvoy)
-	convoyID := ""
+	convoyID := createSlingAutoConvoy(params, info)
 	rollbackSpawnedPolecat := func(rollbackBeadID, reason string) {
 		fmt.Printf("  %s %s, rolling back spawned polecat %s...\n", style.Warning.Render("⚠"), reason, spawnInfo.PolecatName)
 		rollbackSlingArtifactsFn(spawnInfo, rollbackBeadID, hookWorkDir, convoyID)
 		restoreRollbackRawWorkflowFieldsFromCurrent(rollbackBeadID, townRoot, hookWorkDir, info)
 		if params.Force && info.Status == "pinned" {
 			restorePinnedBead(townRoot, params.BeadID, info.Assignee)
-		}
-	}
-	if !params.NoConvoy {
-		existingConvoy := isTrackedByConvoy(params.BeadID)
-		if existingConvoy == "" {
-			var err error
-			convoyID, err = createAutoConvoy(params.BeadID, info.Title, params.Owned, params.Merge, params.BaseBranch)
-			if err != nil {
-				fmt.Printf("  %s Could not create auto-convoy: %v\n", style.Dim.Render("Warning:"), err)
-			} else {
-				fmt.Printf("  %s Created convoy %s\n", style.Bold.Render("→"), convoyID)
-			}
-		} else {
-			fmt.Printf("  %s Already tracked by convoy %s\n", style.Dim.Render("○"), existingConvoy)
 		}
 	}
 
@@ -350,28 +338,7 @@ func executeSling(params SlingParams) (*SlingResult, error) {
 	result.AttachedMolecule = attachedMoleculeID
 
 	actor := detectActor()
-	fieldUpdates := beadFieldUpdates{
-		Dispatcher:       actor,
-		Args:             params.Args,
-		Vars:             varsForAttachment,
-		AttachedMolecule: attachedMoleculeID,
-		NoMerge:          params.NoMerge,
-		ReviewOnly:       params.ReviewOnly,
-		Mode:             &params.Mode,
-		FormulaVars:      formulaVarsForAttachment,
-		ConvoyID:         convoyID,      // GH#4512: propagate convoy fields to issue
-		MergeStrategy:    params.Merge,  // so gt done's issue-level fallback check works
-		ConvoyOwned:      params.Owned,  // for queue/batch-dispatched issues
-	}
-	if params.FormulaName != "" {
-		if attachedMoleculeID != "" {
-			fieldUpdates.AttachedFormula = params.FormulaName
-		} else {
-			fieldUpdates.ClearAttachment = true
-			fieldUpdates.Vars = nil
-			fieldUpdates.FormulaVars = ""
-		}
-	}
+	fieldUpdates := newSlingDispatchFieldUpdates(actor, params, varsForAttachment, formulaVarsForAttachment, convoyID, attachedMoleculeID)
 
 	// 7. Hook bead with retry
 	// Acquire per-assignee lock to serialize concurrent hook writes (issue #3114).
@@ -382,7 +349,7 @@ func executeSling(params SlingParams) (*SlingResult, error) {
 		return result, fmt.Errorf("serializing hook write for %s: %w", targetAgent, assigneeLockErr)
 	}
 	defer assigneeUnlock()
-	if attachedMoleculeID == "" && (params.NoMerge || params.ReviewOnly) {
+	if attachedMoleculeID == "" && slingFieldsRequireDurableWrite(fieldUpdates) {
 		if err := storeFieldsInBeadFromTownRoot(townRoot, beadToHook, fieldUpdates); err != nil {
 			cleanupSpawnedPolecat(spawnInfo, params.RigName, convoyID)
 			restoreRollbackRawWorkflowFieldsFromCurrent(beadToHook, townRoot, hookWorkDir, info)
@@ -409,6 +376,11 @@ func executeSling(params SlingParams) (*SlingResult, error) {
 	// 10. Store fields in bead (dispatcher, args, attached_molecule, no_merge, mode)
 	// Use beadToHook for the update target (may differ from beadID when formula-on-bead)
 	if err := storeFieldsInBeadFromTownRoot(townRoot, beadToHook, fieldUpdates); err != nil {
+		if slingFieldsRequireDurableWrite(fieldUpdates) {
+			rollbackSpawnedPolecat(beadToHook, "Durable sling metadata failed")
+			result.ErrMsg = "sling metadata failed"
+			return result, fmt.Errorf("storing sling metadata: %w", err)
+		}
 		fmt.Printf("  %s Could not store fields in bead: %v\n", style.Dim.Render("Warning:"), err)
 	}
 
