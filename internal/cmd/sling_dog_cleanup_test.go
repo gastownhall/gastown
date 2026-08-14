@@ -183,9 +183,10 @@ func TestDogWorksOnHookRequiresFreshAttachment(t *testing.T) {
 
 func TestShouldReuseExistingFormulaSkipsStaleHookAfterFreshDogAssignment(t *testing.T) {
 	startedAt := time.Date(2026, 6, 16, 20, 30, 15, 900_000_000, time.UTC)
-	existing := &beads.Issue{ID: "gt-wisp-stale"}
+	existing := &beads.Issue{ID: "gt-dispatch-stale", Labels: []string{formulaDispatchLabel}}
 	freshDogHook := &beads.Issue{
-		ID:          "gt-wisp-fresh",
+		ID:          "gt-dispatch-fresh",
+		Labels:      []string{formulaDispatchLabel},
 		Description: "attached_formula: mol-dog-reaper\nattached_at: " + startedAt.Format(time.RFC3339Nano),
 	}
 	reusedDog := &DogDispatchInfo{

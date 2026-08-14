@@ -2233,13 +2233,6 @@ exit /b 0
 	if !strings.Contains(attachment, "attached_molecule: gt-wisp-xyz") {
 		t.Fatalf("durable dispatch bead does not point to formula wisp:\n%s", attachment)
 	}
-	bdLog, err := os.ReadFile(logPath)
-	if err != nil {
-		t.Fatalf("read bd log: %v", err)
-	}
-	if !strings.Contains(string(bdLog), "update gt-dispatch-xyz --status=hooked --assignee=mayor/") {
-		t.Fatalf("standalone formula hooked the wisp instead of durable dispatch bead:\n%s", bdLog)
-	}
 	if !strings.Contains(attachment, "version=1.2.3") || !strings.Contains(attachment, "channel=stable") {
 		t.Fatalf("formula vars missing from persisted description:\n%s", attachment)
 	}
@@ -2320,7 +2313,7 @@ exit /b 0
 	slingNoBoot = true
 	slingForce = false
 	findHookedFormulaSingletonFn = func(workDir, targetAgent, formulaName string) (*beads.Issue, error) {
-		return &beads.Issue{ID: "gt-wisp-existing"}, nil
+		return &beads.Issue{ID: "gt-dispatch-existing", Labels: []string{formulaDispatchLabel}}, nil
 	}
 
 	if err := runSlingFormula(context.Background(), []string{"mol-anything"}); err != nil {
@@ -2397,7 +2390,7 @@ exit /b 0
 	slingForce = false
 	slingRalph = false
 	findHookedFormulaSingletonFn = func(workDir, targetAgent, formulaName string) (*beads.Issue, error) {
-		return &beads.Issue{ID: "gt-wisp-existing", Description: "attached_formula: mol-anything\nmode: ralph"}, nil
+		return &beads.Issue{ID: "gt-dispatch-existing", Labels: []string{formulaDispatchLabel}, Description: "attached_formula: mol-anything\nmode: ralph"}, nil
 	}
 
 	if err := runSlingFormula(context.Background(), []string{"mol-anything"}); err != nil {

@@ -2249,6 +2249,73 @@ func isFormulaCompletionBead(id string, issue *beads.Issue) bool {
 	return strings.Contains(id, "-wfs-") || issue != nil && beads.HasLabel(issue, formulaDispatchLabel)
 }
 
+func shouldCloseHookedWorkOnDone(exitType, hookedBeadID, beadsPath string, bd *beads.Beads) bool {
+	if hookedBeadID == "" {
+		return false
+	}
+	if exitType != ExitDeferred {
+		return true
+	}
+	if isFormulaCompletionBead(hookedBeadID, nil) {
+		return true
+	}
+	hookBd, _, _ := routedIssueBeads(beadsPath, hookedBeadID)
+	if hookBd == nil {
+		hookBd = bd
+	}
+	hookedBead, err := hookBd.Show(hookedBeadID)
+	if err != nil {
+		style.PrintWarning("could not classify deferred work %s before completion: %v", hookedBeadID, err)
+		return false
+	}
+	return isFormulaCompletionBead(hookedBeadID, hookedBead)
+}
+
+func closeHookedWorkOnDone(hookBd *beads.Beads, hookedBeadID, townRoot, rig string) error {
+	hookedBead, err := hookBd.Show(hookedBeadID)
+	if err != nil || beads.IssueStatus(hookedBead.Status).IsTerminal() {
+		return nil
+	}
+
+	if beads.HasLabel(hookedBead, "gt:rig") {
+		fmt.Fprintf(os.Stderr, "Note: hooked bead %s is a rig identity bead (gt:rig) — skipping close\n", hookedBeadID)
+		return nil
+	}
+
+	if skipReason, fatal := doneSourceCloseSkipReason(hookBd, hookedBeadID, hookedBead); skipReason != "" {
+		style.PrintWarning("%s", skipReason)
+		fmt.Fprintf(os.Stderr, "  The bead will remain open for witness/mayor review.\n")
+		notifyDoneCloseSkipped(townRoot, rig, detectSender(), hookedBeadID, skipReason)
+		if fatal {
+			return fmt.Errorf("cannot complete hooked work: %s", skipReason)
+		}
+		return nil
+	}
+
+	attachment := beads.ParseAttachmentFields(hookedBead)
+	if attachment != nil && attachment.AttachedMolecule != "" {
+		if n := closeDescendants(hookBd, attachment.AttachedMolecule); n > 0 {
+			fmt.Fprintf(os.Stderr, "Closed %d molecule step(s) for %s\n", n, attachment.AttachedMolecule)
+		}
+		if closeErr := hookBd.ForceCloseWithReason("done", attachment.AttachedMolecule); closeErr != nil {
+			if !errors.Is(closeErr, beads.ErrNotFound) {
+				fmt.Fprintf(os.Stderr, "Warning: couldn't close attached molecule %s: %v\n", attachment.AttachedMolecule, closeErr)
+				return nil
+			}
+		}
+	}
+
+	if unchecked := beads.HasUncheckedCriteria(hookedBead); unchecked > 0 {
+		style.PrintWarning("hooked bead %s has %d unchecked acceptance criteria — skipping close", hookedBeadID, unchecked)
+		fmt.Fprintf(os.Stderr, "  The bead will remain open for witness/mayor review.\n")
+		return nil
+	}
+	if err := hookBd.Close(hookedBeadID); err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: couldn't close hooked bead %s: %v\n", hookedBeadID, err)
+	}
+	return nil
+}
+
 func updateAgentStateOnDone(cwd, townRoot, exitType, issueID string) error {
 	// Get role context - try multiple sources for resilience
 	roleInfo, err := GetRoleWithContext(cwd, townRoot)
@@ -2323,91 +2390,16 @@ func updateAgentStateOnDone(cwd, townRoot, exitType, issueID string) error {
 	// Workflow step beads (*-wfs-*) and standalone formula dispatch beads are
 	// formula-engine work. For these, DEFERRED means "formula complete, no code
 	// commits" rather than "work paused for resumption". Close them on DEFERRED.
-	isFormulaCompletion := isFormulaCompletionBead(hookedBeadID, nil)
-	if exitType == ExitDeferred && !isFormulaCompletion && hookedBeadID != "" {
-		hookBd, _, _ := routedIssueBeads(beadsPath, hookedBeadID)
-		hookedBead, err := hookBd.Show(hookedBeadID)
-		if err != nil {
-			return fmt.Errorf("classifying deferred work %s before completion: %w", hookedBeadID, err)
-		}
-		isFormulaCompletion = isFormulaCompletionBead(hookedBeadID, hookedBead)
-	}
-
-	if hookedBeadID != "" && (exitType != ExitDeferred || isFormulaCompletion) {
-		// BUG FIX (gt-pftz): Close hooked bead unless already terminal (closed/tombstone).
-		// Previously checked hookedBead.Status == StatusHooked, but polecats update
-		// their work bead to in_progress during work. The exact-match check caused
-		// gt done to skip closing the bead, leaving it as unassigned open work after
-		// the hook was cleared — triggering infinite dispatch loops.
-		//
-		// DEFERRED exits preserve ordinary work for resumption. Formula workflow
-		// steps and durable standalone-formula dispatch beads are closed — see above.
+	if shouldCloseHookedWorkOnDone(exitType, hookedBeadID, beadsPath, bd) {
 		hookBd, _, _ := routedIssueBeads(beadsPath, hookedBeadID)
 		if hookBd == nil {
 			hookBd = bd
 		}
-		if hookedBead, err := hookBd.Show(hookedBeadID); err == nil && !beads.IssueStatus(hookedBead.Status).IsTerminal() {
-			// Guard: never close a rig identity bead. Polecats dispatched with the
-			// rig bead as their hook (via mol-polecat-work) must not close permanent
-			// infrastructure. Skip close and fall through to idle state update.
-			if beads.HasLabel(hookedBead, "gt:rig") {
-				fmt.Fprintf(os.Stderr, "Note: hooked bead %s is a rig identity bead (gt:rig) — skipping close\n", hookedBeadID)
-				goto doneStateUpdate
-			}
-
-			if skipReason, fatal := doneSourceCloseSkipReason(hookBd, hookedBeadID, hookedBead); skipReason != "" {
-				style.PrintWarning("%s", skipReason)
-				fmt.Fprintf(os.Stderr, "  The bead will remain open for witness/mayor review.\n")
-				notifyDoneCloseSkipped(townRoot, ctx.Rig, detectSender(), hookedBeadID, skipReason)
-				if fatal {
-					return fmt.Errorf("cannot complete hooked work: %s", skipReason)
-				}
-				goto doneStateUpdate
-			}
-
-			// BUG FIX: Close attached molecule (wisp) BEFORE closing hooked bead.
-			// When using formula-on-bead (gt sling formula --on bead), the base bead
-			// has attached_molecule pointing to the wisp. Without this fix, gt done
-			// only closed the hooked bead, leaving the wisp orphaned.
-			// Order matters: wisp closes -> unblocks base bead -> base bead closes.
-			attachment := beads.ParseAttachmentFields(hookedBead)
-			if attachment != nil && attachment.AttachedMolecule != "" {
-				// Close molecule step descendants before closing the wisp root.
-				// bd close doesn't cascade — without this, open/in_progress steps
-				// from the molecule stay stuck forever after gt done completes.
-				// Order: step children -> wisp root -> base bead.
-				if n := closeDescendants(hookBd, attachment.AttachedMolecule); n > 0 {
-					fmt.Fprintf(os.Stderr, "Closed %d molecule step(s) for %s\n", n, attachment.AttachedMolecule)
-				}
-
-				// Close the wisp root with --force and audit reason.
-				// ForceCloseWithReason handles any status (hooked, open, in_progress)
-				// and records the reason + session for attribution.
-				// Same pattern as gt mol burn/squash (#1879).
-				if closeErr := hookBd.ForceCloseWithReason("done", attachment.AttachedMolecule); closeErr != nil {
-					if !errors.Is(closeErr, beads.ErrNotFound) {
-						fmt.Fprintf(os.Stderr, "Warning: couldn't close attached molecule %s: %v\n", attachment.AttachedMolecule, closeErr)
-						// Don't try to close hookedBeadID - it may still be blocked.
-						// But DO clear hooks and update agent state (goto doneStateUpdate)
-						// so the polecat isn't stuck in 'working' state (za-o9e).
-						goto doneStateUpdate
-					}
-					// Not found = already burned/deleted by another path, continue
-				}
-			}
-
-			// Acceptance criteria gate: skip close if criteria are unchecked.
-			if unchecked := beads.HasUncheckedCriteria(hookedBead); unchecked > 0 {
-				style.PrintWarning("hooked bead %s has %d unchecked acceptance criteria — skipping close", hookedBeadID, unchecked)
-				fmt.Fprintf(os.Stderr, "  The bead will remain open for witness/mayor review.\n")
-			} else if err := hookBd.Close(hookedBeadID); err != nil {
-				// Non-fatal: warn but continue
-				fmt.Fprintf(os.Stderr, "Warning: couldn't close hooked bead %s: %v\n", hookedBeadID, err)
-			}
+		if err := closeHookedWorkOnDone(hookBd, hookedBeadID, townRoot, ctx.Rig); err != nil {
+			return err
 		}
 	}
 
-doneStateUpdate:
 	// Clear hook_bead on the agent bead (gt-qbh). The hq-l6mm5 refactor made
 	// SetHookBead/ClearHookBead no-ops, but the witness still reads the
 	// hook_bead field from the agent bead snapshot. If the hooked bead is a
