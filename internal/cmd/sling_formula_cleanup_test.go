@@ -36,7 +36,7 @@ func TestRunSlingFormulaCleansDelayedDogFailure(t *testing.T) {
 	for _, want := range []string{
 		") (err error)",
 		"defer func()",
-		"cleanupDelayedDogFormulaFailure(err, delayedDogInfo, wispRootID, formulaWorkDir)",
+		"cleanupDelayedDogFormulaFailure(err, delayedDogInfo, cleanupID, formulaWorkDir)",
 	} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("runSlingFormula missing %q", want)
@@ -147,10 +147,14 @@ func TestRunSlingFormulaNonOwnedDogReuseCannotCreateFreshWisp(t *testing.T) {
 }
 
 func TestRunSlingFormulaDogNudgeBeforeEmptyPaneReturn(t *testing.T) {
-	body := runSlingFormulaSourceForTest(t)
+	data, err := os.ReadFile("sling_formula.go")
+	if err != nil {
+		t.Fatalf("read sling_formula.go: %v", err)
+	}
+	body := string(data)
 
 	dogNudgeIdx := strings.LastIndex(body, "nudgeFormulaDog(delayedDogInfo, prompt)")
-	emptyPaneIdx := strings.Index(body, "if targetPane == \"\" {")
+	emptyPaneIdx := strings.Index(body, "if targetPane == nil || *targetPane == \"\" {")
 	if dogNudgeIdx == -1 {
 		t.Fatal("dog-specific nudge call not found")
 	}

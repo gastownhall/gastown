@@ -48,10 +48,15 @@ Auto-Convoy:
   gt sling gt-abc gastown --no-convoy  # Skip auto-convoy creation
 
 Merge Strategy (--merge):
-  Controls how completed work lands. Stored on the auto-convoy.
+  Controls how completed work lands. Stored on the auto-convoy and on the issue.
   gt sling gt-abc gastown --merge=direct  # Push branch directly to main
   gt sling gt-abc gastown --merge=mr      # Merge queue (default)
   gt sling gt-abc gastown --merge=local   # Keep on feature branch
+
+  An explicit --merge value wins. If --merge is omitted, sling reuses a stored
+  merge_strategy on the issue. If the issue text says "local commit only" or
+  "do not push", sling uses local and stores merge_strategy=local so later
+  dispatches keep the policy without the flag.
 
 Target Resolution:
   gt sling gt-abc                       # Self (current agent)
@@ -634,6 +639,8 @@ func runSling(cmd *cobra.Command, args []string) (retErr error) {
 		return fmt.Errorf("bead %s is %s (work already completed)", beadID, info.Status)
 	}
 
+	mergeStrategy := resolveBeadMergeStrategy(slingMerge, info)
+
 	// Guard against slinging deferred beads (gt-1326mw).
 	// Deferred work (e.g., "deferred to post-launch") should not consume polecat slots.
 	// Use --force to override when intentionally re-activating deferred work.
@@ -873,14 +880,14 @@ func runSling(cmd *cobra.Command, args []string) (retErr error) {
 		if slingDryRun {
 			fmt.Printf("Would create convoy 'Work: %s' if needed\n", info.Title)
 			fmt.Printf("Would add tracking relation to %s if needed\n", beadID)
-			if slingMerge != "" {
-				fmt.Printf("Would set convoy merge strategy: %s\n", slingMerge)
+			if mergeStrategy != "" {
+				fmt.Printf("Would set convoy merge strategy: %s\n", mergeStrategy)
 			}
 		} else {
 			existingConvoy := isTrackedByConvoy(beadID)
 			if existingConvoy == "" {
 				var err error
-				convoyID, err = createAutoConvoy(beadID, info.Title, slingOwned, slingMerge, slingBaseBranch)
+				convoyID, err = createAutoConvoy(beadID, info.Title, slingOwned, mergeStrategy, slingBaseBranch)
 				if err != nil {
 					if delayedDogInfo != nil {
 						return fmt.Errorf("creating dog dispatch convoy: %w", err)
@@ -892,8 +899,8 @@ func runSling(cmd *cobra.Command, args []string) (retErr error) {
 					if slingOwned {
 						fmt.Printf("  Lifecycle: caller-managed (owned)\n")
 					}
-					if slingMerge != "" {
-						fmt.Printf("  Merge:    %s\n", slingMerge)
+					if mergeStrategy != "" {
+						fmt.Printf("  Merge:    %s\n", mergeStrategy)
 					}
 				}
 			} else {
@@ -1041,7 +1048,7 @@ func runSling(cmd *cobra.Command, args []string) (retErr error) {
 		mode,
 		formulaVarsForAttachment,
 		convoyID,
-		slingMerge,
+		mergeStrategy,
 		slingOwned,
 	)
 	// Hook the bead with retry and verification.
@@ -1055,7 +1062,7 @@ func runSling(cmd *cobra.Command, args []string) (retErr error) {
 		return fmt.Errorf("serializing hook write for %s: %w", targetAgent, assigneeLockErr)
 	}
 	defer assigneeUnlock()
-	if attachedMoleculeID == "" && (slingNoMerge || slingReviewOnly) {
+	if attachedMoleculeID == "" && slingFieldsRequireDurableWrite(fieldUpdates) {
 		storedDescription, err := storeFieldsInBeadFromTownRootWithDescription(townRoot, beadID, fieldUpdates)
 		if err != nil {
 			if newPolecatInfo != nil {
@@ -1114,6 +1121,10 @@ func runSling(cmd *cobra.Command, args []string) (retErr error) {
 	if storeErr != nil {
 		if delayedDogInfo != nil && attachedMoleculeID != "" {
 			return fmt.Errorf("storing dog formula attachment metadata: %w", storeErr)
+		}
+		if slingFieldsRequireDurableWrite(fieldUpdates) {
+			rollbackSpawnedPolecat("Durable sling metadata failed")
+			return fmt.Errorf("storing sling metadata: %w", storeErr)
 		}
 		// Warn but don't fail - polecat will still complete work
 		fmt.Printf("%s Could not store fields in bead: %v\n", style.Dim.Render("Warning:"), storeErr)

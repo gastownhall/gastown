@@ -432,6 +432,19 @@ func doneSourceCloseSkipReason(bd *beads.Beads, issueID string, issue *beads.Iss
 	return doneSourceCloseSkipReasonForHead(bd, issueID, issue, currentHead)
 }
 
+func doneSkipPushForLocalStrategy(convoyInfo *ConvoyInfo, sourceIssue *beads.Issue) bool {
+	if convoyInfo != nil && beads.IsLocalMergeStrategy(convoyInfo.MergeStrategy) {
+		return true
+	}
+	if sourceIssue == nil {
+		return false
+	}
+	if beads.HasLocalMergeStrategy(beads.ParseAttachmentFields(sourceIssue)) {
+		return true
+	}
+	return beads.IssueTextImpliesLocalMerge(sourceIssue.Title + "\n" + sourceIssue.Description)
+}
+
 func doneDirectMergeSkipReason(bd *beads.Beads, issueID string, issue *beads.Issue, targetBranch string) string {
 	if strings.TrimSpace(issueID) == "" {
 		return "source issue is required for direct merge"
@@ -1193,8 +1206,10 @@ func runDone(cmd *cobra.Command, args []string) (retErr error) {
 			convoyInfo = getConvoyInfoForIssue(issueID)
 		}
 
-		// Handle "local" strategy: skip push and MR entirely
-		if convoyInfo != nil && convoyInfo.MergeStrategy == "local" {
+		// Handle "local" strategy: skip push and MR entirely.
+		// Check the current convoy and the issue itself so a re-dispatch without
+		// --merge local cannot push a branch that must stay local.
+		if doneSkipPushForLocalStrategy(convoyInfo, sourceIssueForNoMerge) {
 			fmt.Printf("%s Local merge strategy: skipping push and merge queue\n", style.Bold.Render("→"))
 			fmt.Printf("  Branch: %s\n", branch)
 			if issueID != "" {
@@ -1287,14 +1302,6 @@ func runDone(cmd *cobra.Command, args []string) (retErr error) {
 			fmt.Fprintf(os.Stderr, "  MR beads written here will be invisible to the Refinery — run 'gt polecat repair' to fix\n")
 		}
 		bd := beads.NewWithBeadsDir(cwd, resolvedBeads)
-		if attachmentFields := beads.ParseAttachmentFields(sourceIssueForNoMerge); attachmentFields != nil && strings.EqualFold(strings.TrimSpace(attachmentFields.MergeStrategy), "local") {
-			fmt.Printf("%s Local merge strategy: skipping push and merge queue\n", style.Bold.Render("→"))
-			fmt.Printf("  Branch: %s\n", branch)
-			fmt.Printf("  Issue: %s\n", issueID)
-			fmt.Println()
-			fmt.Printf("%s\n", style.Dim.Render("Work stays on local feature branch."))
-			goto notifyWitness
-		}
 
 		// Fallback: check if issue belongs to a direct-merge convoy that the
 		// primary check missed — e.g., issues dispatched before the attachment-field
@@ -2245,6 +2252,77 @@ func clearDoneCheckpoints(bd *beads.Beads, agentBeadID string) {
 // BUG FIX (hq-3xaxy): This function must be resilient to working directory deletion.
 // If the polecat's worktree is deleted before gt done finishes, we use env vars as fallback.
 // All errors are warnings, not failures - gt done must complete even if bead ops fail.
+func isFormulaCompletionBead(id string, issue *beads.Issue) bool {
+	return strings.Contains(id, "-wfs-") || issue != nil && beads.HasLabel(issue, formulaDispatchLabel)
+}
+
+func shouldCloseHookedWorkOnDone(exitType, hookedBeadID, beadsPath string, bd *beads.Beads) bool {
+	if hookedBeadID == "" {
+		return false
+	}
+	if exitType != ExitDeferred {
+		return true
+	}
+	if isFormulaCompletionBead(hookedBeadID, nil) {
+		return true
+	}
+	hookBd, _, _ := routedIssueBeads(beadsPath, hookedBeadID)
+	if hookBd == nil {
+		hookBd = bd
+	}
+	hookedBead, err := hookBd.Show(hookedBeadID)
+	if err != nil {
+		style.PrintWarning("could not classify deferred work %s before completion: %v", hookedBeadID, err)
+		return false
+	}
+	return isFormulaCompletionBead(hookedBeadID, hookedBead)
+}
+
+func closeHookedWorkOnDone(hookBd *beads.Beads, hookedBeadID, townRoot, rig string) error {
+	hookedBead, err := hookBd.Show(hookedBeadID)
+	if err != nil || beads.IssueStatus(hookedBead.Status).IsTerminal() {
+		return nil
+	}
+
+	if beads.HasLabel(hookedBead, "gt:rig") {
+		fmt.Fprintf(os.Stderr, "Note: hooked bead %s is a rig identity bead (gt:rig) — skipping close\n", hookedBeadID)
+		return nil
+	}
+
+	if skipReason, fatal := doneSourceCloseSkipReason(hookBd, hookedBeadID, hookedBead); skipReason != "" {
+		style.PrintWarning("%s", skipReason)
+		fmt.Fprintf(os.Stderr, "  The bead will remain open for witness/mayor review.\n")
+		notifyDoneCloseSkipped(townRoot, rig, detectSender(), hookedBeadID, skipReason)
+		if fatal {
+			return fmt.Errorf("cannot complete hooked work: %s", skipReason)
+		}
+		return nil
+	}
+
+	attachment := beads.ParseAttachmentFields(hookedBead)
+	if attachment != nil && attachment.AttachedMolecule != "" {
+		if n := closeDescendants(hookBd, attachment.AttachedMolecule); n > 0 {
+			fmt.Fprintf(os.Stderr, "Closed %d molecule step(s) for %s\n", n, attachment.AttachedMolecule)
+		}
+		if closeErr := hookBd.ForceCloseWithReason("done", attachment.AttachedMolecule); closeErr != nil {
+			if !errors.Is(closeErr, beads.ErrNotFound) {
+				fmt.Fprintf(os.Stderr, "Warning: couldn't close attached molecule %s: %v\n", attachment.AttachedMolecule, closeErr)
+				return nil
+			}
+		}
+	}
+
+	if unchecked := beads.HasUncheckedCriteria(hookedBead); unchecked > 0 {
+		style.PrintWarning("hooked bead %s has %d unchecked acceptance criteria — skipping close", hookedBeadID, unchecked)
+		fmt.Fprintf(os.Stderr, "  The bead will remain open for witness/mayor review.\n")
+		return nil
+	}
+	if err := hookBd.Close(hookedBeadID); err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: couldn't close hooked bead %s: %v\n", hookedBeadID, err)
+	}
+	return nil
+}
+
 func updateAgentStateOnDone(cwd, townRoot, exitType, issueID string) error {
 	// Get role context - try multiple sources for resilience
 	roleInfo, err := GetRoleWithContext(cwd, townRoot)
@@ -2316,87 +2394,19 @@ func updateAgentStateOnDone(cwd, townRoot, exitType, issueID string) error {
 		}
 	}
 
-	// Workflow step beads (*-wfs-*) are ephemeral formula steps managed by the workflow
-	// engine. For these, DEFERRED means "step complete, no code commits" not "work
-	// paused for resumption". Close them on DEFERRED so the convoy can advance.
-	isWorkflowStep := strings.Contains(hookedBeadID, "-wfs-")
-
-	if hookedBeadID != "" && (exitType != ExitDeferred || isWorkflowStep) {
-		// BUG FIX (gt-pftz): Close hooked bead unless already terminal (closed/tombstone).
-		// Previously checked hookedBead.Status == StatusHooked, but polecats update
-		// their work bead to in_progress during work. The exact-match check caused
-		// gt done to skip closing the bead, leaving it as unassigned open work after
-		// the hook was cleared — triggering infinite dispatch loops.
-		//
-		// DEFERRED exits preserve the bead: work is paused, not done. The bead
-		// stays open/in_progress so it can be resumed on the next session.
-		// Exception: workflow step beads (*-wfs-*) are always closed — see above.
+	// Workflow step beads (*-wfs-*) and standalone formula dispatch beads are
+	// formula-engine work. For these, DEFERRED means "formula complete, no code
+	// commits" rather than "work paused for resumption". Close them on DEFERRED.
+	if shouldCloseHookedWorkOnDone(exitType, hookedBeadID, beadsPath, bd) {
 		hookBd, _, _ := routedIssueBeads(beadsPath, hookedBeadID)
 		if hookBd == nil {
 			hookBd = bd
 		}
-		if hookedBead, err := hookBd.Show(hookedBeadID); err == nil && !beads.IssueStatus(hookedBead.Status).IsTerminal() {
-			// Guard: never close a rig identity bead. Polecats dispatched with the
-			// rig bead as their hook (via mol-polecat-work) must not close permanent
-			// infrastructure. Skip close and fall through to idle state update.
-			if beads.HasLabel(hookedBead, "gt:rig") {
-				fmt.Fprintf(os.Stderr, "Note: hooked bead %s is a rig identity bead (gt:rig) — skipping close\n", hookedBeadID)
-				goto doneStateUpdate
-			}
-
-			if skipReason, fatal := doneSourceCloseSkipReason(hookBd, hookedBeadID, hookedBead); skipReason != "" {
-				style.PrintWarning("%s", skipReason)
-				fmt.Fprintf(os.Stderr, "  The bead will remain open for witness/mayor review.\n")
-				notifyDoneCloseSkipped(townRoot, ctx.Rig, detectSender(), hookedBeadID, skipReason)
-				if fatal {
-					return fmt.Errorf("cannot complete hooked work: %s", skipReason)
-				}
-				goto doneStateUpdate
-			}
-
-			// BUG FIX: Close attached molecule (wisp) BEFORE closing hooked bead.
-			// When using formula-on-bead (gt sling formula --on bead), the base bead
-			// has attached_molecule pointing to the wisp. Without this fix, gt done
-			// only closed the hooked bead, leaving the wisp orphaned.
-			// Order matters: wisp closes -> unblocks base bead -> base bead closes.
-			attachment := beads.ParseAttachmentFields(hookedBead)
-			if attachment != nil && attachment.AttachedMolecule != "" {
-				// Close molecule step descendants before closing the wisp root.
-				// bd close doesn't cascade — without this, open/in_progress steps
-				// from the molecule stay stuck forever after gt done completes.
-				// Order: step children -> wisp root -> base bead.
-				if n := closeDescendants(hookBd, attachment.AttachedMolecule); n > 0 {
-					fmt.Fprintf(os.Stderr, "Closed %d molecule step(s) for %s\n", n, attachment.AttachedMolecule)
-				}
-
-				// Close the wisp root with --force and audit reason.
-				// ForceCloseWithReason handles any status (hooked, open, in_progress)
-				// and records the reason + session for attribution.
-				// Same pattern as gt mol burn/squash (#1879).
-				if closeErr := hookBd.ForceCloseWithReason("done", attachment.AttachedMolecule); closeErr != nil {
-					if !errors.Is(closeErr, beads.ErrNotFound) {
-						fmt.Fprintf(os.Stderr, "Warning: couldn't close attached molecule %s: %v\n", attachment.AttachedMolecule, closeErr)
-						// Don't try to close hookedBeadID - it may still be blocked.
-						// But DO clear hooks and update agent state (goto doneStateUpdate)
-						// so the polecat isn't stuck in 'working' state (za-o9e).
-						goto doneStateUpdate
-					}
-					// Not found = already burned/deleted by another path, continue
-				}
-			}
-
-			// Acceptance criteria gate: skip close if criteria are unchecked.
-			if unchecked := beads.HasUncheckedCriteria(hookedBead); unchecked > 0 {
-				style.PrintWarning("hooked bead %s has %d unchecked acceptance criteria — skipping close", hookedBeadID, unchecked)
-				fmt.Fprintf(os.Stderr, "  The bead will remain open for witness/mayor review.\n")
-			} else if err := hookBd.Close(hookedBeadID); err != nil {
-				// Non-fatal: warn but continue
-				fmt.Fprintf(os.Stderr, "Warning: couldn't close hooked bead %s: %v\n", hookedBeadID, err)
-			}
+		if err := closeHookedWorkOnDone(hookBd, hookedBeadID, townRoot, ctx.Rig); err != nil {
+			return err
 		}
 	}
 
-doneStateUpdate:
 	// Clear hook_bead on the agent bead (gt-qbh). The hq-l6mm5 refactor made
 	// SetHookBead/ClearHookBead no-ops, but the witness still reads the
 	// hook_bead field from the agent bead snapshot. If the hooked bead is a

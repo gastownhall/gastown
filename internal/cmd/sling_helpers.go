@@ -599,6 +599,66 @@ func buildSlingFieldUpdates(
 	return updates
 }
 
+func resolveBeadMergeStrategy(cliMerge string, info *beadInfo) string {
+	stored, text := "", ""
+	if info != nil {
+		text = info.Title + "\n" + info.Description
+		if fields := beads.ParseAttachmentFields(&beads.Issue{Description: info.Description}); fields != nil {
+			stored = fields.MergeStrategy
+		}
+	}
+	return beads.ResolveMergeStrategy(cliMerge, stored, text)
+}
+
+func slingFieldsRequireDurableWrite(updates beadFieldUpdates) bool {
+	return updates.NoMerge || updates.ReviewOnly || beads.IsLocalMergeStrategy(updates.MergeStrategy)
+}
+
+func newSlingDispatchFieldUpdates(actor string, params SlingParams, vars []string, formulaVars, convoyID, attachedMoleculeID string) beadFieldUpdates {
+	attachedFormula := ""
+	if params.FormulaName != "" && attachedMoleculeID != "" {
+		attachedFormula = params.FormulaName
+	}
+	updates := buildSlingFieldUpdates(
+		actor,
+		params.Args,
+		vars,
+		attachedMoleculeID,
+		attachedFormula,
+		params.NoMerge,
+		params.ReviewOnly,
+		params.Mode,
+		formulaVars,
+		convoyID,
+		params.Merge,
+		params.Owned,
+	)
+	if params.FormulaName != "" && attachedMoleculeID == "" {
+		updates.ClearAttachment = true
+		updates.Vars = nil
+		updates.FormulaVars = ""
+	}
+	return updates
+}
+
+func createSlingAutoConvoy(params SlingParams, info *beadInfo) string {
+	if params.NoConvoy {
+		return ""
+	}
+	existingConvoy := isTrackedByConvoy(params.BeadID)
+	if existingConvoy != "" {
+		fmt.Printf("  %s Already tracked by convoy %s\n", style.Dim.Render("○"), existingConvoy)
+		return ""
+	}
+	convoyID, err := createAutoConvoy(params.BeadID, info.Title, params.Owned, params.Merge, params.BaseBranch)
+	if err != nil {
+		fmt.Printf("  %s Could not create auto-convoy: %v\n", style.Dim.Render("Warning:"), err)
+		return ""
+	}
+	fmt.Printf("  %s Created convoy %s\n", style.Bold.Render("→"), convoyID)
+	return convoyID
+}
+
 // storeFieldsInBead performs a single read-modify-write to update all attachment fields
 // in a bead's description atomically. This replaces the sequential storeDispatcherInBead,
 // storeArgsInBead, storeAttachedMoleculeInBead, and storeNoMergeInBead calls that each
