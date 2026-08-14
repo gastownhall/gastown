@@ -18,6 +18,7 @@ func TestFormatParseSlingContextRoundTrip(t *testing.T) {
 		Merge:            "direct",
 		Convoy:           "hq-cv-test",
 		BaseBranch:       "develop",
+		ResumeBranch:     "feature/resume-me",
 		NoMerge:          true,
 		ReviewOnly:       true,
 		Account:          "acme",
@@ -65,6 +66,9 @@ func TestFormatParseSlingContextRoundTrip(t *testing.T) {
 	}
 	if parsed.BaseBranch != original.BaseBranch {
 		t.Errorf("BaseBranch: got %q, want %q", parsed.BaseBranch, original.BaseBranch)
+	}
+	if parsed.ResumeBranch != original.ResumeBranch {
+		t.Errorf("ResumeBranch: got %q, want %q", parsed.ResumeBranch, original.ResumeBranch)
 	}
 	if parsed.NoMerge != original.NoMerge {
 		t.Errorf("NoMerge: got %v, want %v", parsed.NoMerge, original.NoMerge)

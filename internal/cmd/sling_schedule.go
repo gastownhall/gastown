@@ -214,6 +214,10 @@ func scheduleBead(beadID, rigName string, opts ScheduleOptions) error {
 			}
 		} else {
 			fmt.Printf("%s Already tracked by convoy %s\n", style.Dim.Render("○"), existingConvoy)
+			fields.Convoy = existingConvoy
+			if updateErr := rigBeads.UpdateSlingContextFields(ctxBead.ID, fields); updateErr != nil {
+				fmt.Printf("%s Could not update context with existing convoy: %v\n", style.Dim.Render("Warning:"), updateErr)
+			}
 		}
 	}
 

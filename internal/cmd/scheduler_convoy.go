@@ -149,8 +149,8 @@ func runConvoyScheduleByID(convoyID string, opts convoyScheduleOpts) error {
 }
 
 // runConvoySlingByID immediately dispatches all open tracked issues of a convoy.
-// Used when max_polecats=-1 (direct dispatch mode). Each tracked issue gets its
-// own polecat via executeSling(). Sets NoConvoy=true since issues are already tracked.
+// Used when max_polecats=-1 (direct dispatch mode). Each tracked issue goes
+// through the deep Slinging lifecycle. Reuses this convoy identity.
 func runConvoySlingByID(convoyID string, opts convoyScheduleOpts) error {
 	townRoot, err := workspace.FindFromCwdOrError()
 	if err != nil {
@@ -239,12 +239,13 @@ func runConvoySlingByID(convoyID string, opts convoyScheduleOpts) error {
 		}
 
 		fmt.Printf("\n[%d/%d] Dispatching %s → %s...\n", i+1, len(candidates), c.ID, c.RigName)
-		_, err := executeSling(SlingParams{
+		_, err := executeSlingIntent(SlingParams{
 			BeadID:        c.ID,
 			RigName:       c.RigName,
 			FormulaName:   formula,
 			Force:         opts.Force,
 			HookRawBead:   opts.HookRawBead,
+			Convoy:        convoyID,
 			NoConvoy:      true, // Already tracked by this convoy
 			NoBoot:        opts.NoBoot,
 			CallerContext: "convoy-sling",

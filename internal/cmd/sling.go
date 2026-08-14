@@ -611,6 +611,18 @@ func runSling(cmd *cobra.Command, args []string) (retErr error) {
 		}
 	}
 
+	// Deep Slinging module: rig-targeted bead dispatch (raw and Formula).
+	// Dogs, mayor, crew, and self-sling stay on the command path below.
+	if !slingDryRun && len(args) == 2 {
+		if rigName, isRig := IsRigName(args[1]); isRig {
+			formula := formulaName
+			if formula == "" {
+				formula = resolveFormula(slingFormula, slingHookRawBead, townRoot, rigName)
+			}
+			return runRigBeadSling(ctx, beadID, rigName, formula, townRoot, townBeadsDir)
+		}
+	}
+
 	// Serialize assignment writes per bead to prevent concurrent sling races from
 	// producing conflicting assignee/metadata updates.
 	releaseSlingLock, err := tryAcquireSlingBeadLock(townRoot, beadID)
@@ -705,12 +717,9 @@ func runSling(cmd *cobra.Command, args []string) (retErr error) {
 		}
 	}
 
-	// TODO(scheduler-unify): Migrate single-sling rig dispatch to use executeSling().
-	// The inline logic below duplicates executeSling's 12-step flow. Batch sling
-	// and scheduler dispatch already use the unified path. Single-sling is deferred
-	// because it handles non-rig targets (dogs, mayor, crew, self-sling, nudge)
-	// that executeSling does not cover. The rig-target case could be factored out
-	// to use executeSling, limiting this to non-rig targets only.
+	// TODO(scheduler-unify): Non-rig targets (dogs, mayor, crew, self-sling)
+	// remain on this command path. Rig-targeted bead slings go through the
+	// deep Slinging module (runRigBeadSling) before this point.
 	//
 	// Resolve target agent using shared dispatch logic.
 	// Note: args[1] == args[len(args)-1] here because batch mode (len(args) > 2

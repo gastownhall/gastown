@@ -148,7 +148,7 @@ A comprehensive catalog of all cleanup-related commands in the gastown/beads eco
 |----------|-------|-------------|
 | `cleanupOrphanedProcesses()` | `polecat.go` | Auto-runs after nuke/stale cleanup |
 | `retirePolecatSessionAfterDone()` | `done.go` | Self-terminates tmux session with PID exclusion after durable handoff |
-| `rollbackSlingArtifacts()` | `sling.go` | Cleans up partial sling failures |
+| `compensateSlingAttempt()` | `sling_lifecycle.go` | Lifecycle-owned compensation: removes artifacts created by a failed Sling and restores prior Bead fields |
 | `cleanStaleHookedBeads()` | `unsling.go` | Repairs beads stuck in "hooked" state |
 | `gt signal stop` | `signal_stop.go` | Clears stop-state temp files at turn boundaries |
 | `make install` | `Makefile` | Removes stale `~/go/bin/gt` and `~/bin/gt` binaries |

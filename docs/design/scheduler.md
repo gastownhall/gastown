@@ -131,6 +131,7 @@ Sling context beads eliminate all of this:
 | `merge` | string | Merge strategy: `direct`, `mr`, `local` |
 | `convoy` | string | Convoy bead ID (set after auto-convoy creation) |
 | `base_branch` | string | Override base branch for polecat worktree |
+| `resume_branch` | string | Resume an existing branch instead of creating a fresh one |
 | `no_merge` | bool | Skip merge queue on completion |
 | `account` | string | Claude Code account handle |
 | `agent` | string | Agent/runtime override |
@@ -274,7 +275,7 @@ DispatchCycle.Run()
     |    +- Returns DispatchPlan{ToDispatch, Skipped, Reason}
     |
     +- For each planned bead:
-         +- Execute: ReconstructFromContext(fields) → executeSling(params)
+         +- Execute: sling.FromContext(fields) → Lifecycle.Execute(intent)
          +- OnSuccess: CloseSlingContext(contextID, "dispatched")
          +- OnFailure: increment dispatch_failures, update context, maybe close
          +- sleep(SpawnDelay)
@@ -282,10 +283,9 @@ DispatchCycle.Run()
 
 ### dispatchSingleBead
 
-Dramatically simplified — context fields are already parsed:
-
-1. `ReconstructFromContext(b.Context)` → `DispatchParams` with `BeadID = b.WorkBeadID`
-2. Call `executeSling(params)` — that's it
+The scheduler adapter reconstructs `sling.Intent` from context fields and invokes
+the deep Slinging lifecycle. It does not re-project convoy, merge, ownership, or
+formula policy. Recorded Convoy identity is reused; a second Convoy is not created.
 
 Post-dispatch cleanup is handled by callbacks:
 - **OnSuccess**: `CloseSlingContext(b.ID, "dispatched")`
@@ -403,7 +403,7 @@ Convoys and the scheduler are complementary but distinct mechanisms. Convoys tra
 | **Direct dispatch** | `gt sling <convoy-id>` (max_polecats=-1) | None (fires immediately) | Default mode — all issues dispatch at once |
 | **Deferred dispatch** | `gt sling <convoy-id>` (max_polecats>0) | Yes (daemon heartbeat, max_polecats, batch_size) | Capacity-controlled — batched with back-pressure |
 
-**Direct dispatch** (max_polecats=-1): `gt sling <convoy-id>` calls `runConvoySlingByID()` which dispatches all open tracked issues immediately via `executeSling()`. Each issue's rig is auto-resolved from its bead ID prefix. No capacity control — all issues dispatch at once.
+**Direct dispatch** (max_polecats=-1): `gt sling <convoy-id>` calls `runConvoySlingByID()` which dispatches all open tracked issues immediately through the deep Slinging lifecycle. Each issue's rig is auto-resolved from its bead ID prefix. No capacity control — all issues dispatch at once.
 
 **Deferred dispatch** (max_polecats>0): `gt sling <convoy-id>` calls `runConvoyScheduleByID()` which schedules all open tracked issues (creating sling context beads). The daemon dispatches incrementally via `gt scheduler run`, respecting `max_polecats` and `batch_size`. Use this for large batches where simultaneous dispatch would exhaust resources.
 
@@ -433,21 +433,40 @@ Convoys and the scheduler are complementary but distinct mechanisms. Convoys tra
 
 ---
 
+## Deep Slinging module
+
+Direct `gt sling <bead> <rig>` and deferred scheduler dispatch are **two adapters**
+over one lifecycle (`internal/sling`).
+
+| Adapter | Converts | Invokes |
+|---------|----------|---------|
+| Direct command (`runRigBeadSling`) | CLI flags → `sling.Intent` | `Lifecycle.Execute` |
+| Scheduler (`dispatchSingleBead`) | Sling context JSON → `sling.Intent` | `Lifecycle.Execute` |
+
+The lifecycle owns validation, Convoy create/reuse, Polecat spawn, Formula and
+Molecule work, Hook placement, Bead attachment fields, and compensation on fatal
+failure after durable artifacts exist. Adapters own argument conversion,
+invocation, and presentation only.
+
+---
+
 ## Code Layout
 
 | Path | Purpose |
 |------|---------|
+| `internal/sling/` | Deep Slinging module: `Intent`, `Lifecycle`, `FromContext` |
+| `internal/cmd/sling_lifecycle.go` | Production `Lifecycle` implementation and command adapter |
 | `internal/scheduler/capacity/config.go` | `SchedulerConfig` type, defaults, `IsDeferred()` |
-| `internal/scheduler/capacity/pipeline.go` | `PendingBead`, `SlingContextFields`, `PlanDispatch()`, `ReconstructFromContext()` |
+| `internal/scheduler/capacity/pipeline.go` | `PendingBead`, `SlingContextFields`, `PlanDispatch()` |
 | `internal/scheduler/capacity/dispatch.go` | `DispatchCycle` type — generic dispatch orchestrator |
 | `internal/scheduler/capacity/state.go` | `SchedulerState` persistence |
 | `internal/beads/beads_sling_context.go` | Sling context CRUD (create, find, list, close, update) |
-| `internal/cmd/sling.go` | CLI entry, config-driven routing |
+| `internal/cmd/sling.go` | CLI entry, config-driven routing, non-rig targets |
 | `internal/cmd/sling_schedule.go` | `scheduleBead()`, `shouldDeferDispatch()`, `isScheduled()` |
 | `internal/cmd/scheduler.go` | `gt scheduler` command tree |
 | `internal/cmd/scheduler_epic.go` | Epic schedule/sling handlers |
 | `internal/cmd/scheduler_convoy.go` | Convoy schedule/sling handlers |
-| `internal/cmd/capacity_dispatch.go` | `dispatchScheduledWork()`, dispatch callback wiring |
+| `internal/cmd/capacity_dispatch.go` | `dispatchScheduledWork()`, deferred adapter |
 | `internal/daemon/daemon.go` | Heartbeat integration (`gt scheduler run`) |
 
 ---

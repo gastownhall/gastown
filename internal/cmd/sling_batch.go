@@ -171,7 +171,7 @@ func runBatchSling(beadIDs []string, rigName string, townBeadsDir string) error 
 			BeadsDir:         townBeadsDir,
 		}
 
-		result, err := executeSling(params)
+		result, err := executeSlingIntent(params)
 		if err != nil {
 			errMsg := ""
 			if result != nil {

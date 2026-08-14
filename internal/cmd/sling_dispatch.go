@@ -13,9 +13,8 @@ import (
 )
 
 // SlingParams captures everything needed to sling one bead to a rig.
-// This is the serialization boundary for queue dispatch: at enqueue time,
-// these fields are stored as queue metadata; at dispatch time, they are
-// reconstructed into a SlingParams and passed to executeSling().
+// Adapters convert CLI flags or durable sling.Intent into this type for the
+// lifecycle body. Prefer sling.Intent at new call sites.
 type SlingParams struct {
 	// What to sling
 	BeadID      string // Base bead
@@ -30,6 +29,7 @@ type SlingParams struct {
 	ResumeBranch string   // --branch / --pr (resume existing PR branch, gh#3602)
 	Account      string   // --account
 	Agent        string   // --agent
+	Convoy       string   // recorded Convoy identity to reuse (deferred dispatch)
 	NoConvoy     bool     // --no-convoy
 	Owned        bool     // --owned
 	NoMerge      bool     // --no-merge
@@ -52,6 +52,7 @@ type SlingResult struct {
 	BeadID           string
 	PolecatName      string
 	SpawnInfo        *SpawnedPolecatInfo
+	ConvoyID         string
 	Success          bool
 	ErrMsg           string
 	AttachedMolecule string
@@ -84,6 +85,10 @@ type SlingResult struct {
 //  10. Store fields in bead (dispatcher, args, attached_molecule, no_merge)
 //  11. Create Dolt branch
 //  12. Start polecat session
+//
+// executeSling is the deep Slinging lifecycle body. Adapters must invoke it
+// through defaultSlingLifecycle / executeDeepSling / executeSlingIntent so
+// Convoy reuse, Formula, Hook, attachment, and compensation stay in one place.
 func executeSling(params SlingParams) (*SlingResult, error) {
 	townRoot := params.TownRoot
 	if townRoot == "" {
@@ -260,15 +265,24 @@ func executeSling(params SlingParams) (*SlingResult, error) {
 	targetAgent := spawnInfo.AgentID()
 	hookWorkDir := spawnInfo.ClonePath
 
-	// 4. Auto-convoy (if !NoConvoy)
-	convoyID := createSlingAutoConvoy(params, info)
+	// 4. Convoy: reuse a recorded identity, reuse an existing tracker, or create.
+	convoyID, createdConvoy := resolveSlingConvoy(params, info)
+	result.ConvoyID = convoyID
+	rollbackConvoyID := ""
+	if createdConvoy {
+		rollbackConvoyID = convoyID
+	}
 	rollbackSpawnedPolecat := func(rollbackBeadID, reason string) {
-		fmt.Printf("  %s %s, rolling back spawned polecat %s...\n", style.Warning.Render("⚠"), reason, spawnInfo.PolecatName)
-		rollbackSlingArtifactsFn(spawnInfo, rollbackBeadID, hookWorkDir, convoyID)
-		restoreRollbackRawWorkflowFieldsFromCurrent(rollbackBeadID, townRoot, hookWorkDir, info)
-		if params.Force && info.Status == "pinned" {
-			restorePinnedBead(townRoot, params.BeadID, info.Assignee)
-		}
+		compensateSlingAttempt(slingCompensation{
+			reason:        reason,
+			spawnInfo:     spawnInfo,
+			beadID:        rollbackBeadID,
+			hookWorkDir:   hookWorkDir,
+			createdConvoy: rollbackConvoyID,
+			townRoot:      townRoot,
+			originalInfo:  info,
+			force:         params.Force,
+		})
 	}
 
 	// 5. Cook formula (unless SkipCook)
@@ -342,17 +356,16 @@ func executeSling(params SlingParams) (*SlingResult, error) {
 
 	// 7. Hook bead with retry
 	// Acquire per-assignee lock to serialize concurrent hook writes (issue #3114).
-	assigneeUnlock, assigneeLockErr := tryAcquireSlingAssigneeLock(townRoot, targetAgent)
+	assigneeUnlock, assigneeLockErr := tryAcquireSlingAssigneeLockFn(townRoot, targetAgent)
 	if assigneeLockErr != nil {
-		cleanupSpawnedPolecat(spawnInfo, params.RigName, convoyID)
+		rollbackSpawnedPolecat(params.BeadID, "Assignee lock failed")
 		result.ErrMsg = "assignee lock failed"
 		return result, fmt.Errorf("serializing hook write for %s: %w", targetAgent, assigneeLockErr)
 	}
 	defer assigneeUnlock()
 	if attachedMoleculeID == "" && slingFieldsRequireDurableWrite(fieldUpdates) {
 		if err := storeFieldsInBeadFromTownRoot(townRoot, beadToHook, fieldUpdates); err != nil {
-			cleanupSpawnedPolecat(spawnInfo, params.RigName, convoyID)
-			restoreRollbackRawWorkflowFieldsFromCurrent(beadToHook, townRoot, hookWorkDir, info)
+			rollbackSpawnedPolecat(beadToHook, "Raw sling metadata failed")
 			result.ErrMsg = "raw sling metadata failed"
 			return result, fmt.Errorf("storing raw sling metadata before hook: %w", err)
 		}

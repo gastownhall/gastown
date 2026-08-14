@@ -642,21 +642,34 @@ func newSlingDispatchFieldUpdates(actor string, params SlingParams, vars []strin
 }
 
 func createSlingAutoConvoy(params SlingParams, info *beadInfo) string {
+	id, _ := resolveSlingConvoy(params, info)
+	return id
+}
+
+// resolveSlingConvoy returns the Convoy identity for this attempt and whether
+// this attempt created it. Recorded and already-tracking Convoys are reused
+// so deferred dispatch cannot spawn a duplicate. Compensation must only close
+// a Convoy this attempt created.
+func resolveSlingConvoy(params SlingParams, info *beadInfo) (id string, created bool) {
+	if params.Convoy != "" {
+		fmt.Printf("  %s Reusing convoy %s\n", style.Dim.Render("○"), params.Convoy)
+		return params.Convoy, false
+	}
 	if params.NoConvoy {
-		return ""
+		return "", false
 	}
 	existingConvoy := isTrackedByConvoy(params.BeadID)
 	if existingConvoy != "" {
 		fmt.Printf("  %s Already tracked by convoy %s\n", style.Dim.Render("○"), existingConvoy)
-		return ""
+		return existingConvoy, false
 	}
 	convoyID, err := createAutoConvoy(params.BeadID, info.Title, params.Owned, params.Merge, params.BaseBranch)
 	if err != nil {
 		fmt.Printf("  %s Could not create auto-convoy: %v\n", style.Dim.Render("Warning:"), err)
-		return ""
+		return "", false
 	}
 	fmt.Printf("  %s Created convoy %s\n", style.Bold.Render("→"), convoyID)
-	return convoyID
+	return convoyID, true
 }
 
 // storeFieldsInBead performs a single read-modify-write to update all attachment fields
