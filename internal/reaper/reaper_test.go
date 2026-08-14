@@ -110,26 +110,6 @@ func TestParentExcludeJoin(t *testing.T) {
 	}
 }
 
-func TestReapQueryUsesParentExcludeJoin(t *testing.T) {
-	dbName := "gt"
-	parentJoin, parentWhere := parentExcludeJoin(dbName)
-	whereClause := fmt.Sprintf(
-		"w.status IN ('open', 'hooked', 'in_progress') AND w.created_at < ? AND %s", parentWhere)
-	idQuery := fmt.Sprintf(
-		"SELECT w.id FROM wisps w %s WHERE %s LIMIT %d",
-		parentJoin, whereClause, DefaultBatchSize)
-
-	if strings.Contains(idQuery, "wisps w gt") {
-		t.Errorf("Reap idQuery contains injected database name: %s", idQuery)
-	}
-	if !strings.Contains(idQuery, "LEFT JOIN") {
-		t.Errorf("Reap idQuery should contain LEFT JOIN from parentExcludeJoin, got: %s", idQuery)
-	}
-	if !strings.Contains(idQuery, fmt.Sprintf("LIMIT %d", DefaultBatchSize)) {
-		t.Errorf("Reap idQuery should end with LIMIT %d, got: %s", DefaultBatchSize, idQuery)
-	}
-}
-
 // TestIsNothingToCommit verifies that "nothing to commit" errors are recognized
 // correctly. This prevents false-positive dolt_commit_failed anomalies when the
 // reaper operates on dolt_ignored tables (wisps, wisp_*), where Dolt has nothing

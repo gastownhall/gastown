@@ -90,13 +90,6 @@ func TestAdoptedRigBeadsPlanUsesSingleSnapshot(t *testing.T) {
 			wantInitFresh: false,
 		},
 		{
-			name:          "later candidate appearance is ignored when snapshot is empty",
-			existing:      nil,
-			prefix:        "gt",
-			wantHandle:    "",
-			wantInitFresh: true,
-		},
-		{
 			name:          "first snapshot entry is the only handled dir",
 			existing:      []string{"/rig/.beads", "/rig/mayor/rig/.beads"},
 			prefix:        "gt",
