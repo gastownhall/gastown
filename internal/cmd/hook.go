@@ -416,7 +416,9 @@ func runHook(_ *cobra.Command, args []string) error {
 
 	// Update agent bead's hook_bead field (matches gt sling behavior)
 	// This ensures gt hook / gt mol status can find hooked work via the agent bead
-	updateAgentHookBead(agentID, beadID, workDir, townBeadsDir)
+	if err := updateAgentHookBead(agentID, beadID, workDir, townBeadsDir); err != nil {
+		fmt.Printf("%s Could not update agent hook: %v\n", style.Dim.Render("Warning:"), err)
+	}
 
 	if targetAgent != "" {
 		fmt.Printf("  Use 'gt hook show %s' to verify\n", targetAgent)

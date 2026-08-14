@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/steveyegge/gastown/internal/beads"
+	"github.com/steveyegge/gastown/internal/dog"
 )
 
 const (
@@ -64,6 +65,11 @@ func (d *Daemon) pourDogMolecule(formulaName string, vars map[string]string) *do
 		bdPath:   d.bdPath,
 		townRoot: d.config.TownRoot,
 		logger:   d.logger,
+	}
+
+	if err := dog.RequireDispatchAllowed(d.config.TownRoot); err != nil {
+		d.logger.Printf("dog_molecule: pour %s blocked by guardian: %v", formulaName, err)
+		return dm
 	}
 
 	// Build args: bd mol wisp <formula> --var k=v ...

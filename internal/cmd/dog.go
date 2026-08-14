@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -85,7 +86,9 @@ var dogRemoveCmd = &cobra.Command{
 	Long: `Remove one or more dogs from the kennel.
 
 Removes all worktrees and the dog directory.
-Use --force to remove even if dog is in working state.
+Source-backed bead or formula work cannot be removed while assigned.
+Recover or complete that work first; --force only overrides plugin work
+and live-session checks.
 
 Examples:
   gt dog remove alpha
@@ -144,8 +147,10 @@ var dogDoneCmd = &cobra.Command{
 	Long: `Mark a dog as done with its current work and return to idle state.
 
 Dogs should call this when they complete their work assignment.
-This clears the work field and sets state to idle, making the dog
-available for new work.
+Plugin work is cleared from dog state only. Source-backed bead or formula
+work also closes the authoritative hooked source before the dog becomes idle.
+The tmux session is killed only if the dog is still idle after a short delay,
+so a newer assignment is not terminated.
 
 Without a name argument, auto-detects the current dog from the working
 directory (must be run from within a dog's worktree).
@@ -164,6 +169,9 @@ var dogClearCmd = &cobra.Command{
 
 Use this when a dog is stuck in "working" state but its session has died.
 The Deacon uses this during patrol to clear dogs that have timed out.
+
+Plugin work can be cleared from dog state. Source-backed bead or formula
+work cannot; recover or re-sling the source first.
 
 By default, refuses to clear a dog if its tmux session still exists.
 Use --force to clear even if the session is alive.
@@ -403,14 +411,24 @@ func runDogRemove(cmd *cobra.Command, args []string) error {
 			continue
 		}
 
-		// Check if working
+		// Source-backed ownership must be recovered before removal even with
+		// --force; deleting the dog would strand its authoritative hook.
+		if d.State == dog.StateWorking && !dog.CanClearStateOnly(d.Work, d.WorkKind) {
+			removeErrors = append(removeErrors, fmt.Sprintf("%s: has source-backed work %s; recover or complete it before removal", name, d.Work))
+			continue
+		}
 		if d.State == dog.StateWorking && !dogForce {
 			removeErrors = append(removeErrors, fmt.Sprintf("%s: is working (use --force to remove anyway)", name))
 			continue
 		}
 
-		if err := mgr.Remove(name); err != nil {
+		removedMatch, err := mgr.RemoveIfSnapshotMatchesAfter(name, d.Work, d.WorkStartedAt, d.LastActive, nil)
+		if err != nil {
 			removeErrors = append(removeErrors, fmt.Sprintf("%s: %v", name, err))
+			continue
+		}
+		if !removedMatch {
+			removeErrors = append(removeErrors, fmt.Sprintf("%s: assignment changed during removal; retry", name))
 			continue
 		}
 
@@ -627,9 +645,19 @@ func runDogClear(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	// Clear work and return to idle
-	if err := mgr.ClearWork(name); err != nil {
+	// Source-backed work cannot be cleared independently: doing so would return
+	// the dog to the pool while its bead remains assigned to it.
+	if !dog.CanClearStateOnly(d.Work, d.WorkKind) {
+		return fmt.Errorf("dog %s has source-backed work %s; recover or re-sling the source before clearing the dog", name, d.Work)
+	}
+
+	// Clear only the state-only assignment observed above.
+	cleared, err := mgr.ClearWorkIfMatches(name, d.Work, d.WorkStartedAt)
+	if err != nil {
 		return fmt.Errorf("clearing work for dog %s: %w", name, err)
+	}
+	if !cleared {
+		return fmt.Errorf("dog %s assignment changed during clear; state preserved", name)
 	}
 
 	fmt.Printf("✓ Cleared dog %s (now idle)\n", name)
@@ -685,8 +713,16 @@ func runDogDone(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 
-	if err := mgr.ClearWork(name); err != nil {
-		return fmt.Errorf("clearing work for dog %s: %w", name, err)
+	if dog.CanClearStateOnly(d.Work, d.WorkKind) {
+		cleared, err := mgr.ClearWorkIfMatches(name, d.Work, d.WorkStartedAt)
+		if err != nil {
+			return fmt.Errorf("clearing work for dog %s: %w", name, err)
+		}
+		if !cleared {
+			return fmt.Errorf("dog %s assignment changed during completion; state preserved", name)
+		}
+	} else if err := completeSourceBackedDogWork(mgr, name, d); err != nil {
+		return err
 	}
 
 	fmt.Printf("✓ Dog %s returned to kennel (idle)\n", name)
@@ -699,26 +735,57 @@ func runDogDone(cmd *cobra.Command, args []string) error {
 	//
 	// We disable remain-on-exit first — otherwise kill-session leaves a
 	// dead pane that the deacon's health-check reports as an orphan.
+	scheduleCompletedDogSessionKill(mgr, name)
+	return nil
+}
+
+func completeSourceBackedDogWork(mgr *dog.Manager, name string, d *dog.Dog) error {
+	townRoot, err := workspace.FindFromCwd()
+	if err != nil {
+		return fmt.Errorf("finding town for dog completion: %w", err)
+	}
+	source, sourceDir, err := resolveDogAuthoritativeSource(townRoot, d)
+	if err != nil {
+		return err
+	}
+	unlock, err := tryAcquireSlingBeadLock(townRoot, source.ID)
+	if err != nil {
+		return fmt.Errorf("serializing dog completion: %w", err)
+	}
+	defer unlock()
+
+	var completeErr error
+	cleared, err := mgr.ClearWorkIfMatchesAfter(name, d.Work, d.WorkStartedAt, func() bool {
+		completeErr = closeDogAuthoritativeSource(sourceDir, d, source.ID)
+		return completeErr == nil
+	})
+	if completeErr != nil {
+		return completeErr
+	}
+	if err != nil {
+		return fmt.Errorf("clearing completed dog work: %w", err)
+	}
+	if !cleared {
+		return fmt.Errorf("dog %s assignment changed during completion; state preserved", name)
+	}
+	return nil
+}
+
+func scheduleCompletedDogSessionKill(mgr *dog.Manager, name string) {
 	sessionID := fmt.Sprintf("hq-dog-%s", name)
 	t := tmux.NewTmux()
 	_ = t.SetRemainOnExit(sessionID, false)
-	fmt.Printf("  Session %s will terminate in 3s\n", sessionID)
+	fmt.Printf("  Session %s will terminate in 3s if still idle\n", sessionID)
 
-	// Kill the tmux session after a short delay using a goroutine.
-	// Previous approach used bash -c "sleep 3 && tmux kill-session" which
-	// fails silently on Windows. The goroutine is cross-platform and uses
-	// the tmux package which handles the socket name automatically.
 	go func() {
 		time.Sleep(3 * time.Second)
-		if err := t.KillSession(sessionID); err != nil {
+		if err := dog.KillCompletedDogSession(mgr, name, sessionID, t.KillSession); err != nil {
 			fmt.Fprintf(os.Stderr, "warning: failed to kill session %s: %v\n", sessionID, err)
 		}
 	}()
 
 	// Wait for the goroutine to finish (the process will exit after kill).
 	time.Sleep(4 * time.Second)
-
-	return nil
 }
 
 func splitPathComponents(path string) []string {
@@ -1148,8 +1215,13 @@ func runDogDispatch(cmd *cobra.Command, args []string) error {
 
 	// Assign work FIRST (before sending mail) to prevent race condition
 	// If this fails, we haven't sent any mail yet
-	if err := mgr.AssignWork(targetDog.Name, workDesc); err != nil {
+	assignedState, err := mgr.AssignWorkIfIdleWithKind(targetDog.Name, workDesc, dog.WorkKindPlugin)
+	if err != nil {
 		return fmt.Errorf("assigning work to dog: %w", err)
+	}
+	clearPluginAssignment := func() error {
+		_, err := mgr.ClearWorkIfMatches(targetDog.Name, workDesc, assignedState.WorkStartedAt)
+		return err
 	}
 
 	// Create and send mail message with plugin instructions
@@ -1168,8 +1240,8 @@ func runDogDispatch(cmd *cobra.Command, args []string) error {
 	}
 
 	if err := router.Send(msg); err != nil {
-		// Rollback: clear work assignment since mail failed
-		if clearErr := mgr.ClearWork(targetDog.Name); clearErr != nil {
+		// Roll back only the assignment this dispatch created.
+		if clearErr := clearPluginAssignment(); clearErr != nil {
 			// Log rollback failure but return original error
 			if !dogDispatchJSON {
 				fmt.Printf("  Warning: rollback failed: %v\n", clearErr)
@@ -1192,7 +1264,7 @@ func runDogDispatch(cmd *cobra.Command, args []string) error {
 		// cannot read its mail, leaving it stuck in StateWorking (zombie).
 		// Clearing work returns it to idle so it can be re-dispatched.
 		// See: github.com/steveyegge/gastown/issues/2748
-		if clearErr := mgr.ClearWork(targetDog.Name); clearErr != nil {
+		if clearErr := clearPluginAssignment(); clearErr != nil {
 			warn := fmt.Sprintf("session start failed AND rollback failed for dog %s — dog stuck in StateWorking, run: gt dog health-check --auto-clear: %v", targetDog.Name, clearErr)
 			result.Warnings = append(result.Warnings, warn)
 			if !dogDispatchJSON {
@@ -1222,7 +1294,7 @@ func runDogDispatch(cmd *cobra.Command, args []string) error {
 			style.PrintWarning("%s", warn)
 		}
 		_ = dogEscalateBestEffort(warn)
-	} else if d.Work != "" {
+	} else if d.Work == workDesc && d.WorkKind == dog.WorkKindPlugin && d.WorkStartedAt.Equal(assignedState.WorkStartedAt) {
 		result.WorkConfirmed = true
 	} else {
 		warn := fmt.Sprintf("dog dispatch: work assignment cleared for %s between dispatch and verify — re-dispatch required", targetDog.Name)
@@ -1252,6 +1324,66 @@ func runDogDispatch(cmd *cobra.Command, args []string) error {
 	fmt.Printf("  Dog: %s\n", targetDog.Name)
 	fmt.Printf("  Work: %s\n", workDesc)
 
+	return nil
+}
+
+func resolveDogAuthoritativeSource(townRoot string, d *dog.Dog) (*beads.Issue, string, error) {
+	agentID := fmt.Sprintf("deacon/dogs/%s", d.Name)
+	rigsConfig, err := config.LoadRigsConfig(filepath.Join(townRoot, "mayor", "rigs.json"))
+	if err != nil {
+		return nil, "", fmt.Errorf("loading rigs for dog completion: %w", err)
+	}
+	roots := []string{filepath.Join(townRoot, ".beads")}
+	for rigName := range rigsConfig.Rigs {
+		rigDir := beads.GetRigDirForName(townRoot, rigName)
+		if rigDir == "" {
+			rigDir = filepath.Join(townRoot, rigName, "mayor", "rig")
+		}
+		roots = append(roots, rigDir)
+	}
+	for _, root := range roots {
+		work, err := listAssignedActiveWorkAcrossStatuses(beads.New(root), agentID)
+		if err != nil {
+			return nil, "", fmt.Errorf("querying dog source in %s: %w", root, err)
+		}
+		for _, issue := range work {
+			fields := beads.ParseAttachmentFields(issue)
+			formulaMatches := fields != nil && fields.AttachedFormula == d.Work && dogWorksOnHook(d, d.Work, issue)
+			if issue.ID == d.Work || formulaMatches {
+				return issue, root, nil
+			}
+		}
+	}
+	return nil, "", fmt.Errorf("authoritative source for dog %s is missing or no longer assigned", d.Name)
+}
+
+func closeDogAuthoritativeSource(sourceDir string, d *dog.Dog, issueID string) error {
+	agentID := fmt.Sprintf("deacon/dogs/%s", d.Name)
+	bd := beads.New(sourceDir)
+	issue, err := bd.Show(issueID)
+	if err != nil {
+		return fmt.Errorf("reading authoritative source %s: %w", issueID, err)
+	}
+	if issue == nil || issue.Assignee != agentID ||
+		(issue.Status != beads.StatusHooked && issue.Status != string(beads.StatusInProgress)) {
+		return fmt.Errorf("authoritative source %s changed before dog completion", issueID)
+	}
+	fields := beads.ParseAttachmentFields(issue)
+	if fields != nil && fields.AttachedMolecule != "" {
+		if _, err := forceCloseDescendants(bd, fields.AttachedMolecule); err != nil {
+			return fmt.Errorf("closing molecule steps for %s: %w", fields.AttachedMolecule, err)
+		}
+		if err := bd.ForceCloseWithReason("dog done", fields.AttachedMolecule); err != nil && !errors.Is(err, beads.ErrNotFound) {
+			return fmt.Errorf("closing attached molecule %s: %w", fields.AttachedMolecule, err)
+		}
+	} else if d.WorkKind == dog.WorkKindFormula {
+		if _, err := forceCloseDescendants(bd, issue.ID); err != nil {
+			return fmt.Errorf("closing formula steps for %s: %w", issue.ID, err)
+		}
+	}
+	if err := bd.ForceCloseWithReason("dog done", issue.ID); err != nil && !errors.Is(err, beads.ErrNotFound) {
+		return fmt.Errorf("closing authoritative source %s: %w", issue.ID, err)
+	}
 	return nil
 }
 
