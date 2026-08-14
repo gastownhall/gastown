@@ -5,7 +5,6 @@ import (
 	"path/filepath"
 	"runtime"
 	"strconv"
-	"syscall"
 	"testing"
 )
 
@@ -236,12 +235,12 @@ func TestRemoveACPPid_RemovesStalePid(t *testing.T) {
 		t.Fatalf("failed to create mayor dir: %v", err)
 	}
 
-	initialPid := syscall.Getpid() - 10000
-	if initialPid < 1 {
-		initialPid = 1
-	}
+	// Use a PID that cannot be live. Getpid()-10000 collapses to 1 when the
+	// test process PID is below 10000 (common on GitHub runners), and PID 1
+	// is always alive.
+	stalePid := 999999
 	pidPath := ACPPidFilePath(tmpDir)
-	if err := os.WriteFile(pidPath, []byte(strconv.Itoa(initialPid)), 0644); err != nil {
+	if err := os.WriteFile(pidPath, []byte(strconv.Itoa(stalePid)), 0644); err != nil {
 		t.Fatalf("failed to write stale PID file: %v", err)
 	}
 

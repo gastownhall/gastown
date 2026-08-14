@@ -1,0 +1,14 @@
+Vendored agent skills for this repository.
+
+Sources (pinned at install):
+
+- https://github.com/mattpocock/skills
+  commit 8b78b531ab965735c5dc74f6f7a219e1e37326df
+  license MIT (see LICENSE.mattpocock)
+
+- https://github.com/jonbaldie/skills
+  commit ed354da5a1f41907d3adefe4784da9ae885c1e35
+
+Installed with the jonbaldie/skills installer:
+
+  install.sh --project --agent universal --copy --with-prereqs --yes

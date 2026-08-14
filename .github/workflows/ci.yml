@@ -5,10 +5,12 @@ on:
     branches: [ main ]
     paths-ignore:
       - '**/*.md'
+      - '.agents/**'
   pull_request:
     branches: [ main ]
     paths-ignore:
       - '**/*.md'
+      - '.agents/**'
 
 permissions:
   contents: read

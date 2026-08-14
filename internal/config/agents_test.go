@@ -300,7 +300,9 @@ func TestGetProcessNamesRespectsRegistryOverride(t *testing.T) {
 }
 
 func TestResolveProcessNames(t *testing.T) {
-	t.Parallel()
+	// Mutates the process-wide agent registry (ResetRegistryForTesting and
+	// RegisterAgentForTesting), including overlays named "claude". Must not
+	// run in parallel with readers such as TestRuntimeConfigFromPreset.
 	ResetRegistryForTesting()
 	t.Cleanup(ResetRegistryForTesting)
 
