@@ -914,8 +914,8 @@ func findAssignedDogWork(ctx RoleContext, agentID string) (*beads.Issue, error) 
 	if currentErr != nil && !errors.Is(currentErr, dog.ErrDogNotFound) {
 		return nil, fmt.Errorf("reading dog state: %w", currentErr)
 	}
-	if issue, done, err := resolveDogWorkFromState(ctx, agentID, current); done {
-		return issue, err
+	if issue, done := resolveDogWorkFromState(ctx, agentID, current); done {
+		return issue, nil
 	}
 
 	matched, assigned, queryErr := collectAssignedDogWork(ctx, agentID, current, rigsConfig)
@@ -990,29 +990,30 @@ func matchWorkingDogIssue(current *dog.Dog, work []*beads.Issue) *beads.Issue {
 	return nil
 }
 
-func resolveDogWorkFromState(ctx RoleContext, agentID string, current *dog.Dog) (*beads.Issue, bool, error) {
+func resolveDogWorkFromState(ctx RoleContext, agentID string, current *dog.Dog) (*beads.Issue, bool) {
 	if current == nil || current.State != dog.StateWorking || current.Work == "" {
-		return nil, false, nil
+		return nil, false
 	}
 	if current.WorkKind == dog.WorkKindPlugin || (current.WorkKind == "" && strings.HasPrefix(current.Work, "plugin:")) {
-		return nil, true, nil
+		return nil, true
 	}
 	sourceID := current.WorkSourceID
 	if sourceID == "" && current.WorkKind != dog.WorkKindFormula {
 		sourceID = current.Work
 	}
 	if sourceID == "" {
-		return nil, false, nil
+		return nil, false
 	}
 	workDir := beads.ResolveHookDir(ctx.TownRoot, sourceID, ctx.WorkDir)
 	issue, err := beads.New(workDir).Show(sourceID)
 	if err != nil || issue == nil {
-		return nil, false, nil
+		// Source may live in another beads database; continue the full search.
+		return nil, false
 	}
 	if (issue.Status == beads.StatusHooked || issue.Status == string(beads.StatusInProgress)) && issue.Assignee == agentID {
-		return issue, true, nil
+		return issue, true
 	}
-	return nil, false, nil
+	return nil, false
 }
 
 // rigBeadsRoot returns the route-owned directory to use for beads queries.

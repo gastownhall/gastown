@@ -597,7 +597,9 @@ exit /b 0
 			assertTargetRig("review-only metadata update", dir, beadsDir, database, beadsDB, bdDB, dataDir, gtData, args)
 		case strings.Contains(args, "update "+newBeadID) && strings.Contains(args, "--description="):
 			assertTargetRig("description update", dir, beadsDir, database, beadsDB, bdDB, dataDir, gtData, args)
-		case args == "--version" || strings.HasPrefix(args, "version") || strings.Contains(args, " version") || strings.Contains(args, "show gt-rig-") || strings.Contains(args, "show mol-"):
+		case strings.Contains(args, "show gt-gastown-polecat-") || strings.Contains(args, "update gt-gastown-polecat-"):
+			assertTargetRig("polecat agent hook", dir, beadsDir, database, beadsDB, bdDB, dataDir, gtData, args)
+		case args == "--version" || strings.HasPrefix(args, "version") || strings.Contains(args, " version") || strings.Contains(args, "show gt-rig-") || strings.Contains(args, "show mol-") || strings.Contains(args, "show hq-") || strings.Contains(args, "update hq-"):
 			// Explicitly exempt non-target-bead lookups; every gt-new123 operation
 			// above must still prove it is pinned to the gastown database.
 		default:
