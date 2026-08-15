@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Town-wide auto-compaction window** defaults to `min(150000, model default)`
+  tokens for every built-in agent type. Change the 150k cap with
+  `gt config set auto_compact_window 150k` or `GT_AUTO_COMPACT_WINDOW`.
+  Claude-family runtimes also receive `--autocompact` and
+  `CLAUDE_CODE_AUTO_COMPACT_WINDOW`.
+
 ### Fixed
 
 - **Mail notification no longer cancels in-flight tool calls** (gh#4607).

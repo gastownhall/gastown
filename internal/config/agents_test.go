@@ -647,7 +647,7 @@ func TestBuildResumeCommand(t *testing.T) {
 			agentName: "claude",
 			sessionID: "session-123",
 			wantEmpty: false,
-			contains:  []string{"claude", "--dangerously-skip-permissions", "--resume", "session-123"},
+			contains:  []string{"claude", "--dangerously-skip-permissions", "--autocompact", "150000", "--resume", "session-123"},
 		},
 		{
 			name:      "gemini with session",

@@ -88,6 +88,9 @@ func TestInstallForRole_ClaudeSettingsSuppressStartupPrompts(t *testing.T) {
 			if got, ok := settings["hasCompletedOnboarding"].(bool); !ok || !got {
 				t.Fatalf("hasCompletedOnboarding = %v, want true", settings["hasCompletedOnboarding"])
 			}
+			if got, ok := settings["autoCompactWindow"].(float64); !ok || int(got) != 150000 {
+				t.Fatalf("autoCompactWindow = %v, want 150000", settings["autoCompactWindow"])
+			}
 			if got := settings["theme"]; got != "dark" {
 				t.Fatalf("theme = %v, want dark", got)
 			}

@@ -1,6 +1,7 @@
 {
   "skipDangerousModePermissionPrompt": true,
   "hasCompletedOnboarding": true,
+  "autoCompactWindow": 150000,
   "theme": "dark",
   "editorMode": "normal",
   "permissions": {

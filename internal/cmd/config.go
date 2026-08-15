@@ -733,6 +733,8 @@ Supported keys:
                               completion (true/false, default: false)
   cli_theme                   CLI color scheme ("dark", "light", "auto")
   default_agent               Default agent preset name
+  auto_compact_window         Auto-compaction cap in tokens (default: 150000 / 150k).
+                              Applied to every agent type as min(cap, model window).
   dolt.port                   Dolt SQL server port (default: 3307). Set this when
                               another Gas Town instance is using the same port.
                               Writes GT_DOLT_PORT to mayor/daemon.json env section.
@@ -762,6 +764,7 @@ Examples:
   gt config set convoy.notify_on_complete true
   gt config set cli_theme dark
   gt config set default_agent claude
+  gt config set auto_compact_window 150k
   gt config set dolt.port 3308
   gt config set scheduler.max_polecats 5
   gt config set maintenance.window 03:00
@@ -783,6 +786,7 @@ Supported keys:
                               completion (true/false, default: false)
   cli_theme                   CLI color scheme
   default_agent               Default agent preset name
+  auto_compact_window         Auto-compaction cap in tokens (default: 150000)
   scheduler.max_polecats      Dispatch mode (-1 = direct, N > 0 = deferred)
   scheduler.batch_size        Beads per heartbeat
   scheduler.spawn_delay       Delay between spawns
@@ -849,6 +853,13 @@ func runConfigSet(cmd *cobra.Command, args []string) error {
 
 	case "default_agent":
 		townSettings.DefaultAgent = value
+
+	case "auto_compact_window":
+		n, ok := config.ParseTokenCount(value)
+		if !ok {
+			return fmt.Errorf("invalid value for %s: expected a positive token count such as 150000 or 150k", key)
+		}
+		townSettings.AutoCompactWindow = n
 
 	case "scheduler.max_polecats":
 		n, err := strconv.Atoi(value)
@@ -923,7 +934,7 @@ func runConfigSet(cmd *cobra.Command, args []string) error {
 		if strings.HasPrefix(key, "lifecycle.") {
 			return setLifecycleConfig(townRoot, key, value)
 		}
-		return fmt.Errorf("unknown config key: %q\n\nSupported keys:\n  convoy.notify_on_complete\n  cli_theme\n  default_agent\n  dolt.port\n  scheduler.max_polecats\n  scheduler.batch_size\n  scheduler.spawn_delay\n  polecat.target_clean_policy\n  maintenance.window\n  maintenance.interval\n  maintenance.threshold\n  lifecycle.reaper.*\n  lifecycle.compactor.*\n  lifecycle.doctor.*\n  lifecycle.backup.*", key)
+		return fmt.Errorf("unknown config key: %q\n\nSupported keys:\n  convoy.notify_on_complete\n  cli_theme\n  default_agent\n  auto_compact_window\n  dolt.port\n  scheduler.max_polecats\n  scheduler.batch_size\n  scheduler.spawn_delay\n  polecat.target_clean_policy\n  maintenance.window\n  maintenance.interval\n  maintenance.threshold\n  lifecycle.reaper.*\n  lifecycle.compactor.*\n  lifecycle.doctor.*\n  lifecycle.backup.*", key)
 	}
 
 	if err := config.SaveTownSettings(settingsPath, townSettings); err != nil {
@@ -967,6 +978,13 @@ func runConfigGet(cmd *cobra.Command, args []string) error {
 		value = townSettings.DefaultAgent
 		if value == "" {
 			value = "claude"
+		}
+
+	case "auto_compact_window":
+		if townSettings.AutoCompactWindow > 0 {
+			value = strconv.Itoa(townSettings.AutoCompactWindow)
+		} else {
+			value = strconv.Itoa(config.DefaultAutoCompactWindowTokens)
 		}
 
 	case "scheduler.max_polecats":
@@ -1015,7 +1033,7 @@ func runConfigGet(cmd *cobra.Command, args []string) error {
 		if strings.HasPrefix(key, "lifecycle.") {
 			return getLifecycleConfig(townRoot, key)
 		}
-		return fmt.Errorf("unknown config key: %q\n\nSupported keys:\n  convoy.notify_on_complete\n  cli_theme\n  default_agent\n  dolt.port\n  scheduler.max_polecats\n  scheduler.batch_size\n  scheduler.spawn_delay\n  polecat.target_clean_policy\n  maintenance.window\n  maintenance.interval\n  maintenance.threshold\n  lifecycle.reaper.*\n  lifecycle.compactor.*\n  lifecycle.doctor.*\n  lifecycle.backup.*", key)
+		return fmt.Errorf("unknown config key: %q\n\nSupported keys:\n  convoy.notify_on_complete\n  cli_theme\n  default_agent\n  auto_compact_window\n  dolt.port\n  scheduler.max_polecats\n  scheduler.batch_size\n  scheduler.spawn_delay\n  polecat.target_clean_policy\n  maintenance.window\n  maintenance.interval\n  maintenance.threshold\n  lifecycle.reaper.*\n  lifecycle.compactor.*\n  lifecycle.doctor.*\n  lifecycle.backup.*", key)
 	}
 
 	fmt.Println(value)

@@ -2276,6 +2276,7 @@ func BuildStartupCommand(envVars map[string]string, rigPath, prompt string) stri
 	if role != "" {
 		applyRoleEffortToRuntime(rc, ResolveRoleEffort(role, townRoot, rigPath))
 	}
+	applyResolvedAutoCompact(rc, townRoot, envVars[AutoCompactWindowEnv])
 
 	// Apply exec wrapper from rig/town settings if not already set on the resolved config.
 	// ExecWrapper is a deployment-level setting (sandbox/container) independent of agent choice.
@@ -2536,6 +2537,7 @@ func BuildStartupCommandWithAgentOverride(envVars map[string]string, rigPath, pr
 	if role != "" {
 		applyRoleEffortToRuntime(rc, ResolveRoleEffort(role, townRoot, rigPath))
 	}
+	applyResolvedAutoCompact(rc, townRoot, envVars[AutoCompactWindowEnv])
 
 	// Apply exec wrapper from rig/town settings if not already set on the resolved config.
 	if len(rc.ExecWrapper) == 0 {

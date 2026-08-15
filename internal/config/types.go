@@ -55,6 +55,13 @@ type TownSettings struct {
 	// Default: "claude"
 	DefaultAgent string `json:"default_agent,omitempty"`
 
+	// AutoCompactWindow is the town-wide auto-compaction cap in tokens.
+	// The effective window applied to every agent type is
+	// min(this, the model's default context window).
+	// Zero/omitted uses DefaultAutoCompactWindowTokens (150000).
+	// Override with GT_AUTO_COMPACT_WINDOW or `gt config set auto_compact_window N`.
+	AutoCompactWindow int `json:"auto_compact_window,omitempty"`
+
 	// Agents defines custom agent configurations or overrides.
 	// Keys are agent names that can be referenced by DefaultAgent or rig settings.
 	// Values override or extend the built-in presets.

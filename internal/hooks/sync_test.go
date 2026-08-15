@@ -219,6 +219,22 @@ func TestMarshalSettingsEmpty(t *testing.T) {
 	}
 }
 
+func TestMarshalSettingsInjectsAutoCompactWindow(t *testing.T) {
+	data, err := MarshalSettings(&SettingsJSON{})
+	if err != nil {
+		t.Fatalf("MarshalSettings: %v", err)
+	}
+
+	var m map[string]any
+	if err := json.Unmarshal(data, &m); err != nil {
+		t.Fatalf("invalid JSON output: %v", err)
+	}
+	got, ok := m["autoCompactWindow"].(float64)
+	if !ok || int(got) != 150000 {
+		t.Fatalf("autoCompactWindow = %v, want 150000", m["autoCompactWindow"])
+	}
+}
+
 func TestMarshalSettingsDoesNotMutateInput(t *testing.T) {
 	input := `{
   "editorMode": "vim",

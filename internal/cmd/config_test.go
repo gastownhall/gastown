@@ -816,6 +816,82 @@ func TestConfigSetGet(t *testing.T) {
 		}
 	})
 
+	t.Run("set and get auto_compact_window", func(t *testing.T) {
+		townRoot := setupTestTownForConfig(t)
+		settingsPath := config.TownSettingsPath(townRoot)
+
+		originalWd, _ := os.Getwd()
+		defer os.Chdir(originalWd)
+		if err := os.Chdir(townRoot); err != nil {
+			t.Fatalf("chdir: %v", err)
+		}
+
+		cmd := &cobra.Command{}
+		if err := runConfigSet(cmd, []string{"auto_compact_window", "80k"}); err != nil {
+			t.Fatalf("runConfigSet failed: %v", err)
+		}
+
+		loaded, err := config.LoadOrCreateTownSettings(settingsPath)
+		if err != nil {
+			t.Fatalf("load settings: %v", err)
+		}
+		if loaded.AutoCompactWindow != 80_000 {
+			t.Errorf("AutoCompactWindow = %d, want 80000", loaded.AutoCompactWindow)
+		}
+
+		var getErr error
+		out := captureStdout(t, func() {
+			getErr = runConfigGet(cmd, []string{"auto_compact_window"})
+		})
+		if getErr != nil {
+			t.Fatalf("runConfigGet failed: %v", getErr)
+		}
+		if strings.TrimSpace(out) != "80000" {
+			t.Fatalf("config get auto_compact_window = %q, want 80000", strings.TrimSpace(out))
+		}
+	})
+
+	t.Run("get auto_compact_window defaults to 150k", func(t *testing.T) {
+		townRoot := setupTestTownForConfig(t)
+
+		originalWd, _ := os.Getwd()
+		defer os.Chdir(originalWd)
+		if err := os.Chdir(townRoot); err != nil {
+			t.Fatalf("chdir: %v", err)
+		}
+
+		cmd := &cobra.Command{}
+		var getErr error
+		out := captureStdout(t, func() {
+			getErr = runConfigGet(cmd, []string{"auto_compact_window"})
+		})
+		if getErr != nil {
+			t.Fatalf("runConfigGet failed: %v", getErr)
+		}
+		if strings.TrimSpace(out) != "150000" {
+			t.Fatalf("config get auto_compact_window = %q, want 150000", strings.TrimSpace(out))
+		}
+	})
+
+	t.Run("set auto_compact_window rejects invalid value", func(t *testing.T) {
+		townRoot := setupTestTownForConfig(t)
+
+		originalWd, _ := os.Getwd()
+		defer os.Chdir(originalWd)
+		if err := os.Chdir(townRoot); err != nil {
+			t.Fatalf("chdir: %v", err)
+		}
+
+		cmd := &cobra.Command{}
+		err := runConfigSet(cmd, []string{"auto_compact_window", "tokens"})
+		if err == nil {
+			t.Fatal("expected error for invalid auto_compact_window")
+		}
+		if !strings.Contains(err.Error(), "auto_compact_window") {
+			t.Errorf("error = %v, want auto_compact_window context", err)
+		}
+	})
+
 	t.Run("set rejects unknown key", func(t *testing.T) {
 		townRoot := setupTestTownForConfig(t)
 

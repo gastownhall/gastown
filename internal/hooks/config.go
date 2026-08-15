@@ -10,9 +10,11 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	"github.com/steveyegge/gastown/internal/atomicfile"
+	"github.com/steveyegge/gastown/internal/config"
 )
 
 // HookEntry represents a single hook matcher with its associated hooks.
@@ -162,6 +164,7 @@ func addClaudePromptDefaults(out map[string]json.RawMessage) {
 	setRaw(out, "skipDangerousModePermissionPrompt", []byte(`true`))
 	setRaw(out, "hasCompletedOnboarding", []byte(`true`))
 	setRawDefault(out, "theme", []byte(`"dark"`))
+	setRawDefault(out, "autoCompactWindow", []byte(strconv.Itoa(config.DefaultAutoCompactWindowTokens)))
 
 	permissions := map[string]json.RawMessage{}
 	if raw, ok := out["permissions"]; ok {

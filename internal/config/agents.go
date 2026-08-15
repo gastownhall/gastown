@@ -176,6 +176,15 @@ type AgentPresetInfo struct {
 	// ACP is the configuration for ACP (Agent Communication Protocol) support.
 	// nil means the agent does not support ACP.
 	ACP *ACPConfig `json:"acp,omitempty"`
+
+	// AutoCompactFlag is the CLI flag that sets this runtime's auto-compact
+	// window in tokens (e.g. "--autocompact"). Empty means no native flag.
+	AutoCompactFlag string `json:"auto_compact_flag,omitempty"`
+
+	// AutoCompactEnv is the environment variable this runtime uses for its
+	// auto-compact window in tokens. Empty means no native env var; Gas Town
+	// still sets GT_AUTO_COMPACT_WINDOW for every agent type.
+	AutoCompactEnv string `json:"auto_compact_env,omitempty"`
 }
 
 // ACPConfig contains configuration for ACP (Agent Communication Protocol) support.
@@ -258,6 +267,8 @@ var builtinPresets = map[AgentPreset]*AgentPresetInfo{
 		InstructionsFile:       "CLAUDE.md",
 		EmitsPermissionWarning: true,
 		HasTurnBoundaryDrain:   true,
+		AutoCompactFlag:        ClaudeAutoCompactFlag,
+		AutoCompactEnv:         ClaudeAutoCompactWindowEnv,
 	},
 	AgentGemini: {
 		Name:                AgentGemini,
@@ -541,6 +552,8 @@ var builtinPresets = map[AgentPreset]*AgentPresetInfo{
 		ReadyDelayMs:         10000,
 		InstructionsFile:     "CLAUDE.md",
 		HasTurnBoundaryDrain: true,
+		AutoCompactFlag:      ClaudeAutoCompactFlag,
+		AutoCompactEnv:       ClaudeAutoCompactWindowEnv,
 	},
 }
 
@@ -784,8 +797,14 @@ func BuildResumeCommand(agentName, sessionID string) string {
 		return ""
 	}
 
-	// Build base command with args
-	args := append([]string(nil), info.Args...)
+	rc := &RuntimeConfig{
+		Provider: string(info.Name),
+		Command:  info.Command,
+		Args:     append([]string(nil), info.Args...),
+	}
+	townRoot, _ := findTownRootFromCwd()
+	applyResolvedAutoCompact(rc, townRoot, "")
+	args := rc.Args
 
 	// Add resume based on style
 	switch info.ResumeStyle {
