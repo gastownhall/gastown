@@ -218,12 +218,20 @@ func resolveWorkerSession(ctx context.Context, client *Client, opts WorkerOption
 }
 
 func sameDirectory(left, right string) bool {
-	left = filepath.Clean(left)
-	right = filepath.Clean(right)
+	left = canonicalDirectory(left)
+	right = canonicalDirectory(right)
 	if runtime.GOOS == "windows" {
 		return strings.EqualFold(left, right)
 	}
 	return left == right
+}
+
+func canonicalDirectory(path string) string {
+	path = filepath.Clean(path)
+	if resolved, err := filepath.EvalSymlinks(path); err == nil {
+		return filepath.Clean(resolved)
+	}
+	return path
 }
 
 func deliverQueuedNudges(ctx context.Context, client *Client, townRoot, gasTownSession, openCodeSession string, promptOpts ...PromptOptions) (bool, error) {

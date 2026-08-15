@@ -3,11 +3,111 @@ package opencodeserver
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 )
+
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripFunc) RoundTrip(request *http.Request) (*http.Response, error) {
+	return f(request)
+}
+
+func TestClientUsesExtendedSessionInitializationTimeout(t *testing.T) {
+	t.Parallel()
+
+	client, err := NewClient("http://127.0.0.1:12345", "opencode", "secret", t.TempDir(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if client.http.Timeout != defaultRequestTimeout {
+		t.Fatalf("normal request timeout = %v, want %v", client.http.Timeout, defaultRequestTimeout)
+	}
+	if client.sessionHTTP.Timeout != sessionInitializationTimeout {
+		t.Fatalf("session initialization timeout = %v, want %v", client.sessionHTTP.Timeout, sessionInitializationTimeout)
+	}
+
+	custom := &http.Client{Timeout: 250 * time.Millisecond}
+	client, err = NewClient("http://127.0.0.1:12345", "opencode", "secret", t.TempDir(), custom)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if client.http != custom || client.sessionHTTP != custom {
+		t.Fatal("custom HTTP client was not preserved for all request types")
+	}
+}
+
+func TestClientRoutesOnlySessionResolutionThroughInitializationClient(t *testing.T) {
+	t.Parallel()
+
+	normalCalls := 0
+	sessionCalls := 0
+	response := func(request *http.Request, body string) *http.Response {
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Status:     "200 OK",
+			Header:     make(http.Header),
+			Body:       io.NopCloser(strings.NewReader(body)),
+			Request:    request,
+		}
+	}
+	normalHTTP := &http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
+		normalCalls++
+		return response(request, `{}`), nil
+	})}
+	sessionHTTP := &http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
+		sessionCalls++
+		return response(request, `{"id":"ses_test","directory":"/worktree"}`), nil
+	})}
+	client, err := NewClient("http://127.0.0.1:12345", "opencode", "secret", "/worktree", normalHTTP)
+	if err != nil {
+		t.Fatal(err)
+	}
+	client.sessionHTTP = sessionHTTP
+
+	if _, err := client.CreateSession(context.Background(), CreateSessionOptions{}); err != nil {
+		t.Fatalf("CreateSession: %v", err)
+	}
+	if _, err := client.GetSession(context.Background(), "ses_test"); err != nil {
+		t.Fatalf("GetSession: %v", err)
+	}
+	if _, err := client.Status(context.Background(), "ses_test"); err != nil {
+		t.Fatalf("Status: %v", err)
+	}
+	if sessionCalls != 2 || normalCalls != 1 {
+		t.Fatalf("session calls = %d, normal calls = %d; want 2/1", sessionCalls, normalCalls)
+	}
+}
+
+func TestSessionInitializationHonorsCallerContext(t *testing.T) {
+	t.Parallel()
+
+	release := make(chan struct{})
+	server := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+		<-release
+	}))
+	defer server.Close()
+	defer close(release)
+	client, err := NewClient(server.URL, "opencode", "secret", t.TempDir(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 25*time.Millisecond)
+	defer cancel()
+	started := time.Now()
+	_, err = client.CreateSession(ctx, CreateSessionOptions{})
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("CreateSession error = %v, want context deadline exceeded", err)
+	}
+	if elapsed := time.Since(started); elapsed > time.Second {
+		t.Fatalf("CreateSession honored HTTP timeout instead of caller context: %v", elapsed)
+	}
+}
 
 func TestClientLifecycleRequests(t *testing.T) {
 	t.Parallel()

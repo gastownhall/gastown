@@ -15,8 +15,10 @@ import (
 )
 
 const (
-	maxErrorBody    = 16 << 10
-	maxResponseBody = 4 << 20
+	maxErrorBody                 = 16 << 10
+	maxResponseBody              = 4 << 20
+	defaultRequestTimeout        = 15 * time.Second
+	sessionInitializationTimeout = 2 * time.Minute
 )
 
 type Health struct {
@@ -55,11 +57,12 @@ type PromptOptions struct {
 }
 
 type Client struct {
-	baseURL   *url.URL
-	username  string
-	password  string
-	directory string
-	http      *http.Client
+	baseURL     *url.URL
+	username    string
+	password    string
+	directory   string
+	http        *http.Client
+	sessionHTTP *http.Client
 }
 
 type APIError struct {
@@ -102,15 +105,18 @@ func NewClient(baseURL, username, password, directory string, httpClient *http.C
 	if directory == "" {
 		return nil, fmt.Errorf("OpenCode directory is required")
 	}
+	sessionHTTP := httpClient
 	if httpClient == nil {
-		httpClient = &http.Client{Timeout: 15 * time.Second}
+		httpClient = &http.Client{Timeout: defaultRequestTimeout}
+		sessionHTTP = &http.Client{Timeout: sessionInitializationTimeout}
 	}
 	return &Client{
-		baseURL:   parsed,
-		username:  username,
-		password:  password,
-		directory: directory,
-		http:      httpClient,
+		baseURL:     parsed,
+		username:    username,
+		password:    password,
+		directory:   directory,
+		http:        httpClient,
+		sessionHTTP: sessionHTTP,
 	}, nil
 }
 
@@ -141,7 +147,7 @@ func (c *Client) CreateSession(ctx context.Context, opts CreateSessionOptions) (
 	}
 
 	var result Session
-	err := c.doJSON(ctx, http.MethodPost, "/session", body, http.StatusOK, &result)
+	err := c.doSessionJSON(ctx, http.MethodPost, "/session", body, http.StatusOK, &result)
 	if err == nil && result.ID == "" {
 		return Session{}, fmt.Errorf("OpenCode create session returned an empty ID")
 	}
@@ -153,7 +159,7 @@ func (c *Client) GetSession(ctx context.Context, sessionID string) (Session, err
 		return Session{}, fmt.Errorf("OpenCode session ID is required")
 	}
 	var result Session
-	err := c.doJSON(ctx, http.MethodGet, sessionPath(sessionID), nil, http.StatusOK, &result)
+	err := c.doSessionJSON(ctx, http.MethodGet, sessionPath(sessionID), nil, http.StatusOK, &result)
 	return result, err
 }
 
@@ -257,6 +263,14 @@ func sessionPath(sessionID string) string {
 }
 
 func (c *Client) doJSON(ctx context.Context, method, path string, body any, wantStatus int, result any) error {
+	return c.doJSONWithClient(ctx, c.http, method, path, body, wantStatus, result)
+}
+
+func (c *Client) doSessionJSON(ctx context.Context, method, path string, body any, wantStatus int, result any) error {
+	return c.doJSONWithClient(ctx, c.sessionHTTP, method, path, body, wantStatus, result)
+}
+
+func (c *Client) doJSONWithClient(ctx context.Context, httpClient *http.Client, method, path string, body any, wantStatus int, result any) error {
 	var bodyReader io.Reader
 	if body != nil {
 		encoded, err := json.Marshal(body)
@@ -277,7 +291,7 @@ func (c *Client) doJSON(ctx context.Context, method, path string, body any, want
 		req.Header.Set("Content-Type", "application/json")
 	}
 
-	resp, err := c.http.Do(req)
+	resp, err := httpClient.Do(req)
 	if err != nil {
 		return fmt.Errorf("calling OpenCode %s %s: %w", method, path, err)
 	}
