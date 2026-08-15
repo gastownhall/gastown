@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 )
 
@@ -51,4 +52,36 @@ func TestMain(m *testing.M) {
 	_ = os.Unsetenv("GT_AGENT_STUB_BIN_DIR")
 	_ = os.RemoveAll(stubDir)
 	os.Exit(code)
+}
+
+func startupCommandBody(t *testing.T, command string) string {
+	t.Helper()
+	if runtime.GOOS != "windows" {
+		return command
+	}
+
+	if !strings.HasPrefix(command, "& ") {
+		t.Fatalf("startup command is not a PowerShell script invocation: %q", command)
+	}
+	quotedPath := strings.TrimSpace(strings.TrimPrefix(command, "& "))
+	if len(quotedPath) < 2 || quotedPath[0] != '\'' || quotedPath[len(quotedPath)-1] != '\'' {
+		t.Fatalf("startup script path is not single-quoted: %q", command)
+	}
+	scriptPath := strings.ReplaceAll(quotedPath[1:len(quotedPath)-1], "''", "'")
+	if !strings.EqualFold(filepath.Ext(scriptPath), ".ps1") {
+		t.Fatalf("startup command does not invoke a PowerShell script: %q", command)
+	}
+
+	data, err := os.ReadFile(scriptPath)
+	if err != nil {
+		t.Fatalf("read startup script %q: %v", scriptPath, err)
+	}
+	return string(data)
+}
+
+func startupEnvAssignment(key, value string) string {
+	if runtime.GOOS == "windows" {
+		return fmt.Sprintf("$env:%s=%s", key, psQuote(value))
+	}
+	return fmt.Sprintf("%s=%s", key, ShellQuote(value))
 }

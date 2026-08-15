@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Native OpenCode server workers** — Added the opt-in `opencode-server`
+  preset, which starts a loopback-only authenticated OpenCode server per worker,
+  persists Gas Town/OpenCode session mappings, resumes same-work sessions, and
+  delivers queued nudges through OpenCode's HTTP API instead of TUI keystrokes.
+  Lifecycle events serialize async turns, per-session locks reject duplicate
+  workers, and credential state is protected with restricted permissions/ACLs.
+
+### Fixed
+
+- **Windows startup and config reliability** - PowerShell exec wrappers now
+  preserve native arguments exactly, including empty and stop-parsing-like
+  values, and atomic config replacement retries transient sharing contention
+  without introducing an unlink window.
+
 ## [1.2.1] - 2026-06-06
 
 ### Fixed

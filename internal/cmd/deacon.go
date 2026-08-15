@@ -518,7 +518,15 @@ func startDeaconSession(t *tmux.Tmux, sessionName, agentOverride string) error {
 	}
 
 	// Ensure runtime settings exist (autonomous role needs mail in SessionStart)
-	runtimeConfig := config.ResolveRoleAgentConfig("deacon", townRoot, deaconDir)
+	var runtimeConfig *config.RuntimeConfig
+	if agentOverride != "" {
+		runtimeConfig, _, err = config.ResolveAgentConfigWithOverride(townRoot, "", agentOverride)
+		if err != nil {
+			return fmt.Errorf("resolving deacon agent %s: %w", agentOverride, err)
+		}
+	} else {
+		runtimeConfig = config.ResolveRoleAgentConfig("deacon", townRoot, "")
+	}
 	if err := runtime.EnsureSettingsForRole(deaconDir, deaconDir, "deacon", runtimeConfig); err != nil {
 		return fmt.Errorf("ensuring runtime settings: %w", err)
 	}
@@ -548,7 +556,9 @@ func startDeaconSession(t *tmux.Tmux, sessionName, agentOverride string) error {
 		TownRoot:         townRoot,
 		RuntimeConfigDir: runtimeConfigDir,
 		Agent:            agentOverride,
+		SessionName:      sessionName,
 	})
+	envVars = session.MergeRuntimeLivenessEnv(envVars, runtimeConfig)
 
 	// Create session with command and env vars via -e flags so the initial
 	// shell (and subprocesses Claude spawns) inherit them from the start.
@@ -578,15 +588,19 @@ func startDeaconSession(t *tmux.Tmux, sessionName, agentOverride string) error {
 
 	time.Sleep(constants.ShutdownNotifyDelay)
 
-	deaconTownRoot, _ := workspace.FindFromCwdOrError()
-	runtimeCfg := config.ResolveRoleAgentConfig("deacon", deaconTownRoot, "")
-	_ = runtime.RunStartupFallback(t, sessionName, "deacon", runtimeCfg)
-	startDeaconNudgePoller(townRoot, sessionName)
+	_ = runtime.RunStartupFallback(t, sessionName, "deacon", runtimeConfig)
+	startDeaconNudgePoller(townRoot, sessionName, runtimeConfig)
 
 	return nil
 }
 
-func startDeaconNudgePoller(townRoot, sessionName string) {
+func startDeaconNudgePoller(townRoot, sessionName string, runtimeConfig *config.RuntimeConfig) {
+	if runtimeConfig != nil && runtimeConfig.ManagesNudgeQueue {
+		if pollerErr := nudge.StopPoller(townRoot, sessionName); pollerErr != nil {
+			style.PrintWarning("could not stop stale nudge poller for %s: %v", sessionName, pollerErr)
+		}
+		return
+	}
 	if _, pollerErr := nudge.StartPoller(townRoot, sessionName); pollerErr != nil {
 		style.PrintWarning("could not start nudge poller for %s: %v", sessionName, pollerErr)
 	}
@@ -900,6 +914,15 @@ func runDeaconHealthCheck(cmd *cobra.Command, args []string) error {
 	}
 	if !exists {
 		fmt.Printf("%s Agent %s session not running\n", style.Dim.Render("○"), agent)
+		return nil
+	}
+	if hasActiveOpenCodeServerSession(townRoot, sessionName) {
+		agentState.RecordPing()
+		agentState.RecordResponse()
+		if err := deacon.SaveHealthCheckState(townRoot, state); err != nil {
+			style.PrintWarning("failed to save health check state: %v", err)
+		}
+		fmt.Printf("%s Agent %s OpenCode transport is healthy (failures reset to 0)\n", style.Bold.Render("✓"), agent)
 		return nil
 	}
 

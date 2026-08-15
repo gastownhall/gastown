@@ -148,7 +148,7 @@ func (m *Manager) Start(foreground bool, agentOverride string, envOverrides []st
 			return ErrAlreadyRunning
 		}
 
-		if err := t.KillSession(sessionID); err != nil {
+		if err := t.KillSessionWithProcesses(sessionID); err != nil {
 			return fmt.Errorf("killing zombie session: %w", err)
 		}
 	}
@@ -175,7 +175,15 @@ func (m *Manager) Start(foreground bool, agentOverride string, envOverrides []st
 		runtimeConfigDir = os.Getenv("CLAUDE_CONFIG_DIR")
 	}
 
-	runtimeConfig := config.ResolveRoleAgentConfig("witness", townRoot, m.rig.Path)
+	var runtimeConfig *config.RuntimeConfig
+	if agentOverride != "" {
+		runtimeConfig, _, err = config.ResolveAgentConfigWithOverride(townRoot, m.rig.Path, agentOverride)
+		if err != nil {
+			return fmt.Errorf("resolving witness agent %s: %w", agentOverride, err)
+		}
+	} else {
+		runtimeConfig = config.ResolveRoleAgentConfig("witness", townRoot, m.rig.Path)
+	}
 	witnessSettingsDir := config.RoleSettingsDir("witness", m.rig.Path)
 	if err := runtime.EnsureSettingsForRole(witnessSettingsDir, witnessDir, "witness", runtimeConfig); err != nil {
 		return fmt.Errorf("ensuring runtime settings: %w", err)
@@ -270,7 +278,11 @@ func (m *Manager) Start(foreground bool, agentOverride string, envOverrides []st
 	// Start nudge-queue poller (gt-dgf). Claude's UserPromptSubmit hook only
 	// drains when the agent submits a prompt. Idle agents never submit, so
 	// queued nudges deadlock. The poller breaks the cycle by polling every 10s.
-	if _, pollerErr := nudge.StartPoller(townRoot, sessionID); pollerErr != nil {
+	if runtimeConfig.ManagesNudgeQueue {
+		if pollerErr := nudge.StopPoller(townRoot, sessionID); pollerErr != nil {
+			log.Printf("warning: could not stop stale nudge poller for %s: %v", sessionID, pollerErr)
+		}
+	} else if _, pollerErr := nudge.StartPoller(townRoot, sessionID); pollerErr != nil {
 		log.Printf("warning: could not start nudge poller for %s: %v", sessionID, pollerErr)
 	}
 
@@ -338,6 +350,13 @@ func buildWitnessStartCommand(rigPath, rigName, townRoot, sessionName, agentOver
 	}
 	if roleConfig != nil && roleConfig.StartCommand != "" {
 		rc := config.ResolveRoleAgentConfig("witness", townRoot, rigPath)
+		if agentOverride != "" {
+			var err error
+			rc, _, err = config.ResolveAgentConfigWithOverride(townRoot, rigPath, agentOverride)
+			if err != nil {
+				return "", fmt.Errorf("resolving witness agent %s: %w", agentOverride, err)
+			}
+		}
 		if !config.IsResolvedAgentClaude(rc) {
 			// Non-Claude agent: skip TOML start_command entirely.
 			// Built-in role TOMLs hardcode "exec claude ..." which is wrong
@@ -399,5 +418,5 @@ func (m *Manager) Stop() error {
 	}
 
 	// Kill the tmux session
-	return t.KillSession(sessionID)
+	return t.KillSessionWithProcesses(sessionID)
 }

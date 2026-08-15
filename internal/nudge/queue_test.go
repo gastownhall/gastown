@@ -70,6 +70,142 @@ func TestEnqueueAndDrain(t *testing.T) {
 	}
 }
 
+func TestClaimedNudgesReleaseAndCommit(t *testing.T) {
+	townRoot := t.TempDir()
+	session := "gt-gastown-crew-sean"
+	if err := Enqueue(townRoot, session, QueuedNudge{Sender: "mayor", Message: "durable"}); err != nil {
+		t.Fatal(err)
+	}
+
+	first, err := Claim(townRoot, session)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(first.Nudges) != 1 || !strings.HasPrefix(first.MessageID(), "msg") {
+		t.Fatalf("claim = %#v, message ID %q", first.Nudges, first.MessageID())
+	}
+	if pending, _ := Pending(townRoot, session); pending != 0 {
+		t.Fatalf("pending while claimed = %d, want 0", pending)
+	}
+	messageID := first.MessageID()
+	if err := first.Release(); err != nil {
+		t.Fatal(err)
+	}
+	if pending, _ := Pending(townRoot, session); pending != 1 {
+		t.Fatalf("pending after release = %d, want 1", pending)
+	}
+
+	second, err := Claim(townRoot, session)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if second.MessageID() != messageID {
+		t.Fatalf("message ID changed across retry: %q != %q", second.MessageID(), messageID)
+	}
+	if err := second.Commit(); err != nil {
+		t.Fatal(err)
+	}
+	if pending, _ := Pending(townRoot, session); pending != 0 {
+		t.Fatalf("pending after commit = %d, want 0", pending)
+	}
+}
+
+func TestClaimOneKeepsStableIdentityWhenQueueGrows(t *testing.T) {
+	townRoot := t.TempDir()
+	session := "gt-gastown-crew-sean"
+	if err := Enqueue(townRoot, session, QueuedNudge{Sender: "mayor", Message: "first"}); err != nil {
+		t.Fatal(err)
+	}
+	first, err := ClaimOne(townRoot, session)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := Enqueue(townRoot, session, QueuedNudge{Sender: "witness", Message: "second"}); err != nil {
+		t.Fatal(err)
+	}
+	messageID := first.MessageID()
+	if err := first.Release(); err != nil {
+		t.Fatal(err)
+	}
+	retry, err := ClaimOne(townRoot, session)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(retry.Nudges) != 1 || retry.Nudges[0].Message != "first" || retry.MessageID() != messageID {
+		t.Fatalf("retry claim = %#v, message ID %q; want first/%q", retry.Nudges, retry.MessageID(), messageID)
+	}
+	if err := retry.Commit(); err != nil {
+		t.Fatal(err)
+	}
+	if pending, _ := Pending(townRoot, session); pending != 1 {
+		t.Fatalf("pending after first commit = %d, want second nudge", pending)
+	}
+}
+
+func TestClaimOneRefreshesLeaseTimestamp(t *testing.T) {
+	townRoot := t.TempDir()
+	session := "gt-gastown-crew-sean"
+	if err := Enqueue(townRoot, session, QueuedNudge{Sender: "mayor", Message: "old but active"}); err != nil {
+		t.Fatal(err)
+	}
+	entries, err := os.ReadDir(queueDir(townRoot, session))
+	if err != nil || len(entries) != 1 {
+		t.Fatalf("queue entries = %d, %v", len(entries), err)
+	}
+	old := time.Now().Add(-2 * staleClaimThreshold)
+	path := filepath.Join(queueDir(townRoot, session), entries[0].Name())
+	if err := os.Chtimes(path, old, old); err != nil {
+		t.Fatal(err)
+	}
+
+	active, err := ClaimOne(townRoot, session)
+	if err != nil || len(active.Nudges) != 1 {
+		t.Fatalf("active claim = %#v, %v", active, err)
+	}
+	for i := 0; i < 2; i++ {
+		duplicate, err := ClaimOne(townRoot, session)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(duplicate.Nudges) != 0 {
+			t.Fatalf("claim %d duplicated active lease: %#v", i+1, duplicate.Nudges)
+		}
+	}
+	if err := active.Commit(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestClaimOneRestoresStaleClaimBeforeNewerNudge(t *testing.T) {
+	townRoot := t.TempDir()
+	session := "gt-gastown-crew-sean"
+	if err := Enqueue(townRoot, session, QueuedNudge{Sender: "mayor", Message: "first"}); err != nil {
+		t.Fatal(err)
+	}
+	first, err := ClaimOne(townRoot, session)
+	if err != nil || len(first.claims) != 1 {
+		t.Fatalf("first claim = %#v, %v", first, err)
+	}
+	if err := Enqueue(townRoot, session, QueuedNudge{Sender: "witness", Message: "second"}); err != nil {
+		t.Fatal(err)
+	}
+	old := time.Now().Add(-2 * staleClaimThreshold)
+	if err := os.Chtimes(first.claims[0].claimPath, old, old); err != nil {
+		t.Fatal(err)
+	}
+
+	recovered, err := ClaimOne(townRoot, session)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(recovered.Nudges) != 1 || recovered.Nudges[0].Message != "first" {
+		t.Fatalf("recovered claim = %#v, want oldest nudge", recovered.Nudges)
+	}
+	if err := recovered.Commit(); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestDrainEmptyQueue(t *testing.T) {
 	townRoot := t.TempDir()
 
@@ -408,41 +544,38 @@ func TestDrainSweepsOrphanedClaims(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// First Drain: requeues the orphaned claim (rename .claimed → .json),
-	// keeps the fresh claim, and returns the valid nudge.
-	// The requeued file isn't in the current ReadDir snapshot, so it's
-	// picked up on the next Drain call.
+	// Drain requeues the orphaned claim (rename .claimed to .json), refreshes
+	// the directory snapshot, and delivers it before the newer valid nudge.
+	// The fresh claim remains leased.
 	nudges, err := Drain(townRoot, session)
 	if err != nil {
 		t.Fatalf("Drain: %v", err)
 	}
-	if len(nudges) != 1 {
-		t.Fatalf("first Drain got %d nudges, want 1", len(nudges))
+	if len(nudges) != 2 {
+		t.Fatalf("Drain got %d nudges, want 2", len(nudges))
 	}
-	if nudges[0].Message != "valid" {
-		t.Errorf("got message %q, want %q", nudges[0].Message, "valid")
+	if nudges[0].Sender != "ghost" || nudges[1].Message != "valid" {
+		t.Errorf("Drain order = %#v, want restored orphan before valid nudge", nudges)
 	}
 
 	// The orphaned .claimed file should have been requeued as .json
 	if _, err := os.Stat(orphanPath); !os.IsNotExist(err) {
 		t.Error("orphaned .claimed file should no longer exist (requeued to .json)")
 	}
-	// Restored path strips everything from ".claimed" onward
+	// Restored path strips everything from ".claimed" onward, then is
+	// committed after successful delivery.
 	restoredPath := filepath.Join(dir, "100.json")
-	if _, err := os.Stat(restoredPath); os.IsNotExist(err) {
-		t.Error("restored .json file should exist after requeue")
+	if _, err := os.Stat(restoredPath); !os.IsNotExist(err) {
+		t.Error("restored .json file should be committed after delivery")
 	}
 
-	// Second Drain: picks up the requeued orphan
+	// No deliverable nudges remain.
 	nudges2, err := Drain(townRoot, session)
 	if err != nil {
 		t.Fatalf("second Drain: %v", err)
 	}
-	if len(nudges2) != 1 {
-		t.Fatalf("second Drain got %d nudges, want 1 (the requeued orphan)", len(nudges2))
-	}
-	if nudges2[0].Sender != "ghost" {
-		t.Errorf("got sender %q, want %q", nudges2[0].Sender, "ghost")
+	if len(nudges2) != 0 {
+		t.Fatalf("second Drain got %d nudges, want 0", len(nudges2))
 	}
 
 	// The fresh claim should still exist (not old enough to sweep)

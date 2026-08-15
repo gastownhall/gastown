@@ -18,6 +18,7 @@ import (
 	"github.com/steveyegge/gastown/internal/config"
 	"github.com/steveyegge/gastown/internal/constants"
 	"github.com/steveyegge/gastown/internal/git"
+	"github.com/steveyegge/gastown/internal/nudge"
 	"github.com/steveyegge/gastown/internal/rig"
 	"github.com/steveyegge/gastown/internal/runtime"
 	"github.com/steveyegge/gastown/internal/session"
@@ -248,15 +249,21 @@ func (m *SessionManager) ensureCanonicalSessionBranch(g *git.Git, polecat string
 	if err != nil {
 		return ""
 	}
+	currentWorkKey := currentBranch
+	if currentBranch == "HEAD" {
+		if workKey, workKeyErr := g.WorkKey(); workKeyErr == nil {
+			currentWorkKey = workKey
+		}
+	}
 
 	startPoint := m.canonicalSessionStartPoint(g)
 	if startPoint == "" {
 		debugSession("canonical session start point unresolved", fmt.Errorf("no default branch in rig config or remote"))
-		return currentBranch
+		return currentWorkKey
 	}
 	canonicalBranch := strings.TrimPrefix(startPoint, "origin/")
 	if !shouldCreateFreshSessionBranch(currentBranch, opts.Issue, canonicalBranch) {
-		return currentBranch
+		return currentWorkKey
 	}
 
 	// Refresh origin refs before branching so recovered sessions start from the
@@ -268,17 +275,17 @@ func (m *SessionManager) ensureCanonicalSessionBranch(g *git.Git, polecat string
 	exists, err := g.RefExists(startPoint)
 	if err != nil {
 		debugSession("check canonical session start point", err)
-		return currentBranch
+		return currentWorkKey
 	}
 	if !exists {
 		debugSession("missing canonical session start point", fmt.Errorf("%s", startPoint))
-		return currentBranch
+		return currentWorkKey
 	}
 
 	newBranch := m.freshBranchName(polecat, opts.Issue)
 	if err := g.CheckoutNewBranch(newBranch, startPoint); err != nil {
 		debugSession("auto-checkout fresh branch on canonical base", err)
-		return currentBranch
+		return currentWorkKey
 	}
 
 	return newBranch
@@ -469,6 +476,11 @@ func (m *SessionManager) Start(polecat string, opts SessionStartOptions) error {
 	// for show-environment lookups.
 	if _, hasGTAgent := envVars["GT_AGENT"]; !hasGTAgent && runtimeConfig.ResolvedAgent != "" {
 		envVars["GT_AGENT"] = runtimeConfig.ResolvedAgent
+	}
+	if runtimeConfig.ManagesNudgeQueue {
+		if err := nudge.StopPoller(townRoot, sessionID); err != nil {
+			debugSession("StopPoller", err)
+		}
 	}
 	// Custom agent config dir env (e.g., GEMINI_CONFIG_DIR) for non-Claude agents.
 	if runtimeConfig.Session != nil && runtimeConfig.Session.ConfigDirEnv != "" && opts.RuntimeConfigDir != "" {

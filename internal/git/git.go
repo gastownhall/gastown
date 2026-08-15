@@ -1327,6 +1327,21 @@ func (g *Git) CurrentBranch() (string, error) {
 	return g.run("rev-parse", "--abbrev-ref", "HEAD")
 }
 
+// WorkKey returns the current branch, or the exact commit SHA when HEAD is
+// detached. It is suitable for durable state that must not conflate detached
+// revisions under the literal branch name "HEAD".
+func (g *Git) WorkKey() (string, error) {
+	branch, err := g.CurrentBranch()
+	if err != nil {
+		return "", err
+	}
+	branch = strings.TrimSpace(branch)
+	if branch != "" && branch != "HEAD" {
+		return branch, nil
+	}
+	return g.Rev("HEAD")
+}
+
 // DefaultBranch returns the default branch name (what HEAD points to).
 // This works for both regular and bare repositories.
 // Returns "main" as fallback if detection fails.

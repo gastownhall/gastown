@@ -2,6 +2,7 @@ package util
 
 import (
 	"os"
+	"os/exec"
 	"runtime"
 	"strings"
 	"testing"
@@ -114,5 +115,17 @@ func TestExecWithOutput_StderrInError(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "error message") {
 		t.Errorf("expected error to contain stderr, got %q", err.Error())
+	}
+}
+
+func TestSetProcessGroupInstallsCancelHook(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("process cancellation hooks are Unix-specific")
+	}
+	cmd := exec.Command("true")
+	SetProcessGroup(cmd)
+
+	if cmd.Cancel == nil {
+		t.Fatal("SetProcessGroup did not install a cancellation hook")
 	}
 }

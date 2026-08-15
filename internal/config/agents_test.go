@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strings"
 	"testing"
@@ -32,7 +33,7 @@ func TestBuiltInAgentPresetSummary(t *testing.T) {
 func TestBuiltinPresets(t *testing.T) {
 	t.Parallel()
 	// Ensure all built-in presets are accessible
-	presets := []AgentPreset{AgentClaude, AgentGemini, AgentCodex, AgentKiro, AgentCursor, AgentAuggie, AgentAmp, AgentOpenCode, AgentCopilot, AgentPi, AgentOmp}
+	presets := []AgentPreset{AgentClaude, AgentGemini, AgentCodex, AgentKiro, AgentCursor, AgentAuggie, AgentAmp, AgentOpenCode, AgentOpenCodeServer, AgentCopilot, AgentPi, AgentOmp}
 
 	for _, preset := range presets {
 		info := GetAgentPreset(preset)
@@ -68,9 +69,10 @@ func TestGetAgentPresetByName(t *testing.T) {
 		{"amp", AgentAmp, false},
 		{"aider", "", true},                // Not built-in, can be added via config
 		{"opencode", AgentOpenCode, false}, // Built-in multi-model CLI agent
-		{"copilot", AgentCopilot, false},   // Built-in GitHub Copilot CLI agent
-		{"pi", AgentPi, false},             // Pi Coding Agent
-		{"omp", AgentOmp, false},           // Oh My Pi
+		{"opencode-server", AgentOpenCodeServer, false},
+		{"copilot", AgentCopilot, false}, // Built-in GitHub Copilot CLI agent
+		{"pi", AgentPi, false},           // Pi Coding Agent
+		{"omp", AgentOmp, false},         // Oh My Pi
 		{"unknown", "", true},
 	}
 
@@ -152,9 +154,10 @@ func TestIsKnownPreset(t *testing.T) {
 		{"amp", true},
 		{"aider", false},   // Not built-in, can be added via config
 		{"opencode", true}, // Built-in multi-model CLI agent
-		{"copilot", true},  // Built-in GitHub Copilot CLI agent
-		{"pi", true},       // Pi Coding Agent
-		{"omp", true},      // Oh My Pi
+		{"opencode-server", true},
+		{"copilot", true}, // Built-in GitHub Copilot CLI agent
+		{"pi", true},      // Pi Coding Agent
+		{"omp", true},     // Oh My Pi
 		{"unknown", false},
 		{"chatgpt", false},
 	}
@@ -773,7 +776,7 @@ func TestGetProcessNames(t *testing.T) {
 func TestListAgentPresetsMatchesConstants(t *testing.T) {
 	t.Parallel()
 	// Ensure all AgentPreset constants are returned by ListAgentPresets
-	allConstants := []AgentPreset{AgentClaude, AgentGemini, AgentCodex, AgentCursor, AgentAuggie, AgentAmp, AgentOpenCode, AgentCopilot, AgentPi, AgentOmp}
+	allConstants := []AgentPreset{AgentClaude, AgentGemini, AgentCodex, AgentCursor, AgentAuggie, AgentAmp, AgentOpenCode, AgentOpenCodeServer, AgentCopilot, AgentPi, AgentOmp}
 	presets := ListAgentPresets()
 
 	// Convert to map for quick lookup
@@ -1215,6 +1218,88 @@ func TestOpenCodeRuntimeConfigFromPreset(t *testing.T) {
 	original := GetAgentPreset(AgentOpenCode)
 	if _, exists := original.Env["MUTATED"]; exists {
 		t.Error("Mutation of RuntimeConfig.Env affected original preset")
+	}
+}
+
+func TestOpenCodeServerAgentPreset(t *testing.T) {
+	t.Parallel()
+	info := GetAgentPreset(AgentOpenCodeServer)
+	if info == nil {
+		t.Fatal("opencode-server preset not found")
+	}
+	if info.Command == "" || len(info.Args) != 1 || info.Args[0] != "opencode-worker" {
+		t.Fatalf("opencode-server command = %q %v", info.Command, info.Args)
+	}
+	if info.PromptMode != "arg" {
+		t.Fatalf("PromptMode = %q, want arg", info.PromptMode)
+	}
+	if info.HooksProvider != "opencode" || !info.SupportsHooks {
+		t.Fatalf("hooks = %q/%v, want opencode/true", info.HooksProvider, info.SupportsHooks)
+	}
+	if info.Env["OPENCODE_PERMISSION"] != `{"*":"allow"}` {
+		t.Fatalf("OPENCODE_PERMISSION = %q", info.Env["OPENCODE_PERMISSION"])
+	}
+	if !info.ManagesNudgeQueue {
+		t.Fatal("opencode-server should manage its own nudge queue")
+	}
+	rc := RuntimeConfigFromPreset(AgentOpenCodeServer)
+	if rc == nil || !rc.ManagesNudgeQueue {
+		t.Fatal("runtime config lost ManagesNudgeQueue")
+	}
+}
+
+func TestRuntimeConfigBuildCommandQuotesCommandPath(t *testing.T) {
+	t.Parallel()
+	rc := &RuntimeConfig{
+		Provider:   "generic",
+		Command:    filepath.Join("path with spaces", "gt"),
+		Args:       []string{"opencode-worker"},
+		PromptMode: "arg",
+	}
+	command := rc.BuildCommandWithPrompt("start work")
+	if !strings.Contains(command, quoteCommandForShell(rc.Command)) {
+		t.Fatalf("command path is not shell-quoted: %q", command)
+	}
+	if runtime.GOOS == "windows" && !strings.HasPrefix(command, "& ") {
+		t.Fatalf("quoted PowerShell command is not invokable: %q", command)
+	}
+}
+
+func TestPowerShellInvocationDoesNotDuplicateCallOperator(t *testing.T) {
+	command := "& 'C:\\Program Files\\Gas Town\\gt.exe' opencode-worker"
+	if got := powerShellInvocation(command); got != command {
+		t.Fatalf("powerShellInvocation = %q, want %q", got, command)
+	}
+	if got := powerShellInvocation("claude --model sonnet"); got != "& claude --model sonnet" {
+		t.Fatalf("powerShellInvocation bare command = %q", got)
+	}
+}
+
+func TestAgentManagesNudgeQueueResolvesCustomAlias(t *testing.T) {
+	townRoot := t.TempDir()
+	settings := NewTownSettings()
+	settings.Agents = map[string]*RuntimeConfig{
+		"server-alias": {Provider: string(AgentOpenCodeServer)},
+	}
+	if err := SaveTownSettings(TownSettingsPath(townRoot), settings); err != nil {
+		t.Fatal(err)
+	}
+	if !AgentManagesNudgeQueue(townRoot, "", "server-alias") {
+		t.Fatal("custom OpenCode server alias lost managed-queue metadata")
+	}
+}
+
+func TestAgentManagesNudgeQueueHonorsCustomPresetOverride(t *testing.T) {
+	townRoot := t.TempDir()
+	settings := NewTownSettings()
+	settings.Agents = map[string]*RuntimeConfig{
+		string(AgentOpenCodeServer): {Provider: "generic", Command: "claude"},
+	}
+	if err := SaveTownSettings(TownSettingsPath(townRoot), settings); err != nil {
+		t.Fatal(err)
+	}
+	if AgentManagesNudgeQueue(townRoot, "", string(AgentOpenCodeServer)) {
+		t.Fatal("custom runtime inherited managed-queue metadata from shadowed preset")
 	}
 }
 

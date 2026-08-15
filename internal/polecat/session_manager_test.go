@@ -398,6 +398,23 @@ func TestEnsureCanonicalSessionBranch_KeepsCurrentIssueBranch(t *testing.T) {
 	}
 }
 
+func TestEnsureCanonicalSessionBranchUsesSHAForDetachedHead(t *testing.T) {
+	workDir, repoGit := setupSessionBranchTestRepo(t)
+	command := exec.Command("git", "-C", workDir, "checkout", "--detach", "main")
+	if output, err := command.CombinedOutput(); err != nil {
+		t.Fatalf("detach HEAD: %v\n%s", err, output)
+	}
+	revision, err := repoGit.Rev("HEAD")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	sm := NewSessionManager(tmux.NewTmux(), &rig.Rig{Name: "gastown", Path: workDir})
+	if got := sm.ensureCanonicalSessionBranch(repoGit, "toast", SessionStartOptions{}); got != revision {
+		t.Fatalf("detached work key = %q, want %q", got, revision)
+	}
+}
+
 // TestSessionManager_resolveBeadsDir verifies that SessionManager correctly
 // resolves the beads directory for cross-rig issues via routes.jsonl.
 // This is a regression test for GitHub issue #1056.

@@ -17,6 +17,11 @@ func pollerProcessAlive(pid int) bool {
 	if err != nil {
 		return err == windows.ERROR_ACCESS_DENIED
 	}
-	_ = windows.CloseHandle(handle)
-	return true
+	defer windows.CloseHandle(handle)
+	var exitCode uint32
+	if err := windows.GetExitCodeProcess(handle, &exitCode); err != nil {
+		return false
+	}
+	const stillActive = 259
+	return exitCode == stillActive
 }
