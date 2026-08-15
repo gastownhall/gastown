@@ -2,7 +2,9 @@ package rig
 
 import (
 	"os"
+	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -264,7 +266,7 @@ func TestEnsureGitignorePatterns_CreatesNewFile(t *testing.T) {
 	}
 
 	// Check all required patterns are present (.beads/ intentionally excluded — see overlay.go)
-	patterns := []string{".runtime/", ".claude/", ".opencode/", ".logs/", "__pycache__/", "state.json"}
+	patterns := []string{".runtime/", ".claude/", ".opencode/", ".agents/", ".logs/", "__pycache__/", "state.json"}
 	for _, pattern := range patterns {
 		if !containsLine(string(content), pattern) {
 			t.Errorf(".gitignore missing pattern %q", pattern)
@@ -302,7 +304,7 @@ func TestEnsureGitignorePatterns_AppendsToExisting(t *testing.T) {
 	}
 
 	// Should add required patterns (.beads/ intentionally excluded — see overlay.go)
-	patterns := []string{".runtime/", ".claude/", ".opencode/", ".logs/", "__pycache__/", "state.json"}
+	patterns := []string{".runtime/", ".claude/", ".opencode/", ".agents/", ".logs/", "__pycache__/", "state.json"}
 	for _, pattern := range patterns {
 		if !containsLine(string(content), pattern) {
 			t.Errorf(".gitignore missing pattern %q", pattern)
@@ -407,7 +409,7 @@ func TestEnsureGitignorePatterns_AllPatternsPresent(t *testing.T) {
 	tmpDir := t.TempDir()
 
 	// Create existing .gitignore with all required patterns.
-	existing := ".runtime/\n.claude/\n.opencode/\n.beads/\n.logs/\n__pycache__/\nstate.json\nCLAUDE.md\nCLAUDE.local.md\nGEMINI.md\n"
+	existing := ".runtime/\n.claude/\n.opencode/\n.agents/\n.beads/\n.logs/\n__pycache__/\nstate.json\nCLAUDE.md\nCLAUDE.local.md\nGEMINI.md\n"
 	if err := os.WriteFile(filepath.Join(tmpDir, ".gitignore"), []byte(existing), 0644); err != nil {
 		t.Fatalf("Failed to create .gitignore: %v", err)
 	}
@@ -437,7 +439,7 @@ func TestEnsureGitignorePatterns_NarrowPatternPresent(t *testing.T) {
 	tmpDir := t.TempDir()
 
 	// Create .gitignore with the exact required patterns
-	existing := ".runtime/\n.claude/\n.opencode/\n.logs/\n__pycache__/\nstate.json\nCLAUDE.md\nCLAUDE.local.md\nGEMINI.md\n"
+	existing := ".runtime/\n.claude/\n.opencode/\n.agents/\n.logs/\n__pycache__/\nstate.json\nCLAUDE.md\nCLAUDE.local.md\nGEMINI.md\n"
 	if err := os.WriteFile(filepath.Join(tmpDir, ".gitignore"), []byte(existing), 0644); err != nil {
 		t.Fatalf("Failed to create .gitignore: %v", err)
 	}
@@ -523,6 +525,62 @@ func TestEnsureGitignorePatterns_UpgradePreservesBroadPattern(t *testing.T) {
 	if !containsLine(string(content), ".claude/") {
 		t.Error(".claude/ should be preserved")
 	}
+}
+
+// TestEnsureLocalExcludePatterns_HidesAgentsInWorktree is the cleanliness
+// seam for provisioned skills: a linked worktree must not show .agents/ in
+// git status after EnsureLocalExcludePatterns. Git reads info/exclude from
+// the common dir, not the worktree-specific git dir.
+func TestEnsureLocalExcludePatterns_HidesAgentsInWorktree(t *testing.T) {
+	repo := t.TempDir()
+	runGit(t, repo, "init", "-b", "main")
+	runGit(t, repo, "config", "user.email", "test@test.com")
+	runGit(t, repo, "config", "user.name", "Test")
+	if err := os.WriteFile(filepath.Join(repo, "README.md"), []byte("hi\n"), 0644); err != nil {
+		t.Fatalf("write README: %v", err)
+	}
+	runGit(t, repo, "add", "README.md")
+	runGit(t, repo, "commit", "-m", "init")
+
+	worktree := filepath.Join(t.TempDir(), "wt")
+	runGit(t, repo, "worktree", "add", worktree)
+
+	if err := EnsureLocalExcludePatterns(worktree); err != nil {
+		t.Fatalf("EnsureLocalExcludePatterns: %v", err)
+	}
+
+	skill := filepath.Join(worktree, ".agents", "skills", "implement", "SKILL.md")
+	if err := os.MkdirAll(filepath.Dir(skill), 0755); err != nil {
+		t.Fatalf("mkdir skills: %v", err)
+	}
+	if err := os.WriteFile(skill, []byte("# skill\n"), 0644); err != nil {
+		t.Fatalf("write skill: %v", err)
+	}
+
+	status := runGitOutput(t, worktree, "status", "--porcelain")
+	if strings.Contains(status, ".agents") {
+		t.Fatalf("git status in linked worktree should hide .agents/, got:\n%s", status)
+	}
+}
+
+func runGit(t *testing.T, dir string, args ...string) {
+	t.Helper()
+	cmd := exec.Command("git", args...)
+	cmd.Dir = dir
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("git %s: %v\n%s", strings.Join(args, " "), err, out)
+	}
+}
+
+func runGitOutput(t *testing.T, dir string, args ...string) string {
+	t.Helper()
+	cmd := exec.Command("git", args...)
+	cmd.Dir = dir
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("git %s: %v\n%s", strings.Join(args, " "), err, out)
+	}
+	return string(out)
 }
 
 // TestGasTownLocalExcludePatterns_IncludesBeads verifies that the local exclude

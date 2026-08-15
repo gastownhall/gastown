@@ -2218,6 +2218,8 @@ func TestIsGasTownRuntimePath(t *testing.T) {
 		{".opencode/", true},
 		{".opencode/plugins/gastown.js", true},
 		{".opencode/commands/handoff.md", true},
+		{".agents/", true},
+		{".agents/skills/implement/SKILL.md", true},
 		{".beads/", true},
 		{".beads/db.json", true},
 		{".beads\\db.json", true},

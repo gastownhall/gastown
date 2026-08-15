@@ -15,6 +15,7 @@ import (
 	"github.com/steveyegge/gastown/internal/constants"
 	"github.com/steveyegge/gastown/internal/git"
 	"github.com/steveyegge/gastown/internal/runtime"
+	"github.com/steveyegge/gastown/internal/skills"
 	"github.com/steveyegge/gastown/internal/telemetry"
 	"github.com/steveyegge/gastown/internal/tmux"
 )
@@ -173,6 +174,11 @@ func StartSession(t *tmux.Tmux, cfg SessionConfig) (_ *StartResult, retErr error
 	}
 	if err := runtime.EnsureSettingsForRole(settingsDir, cfg.WorkDir, cfg.Role, runtimeConfig); err != nil {
 		return nil, fmt.Errorf("ensuring runtime settings: %w", err)
+	}
+	if cfg.RuntimeConfigDir != "" {
+		if err := skills.ProvisionUserDir(cfg.RuntimeConfigDir); err != nil {
+			return nil, fmt.Errorf("ensuring account skills: %w", err)
+		}
 	}
 
 	// 3. Build startup command if not provided.

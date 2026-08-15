@@ -20,6 +20,7 @@ import (
 	"github.com/steveyegge/gastown/internal/dog"
 	"github.com/steveyegge/gastown/internal/lock"
 	"github.com/steveyegge/gastown/internal/refinery"
+	"github.com/steveyegge/gastown/internal/skills"
 	"github.com/steveyegge/gastown/internal/state"
 	"github.com/steveyegge/gastown/internal/style"
 	"github.com/steveyegge/gastown/internal/telemetry"
@@ -164,6 +165,11 @@ func runPrime(cmd *cobra.Command, args []string) (retErr error) {
 		TownRoot: townRoot,
 		WorkDir:  cwd,
 	}
+	if !primeDryRun {
+		if err := ensurePrimeSkills(cwd, townRoot, os.Getenv("GT_AGENT")); err != nil {
+			explain(true, fmt.Sprintf("mattpocock skills: provision failed: %v", err))
+		}
+	}
 
 	// --state mode: output state only and exit
 	if primeState {
@@ -289,6 +295,13 @@ func runPrimeCompactResume(ctx RoleContext) {
 
 	fmt.Println("\n---")
 	fmt.Println()
+	if !primeDryRun {
+		if err := ensurePrimeSkills(ctx.WorkDir, ctx.TownRoot, os.Getenv("GT_AGENT")); err != nil {
+			explain(true, fmt.Sprintf("mattpocock skills: provision failed: %v", err))
+		}
+	}
+	outputSkillDirectives(os.Stdout)
+	fmt.Println()
 	fmt.Println("**Continue your current task.** If you've lost context, run `gt prime` for full reload.")
 
 	// Remind polecats about gt done — after compaction the agent may have lost
@@ -304,6 +317,24 @@ func runPrimeCompactResume(ctx RoleContext) {
 }
 
 // validatePrimeFlags checks that CLI flag combinations are valid.
+func ensurePrimeSkills(workDir, townRoot, agent string) error {
+	if agent == "" || agent == "none" {
+		agent = "claude"
+	}
+	if townRoot != "" {
+		if err := skills.ProvisionFor(townRoot, agent); err != nil {
+			return err
+		}
+		if workDir == "" || workDir == townRoot {
+			return nil
+		}
+	}
+	if workDir == "" {
+		return nil
+	}
+	return skills.ProvisionFor(workDir, agent)
+}
+
 func validatePrimeFlags() error {
 	if primeState && (primeHookMode || primeDryRun || primeExplain) {
 		return fmt.Errorf("--state cannot be combined with other flags (except --json)")
@@ -538,6 +569,7 @@ func outputRoleContext(ctx RoleContext) (string, error) {
 		return "", err
 	}
 
+	outputSkillDirectives(os.Stdout)
 	outputRoleDirectives(ctx, os.Stdout, primeExplain)
 	outputContextFile(ctx)
 	outputHandoffContent(ctx)

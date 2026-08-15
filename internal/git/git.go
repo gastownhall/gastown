@@ -3054,7 +3054,7 @@ func runtimeArtifactRoot(path string) (string, bool) {
 	parts := strings.Split(bare, "/")
 	for i, part := range parts {
 		switch part {
-		case ".beads", ".claude", ".opencode", ".runtime", ".logs", "__pycache__", "node_modules", ".vite", ".pytest_cache", ".mypy_cache", ".ruff_cache", ".cache", "coverage", "htmlcov":
+		case ".beads", ".claude", ".opencode", ".agents", ".runtime", ".logs", "__pycache__", "node_modules", ".vite", ".pytest_cache", ".mypy_cache", ".ruff_cache", ".cache", "coverage", "htmlcov":
 			return strings.Join(parts[:i+1], "/") + "/", true
 		}
 	}

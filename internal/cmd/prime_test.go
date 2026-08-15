@@ -1087,6 +1087,39 @@ func TestCompactResumeReminder_NonPolecatNoGtDone(t *testing.T) {
 	}
 }
 
+func TestEnsurePrimeSkills_WritesWorkDirAndTownRoot(t *testing.T) {
+	townRoot := t.TempDir()
+	workDir := t.TempDir()
+	if err := ensurePrimeSkills(workDir, townRoot, "claude"); err != nil {
+		t.Fatalf("ensurePrimeSkills: %v", err)
+	}
+	for _, root := range []string{townRoot, workDir} {
+		path := filepath.Join(root, ".agents", "skills", "implement", "SKILL.md")
+		if _, err := os.Stat(path); err != nil {
+			t.Errorf("missing skill in %s: %v", root, err)
+		}
+	}
+}
+
+func TestCompactResumeReminder_IncludesSkillDirectives(t *testing.T) {
+	ctx := RoleContext{Role: RoleCrew}
+	primeHookSource = "compact"
+	defer func() { primeHookSource = "" }()
+
+	output := captureStdout(t, func() {
+		runPrimeCompactResume(ctx)
+	})
+
+	for _, want := range []string{
+		"Working on production code: use /implement's SKILL.md rigorously.",
+		"Looking at a bug: use /diagnosing-bugs's SKILL.md rigorously.",
+	} {
+		if !strings.Contains(output, want) {
+			t.Fatalf("compact/resume missing skill directive %q:\n%s", want, output)
+		}
+	}
+}
+
 func TestEnsureBeadsRedirect_WitnessCreatesRedirect(t *testing.T) {
 	townRoot := t.TempDir()
 	rigRoot := filepath.Join(townRoot, "testrig")

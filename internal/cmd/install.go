@@ -25,6 +25,7 @@ import (
 	"github.com/steveyegge/gastown/internal/hooks"
 	"github.com/steveyegge/gastown/internal/runtime"
 	"github.com/steveyegge/gastown/internal/shell"
+	"github.com/steveyegge/gastown/internal/skills"
 	"github.com/steveyegge/gastown/internal/state"
 	"github.com/steveyegge/gastown/internal/style"
 	"github.com/steveyegge/gastown/internal/templates"
@@ -429,6 +430,12 @@ func runInstall(cmd *cobra.Command, args []string) error {
 		fmt.Printf("   %s Could not provision slash commands: %v\n", style.Dim.Render("⚠"), err)
 	} else {
 		fmt.Printf("   ✓ Created .claude/commands/ (slash commands for all agents)\n")
+	}
+
+	if err := skills.ProvisionFor(absPath, "claude"); err != nil {
+		fmt.Printf("   %s Could not provision mattpocock skills: %v\n", style.Dim.Render("⚠"), err)
+	} else {
+		fmt.Printf("   ✓ Created .agents/skills/ (mattpocock skills for all role sessions)\n")
 	}
 
 	// Sync hooks to generate .claude/settings.json files for all targets.

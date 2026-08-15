@@ -1143,14 +1143,10 @@ func TestClaudeSettingsCheck_TownRootSettingsWarnsInsteadOfKilling(t *testing.T)
 		t.Fatalf("Fix failed: %v", err)
 	}
 
-	// Verify stale file was deleted
+	// Verify stale settings.json was deleted. Town-root .claude/ may remain
+	// for inherited slash commands and mattpocock skills.
 	if _, err := os.Stat(staleTownRootSettings); !os.IsNotExist(err) {
 		t.Error("expected settings.json at town root to be deleted")
-	}
-
-	// Verify .claude directory was cleaned up (best-effort)
-	if _, err := os.Stat(staleTownRootDir); !os.IsNotExist(err) {
-		t.Error("expected .claude directory at town root to be deleted")
 	}
 }
 

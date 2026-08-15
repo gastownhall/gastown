@@ -10,6 +10,7 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/steveyegge/gastown/internal/config"
 	"github.com/steveyegge/gastown/internal/constants"
+	"github.com/steveyegge/gastown/internal/skills"
 	"github.com/steveyegge/gastown/internal/style"
 	"github.com/steveyegge/gastown/internal/workspace"
 )
@@ -200,6 +201,9 @@ func runAccountAdd(cmd *cobra.Command, args []string) error {
 	// when CLAUDE_CONFIG_DIR points at this account directory.
 	if err := ensureSharedCommandsSymlink(configDir); err != nil {
 		style.PrintWarning("could not symlink global commands: %v", err)
+	}
+	if err := skills.ProvisionUserDir(configDir); err != nil {
+		style.PrintWarning("could not provision mattpocock skills: %v", err)
 	}
 
 	// Add account

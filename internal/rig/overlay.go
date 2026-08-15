@@ -16,6 +16,7 @@ func gasTownIgnorePatterns() []string {
 		".runtime/",
 		".claude/",
 		".opencode/",
+		".agents/",
 		".logs/",
 		"__pycache__/",
 		"state.json",
@@ -146,23 +147,24 @@ func EnsureGitignorePatterns(worktreePath string) error {
 	return nil
 }
 
-// gasTownLocalExcludePatterns returns the patterns to write to the worktree-local
-// .git/info/exclude file. This is a superset of gasTownIgnorePatterns() and
-// includes .beads/ — which is safe here because .git/info/exclude is per-worktree
-// and never committed to the repo (unlike .gitignore, where .beads/ must NOT appear
-// because Beads manages its own .beads/.gitignore via bd init).
+// gasTownLocalExcludePatterns returns the patterns to write to git's
+// info/exclude file. This is a superset of gasTownIgnorePatterns() and
+// includes .beads/ — which is safe here because info/exclude is never
+// committed (unlike .gitignore, where .beads/ must NOT appear because Beads
+// manages its own .beads/.gitignore via bd init).
 func gasTownLocalExcludePatterns() []string {
 	patterns := gasTownIgnorePatterns()
 	// .beads/ is excluded from gasTownIgnorePatterns() to avoid breaking bd sync
-	// (see EnsureGitignorePatterns comment). The local exclude file is safe to
-	// include it — it's per-worktree and invisible to `git status` without affecting
-	// the tracked .gitignore (gas-7vg defense-in-depth).
+	// (see EnsureGitignorePatterns comment). info/exclude is safe to include it —
+	// it is untracked and invisible to `git status` without affecting the
+	// tracked .gitignore (gas-7vg defense-in-depth).
 	return append(patterns, ".beads/")
 }
 
-// EnsureLocalExcludePatterns writes the standard Gas Town ignore patterns to the
-// worktree-local git exclude file so the worktree stays clean without mutating a
-// tracked .gitignore.
+// EnsureLocalExcludePatterns writes the standard Gas Town ignore patterns to
+// git's info/exclude file so the worktree stays clean without mutating a
+// tracked .gitignore. Git stores info/exclude in the common dir, so the
+// patterns apply to every worktree of that repository.
 func EnsureLocalExcludePatterns(worktreePath string) error {
 	excludePath, err := gitLocalExcludePath(worktreePath)
 	if err != nil {
@@ -226,20 +228,24 @@ func EnsureLocalExcludePatterns(worktreePath string) error {
 }
 
 func gitLocalExcludePath(worktreePath string) (string, error) {
-	cmd := exec.Command("git", "-C", worktreePath, "rev-parse", "--git-dir")
+	// --git-path resolves info/exclude to the common dir. Linked worktrees
+	// have their own $GIT_DIR under .git/worktrees/<name>, but git reads
+	// exclude from the common repository, so writing $GIT_DIR/info/exclude
+	// leaves provisioned files such as .agents/ visible in git status.
+	cmd := exec.Command("git", "-C", worktreePath, "rev-parse", "--git-path", "info/exclude")
 	out, err := cmd.CombinedOutput()
 	if err != nil {
-		return "", fmt.Errorf("resolving git dir: %w: %s", err, strings.TrimSpace(string(out)))
+		return "", fmt.Errorf("resolving git exclude path: %w: %s", err, strings.TrimSpace(string(out)))
 	}
 
-	gitDir := strings.TrimSpace(string(out))
-	if gitDir == "" {
-		return "", fmt.Errorf("empty git dir for %s", worktreePath)
+	excludePath := strings.TrimSpace(string(out))
+	if excludePath == "" {
+		return "", fmt.Errorf("empty git exclude path for %s", worktreePath)
 	}
-	if !filepath.IsAbs(gitDir) {
-		gitDir = filepath.Join(worktreePath, gitDir)
+	if !filepath.IsAbs(excludePath) {
+		excludePath = filepath.Join(worktreePath, excludePath)
 	}
-	return filepath.Join(gitDir, "info", "exclude"), nil
+	return excludePath, nil
 }
 
 // matchesGitignorePattern checks if a gitignore line covers the required pattern.

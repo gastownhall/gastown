@@ -292,6 +292,7 @@ func newDoctorForCommand(rig string) *doctor.Doctor {
 	d.Register(doctor.NewCrewStateCheck())
 	d.Register(doctor.NewCrewWorktreeCheck())
 	d.Register(doctor.NewCommandsCheck())
+	d.Register(doctor.NewSkillsCheck())
 
 	// Lifecycle hygiene checks
 	d.Register(doctor.NewLifecycleHygieneCheck())

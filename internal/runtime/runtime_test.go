@@ -234,32 +234,34 @@ func TestStartupFallbackCommands_RoleCasing(t *testing.T) {
 }
 
 func TestEnsureSettingsForRole_NilConfig(t *testing.T) {
-	// Should not panic with nil config
-	err := EnsureSettingsForRole("/tmp/test", "/tmp/test", "polecat", nil)
+	dir := t.TempDir()
+	err := EnsureSettingsForRole(dir, dir, "polecat", nil)
 	if err != nil {
 		t.Errorf("EnsureSettingsForRole() with nil config should not error, got %v", err)
 	}
 }
 
 func TestEnsureSettingsForRole_NilHooks(t *testing.T) {
+	dir := t.TempDir()
 	rc := &config.RuntimeConfig{
 		Hooks: nil,
 	}
 
-	err := EnsureSettingsForRole("/tmp/test", "/tmp/test", "polecat", rc)
+	err := EnsureSettingsForRole(dir, dir, "polecat", rc)
 	if err != nil {
 		t.Errorf("EnsureSettingsForRole() with nil hooks should not error, got %v", err)
 	}
 }
 
 func TestEnsureSettingsForRole_UnknownProvider(t *testing.T) {
+	dir := t.TempDir()
 	rc := &config.RuntimeConfig{
 		Hooks: &config.RuntimeHooksConfig{
 			Provider: "unknown",
 		},
 	}
 
-	err := EnsureSettingsForRole("/tmp/test", "/tmp/test", "polecat", rc)
+	err := EnsureSettingsForRole(dir, dir, "polecat", rc)
 	if err != nil {
 		t.Errorf("EnsureSettingsForRole() with unknown provider should not error, got %v", err)
 	}
@@ -1026,5 +1028,69 @@ func TestEnsureSettingsForRole_ProvisionCommandsOutsideTownRoot(t *testing.T) {
 	}
 	if provisioned == 0 {
 		t.Error("no commands provisioned in workDir outside town root, want at least one")
+	}
+}
+
+func TestEnsureSettingsForRole_ProvisionsMattPocockSkills(t *testing.T) {
+	workDir := t.TempDir()
+	rc := &config.RuntimeConfig{
+		Hooks: &config.RuntimeHooksConfig{
+			Provider:     "claude",
+			Dir:          ".claude",
+			SettingsFile: "settings.json",
+		},
+	}
+
+	if err := EnsureSettingsForRole(workDir, workDir, "polecat", rc); err != nil {
+		t.Fatalf("EnsureSettingsForRole() error = %v", err)
+	}
+
+	for _, name := range []string{"implement", "diagnosing-bugs"} {
+		path := workDir + "/.agents/skills/" + name + "/SKILL.md"
+		if _, err := os.Stat(path); err != nil {
+			t.Errorf("missing skill %s: %v", name, err)
+		}
+		claudePath := workDir + "/.claude/skills/" + name + "/SKILL.md"
+		if _, err := os.Stat(claudePath); err != nil {
+			t.Errorf("missing claude skill %s: %v", name, err)
+		}
+	}
+}
+
+func TestEnsureSettingsForRole_ProvisionsSkillsWithoutHooks(t *testing.T) {
+	workDir := t.TempDir()
+	if err := EnsureSettingsForRole(workDir, workDir, "crew", &config.RuntimeConfig{}); err != nil {
+		t.Fatalf("EnsureSettingsForRole() error = %v", err)
+	}
+
+	path := workDir + "/.agents/skills/implement/SKILL.md"
+	if _, err := os.Stat(path); err != nil {
+		t.Fatalf("skills must be provisioned even without hooks: %v", err)
+	}
+}
+
+func TestEnsureSettingsForRole_ProvisionsInheritedRoleWorkDir(t *testing.T) {
+	root := makeTownRootWithGit(t)
+	mayorDir := root + "/mayor"
+	if err := os.MkdirAll(mayorDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	rc := &config.RuntimeConfig{
+		Hooks: &config.RuntimeHooksConfig{
+			Provider:     "claude",
+			Dir:          ".claude",
+			SettingsFile: "settings.json",
+		},
+	}
+	if err := EnsureSettingsForRole(mayorDir, mayorDir, "mayor", rc); err != nil {
+		t.Fatalf("EnsureSettingsForRole() error = %v", err)
+	}
+
+	if _, err := os.Stat(mayorDir + "/.agents/skills/implement/SKILL.md"); err != nil {
+		t.Fatalf("mayor workDir must have local skills: %v", err)
+	}
+	if _, err := os.Stat(root + "/.agents/skills/implement/SKILL.md"); err != nil {
+		t.Fatalf("town root should also receive skills: %v", err)
 	}
 }

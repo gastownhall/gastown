@@ -110,6 +110,17 @@ func roleRigContext(ctx RoleContext) (defaultBranch string, isForkRig bool, upst
 	return defaultBranch, false, ""
 }
 
+const (
+	primeImplementDirective      = "Working on production code: use /implement's SKILL.md rigorously."
+	primeDiagnosingBugsDirective = "Looking at a bug: use /diagnosing-bugs's SKILL.md rigorously."
+)
+
+// outputSkillDirectives emits the standing skill-use rules for every role session.
+func outputSkillDirectives(w io.Writer) {
+	fmt.Fprintln(w, primeImplementDirective)
+	fmt.Fprintln(w, primeDiagnosingBugsDirective)
+}
+
 // outputRoleDirectives loads and emits operator-provided role directives.
 // These come from the directive file layout (town-level and/or rig-level)
 // and override formula defaults where they conflict.

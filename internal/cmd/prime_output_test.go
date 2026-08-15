@@ -198,3 +198,64 @@ func TestOutputCommandQuickReferenceBootBlocksRawTmux(t *testing.T) {
 		t.Fatalf("Boot quick reference still calls raw tmux merely unreliable:\n%s", output)
 	}
 }
+
+func TestOutputRoleContext_IncludesSkillDirectives(t *testing.T) {
+	output := captureStdout(t, func() {
+		if _, err := outputRoleContext(RoleContext{
+			Role:     RoleCrew,
+			TownRoot: t.TempDir(),
+			Rig:      "testrig",
+			Polecat:  "joe",
+		}); err != nil {
+			t.Fatalf("outputRoleContext: %v", err)
+		}
+	})
+
+	for _, want := range []string{
+		"Working on production code: use /implement's SKILL.md rigorously.",
+		"Looking at a bug: use /diagnosing-bugs's SKILL.md rigorously.",
+	} {
+		if !strings.Contains(output, want) {
+			t.Fatalf("role context missing %q:\n%s", want, output)
+		}
+	}
+}
+
+func TestOutputSkillDirectives_TwoBluntLines(t *testing.T) {
+	t.Parallel()
+
+	var buf bytes.Buffer
+	outputSkillDirectives(&buf)
+	got := buf.String()
+
+	want := []string{
+		"Working on production code: use /implement's SKILL.md rigorously.",
+		"Looking at a bug: use /diagnosing-bugs's SKILL.md rigorously.",
+	}
+	for _, line := range want {
+		if !strings.Contains(got, line) {
+			t.Fatalf("missing %q in:\n%s", line, got)
+		}
+	}
+	if strings.Contains(got, "Use /tdd where possible") {
+		t.Fatal("must not repeat /implement SKILL.md contents")
+	}
+	if strings.Contains(got, "Build a feedback loop") {
+		t.Fatal("must not repeat /diagnosing-bugs SKILL.md contents")
+	}
+
+	lines := nonEmptyLines(got)
+	if len(lines) != 2 {
+		t.Fatalf("want exactly 2 lines, got %d: %q", len(lines), lines)
+	}
+}
+
+func nonEmptyLines(s string) []string {
+	var out []string
+	for _, line := range strings.Split(s, "\n") {
+		if strings.TrimSpace(line) != "" {
+			out = append(out, line)
+		}
+	}
+	return out
+}

@@ -11,6 +11,7 @@ import (
 	"github.com/steveyegge/gastown/internal/cli"
 	"github.com/steveyegge/gastown/internal/config"
 	"github.com/steveyegge/gastown/internal/hooks"
+	"github.com/steveyegge/gastown/internal/skills"
 	"github.com/steveyegge/gastown/internal/templates/commands"
 	"github.com/steveyegge/gastown/internal/tmux"
 	"github.com/steveyegge/gastown/internal/workspace"
@@ -18,7 +19,7 @@ import (
 
 // EnsureSettingsForRole provisions all agent-specific configuration for a role.
 // settingsDir is where provider settings (e.g., .claude/settings.json) are installed.
-// workDir is the agent's working directory where slash commands are provisioned.
+// workDir is the agent's working directory where slash commands and skills are provisioned.
 // For roles like crew/witness/refinery/polecat, settingsDir is a gastown-managed
 // parent directory (passed via --settings flag), while workDir is the customer repo.
 // For mayor/deacon, settingsDir and workDir are the same.
@@ -27,11 +28,17 @@ func EnsureSettingsForRole(settingsDir, workDir, role string, rc *config.Runtime
 		rc = config.DefaultRuntimeConfig()
 	}
 
+	provider := ""
+	if rc.Hooks != nil {
+		provider = rc.Hooks.Provider
+	}
+	if err := provisionRoleSkills(workDir, provider); err != nil {
+		return err
+	}
+
 	if rc.Hooks == nil {
 		return nil
 	}
-
-	provider := rc.Hooks.Provider
 	if provider == "" || provider == "none" {
 		return nil
 	}
@@ -63,6 +70,26 @@ func EnsureSettingsForRole(settingsDir, workDir, role string, rc *config.Runtime
 	}
 
 	return nil
+}
+
+func provisionRoleSkills(workDir, provider string) error {
+	if workDir == "" {
+		return nil
+	}
+
+	townProvider := provider
+	if townProvider == "" || townProvider == "none" {
+		townProvider = "claude"
+	}
+	if townRoot, err := workspace.Find(workDir); err == nil && townRoot != "" {
+		if err := skills.ProvisionFor(townRoot, townProvider); err != nil {
+			return err
+		}
+		if samePath(townRoot, workDir) {
+			return nil
+		}
+	}
+	return skills.ProvisionFor(workDir, provider)
 }
 
 func ensureGeminiContextFile(workDir string) error {
