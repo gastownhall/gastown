@@ -175,19 +175,35 @@ func CostTierRoleEffort(tier CostTier) map[string]string {
 	}
 }
 
-// ValidEffortLevels returns all valid effort level values.
+// ValidEffortLevels returns every effort level supported by a managed runtime.
 func ValidEffortLevels() []string {
-	return []string{"low", "medium", "high", "max"}
+	return []string{"off", "minimal", "low", "medium", "high", "xhigh", "max"}
 }
 
 // IsValidEffortLevel checks if a string is a valid effort level.
 func IsValidEffortLevel(level string) bool {
 	switch level {
-	case "low", "medium", "high", "max":
+	case "off", "minimal", "low", "medium", "high", "xhigh", "max":
 		return true
 	default:
 		return false
 	}
+}
+
+func validEffortLevelsForRuntime(rc *RuntimeConfig) []string {
+	if isPiAgent(rc) {
+		return ValidEffortLevels()
+	}
+	return []string{"low", "medium", "high", "max"}
+}
+
+func isValidEffortLevelForRuntime(rc *RuntimeConfig, level string) bool {
+	for _, candidate := range validEffortLevelsForRuntime(rc) {
+		if level == candidate {
+			return true
+		}
+	}
+	return false
 }
 
 // CostTierAgents returns the custom agent definitions needed for a given tier.

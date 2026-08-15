@@ -26,6 +26,7 @@ Native source installs require these host tools. Homebrew and Docker installs pr
 |------|---------|-------|---------|
 | **tmux** | 3.0+ | `tmux -V` | See below |
 | **Claude Code** (default) | >= 2.0.20 | `claude --version` | See [claude.ai/claude-code](https://claude.ai/claude-code) |
+| **Pi** (optional) | latest | `pi --version` | See [Pi runtime](PI.md) |
 | **Codex CLI** (optional) | latest | `codex --version` | See [developers.openai.com/codex/cli](https://developers.openai.com/codex/cli) |
 | **OpenCode CLI** (optional) | latest | `opencode --version` | See [opencode.ai](https://opencode.ai) |
 | **GitHub Copilot CLI** (optional) | latest | `copilot --version` | See [cli.github.com](https://cli.github.com) (requires Copilot seat) |
@@ -195,7 +196,7 @@ gt status              # Show workspace status
 
 ### Step 5: Configure Agents (Optional)
 
-Gas Town supports built-in runtimes (`claude`, `gemini`, `codex`, `kiro`, `cursor`, `auggie`, `amp`, `opencode`, `copilot`) plus custom agent aliases.
+Gas Town supports built-in runtimes (`claude`, `gemini`, `codex`, `kiro`, `cursor`, `auggie`, `amp`, `opencode`, `copilot`, `pi`) plus custom agent aliases.
 
 ```bash
 # List available agents
@@ -208,6 +209,18 @@ gt config agent set claude-haiku "claude --model haiku --dangerously-skip-permis
 # Set the town default agent (used when a rig doesn't specify one)
 gt config default-agent codex-low
 ```
+
+Assign profiles and thinking effort by role:
+
+```bash
+gt config agent set pi-luna "pi --model openai-codex/gpt-5.6-luna" --provider pi
+gt config role set mayor pi-luna high
+gt config role set witness pi-luna low
+gt config role list
+```
+
+See [Pi runtime](PI.md) for model profiles, role and rig overrides, thinking
+effort, and container authentication.
 
 You can also override the agent per command without changing defaults:
 

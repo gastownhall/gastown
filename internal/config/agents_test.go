@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"testing"
@@ -1329,9 +1330,10 @@ func TestPiAgentPreset(t *testing.T) {
 		t.Errorf("pi command = %q, want pi", info.Command)
 	}
 
-	// Pi preset includes -e flag to load gastown hooks extension
-	if len(info.Args) != 2 || info.Args[0] != "-e" {
-		t.Errorf("pi args = %v, want [-e .pi/extensions/gastown-hooks.js]", info.Args)
+	// Pi preset loads the Gas Town extension without an interactive trust prompt.
+	wantArgs := []string{"-e", ".pi/extensions/gastown-hooks.js", "--approve"}
+	if !slices.Equal(info.Args, wantArgs) {
+		t.Errorf("pi args = %v, want %v", info.Args, wantArgs)
 	}
 
 	if len(info.ProcessNames) != 3 {
@@ -1367,6 +1369,18 @@ func TestPiAgentPreset(t *testing.T) {
 	}
 	if info.NonInteractive.PromptFlag != "-p" {
 		t.Errorf("pi NonInteractive.PromptFlag = %q, want -p", info.NonInteractive.PromptFlag)
+	}
+}
+
+func TestCloneAgentPresetInfoCopiesRequiredArgGroups(t *testing.T) {
+	t.Parallel()
+
+	original := &AgentPresetInfo{RequiredArgGroups: [][]string{{"--required", "value"}}}
+	clone := cloneAgentPresetInfo(original)
+	clone.RequiredArgGroups[0][0] = "--changed"
+
+	if original.RequiredArgGroups[0][0] != "--required" {
+		t.Fatalf("clone shares RequiredArgGroups storage with original: %v", original.RequiredArgGroups)
 	}
 }
 

@@ -31,7 +31,9 @@ Rig settings control behavioral configuration for a rig:
 - Workflow settings
 
 Settings are stored in settings/config.json within each rig directory.
-Use dot notation to access nested keys (e.g., role_agents.witness).`,
+Use dot notation to access nested keys (e.g., role_agents.witness or
+role_effort.witness). For role configuration, 'gt rig role' provides a simpler
+validated interface.`,
 	RunE: requireSubcommand,
 }
 
@@ -65,10 +67,13 @@ If the settings file doesn't exist, it will be created with a valid scaffold.
 Examples:
   gt rig settings set gastown agent claude
   gt rig settings set gastown role_agents.witness gemini
+  gt rig settings set gastown role_effort.witness low
   gt rig settings set gastown merge_queue.max_concurrent 5
   gt rig settings set gastown theme.disabled true
   gt rig settings set gastown theme.name forest
-  gt rig settings set gastown theme.custom '{"bg":"#111111","fg":"#eeeeee"}'`,
+  gt rig settings set gastown theme.custom '{"bg":"#111111","fg":"#eeeeee"}'
+
+Prefer 'gt rig role set' when changing role_agents and role_effort together.`,
 	Args: cobra.ExactArgs(3),
 	RunE: runRigSettingsSet,
 }
@@ -83,7 +88,8 @@ specified key is removed (parent objects remain if they have other keys).
 
 Examples:
   gt rig settings unset gastown agent
-  gt rig settings unset gastown role_agents.witness`,
+  gt rig settings unset gastown role_agents.witness
+  gt rig settings unset gastown role_effort.witness`,
 	Args: cobra.ExactArgs(2),
 	RunE: runRigSettingsUnset,
 }
@@ -124,12 +130,12 @@ func runRigSettingsShow(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
-func runRigSettingsSet(cmd *cobra.Command, args []string) error {
+func runRigSettingsSet(_ *cobra.Command, args []string) error {
 	rigName := args[0]
 	keyPath := args[1]
 	valueStr := args[2]
 
-	_, r, err := getRig(rigName)
+	townRoot, r, err := getRig(rigName)
 	if err != nil {
 		return err
 	}
@@ -145,6 +151,10 @@ func runRigSettingsSet(cmd *cobra.Command, args []string) error {
 		} else {
 			return fmt.Errorf("loading settings: %w", err)
 		}
+	}
+
+	if err := validateRigRoleSetting(townRoot, r.Path, keyPath, valueStr); err != nil {
+		return err
 	}
 
 	// Parse the value
@@ -163,6 +173,21 @@ func runRigSettingsSet(cmd *cobra.Command, args []string) error {
 	fmt.Printf("%s Set %s=%v in settings for rig %s\n",
 		style.Success.Render("✓"), keyPath, formatValueForDisplay(value), rigName)
 	return nil
+}
+
+func validateRigRoleSetting(townRoot, rigPath, keyPath, value string) error {
+	parts := strings.Split(keyPath, ".")
+	if len(parts) != 2 {
+		return nil
+	}
+	switch parts[0] {
+	case "role_agents":
+		return config.ValidateRigRoleAgent(townRoot, rigPath, parts[1], value)
+	case "role_effort":
+		return config.ValidateRigRoleEffort(townRoot, rigPath, parts[1], value)
+	default:
+		return nil
+	}
 }
 
 func runRigSettingsUnset(cmd *cobra.Command, args []string) error {
@@ -332,7 +357,7 @@ func setNestedValue(obj interface{}, keyPath string, value interface{}) error {
 				validKeys := []string{
 					"type", "version",
 					"merge_queue", "theme", "namepool", "crew", "workflow",
-					"runtime", "agent", "agents", "role_agents",
+					"runtime", "agent", "agents", "role_agents", "role_effort",
 				}
 				return fmt.Errorf("unknown key %q (valid top-level keys: %s)", keyPath, strings.Join(validKeys, ", "))
 			}

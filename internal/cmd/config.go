@@ -34,6 +34,10 @@ Commands:
   gt config agent get <name>         Show agent configuration
   gt config agent set <name> <cmd>   Set custom agent command
   gt config agent remove <name>      Remove custom agent
+  gt config role list                Show effective agent and effort by role
+  gt config role set <role> <agent> [effort]
+                                     Assign an agent and optional effort to a role
+  gt config role unset <role>        Clear a role assignment
   gt config default-agent [name]     Get or set default agent
   gt config default-agent list       List available agents`,
 }
@@ -94,6 +98,47 @@ var configAgentRemoveCmd = &cobra.Command{
 	Long:  "", // Set in init() — includes full built-in preset list
 	Args:  cobra.ExactArgs(1),
 	RunE:  runConfigAgentRemove,
+}
+
+// Role subcommands provide a typed interface over role_agents and role_effort.
+
+var configRoleCmd = &cobra.Command{
+	Use:   "role",
+	Short: "Configure agents and effort by role",
+	Long: `Configure the agent profile and thinking effort used by each role.
+
+Agent profiles are built-ins or aliases created with 'gt config agent set'.
+Effort is optional. Pi profiles accept off, minimal, low, medium, high, xhigh,
+or max; other runtimes accept low, medium, high, or max. For Pi profiles, the
+configured effort is passed to Pi as --thinking.`,
+	RunE: requireSubcommand,
+}
+
+var configRoleListCmd = &cobra.Command{
+	Use:   "list",
+	Short: "List effective role assignments",
+	Args:  cobra.NoArgs,
+	RunE:  runConfigRoleList,
+}
+
+var configRoleSetCmd = &cobra.Command{
+	Use:   "set <role> <agent> [effort]",
+	Short: "Assign an agent profile and optional effort to a role",
+	Long: `Assign an agent profile and optional thinking effort to a role.
+
+Examples:
+  gt config role set mayor pi-luna high
+  gt config role set witness pi-luna low
+  gt config role set polecat pi-sonnet max`,
+	Args: cobra.RangeArgs(2, 3),
+	RunE: runConfigRoleSet,
+}
+
+var configRoleUnsetCmd = &cobra.Command{
+	Use:   "unset <role>",
+	Short: "Clear the agent and effort assigned to a role",
+	Args:  cobra.ExactArgs(1),
+	RunE:  runConfigRoleUnset,
 }
 
 // Cost-tier subcommand
@@ -560,6 +605,72 @@ func runConfigDefaultAgent(cmd *cobra.Command, args []string) error {
 	}
 
 	fmt.Printf("Default agent set to '%s'\n", style.Bold.Render(name))
+	return nil
+}
+
+func runConfigRoleList(_ *cobra.Command, _ []string) error {
+	townRoot, err := workspace.FindFromCwd()
+	if err != nil {
+		return fmt.Errorf("finding town root: %w", err)
+	}
+
+	settings, err := config.LoadOrCreateTownSettings(config.TownSettingsPath(townRoot))
+	if err != nil {
+		return fmt.Errorf("loading town settings: %w", err)
+	}
+
+	defaultAgent := settings.DefaultAgent
+	if defaultAgent == "" {
+		defaultAgent = "claude"
+	}
+
+	fmt.Printf("%-10s %-20s %s\n", "ROLE", "AGENT", "EFFORT")
+	for _, role := range config.TierManagedRoles {
+		agent := settings.RoleAgents[role]
+		if agent == "" {
+			agent = defaultAgent + " (default)"
+		}
+		effort := settings.RoleEffort[role]
+		if effort == "" {
+			effort = "runtime default"
+		}
+		fmt.Printf("%-10s %-20s %s\n", role, agent, effort)
+	}
+	return nil
+}
+
+func runConfigRoleSet(_ *cobra.Command, args []string) error {
+	role, agent := args[0], args[1]
+	townRoot, err := workspace.FindFromCwd()
+	if err != nil {
+		return fmt.Errorf("finding town root: %w", err)
+	}
+
+	effort := ""
+	if len(args) == 3 {
+		effort = args[2]
+	}
+	if err := config.SetTownRole(config.TownSettingsPath(townRoot), role, agent, effort); err != nil {
+		return err
+	}
+	if effort == "" {
+		fmt.Printf("Set role %s to agent %s (effort unchanged)\n", style.Bold.Render(role), style.Bold.Render(agent))
+	} else {
+		fmt.Printf("Set role %s to agent %s with %s effort\n", style.Bold.Render(role), style.Bold.Render(agent), style.Bold.Render(effort))
+	}
+	return nil
+}
+
+func runConfigRoleUnset(_ *cobra.Command, args []string) error {
+	role := args[0]
+	townRoot, err := workspace.FindFromCwd()
+	if err != nil {
+		return fmt.Errorf("finding town root: %w", err)
+	}
+	if err := config.UnsetTownRole(config.TownSettingsPath(townRoot), role); err != nil {
+		return err
+	}
+	fmt.Printf("Cleared role configuration for %s\n", style.Bold.Render(role))
 	return nil
 }
 
@@ -1307,12 +1418,16 @@ config values such as the default AI model or provider.`,
 	configAgentCmd.AddCommand(configAgentGetCmd)
 	configAgentCmd.AddCommand(configAgentSetCmd)
 	configAgentCmd.AddCommand(configAgentRemoveCmd)
+	configRoleCmd.AddCommand(configRoleListCmd)
+	configRoleCmd.AddCommand(configRoleSetCmd)
+	configRoleCmd.AddCommand(configRoleUnsetCmd)
 
 	// Add default-agent subcommands
 	configDefaultAgentCmd.AddCommand(configDefaultAgentListCmd)
 
 	// Add subcommands to config
 	configCmd.AddCommand(configAgentCmd)
+	configCmd.AddCommand(configRoleCmd)
 	configCmd.AddCommand(configCostTierCmd)
 	configCmd.AddCommand(configDefaultAgentCmd)
 	configCmd.AddCommand(configAgentEmailDomainCmd)

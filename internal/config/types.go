@@ -93,7 +93,9 @@ type TownSettings struct {
 
 	// RoleEffort maps role names to effort levels for per-role effort configuration.
 	// Keys are role names: "mayor", "deacon", "witness", "refinery", "polecat", "crew", "boot", "dog".
-	// Values are effort levels: "low", "medium", "high", "max".
+	// Values are runtime-specific effort levels. Pi accepts "off", "minimal",
+	// "low", "medium", "high", "xhigh", and "max"; other managed runtimes
+	// accept "low", "medium", "high", and "max".
 	// Allows cost/speed optimization by using lower effort for simpler roles.
 	// Managed by cost-tier presets alongside RoleAgents.
 	RoleEffort map[string]string `json:"role_effort,omitempty"`
@@ -704,7 +706,9 @@ type RigSettings struct {
 
 	// RoleEffort maps role names to effort levels, overriding TownSettings.RoleEffort for this rig.
 	// Keys are role names: "witness", "refinery", "polecat", "crew".
-	// Values are effort levels: "low", "medium", "high", "max".
+	// Values are runtime-specific effort levels. Pi accepts "off", "minimal",
+	// "low", "medium", "high", "xhigh", and "max"; other managed runtimes
+	// accept "low", "medium", "high", and "max".
 	// Example: {"crew": "max", "witness": "low"}
 	RoleEffort map[string]string `json:"role_effort,omitempty"`
 }
@@ -1042,6 +1046,48 @@ func normalizeRuntimeConfig(rc *RuntimeConfig) *RuntimeConfig {
 
 const codexUpdateCheckKey = "check_for_update_on_startup"
 const codexUpdateCheckConfig = codexUpdateCheckKey + "=false"
+
+func ensureRequiredArgGroups(args []string, requiredGroups [][]string) []string {
+	missingCount := 0
+	for _, group := range requiredGroups {
+		if !containsArgSequence(args, group) {
+			missingCount += len(group)
+		}
+	}
+	if missingCount == 0 {
+		return args
+	}
+
+	result := make([]string, 0, missingCount+len(args))
+	for _, group := range requiredGroups {
+		if !containsArgSequence(args, group) {
+			result = append(result, group...)
+		}
+	}
+	result = append(result, args...)
+	return result
+}
+
+func containsArgSequence(args, sequence []string) bool {
+	sequenceLength := len(sequence)
+	if sequenceLength == 0 {
+		return true
+	}
+	argsLength := len(args)
+	for i := 0; i+sequenceLength <= argsLength; i++ {
+		matched := true
+		for j := range sequence {
+			if args[i+j] != sequence[j] {
+				matched = false
+				break
+			}
+		}
+		if matched {
+			return true
+		}
+	}
+	return false
+}
 
 func ensureCodexAutomationArgs(command string, args []string) []string {
 	if !isCodexRuntime(command) || hasCodexUpdateCheckConfig(args) {

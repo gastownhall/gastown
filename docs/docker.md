@@ -10,7 +10,7 @@ The Docker tooling lives at the repository root.
 
 | File | Purpose |
 |---|---|
-| `Dockerfile` | Production runtime image. The Dockerfile builds on Anthropic's claude-code sandbox template, installs Git, Go, Dolt, beads, plus utility tooling, and compiles `gt` from source. |
+| `Dockerfile` | Production runtime image. The Dockerfile builds on Anthropic's claude-code sandbox template, installs Git, Go, Dolt, beads, Pi, plus utility tooling, and compiles `gt` from source. |
 | `docker-compose.yml` | Service definition for the runtime. The compose file sets capabilities, volumes, and the bind mount you point at a host directory. |
 | `docker-entrypoint.sh` | First-run bootstrap script. The script sets git and dolt identity from environment variables, then runs `gt install /gt --git` against the bind-mounted workspace. |
 | `Dockerfile.e2e` | Image used by CI for integration tests. The e2e image is Alpine-based, more minimal than the production image, and runs `go test` rather than a long-lived service. |

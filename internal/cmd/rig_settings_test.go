@@ -27,9 +27,9 @@ func setupTestRigForSettings(t *testing.T) (string, string) {
 	// Create town.json (primary marker for workspace detection)
 	townConfig := &config.TownConfig{
 		Type:      "town",
-		Version:    config.CurrentTownVersion,
-		Name:       "test-town",
-		CreatedAt:  time.Now().Truncate(time.Second),
+		Version:   config.CurrentTownVersion,
+		Name:      "test-town",
+		CreatedAt: time.Now().Truncate(time.Second),
 	}
 	townConfigPath := filepath.Join(mayorDir, "town.json")
 	if err := config.SaveTownConfig(townConfigPath, townConfig); err != nil {
@@ -216,6 +216,93 @@ func TestRigSettingsSet(t *testing.T) {
 		}
 	})
 
+	t.Run("sets valid role effort", func(t *testing.T) {
+		townRoot, rigName := setupTestRigForSettings(t)
+		rigPath := filepath.Join(townRoot, rigName)
+
+		if err := runRigSettingsSet(rigSettingsSetCmd, []string{rigName, "role_effort.witness", "medium"}); err != nil {
+			t.Fatalf("runRigSettingsSet error: %v", err)
+		}
+
+		settings, err := config.LoadRigSettings(filepath.Join(rigPath, "settings", "config.json"))
+		if err != nil {
+			t.Fatalf("load settings: %v", err)
+		}
+		if got := settings.RoleEffort["witness"]; got != "medium" {
+			t.Fatalf("RoleEffort[witness] = %q, want medium", got)
+		}
+	})
+
+	t.Run("sets Pi-specific role effort", func(t *testing.T) {
+		townRoot, rigName := setupTestRigForSettings(t)
+		rigPath := filepath.Join(townRoot, rigName)
+		townSettings := config.NewTownSettings()
+		townSettings.Agents = map[string]*config.RuntimeConfig{
+			"pi-luna": {Provider: "pi", Command: "pi"},
+		}
+		if err := config.SaveTownSettings(config.TownSettingsPath(townRoot), townSettings); err != nil {
+			t.Fatalf("save town settings: %v", err)
+		}
+
+		if err := runRigSettingsSet(rigSettingsSetCmd, []string{rigName, "role_agents.witness", "pi-luna"}); err != nil {
+			t.Fatalf("set Pi role agent: %v", err)
+		}
+		if err := runRigSettingsSet(rigSettingsSetCmd, []string{rigName, "role_effort.witness", "xhigh"}); err != nil {
+			t.Fatalf("set Pi role effort: %v", err)
+		}
+
+		settings, err := config.LoadRigSettings(filepath.Join(rigPath, "settings", "config.json"))
+		if err != nil {
+			t.Fatalf("load settings: %v", err)
+		}
+		if got := settings.RoleEffort["witness"]; got != "xhigh" {
+			t.Fatalf("RoleEffort[witness] = %q, want xhigh", got)
+		}
+	})
+
+	t.Run("rejects invalid role effort", func(t *testing.T) {
+		townRoot, rigName := setupTestRigForSettings(t)
+		rigPath := filepath.Join(townRoot, rigName)
+		settingsPath := filepath.Join(rigPath, "settings", "config.json")
+
+		err := runRigSettingsSet(rigSettingsSetCmd, []string{rigName, "role_effort.witness", "extreme"})
+		if err == nil {
+			t.Fatal("invalid role effort succeeded, want error")
+		}
+		if !strings.Contains(err.Error(), "invalid effort") {
+			t.Fatalf("error = %q, want invalid effort", err)
+		}
+		if _, statErr := os.Stat(settingsPath); !os.IsNotExist(statErr) {
+			t.Fatalf("invalid setting created %s", settingsPath)
+		}
+	})
+
+	t.Run("rejects unknown role and agent paths", func(t *testing.T) {
+		tests := []struct {
+			name    string
+			keyPath string
+			value   string
+		}{
+			{name: "role agent suffix", keyPath: "role_agents.polecats", value: "pi"},
+			{name: "role effort suffix", keyPath: "role_effort.polecats", value: "low"},
+			{name: "agent profile", keyPath: "role_agents.polecat", value: "pi-lcoal"},
+		}
+		for _, tt := range tests {
+			t.Run(tt.name, func(t *testing.T) {
+				townRoot, rigName := setupTestRigForSettings(t)
+				settingsPath := filepath.Join(townRoot, rigName, "settings", "config.json")
+
+				err := runRigSettingsSet(rigSettingsSetCmd, []string{rigName, tt.keyPath, tt.value})
+				if err == nil {
+					t.Fatalf("%s=%s succeeded, want error", tt.keyPath, tt.value)
+				}
+				if _, statErr := os.Stat(settingsPath); !os.IsNotExist(statErr) {
+					t.Fatalf("invalid setting created %s", settingsPath)
+				}
+			})
+		}
+	})
+
 	t.Run("sets deeply nested keys", func(t *testing.T) {
 		townRoot, rigName := setupTestRigForSettings(t)
 		rigPath := filepath.Join(townRoot, rigName)
@@ -307,48 +394,19 @@ func TestRigSettingsSet(t *testing.T) {
 		}
 	})
 
-	t.Run("false on string field falls back to string", func(t *testing.T) {
-		townRoot, rigName := setupTestRigForSettings(t)
-		rigPath := filepath.Join(townRoot, rigName)
-
-		// parseValue("false") infers bool, but role_agents values are strings.
-		cmd := rigSettingsSetCmd
-		err := runRigSettingsSet(cmd, []string{rigName, "role_agents.witness", "false"})
-		if err != nil {
-			t.Fatalf("runRigSettingsSet error: %v", err)
-		}
-
-		settingsPath := filepath.Join(rigPath, "settings", "config.json")
-		settings, err := config.LoadRigSettings(settingsPath)
-		if err != nil {
-			t.Fatalf("load settings: %v", err)
-		}
-		if settings.RoleAgents["witness"] != "false" {
-			t.Errorf("RoleAgents[witness] = %q, want %q", settings.RoleAgents["witness"], "false")
+	t.Run("false is rejected as an unknown role agent", func(t *testing.T) {
+		_, rigName := setupTestRigForSettings(t)
+		err := runRigSettingsSet(rigSettingsSetCmd, []string{rigName, "role_agents.witness", "false"})
+		if err == nil || !strings.Contains(err.Error(), `agent "false" not found`) {
+			t.Fatalf("error = %v, want unknown agent", err)
 		}
 	})
 
-	t.Run("type inference for JSON array falls back to string", func(t *testing.T) {
-		townRoot, rigName := setupTestRigForSettings(t)
-		rigPath := filepath.Join(townRoot, rigName)
-
-		// parseValue parses this as a JSON array, but role_agents values are strings.
-		// setNestedValue should fall back to storing the raw string representation.
-		cmd := rigSettingsSetCmd
-		err := runRigSettingsSet(cmd, []string{rigName, "role_agents.witness", `["gemini", "claude"]`})
-		if err != nil {
-			t.Fatalf("runRigSettingsSet error: %v", err)
-		}
-
-		settingsPath := filepath.Join(rigPath, "settings", "config.json")
-		settings, err := config.LoadRigSettings(settingsPath)
-		if err != nil {
-			t.Fatalf("load settings: %v", err)
-		}
-		// The fallback uses fmt.Sprintf("%v", value) which for a slice gives "[gemini claude]"
-		// This is the expected behavior when a JSON array is set on a string field
-		if settings.RoleAgents["witness"] == "" {
-			t.Error("RoleAgents[witness] should not be empty after set")
+	t.Run("JSON array is rejected as an unknown role agent", func(t *testing.T) {
+		_, rigName := setupTestRigForSettings(t)
+		err := runRigSettingsSet(rigSettingsSetCmd, []string{rigName, "role_agents.witness", `["gemini", "claude"]`})
+		if err == nil || !strings.Contains(err.Error(), "not found") {
+			t.Fatalf("error = %v, want unknown agent", err)
 		}
 	})
 
@@ -740,7 +798,7 @@ func TestRigSettingsEdgeCases(t *testing.T) {
 		if err := runRigSettingsSet(cmd, []string{rigName, "role_agents.witness", "gemini"}); err != nil {
 			t.Fatalf("set witness: %v", err)
 		}
-		if err := runRigSettingsSet(cmd, []string{rigName, "role_agents.refinery", "claude-sonnet"}); err != nil {
+		if err := runRigSettingsSet(cmd, []string{rigName, "role_agents.refinery", "codex"}); err != nil {
 			t.Fatalf("set refinery: %v", err)
 		}
 
@@ -759,8 +817,8 @@ func TestRigSettingsEdgeCases(t *testing.T) {
 		if settings.RoleAgents["witness"] != "gemini" {
 			t.Errorf("RoleAgents[witness] = %q, want %q", settings.RoleAgents["witness"], "gemini")
 		}
-		if settings.RoleAgents["refinery"] != "claude-sonnet" {
-			t.Errorf("RoleAgents[refinery] = %q, want %q", settings.RoleAgents["refinery"], "claude-sonnet")
+		if settings.RoleAgents["refinery"] != "codex" {
+			t.Errorf("RoleAgents[refinery] = %q, want %q", settings.RoleAgents["refinery"], "codex")
 		}
 	})
 }

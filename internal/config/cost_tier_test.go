@@ -667,9 +667,12 @@ func TestIsValidEffortLevel(t *testing.T) {
 		level string
 		want  bool
 	}{
+		{"off", true},
+		{"minimal", true},
 		{"low", true},
 		{"medium", true},
 		{"high", true},
+		{"xhigh", true},
 		{"max", true},
 		{"", false},
 		{"extreme", false},
@@ -682,6 +685,29 @@ func TestIsValidEffortLevel(t *testing.T) {
 				t.Errorf("IsValidEffortLevel(%q) = %v, want %v", tt.level, got, tt.want)
 			}
 		})
+	}
+}
+
+func TestValidEffortLevelsForRuntime(t *testing.T) {
+	t.Parallel()
+
+	pi := &RuntimeConfig{Provider: "pi", Command: "pi"}
+	for _, effort := range []string{"off", "minimal", "low", "medium", "high", "xhigh", "max"} {
+		if !isValidEffortLevelForRuntime(pi, effort) {
+			t.Errorf("Pi effort %q rejected", effort)
+		}
+	}
+
+	claude := &RuntimeConfig{Provider: "claude", Command: "claude"}
+	for _, effort := range []string{"low", "medium", "high", "max"} {
+		if !isValidEffortLevelForRuntime(claude, effort) {
+			t.Errorf("Claude effort %q rejected", effort)
+		}
+	}
+	for _, effort := range []string{"off", "minimal", "xhigh"} {
+		if isValidEffortLevelForRuntime(claude, effort) {
+			t.Errorf("Claude effort %q accepted", effort)
+		}
 	}
 }
 

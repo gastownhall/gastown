@@ -68,6 +68,11 @@ type AgentPresetInfo struct {
 	// Args are the default command-line arguments for autonomous mode.
 	Args []string `json:"args"`
 
+	// RequiredArgGroups are lifecycle-critical command-line argument sequences
+	// that remain present when a custom runtime replaces Args. Keep ordinary
+	// autonomous defaults in Args so users can still override them.
+	RequiredArgGroups [][]string `json:"required_arg_groups,omitempty"`
+
 	// Env are environment variables to set when starting the agent.
 	// These are merged with the standard GT_* variables.
 	// Used for agent-specific configuration like OPENCODE_PERMISSION.
@@ -432,7 +437,8 @@ var builtinPresets = map[AgentPreset]*AgentPresetInfo{
 	AgentPi: {
 		Name:                AgentPi,
 		Command:             "pi",
-		Args:                []string{"-e", ".pi/extensions/gastown-hooks.js"},
+		Args:                []string{"-e", ".pi/extensions/gastown-hooks.js", "--approve"},
+		RequiredArgGroups:   [][]string{{"-e", ".pi/extensions/gastown-hooks.js"}, {"--approve"}},
 		ProcessNames:        []string{"pi", "node", "bun"}, // Pi runs as Node.js
 		SessionIDEnv:        "PI_SESSION_ID",
 		ResumeFlag:          "--session",
@@ -615,6 +621,7 @@ func cloneAgentPresetInfo(src *AgentPresetInfo) *AgentPresetInfo {
 	if src.Args != nil {
 		clone.Args = append([]string(nil), src.Args...)
 	}
+	clone.RequiredArgGroups = cloneStringGroups(src.RequiredArgGroups)
 	if src.Env != nil {
 		clone.Env = make(map[string]string, len(src.Env))
 		for k, v := range src.Env {
@@ -636,6 +643,17 @@ func cloneAgentPresetInfo(src *AgentPresetInfo) *AgentPresetInfo {
 		clone.ACP = &acp
 	}
 	return &clone
+}
+
+func cloneStringGroups(src [][]string) [][]string {
+	if src == nil {
+		return nil
+	}
+	clone := make([][]string, len(src))
+	for i, group := range src {
+		clone[i] = append([]string(nil), group...)
+	}
+	return clone
 }
 
 // LoadAgentRegistry loads agent definitions from a JSON file and merges with built-ins.
@@ -1026,6 +1044,7 @@ func (rc *RuntimeConfig) MergeWithPreset(preset AgentPreset) *RuntimeConfig {
 	if len(result.Args) == 0 {
 		result.Args = append([]string(nil), info.Args...)
 	}
+	result.Args = ensureRequiredArgGroups(result.Args, info.RequiredArgGroups)
 
 	return result
 }
