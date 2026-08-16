@@ -1116,6 +1116,7 @@ func TestCompactResumeReminder_IncludesSkillDirectives(t *testing.T) {
 		"Bead epics: use /to-spec's SKILL.md rigorously.",
 		"Bead children: use /to-tickets's SKILL.md rigorously.",
 		"Rule of thumb: synthesize one parent spec; children are one-window vertical slices that declare blockers.",
+		"Conflict-resolution beads: use /resolving-merge-conflicts's SKILL.md rigorously.",
 	} {
 		if !strings.Contains(output, want) {
 			t.Fatalf("compact/resume missing skill directive %q:\n%s", want, output)
@@ -1143,13 +1144,14 @@ func TestPrimeDryRun_PrintsStandingSkillDirectives(t *testing.T) {
 		"Bead epics: use /to-spec's SKILL.md rigorously.",
 		"Bead children: use /to-tickets's SKILL.md rigorously.",
 		"Rule of thumb: synthesize one parent spec; children are one-window vertical slices that declare blockers.",
+		"Conflict-resolution beads: use /resolving-merge-conflicts's SKILL.md rigorously.",
 	} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("gt prime missing %q:\n%s", want, got)
 		}
 	}
-	if strings.Contains(got, "Do NOT interview the user") || strings.Contains(got, "Quiz the user") {
-		t.Fatal("gt prime must not repeat /to-spec or /to-tickets SKILL.md contents")
+	if strings.Contains(got, "Do NOT interview the user") || strings.Contains(got, "Quiz the user") || strings.Contains(got, "never `--abort`") {
+		t.Fatal("gt prime must not repeat standing-skill SKILL.md contents")
 	}
 }
 

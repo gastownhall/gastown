@@ -217,6 +217,7 @@ func TestOutputRoleContext_IncludesSkillDirectives(t *testing.T) {
 		"Bead epics: use /to-spec's SKILL.md rigorously.",
 		"Bead children: use /to-tickets's SKILL.md rigorously.",
 		"Rule of thumb: synthesize one parent spec; children are one-window vertical slices that declare blockers.",
+		"Conflict-resolution beads: use /resolving-merge-conflicts's SKILL.md rigorously.",
 	} {
 		if !strings.Contains(output, want) {
 			t.Fatalf("role context missing %q:\n%s", want, output)
@@ -224,7 +225,7 @@ func TestOutputRoleContext_IncludesSkillDirectives(t *testing.T) {
 	}
 }
 
-func TestOutputSkillDirectives_FiveBluntLines(t *testing.T) {
+func TestOutputSkillDirectives_SixBluntLines(t *testing.T) {
 	t.Parallel()
 
 	var buf bytes.Buffer
@@ -237,6 +238,7 @@ func TestOutputSkillDirectives_FiveBluntLines(t *testing.T) {
 		"Bead epics: use /to-spec's SKILL.md rigorously.",
 		"Bead children: use /to-tickets's SKILL.md rigorously.",
 		"Rule of thumb: synthesize one parent spec; children are one-window vertical slices that declare blockers.",
+		"Conflict-resolution beads: use /resolving-merge-conflicts's SKILL.md rigorously.",
 	}
 	for _, line := range want {
 		if !strings.Contains(got, line) {
@@ -255,14 +257,17 @@ func TestOutputSkillDirectives_FiveBluntLines(t *testing.T) {
 	if strings.Contains(got, "Quiz the user") {
 		t.Fatal("must not repeat /to-tickets SKILL.md contents")
 	}
-	beadsLines := primeToSpecDirective + primeToTicketsDirective + primeBeadsRuleOfThumb
+	if strings.Contains(got, "never `--abort`") || strings.Contains(got, "Do not invent new behaviour") {
+		t.Fatal("must not repeat /resolving-merge-conflicts SKILL.md contents")
+	}
+	beadsLines := primeToSpecDirective + primeToTicketsDirective + primeBeadsRuleOfThumb + primeConflictResolutionDirective
 	if strings.Contains(strings.ToLower(beadsLines), "sling") {
 		t.Fatal("bead directives must not use sling; that is gt sling")
 	}
 
 	lines := nonEmptyLines(got)
-	if len(lines) != 5 {
-		t.Fatalf("want exactly 5 lines, got %d: %q", len(lines), lines)
+	if len(lines) != 6 {
+		t.Fatalf("want exactly 6 lines, got %d: %q", len(lines), lines)
 	}
 }
 

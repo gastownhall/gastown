@@ -376,11 +376,13 @@ agents from losing their Gas Town identity after context compaction or new sessi
 Full role context (~300-500 lines per role) is injected ephemerally by `gt prime`
 via the SessionStart hook. `gt prime` also provisions the mattpocock/skills
 collection into `.agents/skills` (and the active agent's skills directory) and
-prints five standing lines: production code must follow `/implement`'s SKILL.md
+prints six standing lines: production code must follow `/implement`'s SKILL.md
 rigorously, bug work must follow `/diagnosing-bugs`'s SKILL.md rigorously,
 bead epics must follow `/to-spec`'s SKILL.md rigorously, bead children must
-follow `/to-tickets`'s SKILL.md rigorously, and a rule of thumb: synthesize
-one parent spec; children are one-window vertical slices that declare blockers.
+follow `/to-tickets`'s SKILL.md rigorously, a rule of thumb: synthesize
+one parent spec; children are one-window vertical slices that declare blockers,
+and conflict-resolution beads must follow `/resolving-merge-conflicts`'s
+SKILL.md rigorously.
 No per-directory CLAUDE.md or AGENTS.md files are created.
 
 **Why no per-directory files?**

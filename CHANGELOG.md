@@ -24,7 +24,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - **`gt prime` standing skill lines** now also tell every role to follow
-  `/to-spec` for bead epics and `/to-tickets` for bead children, plus a
+  `/to-spec` for bead epics, `/to-tickets` for bead children, and
+  `/resolving-merge-conflicts` for conflict-resolution beads, plus a
   rule of thumb: synthesize one parent spec; children are one-window
   vertical slices that declare blockers. The lines do not use `sling` —
   that remains `gt sling`. They still point at SKILL.md and do not

@@ -111,11 +111,12 @@ func roleRigContext(ctx RoleContext) (defaultBranch string, isForkRig bool, upst
 }
 
 const (
-	primeImplementDirective      = "Working on production code: use /implement's SKILL.md rigorously."
-	primeDiagnosingBugsDirective = "Looking at a bug: use /diagnosing-bugs's SKILL.md rigorously."
-	primeToSpecDirective         = "Bead epics: use /to-spec's SKILL.md rigorously."
-	primeToTicketsDirective      = "Bead children: use /to-tickets's SKILL.md rigorously."
-	primeBeadsRuleOfThumb        = "Rule of thumb: synthesize one parent spec; children are one-window vertical slices that declare blockers."
+	primeImplementDirective          = "Working on production code: use /implement's SKILL.md rigorously."
+	primeDiagnosingBugsDirective     = "Looking at a bug: use /diagnosing-bugs's SKILL.md rigorously."
+	primeToSpecDirective             = "Bead epics: use /to-spec's SKILL.md rigorously."
+	primeToTicketsDirective          = "Bead children: use /to-tickets's SKILL.md rigorously."
+	primeBeadsRuleOfThumb            = "Rule of thumb: synthesize one parent spec; children are one-window vertical slices that declare blockers."
+	primeConflictResolutionDirective = "Conflict-resolution beads: use /resolving-merge-conflicts's SKILL.md rigorously."
 )
 
 // outputSkillDirectives emits the standing skill-use rules for every role session.
@@ -125,6 +126,7 @@ func outputSkillDirectives(w io.Writer) {
 	fmt.Fprintln(w, primeToSpecDirective)
 	fmt.Fprintln(w, primeToTicketsDirective)
 	fmt.Fprintln(w, primeBeadsRuleOfThumb)
+	fmt.Fprintln(w, primeConflictResolutionDirective)
 }
 
 // outputRoleDirectives loads and emits operator-provided role directives.
