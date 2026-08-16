@@ -1113,8 +1113,9 @@ func TestCompactResumeReminder_IncludesSkillDirectives(t *testing.T) {
 	for _, want := range []string{
 		"Working on production code: use /implement's SKILL.md rigorously.",
 		"Looking at a bug: use /diagnosing-bugs's SKILL.md rigorously.",
-		"Slinging a spec: use /to-spec's SKILL.md rigorously.",
-		"Slinging tickets: use /to-tickets's SKILL.md rigorously.",
+		"Bead epics: use /to-spec's SKILL.md rigorously.",
+		"Bead children: use /to-tickets's SKILL.md rigorously.",
+		"Rule of thumb: synthesize one parent spec; children are one-window vertical slices that declare blockers.",
 	} {
 		if !strings.Contains(output, want) {
 			t.Fatalf("compact/resume missing skill directive %q:\n%s", want, output)
@@ -1139,14 +1140,15 @@ func TestPrimeDryRun_PrintsStandingSkillDirectives(t *testing.T) {
 	for _, want := range []string{
 		"Working on production code: use /implement's SKILL.md rigorously.",
 		"Looking at a bug: use /diagnosing-bugs's SKILL.md rigorously.",
-		"Slinging a spec: use /to-spec's SKILL.md rigorously.",
-		"Slinging tickets: use /to-tickets's SKILL.md rigorously.",
+		"Bead epics: use /to-spec's SKILL.md rigorously.",
+		"Bead children: use /to-tickets's SKILL.md rigorously.",
+		"Rule of thumb: synthesize one parent spec; children are one-window vertical slices that declare blockers.",
 	} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("gt prime missing %q:\n%s", want, got)
 		}
 	}
-	if strings.Contains(got, "Do NOT interview the user") || strings.Contains(got, "tracer-bullet") {
+	if strings.Contains(got, "Do NOT interview the user") || strings.Contains(got, "Quiz the user") {
 		t.Fatal("gt prime must not repeat /to-spec or /to-tickets SKILL.md contents")
 	}
 }

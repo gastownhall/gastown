@@ -24,8 +24,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - **`gt prime` standing skill lines** now also tell every role to follow
-  `/to-spec` and `/to-tickets` rigorously when slinging a spec or tickets.
-  The four lines still point at SKILL.md and do not inline those skills.
+  `/to-spec` for bead epics and `/to-tickets` for bead children, plus a
+  rule of thumb: synthesize one parent spec; children are one-window
+  vertical slices that declare blockers. The lines do not use `sling` —
+  that remains `gt sling`. They still point at SKILL.md and do not
+  inline those skills.
 
 ### Fixed
 
