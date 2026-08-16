@@ -22,6 +22,8 @@ func gasTownIgnorePatterns() []string {
 		"state.json",
 		"CLAUDE.md",
 		"CLAUDE.local.md",
+		"AGENTS.md",
+		"AGENTS.local.md",
 		"GEMINI.md",
 	}
 }

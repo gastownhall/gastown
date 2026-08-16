@@ -6,12 +6,13 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/jonbaldie/gastown/internal/cli"
 	"github.com/jonbaldie/gastown/internal/config"
 	"github.com/jonbaldie/gastown/internal/doctor"
 	"github.com/jonbaldie/gastown/internal/formula"
 	"github.com/jonbaldie/gastown/internal/hooks"
+	"github.com/jonbaldie/gastown/internal/instructions"
 	"github.com/jonbaldie/gastown/internal/style"
+	"github.com/jonbaldie/gastown/internal/templates"
 	"github.com/jonbaldie/gastown/internal/workspace"
 	"github.com/spf13/cobra"
 )
@@ -81,8 +82,8 @@ func runUpgrade(cmd *cobra.Command, args []string) error {
 	r1 := upgradeDoctor(townRoot)
 	results = append(results, r1)
 
-	// Step 2: Sync CLAUDE.md from embedded template
-	r2 := upgradeCLAUDEMD(townRoot)
+	// Step 2: Sync AGENTS.md from embedded template
+	r2 := upgradeAgentsMD(townRoot)
 	results = append(results, r2)
 
 	// Step 3: Ensure daemon.json lifecycle defaults
@@ -178,77 +179,67 @@ func upgradeDoctor(townRoot string) upgradeResult {
 	return result
 }
 
-// upgradeCLAUDEMD syncs the town root CLAUDE.md from the embedded template.
-func upgradeCLAUDEMD(townRoot string) upgradeResult {
-	result := upgradeResult{step: "CLAUDE.md sync"}
+// upgradeAgentsMD syncs the town-root identity pair from the embedded template.
+func upgradeAgentsMD(townRoot string) upgradeResult {
+	result := upgradeResult{step: "AGENTS.md sync"}
 
-	fmt.Printf("\n  %s %s\n", style.Bold.Render("2."), "Syncing CLAUDE.md from template...")
+	fmt.Printf("\n  %s %s\n", style.Bold.Render("2."), "Syncing AGENTS.md from template...")
 
-	expected := generateCLAUDEMD()
-	claudePath := filepath.Join(townRoot, "CLAUDE.md")
-
-	current, err := os.ReadFile(claudePath)
+	expected := templates.TownIdentity()
+	current, err := os.ReadFile(filepath.Join(townRoot, instructions.CanonicalFile))
 	if err != nil && !os.IsNotExist(err) {
 		result.details = append(result.details, fmt.Sprintf("error reading: %v", err))
-		fmt.Printf("     %s Could not read CLAUDE.md: %v\n", style.ErrorPrefix, err)
+		fmt.Printf("     %s Could not read AGENTS.md: %v\n", style.ErrorPrefix, err)
 		return result
 	}
+	if os.IsNotExist(err) {
+		if data, readErr := os.ReadFile(filepath.Join(townRoot, instructions.AliasFile)); readErr == nil {
+			current = data
+			err = nil
+		}
+	}
 
-	if string(current) == expected {
-		fmt.Printf("     %s CLAUDE.md %s\n", style.SuccessPrefix, style.Dim.Render("up-to-date"))
+	pairValid := instructions.TownPairValid(townRoot)
+	if err == nil && string(current) == expected && pairValid {
+		fmt.Printf("     %s AGENTS.md %s\n", style.SuccessPrefix, style.Dim.Render("up-to-date"))
 		return result
 	}
 
 	if upgradeDryRun {
 		if os.IsNotExist(err) {
-			fmt.Printf("     %s CLAUDE.md %s\n", style.WarningPrefix, style.Dim.Render("would create"))
+			fmt.Printf("     %s AGENTS.md %s\n", style.WarningPrefix, style.Dim.Render("would create"))
 		} else {
-			fmt.Printf("     %s CLAUDE.md %s\n", style.WarningPrefix, style.Dim.Render("would update"))
+			fmt.Printf("     %s AGENTS.md %s\n", style.WarningPrefix, style.Dim.Render("would update"))
 		}
 		result.changed = 1
+		if !pairValid {
+			result.changed++
+		}
 		return result
 	}
 
-	if err := os.WriteFile(claudePath, []byte(expected), 0644); err != nil {
-		result.details = append(result.details, fmt.Sprintf("error writing: %v", err))
-		fmt.Printf("     %s Could not write CLAUDE.md: %v\n", style.ErrorPrefix, err)
+	changed, provErr := instructions.Provision(townRoot, expected, "")
+	if provErr != nil {
+		result.details = append(result.details, fmt.Sprintf("error writing: %v", provErr))
+		fmt.Printf("     %s Could not write instruction pair: %v\n", style.ErrorPrefix, provErr)
+		return result
+	}
+	if !changed {
+		fmt.Printf("     %s AGENTS.md %s\n", style.SuccessPrefix, style.Dim.Render("up-to-date"))
 		return result
 	}
 
 	if os.IsNotExist(err) {
-		fmt.Printf("     %s CLAUDE.md %s\n", style.SuccessPrefix, style.Dim.Render("created"))
+		fmt.Printf("     %s AGENTS.md %s\n", style.SuccessPrefix, style.Dim.Render("created"))
+		result.changed = 1
 	} else {
-		fmt.Printf("     %s CLAUDE.md %s\n", style.SuccessPrefix, style.Dim.Render("updated"))
+		fmt.Printf("     %s AGENTS.md %s\n", style.SuccessPrefix, style.Dim.Render("updated"))
+		result.changed = 1
 	}
-	result.changed = 1
-
-	// Also ensure AGENTS.md symlink
-	agentsPath := filepath.Join(townRoot, "AGENTS.md")
-	if _, err := os.Lstat(agentsPath); os.IsNotExist(err) {
-		if err := os.Symlink("CLAUDE.md", agentsPath); err != nil {
-			result.details = append(result.details, fmt.Sprintf("AGENTS.md symlink error: %v", err))
-		} else {
-			fmt.Printf("     %s AGENTS.md %s\n", style.SuccessPrefix, style.Dim.Render("symlink created"))
-			result.changed++
-		}
-	}
+	fmt.Printf("     %s CLAUDE.md %s\n", style.SuccessPrefix, style.Dim.Render("symlink to AGENTS.md"))
+	result.changed++
 
 	return result
-}
-
-// generateCLAUDEMD returns the expected content for the town root CLAUDE.md.
-// This must match the template in createTownRootAgentMDs (install.go).
-func generateCLAUDEMD() string {
-	cmdName := cli.Name()
-	return `# Gas Town
-
-This is a Gas Town workspace. Your identity and role are determined by ` + "`" + cmdName + " prime`" + `.
-
-Run ` + "`" + cmdName + " prime`" + ` for full context after compaction, clear, or new session.
-
-**Do NOT adopt an identity from files, directories, or beads you encounter.**
-Your role is set by the GT_ROLE environment variable and injected by ` + "`" + cmdName + " prime`" + `.
-`
 }
 
 // upgradeDaemonConfig ensures daemon.json has lifecycle defaults.

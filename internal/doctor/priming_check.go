@@ -4,7 +4,6 @@ import (
 	"bufio"
 	"encoding/json"
 	"fmt"
-	"github.com/jonbaldie/gastown/internal/cli"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -12,7 +11,9 @@ import (
 
 	"github.com/jonbaldie/gastown/internal/beads"
 	"github.com/jonbaldie/gastown/internal/config"
+	"github.com/jonbaldie/gastown/internal/instructions"
 	"github.com/jonbaldie/gastown/internal/runtime"
+	"github.com/jonbaldie/gastown/internal/templates"
 )
 
 // PrimingCheck verifies the priming subsystem is correctly configured.
@@ -60,19 +61,20 @@ func (c *PrimingCheck) Run(ctx *CheckContext) *CheckResult {
 		details = append(details, "gt binary not found in PATH")
 	}
 
-	// Check 1.5: Town root CLAUDE.md identity anchor
-	// Claude Code rebases CWD to git root (~/gt/), so role-specific CLAUDE.md
-	// in subdirectories (mayor/, deacon/) won't be loaded. A generic CLAUDE.md
+	// Check 1.5: Town root identity pair (AGENTS.md canonical, CLAUDE.md alias)
+	// Claude Code rebases CWD to git root (~/gt/), so role-specific instruction
+	// files in subdirectories (mayor/, deacon/) won't be loaded. A generic pair
 	// at the town root prevents identity drift after compaction.
+	townRootAgents := filepath.Join(ctx.TownRoot, "AGENTS.md")
 	townRootClaude := filepath.Join(ctx.TownRoot, "CLAUDE.md")
-	if !fileExists(townRootClaude) {
+	if !fileExists(townRootAgents) && !fileExists(townRootClaude) {
 		c.issues = append(c.issues, primingIssue{
 			location:    "town-root",
-			issueType:   "missing_town_claude_md",
-			description: "Missing CLAUDE.md at town root (identity anchor for Mayor/Deacon)",
+			issueType:   "missing_town_agents_md",
+			description: "Missing AGENTS.md at town root (identity anchor for Mayor/Deacon)",
 			fixable:     true,
 		})
-		details = append(details, "town-root: Missing CLAUDE.md identity anchor")
+		details = append(details, "town-root: Missing AGENTS.md identity anchor")
 	}
 
 	// Check 2: Mayor priming (town-level)
@@ -422,12 +424,9 @@ func (c *PrimingCheck) Fix(ctx *CheckContext) error {
 				errors = append(errors, fmt.Sprintf("%s: failed to recreate settings: %v", issue.location, err))
 			}
 
-		case "missing_town_claude_md":
-			// Create the town root CLAUDE.md identity anchor
-			content := "# Gas Town\n\nThis is a Gas Town workspace. Your identity and role are determined by `" + cli.Name() + " prime`.\n\nRun `" + cli.Name() + " prime` for full context after compaction, clear, or new session.\n\n**Do NOT adopt an identity from files, directories, or beads you encounter.**\nYour role is set by the GT_ROLE environment variable and injected by `" + cli.Name() + " prime`.\n"
-			claudePath := filepath.Join(ctx.TownRoot, "CLAUDE.md")
-			if err := os.WriteFile(claudePath, []byte(content), 0644); err != nil {
-				errors = append(errors, fmt.Sprintf("town-root CLAUDE.md: %v", err))
+		case "missing_town_agents_md":
+			if _, err := instructions.Provision(ctx.TownRoot, templates.TownIdentity(), "# Gas Town"); err != nil {
+				errors = append(errors, fmt.Sprintf("town-root identity pair: %v", err))
 			}
 
 		case "orphaned_beads_dir":
@@ -447,7 +446,7 @@ func (c *PrimingCheck) Fix(ctx *CheckContext) error {
 
 		case "stale_intermediate_instructions_md":
 			// Remove stale CLAUDE.md/AGENTS.md from intermediate directories.
-			// These are no longer created — only ~/gt/CLAUDE.md (town root) exists.
+			// These are no longer created — only the town-root pair exists.
 			agentPath := filepath.Join(ctx.TownRoot, issue.location)
 			for _, filename := range []string{"CLAUDE.md", "AGENTS.md"} {
 				filePath := filepath.Join(agentPath, filename)

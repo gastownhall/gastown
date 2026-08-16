@@ -94,7 +94,7 @@ Formula overlay checks (fixable):
   - overlay-health           Check formula overlay step IDs are valid (fixable)
 
 Migration checks:
-  - town-claude-md           Check town-root CLAUDE.md matches embedded version (fixable)
+  - town-agents-md           Check town-root AGENTS.md identity pair matches embedded version (fixable)
 
 Session hook checks:
   - session-hooks            Check settings.json use session-start.sh
@@ -286,7 +286,7 @@ func newDoctorForCommand(rig string) *doctor.Doctor {
 	d.Register(doctor.NewPrimingCheck())
 
 	// Town-root CLAUDE.md version check (migration check for behavioral norms)
-	d.Register(doctor.NewTownCLAUDEmdCheck())
+	d.Register(doctor.NewTownAgentsMDCheck())
 
 	// Crew workspace checks
 	d.Register(doctor.NewCrewStateCheck())

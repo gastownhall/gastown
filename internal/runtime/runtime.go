@@ -11,6 +11,7 @@ import (
 	"github.com/jonbaldie/gastown/internal/cli"
 	"github.com/jonbaldie/gastown/internal/config"
 	"github.com/jonbaldie/gastown/internal/hooks"
+	"github.com/jonbaldie/gastown/internal/instructions"
 	"github.com/jonbaldie/gastown/internal/skills"
 	"github.com/jonbaldie/gastown/internal/templates/commands"
 	"github.com/jonbaldie/gastown/internal/tmux"
@@ -53,7 +54,7 @@ func EnsureSettingsForRole(settingsDir, workDir, role string, rc *config.Runtime
 		return err
 	}
 	if provider == "gemini" {
-		if err := ensureGeminiContextFile(workDir); err != nil {
+		if err := instructions.EnsureGeminiAlias(workDir); err != nil {
 			return err
 		}
 	}
@@ -90,59 +91,6 @@ func provisionRoleSkills(workDir, provider string) error {
 		}
 	}
 	return skills.ProvisionFor(workDir, provider)
-}
-
-func ensureGeminiContextFile(workDir string) error {
-	if workDir == "" {
-		return nil
-	}
-
-	agentsPath := filepath.Join(workDir, "AGENTS.md")
-	geminiPath := filepath.Join(workDir, "GEMINI.md")
-	info, err := os.Lstat(geminiPath)
-	if err == nil {
-		if info.Mode()&os.ModeSymlink == 0 {
-			return nil
-		}
-
-		target, err := os.Readlink(geminiPath)
-		if err != nil {
-			return fmt.Errorf("reading GEMINI.md symlink: %w", err)
-		}
-		if target == "AGENTS.md" {
-			return nil
-		}
-		if !pointsToAgentsMD(target) {
-			return nil
-		}
-		if _, err := os.Stat(agentsPath); err != nil {
-			if os.IsNotExist(err) {
-				return nil
-			}
-			return fmt.Errorf("checking AGENTS.md: %w", err)
-		}
-		if err := os.Remove(geminiPath); err != nil {
-			return fmt.Errorf("removing non-canonical GEMINI.md symlink: %w", err)
-		}
-	} else if !os.IsNotExist(err) {
-		return fmt.Errorf("checking GEMINI.md: %w", err)
-	}
-
-	if _, err := os.Stat(agentsPath); err != nil {
-		if os.IsNotExist(err) {
-			return nil
-		}
-		return fmt.Errorf("checking AGENTS.md: %w", err)
-	}
-
-	if err := os.Symlink("AGENTS.md", geminiPath); err != nil {
-		return fmt.Errorf("creating GEMINI.md symlink: %w", err)
-	}
-	return nil
-}
-
-func pointsToAgentsMD(target string) bool {
-	return filepath.Base(filepath.Clean(target)) == "AGENTS.md"
 }
 
 // commandsInherited reports whether workDir will receive slash commands via

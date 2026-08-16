@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/jonbaldie/gastown/internal/config"
+	"github.com/jonbaldie/gastown/internal/instructions"
 	"github.com/jonbaldie/gastown/internal/runtime"
 	"github.com/jonbaldie/gastown/internal/session"
 	"github.com/jonbaldie/gastown/internal/style"
@@ -848,6 +849,5 @@ func isIdentityAnchor(path string) bool {
 	if err != nil {
 		return false
 	}
-	content := string(data)
-	return strings.HasPrefix(content, "# Gas Town") && strings.Contains(content, "prime")
+	return instructions.IsIdentityText(string(data))
 }

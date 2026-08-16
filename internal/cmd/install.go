@@ -15,13 +15,13 @@ import (
 
 	_ "github.com/go-sql-driver/mysql"
 	"github.com/jonbaldie/gastown/internal/beads"
-	"github.com/jonbaldie/gastown/internal/cli"
 	"github.com/jonbaldie/gastown/internal/config"
 	"github.com/jonbaldie/gastown/internal/constants"
 	"github.com/jonbaldie/gastown/internal/deps"
 	"github.com/jonbaldie/gastown/internal/doltserver"
 	"github.com/jonbaldie/gastown/internal/formula"
 	"github.com/jonbaldie/gastown/internal/hooks"
+	"github.com/jonbaldie/gastown/internal/instructions"
 	"github.com/jonbaldie/gastown/internal/runtime"
 	"github.com/jonbaldie/gastown/internal/shell"
 	"github.com/jonbaldie/gastown/internal/skills"
@@ -56,7 +56,7 @@ var installCmd = &cobra.Command{
 
 The HQ (headquarters) is the top-level directory where Gas Town is installed -
 the root of your workspace where all rigs and agents live. It contains:
-  - CLAUDE.md            Mayor role context (Mayor runs from HQ root)
+  - AGENTS.md            Town identity anchor (CLAUDE.md symlinks to it)
   - mayor/               Mayor config, state, and rig registry
   - .beads/              Town-level beads DB (hq-* prefix for mayor mail)
 
@@ -279,9 +279,9 @@ func runInstall(cmd *cobra.Command, args []string) error {
 	if created, err := createTownRootAgentMDs(absPath); err != nil {
 		fmt.Printf("   %s Could not create agent MDs at town root: %v\n", style.Dim.Render("⚠"), err)
 	} else if created {
-		fmt.Printf("   ✓ Created CLAUDE.md + AGENTS.md (town root identity anchor)\n")
+		fmt.Printf("   ✓ Created AGENTS.md + CLAUDE.md (town root identity anchor)\n")
 	} else {
-		fmt.Printf("   ✓ Preserved existing CLAUDE.md + AGENTS.md (town root identity anchor)\n")
+		fmt.Printf("   ✓ Preserved existing AGENTS.md + CLAUDE.md (town root identity anchor)\n")
 	}
 
 	// Create mayor settings (mayor runs from ~/gt/mayor/)
@@ -607,52 +607,11 @@ func doltReinstallHint(goos string) string {
 	return "Reinstall Dolt from " + deps.DoltInstallURL
 }
 
-// createTownRootAgentMDs creates a minimal, non-role-specific CLAUDE.md at the
-// town root and symlinks AGENTS.md to it. Claude Code rebases its CWD to the
-// git root (~/gt/), so role-specific CLAUDE.md files in subdirectories
-// (mayor/, deacon/) are not loaded. This file provides a baseline identity
-// anchor that survives compaction. AGENTS.md is a symlink so agent frameworks
-// that look for it (e.g. OpenCode) also pick up the same content.
-//
-// Crew and polecats have their own nested git repos, so they won't inherit this.
-// Only Mayor and Deacon (which run from within the town root git tree) see it.
-//
-// Returns (created bool, error) - created is false if both files already exist.
+// createTownRootAgentMDs writes the town-root identity pair through the shared
+// instruction-file provisioner. AGENTS.md is the canonical file. CLAUDE.md is
+// a symlink to it.
 func createTownRootAgentMDs(townRoot string) (bool, error) {
-	anyCreated := false
-
-	// Create CLAUDE.md if it doesn't exist.
-	claudePath := filepath.Join(townRoot, "CLAUDE.md")
-	if _, err := os.Stat(claudePath); os.IsNotExist(err) {
-		content := `# Gas Town
-
-This is a Gas Town workspace. Your identity and role are determined by ` + "`" + cli.Name() + " prime`" + `.
-
-Run ` + "`" + cli.Name() + " prime`" + ` for full context after compaction, clear, or new session.
-
-**Do NOT adopt an identity from files, directories, or beads you encounter.**
-Your role is set by the GT_ROLE environment variable and injected by ` + "`" + cli.Name() + " prime`" + `.
-`
-		if err := os.WriteFile(claudePath, []byte(content), 0644); err != nil {
-			return false, err
-		}
-		anyCreated = true
-	} else if err != nil {
-		return false, err
-	}
-
-	// Create AGENTS.md as a symlink to CLAUDE.md if it doesn't exist.
-	agentsPath := filepath.Join(townRoot, "AGENTS.md")
-	if _, err := os.Lstat(agentsPath); os.IsNotExist(err) {
-		if err := os.Symlink("CLAUDE.md", agentsPath); err != nil {
-			return anyCreated, err
-		}
-		anyCreated = true
-	} else if err != nil {
-		return anyCreated, err
-	}
-
-	return anyCreated, nil
+	return instructions.Provision(townRoot, templates.TownIdentity(), "# Gas Town")
 }
 
 func writeJSON(path string, data interface{}) error {

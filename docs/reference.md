@@ -368,10 +368,12 @@ Claude Code via the `--settings` flag. This keeps customer repos clean:
 The `--settings` flag loads these as a separate priority tier that merges
 additively with any project-level settings in the customer repo.
 
-### CLAUDE.md
+### AGENTS.md
 
-Only `~/gt/CLAUDE.md` exists on disk — a minimal identity anchor that prevents
-agents from losing their Gas Town identity after context compaction or new sessions.
+Only `~/gt/AGENTS.md` exists as the identity file — a minimal identity anchor
+that prevents agents from losing their Gas Town identity after context compaction
+or new sessions. `~/gt/CLAUDE.md` is a symlink to `AGENTS.md` so Claude Code
+reads the same text.
 
 Full role context (~300-500 lines per role) is injected ephemerally by `gt prime`
 via the SessionStart hook. `gt prime` also provisions the mattpocock/skills
@@ -383,12 +385,14 @@ follow `/to-tickets`'s SKILL.md rigorously, a rule of thumb: synthesize
 one parent spec; children are one-window vertical slices that declare blockers,
 and conflict-resolution beads must follow `/resolving-merge-conflicts`'s
 SKILL.md rigorously.
-No per-directory CLAUDE.md or AGENTS.md files are created.
+No per-Role-home instruction files are created. Polecat worktrees get a Gas Town
+overlay pair (`AGENTS.md` with a `CLAUDE.md` symlink, or the `.local` pair when
+the Rig already has a constitution file).
 
-**Why no per-directory files?**
-- Claude Code traverses upward from CWD for CLAUDE.md — all agents under `~/gt/` find the town-root file
-- AGENTS.md (for Codex) uses downward traversal from git root — parent directories are invisible, so per-directory AGENTS.md never worked
-- The real context comes from `gt prime`, making on-disk bootstrap pointers redundant
+**Why no per-directory Role files?**
+- Claude Code traverses upward from CWD for CLAUDE.md — Mayor and Deacon under `~/gt/` find the town-root symlink
+- AGENTS.md (for Codex and Cursor) is the canonical town-root file
+- The real Role context comes from `gt prime`, making on-disk Role-home files redundant
 
 ### Customer Repo Files (CLAUDE.md and .claude/)
 
@@ -396,8 +400,8 @@ Gas Town no longer uses git sparse checkout to hide customer repo files. Custome
 repositories can have their own `.claude/` directory and `CLAUDE.md` — these are
 preserved in all worktrees (crew, polecats, refinery, mayor/rig).
 
-Gas Town's context comes from the town-root `CLAUDE.md` identity anchor
-(picked up by all agents via Claude Code's upward directory traversal),
+Gas Town's context comes from the town-root `AGENTS.md` identity anchor
+(Claude Code loads the `CLAUDE.md` symlink to that file via upward directory traversal),
 `gt prime` via the SessionStart hook, and the customer repo's own `CLAUDE.md`.
 These coexist safely because:
 

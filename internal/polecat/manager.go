@@ -817,10 +817,10 @@ func (m *Manager) addWithOptionsLocked(name string, opts AddOptions, polecatDir 
 		worktreeCreated = true
 	}
 
-	// Provision CLAUDE.md with gt done instructions (same as AddWithOptions path).
+	// Provision the instruction pair with gt done instructions (same as AddWithOptions path).
 	lockedRigName := filepath.Base(m.rig.Path)
-	if _, err := templates.CreatePolecatCLAUDEmd(clonePath, lockedRigName, name); err != nil {
-		style.PrintWarning("could not provision polecat CLAUDE.md: %v", err)
+	if _, err := templates.CreatePolecatAgentsMD(clonePath, lockedRigName, name); err != nil {
+		style.PrintWarning("could not provision polecat instruction pair: %v", err)
 	}
 
 	if err := m.setupSharedBeads(clonePath); err != nil {
@@ -1021,14 +1021,14 @@ func (m *Manager) AddWithOptions(name string, opts AddOptions) (_ *Polecat, retE
 		worktreeCreated = true
 	}
 
-	// Provision CLAUDE.md with gt done instructions and lifecycle context.
+	// Provision the instruction pair with gt done instructions and lifecycle context.
 	// This is the primary mechanism for polecats to learn about completion —
 	// the file persists across compaction and session restarts (unlike ephemeral
 	// gt prime output which scrolls past and gets lost).
 	rigName := filepath.Base(m.rig.Path)
-	if _, err := templates.CreatePolecatCLAUDEmd(clonePath, rigName, name); err != nil {
+	if _, err := templates.CreatePolecatAgentsMD(clonePath, rigName, name); err != nil {
 		// Non-fatal — polecat can still learn via gt prime hook
-		style.PrintWarning("could not provision polecat CLAUDE.md: %v", err)
+		style.PrintWarning("could not provision polecat instruction pair: %v", err)
 	}
 
 	// Set up shared beads: polecat uses rig's .beads via redirect file.
@@ -1688,10 +1688,10 @@ func (m *Manager) RepairWorktreeWithOptions(name string, force bool, opts AddOpt
 		return nil, fmt.Errorf("moving repaired worktree to final path: %w", err)
 	}
 
-	// Provision CLAUDE.md (same as spawn path — repair creates a fresh worktree).
+	// Provision the instruction pair (same as spawn path — repair creates a fresh worktree).
 	repairRigName := filepath.Base(m.rig.Path)
-	if _, err := templates.CreatePolecatCLAUDEmd(newClonePath, repairRigName, name); err != nil {
-		style.PrintWarning("could not provision polecat CLAUDE.md during repair: %v", err)
+	if _, err := templates.CreatePolecatAgentsMD(newClonePath, repairRigName, name); err != nil {
+		style.PrintWarning("could not provision polecat instruction pair during repair: %v", err)
 	}
 
 	// Set up shared beads — fatal during repair too, same reason as spawn.
@@ -1870,13 +1870,13 @@ func (m *Manager) ReuseIdlePolecat(name string, opts AddOptions) (*Polecat, erro
 	_ = polecatGit.ResetHard(startPoint)
 	_ = polecatGit.CleanForce()
 
-	// Re-provision CLAUDE.md after reset — git reset --hard restores the tracked
-	// version (which lacks gt done instructions), and git clean -f removes any
-	// untracked CLAUDE.md we previously wrote. Without this, reused polecats
-	// lose all lifecycle instructions and never call gt done.
+	// Re-provision the instruction pair after reset — git reset --hard restores
+	// the tracked version (which lacks gt done instructions), and git clean -f
+	// removes any untracked overlay we previously wrote. Without this, reused
+	// polecats lose all lifecycle instructions and never call gt done.
 	reuseRigName := filepath.Base(m.rig.Path)
-	if _, err := templates.CreatePolecatCLAUDEmd(clonePath, reuseRigName, name); err != nil {
-		style.PrintWarning("could not re-provision polecat CLAUDE.md on reuse: %v", err)
+	if _, err := templates.CreatePolecatAgentsMD(clonePath, reuseRigName, name); err != nil {
+		style.PrintWarning("could not re-provision polecat instruction pair on reuse: %v", err)
 	}
 
 	// Create or reset the branch tracking the start point. For resume, the branch

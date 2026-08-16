@@ -128,9 +128,9 @@ Each agent bead references its role bead via the `role_bead` field.
         └── <name>/<rigname>/   Worker worktrees from mayor/rig
 ```
 
-**Note**: No per-directory CLAUDE.md or AGENTS.md is created. Only `~/gt/CLAUDE.md`
-(town-root identity anchor) exists on disk. Full context is injected by `gt prime`
-via SessionStart hook.
+**Note**: No per-directory role instruction files are created. Only `~/gt/AGENTS.md`
+(town-root identity anchor) exists as a regular file, with `~/gt/CLAUDE.md` as a
+symlink to it. Full context is injected by `gt prime` via SessionStart hook.
 
 ### Worktree Architecture
 

@@ -15,13 +15,13 @@ import (
 	"github.com/jonbaldie/gastown/internal/config"
 	"github.com/jonbaldie/gastown/internal/events"
 	"github.com/jonbaldie/gastown/internal/git"
+	"github.com/jonbaldie/gastown/internal/instructions"
 	"github.com/jonbaldie/gastown/internal/mail"
 	"github.com/jonbaldie/gastown/internal/polecat"
 	"github.com/jonbaldie/gastown/internal/rig"
 	"github.com/jonbaldie/gastown/internal/session"
 	"github.com/jonbaldie/gastown/internal/style"
 	"github.com/jonbaldie/gastown/internal/telemetry"
-	"github.com/jonbaldie/gastown/internal/templates"
 	"github.com/jonbaldie/gastown/internal/tmux"
 	"github.com/jonbaldie/gastown/internal/worker"
 	"github.com/jonbaldie/gastown/internal/workspace"
@@ -819,10 +819,12 @@ func runDone(cmd *cobra.Command, args []string) (retErr error) {
 				// Unstage Gas Town overlay files that git add -A picked up.
 				// These are runtime artifacts that must not be committed to repos.
 				_ = g.ResetFiles("CLAUDE.local.md")
-				// Only unstage CLAUDE.md if it contains the overlay marker
-				if claudeData, readErr := os.ReadFile(filepath.Join(cwd, "CLAUDE.md")); readErr == nil {
-					if strings.Contains(string(claudeData), templates.PolecatLifecycleMarker) {
-						_ = g.ResetFiles("CLAUDE.md")
+				_ = g.ResetFiles("AGENTS.local.md")
+				for _, name := range []string{"CLAUDE.md", "AGENTS.md"} {
+					if data, readErr := os.ReadFile(filepath.Join(cwd, name)); readErr == nil {
+						if instructions.IsGasTownOverlay(string(data)) {
+							_ = g.ResetFiles(name)
+						}
 					}
 				}
 				// Unstage runtime/ephemeral artifacts using the centralized git policy.
@@ -1183,10 +1185,8 @@ func runDone(cmd *cobra.Command, args []string) (retErr error) {
 			}
 		}
 
-		// Strip Gas Town overlay from CLAUDE.md / CLAUDE.local.md (gt-p35).
-		// Polecats commit the overlay (polecat lifecycle boilerplate) into repos,
-		// overwriting project-specific CLAUDE.md content. Detect and revert before push.
-		if stripped := stripOverlayCLAUDEmd(g, defaultBranch, baseRef); stripped {
+		// Strip Gas Town overlay from the instruction pair before push.
+		if stripped := stripOverlayInstructionFiles(g, defaultBranch, baseRef); stripped {
 			// Recalculate commits ahead since we added a cleanup commit
 			aheadCount, _ = g.CommitsAhead(baseRef, "HEAD")
 		}
@@ -2665,86 +2665,30 @@ func isPolecatActor(actor string) bool {
 	return len(parts) == 3 && parts[0] != "" && parts[1] == "polecats" && parts[2] != ""
 }
 
-// stripOverlayCLAUDEmd detects and removes Gas Town overlay content from CLAUDE.md
-// and CLAUDE.local.md before the branch is pushed. Polecats were committing the
-// overlay (which contains polecat lifecycle boilerplate like "Idle Polecat Heresy",
-// "gt done" protocol, etc.) into actual repos, overwriting project-specific CLAUDE.md
-// content. (gt-p35)
-//
-// This runs after all commits but before push. If overlay files are detected in
-// the branch diff, they are restored (CLAUDE.md) or removed (CLAUDE.local.md)
-// and a cleanup commit is created.
-//
-// Returns true if a cleanup commit was created.
-func stripOverlayCLAUDEmd(g *git.Git, defaultBranch, baseRef string) bool {
-	// Check which files changed on this branch vs the clean target base.
+// stripOverlayInstructionFiles removes Gas Town overlay files from the branch
+// before push. The overlay pair may be CLAUDE.md/AGENTS.md or the local pair.
+func stripOverlayInstructionFiles(g *git.Git, defaultBranch, baseRef string) bool {
 	changedFiles, err := g.DiffNameOnly(baseRef, "HEAD")
 	if err != nil {
-		// Can't determine diff — skip silently (push will still work)
 		return false
 	}
 
-	claudeChanged := false
-	claudeLocalChanged := false
+	changed := map[string]bool{}
 	for _, f := range changedFiles {
-		switch f {
-		case "CLAUDE.md":
-			claudeChanged = true
-		case "CLAUDE.local.md":
-			claudeLocalChanged = true
-		}
-	}
-
-	if !claudeChanged && !claudeLocalChanged {
-		return false // Nothing to strip
+		changed[f] = true
 	}
 
 	needsCommit := false
-
-	// Handle CLAUDE.md: check if the committed version contains overlay marker
-	if claudeChanged {
-		// Read current CLAUDE.md from HEAD
-		currentContent, showErr := g.ShowFile("HEAD", "CLAUDE.md")
-		if showErr == nil && strings.Contains(currentContent, templates.PolecatLifecycleMarker) {
-			// Current CLAUDE.md has overlay content — restore from the clean base.
-			origContent, origErr := g.ShowFile(baseRef, "CLAUDE.md")
-			if origErr != nil {
-				// CLAUDE.md didn't exist on the clean base — the overlay created it.
-				// Remove it from tracking.
-				if rmErr := g.RmCached("CLAUDE.md"); rmErr == nil {
-					needsCommit = true
-					fmt.Printf("%s Removed overlay CLAUDE.md (did not exist on %s)\n",
-						style.Bold.Render("→"), defaultBranch)
-				}
-			} else {
-				// CLAUDE.md existed on the clean base — restore original content
-				_ = origContent // Restore via checkout
-				if coErr := g.CheckoutFileFromRef(baseRef, "CLAUDE.md"); coErr == nil {
-					if addErr := g.Add("CLAUDE.md"); addErr == nil {
-						needsCommit = true
-						fmt.Printf("%s Restored original CLAUDE.md (stripped Gas Town overlay)\n",
-							style.Bold.Render("→"))
-					}
-				}
-			}
-		}
-	}
-
-	// Handle CLAUDE.local.md: always remove from commits (it's a runtime artifact)
-	if claudeLocalChanged {
-		if rmErr := g.RmCached("CLAUDE.local.md"); rmErr == nil {
-			needsCommit = true
-			fmt.Printf("%s Removed CLAUDE.local.md from branch (Gas Town overlay)\n",
-				style.Bold.Render("→"))
-		}
-	}
+	needsCommit = stripOverlayCanonical(g, defaultBranch, baseRef, "CLAUDE.md", changed["CLAUDE.md"]) || needsCommit
+	needsCommit = stripOverlayCanonical(g, defaultBranch, baseRef, "AGENTS.md", changed["AGENTS.md"]) || needsCommit
+	needsCommit = stripOverlayLocal(g, "CLAUDE.local.md", changed["CLAUDE.local.md"], false) || needsCommit
+	needsCommit = stripOverlayLocal(g, "AGENTS.local.md", changed["AGENTS.local.md"], true) || needsCommit
 
 	if !needsCommit {
 		return false
 	}
 
-	// Create cleanup commit
-	if commitErr := g.Commit("chore: strip Gas Town overlay from CLAUDE.md (gt-p35)"); commitErr != nil {
+	if commitErr := g.Commit("chore: strip Gas Town overlay from instruction files"); commitErr != nil {
 		style.PrintWarning("failed to create overlay cleanup commit: %v", commitErr)
 		return false
 	}
@@ -2752,6 +2696,50 @@ func stripOverlayCLAUDEmd(g *git.Git, defaultBranch, baseRef string) bool {
 	fmt.Printf("%s Created cleanup commit to remove Gas Town overlay files\n",
 		style.Bold.Render("✓"))
 	return true
+}
+
+func stripOverlayCanonical(g *git.Git, defaultBranch, baseRef, name string, changed bool) bool {
+	if !changed {
+		return false
+	}
+	currentContent, showErr := g.ShowFile("HEAD", name)
+	if showErr != nil || !instructions.IsGasTownOverlay(currentContent) {
+		return false
+	}
+	if _, origErr := g.ShowFile(baseRef, name); origErr != nil {
+		if rmErr := g.RmCached(name); rmErr == nil {
+			fmt.Printf("%s Removed overlay %s (did not exist on %s)\n",
+				style.Bold.Render("→"), name, defaultBranch)
+			return true
+		}
+		return false
+	}
+	if coErr := g.CheckoutFileFromRef(baseRef, name); coErr == nil {
+		if addErr := g.Add(name); addErr == nil {
+			fmt.Printf("%s Restored original %s (stripped Gas Town overlay)\n",
+				style.Bold.Render("→"), name)
+			return true
+		}
+	}
+	return false
+}
+
+func stripOverlayLocal(g *git.Git, name string, changed, requireOverlay bool) bool {
+	if !changed {
+		return false
+	}
+	if requireOverlay {
+		currentContent, showErr := g.ShowFile("HEAD", name)
+		if showErr != nil || !instructions.IsGasTownOverlay(currentContent) {
+			return false
+		}
+	}
+	if rmErr := g.RmCached(name); rmErr == nil {
+		fmt.Printf("%s Removed %s from branch (Gas Town overlay)\n",
+			style.Bold.Render("→"), name)
+		return true
+	}
+	return false
 }
 
 // purgeClosedEphemeralBeads removes closed ephemeral beads (wisps) that accumulated

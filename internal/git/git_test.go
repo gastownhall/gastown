@@ -2361,6 +2361,14 @@ func TestCleanExcludingRuntime(t *testing.T) {
 			},
 			want: true,
 		},
+		{
+			name: "AGENTS.local.md is runtime artifact",
+			s: UncommittedWorkStatus{
+				HasUncommittedChanges: true,
+				UntrackedFiles:        []string{"AGENTS.local.md"},
+			},
+			want: true,
+		},
 	}
 
 	for _, tt := range tests {

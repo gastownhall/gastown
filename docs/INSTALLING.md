@@ -140,7 +140,7 @@ gt install ~/gt --shell --git
 
 # This creates:
 #   ~/gt/
-#   ├── CLAUDE.md          # Identity anchor (run gt prime)
+#   ├── AGENTS.md          # Identity anchor (CLAUDE.md symlinks here)
 #   ├── mayor/             # Mayor config and state
 #   ├── rigs/              # Project containers (initially empty)
 #   └── .beads/            # Town-level issue tracking

@@ -720,9 +720,8 @@ func TestClearIssueWithoutAssignment(t *testing.T) {
 }
 
 // NOTE: TestInstallCLAUDETemplate tests were removed.
-// We no longer write CLAUDE.md to worktrees - Gas Town context is injected
-// ephemerally via SessionStart hook (gt prime) to prevent leaking internal
-// architecture into project repos.
+// Role context is injected by gt prime. Polecat lifecycle overlay is written
+// through the shared instruction provisioner (AGENTS.md canonical, CLAUDE.md alias).
 
 func TestAddWithOptions_HasAgentsMD(t *testing.T) {
 	// This test verifies that AGENTS.md exists in polecat worktrees after creation.
@@ -1884,8 +1883,8 @@ func TestAddWithOptions_NoFilesAddedToRepo(t *testing.T) {
 		if strings.Contains(line, ".beads") {
 			continue
 		}
-		// CLAUDE.md is expected - provisioned by CreatePolecatCLAUDEmd for gt done instructions
-		if strings.Contains(line, "CLAUDE.md") {
+		// Gas Town instruction overlay pair (canonical file plus aliases)
+		if strings.Contains(line, "CLAUDE.md") || strings.Contains(line, "AGENTS.md") || strings.Contains(line, "GEMINI.md") {
 			continue
 		}
 		unexpected = append(unexpected, line)

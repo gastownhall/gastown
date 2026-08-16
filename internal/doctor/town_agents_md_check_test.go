@@ -9,11 +9,11 @@ import (
 	"github.com/jonbaldie/gastown/internal/templates"
 )
 
-func TestTownCLAUDEmdCheck_Missing(t *testing.T) {
+func TestTownAgentsMDCheck_Missing(t *testing.T) {
 	tmpDir := t.TempDir()
 	ctx := &CheckContext{TownRoot: tmpDir}
 
-	check := NewTownCLAUDEmdCheck()
+	check := NewTownAgentsMDCheck()
 	result := check.Run(ctx)
 
 	if result.Status != StatusError {
@@ -24,18 +24,13 @@ func TestTownCLAUDEmdCheck_Missing(t *testing.T) {
 	}
 }
 
-func TestTownCLAUDEmdCheck_Complete(t *testing.T) {
+func TestTownAgentsMDCheck_Complete(t *testing.T) {
 	tmpDir := t.TempDir()
 	ctx := &CheckContext{TownRoot: tmpDir}
 
-	// Write the canonical content
-	canonical := templates.TownRootCLAUDEmd()
-	claudePath := filepath.Join(tmpDir, "CLAUDE.md")
-	if err := os.WriteFile(claudePath, []byte(canonical), 0644); err != nil {
-		t.Fatal(err)
-	}
+	writeTownPair(t, tmpDir, templates.TownRootAgentsMD())
 
-	check := NewTownCLAUDEmdCheck()
+	check := NewTownAgentsMDCheck()
 	result := check.Run(ctx)
 
 	if result.Status != StatusOK {
@@ -43,7 +38,7 @@ func TestTownCLAUDEmdCheck_Complete(t *testing.T) {
 	}
 }
 
-func TestTownCLAUDEmdCheck_MissingSections(t *testing.T) {
+func TestTownAgentsMDCheck_MissingSections(t *testing.T) {
 	tmpDir := t.TempDir()
 	ctx := &CheckContext{TownRoot: tmpDir}
 
@@ -59,7 +54,7 @@ Run ` + "`gt prime`" + ` for full context after compaction, clear, or new sessio
 		t.Fatal(err)
 	}
 
-	check := NewTownCLAUDEmdCheck()
+	check := NewTownAgentsMDCheck()
 	result := check.Run(ctx)
 
 	if result.Status != StatusWarning {
@@ -70,7 +65,7 @@ Run ` + "`gt prime`" + ` for full context after compaction, clear, or new sessio
 	}
 }
 
-func TestTownCLAUDEmdCheck_PartialSections(t *testing.T) {
+func TestTownAgentsMDCheck_PartialSections(t *testing.T) {
 	tmpDir := t.TempDir()
 	ctx := &CheckContext{TownRoot: tmpDir}
 
@@ -88,7 +83,7 @@ Dolt is the data plane for beads.
 		t.Fatal(err)
 	}
 
-	check := NewTownCLAUDEmdCheck()
+	check := NewTownAgentsMDCheck()
 	result := check.Run(ctx)
 
 	if result.Status != StatusWarning {
@@ -102,11 +97,11 @@ Dolt is the data plane for beads.
 	}
 }
 
-func TestTownCLAUDEmdCheck_Fix_MissingFile(t *testing.T) {
+func TestTownAgentsMDCheck_Fix_MissingFile(t *testing.T) {
 	tmpDir := t.TempDir()
 	ctx := &CheckContext{TownRoot: tmpDir}
 
-	check := NewTownCLAUDEmdCheck()
+	check := NewTownAgentsMDCheck()
 	result := check.Run(ctx)
 	if result.Status != StatusError {
 		t.Fatalf("expected StatusError, got %v", result.Status)
@@ -118,7 +113,7 @@ func TestTownCLAUDEmdCheck_Fix_MissingFile(t *testing.T) {
 	}
 
 	// Verify file was created
-	data, err := os.ReadFile(filepath.Join(tmpDir, "CLAUDE.md"))
+	data, err := os.ReadFile(filepath.Join(tmpDir, "AGENTS.md"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -130,16 +125,17 @@ func TestTownCLAUDEmdCheck_Fix_MissingFile(t *testing.T) {
 	if !strings.Contains(content, "### Communication hygiene") {
 		t.Error("created file missing Communication hygiene section")
 	}
+	assertClaudeSymlink(t, tmpDir)
 }
 
-func TestTownCLAUDEmdCheck_Fix_AppendSections(t *testing.T) {
+func TestTownAgentsMDCheck_Fix_AppendSections(t *testing.T) {
 	tmpDir := t.TempDir()
 	ctx := &CheckContext{TownRoot: tmpDir}
 
 	// Write minimal anchor + a user custom section
 	original := `# Gas Town
 
-This is a Gas Town workspace.
+This is a Gas Town workspace. Run ` + "`gt prime`" + `.
 
 ## My Custom Section
 
@@ -150,7 +146,7 @@ This is user-added content that should be preserved.
 		t.Fatal(err)
 	}
 
-	check := NewTownCLAUDEmdCheck()
+	check := NewTownAgentsMDCheck()
 	result := check.Run(ctx)
 	if result.Status != StatusWarning {
 		t.Fatalf("expected StatusWarning, got %v", result.Status)
@@ -183,36 +179,101 @@ This is user-added content that should be preserved.
 	if !strings.Contains(content, "### Communication hygiene") {
 		t.Error("Communication hygiene section was not appended")
 	}
+	assertClaudeSymlink(t, tmpDir)
 }
 
-func TestTownCLAUDEmdCheck_Fix_Idempotent(t *testing.T) {
+func TestTownAgentsMDCheck_Fix_Idempotent(t *testing.T) {
 	tmpDir := t.TempDir()
 	ctx := &CheckContext{TownRoot: tmpDir}
 
-	// Write the canonical content
-	canonical := templates.TownRootCLAUDEmd()
-	claudePath := filepath.Join(tmpDir, "CLAUDE.md")
-	if err := os.WriteFile(claudePath, []byte(canonical), 0644); err != nil {
-		t.Fatal(err)
-	}
+	canonical := templates.TownRootAgentsMD()
+	writeTownPair(t, tmpDir, canonical)
 
-	check := NewTownCLAUDEmdCheck()
+	check := NewTownAgentsMDCheck()
 	result := check.Run(ctx)
 	if result.Status != StatusOK {
 		t.Fatalf("expected StatusOK, got %v", result.Status)
 	}
 
-	// Fix on an OK file should be a no-op
 	if err := check.Fix(ctx); err != nil {
 		t.Fatal(err)
 	}
 
-	data, err := os.ReadFile(claudePath)
+	data, err := os.ReadFile(filepath.Join(tmpDir, "AGENTS.md"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	if string(data) != canonical {
 		t.Error("fix modified a complete file (should be idempotent)")
+	}
+}
+
+func TestTownAgentsMDCheck_AcceptsClaudeSymlinkPair(t *testing.T) {
+	tmpDir := t.TempDir()
+	ctx := &CheckContext{TownRoot: tmpDir}
+	writeTownPair(t, tmpDir, templates.TownRootAgentsMD())
+
+	check := NewTownAgentsMDCheck()
+	result := check.Run(ctx)
+	if result.Status != StatusOK {
+		t.Errorf("expected StatusOK for valid pair, got %v: %s", result.Status, result.Message)
+	}
+}
+
+func TestTownAgentsMDCheck_Fix_InvertedPair(t *testing.T) {
+	tmpDir := t.TempDir()
+	ctx := &CheckContext{TownRoot: tmpDir}
+	canonical := templates.TownRootAgentsMD()
+	if err := os.WriteFile(filepath.Join(tmpDir, "CLAUDE.md"), []byte(canonical), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("CLAUDE.md", filepath.Join(tmpDir, "AGENTS.md")); err != nil {
+		t.Fatal(err)
+	}
+
+	check := NewTownAgentsMDCheck()
+	result := check.Run(ctx)
+	if result.Status == StatusOK {
+		t.Fatal("inverted pair should not be StatusOK")
+	}
+	if err := check.Fix(ctx); err != nil {
+		t.Fatal(err)
+	}
+	assertClaudeSymlink(t, tmpDir)
+	got, err := os.ReadFile(filepath.Join(tmpDir, "AGENTS.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(got), "## Dolt Server") {
+		t.Error("canonical content missing after pair repair")
+	}
+}
+
+func writeTownPair(t *testing.T, dir, content string) {
+	t.Helper()
+	if err := os.WriteFile(filepath.Join(dir, "AGENTS.md"), []byte(content), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("AGENTS.md", filepath.Join(dir, "CLAUDE.md")); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func assertClaudeSymlink(t *testing.T, dir string) {
+	t.Helper()
+	target, err := os.Readlink(filepath.Join(dir, "CLAUDE.md"))
+	if err != nil {
+		t.Fatalf("CLAUDE.md should be a symlink: %v", err)
+	}
+	if target != "AGENTS.md" {
+		t.Errorf("CLAUDE.md target = %q, want AGENTS.md", target)
+	}
+	info, err := os.Lstat(filepath.Join(dir, "AGENTS.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Mode()&os.ModeSymlink != 0 {
+		t.Fatal("AGENTS.md should be a regular file")
 	}
 }
 
@@ -292,12 +353,28 @@ func TestIsIdentityAnchor_ExpandedCLAUDEmd(t *testing.T) {
 	path := filepath.Join(tmpDir, "CLAUDE.md")
 
 	// Write canonical content (many lines)
-	if err := os.WriteFile(path, []byte(templates.TownRootCLAUDEmd()), 0644); err != nil {
+	if err := os.WriteFile(path, []byte(templates.TownRootAgentsMD()), 0644); err != nil {
 		t.Fatal(err)
 	}
 
 	if !isIdentityAnchor(path) {
 		t.Error("expanded CLAUDE.md should be recognized as identity anchor")
+	}
+}
+
+func TestIsIdentityAnchor_SymlinkToAgents(t *testing.T) {
+	tmpDir := t.TempDir()
+	agentsPath := filepath.Join(tmpDir, "AGENTS.md")
+	if err := os.WriteFile(agentsPath, []byte(templates.TownRootAgentsMD()), 0644); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(tmpDir, "CLAUDE.md")
+	if err := os.Symlink("AGENTS.md", path); err != nil {
+		t.Fatal(err)
+	}
+
+	if !isIdentityAnchor(path) {
+		t.Error("CLAUDE.md symlink to valid AGENTS.md should be recognized as identity anchor")
 	}
 }
 

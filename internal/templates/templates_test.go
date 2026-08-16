@@ -8,6 +8,8 @@ import (
 	"testing"
 
 	"github.com/jonbaldie/gastown/internal/constants"
+	"github.com/jonbaldie/gastown/internal/instructions"
+	"github.com/jonbaldie/gastown/internal/testutil/gitcmd"
 )
 
 func TestNew(t *testing.T) {
@@ -640,273 +642,354 @@ func TestRenderRole_BootUsesNudgeNotRawTmux(t *testing.T) {
 	}
 }
 
-func TestCreatePolecatCLAUDEmd(t *testing.T) {
+func TestCreatePolecatAgentsMD(t *testing.T) {
 	dir := t.TempDir()
 
-	created, err := CreatePolecatCLAUDEmd(dir, "greenplace", "furiosa")
+	created, err := CreatePolecatAgentsMD(dir, "greenplace", "furiosa")
 	if err != nil {
-		t.Fatalf("CreatePolecatCLAUDEmd() error = %v", err)
+		t.Fatalf("CreatePolecatAgentsMD() error = %v", err)
 	}
 	if !created {
-		t.Fatal("CreatePolecatCLAUDEmd() created = false, want true")
+		t.Fatal("CreatePolecatAgentsMD() created = false, want true")
 	}
 
-	data, err := os.ReadFile(filepath.Join(dir, "CLAUDE.md"))
-	if err != nil {
-		t.Fatalf("reading CLAUDE.md: %v", err)
-	}
-	content := string(data)
+	content := readCanonicalOverlay(t, dir)
 
-	// Verify placeholders were replaced
 	if strings.Contains(content, "{{rig}}") {
-		t.Error("CLAUDE.md still contains {{rig}} placeholder")
+		t.Error("canonical file still contains {{rig}} placeholder")
 	}
 	if strings.Contains(content, "{{name}}") {
-		t.Error("CLAUDE.md still contains {{name}} placeholder")
+		t.Error("canonical file still contains {{name}} placeholder")
 	}
-
-	// Verify substituted values are present
 	if !strings.Contains(content, "greenplace") {
-		t.Error("CLAUDE.md does not contain rig name 'greenplace'")
+		t.Error("canonical file does not contain rig name 'greenplace'")
 	}
 	if !strings.Contains(content, "furiosa") {
-		t.Error("CLAUDE.md does not contain polecat name 'furiosa'")
+		t.Error("canonical file does not contain polecat name 'furiosa'")
 	}
-
-	// Verify critical gt done instructions are present
 	if !strings.Contains(content, "gt done") {
-		t.Fatal("CLAUDE.md does not contain 'gt done' — polecats will not know to call it")
+		t.Fatal("canonical file does not contain 'gt done' — polecats will not know to call it")
 	}
 	if !strings.Contains(content, "IDLE POLECAT HERESY") {
-		t.Error("CLAUDE.md missing 'IDLE POLECAT HERESY' warning section")
+		t.Error("canonical file missing 'IDLE POLECAT HERESY' warning section")
 	}
 	if !strings.Contains(content, "MANDATORY FINAL STEP") {
-		t.Error("CLAUDE.md missing completion protocol with MANDATORY FINAL STEP")
+		t.Error("canonical file missing completion protocol with MANDATORY FINAL STEP")
 	}
+	assertSymlinkTo(t, filepath.Join(dir, "CLAUDE.md"), "AGENTS.md")
 }
 
-func TestCreatePolecatCLAUDEmd_WritesToLocalWhenTrackedExists(t *testing.T) {
+func TestCreatePolecatAgentsMD_WritesToLocalWhenTrackedExists(t *testing.T) {
 	dir := t.TempDir()
+	gitcmd.InitRepo(t, dir)
 
-	// Write a CLAUDE.md with the exact town-root template content that gets
-	// tracked in repos. This is the real-world scenario: gt install creates
-	// ~/gt/CLAUDE.md with Dolt operational awareness, the user commits it to
-	// their repo, and git worktree add checks it out in the polecat worktree.
-	existing := TownRootCLAUDEmd()
+	existing := TownRootAgentsMD()
 	if err := os.WriteFile(filepath.Join(dir, "CLAUDE.md"), []byte(existing), 0644); err != nil {
 		t.Fatalf("writing existing CLAUDE.md: %v", err)
 	}
+	gitcmd.CommitFile(t, dir, "CLAUDE.md", "track constitution")
 
-	created, err := CreatePolecatCLAUDEmd(dir, "greenplace", "furiosa")
+	created, err := CreatePolecatAgentsMD(dir, "greenplace", "furiosa")
 	if err != nil {
-		t.Fatalf("CreatePolecatCLAUDEmd() error = %v", err)
+		t.Fatalf("CreatePolecatAgentsMD() error = %v", err)
 	}
 	if !created {
-		t.Fatal("CreatePolecatCLAUDEmd() created = false, want true (should write to CLAUDE.local.md)")
+		t.Fatal("CreatePolecatAgentsMD() created = false, want true (should write local pair)")
 	}
 
-	// CLAUDE.md must NOT be modified — it's a tracked file and modifying it
-	// creates uncommitted changes that the gt done safety net would commit onto
-	// the polecat's branch, polluting the PR diff.
 	data, err := os.ReadFile(filepath.Join(dir, "CLAUDE.md"))
 	if err != nil {
 		t.Fatalf("reading CLAUDE.md: %v", err)
 	}
 	if string(data) != existing {
-		t.Error("CLAUDE.md was modified — tracked file must not be touched when CLAUDE.local.md is used")
+		t.Error("CLAUDE.md was modified — tracked file must not be touched")
 	}
 	if strings.Contains(string(data), PolecatLifecycleMarker) {
-		t.Error("polecat lifecycle marker written to tracked CLAUDE.md — should go to CLAUDE.local.md")
+		t.Error("polecat lifecycle marker written to tracked CLAUDE.md")
 	}
+	assertRegularFile(t, filepath.Join(dir, "CLAUDE.md"))
 
-	// Polecat lifecycle instructions written to CLAUDE.local.md (gitignored)
-	localData, err := os.ReadFile(filepath.Join(dir, "CLAUDE.local.md"))
+	localData, err := os.ReadFile(filepath.Join(dir, "AGENTS.local.md"))
 	if err != nil {
-		t.Fatalf("reading CLAUDE.local.md: %v", err)
+		t.Fatalf("reading AGENTS.local.md: %v", err)
 	}
 	localContent := string(localData)
 	if !strings.Contains(localContent, "IDLE POLECAT HERESY") {
-		t.Error("polecat lifecycle instructions not written to CLAUDE.local.md")
+		t.Error("polecat lifecycle instructions not written to AGENTS.local.md")
 	}
 	if !strings.Contains(localContent, "gt done") {
-		t.Fatal("gt done instructions not in CLAUDE.local.md — polecats will not know to call it")
+		t.Fatal("gt done instructions not in AGENTS.local.md")
 	}
+	assertSymlinkTo(t, filepath.Join(dir, "CLAUDE.local.md"), "AGENTS.local.md")
 }
 
-func TestCreatePolecatCLAUDEmd_SkipsWhenAlreadyProvisioned(t *testing.T) {
+func TestCreatePolecatAgentsMD_WritesToLocalWhenAgentsExists(t *testing.T) {
+	dir := t.TempDir()
+	constitution := "# Project agents\nKeep this file.\n"
+	if err := os.WriteFile(filepath.Join(dir, "AGENTS.md"), []byte(constitution), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := CreatePolecatAgentsMD(dir, "greenplace", "furiosa"); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := os.ReadFile(filepath.Join(dir, "AGENTS.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != constitution {
+		t.Fatal("constitution AGENTS.md was changed")
+	}
+	assertRegularFile(t, filepath.Join(dir, "AGENTS.md"))
+	local, err := os.ReadFile(filepath.Join(dir, "AGENTS.local.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(local), PolecatLifecycleMarker) {
+		t.Fatal("lifecycle overlay missing from AGENTS.local.md")
+	}
+	assertSymlinkTo(t, filepath.Join(dir, "CLAUDE.local.md"), "AGENTS.local.md")
+}
+
+func TestCreatePolecatAgentsMD_WritesToLocalWhenBothExist(t *testing.T) {
+	dir := t.TempDir()
+	claude := "# Claude constitution\n"
+	agents := "# Agents constitution\n"
+	if err := os.WriteFile(filepath.Join(dir, "CLAUDE.md"), []byte(claude), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "AGENTS.md"), []byte(agents), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := CreatePolecatAgentsMD(dir, "greenplace", "furiosa"); err != nil {
+		t.Fatal(err)
+	}
+
+	gotClaude, _ := os.ReadFile(filepath.Join(dir, "CLAUDE.md"))
+	gotAgents, _ := os.ReadFile(filepath.Join(dir, "AGENTS.md"))
+	if string(gotClaude) != claude || string(gotAgents) != agents {
+		t.Fatal("constitution files were changed")
+	}
+	assertRegularFile(t, filepath.Join(dir, "CLAUDE.md"))
+	assertRegularFile(t, filepath.Join(dir, "AGENTS.md"))
+	assertSymlinkTo(t, filepath.Join(dir, "CLAUDE.local.md"), "AGENTS.local.md")
+}
+
+func TestCreatePolecatAgentsMD_SkipsWhenAlreadyProvisioned(t *testing.T) {
 	dir := t.TempDir()
 
-	// First call — creates the file
-	created, err := CreatePolecatCLAUDEmd(dir, "greenplace", "furiosa")
+	created, err := CreatePolecatAgentsMD(dir, "greenplace", "furiosa")
 	if err != nil {
-		t.Fatalf("first CreatePolecatCLAUDEmd() error = %v", err)
+		t.Fatalf("first CreatePolecatAgentsMD() error = %v", err)
 	}
 	if !created {
 		t.Fatal("first call should create")
 	}
 
-	data1, _ := os.ReadFile(filepath.Join(dir, "CLAUDE.md"))
+	data1, _ := os.ReadFile(filepath.Join(dir, "AGENTS.md"))
 
-	// Second call — should skip (marker already present)
-	created, err = CreatePolecatCLAUDEmd(dir, "greenplace", "furiosa")
+	created, err = CreatePolecatAgentsMD(dir, "greenplace", "furiosa")
 	if err != nil {
-		t.Fatalf("second CreatePolecatCLAUDEmd() error = %v", err)
+		t.Fatalf("second CreatePolecatAgentsMD() error = %v", err)
 	}
 	if created {
 		t.Fatal("second call should skip (lifecycle instructions already present)")
 	}
 
-	data2, _ := os.ReadFile(filepath.Join(dir, "CLAUDE.md"))
+	data2, _ := os.ReadFile(filepath.Join(dir, "AGENTS.md"))
 	if string(data1) != string(data2) {
 		t.Fatal("file was modified on second call — should be idempotent")
 	}
 }
 
-// TestCreatePolecatCLAUDEmd_ReusePath simulates the polecat reuse scenario:
-// 1. Worktree has tracked CLAUDE.md from repo (town-root Dolt content)
-// 2. CreatePolecatCLAUDEmd writes lifecycle instructions to CLAUDE.local.md
-// 3. git reset --hard restores CLAUDE.md (CLAUDE.local.md unaffected — it's gitignored)
-// 4. Second CreatePolecatCLAUDEmd call is a no-op (CLAUDE.local.md still has the marker)
-//
-// This is better than the old append-to-CLAUDE.md approach because git reset --hard
-// no longer loses the lifecycle instructions.
-func TestCreatePolecatCLAUDEmd_ReusePath(t *testing.T) {
+func TestCreatePolecatAgentsMD_ReusePath(t *testing.T) {
 	dir := t.TempDir()
+	gitcmd.InitRepo(t, dir)
 	claudePath := filepath.Join(dir, "CLAUDE.md")
-	claudeLocalPath := filepath.Join(dir, "CLAUDE.local.md")
 
-	// Step 1: Simulate tracked CLAUDE.md from repo (town-root content)
-	townRoot := TownRootCLAUDEmd()
+	townRoot := TownRootAgentsMD()
 	if err := os.WriteFile(claudePath, []byte(townRoot), 0644); err != nil {
 		t.Fatalf("writing tracked CLAUDE.md: %v", err)
 	}
+	gitcmd.CommitFile(t, dir, "CLAUDE.md", "track constitution")
 
-	// Step 2: First provision — writes lifecycle instructions to CLAUDE.local.md
-	created, err := CreatePolecatCLAUDEmd(dir, "greenplace", "furiosa")
+	created, err := CreatePolecatAgentsMD(dir, "greenplace", "furiosa")
 	if err != nil {
-		t.Fatalf("first CreatePolecatCLAUDEmd() error = %v", err)
+		t.Fatalf("first CreatePolecatAgentsMD() error = %v", err)
 	}
 	if !created {
-		t.Fatal("first call should create CLAUDE.local.md")
+		t.Fatal("first call should create local pair")
 	}
 
-	// Lifecycle instructions are in CLAUDE.local.md, not CLAUDE.md
-	localData, _ := os.ReadFile(claudeLocalPath)
+	localData, _ := os.ReadFile(filepath.Join(dir, "AGENTS.local.md"))
 	if !strings.Contains(string(localData), PolecatLifecycleMarker) {
-		t.Fatal("lifecycle marker not found in CLAUDE.local.md after first provision")
+		t.Fatal("lifecycle marker not found in AGENTS.local.md after first provision")
 	}
 	claudeData, _ := os.ReadFile(claudePath)
 	if strings.Contains(string(claudeData), PolecatLifecycleMarker) {
-		t.Fatal("lifecycle marker written to tracked CLAUDE.md — must not modify tracked file")
+		t.Fatal("lifecycle marker written to tracked CLAUDE.md")
 	}
 
-	// Step 3: Simulate git reset --hard (restores tracked CLAUDE.md, but CLAUDE.local.md
-	// is gitignored/untracked so it survives the reset)
 	if err := os.WriteFile(claudePath, []byte(townRoot), 0644); err != nil {
 		t.Fatalf("simulating git reset --hard: %v", err)
 	}
 
-	// CLAUDE.local.md still has the lifecycle marker (survived git reset)
-	localData, _ = os.ReadFile(claudeLocalPath)
+	localData, _ = os.ReadFile(filepath.Join(dir, "AGENTS.local.md"))
 	if !strings.Contains(string(localData), PolecatLifecycleMarker) {
-		t.Fatal("CLAUDE.local.md lifecycle marker lost — should survive git reset --hard")
+		t.Fatal("AGENTS.local.md lifecycle marker lost — should survive git reset --hard")
 	}
 
-	// Step 4: Second provision — no-op since CLAUDE.local.md already has the marker
-	created, err = CreatePolecatCLAUDEmd(dir, "greenplace", "furiosa")
+	created, err = CreatePolecatAgentsMD(dir, "greenplace", "furiosa")
 	if err != nil {
-		t.Fatalf("second CreatePolecatCLAUDEmd() error = %v", err)
+		t.Fatalf("second CreatePolecatAgentsMD() error = %v", err)
 	}
 	if created {
-		t.Fatal("second call should be a no-op (lifecycle instructions still in CLAUDE.local.md)")
+		t.Fatal("second call should be a no-op (lifecycle instructions still in local pair)")
 	}
 
-	// Both CLAUDE.md (unchanged) and CLAUDE.local.md (with lifecycle) should be intact
 	claudeData, _ = os.ReadFile(claudePath)
 	if !strings.Contains(string(claudeData), "Dolt Server") {
 		t.Error("town-root content in CLAUDE.md was lost")
 	}
-	localData, _ = os.ReadFile(claudeLocalPath)
+	localData, _ = os.ReadFile(filepath.Join(dir, "AGENTS.local.md"))
 	if !strings.Contains(string(localData), "gt done") {
-		t.Fatal("gt done instructions not found in CLAUDE.local.md")
+		t.Fatal("gt done instructions not found in AGENTS.local.md")
 	}
 }
 
-// TestCreatePolecatCLAUDEmd_GitCleanRemovesLocal simulates git clean -f removing
-// the untracked CLAUDE.local.md. On re-provision, the function must recreate it.
-func TestCreatePolecatCLAUDEmd_GitCleanRemovesLocal(t *testing.T) {
+func TestCreatePolecatAgentsMD_GitCleanRemovesLocal(t *testing.T) {
 	dir := t.TempDir()
+	gitcmd.InitRepo(t, dir)
 	claudePath := filepath.Join(dir, "CLAUDE.md")
-	claudeLocalPath := filepath.Join(dir, "CLAUDE.local.md")
 
-	// Tracked CLAUDE.md exists
-	townRoot := TownRootCLAUDEmd()
+	townRoot := TownRootAgentsMD()
 	if err := os.WriteFile(claudePath, []byte(townRoot), 0644); err != nil {
 		t.Fatalf("writing tracked CLAUDE.md: %v", err)
 	}
+	gitcmd.CommitFile(t, dir, "CLAUDE.md", "track constitution")
 
-	// First provision: writes to CLAUDE.local.md
-	if _, err := CreatePolecatCLAUDEmd(dir, "greenplace", "nux"); err != nil {
+	if _, err := CreatePolecatAgentsMD(dir, "greenplace", "nux"); err != nil {
 		t.Fatalf("first provision: %v", err)
 	}
 
-	// Simulate git clean -f removing the untracked CLAUDE.local.md
-	if err := os.Remove(claudeLocalPath); err != nil {
+	if err := os.Remove(filepath.Join(dir, "AGENTS.local.md")); err != nil {
 		t.Fatalf("simulating git clean -f: %v", err)
 	}
+	_ = os.Remove(filepath.Join(dir, "CLAUDE.local.md"))
 
-	// Second provision: CLAUDE.local.md is gone, must recreate it
-	created, err := CreatePolecatCLAUDEmd(dir, "greenplace", "nux")
+	created, err := CreatePolecatAgentsMD(dir, "greenplace", "nux")
 	if err != nil {
 		t.Fatalf("second provision: %v", err)
 	}
 	if !created {
-		t.Fatal("should recreate CLAUDE.local.md after git clean removed it")
+		t.Fatal("should recreate local pair after git clean removed it")
 	}
 
-	localData, _ := os.ReadFile(claudeLocalPath)
+	localData, _ := os.ReadFile(filepath.Join(dir, "AGENTS.local.md"))
 	if !strings.Contains(string(localData), PolecatLifecycleMarker) {
-		t.Fatal("lifecycle marker not in recreated CLAUDE.local.md")
+		t.Fatal("lifecycle marker not in recreated AGENTS.local.md")
 	}
-	// CLAUDE.md must still be unmodified
 	claudeData, _ := os.ReadFile(claudePath)
 	if string(claudeData) != townRoot {
 		t.Error("tracked CLAUDE.md was modified")
 	}
 }
 
-// TestCreatePolecatCLAUDEmd_GitCleanScenario simulates git clean -f removing
-// an untracked CLAUDE.md (repo without tracked CLAUDE.md), then re-provisioning.
-func TestCreatePolecatCLAUDEmd_GitCleanScenario(t *testing.T) {
+func TestCreatePolecatAgentsMD_GitCleanScenario(t *testing.T) {
 	dir := t.TempDir()
-	claudePath := filepath.Join(dir, "CLAUDE.md")
 
-	// Step 1: First provision — creates fresh file
-	created, err := CreatePolecatCLAUDEmd(dir, "greenplace", "nux")
+	created, err := CreatePolecatAgentsMD(dir, "greenplace", "nux")
 	if err != nil {
-		t.Fatalf("first CreatePolecatCLAUDEmd() error = %v", err)
+		t.Fatalf("first CreatePolecatAgentsMD() error = %v", err)
 	}
 	if !created {
 		t.Fatal("first call should create file")
 	}
 
-	// Step 2: Simulate git clean -f (removes untracked files)
-	os.Remove(claudePath)
-	if _, err := os.Stat(claudePath); !os.IsNotExist(err) {
-		t.Fatal("git clean simulation should have removed CLAUDE.md")
+	if err := os.Remove(filepath.Join(dir, "AGENTS.md")); err != nil {
+		t.Fatal(err)
+	}
+	_ = os.Remove(filepath.Join(dir, "CLAUDE.md"))
+	if _, err := os.Stat(filepath.Join(dir, "AGENTS.md")); !os.IsNotExist(err) {
+		t.Fatal("git clean simulation should have removed AGENTS.md")
 	}
 
-	// Step 3: Re-provision after clean
-	created, err = CreatePolecatCLAUDEmd(dir, "greenplace", "nux")
+	created, err = CreatePolecatAgentsMD(dir, "greenplace", "nux")
 	if err != nil {
-		t.Fatalf("second CreatePolecatCLAUDEmd() error = %v", err)
+		t.Fatalf("second CreatePolecatAgentsMD() error = %v", err)
 	}
 	if !created {
 		t.Fatal("second call should re-create file after git clean")
 	}
 
-	data, _ := os.ReadFile(claudePath)
+	data, _ := os.ReadFile(filepath.Join(dir, "AGENTS.md"))
 	if !strings.Contains(string(data), "gt done") {
 		t.Fatal("gt done instructions not found after re-creation")
+	}
+	assertSymlinkTo(t, filepath.Join(dir, "CLAUDE.md"), "AGENTS.md")
+}
+
+func TestCreatePolecatAgentsMD_GeminiAliasPointsAtCanonical(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.Symlink("CLAUDE.md", filepath.Join(dir, "GEMINI.md")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := CreatePolecatAgentsMD(dir, "greenplace", "nux"); err != nil {
+		t.Fatal(err)
+	}
+	assertSymlinkTo(t, filepath.Join(dir, "GEMINI.md"), "AGENTS.md")
+}
+
+func TestCreatePolecatAgentsMD_LeavesRegularGeminiUnchanged(t *testing.T) {
+	dir := t.TempDir()
+	gemini := "# Gemini project file\n"
+	if err := os.WriteFile(filepath.Join(dir, "GEMINI.md"), []byte(gemini), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := CreatePolecatAgentsMD(dir, "greenplace", "nux"); err != nil {
+		t.Fatal(err)
+	}
+	got, err := os.ReadFile(filepath.Join(dir, "GEMINI.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != gemini {
+		t.Fatalf("regular GEMINI.md changed: %q", got)
+	}
+	assertRegularFile(t, filepath.Join(dir, "GEMINI.md"))
+}
+
+func readCanonicalOverlay(t *testing.T, dir string) string {
+	t.Helper()
+	path := filepath.Join(dir, instructions.CanonicalFile)
+	assertRegularFile(t, path)
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("reading %s: %v", path, err)
+	}
+	return string(data)
+}
+
+func assertSymlinkTo(t *testing.T, path, want string) {
+	t.Helper()
+	target, err := os.Readlink(path)
+	if err != nil {
+		t.Fatalf("readlink %s: %v", path, err)
+	}
+	if target != want {
+		t.Fatalf("%s symlink target = %q, want %q", path, target, want)
+	}
+}
+
+func assertRegularFile(t *testing.T, path string) {
+	t.Helper()
+	info, err := os.Lstat(path)
+	if err != nil {
+		t.Fatalf("lstat %s: %v", path, err)
+	}
+	if info.Mode()&os.ModeSymlink != 0 {
+		t.Fatalf("%s is a symlink, want a regular file", path)
 	}
 }
