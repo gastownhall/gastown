@@ -21,8 +21,27 @@ import (
 	"github.com/steveyegge/gastown/internal/style"
 	"github.com/steveyegge/gastown/internal/telemetry"
 	"github.com/steveyegge/gastown/internal/tmux"
+	"github.com/steveyegge/gastown/internal/worker"
 	"github.com/steveyegge/gastown/internal/workspace"
 )
+
+func workerHasSession(townRoot, sessionName string) bool {
+	if townRoot == "" || sessionName == "" {
+		return false
+	}
+	run, err := worker.LatestRunForSession(townRoot, sessionName)
+	return err == nil && run != nil
+}
+
+func nudgeTargetExists(t *tmux.Tmux, townRoot, sessionName string) (bool, error) {
+	if workerHasSession(townRoot, sessionName) {
+		return true, nil
+	}
+	if hasACPSessionByName(townRoot, sessionName) {
+		return true, nil
+	}
+	return t.HasSession(sessionName)
+}
 
 func hasACPSessionByName(townRoot, sessionName string) bool {
 	if townRoot == "" {
@@ -66,7 +85,7 @@ func init() {
 	nudgeCmd.Flags().BoolVar(&nudgeStdinFlag, "stdin", false, "Read message from stdin (avoids shell quoting issues)")
 	nudgeCmd.Flags().BoolVar(&nudgeIfFreshFlag, "if-fresh", false, "Only send if caller's tmux session is <60s old (suppresses compaction nudges)")
 	nudgeCmd.Flags().StringVar(&nudgeModeFlag, "mode", NudgeModeWaitIdle, "Delivery mode: wait-idle (default), queue, or immediate")
-	nudgeCmd.Flags().StringVar(&nudgePriorityFlag, "priority", nudge.PriorityNormal, "Queue priority: normal (default) or urgent")
+	nudgeCmd.Flags().StringVar(&nudgePriorityFlag, "priority", nudge.PriorityNormal, "Queue priority: normal (default), urgent, or system")
 }
 
 var nudgeCmd = &cobra.Command{
@@ -161,6 +180,13 @@ func deliverNudge(t *tmux.Tmux, sessionName, message, sender string) error {
 	}
 
 	townRoot, _ := workspace.FindFromCwd()
+	if townRoot != "" && !hasACPSessionByName(townRoot, sessionName) {
+		if err := deliverNudgeViaWorker(townRoot, sessionName, sender, message); err == nil {
+			return nil
+		} else if !errors.Is(err, worker.ErrServerDown) {
+			return err
+		}
+	}
 
 	// Use the requested mode, but force queue mode for ACP sessions.
 	// ACP agents don't have tmux panes to send-keys to.
@@ -182,6 +208,36 @@ func deliverNudge(t *tmux.Tmux, sessionName, message, sender string) error {
 	default: // NudgeModeImmediate
 		return deliverNudgeImmediate(t, townRoot, sessionName, sender, message)
 	}
+}
+
+func deliverNudgeViaWorker(townRoot, sessionName, sender, message string) error {
+	w, err := worker.Open(townRoot)
+	if err != nil {
+		return err
+	}
+	priority := worker.PriorityNormal
+	switch {
+	case nudgePriorityFlag == nudge.PriorityUrgent || nudgeModeFlag == NudgeModeImmediate:
+		priority = worker.PriorityUrgent
+	case nudgePriorityFlag == nudge.PrioritySystem || nudgeModeFlag == NudgeModeQueue:
+		priority = worker.PrioritySystem
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+	d, err := w.Deliver(ctx, worker.Prompt{
+		RunID:    sessionName,
+		Content:  message,
+		Priority: priority,
+		Source:   worker.SourceNudge,
+		From:     sender,
+	})
+	if err != nil {
+		return err
+	}
+	if d != nil && d.Queued {
+		fmt.Fprintf(os.Stderr, "worker: queued nudge for %s at position %d\n", sessionName, d.Position)
+	}
+	return nil
 }
 
 func logNudgeIfTest(sessionName, sender, message string) (bool, error) {
@@ -420,6 +476,7 @@ var validNudgeModes = map[string]bool{
 var validNudgePriorities = map[string]bool{
 	nudge.PriorityNormal: true,
 	nudge.PriorityUrgent: true,
+	nudge.PrioritySystem: true,
 }
 
 func runNudge(cmd *cobra.Command, args []string) (retErr error) {
@@ -435,7 +492,7 @@ func runNudge(cmd *cobra.Command, args []string) (retErr error) {
 		return fmt.Errorf("invalid --mode %q: must be one of immediate, queue, wait-idle", nudgeModeFlag)
 	}
 	if !validNudgePriorities[nudgePriorityFlag] {
-		return fmt.Errorf("invalid --priority %q: must be one of normal, urgent", nudgePriorityFlag)
+		return fmt.Errorf("invalid --priority %q: must be one of normal, urgent, system", nudgePriorityFlag)
 	}
 
 	// --if-fresh: skip nudge if the caller's tmux session is older than 60s.
@@ -561,7 +618,7 @@ func runNudge(cmd *cobra.Command, args []string) (retErr error) {
 		hasACP := hasACPSessionByName(townRoot, deaconSession)
 		exists := false
 		if !hasACP {
-			exists, _ = t.HasSession(deaconSession)
+			exists, _ = nudgeTargetExists(t, townRoot, deaconSession)
 		}
 
 		if !hasACP && !exists {
@@ -586,7 +643,7 @@ func runNudge(cmd *cobra.Command, args []string) (retErr error) {
 	if dogName, ok := mail.DogAddressName(target); ok {
 		sessionName := session.DogSessionName(dogName)
 		if nudgeModeFlag != NudgeModeImmediate && !hasACPSessionByName(townRoot, sessionName) {
-			exists, err := t.HasSession(sessionName)
+			exists, err := nudgeTargetExists(t, townRoot, sessionName)
 			if err != nil {
 				return fmt.Errorf("checking dog session: %w", err)
 			}
@@ -655,7 +712,7 @@ func runNudge(cmd *cobra.Command, args []string) (retErr error) {
 		// the file is written but never drained.
 		// ACP sessions are always allowed as they use queue mode.
 		if nudgeModeFlag != NudgeModeImmediate && !hasACPSessionByName(townRoot, sessionName) {
-			exists, err := t.HasSession(sessionName)
+			exists, err := nudgeTargetExists(t, townRoot, sessionName)
 			if err != nil {
 				return fmt.Errorf("checking session: %w", err)
 			}
@@ -682,7 +739,7 @@ func runNudge(cmd *cobra.Command, args []string) (retErr error) {
 		hasACP := hasACPSessionByName(townRoot, target)
 
 		if !hasACP {
-			exists, err := t.HasSession(target)
+			exists, err := nudgeTargetExists(t, townRoot, target)
 			if err != nil {
 				return fmt.Errorf("checking session: %w", err)
 			}

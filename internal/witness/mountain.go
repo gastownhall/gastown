@@ -15,6 +15,9 @@ import (
 	"os"
 	"strconv"
 	"strings"
+
+	"github.com/steveyegge/gastown/internal/worker"
+	"github.com/steveyegge/gastown/internal/workspace"
 )
 
 // MountainMaxFailures is the number of polecat failures before an issue is
@@ -45,6 +48,13 @@ func trackConvoyFailures(bd *BdCli, workDir string, result *DetectZombiePolecats
 		// hook_bead for traceability, but they must not increment mountain failure
 		// counts.
 		if zombie.HookBead == "" || !zombieImpliesActiveFailure(*zombie) {
+			continue
+		}
+		townRoot, findErr := workspace.Find(workDir)
+		if findErr != nil || townRoot == "" {
+			townRoot = workDir
+		}
+		if !worker.StoppedWithoutDone(townRoot, zombie.HookBead) {
 			continue
 		}
 

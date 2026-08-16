@@ -10,6 +10,7 @@ import (
 	"github.com/steveyegge/gastown/internal/events"
 	"github.com/steveyegge/gastown/internal/mail"
 	"github.com/steveyegge/gastown/internal/style"
+	"github.com/steveyegge/gastown/internal/worker"
 )
 
 // SlingParams captures everything needed to sling one bead to a rig.
@@ -119,6 +120,11 @@ func executeSling(params SlingParams) (*SlingResult, error) {
 
 	result := &SlingResult{
 		BeadID: params.BeadID,
+	}
+
+	if live, liveErr := worker.LiveRunFromStore(townRoot, params.BeadID); liveErr == nil && live != nil {
+		result.ErrMsg = "live run"
+		return result, fmt.Errorf("%w: bead %s already has live run %s", worker.ErrLiveRun, params.BeadID, live.RunID)
 	}
 
 	// 0. Check if rig is parked or docked before dispatching (gt-4owfd.1, gt-11y)

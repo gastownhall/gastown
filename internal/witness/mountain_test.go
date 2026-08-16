@@ -2,9 +2,40 @@ package witness
 
 import (
 	"encoding/json"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/steveyegge/gastown/internal/worker"
 )
+
+func writeStoppedWithoutDoneTown(t *testing.T, beadID string) string {
+	t.Helper()
+	town := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(town, "mayor"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(town, "mayor", "town.json"), []byte("{}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	code := 1
+	if err := worker.PersistRun(town, &worker.Run{
+		RunID:     "run-" + beadID,
+		SessionID: "gt-test-" + beadID,
+		BeadID:    beadID,
+		State:     worker.StateStopped,
+		Done:      false,
+		ExitCode:  &code,
+		StartedAt: time.Now().UTC().Add(-time.Minute),
+		UpdatedAt: time.Now().UTC(),
+		StoppedAt: time.Now().UTC(),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	return town
+}
 
 func TestGetMountainFailureCount(t *testing.T) {
 	t.Parallel()
@@ -350,7 +381,8 @@ func TestTrackConvoyFailures_Integration(t *testing.T) {
 	// No convoys for it
 	mock.execResults["dep list gt-task-a --direction=up --type=tracks --json"] = mockExecResult{output: "[]"}
 
-	trackConvoyFailures(mock.toBdCli(), "/tmp", result)
+	town := writeStoppedWithoutDoneTown(t, "gt-task-a")
+	trackConvoyFailures(mock.toBdCli(), town, result)
 
 	// Should have queried only gt-task-a (not gt-task-b, empty, or submitted idle)
 	if len(mock.execCalls) != 1 {
@@ -395,7 +427,8 @@ func TestTrackConvoyFailures_MountainZombie(t *testing.T) {
 	}{{Labels: []string{}}})
 	mock.execResults["show gt-mtn-task --json"] = mockExecResult{output: string(issueShow)}
 
-	trackConvoyFailures(mock.toBdCli(), "/tmp", result)
+	town := writeStoppedWithoutDoneTown(t, "gt-mtn-task")
+	trackConvoyFailures(mock.toBdCli(), town, result)
 
 	if len(result.ConvoyFailures) != 1 {
 		t.Fatalf("expected 1 convoy failure, got %d", len(result.ConvoyFailures))
@@ -413,5 +446,40 @@ func TestTrackConvoyFailures_MountainZombie(t *testing.T) {
 	}
 	if cf.Skipped {
 		t.Error("should not be skipped after 1 failure")
+	}
+}
+
+func TestTrackConvoyFailures_PaneMissDoesNotIncrement(t *testing.T) {
+	t.Parallel()
+	mock := newMockBd()
+
+	result := &DetectZombiePolecatsResult{
+		Checked: 1,
+		Zombies: []ZombieResult{{
+			PolecatName:    "nux",
+			Classification: ZombieSessionDeadActive,
+			HookBead:       "gt-pane-miss",
+		}},
+	}
+	deps, _ := json.Marshal([]struct {
+		ID   string `json:"id"`
+		Type string `json:"type"`
+	}{{ID: "hq-cv-mtn", Type: "tracks"}})
+	mock.execResults["dep list gt-pane-miss --direction=up --type=tracks --json"] = mockExecResult{output: string(deps)}
+
+	town := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(town, "mayor"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(town, "mayor", "town.json"), []byte("{}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	trackConvoyFailures(mock.toBdCli(), town, result)
+	if len(result.ConvoyFailures) != 0 {
+		t.Fatalf("pane miss must not raise mountain failures, got %d", len(result.ConvoyFailures))
+	}
+	if len(mock.execCalls) != 0 {
+		t.Fatalf("pane miss must not query convoys, got %v", mock.execCalls)
 	}
 }

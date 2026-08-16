@@ -20,6 +20,7 @@ import (
 	"github.com/steveyegge/gastown/internal/session"
 	"github.com/steveyegge/gastown/internal/style"
 	"github.com/steveyegge/gastown/internal/tmux"
+	"github.com/steveyegge/gastown/internal/worker"
 	"github.com/steveyegge/gastown/internal/workspace"
 )
 
@@ -39,7 +40,6 @@ var (
 	digestYesterday bool
 	digestDate      string
 	digestDryRun    bool
-
 )
 
 var costsCmd = &cobra.Command{
@@ -145,6 +145,8 @@ type CostEntry struct {
 	Role      string    `json:"role"`
 	Rig       string    `json:"rig,omitempty"`
 	Worker    string    `json:"worker,omitempty"`
+	AgentType string    `json:"agent_type,omitempty"`
+	RunID     string    `json:"run_id,omitempty"`
 	CostUSD   float64   `json:"cost_usd"`
 	StartedAt time.Time `json:"started_at"`
 	EndedAt   time.Time `json:"ended_at"`
@@ -153,11 +155,13 @@ type CostEntry struct {
 
 // CostsOutput is the JSON output structure.
 type CostsOutput struct {
-	Sessions []SessionCost      `json:"sessions,omitempty"`
-	Total    float64            `json:"total_usd"`
-	ByRole   map[string]float64 `json:"by_role,omitempty"`
-	ByRig    map[string]float64 `json:"by_rig,omitempty"`
-	Period   string             `json:"period,omitempty"`
+	Sessions    []SessionCost      `json:"sessions,omitempty"`
+	Entries     []CostEntry        `json:"entries,omitempty"`
+	Total       float64            `json:"total_usd"`
+	ByRole      map[string]float64 `json:"by_role,omitempty"`
+	ByRig       map[string]float64 `json:"by_rig,omitempty"`
+	ByAgentType map[string]float64 `json:"by_agent_type,omitempty"`
+	Period      string             `json:"period,omitempty"`
 }
 
 // costRegex matches cost patterns like "$1.23" or "$12.34"
@@ -173,8 +177,8 @@ type TranscriptMessage struct {
 
 // TranscriptMessageBody contains the message content and usage info.
 type TranscriptMessageBody struct {
-	Model string          `json:"model"`
-	Role  string          `json:"role"`
+	Model string           `json:"model"`
+	Role  string           `json:"role"`
 	Usage *TranscriptUsage `json:"usage,omitempty"`
 }
 
@@ -337,12 +341,16 @@ func runCostsFromLedger() error {
 	var total float64
 	byRole := make(map[string]float64)
 	byRig := make(map[string]float64)
+	byAgent := make(map[string]float64)
 
 	for _, entry := range entries {
 		total += entry.CostUSD
 		byRole[entry.Role] += entry.CostUSD
 		if entry.Rig != "" {
 			byRig[entry.Rig] += entry.CostUSD
+		}
+		if entry.AgentType != "" {
+			byAgent[entry.AgentType] += entry.CostUSD
 		}
 	}
 
@@ -353,6 +361,10 @@ func runCostsFromLedger() error {
 
 	if costsByRole {
 		output.ByRole = byRole
+		output.Entries = entries
+		if len(byAgent) > 0 {
+			output.ByAgentType = byAgent
+		}
 	}
 	if costsByRig {
 		output.ByRig = byRig
@@ -911,6 +923,28 @@ func outputLedgerHuman(output CostsOutput, entries []CostEntry) error {
 		}
 	}
 
+	if output.ByAgentType != nil && len(output.ByAgentType) > 0 {
+		fmt.Printf("\n%s\n", style.Bold.Render("By Agent Type:"))
+		for agent, cost := range output.ByAgentType {
+			fmt.Printf("  %-15s $%.2f\n", agent, cost)
+		}
+	}
+
+	if len(entries) > 0 {
+		fmt.Printf("\n%s\n", style.Bold.Render("Runs:"))
+		for _, e := range entries {
+			bead := e.WorkItem
+			if bead == "" {
+				bead = "-"
+			}
+			agent := e.AgentType
+			if agent == "" {
+				agent = "-"
+			}
+			fmt.Printf("  bead=%s role=%s agent=%s $%.2f\n", bead, e.Role, agent, e.CostUSD)
+		}
+	}
+
 	// Session count
 	fmt.Printf("\n%s %d sessions\n", style.Dim.Render("Entries:"), len(entries))
 
@@ -1225,16 +1259,13 @@ func querySessionCostEntries(targetDate time.Time) ([]CostEntry, error) {
 	logPath := getCostsLogPath()
 
 	// Read log file
+	targetDay := targetDate.UTC().Format("2006-01-02")
+	var entries []CostEntry
+
 	data, err := os.ReadFile(logPath)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return nil, nil // No log file yet
-		}
+	if err != nil && !os.IsNotExist(err) {
 		return nil, fmt.Errorf("reading costs log: %w", err)
 	}
-
-	targetDay := targetDate.Format("2006-01-02")
-	var entries []CostEntry
 
 	// Parse each line as a CostLogEntry
 	lines := strings.Split(string(data), "\n")
@@ -1266,6 +1297,34 @@ func querySessionCostEntries(targetDate time.Time) ([]CostEntry, error) {
 			EndedAt:   logEntry.EndedAt,
 			WorkItem:  logEntry.WorkItem,
 		})
+	}
+
+	townRoot, townErr := workspace.FindFromCwd()
+	if townErr != nil || townRoot == "" {
+		if env := os.Getenv("GT_TOWN_ROOT"); env != "" {
+			townRoot = env
+			townErr = nil
+		}
+	}
+	if townErr == nil && townRoot != "" {
+		if recs, err := worker.ReadCosts(townRoot); err == nil {
+			for _, rec := range recs {
+				if !rec.Timestamp.IsZero() && rec.Timestamp.UTC().Format("2006-01-02") != targetDay {
+					continue
+				}
+				entries = append(entries, CostEntry{
+					SessionID: rec.SessionID,
+					Role:      rec.Role,
+					Rig:       rec.Rig,
+					Worker:    rec.AgentName,
+					AgentType: rec.AgentType,
+					RunID:     rec.RunID,
+					CostUSD:   rec.CostUSD,
+					EndedAt:   rec.Timestamp,
+					WorkItem:  rec.BeadID,
+				})
+			}
+		}
 	}
 
 	return entries, nil
@@ -1404,4 +1463,3 @@ func deleteSessionCostEntries(targetDate time.Time) (int, error) {
 
 	return deletedCount, nil
 }
-

@@ -3,6 +3,7 @@ package cmd
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"math/rand"
@@ -25,6 +26,7 @@ import (
 	"github.com/steveyegge/gastown/internal/style"
 	"github.com/steveyegge/gastown/internal/telemetry"
 	"github.com/steveyegge/gastown/internal/tmux"
+	"github.com/steveyegge/gastown/internal/worker"
 	"github.com/steveyegge/gastown/internal/workspace"
 )
 
@@ -1107,6 +1109,27 @@ func nudgeRefinery(rigName, message string) {
 			"source=sling",
 			"message=" + message,
 		})
+	}
+
+	if townRoot != "" {
+		if w, err := worker.Open(townRoot); err == nil {
+			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			_, derr := w.Deliver(ctx, worker.Prompt{
+				RunID:    refinerySession,
+				Content:  message,
+				Priority: worker.PriorityUrgent,
+				Source:   worker.SourceNudge,
+				From:     "mayor",
+			})
+			cancel()
+			if derr == nil {
+				return
+			}
+			if !errors.Is(derr, worker.ErrServerDown) && !errors.Is(derr, worker.ErrUnknownState) && !errors.Is(derr, worker.ErrRunNotFound) {
+				fmt.Fprintf(os.Stderr, "Warning: failed to nudge refinery %s: %v\n", refinerySession, derr)
+				return
+			}
+		}
 	}
 
 	t := tmux.NewTmux()

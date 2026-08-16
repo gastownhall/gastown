@@ -18,6 +18,7 @@ import (
 	"github.com/steveyegge/gastown/internal/skills"
 	"github.com/steveyegge/gastown/internal/telemetry"
 	"github.com/steveyegge/gastown/internal/tmux"
+	"github.com/steveyegge/gastown/internal/worker"
 )
 
 // SessionConfig describes how to create and start a tmux session.
@@ -261,10 +262,57 @@ func StartSession(t *tmux.Tmux, cfg SessionConfig) (_ *StartResult, retErr error
 		}
 	}
 
-	// 11. Ready delay: wait for agent to be fully ready at the prompt.
-	// Uses prompt-based polling for agents with ReadyPromptPrefix,
-	// falling back to ReadyDelayMs sleep for agents without prompt detection.
-	if cfg.ReadyDelay {
+	// 11. Register the run and wait for ready through Worker.
+	// Protocol sessions wait for a ready event. The tmux adapter may still
+	// use a ready delay. Callers do not wait on pane text here.
+	if cfg.TownRoot != "" {
+		if w, werr := worker.Open(cfg.TownRoot); werr == nil {
+			agentType := runtimeConfig.ResolvedAgent
+			if _, err := w.StartRun(ctx, worker.StartSpec{
+				RunID:     runID,
+				SessionID: cfg.SessionID,
+				BeadID:    cfg.Beacon.MolID,
+				Role:      cfg.Role,
+				Rig:       cfg.RigName,
+				AgentName: cfg.AgentName,
+				AgentType: agentType,
+			}); err != nil && !errors.Is(err, worker.ErrLiveRun) {
+				fmt.Fprintf(os.Stderr, "Warning: worker start run for %s: %v\n", cfg.SessionID, err)
+			} else {
+				_ = w.PushIdentity(ctx, worker.Identity{
+					RunID:     runID,
+					Role:      cfg.Role,
+					Rig:       cfg.RigName,
+					AgentName: cfg.AgentName,
+					SessionID: cfg.SessionID,
+					Env:       envVars,
+				})
+				sections := []worker.ContextSection{{Type: worker.SectionRole, Content: cfg.Role}}
+				if cfg.Beacon.MolID != "" {
+					sections = append(sections, worker.ContextSection{Type: worker.SectionWork, Content: cfg.Beacon.MolID})
+				}
+				if cfg.Instructions != "" {
+					sections = append(sections, worker.ContextSection{Type: worker.SectionDirective, Content: cfg.Instructions})
+				}
+				_ = w.PushContext(ctx, worker.ContextPush{
+					RunID:    runID,
+					Sections: sections,
+					Mode:     worker.ContextFull,
+				})
+			}
+			if cfg.ReadyDelay {
+				waitCtx, cancel := context.WithTimeout(ctx, constants.ClaudeStartTimeout)
+				if err := w.WaitReady(waitCtx, runID); err != nil {
+					fmt.Fprintf(os.Stderr, "Warning: agent readiness detection timed out for %s: %v\n", cfg.SessionID, err)
+				}
+				cancel()
+			}
+		} else if cfg.ReadyDelay {
+			if err := t.WaitForRuntimeReady(cfg.SessionID, runtimeConfig, constants.ClaudeStartTimeout); err != nil {
+				fmt.Fprintf(os.Stderr, "Warning: agent readiness detection timed out for %s: %v\n", cfg.SessionID, err)
+			}
+		}
+	} else if cfg.ReadyDelay {
 		if err := t.WaitForRuntimeReady(cfg.SessionID, runtimeConfig, constants.ClaudeStartTimeout); err != nil {
 			fmt.Fprintf(os.Stderr, "Warning: agent readiness detection timed out for %s: %v\n", cfg.SessionID, err)
 		}

@@ -19,6 +19,7 @@ import (
 	"github.com/steveyegge/gastown/internal/telemetry"
 	"github.com/steveyegge/gastown/internal/tmux"
 	"github.com/steveyegge/gastown/internal/witness"
+	"github.com/steveyegge/gastown/internal/worker"
 	"github.com/steveyegge/gastown/internal/workspace"
 )
 
@@ -605,6 +606,10 @@ func runSling(cmd *cobra.Command, args []string) (retErr error) {
 				return fmt.Errorf("'%s' is not a valid bead or formula", firstArg)
 			}
 		}
+	}
+
+	if err := worker.RefuseLiveBead(townRoot, beadID); err != nil {
+		return err
 	}
 
 	// Deep Slinging module: every bead dispatch crosses Lifecycle.

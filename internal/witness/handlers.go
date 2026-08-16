@@ -27,6 +27,7 @@ import (
 	"github.com/steveyegge/gastown/internal/session"
 	"github.com/steveyegge/gastown/internal/tmux"
 	"github.com/steveyegge/gastown/internal/util"
+	"github.com/steveyegge/gastown/internal/worker"
 	"github.com/steveyegge/gastown/internal/workspace"
 )
 
@@ -2288,6 +2289,26 @@ func DetectStalledPolecats(workDir, rigName string) *DetectStalledPolecatsResult
 			result.Errors = append(result.Errors,
 				fmt.Errorf("checking session %s: %w", sessionName, err))
 			continue
+		}
+		if run, err := worker.LatestRunForSession(townRoot, sessionName); err == nil && run != nil {
+			if h, herr := worker.StoreHealth(townRoot, sessionName, 0); herr == nil && h.Status == worker.HealthUnhealthy {
+				stalled := StalledResult{
+					PolecatName: polecatName,
+					StallType:   "unhealthy",
+					Action:      "unhealthy",
+				}
+				result.Stalled = append(result.Stalled, stalled)
+				continue
+			}
+			if run.State == worker.StateBusy {
+				continue // Live tool — do not stall-nudge
+			}
+			if run.State == worker.StateIdle || run.State == worker.StateReady {
+				continue
+			}
+			if run.Adapter == worker.AdapterProtocol {
+				continue
+			}
 		}
 		if !sessionAlive {
 			continue // Dead session — zombie detection handles this

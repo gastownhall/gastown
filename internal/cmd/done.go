@@ -24,6 +24,7 @@ import (
 	"github.com/steveyegge/gastown/internal/telemetry"
 	"github.com/steveyegge/gastown/internal/templates"
 	"github.com/steveyegge/gastown/internal/tmux"
+	"github.com/steveyegge/gastown/internal/worker"
 	"github.com/steveyegge/gastown/internal/workspace"
 )
 
@@ -1978,6 +1979,7 @@ notifyWitness:
 	// killing gt done before all metadata and notifications above are written.
 	if retirePolecat {
 		fmt.Printf("%s Terminating polecat session\n", style.Bold.Render("→"))
+		reportWorkerDone(townRoot, rigName, polecatName)
 		if err := retirePolecatSessionAfterDone(rigName, polecatName, os.Getpid()); err != nil {
 			style.PrintWarning("could not terminate polecat session: %v", err)
 		}
@@ -2771,4 +2773,31 @@ func purgeClosedEphemeralBeads(bd *beads.Beads) {
 	if outStr != "" && outStr != "0" {
 		fmt.Fprintf(os.Stderr, "Purged closed ephemeral beads: %s\n", outStr)
 	}
+}
+
+func reportWorkerDone(townRoot, rigName, polecatName string) {
+	if townRoot == "" || polecatName == "" {
+		return
+	}
+	sessionID := session.PolecatSessionName(session.PrefixFor(rigName), polecatName)
+	run, err := worker.RunBySession(townRoot, sessionID)
+	if err != nil || run == nil {
+		return
+	}
+	client, err := worker.DialAgent(townRoot)
+	if err != nil {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	_ = client.ReportLifecycle(ctx, worker.Lifecycle{
+		Event: worker.EventStopping, RunID: run.RunID, SessionID: sessionID, Timestamp: time.Now().UTC(),
+	})
+	_ = client.ReportLifecycle(ctx, worker.Lifecycle{
+		Event:     worker.EventStopped,
+		RunID:     run.RunID,
+		SessionID: sessionID,
+		Timestamp: time.Now().UTC(),
+		Metadata:  map[string]any{"exit_code": 0, "done": true},
+	})
 }

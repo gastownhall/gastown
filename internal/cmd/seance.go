@@ -18,6 +18,7 @@ import (
 	"github.com/steveyegge/gastown/internal/constants"
 	"github.com/steveyegge/gastown/internal/events"
 	"github.com/steveyegge/gastown/internal/style"
+	"github.com/steveyegge/gastown/internal/worker"
 	"github.com/steveyegge/gastown/internal/workspace"
 )
 
@@ -331,6 +332,26 @@ func discoverSessions(townRoot string) ([]sessionEvent, error) {
 
 		if event.Type == events.TypeSessionStart {
 			sessions = append(sessions, event)
+		}
+	}
+
+	if wev, err := worker.ReadEvents(townRoot); err == nil {
+		for _, ev := range wev {
+			if ev.Type != worker.EventStarted && ev.Type != worker.EventStopped {
+				continue
+			}
+			payload := map[string]interface{}{
+				"session_id": ev.SessionID,
+				"run_id":     ev.RunID,
+				"bead_id":    ev.BeadID,
+				"topic":      ev.Type,
+			}
+			sessions = append(sessions, sessionEvent{
+				Timestamp: ev.Timestamp.UTC().Format(time.RFC3339),
+				Type:      events.TypeSessionStart,
+				Actor:     ev.SessionID,
+				Payload:   payload,
+			})
 		}
 	}
 

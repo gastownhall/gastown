@@ -26,6 +26,7 @@ import (
 	"github.com/steveyegge/gastown/internal/telemetry"
 	"github.com/steveyegge/gastown/internal/tmux"
 	"github.com/steveyegge/gastown/internal/util"
+	"github.com/steveyegge/gastown/internal/worker"
 	"github.com/steveyegge/gastown/internal/workspace"
 	worktreeintegrity "github.com/steveyegge/gastown/internal/worktree"
 )
@@ -220,6 +221,7 @@ func runPrime(cmd *cobra.Command, args []string) (retErr error) {
 		fmt.Fprintf(os.Stderr, "Escalate to witness/mayor and wait for resolution.\n\n")
 	}
 	injectWorkContext(ctx, hookedBead)
+	pushPrimeToWorker(ctx, hookedBead)
 
 	formula, err := outputRoleContext(ctx)
 	if err != nil {
@@ -1533,6 +1535,42 @@ func injectWorkContext(ctx RoleContext, hookedBead *beads.Issue) {
 	_ = os.Setenv("GT_WORK_BEAD", workBead)
 	_ = os.Setenv("GT_WORK_MOL", workMol)
 	setTmuxWorkContext(workRig, workBead, workMol)
+}
+
+func pushPrimeToWorker(ctx RoleContext, hookedBead *beads.Issue) {
+	if primeDryRun || ctx.TownRoot == "" {
+		return
+	}
+	sessionID := os.Getenv("GT_SESSION")
+	if sessionID == "" {
+		sessionID = os.Getenv("GT_SESSION_ID")
+	}
+	run, err := worker.LatestRunForSession(ctx.TownRoot, sessionID)
+	if err != nil || run == nil {
+		if os.Getenv("GT_RUN") != "" {
+			run, err = worker.ReadRun(ctx.TownRoot, os.Getenv("GT_RUN"))
+		}
+		if err != nil || run == nil {
+			return
+		}
+	}
+	w, err := worker.Open(ctx.TownRoot)
+	if err != nil {
+		return
+	}
+	mode := worker.ContextFull
+	if isCompactResume() {
+		mode = worker.ContextResume
+	}
+	sections := []worker.ContextSection{{Type: worker.SectionRole, Content: string(ctx.Role)}}
+	if hookedBead != nil {
+		sections = append(sections, worker.ContextSection{Type: worker.SectionWork, Content: hookedBead.ID})
+	}
+	_ = w.PushContext(context.Background(), worker.ContextPush{
+		RunID:    run.RunID,
+		Sections: sections,
+		Mode:     mode,
+	})
 }
 
 // setTmuxWorkContext writes GT_WORK_RIG, GT_WORK_BEAD, GT_WORK_MOL into the current

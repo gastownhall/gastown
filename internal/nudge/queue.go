@@ -30,6 +30,8 @@ const (
 	PriorityNormal = "normal"
 	// PriorityUrgent means the agent should handle this promptly.
 	PriorityUrgent = "urgent"
+	// PrioritySystem waits for the end of a turn and does not start a new one.
+	PrioritySystem = "system"
 )
 
 // Operational limits and defaults.

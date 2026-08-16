@@ -334,6 +334,9 @@ func SessionPayload(sessionID, role, topic, cwd string) map[string]interface{} {
 		"role":       role,
 		"actor_pid":  fmt.Sprintf("%s-%d", role, os.Getpid()),
 	}
+	if runID := os.Getenv("GT_RUN"); runID != "" {
+		p["run_id"] = runID
+	}
 	if topic != "" {
 		p["topic"] = topic
 	}

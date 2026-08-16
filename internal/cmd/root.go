@@ -77,6 +77,7 @@ var beadsExemptCommands = map[string]bool{
 	"health":        true, // Health check doesn't require beads
 	"upgrade":       true, // Post-install migration orchestrator
 	"heartbeat":     true, // Heartbeat state update — must be fast and dependency-free
+	"worker":        true, // Worker protocol server and status — no beads
 }
 
 // Commands exempt from the town root branch warning.
