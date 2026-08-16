@@ -6,15 +6,14 @@ import (
 	"testing"
 )
 
-func TestNames_IncludesImplementAndDiagnosingBugs(t *testing.T) {
+func TestNames_IncludesStandingSkillDirectives(t *testing.T) {
 	t.Parallel()
 
 	names := Names()
-	if !contains(names, "implement") {
-		t.Fatalf("Names() missing implement: %v", names)
-	}
-	if !contains(names, "diagnosing-bugs") {
-		t.Fatalf("Names() missing diagnosing-bugs: %v", names)
+	for _, name := range []string{"implement", "diagnosing-bugs", "to-spec", "to-tickets"} {
+		if !contains(names, name) {
+			t.Fatalf("Names() missing %s: %v", name, names)
+		}
 	}
 }
 
@@ -26,7 +25,7 @@ func TestProvisionFor_WritesUniversalAndAgentSkillTrees(t *testing.T) {
 		t.Fatalf("ProvisionFor: %v", err)
 	}
 
-	for _, name := range []string{"implement", "diagnosing-bugs"} {
+	for _, name := range []string{"implement", "diagnosing-bugs", "to-spec", "to-tickets"} {
 		agentsSkill := filepath.Join(workDir, ".agents", "skills", name, "SKILL.md")
 		if _, err := os.Stat(agentsSkill); err != nil {
 			t.Errorf("missing universal skill %s: %v", name, err)

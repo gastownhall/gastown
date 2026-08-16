@@ -1113,10 +1113,41 @@ func TestCompactResumeReminder_IncludesSkillDirectives(t *testing.T) {
 	for _, want := range []string{
 		"Working on production code: use /implement's SKILL.md rigorously.",
 		"Looking at a bug: use /diagnosing-bugs's SKILL.md rigorously.",
+		"Slinging a spec: use /to-spec's SKILL.md rigorously.",
+		"Slinging tickets: use /to-tickets's SKILL.md rigorously.",
 	} {
 		if !strings.Contains(output, want) {
 			t.Fatalf("compact/resume missing skill directive %q:\n%s", want, output)
 		}
+	}
+}
+
+func TestPrimeDryRun_PrintsStandingSkillDirectives(t *testing.T) {
+	gtBin := buildGT(t)
+	townRoot := setupTestTownForTheme(t)
+	mayorDir := filepath.Join(townRoot, "mayor")
+
+	cmd := exec.Command(gtBin, "prime", "--dry-run")
+	cmd.Dir = mayorDir
+	cmd.Env = append(os.Environ(), "GT_ROLE=mayor")
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("gt prime --dry-run: %v\n%s", err, output)
+	}
+
+	got := string(output)
+	for _, want := range []string{
+		"Working on production code: use /implement's SKILL.md rigorously.",
+		"Looking at a bug: use /diagnosing-bugs's SKILL.md rigorously.",
+		"Slinging a spec: use /to-spec's SKILL.md rigorously.",
+		"Slinging tickets: use /to-tickets's SKILL.md rigorously.",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("gt prime missing %q:\n%s", want, got)
+		}
+	}
+	if strings.Contains(got, "Do NOT interview the user") || strings.Contains(got, "tracer-bullet") {
+		t.Fatal("gt prime must not repeat /to-spec or /to-tickets SKILL.md contents")
 	}
 }
 

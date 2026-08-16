@@ -21,6 +21,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Claude-family runtimes also receive `--autocompact` and
   `CLAUDE_CODE_AUTO_COMPACT_WINDOW`.
 
+### Changed
+
+- **`gt prime` standing skill lines** now also tell every role to follow
+  `/to-spec` and `/to-tickets` rigorously when slinging a spec or tickets.
+  The four lines still point at SKILL.md and do not inline those skills.
+
 ### Fixed
 
 - **Mail notification no longer cancels in-flight tool calls** (gh#4607).

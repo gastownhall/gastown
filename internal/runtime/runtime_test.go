@@ -1045,7 +1045,7 @@ func TestEnsureSettingsForRole_ProvisionsMattPocockSkills(t *testing.T) {
 		t.Fatalf("EnsureSettingsForRole() error = %v", err)
 	}
 
-	for _, name := range []string{"implement", "diagnosing-bugs"} {
+	for _, name := range []string{"implement", "diagnosing-bugs", "to-spec", "to-tickets"} {
 		path := workDir + "/.agents/skills/" + name + "/SKILL.md"
 		if _, err := os.Stat(path); err != nil {
 			t.Errorf("missing skill %s: %v", name, err)

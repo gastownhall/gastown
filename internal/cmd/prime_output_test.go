@@ -214,6 +214,8 @@ func TestOutputRoleContext_IncludesSkillDirectives(t *testing.T) {
 	for _, want := range []string{
 		"Working on production code: use /implement's SKILL.md rigorously.",
 		"Looking at a bug: use /diagnosing-bugs's SKILL.md rigorously.",
+		"Slinging a spec: use /to-spec's SKILL.md rigorously.",
+		"Slinging tickets: use /to-tickets's SKILL.md rigorously.",
 	} {
 		if !strings.Contains(output, want) {
 			t.Fatalf("role context missing %q:\n%s", want, output)
@@ -221,7 +223,7 @@ func TestOutputRoleContext_IncludesSkillDirectives(t *testing.T) {
 	}
 }
 
-func TestOutputSkillDirectives_TwoBluntLines(t *testing.T) {
+func TestOutputSkillDirectives_FourBluntLines(t *testing.T) {
 	t.Parallel()
 
 	var buf bytes.Buffer
@@ -231,6 +233,8 @@ func TestOutputSkillDirectives_TwoBluntLines(t *testing.T) {
 	want := []string{
 		"Working on production code: use /implement's SKILL.md rigorously.",
 		"Looking at a bug: use /diagnosing-bugs's SKILL.md rigorously.",
+		"Slinging a spec: use /to-spec's SKILL.md rigorously.",
+		"Slinging tickets: use /to-tickets's SKILL.md rigorously.",
 	}
 	for _, line := range want {
 		if !strings.Contains(got, line) {
@@ -243,10 +247,16 @@ func TestOutputSkillDirectives_TwoBluntLines(t *testing.T) {
 	if strings.Contains(got, "Build a feedback loop") {
 		t.Fatal("must not repeat /diagnosing-bugs SKILL.md contents")
 	}
+	if strings.Contains(got, "Do NOT interview the user") {
+		t.Fatal("must not repeat /to-spec SKILL.md contents")
+	}
+	if strings.Contains(got, "tracer-bullet") {
+		t.Fatal("must not repeat /to-tickets SKILL.md contents")
+	}
 
 	lines := nonEmptyLines(got)
-	if len(lines) != 2 {
-		t.Fatalf("want exactly 2 lines, got %d: %q", len(lines), lines)
+	if len(lines) != 4 {
+		t.Fatalf("want exactly 4 lines, got %d: %q", len(lines), lines)
 	}
 }
 
