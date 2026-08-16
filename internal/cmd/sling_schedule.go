@@ -329,13 +329,20 @@ func resolveFormula(explicit string, hookRawBead bool, townRoot, rigName string)
 // beads as scheduled to prevent false stranded detection and duplicate
 // scheduling attempts.
 func areScheduled(beadIDs []string) map[string]bool {
+	townRoot, err := workspace.FindFromCwd()
+	if err != nil {
+		townRoot = ""
+	}
+	return areScheduledForTown(townRoot, beadIDs)
+}
+
+func areScheduledForTown(townRoot string, beadIDs []string) map[string]bool {
 	result := make(map[string]bool)
 	if len(beadIDs) == 0 {
 		return result
 	}
 
-	townRoot, err := workspace.FindFromCwd()
-	if err != nil || townRoot == "" {
+	if townRoot == "" {
 		// Can't determine town root — fail closed (treat all as scheduled)
 		for _, id := range beadIDs {
 			result[id] = true

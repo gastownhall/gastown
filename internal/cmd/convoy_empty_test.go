@@ -157,6 +157,18 @@ func TestFindStrandedConvoys_MixedConvoys(t *testing.T) {
 	if err := os.MkdirAll(beadsDir, 0755); err != nil {
 		t.Fatalf("mkdir .beads: %v", err)
 	}
+	// convoyIssueClient uses FindFromCwd and beads.New(cwd). The beads dir
+	// on townRoot is only routes.jsonl; opening it as a real DB makes Show
+	// return nothing. Use a separate cwd town (marker only, no .beads),
+	// matching the old accidental internal/mayor match.
+	cwdTown := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(cwdTown, "mayor"), 0755); err != nil {
+		t.Fatalf("mkdir cwd mayor: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(cwdTown, "mayor", "town.json"), []byte(`{"name":"cwd-town"}`), 0644); err != nil {
+		t.Fatalf("write cwd town.json: %v", err)
+	}
+	t.Chdir(cwdTown)
 	// Routes needed so isSlingableBead can resolve gt- prefix to a rig
 	if err := os.WriteFile(filepath.Join(beadsDir, "routes.jsonl"), []byte(`{"prefix":"gt-","path":"gastown/mayor/rig"}`+"\n"), 0644); err != nil {
 		t.Fatalf("write routes: %v", err)

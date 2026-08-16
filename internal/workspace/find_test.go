@@ -80,6 +80,39 @@ func TestFindNotFound(t *testing.T) {
 	}
 }
 
+func TestFindIgnoresGoPackageMayorDirectory(t *testing.T) {
+	// The gastown repo itself has internal/mayor (a Go package). A secondary
+	// mayor/ marker that is only source files is not a town.
+	root := realPath(t, t.TempDir())
+	mayorPkg := filepath.Join(root, "internal", "mayor")
+	if err := os.MkdirAll(mayorPkg, 0755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(mayorPkg, "manager.go"), []byte("package mayor\n"), 0644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	start := filepath.Join(root, "internal", "cmd")
+	if err := os.MkdirAll(start, 0755); err != nil {
+		t.Fatalf("mkdir start: %v", err)
+	}
+
+	found, err := Find(start)
+	if err != nil {
+		t.Fatalf("Find: %v", err)
+	}
+	if found != "" {
+		t.Errorf("Find = %q, want empty (Go package mayor/ is not a town)", found)
+	}
+
+	is, err := IsWorkspace(filepath.Join(root, "internal"))
+	if err != nil {
+		t.Fatalf("IsWorkspace: %v", err)
+	}
+	if is {
+		t.Error("IsWorkspace(internal/) = true, want false for a Go package mayor/")
+	}
+}
+
 func TestFindOrErrorNotFound(t *testing.T) {
 	dir := t.TempDir()
 

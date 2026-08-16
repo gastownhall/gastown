@@ -1097,11 +1097,6 @@ func computeWaves(dag *ConvoyDAG) ([]Wave, []GatedTask, error) {
 // validation. Returns the updated waves and the validation bead ID.
 // Only called for epic input when --no-validate is not set.
 func appendValidationWave(dag *ConvoyDAG, waves []Wave, epicID string) ([]Wave, string, error) {
-	townBeads, err := getTownBeadsDir()
-	if err != nil {
-		return waves, "", err
-	}
-
 	// Collect all slingable bead IDs (these will block the validation bead).
 	var slingableIDs []string
 	for _, node := range dag.Nodes {
@@ -1113,6 +1108,11 @@ func appendValidationWave(dag *ConvoyDAG, waves []Wave, epicID string) ([]Wave, 
 
 	if len(slingableIDs) == 0 {
 		return waves, "", nil // nothing to validate
+	}
+
+	townBeads, err := getTownBeadsDir()
+	if err != nil {
+		return waves, "", err
 	}
 
 	// Generate a validation bead ID.

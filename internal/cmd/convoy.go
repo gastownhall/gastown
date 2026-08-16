@@ -1658,7 +1658,7 @@ func findStrandedConvoys(townBeads string) ([]strandedConvoyInfo, error) {
 		for _, t := range tracked {
 			trackedIDs = append(trackedIDs, t.ID)
 		}
-		scheduledSet := areScheduled(trackedIDs)
+		scheduledSet := areScheduledForTown(townBeads, trackedIDs)
 
 		var readyIssues []string
 		for _, t := range tracked {

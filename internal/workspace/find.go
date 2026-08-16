@@ -28,7 +28,8 @@ const (
 
 // Find locates the town root by walking up from the given directory.
 // Primary detection uses townroot.Find (outermost mayor/town.json).
-// If no town.json exists, Find falls back to the outermost mayor/ directory.
+// If no town.json exists, Find falls back to the outermost mayor/ directory
+// that is not a Go package (a mayor/ folder containing *.go and no town.json).
 // Does not resolve symlinks to stay consistent with os.Getwd().
 func Find(startDir string) (string, error) {
 	absDir, err := filepath.Abs(startDir)
@@ -43,7 +44,7 @@ func Find(startDir string) (string, error) {
 	var secondaryMatch string
 	current := absDir
 	for {
-		if info, err := os.Stat(filepath.Join(current, SecondaryMarker)); err == nil && info.IsDir() {
+		if isSecondaryTownMarker(filepath.Join(current, SecondaryMarker)) {
 			secondaryMatch = current
 		}
 
@@ -130,7 +131,7 @@ func FindFromCwdWithFallback() (townRoot string, cwd string, err error) {
 
 // IsWorkspace checks if the given directory is a Gas Town workspace root.
 // A directory is a workspace if it has a primary marker (mayor/town.json)
-// or a secondary marker (mayor/ directory).
+// or a secondary marker (a mayor/ directory that is not a Go package).
 func IsWorkspace(dir string) (bool, error) {
 	absDir, err := filepath.Abs(dir)
 	if err != nil {
@@ -143,14 +144,30 @@ func IsWorkspace(dir string) (bool, error) {
 		return true, nil
 	}
 
-	// Check for secondary marker (mayor/ directory)
-	secondaryPath := filepath.Join(absDir, SecondaryMarker)
-	info, err := os.Stat(secondaryPath)
-	if err == nil && info.IsDir() {
+	// Check for secondary marker (mayor/ directory that is a town, not a Go package)
+	if isSecondaryTownMarker(filepath.Join(absDir, SecondaryMarker)) {
 		return true, nil
 	}
 
 	return false, nil
+}
+
+// isSecondaryTownMarker reports whether mayorDir is a Gas Town mayor/ folder.
+// A directory named mayor/ that contains only Go source (no town.json) is a
+// package, such as this repo's internal/mayor, not an incomplete town.
+func isSecondaryTownMarker(mayorDir string) bool {
+	info, err := os.Stat(mayorDir)
+	if err != nil || !info.IsDir() {
+		return false
+	}
+	if _, err := os.Stat(filepath.Join(mayorDir, "town.json")); err == nil {
+		return true
+	}
+	matches, err := filepath.Glob(filepath.Join(mayorDir, "*.go"))
+	if err == nil && len(matches) > 0 {
+		return false
+	}
+	return true
 }
 
 // GetTownName loads the town name from the workspace's town.json config.

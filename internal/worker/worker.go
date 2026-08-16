@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/jonbaldie/gastown/internal/events"
@@ -349,6 +351,9 @@ func EnsureServer(townRoot string) error {
 	if err != nil {
 		return fmt.Errorf("finding gt binary: %w", err)
 	}
+	if isTestExecutable(bin) {
+		return fmt.Errorf("%w: refusing to start test binary as worker server", ErrServerDown)
+	}
 	cmd := exec.Command(bin, "worker", "serve", "--town", townRoot)
 	cmd.SysProcAttr = serveSysProcAttr()
 	cmd.Stdout = nil
@@ -375,6 +380,11 @@ func EnsureServer(townRoot string) error {
 	}
 	_ = cmd.Process.Kill()
 	return fmt.Errorf("%w: server did not become ready", ErrServerDown)
+}
+
+func isTestExecutable(bin string) bool {
+	base := filepath.Base(bin)
+	return strings.HasSuffix(base, ".test") || strings.HasSuffix(base, ".test.exe")
 }
 
 // LogTownLifecycle writes a feed-visible lifecycle event when a town root
