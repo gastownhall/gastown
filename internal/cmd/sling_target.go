@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/steveyegge/gastown/internal/constants"
 	"github.com/steveyegge/gastown/internal/dog"
 	"github.com/steveyegge/gastown/internal/session"
 	"github.com/steveyegge/gastown/internal/tmux"
@@ -17,6 +18,9 @@ var spawnPolecatForSling = SpawnPolecatForSling
 
 // resolveTargetAgentFn is a seam for tests. Production uses resolveTargetAgent.
 var resolveTargetAgentFn = resolveTargetAgent
+
+// startCrewMemberForSling is a seam for tests. Production uses startCrewMember.
+var startCrewMemberForSling = startCrewMember
 
 // resolveTargetAgent converts a target spec to agent ID, pane, and hook root.
 func resolveTargetAgent(target string) (agentID string, pane string, hookRoot string, err error) {
@@ -267,7 +271,27 @@ func resolveTarget(target string, opts ResolveTargetOptions) (*ResolvedTarget, e
 	// resolve here, getting their pane for nudge delivery (gt-in7b).
 	agentID, pane, workDir, err := resolveTargetAgentFn(target)
 	if err != nil {
-		if rigName, ok := missingPolecatTargetRig(target, opts.Create, opts.TownRoot); ok {
+		if rigName, crewName, crewDir, ok := stoppedCrewTarget(target, opts.TownRoot); ok {
+			if opts.DryRun {
+				fmt.Printf("Would start stopped crew member '%s/crew/%s'\n", rigName, crewName)
+				result.Agent = fmt.Sprintf("%s/crew/%s", rigName, crewName)
+				result.Pane = "<crew-pane>"
+				result.WorkDir = crewDir
+				return result, nil
+			}
+			fmt.Printf("Target crew member has no active session, starting '%s/crew/%s'...\n", rigName, crewName)
+			townRoot := opts.TownRoot
+			if townRoot == "" {
+				townRoot = filepath.Dir(filepath.Dir(filepath.Dir(crewDir)))
+			}
+			if startErr := startCrewMemberForSling(rigName, crewName, townRoot); startErr != nil {
+				return nil, fmt.Errorf("starting stopped crew member: %w", startErr)
+			}
+			agentID, pane, workDir, err = resolveTargetAgentFn(target)
+			if err != nil {
+				return nil, fmt.Errorf("resolving target after starting crew member: %w", err)
+			}
+		} else if rigName, ok := missingPolecatTargetRig(target, opts.Create, opts.TownRoot); ok {
 			if opts.BeadID != "" && !opts.Force {
 				if err := checkCrossRigGuard(opts.BeadID, rigName+"/polecats/_", opts.TownRoot); err != nil {
 					return nil, err
@@ -302,8 +326,9 @@ func resolveTarget(target string, opts ResolveTargetOptions) (*ResolvedTarget, e
 				wakeRigAgents(rigName)
 			}
 			return result, nil
+		} else {
+			return nil, fmt.Errorf("resolving target: %w", err)
 		}
-		return nil, fmt.Errorf("resolving target: %w", err)
 	}
 	if opts.BeadID != "" && isPolecatTarget(agentID) {
 		parts := strings.Split(agentID, "/")
@@ -324,6 +349,29 @@ func resolveTarget(target string, opts ResolveTargetOptions) (*ResolvedTarget, e
 		result.IsSelfSling = true
 	}
 	return result, nil
+}
+
+func stoppedCrewTarget(target, townRoot string) (rigName, crewName, crewDir string, ok bool) {
+	parts := strings.Split(target, "/")
+	switch {
+	case len(parts) == 3 && parts[1] == constants.RoleCrew:
+		rigName, crewName = parts[0], parts[2]
+	case len(parts) == 2 && !knownRoles[strings.ToLower(parts[1])]:
+		rigName, crewName = parts[0], parts[1]
+	default:
+		return "", "", "", false
+	}
+	if townRoot == "" {
+		townRoot = detectTownRootFromCwd()
+	}
+	if townRoot == "" {
+		return "", "", "", false
+	}
+	crewDir = filepath.Join(townRoot, rigName, "crew", crewName)
+	if info, err := os.Stat(crewDir); err != nil || !info.IsDir() {
+		return "", "", "", false
+	}
+	return rigName, crewName, crewDir, true
 }
 
 func missingPolecatTargetRig(target string, allowShorthand bool, townRoot string) (string, bool) {

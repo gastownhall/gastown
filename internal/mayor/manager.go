@@ -15,6 +15,7 @@ import (
 	"github.com/steveyegge/gastown/internal/session"
 	"github.com/steveyegge/gastown/internal/templates"
 	"github.com/steveyegge/gastown/internal/tmux"
+	"github.com/steveyegge/gastown/internal/worker"
 	"github.com/steveyegge/gastown/internal/workspace"
 )
 
@@ -346,6 +347,9 @@ func (m *Manager) Stop() error {
 	// Kill the session and all its processes
 	if err := t.KillSessionWithProcesses(sessionID); err != nil {
 		return fmt.Errorf("killing session: %w", err)
+	}
+	if err := worker.MarkSessionStopped(m.townRoot, sessionID); err != nil {
+		return fmt.Errorf("recording stopped worker run: %w", err)
 	}
 
 	return nil

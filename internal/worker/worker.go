@@ -3,6 +3,7 @@ package worker
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -235,6 +236,41 @@ func RunBySession(townRoot, sessionID string) (*Run, error) {
 // LatestRunForSession returns the most recently updated run for a session.
 func LatestRunForSession(townRoot, sessionID string) (*Run, error) {
 	return newStore(townRoot).latestRunForSession(sessionID)
+}
+
+// MarkSessionStopped closes the latest live run for a session after its runtime
+// has been terminated outside Worker. Missing and already-stopped runs are safe
+// no-ops so legacy sessions can use the same shutdown path.
+func MarkSessionStopped(townRoot, sessionID string) error {
+	store := newStore(townRoot)
+	run, err := store.latestRunForSession(sessionID)
+	if errors.Is(err, ErrRunNotFound) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	return markRunStopped(store, run)
+}
+
+func markRunStopped(store *Store, run *Run) error {
+	if !run.State.known() {
+		return ErrUnknownState
+	}
+	if !run.State.live() {
+		return nil
+	}
+	now := nowUTC()
+	run.State = StateStopped
+	run.UpdatedAt = now
+	run.StoppedAt = now
+	if err := store.putRun(run); err != nil {
+		return err
+	}
+	return store.appendEvent(Event{
+		Type: EventStopped, RunID: run.RunID, BeadID: run.BeadID,
+		SessionID: run.SessionID, Timestamp: now,
+	})
 }
 
 // RefuseLiveBead fails closed when the bead already has a live run.

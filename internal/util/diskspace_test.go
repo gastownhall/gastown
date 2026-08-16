@@ -100,6 +100,30 @@ func TestFormatBytesHuman(t *testing.T) {
 	}
 }
 
+func TestClassifyDiskSpace_CriticalRequiresLowAbsoluteSpace(t *testing.T) {
+	const MB = uint64(1024 * 1024)
+	tests := []struct {
+		name      string
+		available uint64
+		used      float64
+		want      DiskSpaceLevel
+	}{
+		{name: "high utilization with ample free space warns", available: 13 * 1024 * MB, used: 97, want: DiskSpaceWarning},
+		{name: "below absolute minimum is critical", available: 499 * MB, used: 50, want: DiskSpaceCritical},
+		{name: "below warning threshold warns", available: 750 * MB, used: 50, want: DiskSpaceWarning},
+		{name: "ample free space is okay", available: 13 * 1024 * MB, used: 50, want: DiskSpaceOK},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			level, _ := ClassifyDiskSpace(&DiskSpaceInfo{AvailableBytes: tt.available, UsedPercent: tt.used})
+			if level != tt.want {
+				t.Errorf("ClassifyDiskSpace() = %s, want %s", level, tt.want)
+			}
+		})
+	}
+}
+
 func TestCheckDiskSpace_CurrentDir(t *testing.T) {
 	level, msg, err := CheckDiskSpace(".")
 	if err != nil {

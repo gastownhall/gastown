@@ -1,6 +1,7 @@
 package mail
 
 import (
+	"context"
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
@@ -21,6 +22,7 @@ import (
 	"github.com/steveyegge/gastown/internal/session"
 	"github.com/steveyegge/gastown/internal/testutil"
 	"github.com/steveyegge/gastown/internal/tmux"
+	"github.com/steveyegge/gastown/internal/worker"
 )
 
 func TestDetectTownRoot(t *testing.T) {
@@ -1783,6 +1785,71 @@ exit 1
 		t.Fatalf("write bd stub: %v", err)
 	}
 	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+}
+
+type recordingWorkerTmux struct {
+	nudged chan string
+}
+
+func (r *recordingWorkerTmux) HasSession(string) (bool, error) { return true, nil }
+func (r *recordingWorkerTmux) NudgeSession(_ string, message string) error {
+	r.nudged <- message
+	return nil
+}
+func (r *recordingWorkerTmux) WaitForRuntimeReady(string, time.Duration) error { return nil }
+func (r *recordingWorkerTmux) WaitForIdle(string, time.Duration) error         { return nil }
+func (r *recordingWorkerTmux) IsAgentAlive(string) bool                        { return true }
+func (r *recordingWorkerTmux) KillSessionWithProcesses(string) error           { return nil }
+func (r *recordingWorkerTmux) CheckSessionHealth(string, time.Duration) string {
+	return "healthy"
+}
+
+// TestNotifyRecipient_LiveWorkerDoesNotSubmitNewTurn exercises the Worker
+// fallback that the original GH#4607 regression tests missed. Queued mail is
+// already durable and must not also become a direct pane turn.
+func TestNotifyRecipient_LiveWorkerDoesNotSubmitNewTurn(t *testing.T) {
+	sessionName := "gt-crew-worker-mail"
+	_, tm := startIdleMailSession(t, sessionName)
+	townRoot, err := os.MkdirTemp("/tmp", "gt-mail-worker-")
+	if err != nil {
+		t.Fatalf("MkdirTemp: %v", err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(townRoot) })
+	recordingTmux := &recordingWorkerTmux{nudged: make(chan string, 1)}
+	w, err := worker.Listen(townRoot, recordingTmux)
+	if err != nil {
+		t.Fatalf("worker.Listen: %v", err)
+	}
+	t.Cleanup(func() { _ = w.Close() })
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if _, err := w.StartRun(ctx, worker.StartSpec{
+		SessionID: sessionName,
+		Role:      constants.RoleCrew,
+		AgentName: "worker-mail",
+		AgentType: "pi",
+	}); err != nil {
+		t.Fatalf("StartRun: %v", err)
+	}
+
+	r := &Router{workDir: t.TempDir(), townRoot: townRoot, tmux: tm}
+	msg := &Message{
+		From:    "gastown/crew/sender",
+		To:      "gastown/crew/worker-mail",
+		Subject: "test worker delivery",
+	}
+	if err := r.notifyRecipient(msg); err != nil {
+		t.Fatalf("notifyRecipient returned error: %v", err)
+	}
+
+	select {
+	case notification := <-recordingTmux.nudged:
+		t.Errorf("mail notification was delivered directly through Worker: %q", notification)
+	default:
+	}
+	assertNoSubmittedMailTurn(t, tm, sessionName)
+	assertQueuedMailWakeup(t, townRoot, sessionName)
 }
 
 // TestNotifyRecipient_IdleAgentDoesNotSubmitNewTurn is the GH#4607 feedback

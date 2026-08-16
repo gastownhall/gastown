@@ -21,6 +21,7 @@ import (
 	"github.com/steveyegge/gastown/internal/session"
 	"github.com/steveyegge/gastown/internal/testutil"
 	"github.com/steveyegge/gastown/internal/tmux"
+	"github.com/steveyegge/gastown/internal/util"
 )
 
 func TestHasSubmittableWorkForWorkstateUsesBranchTargetStatus(t *testing.T) {
@@ -1511,6 +1512,34 @@ func TestAddWithOptions_UsesCanonicalOriginDefaultBranch(t *testing.T) {
 	}
 	if !baseAncestor {
 		t.Fatalf("new polecat branch %q should descend from origin/main commit %s", polecat.Branch, baseSHA)
+	}
+}
+
+func TestAllocateAndAdd_CriticalDiskLeavesNoPolecatOrAllocation(t *testing.T) {
+	mgr, _ := setupCanonicalBranchManagerTest(t)
+	originalCheck := checkDiskSpace
+	checkDiskSpace = func(string) (util.DiskSpaceLevel, string, error) {
+		return util.DiskSpaceCritical, "synthetic critical disk", nil
+	}
+	t.Cleanup(func() { checkDiskSpace = originalCheck })
+
+	name, polecat, err := mgr.AllocateAndAdd(AddOptions{})
+	if !errors.Is(err, ErrDiskSpaceLow) {
+		t.Fatalf("AllocateAndAdd error = %v, want ErrDiskSpaceLow", err)
+	}
+	if name != "" || polecat != nil {
+		t.Fatalf("AllocateAndAdd returned name=%q polecat=%v after disk rejection", name, polecat)
+	}
+	if active := mgr.namePool.ActiveNames(); len(active) != 0 {
+		t.Fatalf("name pool retained allocations after disk rejection: %v", active)
+	}
+	polecatsDir := filepath.Join(mgr.rig.Path, "polecats")
+	entries, readErr := os.ReadDir(polecatsDir)
+	if readErr != nil && !os.IsNotExist(readErr) {
+		t.Fatalf("ReadDir(%s): %v", polecatsDir, readErr)
+	}
+	if len(entries) != 0 {
+		t.Fatalf("polecat directories remain after disk rejection: %v", entries)
 	}
 }
 

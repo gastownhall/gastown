@@ -112,6 +112,8 @@ func isDoltConfigError(err error) bool {
 }
 
 // Common errors
+var checkDiskSpace = util.CheckDiskSpace
+
 var (
 	ErrPolecatExists      = errors.New("polecat already exists")
 	ErrPolecatNotFound    = errors.New("polecat not found")
@@ -660,6 +662,12 @@ func (m *Manager) Add(name string) (*Polecat, error) {
 // (GH#2215) by holding the pool lock through directory creation, ensuring
 // no concurrent process can allocate the same name.
 func (m *Manager) AllocateAndAdd(opts AddOptions) (string, *Polecat, error) {
+	// Reject before allocating a name or creating the polecat directory. The
+	// inner check remains as a defense against space disappearing mid-spawn.
+	if level, msg, err := checkDiskSpace(m.rig.Path); err == nil && level == util.DiskSpaceCritical {
+		return "", nil, fmt.Errorf("%w: %s", ErrDiskSpaceLow, msg)
+	}
+
 	// Hold pool lock across allocation + directory creation to close the
 	// race window where a concurrent AllocateName could miss the pending
 	// marker and reallocate the same name.
@@ -726,7 +734,7 @@ func (m *Manager) addWithOptionsLocked(name string, opts AddOptions, polecatDir 
 	defer func() { telemetry.RecordPolecatSpawn(context.Background(), name, retErr) }()
 
 	// Pre-check: Verify sufficient disk space before expensive worktree creation.
-	if level, msg, err := util.CheckDiskSpace(m.rig.Path); err == nil && level == util.DiskSpaceCritical {
+	if level, msg, err := checkDiskSpace(m.rig.Path); err == nil && level == util.DiskSpaceCritical {
 		return nil, fmt.Errorf("%w: %s", ErrDiskSpaceLow, msg)
 	}
 
@@ -893,7 +901,7 @@ func (m *Manager) AddWithOptions(name string, opts AddOptions) (_ *Polecat, retE
 	// beads state — all requiring disk I/O. If the disk is nearly full, fail early
 	// with a clear message rather than leaving a half-created polecat.
 	// See: disk-space-resilience — 5 polecats died silently on disk exhaustion.
-	if level, msg, err := util.CheckDiskSpace(m.rig.Path); err == nil && level == util.DiskSpaceCritical {
+	if level, msg, err := checkDiskSpace(m.rig.Path); err == nil && level == util.DiskSpaceCritical {
 		return nil, fmt.Errorf("%w: %s", ErrDiskSpaceLow, msg)
 	}
 

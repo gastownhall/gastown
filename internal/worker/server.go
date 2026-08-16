@@ -832,7 +832,10 @@ func (s *Server) kill(runID, sessionID string) error {
 	if s.tmux == nil {
 		return ErrUnknownState
 	}
-	return s.tmux.KillSessionWithProcesses(run.SessionID)
+	if err := s.tmux.KillSessionWithProcesses(run.SessionID); err != nil {
+		return err
+	}
+	return markRunStopped(s.store, run)
 }
 
 func (s *Server) pushIdentity(id Identity) error {

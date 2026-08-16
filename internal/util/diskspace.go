@@ -67,8 +67,8 @@ const (
 	// At 1 GB free, the system is at risk and should shed load.
 	DiskSpaceWarningMB uint64 = 1024
 
-	// DiskSpaceCriticalPercent is the usage percentage above which operations
-	// should be blocked regardless of absolute free space.
+	// DiskSpaceCriticalPercent is retained as the high-utilization threshold.
+	// Crossing it emits a warning; only the absolute minimum blocks operations.
 	DiskSpaceCriticalPercent float64 = 95.0
 )
 
@@ -105,22 +105,26 @@ func CheckDiskSpace(path string) (DiskSpaceLevel, string, error) {
 	if err != nil {
 		return DiskSpaceOK, "", err
 	}
+	level, message := ClassifyDiskSpace(info)
+	return level, message, nil
+}
 
+// ClassifyDiskSpace applies admission-control thresholds to measured space.
+// Only an absolute shortage is critical; percentage utilization alone can be
+// misleading on large filesystems and therefore remains warning-level.
+func ClassifyDiskSpace(info *DiskSpaceInfo) (DiskSpaceLevel, string) {
 	availMB := info.AvailableMB()
-
-	if availMB < DiskSpaceMinimumMB || info.UsedPercent >= DiskSpaceCriticalPercent {
+	if availMB < DiskSpaceMinimumMB {
 		return DiskSpaceCritical,
 			fmt.Sprintf("CRITICAL: only %s free (%.1f%% used) — disk space exhausted, operations blocked",
-				info.AvailableHuman(), info.UsedPercent),
-			nil
+				info.AvailableHuman(), info.UsedPercent)
 	}
 
-	if availMB < DiskSpaceWarningMB {
+	if availMB < DiskSpaceWarningMB || info.UsedPercent >= DiskSpaceCriticalPercent {
 		return DiskSpaceWarning,
-			fmt.Sprintf("WARNING: only %s free (%.1f%% used) — disk space low, reduce workload",
-				info.AvailableHuman(), info.UsedPercent),
-			nil
+			fmt.Sprintf("WARNING: %s free (%.1f%% used) — disk space pressure is high, reduce workload",
+				info.AvailableHuman(), info.UsedPercent)
 	}
 
-	return DiskSpaceOK, "", nil
+	return DiskSpaceOK, ""
 }

@@ -39,7 +39,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   always uses the queued-nudge channel; the agent reads it on the next
   turn via `gt mail inbox` / hook injection. If no town root exists to
   write the queue, notification is skipped rather than submitting a new
-  turn. The mail bead is unchanged.
+  turn. A live Worker run is no longer a second delivery path. The mail
+  bead is unchanged.
+- **Mixed-agent UAT follow-ups** for towns that mix Codex, Pi, and other
+  runtimes: `gt status` prefers a named crew assignment over the role
+  default; process discovery falls back to `ps`/`pgrep` on macOS;
+  unattended crew starts wait for and accept startup dialogs with a
+  tmux 3.7b-safe Enter; disk admission is critical only below 500 MB;
+  polecat allocation checks disk before creating a name or directory;
+  slinging to a stopped crew workspace starts that crew instead of
+  spawning a polecat; mayor and crew stop mark the Worker run stopped
+  so the next start is not blocked by a stale live run.
 
 ## [1.2.1] - 2026-06-06
 

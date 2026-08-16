@@ -1529,46 +1529,56 @@ func TestResolveTargetCreateSpawnsPolecatShorthandWhenPaneMissing(t *testing.T) 
 	}
 }
 
-func TestResolveTargetCreateDoesNotSpawnCrewShorthandWhenPaneMissing(t *testing.T) {
+func TestResolveTargetStartsStoppedCrewShorthandWhenPaneMissing(t *testing.T) {
 	townRoot := t.TempDir()
-	if err := os.MkdirAll(filepath.Join(townRoot, "mayor", "rig"), 0755); err != nil {
-		t.Fatalf("mkdir mayor/rig: %v", err)
-	}
-	if err := os.MkdirAll(filepath.Join(townRoot, "gastown", "crew", "toast"), 0755); err != nil {
+	crewDir := filepath.Join(townRoot, "gastown", "crew", "toast")
+	if err := os.MkdirAll(crewDir, 0755); err != nil {
 		t.Fatalf("mkdir crew: %v", err)
-	}
-
-	cwd, err := os.Getwd()
-	if err != nil {
-		t.Fatalf("getwd: %v", err)
-	}
-	t.Cleanup(func() { _ = os.Chdir(cwd) })
-	if err := os.Chdir(filepath.Join(townRoot, "mayor", "rig")); err != nil {
-		t.Fatalf("chdir: %v", err)
 	}
 
 	prevResolve := resolveTargetAgentFn
 	prevSpawn := spawnPolecatForSling
+	prevStartCrew := startCrewMemberForSling
 	t.Cleanup(func() {
 		resolveTargetAgentFn = prevResolve
 		spawnPolecatForSling = prevSpawn
+		startCrewMemberForSling = prevStartCrew
 	})
+	resolveCalls := 0
 	resolveTargetAgentFn = func(target string) (string, string, string, error) {
-		return "", "", "", errors.New("getting pane for gt-crew-toast: exit status 1")
+		resolveCalls++
+		if resolveCalls == 1 {
+			return "", "", "", errors.New("getting pane for gt-crew-toast: exit status 1")
+		}
+		return "gastown/crew/toast", "%7", crewDir, nil
 	}
 
 	spawnCalled := false
-	spawnPolecatForSling = func(rigName string, opts SlingSpawnOptions) (*SpawnedPolecatInfo, error) {
+	spawnPolecatForSling = func(string, SlingSpawnOptions) (*SpawnedPolecatInfo, error) {
 		spawnCalled = true
 		return nil, errors.New("unexpected spawn")
 	}
+	startCalled := false
+	startCrewMemberForSling = func(rigName, crewName, gotTownRoot string) error {
+		startCalled = true
+		if rigName != "gastown" || crewName != "toast" || gotTownRoot != townRoot {
+			t.Fatalf("startCrewMember(%q, %q, %q)", rigName, crewName, gotTownRoot)
+		}
+		return nil
+	}
 
-	_, err = resolveTarget("gastown/toast", ResolveTargetOptions{Create: true, NoBoot: true})
-	if err == nil {
-		t.Fatal("expected resolve error for missing crew pane")
+	got, err := resolveTarget("gastown/toast", ResolveTargetOptions{Create: true, NoBoot: true, TownRoot: townRoot})
+	if err != nil {
+		t.Fatalf("resolveTarget: %v", err)
+	}
+	if !startCalled {
+		t.Fatal("stopped crew workspace was not started")
 	}
 	if spawnCalled {
 		t.Fatal("crew shorthand must not spawn a polecat")
+	}
+	if got.Agent != "gastown/crew/toast" || got.Pane != "%7" || got.WorkDir != crewDir {
+		t.Fatalf("resolved target = %+v", got)
 	}
 }
 

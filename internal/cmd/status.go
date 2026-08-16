@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"os/signal"
 	"path/filepath"
 	"strings"
@@ -192,9 +193,17 @@ func resolveAgentDisplay(townRoot string, townSettings *config.TownSettings, rol
 		configRole = constants.RoleDeacon
 	}
 
-	// Get alias from config
+	// Get alias from config. A named crew assignment is more specific than
+	// the role-wide assignment and town default.
 	if townSettings != nil {
-		alias = townSettings.RoleAgents[configRole]
+		if configRole == constants.RoleCrew && sessionName != "" {
+			if identity, err := session.ParseSessionName(sessionName); err == nil && identity.Role == session.RoleCrew {
+				alias = townSettings.CrewAgents[identity.Name]
+			}
+		}
+		if alias == "" {
+			alias = townSettings.RoleAgents[configRole]
+		}
 		if alias == "" {
 			alias = townSettings.DefaultAgent
 		}
@@ -256,26 +265,14 @@ func findAgentCmdline(panePid string) string {
 		return cmdline
 	}
 
-	// Walk children (shell → agent)
-	childrenPath := "/proc/" + panePid + "/task/" + panePid + "/children"
-	childrenBytes, err := os.ReadFile(childrenPath)
-	if err != nil {
-		return cmdline // return whatever the pane process is
-	}
-
-	children := strings.Fields(string(childrenBytes))
-	for _, childPid := range children {
+	// Walk children (shell → agent).
+	for _, childPid := range childPIDs(panePid) {
 		childCmd := readCmdline(childPid)
 		if isAgentCmdline(childCmd) {
 			return childCmd
 		}
-		// Check grandchildren (cgroup-wrap → agent)
-		gcPath := "/proc/" + childPid + "/task/" + childPid + "/children"
-		gcBytes, err := os.ReadFile(gcPath)
-		if err != nil {
-			continue
-		}
-		for _, gcPid := range strings.Fields(string(gcBytes)) {
+		// Check grandchildren (cgroup-wrap → agent).
+		for _, gcPid := range childPIDs(childPid) {
 			gcCmd := readCmdline(gcPid)
 			if isAgentCmdline(gcCmd) {
 				return gcCmd
@@ -308,14 +305,34 @@ func isAgentCmdline(cmdline string) bool {
 	return false
 }
 
-// readCmdline reads /proc/<pid>/cmdline and returns it as a space-joined string.
+// readCmdline reads a process command line. Linux exposes null-separated
+// arguments through /proc; platforms without /proc (notably macOS) fall back
+// to ps and normalize its output to the same representation.
 func readCmdline(pid string) string {
 	data, err := os.ReadFile("/proc/" + pid + "/cmdline")
-	if err != nil || len(data) == 0 {
+	if err == nil && len(data) > 0 {
+		return string(data)
+	}
+
+	out, err := exec.Command("ps", "-p", pid, "-o", "command=").Output() //nolint:gosec // PID is passed as an argument, not interpreted by a shell.
+	if err != nil {
 		return ""
 	}
-	// cmdline uses null bytes as separators
-	return string(data)
+	return strings.Join(strings.Fields(string(out)), "\x00")
+}
+
+// childPIDs reads Linux's process child list first and uses pgrep elsewhere.
+func childPIDs(pid string) []string {
+	childrenPath := "/proc/" + pid + "/task/" + pid + "/children"
+	if data, err := os.ReadFile(childrenPath); err == nil {
+		return strings.Fields(string(data))
+	}
+
+	out, err := exec.Command("pgrep", "-P", pid).Output() //nolint:gosec // PID is passed as an argument, not interpreted by a shell.
+	if err != nil {
+		return nil
+	}
+	return strings.Fields(string(out))
 }
 
 // extractBaseName gets the base command name from a null-separated cmdline.

@@ -5,12 +5,15 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
 	"github.com/steveyegge/gastown/internal/beads"
 	"github.com/steveyegge/gastown/internal/config"
+	"github.com/steveyegge/gastown/internal/constants"
 	"github.com/steveyegge/gastown/internal/rig"
+	"github.com/steveyegge/gastown/internal/session"
 )
 
 func captureStderr(t *testing.T, fn func()) string {
@@ -438,6 +441,32 @@ func TestBuildInfoFromConfig(t *testing.T) {
 	}
 }
 
+func TestResolveAgentDisplay_CrewAgentOverridesRoleAgent(t *testing.T) {
+	registry := session.NewPrefixRegistry()
+	registry.Register("gt", "gastown")
+	oldRegistry := session.DefaultRegistry()
+	session.SetDefaultRegistry(registry)
+	t.Cleanup(func() { session.SetDefaultRegistry(oldRegistry) })
+
+	settings := &config.TownSettings{
+		DefaultAgent: "claude",
+		RoleAgents:   map[string]string{constants.RoleCrew: "codex"},
+		CrewAgents:   map[string]string{"alice": "pi"},
+		Agents: map[string]*config.RuntimeConfig{
+			"codex": {Command: "codex"},
+			"pi":    {Command: "pi"},
+		},
+	}
+
+	alias, info := resolveAgentDisplay(t.TempDir(), settings, constants.RoleCrew, "gt-crew-alice", false)
+	if alias != "pi" {
+		t.Errorf("resolveAgentDisplay alias = %q, want pi", alias)
+	}
+	if info != "pi" {
+		t.Errorf("resolveAgentDisplay info = %q, want pi", info)
+	}
+}
+
 func TestIsAgentCmdline(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
@@ -461,6 +490,42 @@ func TestIsAgentCmdline(t *testing.T) {
 				t.Errorf("isAgentCmdline(%q) = %v, want %v", tt.name, got, tt.want)
 			}
 		})
+	}
+}
+
+func TestFindAgentCmdline_FallsBackToPSAndPgrep(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("test uses POSIX process stubs")
+	}
+	binDir := t.TempDir()
+	psStub := `#!/bin/sh
+case "$2" in
+  99999998) printf 'zsh\n' ;;
+  99999999) printf 'pi --model gpt-5\n' ;;
+  *) exit 1 ;;
+esac
+`
+	pgrepStub := `#!/bin/sh
+if [ "$1" = "-P" ] && [ "$2" = "99999998" ]; then
+  printf '99999999\n'
+  exit 0
+fi
+exit 1
+`
+	for name, script := range map[string]string{"ps": psStub, "pgrep": pgrepStub} {
+		path := filepath.Join(binDir, name)
+		if err := os.WriteFile(path, []byte(script), 0755); err != nil {
+			t.Fatalf("write %s stub: %v", name, err)
+		}
+	}
+	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	cmdline := findAgentCmdline("99999998")
+	if !isAgentCmdline(cmdline) {
+		t.Fatalf("findAgentCmdline() = %q, want Pi command line", cmdline)
+	}
+	if got := parseRuntimeInfo(cmdline); got != "pi/gpt-5" {
+		t.Errorf("parseRuntimeInfo(findAgentCmdline()) = %q, want pi/gpt-5", got)
 	}
 }
 

@@ -48,6 +48,37 @@ func TestNudgeSubmit_NamedEnterNoop_LiteralCRRequired(t *testing.T) {
 	t.Fatalf("named-key Enter did not submit; literal CR is required. outfile=%q err=%v", string(got), err)
 }
 
+// TestStartupDialogSubmit_NamedEnterNoop_LiteralCRRequired verifies startup
+// acceptance uses the same tmux 3.7b-safe submission path as nudges.
+func TestStartupDialogSubmit_NamedEnterNoop_LiteralCRRequired(t *testing.T) {
+	realTmux := tmuxtest.RealTmuxOrSkip(t)
+
+	t.Setenv("GT_REAL_TMUX", realTmux)
+	t.Setenv("GT_TMUX_NOOP_NAMED_ENTER", "1")
+
+	socket := tmuxtest.SocketName(t, "gt-dialog-enter-")
+	session := "dialog-enter"
+	outFile := filepath.Join(t.TempDir(), "accepted.txt")
+	tmuxtest.StartSession(t, realTmux, socket, session,
+		"printf 'Do you trust the contents of this directory?\\n'; exec cat >"+tmuxtest.ShellQuote(outFile))
+
+	stub := tmuxtest.InstallStub(t)
+	tm := NewTmuxWithSocketAndBinary(socket, stub)
+	if err := tm.AcceptWorkspaceTrustDialog(session); err != nil {
+		t.Fatalf("AcceptWorkspaceTrustDialog: %v", err)
+	}
+
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if data, err := os.ReadFile(outFile); err == nil && len(data) > 0 {
+			return
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	data, err := os.ReadFile(outFile)
+	t.Fatalf("startup dialog was not accepted with a literal CR; outfile=%q err=%v", data, err)
+}
+
 // TestNudgeSendKeys_DoesNotPassUnknown37bFlags records send-keys argv during a
 // real NudgeSession. tmux 3.7b rejects -V and -o on send-keys (GH#4666 defect 1).
 func TestNudgeSendKeys_DoesNotPassUnknown37bFlags(t *testing.T) {

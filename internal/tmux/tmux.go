@@ -2031,7 +2031,7 @@ func (t *Tmux) AcceptWorkspaceTrustDialog(session string) error {
 		// detection alone would exit too early.
 		if containsWorkspaceTrustDialog(content) {
 			// Dialog found — accept it (option 1 is pre-selected, just press Enter)
-			if _, err := t.run("send-keys", "-t", session, "Enter"); err != nil {
+			if err := sendLiteralCR(t, session); err != nil {
 				return err
 			}
 			// Wait for dialog to dismiss before proceeding
@@ -2179,7 +2179,7 @@ func (t *Tmux) AcceptBypassPermissionsWarning(session string) error {
 				return err
 			}
 			time.Sleep(200 * time.Millisecond)
-			if _, err := t.run("send-keys", "-t", session, "Enter"); err != nil {
+			if err := sendLiteralCR(t, session); err != nil {
 				return err
 			}
 			return nil
@@ -2214,7 +2214,7 @@ func (t *Tmux) AcceptBypassPermissionsWarning(session string) error {
 // precision matters, use AcceptStartupDialogs instead.
 func (t *Tmux) DismissStartupDialogsBlind(session string) error {
 	// Step 1: Send Enter to dismiss trust dialog (if present)
-	if _, err := t.run("send-keys", "-t", session, "Enter"); err != nil {
+	if err := sendLiteralCR(t, session); err != nil {
 		return fmt.Errorf("sending Enter for trust dialog: %w", err)
 	}
 	time.Sleep(500 * time.Millisecond)
@@ -2224,7 +2224,7 @@ func (t *Tmux) DismissStartupDialogsBlind(session string) error {
 		return fmt.Errorf("sending Down for bypass dialog: %w", err)
 	}
 	time.Sleep(200 * time.Millisecond)
-	if _, err := t.run("send-keys", "-t", session, "Enter"); err != nil {
+	if err := sendLiteralCR(t, session); err != nil {
 		return fmt.Errorf("sending Enter for bypass dialog: %w", err)
 	}
 

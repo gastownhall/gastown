@@ -18,7 +18,6 @@ import (
 	"github.com/steveyegge/gastown/internal/session"
 	"github.com/steveyegge/gastown/internal/telemetry"
 	"github.com/steveyegge/gastown/internal/tmux"
-	"github.com/steveyegge/gastown/internal/worker"
 	"github.com/steveyegge/gastown/internal/workspace"
 )
 
@@ -1771,18 +1770,6 @@ func enqueueQueuedMail(townRoot, sessionID string, msg *Message, notification, p
 		Severity: prioritySeverityLabel(msg.Priority),
 	}); err != nil {
 		return fmt.Errorf("enqueue mail notification for session %s: %w", sessionID, err)
-	}
-	if w, err := worker.Open(townRoot); err == nil {
-		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-		defer cancel()
-		_, _ = w.Deliver(ctx, worker.Prompt{
-			RunID:    sessionID,
-			Content:  notification,
-			Priority: worker.PriorityNormal,
-			Source:   worker.SourceMail,
-			From:     msg.From,
-			Kind:     nudgeKindForMessage(msg),
-		})
 	}
 	return nil
 }

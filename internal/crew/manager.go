@@ -22,6 +22,7 @@ import (
 	"github.com/steveyegge/gastown/internal/style"
 	"github.com/steveyegge/gastown/internal/tmux"
 	"github.com/steveyegge/gastown/internal/util"
+	"github.com/steveyegge/gastown/internal/worker"
 )
 
 // Common errors
@@ -33,6 +34,15 @@ var (
 	ErrSessionRunning  = errors.New("session already running")
 	ErrSessionNotFound = errors.New("session not found")
 )
+
+// startupDialogPolicy makes every unattended crew startup wait for the runtime
+// and dismiss blocking dialogs, regardless of the selected agent preset.
+func startupDialogPolicy(interactive bool) (waitForAgent, acceptDialogs bool) {
+	if interactive {
+		return false, false
+	}
+	return true, true
+}
 
 // StartOptions configures crew session startup.
 type StartOptions struct {
@@ -812,23 +822,7 @@ func (m *Manager) Start(name string, opts StartOptions) error {
 		}
 	}
 
-	waitForAgent := false
-	acceptBypass := false
-	if !opts.Interactive {
-		agentName := opts.AgentOverride
-		if agentName == "" {
-			if rc := config.ResolveWorkerAgentConfig(name, townRoot, m.rig.Path); rc != nil && rc.Provider != "" {
-				agentName = rc.Provider
-			} else {
-				agentName = "claude"
-			}
-		}
-		preset := config.GetAgentPresetByName(agentName)
-		if preset != nil && preset.EmitsPermissionWarning {
-			waitForAgent = true
-			acceptBypass = true
-		}
-	}
+	waitForAgent, acceptBypass := startupDialogPolicy(opts.Interactive)
 
 	topic := opts.Topic
 	if topic == "" {
@@ -900,6 +894,9 @@ func (m *Manager) Stop(name string) error {
 	// This prevents orphan bash processes from Claude's Bash tool surviving session termination.
 	if err := t.KillSessionWithProcesses(sessionID); err != nil {
 		return fmt.Errorf("killing session: %w", err)
+	}
+	if err := worker.MarkSessionStopped(townRoot, sessionID); err != nil {
+		return fmt.Errorf("recording stopped worker run: %w", err)
 	}
 
 	return nil

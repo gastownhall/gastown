@@ -597,6 +597,31 @@ func TestValidateSessionID(t *testing.T) {
 	}
 }
 
+func TestStartupDialogPolicy(t *testing.T) {
+	tests := []struct {
+		name        string
+		interactive bool
+		agent       string
+		wantWait    bool
+		wantAccept  bool
+	}{
+		{name: "non-interactive Claude", agent: "claude", wantWait: true, wantAccept: true},
+		{name: "non-interactive Codex", agent: "codex", wantWait: true, wantAccept: true},
+		{name: "non-interactive Pi", agent: "pi", wantWait: true, wantAccept: true},
+		{name: "interactive", interactive: true, agent: "codex"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			wait, accept := startupDialogPolicy(tt.interactive)
+			if wait != tt.wantWait || accept != tt.wantAccept {
+				t.Errorf("startupDialogPolicy(%v) for %s = (%v, %v), want (%v, %v)",
+					tt.interactive, tt.agent, wait, accept, tt.wantWait, tt.wantAccept)
+			}
+		})
+	}
+}
+
 func TestStartOptionsResumeValidation(t *testing.T) {
 	t.Parallel()
 
