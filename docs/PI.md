@@ -51,7 +51,14 @@ role assigned to that profile when its next session starts.
 
 ## Assign models and thinking effort by role
 
-Use `gt config role set <role> <profile> [effort]` for town-wide assignments:
+Use `gt config mix` to assign several roles at once, including a mix with
+another runtime:
+
+```bash
+gt config mix default=pi-luna mayor=pi-luna:high deacon=pi-local crew=codex
+```
+
+Or use `gt config role set <role> <profile> [effort]` for one role at a time:
 
 ```bash
 gt config role set mayor pi-luna high

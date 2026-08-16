@@ -38,6 +38,7 @@ Commands:
   gt config role set <role> <agent> [effort]
                                      Assign an agent and optional effort to a role
   gt config role unset <role>        Clear a role assignment
+  gt config mix [assignment...]      Mix agent types across roles and crew
   gt config default-agent [name]     Get or set default agent
   gt config default-agent list       List available agents`,
 }
@@ -636,6 +637,8 @@ func runConfigRoleList(_ *cobra.Command, _ []string) error {
 		}
 		fmt.Printf("%-10s %-20s %s\n", role, agent, effort)
 	}
+	fmt.Println()
+	fmt.Println("Tip: assign several roles at once with gt config mix mayor=pi crew=codex")
 	return nil
 }
 
@@ -1420,6 +1423,7 @@ Examples:
 	// Add flags
 	configAgentListCmd.Flags().BoolVar(&configAgentListJSON, "json", false, "Output as JSON")
 	configDefaultAgentListCmd.Flags().BoolVar(&configDefaultAgentListJSON, "json", false, "Output as JSON")
+	configMixCmd.Flags().BoolVar(&configMixJSON, "json", false, "Output the effective mix as JSON")
 	configAgentSetCmd.Flags().StringVar(&configAgentSetProvider, "provider", "", fmt.Sprintf("Agent provider preset (e.g. %s); inferred from command name if not set", presets))
 
 	// Add agent subcommands
@@ -1446,6 +1450,7 @@ config values such as the default AI model or provider.`,
 	// Add subcommands to config
 	configCmd.AddCommand(configAgentCmd)
 	configCmd.AddCommand(configRoleCmd)
+	configCmd.AddCommand(configMixCmd)
 	configCmd.AddCommand(configCostTierCmd)
 	configCmd.AddCommand(configDefaultAgentCmd)
 	configCmd.AddCommand(configAgentEmailDomainCmd)

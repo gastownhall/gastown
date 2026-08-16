@@ -504,7 +504,7 @@ gt feed                     # Real-time activity feed (TUI)
 gt feed --problems          # Start in problems view (stuck agent detection)
 ```
 
-**Built-in agent presets**: `claude`, `gemini`, `codex`, `kiro`, `cursor`, `auggie`, `amp`, `opencode`, `copilot`, `pi`, `omp`
+**Built-in agent presets**: `claude`, `gemini`, `codex`, `kiro`, `cursor`, `auggie`, `amp`, `opencode`, `copilot`, `pi`, `omp`. Mix them in one town with `gt config mix default=codex mayor=pi`.
 
 The `kiro` preset launches `kiro-cli chat --trust-all-tools`, supports Kiro's
 documented `--resume` / `--resume-id` session flags, and does not install Kiro
@@ -525,6 +525,10 @@ gt convoy add <convoy-id> <issue-id...>  # Add issues to convoy
 ### Configuration
 
 ```bash
+# Mix agent types in one town (Codex workers, Pi mayor, …)
+gt config mix default=codex mayor=pi:high crew=codex
+gt config mix                          # Show the effective mix
+
 # Set custom agent command
 gt config agent set claude-glm "claude-glm --model glm-4"
 gt config agent set codex-low "codex --thinking low"

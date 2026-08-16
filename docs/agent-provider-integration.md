@@ -232,19 +232,30 @@ Or set it as the town-wide default:
 }
 ```
 
-You can also assign agents per-role for cost optimization:
+You can also assign agents per-role for cost optimization, or mix
+providers in one town (for example Codex workers with a Pi mayor):
+
+```bash
+gt config mix default=codex mayor=pi:high crew=codex
+gt config mix crew:alice=pi
+```
 
 ```json
 {
   "type": "town-settings",
   "version": 1,
-  "default_agent": "claude",
+  "default_agent": "codex",
   "role_agents": {
-    "witness": "kiro",
-    "polecat": "kiro"
+    "mayor": "pi",
+    "crew": "codex"
+  },
+  "crew_agents": {
+    "alice": "pi"
   }
 }
 ```
+
+See [Mixed agent types](guides/mixed-agents.md).
 
 ### Resolution order
 

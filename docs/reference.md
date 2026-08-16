@@ -461,6 +461,11 @@ gt config agent get <name>        # Show agent configuration
 gt config agent set <name> <cmd>  # Create or update custom agent
 gt config agent remove <name>     # Remove custom agent (built-ins protected)
 
+# Mix agent types across roles and crew
+gt config mix                         # Show the effective mix
+gt config mix default=codex mayor=pi  # Assign several roles at once
+gt config mix mayor=pi:high crew:alice=codex
+
 # Default agent
 gt config default-agent [name]    # Get or set town default agent
 ```

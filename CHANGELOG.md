@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Mixed agent types** — `gt config mix` assigns different runtimes to
+  roles and crew workers in one command. Example:
+  `gt config mix default=codex mayor=pi:high crew=codex crew:alice=pi`.
+  The command prints the effective mix, providers, and whether each
+  agent binary is on PATH. Per-role `gt config role set` still works.
+
 - **Town-wide auto-compaction window** defaults to `min(150000, model default)`
   tokens for every built-in agent type. Change the 150k cap with
   `gt config set auto_compact_window 150k` or `GT_AUTO_COMPACT_WINDOW`.

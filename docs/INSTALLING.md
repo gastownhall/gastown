@@ -210,12 +210,21 @@ gt config agent set claude-haiku "claude --model haiku --dangerously-skip-permis
 gt config default-agent codex-low
 ```
 
-Assign profiles and thinking effort by role:
+Mix agent types across roles in one command. Codex and Pi (or any built-in
+pair) can run in the same town:
+
+```bash
+gt config mix default=codex mayor=pi:high crew=codex polecat=codex
+gt config mix
+```
+
+Or assign one role at a time, including named crew workers:
 
 ```bash
 gt config agent set pi-luna "pi --model openai-codex/gpt-5.6-luna" --provider pi
 gt config role set mayor pi-luna high
 gt config role set witness pi-luna low
+gt config mix crew:alice=pi
 gt config role list
 ```
 
