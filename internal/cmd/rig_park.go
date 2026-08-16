@@ -3,13 +3,13 @@ package cmd
 import (
 	"fmt"
 
+	"github.com/jonbaldie/gastown/internal/refinery"
+	"github.com/jonbaldie/gastown/internal/session"
+	"github.com/jonbaldie/gastown/internal/style"
+	"github.com/jonbaldie/gastown/internal/tmux"
+	"github.com/jonbaldie/gastown/internal/wisp"
+	"github.com/jonbaldie/gastown/internal/witness"
 	"github.com/spf13/cobra"
-	"github.com/steveyegge/gastown/internal/refinery"
-	"github.com/steveyegge/gastown/internal/session"
-	"github.com/steveyegge/gastown/internal/style"
-	"github.com/steveyegge/gastown/internal/tmux"
-	"github.com/steveyegge/gastown/internal/wisp"
-	"github.com/steveyegge/gastown/internal/witness"
 )
 
 // RigStatusKey is the wisp config key for rig operational status.

@@ -6,11 +6,11 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/steveyegge/gastown/internal/config"
-	"github.com/steveyegge/gastown/internal/dog"
-	"github.com/steveyegge/gastown/internal/mail"
-	"github.com/steveyegge/gastown/internal/plugin"
-	"github.com/steveyegge/gastown/internal/tmux"
+	"github.com/jonbaldie/gastown/internal/config"
+	"github.com/jonbaldie/gastown/internal/dog"
+	"github.com/jonbaldie/gastown/internal/mail"
+	"github.com/jonbaldie/gastown/internal/plugin"
+	"github.com/jonbaldie/gastown/internal/tmux"
 )
 
 // Dog lifecycle defaults — now config-driven via operational.daemon thresholds.

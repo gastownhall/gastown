@@ -14,9 +14,9 @@ import (
 	"github.com/charmbracelet/bubbles/key"
 	tea "github.com/charmbracelet/bubbletea"
 
-	"github.com/steveyegge/gastown/internal/beads"
-	"github.com/steveyegge/gastown/internal/constants"
-	"github.com/steveyegge/gastown/internal/util"
+	"github.com/jonbaldie/gastown/internal/beads"
+	"github.com/jonbaldie/gastown/internal/constants"
+	"github.com/jonbaldie/gastown/internal/util"
 )
 
 // convoyIDPattern validates convoy IDs.

@@ -16,11 +16,11 @@ import (
 	"testing"
 
 	_ "github.com/go-sql-driver/mysql"
-	"github.com/steveyegge/gastown/internal/beads"
-	"github.com/steveyegge/gastown/internal/config"
-	"github.com/steveyegge/gastown/internal/constants"
-	"github.com/steveyegge/gastown/internal/refinery"
-	"github.com/steveyegge/gastown/internal/testutil"
+	"github.com/jonbaldie/gastown/internal/beads"
+	"github.com/jonbaldie/gastown/internal/config"
+	"github.com/jonbaldie/gastown/internal/constants"
+	"github.com/jonbaldie/gastown/internal/refinery"
+	"github.com/jonbaldie/gastown/internal/testutil"
 )
 
 func TestBuildWitnessPatrolVars_NilContext(t *testing.T) {

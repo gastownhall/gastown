@@ -10,12 +10,12 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/steveyegge/gastown/internal/beads"
-	"github.com/steveyegge/gastown/internal/checkpoint"
-	"github.com/steveyegge/gastown/internal/constants"
-	"github.com/steveyegge/gastown/internal/events"
-	"github.com/steveyegge/gastown/internal/runtime"
-	"github.com/steveyegge/gastown/internal/workspace"
+	"github.com/jonbaldie/gastown/internal/beads"
+	"github.com/jonbaldie/gastown/internal/checkpoint"
+	"github.com/jonbaldie/gastown/internal/constants"
+	"github.com/jonbaldie/gastown/internal/events"
+	"github.com/jonbaldie/gastown/internal/runtime"
+	"github.com/jonbaldie/gastown/internal/workspace"
 )
 
 // hookInput represents the JSON input from LLM runtime hooks.

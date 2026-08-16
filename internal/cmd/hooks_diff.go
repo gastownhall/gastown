@@ -5,10 +5,10 @@ import (
 	"path/filepath"
 
 	"github.com/charmbracelet/lipgloss"
+	"github.com/jonbaldie/gastown/internal/hooks"
+	"github.com/jonbaldie/gastown/internal/style"
+	"github.com/jonbaldie/gastown/internal/workspace"
 	"github.com/spf13/cobra"
-	"github.com/steveyegge/gastown/internal/hooks"
-	"github.com/steveyegge/gastown/internal/style"
-	"github.com/steveyegge/gastown/internal/workspace"
 )
 
 var hooksDiffCmd = &cobra.Command{

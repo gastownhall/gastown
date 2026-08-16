@@ -2,22 +2,22 @@
 
 Complete setup guide for Gas Town multi-agent orchestrator.
 
-For the shortest path, use `brew install gastown` on macOS or the Docker setup in [docker.md](docker.md). Homebrew installs `gt`, `bd`, and `dolt` together. Docker supplies the runtime tools inside the container. The native/source paths below are for hosts where you install and run `gt` directly.
+For the shortest native path, install `gt` globally with `CGO_ENABLED=0 go install github.com/jonbaldie/gastown/cmd/gt@main`. Use `@main` until a post-migration release tag exists; `@latest` still resolves to the pre-migration `v1.2.1` module path. Install `bd` and Dolt separately as described below. Docker supplies the runtime tools inside the container.
 
 ## Prerequisites
 
 ### Required
 
-Native source installs require these host tools. Homebrew and Docker installs provide some of them for you, as noted in the platform sections below. Docker installs only require Docker Compose on the host; the container supplies Go, Dolt, `bd`, tmux, and CLI utilities.
+Native source installs require these host tools. Docker installs only require Docker Compose on the host; the container supplies Go, Dolt, `bd`, tmux, and CLI utilities.
 
 | Tool | Version | Check | Install |
 |------|---------|-------|---------|
 | **Go** | 1.26.2+ | `go version` | See [golang.org](https://go.dev/doc/install) |
 | **Git** | 2.20+ | `git --version` | See below |
 | **sqlite3** | any | `sqlite3 --version` | Usually pre-installed on macOS; Linux packages are commonly named `sqlite3` |
-| **ICU4C dev headers** | varies | `pkg-config --modversion icu-uc`, `dpkg -l libicu-dev`, `rpm -q libicu-devel`, or `brew --prefix icu4c` | Source builds need Debian/Ubuntu `libicu-dev`, Fedora/RHEL `libicu-devel` with `pkgconf-pkg-config`, macOS `icu4c`, or native Windows MSYS2 ICU/toolchain/pkg-config packages |
+| **ICU4C dev headers** | varies | `pkg-config --modversion icu-uc`, `dpkg -l libicu-dev`, `rpm -q libicu-devel`, or `brew --prefix icu4c` | Required only for `make build-cgo`, which compiles the optional embedded query layer |
 | **Dolt** | >= 2.0.7 | `dolt version` | macOS: `brew install dolt`; other platforms: see [dolthub/dolt](https://github.com/dolthub/dolt?tab=readme-ov-file#installation) |
-| **Beads** | >= 0.57.0 | `bd version` | Installed by `brew install gastown`, or from source with `go install github.com/steveyegge/beads/cmd/bd@latest` |
+| **Beads** | >= 0.57.0 | `bd version` | `go install github.com/steveyegge/beads/cmd/bd@latest` |
 | **Docker Compose** | v2+ | `docker compose version` | Docker setup only. Install Docker Desktop or Docker Engine with the Compose plugin. |
 
 ### Optional (for Full Stack Mode)
@@ -35,17 +35,12 @@ Native source installs require these host tools. Homebrew and Docker installs pr
 
 ### macOS
 
-Use Homebrew for the normal macOS install. It installs `gt`, `bd`, and `dolt` together.
+Install Go and Dolt with Homebrew, then install `gt` and `bd` with Go.
 
 ```bash
-# Install Homebrew if needed
-/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
-
-# Recommended install
-brew install gastown
-
-# Optional: source builds also need Go, Dolt, and ICU4C
-brew install go dolt icu4c
+brew install go dolt
+CGO_ENABLED=0 go install github.com/jonbaldie/gastown/cmd/gt@main
+go install github.com/steveyegge/beads/cmd/bd@latest
 
 # Optional: Docker setup only
 # Install Docker Desktop or another Docker Engine with Compose v2.
@@ -59,7 +54,7 @@ brew install tmux
 ```bash
 # Required
 sudo apt update
-sudo apt install -y git sqlite3 libicu-dev
+sudo apt install -y git sqlite3
 
 # Install Go (apt version may be outdated, use official installer)
 wget https://go.dev/dl/go1.26.2.linux-amd64.tar.gz
@@ -79,7 +74,7 @@ sudo apt install -y tmux
 
 ```bash
 # Required
-sudo dnf install -y git sqlite libicu-devel pkgconf-pkg-config
+sudo dnf install -y git sqlite
 # Install Go 1.26.2+ from your distro if available, otherwise use the official Go installer.
 # Install Dolt: see https://github.com/dolthub/dolt?tab=readme-ov-file#installation
 # Docker setup only: install Docker Engine with the Compose plugin.
@@ -95,7 +90,8 @@ Install Go and Dolt first, then install `gt` and `bd` with Go. The binaries land
 `make build` defaults to `CGO_ENABLED=0` and talks to Dolt as an external SQL server. Native Windows source builds that compile the ICU-backed embedded query layer (`make build-cgo`) need an MSYS2 UCRT64 or MinGW64 shell with matching `icu`, `toolchain`, and `pkg-config` packages. The repository's Windows CI uses `pacboy -S icu:p toolchain:p pkg-config:p` before running Go commands; plain PowerShell/MSVC is not enough for that CGO build.
 
 ```powershell
-go install github.com/steveyegge/gastown/cmd/gt@latest
+$env:CGO_ENABLED = "0"
+go install github.com/jonbaldie/gastown/cmd/gt@main
 go install github.com/steveyegge/beads/cmd/bd@latest
 ```
 
@@ -115,36 +111,19 @@ tmux -V           # (Optional) Should show 3.0 or higher
 
 ### Step 1: Install the Binaries
 
-If you used `brew install gastown`, the binaries are already installed. Verify them:
+On macOS and Linux, install `gt` and Beads with Go after installing Dolt separately:
+
+```bash
+CGO_ENABLED=0 go install github.com/jonbaldie/gastown/cmd/gt@main
+go install github.com/steveyegge/beads/cmd/bd@latest
+```
+
+The binaries land in `$GOBIN`, or `$GOPATH/bin` (usually `~/go/bin`) when `GOBIN` is unset. Put that directory before older install locations on `PATH`, then verify the native dependencies:
 
 ```bash
 gt version
 bd version
 dolt version
-```
-
-On Linux and Windows, install `gt` and `bd` with Go after installing Dolt separately:
-
-```bash
-go install github.com/steveyegge/gastown/cmd/gt@latest
-go install github.com/steveyegge/beads/cmd/bd@latest
-```
-
-Homebrew installs the runtime dependencies declared by the core formula. The
-`gastownhall/gastown` tap is reserved for emergency updates. If you build from
-source instead, install `dolt` and ICU4C first, install `bd` with Go, and ensure both
-`~/.local/bin` and `$GOPATH/bin` (usually `~/go/bin`) appear before older
-install locations. On macOS, do not install `gt` with `go install`:
-unsigned binaries may be killed by the OS. Clone the repository and use `make`
-instead.
-
-```bash
-brew install dolt icu4c
-go install github.com/steveyegge/beads/cmd/bd@latest
-export PATH="$HOME/.local/bin:$HOME/go/bin:$PATH"
-git clone https://github.com/steveyegge/gastown.git
-cd gastown
-make install
 ```
 
 ### Step 2: Create Your Workspace
@@ -300,16 +279,13 @@ Gas Town is modular. Enable only what you need:
 
 ### `gt: command not found`
 
-The Gas Town binary directory is not in PATH. Homebrew usually handles this for
-Homebrew installs. Source installs place `gt` in `~/.local/bin`:
+The Gas Town binary directory is not in PATH. `go install` places `gt` in `$GOBIN`, or `$GOPATH/bin` (usually `~/go/bin`) when `GOBIN` is unset:
 
 ```bash
 # Add to your shell config (~/.bashrc, ~/.zshrc)
-export PATH="$HOME/.local/bin:$PATH"
+export PATH="$HOME/go/bin:$PATH"
 source ~/.bashrc  # or restart terminal
 ```
-
-If you also installed Beads with Go, keep `$HOME/go/bin` in PATH for `bd`.
 
 ### `bd: command not found`
 
@@ -366,29 +342,16 @@ bd doctor                  # Run beads health check
 
 ## Updating
 
-Update Gas Town through the same channel you used to install it. For the
-recommended Homebrew install:
+Reinstall `gt` from `main` to pick up updates:
 
 ```bash
-brew update
-brew upgrade gastown
-command -v gt              # Should be Homebrew's gt, e.g. /opt/homebrew/bin/gt
+CGO_ENABLED=0 go install github.com/jonbaldie/gastown/cmd/gt@main
+command -v gt              # Should be $GOBIN or $GOPATH/bin, usually ~/go/bin/gt
 gt version
 gt doctor --fix            # Fix any post-update issues
 ```
 
-If you installed from source, update the checkout and rebuild with `make` rather
-than installing `gt` with `go install` on macOS:
-
-```bash
-git pull --ff-only
-make install
-command -v gt              # Should be ~/.local/bin/gt
-gt version
-gt doctor --fix
-```
-
-If you maintain Beads separately from Homebrew, update `bd` from its own source:
+Update Beads the same way:
 
 ```bash
 go install github.com/steveyegge/beads/cmd/bd@latest

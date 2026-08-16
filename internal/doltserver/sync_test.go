@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	beadspkg "github.com/steveyegge/gastown/internal/beads"
+	beadspkg "github.com/jonbaldie/gastown/internal/beads"
 )
 
 // TestFindRemote_NoRemote verifies FindRemote returns empty when no remote is configured.

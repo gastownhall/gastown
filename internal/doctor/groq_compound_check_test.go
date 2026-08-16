@@ -5,7 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/steveyegge/gastown/internal/config"
+	"github.com/jonbaldie/gastown/internal/config"
 )
 
 func TestNewGroqCompoundCheck(t *testing.T) {

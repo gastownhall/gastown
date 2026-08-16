@@ -8,11 +8,11 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/steveyegge/gastown/internal/config"
-	"github.com/steveyegge/gastown/internal/runtime"
-	"github.com/steveyegge/gastown/internal/session"
-	"github.com/steveyegge/gastown/internal/style"
-	"github.com/steveyegge/gastown/internal/tmux"
+	"github.com/jonbaldie/gastown/internal/config"
+	"github.com/jonbaldie/gastown/internal/runtime"
+	"github.com/jonbaldie/gastown/internal/session"
+	"github.com/jonbaldie/gastown/internal/style"
+	"github.com/jonbaldie/gastown/internal/tmux"
 )
 
 // gitFileStatus represents the git status of a file.
@@ -34,14 +34,14 @@ type ClaudeSettingsCheck struct {
 }
 
 type staleSettingsInfo struct {
-	path           string        // Full path to settings file
-	agentType      string        // e.g., "witness", "refinery", "deacon", "mayor"
-	rigName        string        // Rig name (empty for town-level agents)
-	sessionName    string        // tmux session name for cycling
-	missing        []string      // What's missing from the settings
-	wrongLocation  bool          // True if file is in wrong location (should be deleted)
-	missingFile    bool          // True if settings.local.json doesn't exist (needs agent restart)
-	gitStatus      gitFileStatus // Git status for wrong-location files (for safe deletion)
+	path          string        // Full path to settings file
+	agentType     string        // e.g., "witness", "refinery", "deacon", "mayor"
+	rigName       string        // Rig name (empty for town-level agents)
+	sessionName   string        // tmux session name for cycling
+	missing       []string      // What's missing from the settings
+	wrongLocation bool          // True if file is in wrong location (should be deleted)
+	missingFile   bool          // True if settings.local.json doesn't exist (needs agent restart)
+	gitStatus     gitFileStatus // Git status for wrong-location files (for safe deletion)
 }
 
 // NewClaudeSettingsCheck creates a new Claude settings validation check.
@@ -403,9 +403,9 @@ func (c *ClaudeSettingsCheck) findSettingsFiles(townRoot string) []staleSettings
 			crewCorrectSettings := filepath.Join(crewDir, ".claude", "settings.json")
 			if fileExists(crewCorrectSettings) {
 				files = append(files, staleSettingsInfo{
-					path:        crewCorrectSettings,
-					agentType:   "crew",
-					rigName:     rigName,
+					path:      crewCorrectSettings,
+					agentType: "crew",
+					rigName:   rigName,
 				})
 			} else {
 				files = append(files, staleSettingsInfo{
@@ -459,9 +459,9 @@ func (c *ClaudeSettingsCheck) findSettingsFiles(townRoot string) []staleSettings
 			polecatCorrectSettings := filepath.Join(polecatsDir, ".claude", "settings.json")
 			if fileExists(polecatCorrectSettings) {
 				files = append(files, staleSettingsInfo{
-					path:        polecatCorrectSettings,
-					agentType:   "polecat",
-					rigName:     rigName,
+					path:      polecatCorrectSettings,
+					agentType: "polecat",
+					rigName:   rigName,
 				})
 			} else {
 				files = append(files, staleSettingsInfo{

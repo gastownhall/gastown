@@ -9,12 +9,12 @@ import (
 	"strings"
 	"time"
 
+	"github.com/jonbaldie/gastown/internal/beads"
+	"github.com/jonbaldie/gastown/internal/config"
+	"github.com/jonbaldie/gastown/internal/git"
+	"github.com/jonbaldie/gastown/internal/style"
+	"github.com/jonbaldie/gastown/internal/workspace"
 	"github.com/spf13/cobra"
-	"github.com/steveyegge/gastown/internal/beads"
-	"github.com/steveyegge/gastown/internal/config"
-	"github.com/steveyegge/gastown/internal/git"
-	"github.com/steveyegge/gastown/internal/style"
-	"github.com/steveyegge/gastown/internal/workspace"
 )
 
 // Note: Agent field parsing is now in internal/beads/fields.go (AgentFields, ParseAgentFields)

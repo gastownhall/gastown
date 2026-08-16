@@ -5,13 +5,13 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/jonbaldie/gastown/internal/beads"
+	"github.com/jonbaldie/gastown/internal/constants"
+	"github.com/jonbaldie/gastown/internal/events"
+	"github.com/jonbaldie/gastown/internal/nudge"
+	"github.com/jonbaldie/gastown/internal/style"
+	"github.com/jonbaldie/gastown/internal/workspace"
 	"github.com/spf13/cobra"
-	"github.com/steveyegge/gastown/internal/beads"
-	"github.com/steveyegge/gastown/internal/constants"
-	"github.com/steveyegge/gastown/internal/events"
-	"github.com/steveyegge/gastown/internal/nudge"
-	"github.com/steveyegge/gastown/internal/style"
-	"github.com/steveyegge/gastown/internal/workspace"
 )
 
 var unslingCmd = &cobra.Command{

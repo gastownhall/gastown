@@ -14,7 +14,7 @@ import (
 	"sync/atomic"
 	"testing"
 
-	"github.com/steveyegge/gastown/internal/beads"
+	"github.com/jonbaldie/gastown/internal/beads"
 )
 
 // routingTestCounter generates unique prefixes for each routing test to isolate

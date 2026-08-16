@@ -10,8 +10,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/jonbaldie/gastown/internal/style"
 	"github.com/spf13/cobra"
-	"github.com/steveyegge/gastown/internal/style"
 )
 
 var (
@@ -70,16 +70,16 @@ func init() {
 
 // PatrolDigest represents the aggregated daily patrol report.
 type PatrolDigest struct {
-	Date         string                   `json:"date"`
-	TotalCycles  int                      `json:"total_cycles"`
-	ByRole       map[string]int           `json:"by_role"`        // deacon, witness, refinery
-	Cycles       []PatrolCycleEntry       `json:"cycles"`
+	Date        string             `json:"date"`
+	TotalCycles int                `json:"total_cycles"`
+	ByRole      map[string]int     `json:"by_role"` // deacon, witness, refinery
+	Cycles      []PatrolCycleEntry `json:"cycles"`
 }
 
 // PatrolCycleEntry represents a single patrol cycle in the digest.
 type PatrolCycleEntry struct {
 	ID          string    `json:"id"`
-	Role        string    `json:"role"`         // deacon, witness, refinery
+	Role        string    `json:"role"` // deacon, witness, refinery
 	Title       string    `json:"title"`
 	Description string    `json:"description"`
 	CreatedAt   time.Time `json:"created_at"`

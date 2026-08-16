@@ -7,11 +7,11 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/jonbaldie/gastown/internal/config"
+	"github.com/jonbaldie/gastown/internal/nudge"
+	"github.com/jonbaldie/gastown/internal/tmux"
+	"github.com/jonbaldie/gastown/internal/workspace"
 	"github.com/spf13/cobra"
-	"github.com/steveyegge/gastown/internal/config"
-	"github.com/steveyegge/gastown/internal/nudge"
-	"github.com/steveyegge/gastown/internal/tmux"
-	"github.com/steveyegge/gastown/internal/workspace"
 )
 
 var (

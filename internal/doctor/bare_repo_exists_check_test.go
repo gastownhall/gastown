@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/steveyegge/gastown/internal/git"
+	"github.com/jonbaldie/gastown/internal/git"
 )
 
 func TestBareRepoExistsCheck_Name(t *testing.T) {

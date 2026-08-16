@@ -5,8 +5,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/steveyegge/gastown/internal/git"
-	"github.com/steveyegge/gastown/internal/refinery"
+	"github.com/jonbaldie/gastown/internal/git"
+	"github.com/jonbaldie/gastown/internal/refinery"
 )
 
 type fakeMQPostMergeManager struct {

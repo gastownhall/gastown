@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/steveyegge/gastown/internal/scheduler/capacity"
+	"github.com/jonbaldie/gastown/internal/scheduler/capacity"
 )
 
 // FormatSlingContextDescription serializes SlingContextFields as JSON.

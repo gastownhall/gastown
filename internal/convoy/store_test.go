@@ -7,8 +7,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jonbaldie/gastown/internal/testutil"
 	beadsdk "github.com/steveyegge/beads"
-	"github.com/steveyegge/gastown/internal/testutil"
 )
 
 // setupTestStore opens a real beads database in a temp dir for integration tests.

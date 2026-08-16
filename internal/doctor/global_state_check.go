@@ -9,8 +9,8 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/steveyegge/gastown/internal/shell"
-	"github.com/steveyegge/gastown/internal/state"
+	"github.com/jonbaldie/gastown/internal/shell"
+	"github.com/jonbaldie/gastown/internal/state"
 )
 
 type GlobalStateCheck struct {

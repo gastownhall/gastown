@@ -5,7 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/steveyegge/gastown/internal/config"
+	"github.com/jonbaldie/gastown/internal/config"
 )
 
 // TestFindAgentWorkOnceDogIgnoresLegacyHook covers the other GH-4516 startup

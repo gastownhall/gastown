@@ -4,14 +4,14 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/steveyegge/gastown/internal/templates"
+	"github.com/jonbaldie/gastown/internal/templates"
 )
 
 // CommandsCheck validates that town-level .claude/commands/ is provisioned.
 // All agents inherit these via Claude's directory traversal - no per-workspace copies needed.
 type CommandsCheck struct {
 	FixableCheck
-	townRoot       string   // Cached for Fix
+	townRoot        string   // Cached for Fix
 	missingCommands []string // Cached during Run for use in Fix
 }
 

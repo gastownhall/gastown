@@ -3,7 +3,7 @@ package testutil
 import (
 	"testing"
 
-	"github.com/steveyegge/gastown/internal/doltserver"
+	"github.com/jonbaldie/gastown/internal/doltserver"
 )
 
 // ReapOwnedDoltOnCleanup registers test cleanup for Dolt servers whose metadata

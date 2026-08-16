@@ -6,7 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/steveyegge/gastown/internal/beads"
+	"github.com/jonbaldie/gastown/internal/beads"
 )
 
 const safetyStopLabelPrefix = "safety_stop:"

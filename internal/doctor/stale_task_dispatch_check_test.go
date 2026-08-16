@@ -5,7 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/steveyegge/gastown/internal/hooks"
+	"github.com/jonbaldie/gastown/internal/hooks"
 )
 
 func TestStaleTaskDispatchCheck_Clean(t *testing.T) {

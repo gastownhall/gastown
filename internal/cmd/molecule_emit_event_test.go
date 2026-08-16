@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/steveyegge/gastown/internal/channelevents"
+	"github.com/jonbaldie/gastown/internal/channelevents"
 )
 
 func TestEmitEvent(t *testing.T) {

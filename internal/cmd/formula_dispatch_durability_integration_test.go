@@ -9,7 +9,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/steveyegge/gastown/internal/testutil"
+	"github.com/jonbaldie/gastown/internal/testutil"
 )
 
 // TestStandaloneFormulaHookSurvivesCommittedReplica is the GH#4527 feedback

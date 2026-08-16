@@ -11,9 +11,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jonbaldie/gastown/internal/beads"
+	"github.com/jonbaldie/gastown/internal/config"
 	"github.com/spf13/cobra"
-	"github.com/steveyegge/gastown/internal/beads"
-	"github.com/steveyegge/gastown/internal/config"
 )
 
 func writeBDStub(t *testing.T, binDir string, unixScript string, windowsScript string) string {

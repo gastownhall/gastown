@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/steveyegge/gastown/internal/hooks"
+	"github.com/jonbaldie/gastown/internal/hooks"
 )
 
 func TestParseHooksFile(t *testing.T) {

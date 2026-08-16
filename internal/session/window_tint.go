@@ -3,9 +3,9 @@ package session
 import (
 	"path/filepath"
 
-	"github.com/steveyegge/gastown/internal/config"
-	"github.com/steveyegge/gastown/internal/tmux"
-	"github.com/steveyegge/gastown/internal/workspace"
+	"github.com/jonbaldie/gastown/internal/config"
+	"github.com/jonbaldie/gastown/internal/tmux"
+	"github.com/jonbaldie/gastown/internal/workspace"
 )
 
 // ResolveWindowTint resolves the window tint style for a session.

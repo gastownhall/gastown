@@ -7,9 +7,9 @@ import (
 	"strings"
 
 	"github.com/BurntSushi/toml"
+	"github.com/jonbaldie/gastown/internal/style"
+	"github.com/jonbaldie/gastown/internal/workspace"
 	"github.com/spf13/cobra"
-	"github.com/steveyegge/gastown/internal/style"
-	"github.com/steveyegge/gastown/internal/workspace"
 )
 
 // HookRegistry represents the hooks/registry.toml structure.

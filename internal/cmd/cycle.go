@@ -4,9 +4,9 @@ import (
 	"fmt"
 	"sort"
 
+	sessionpkg "github.com/jonbaldie/gastown/internal/session"
+	"github.com/jonbaldie/gastown/internal/tmux"
 	"github.com/spf13/cobra"
-	sessionpkg "github.com/steveyegge/gastown/internal/session"
-	"github.com/steveyegge/gastown/internal/tmux"
 )
 
 // cycleSession is the --session flag for cycle next/prev commands.

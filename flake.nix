@@ -31,15 +31,14 @@
             vendorHash = "sha256-mJzpsl4XnIm3ZSg7fFn0MOdQQW1bdOkAJ+TikiLMXJM=";
 
             ldflags = [
-              "-X github.com/gastownhall/gastown/internal/cmd.Build=nix"
-              "-X github.com/steveyegge/gastown/internal/cmd.BuiltProperly=1"
+              "-X github.com/jonbaldie/gastown/internal/cmd.Build=nix"
             ];
 
             subPackages = [ "cmd/gt" ];
 
             meta = with pkgs.lib; {
               description = "Multi-agent orchestration system for Claude Code with persistent work tracking";
-              homepage = "https://github.com/gastownhall/gastown";
+              homepage = "https://github.com/jonbaldie/gastown";
               license = licenses.mit;
               mainProgram = "gt";
             };

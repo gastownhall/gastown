@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/steveyegge/gastown/internal/beads"
+	"github.com/jonbaldie/gastown/internal/beads"
 )
 
 // IssueReader is the subset of beads lookup needed to classify active_mr.

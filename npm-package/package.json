@@ -23,13 +23,13 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/gastownhall/gastown.git",
+    "url": "https://github.com/jonbaldie/gastown.git",
     "directory": "npm-package"
   },
   "bugs": {
-    "url": "https://github.com/gastownhall/gastown/issues"
+    "url": "https://github.com/jonbaldie/gastown/issues"
   },
-  "homepage": "https://github.com/gastownhall/gastown#readme",
+  "homepage": "https://github.com/jonbaldie/gastown#readme",
   "engines": {
     "node": ">=14.0.0"
   },

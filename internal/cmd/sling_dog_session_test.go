@@ -4,7 +4,7 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/steveyegge/gastown/internal/dog"
+	"github.com/jonbaldie/gastown/internal/dog"
 )
 
 func TestStartDelayedSession_FailsClosedOnStaleSession(t *testing.T) {

@@ -5,7 +5,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/steveyegge/gastown/internal/beads"
+	"github.com/jonbaldie/gastown/internal/beads"
 )
 
 // isBlockingDepType returns true for dependency types that block molecule step

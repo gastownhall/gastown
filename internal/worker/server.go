@@ -15,7 +15,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/steveyegge/gastown/internal/nudge"
+	"github.com/jonbaldie/gastown/internal/nudge"
 )
 
 const (

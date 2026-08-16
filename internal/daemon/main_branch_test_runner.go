@@ -10,8 +10,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/steveyegge/gastown/internal/rig"
-	"github.com/steveyegge/gastown/internal/util"
+	"github.com/jonbaldie/gastown/internal/rig"
+	"github.com/jonbaldie/gastown/internal/util"
 )
 
 const (

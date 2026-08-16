@@ -6,7 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/steveyegge/gastown/internal/config"
+	"github.com/jonbaldie/gastown/internal/config"
 )
 
 // buildPrefixSet builds a set of all known rig prefixes from rigs.json.
@@ -28,7 +28,7 @@ func buildPrefixSet(registeredRigs map[string]bool, townRoot string) map[string]
 // think agents are running or try to start agents for removed rigs.
 type StaleRuntimeFilesCheck struct {
 	FixableCheck
-	stalePIDFiles   []string
+	stalePIDFiles    []string
 	staleWispConfigs []string
 }
 
@@ -174,4 +174,3 @@ func extractRigPrefix(filename string) string {
 	}
 	return name
 }
-

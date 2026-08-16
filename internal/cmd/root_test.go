@@ -6,8 +6,8 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/jonbaldie/gastown/internal/config"
 	"github.com/spf13/cobra"
-	"github.com/steveyegge/gastown/internal/config"
 )
 
 func TestCheckHelpFlag(t *testing.T) {

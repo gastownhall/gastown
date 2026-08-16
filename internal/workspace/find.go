@@ -8,7 +8,7 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/steveyegge/gastown/internal/townroot"
+	"github.com/jonbaldie/gastown/internal/townroot"
 )
 
 // ErrNotFound indicates no workspace was found.

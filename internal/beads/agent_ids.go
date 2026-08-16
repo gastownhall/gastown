@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/steveyegge/gastown/internal/constants"
+	"github.com/jonbaldie/gastown/internal/constants"
 )
 
 // TownBeadsPrefix is the prefix used for town-level agent beads stored in ~/gt/.beads/.
@@ -47,8 +47,8 @@ var ValidAgentRoles = []string{
 	"dog",                  // Town-level with name: gt-dog-<name>
 	constants.RoleWitness,  // Per-rig: gt-<rig>-witness
 	constants.RoleRefinery, // Per-rig: gt-<rig>-refinery
-	constants.RoleCrew,    // Per-rig with name: gt-<rig>-crew-<name>
-	constants.RolePolecat, // Per-rig with name: gt-<rig>-polecat-<name>
+	constants.RoleCrew,     // Per-rig with name: gt-<rig>-crew-<name>
+	constants.RolePolecat,  // Per-rig with name: gt-<rig>-polecat-<name>
 }
 
 // TownLevelRoles are agent roles that don't have a rig.

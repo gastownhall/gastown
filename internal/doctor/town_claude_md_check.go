@@ -6,7 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/steveyegge/gastown/internal/templates"
+	"github.com/jonbaldie/gastown/internal/templates"
 )
 
 // TownCLAUDEmdCheck verifies the town-root CLAUDE.md is up to date with

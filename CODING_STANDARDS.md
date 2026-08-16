@@ -37,7 +37,7 @@
 - Production Go code changes should report no violations on the `messgo` rulesets `design`, `codesize`, and `unusedcode`.
 - Production Go code changes should report a covered-MSI of 80% or above from `mutago`.
 - Validate trust boundaries manually as well as with linters. Check user-controlled paths, subprocess arguments, SQL identifiers, and external input before use; linter exclusions are not evidence that an operation is safe.
-- Keep the module path `github.com/steveyegge/gastown` and the Go version in `go.mod` honest. Do not use newer language features without deliberately updating the module version.
+- Keep the module path `github.com/jonbaldie/gastown` and the Go version in `go.mod` honest. Do not use newer language features without deliberately updating the module version.
 - Follow Zero Framework Cognition: Go code transports data, enforces deterministic protocols and safety boundaries, and performs deterministic operations; agents and molecule formulas perform behavioural judgment and reasoning.
 - Use existing package boundaries and production seams. Keep Cobra command wiring in `internal/cmd` thin, and put reusable domain behaviour in the relevant `internal` package.
 - Pass `context.Context` through blocking work. Give subprocesses and external operations explicit cancellation or timeouts.

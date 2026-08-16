@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/steveyegge/gastown/internal/style"
+	"github.com/jonbaldie/gastown/internal/style"
 )
 
 // Delegation represents a work delegation relationship between work units.

@@ -103,7 +103,7 @@ fi
 # ============================================
 log "Installing Gas Town (gt)..."
 
-go install github.com/steveyegge/gastown/cmd/gt@latest
+CGO_ENABLED=0 go install github.com/jonbaldie/gastown/cmd/gt@main
 
 if command -v gt &> /dev/null; then
     check "gt installed: $(gt --version 2>/dev/null || echo 'version unknown')"

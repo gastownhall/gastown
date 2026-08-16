@@ -9,11 +9,11 @@ import (
 	"os"
 	"time"
 
+	"github.com/jonbaldie/gastown/internal/beads"
+	"github.com/jonbaldie/gastown/internal/style"
+	"github.com/jonbaldie/gastown/internal/telemetry"
+	"github.com/jonbaldie/gastown/internal/workspace"
 	"github.com/spf13/cobra"
-	"github.com/steveyegge/gastown/internal/beads"
-	"github.com/steveyegge/gastown/internal/style"
-	"github.com/steveyegge/gastown/internal/telemetry"
-	"github.com/steveyegge/gastown/internal/workspace"
 )
 
 // runMoleculeBurn burns (destroys) the current molecule attachment.
@@ -283,9 +283,9 @@ squashed_at: %s
 			Title:       digestTitle,
 			Description: digestDesc,
 			Labels:      []string{"gt:task"},
-			Priority:    4,       // P4 - backlog priority for digests
+			Priority:    4, // P4 - backlog priority for digests
 			Actor:       target,
-			Ephemeral:   true,    // Don't export to JSONL - daily aggregation handles permanent record
+			Ephemeral:   true, // Don't export to JSONL - daily aggregation handles permanent record
 		})
 		if err != nil {
 			return fmt.Errorf("creating digest: %w", err)

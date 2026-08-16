@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/steveyegge/gastown/internal/session"
+	"github.com/jonbaldie/gastown/internal/session"
 )
 
 // mockSocketLister implements socketSessionLister for testing.

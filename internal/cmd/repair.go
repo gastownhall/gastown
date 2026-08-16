@@ -4,9 +4,9 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/jonbaldie/gastown/internal/doctor"
+	"github.com/jonbaldie/gastown/internal/workspace"
 	"github.com/spf13/cobra"
-	"github.com/steveyegge/gastown/internal/doctor"
-	"github.com/steveyegge/gastown/internal/workspace"
 )
 
 var repairCmd = &cobra.Command{

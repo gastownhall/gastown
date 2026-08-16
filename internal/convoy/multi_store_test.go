@@ -7,9 +7,9 @@ import (
 	"testing"
 	"time"
 
+	beadsRouting "github.com/jonbaldie/gastown/internal/beads"
+	"github.com/jonbaldie/gastown/internal/testutil"
 	beadsdk "github.com/steveyegge/beads"
-	beadsRouting "github.com/steveyegge/gastown/internal/beads"
-	"github.com/steveyegge/gastown/internal/testutil"
 )
 
 // setupTestStoreWithPrefix opens a test store and sets a specific prefix.

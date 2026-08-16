@@ -10,8 +10,8 @@ import (
 	"time"
 
 	_ "github.com/go-sql-driver/mysql"
-	"github.com/steveyegge/gastown/internal/constants"
-	"github.com/steveyegge/gastown/internal/reaper"
+	"github.com/jonbaldie/gastown/internal/constants"
+	"github.com/jonbaldie/gastown/internal/reaper"
 )
 
 // shortHash returns at most 8 characters of a hash for display.
@@ -46,8 +46,8 @@ const (
 
 // CompactorDogConfig holds configuration for the compactor_dog patrol.
 type CompactorDogConfig struct {
-	Enabled     bool     `json:"enabled"`
-	IntervalStr string   `json:"interval,omitempty"`
+	Enabled     bool   `json:"enabled"`
+	IntervalStr string `json:"interval,omitempty"`
 	// Threshold is the minimum commit count before compaction triggers.
 	// Defaults to 2000 if not set.
 	Threshold int `json:"threshold,omitempty"`
@@ -544,6 +544,7 @@ func (d *Daemon) surgicalRebaseOnce(dbName string, keepRecent int) error {
 }
 
 // surgicalCleanup switches back to main and removes rebase branches.
+//
 //nolint:unparam // baseBranch always "compact-base" — API kept flexible for future callers
 func (d *Daemon) surgicalCleanup(db *sql.DB, baseBranch, workBranch string) {
 	ctx, cancel := context.WithTimeout(context.Background(), compactorQueryTimeout)

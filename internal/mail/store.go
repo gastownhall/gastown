@@ -11,9 +11,9 @@ import (
 	"strings"
 	"time"
 
+	"github.com/jonbaldie/gastown/internal/runtime"
+	"github.com/jonbaldie/gastown/internal/telemetry"
 	beadsdk "github.com/steveyegge/beads"
-	"github.com/steveyegge/gastown/internal/runtime"
-	"github.com/steveyegge/gastown/internal/telemetry"
 )
 
 // SetStore configures an in-process beadsdk.Storage for this Mailbox.

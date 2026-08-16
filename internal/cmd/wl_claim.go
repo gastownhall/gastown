@@ -5,11 +5,11 @@ import (
 	"os/exec"
 	"strings"
 
+	"github.com/jonbaldie/gastown/internal/doltserver"
+	"github.com/jonbaldie/gastown/internal/style"
+	"github.com/jonbaldie/gastown/internal/wasteland"
+	"github.com/jonbaldie/gastown/internal/workspace"
 	"github.com/spf13/cobra"
-	"github.com/steveyegge/gastown/internal/doltserver"
-	"github.com/steveyegge/gastown/internal/style"
-	"github.com/steveyegge/gastown/internal/wasteland"
-	"github.com/steveyegge/gastown/internal/workspace"
 )
 
 var wlClaimCmd = &cobra.Command{

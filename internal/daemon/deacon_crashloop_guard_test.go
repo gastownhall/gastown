@@ -10,8 +10,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/steveyegge/gastown/internal/deacon"
-	"github.com/steveyegge/gastown/internal/tmux"
+	"github.com/jonbaldie/gastown/internal/deacon"
+	"github.com/jonbaldie/gastown/internal/tmux"
 )
 
 func writeFakeTmuxCrashLoop(t *testing.T, dir string) {
@@ -84,9 +84,9 @@ func TestCheckDeaconHeartbeat_RespectsCrashLoopGuard(t *testing.T) {
 	}
 
 	d := &Daemon{
-		config:        &Config{TownRoot: townRoot},
-		logger:        log.New(io.Discard, "", 0),
-		tmux:          tmux.NewTmux(),
+		config:         &Config{TownRoot: townRoot},
+		logger:         log.New(io.Discard, "", 0),
+		tmux:           tmux.NewTmux(),
 		restartTracker: rt,
 	}
 

@@ -8,8 +8,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jonbaldie/gastown/internal/config"
 	"github.com/spf13/cobra"
-	"github.com/steveyegge/gastown/internal/config"
 )
 
 // setupTestTownForAccount creates a minimal Gas Town workspace with accounts.

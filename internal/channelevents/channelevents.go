@@ -16,7 +16,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/steveyegge/gastown/internal/workspace"
+	"github.com/jonbaldie/gastown/internal/workspace"
 )
 
 // ValidChannelName restricts channel names to safe characters (no path traversal).

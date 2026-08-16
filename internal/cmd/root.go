@@ -6,20 +6,19 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
-	"runtime"
 	"strings"
 	"time"
 
+	"github.com/jonbaldie/gastown/internal/cli"
+	"github.com/jonbaldie/gastown/internal/config"
+	"github.com/jonbaldie/gastown/internal/polecat"
+	"github.com/jonbaldie/gastown/internal/session"
+	"github.com/jonbaldie/gastown/internal/style"
+	"github.com/jonbaldie/gastown/internal/telemetry"
+	"github.com/jonbaldie/gastown/internal/ui"
+	"github.com/jonbaldie/gastown/internal/version"
+	"github.com/jonbaldie/gastown/internal/workspace"
 	"github.com/spf13/cobra"
-	"github.com/steveyegge/gastown/internal/cli"
-	"github.com/steveyegge/gastown/internal/config"
-	"github.com/steveyegge/gastown/internal/polecat"
-	"github.com/steveyegge/gastown/internal/session"
-	"github.com/steveyegge/gastown/internal/style"
-	"github.com/steveyegge/gastown/internal/telemetry"
-	"github.com/steveyegge/gastown/internal/ui"
-	"github.com/steveyegge/gastown/internal/version"
-	"github.com/steveyegge/gastown/internal/workspace"
 )
 
 var rootCmd = &cobra.Command{
@@ -98,20 +97,6 @@ var branchCheckExemptCommands = map[string]bool{
 
 // persistentPreRun runs before every command.
 func persistentPreRun(cmd *cobra.Command, args []string) error {
-	// Check if binary was built properly (via make build, not raw go build).
-	// Raw go build produces unsigned binaries that macOS may kill.
-	// Warning only - doesn't block execution.
-	// Skip warning when Build was set by a package manager (e.g. Homebrew sets
-	// Build to "Homebrew" via ldflags but doesn't set BuiltProperly).
-	if BuiltProperly == "" && Build == "dev" && runtime.GOOS == "darwin" {
-		fmt.Fprintln(os.Stderr, "ERROR: This binary was built with 'go build' directly.")
-		fmt.Fprintln(os.Stderr, "       macOS will SIGKILL unsigned binaries. Use 'make build' instead.")
-		if gtRoot := os.Getenv("GT_ROOT"); gtRoot != "" {
-			fmt.Fprintf(os.Stderr, "       Run from: %s\n", gtRoot)
-		}
-		os.Exit(1)
-	}
-
 	// Initialize CLI theme (dark/light mode support)
 	initCLITheme()
 

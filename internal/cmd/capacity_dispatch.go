@@ -13,13 +13,13 @@ import (
 	"time"
 
 	"github.com/gofrs/flock"
-	"github.com/steveyegge/gastown/internal/beads"
-	"github.com/steveyegge/gastown/internal/config"
-	"github.com/steveyegge/gastown/internal/doltserver"
-	"github.com/steveyegge/gastown/internal/events"
-	"github.com/steveyegge/gastown/internal/scheduler/capacity"
-	"github.com/steveyegge/gastown/internal/sling"
-	"github.com/steveyegge/gastown/internal/style"
+	"github.com/jonbaldie/gastown/internal/beads"
+	"github.com/jonbaldie/gastown/internal/config"
+	"github.com/jonbaldie/gastown/internal/doltserver"
+	"github.com/jonbaldie/gastown/internal/events"
+	"github.com/jonbaldie/gastown/internal/scheduler/capacity"
+	"github.com/jonbaldie/gastown/internal/sling"
+	"github.com/jonbaldie/gastown/internal/style"
 )
 
 // crossRigEscalationDebounce is the minimum interval between cross-rig prefix

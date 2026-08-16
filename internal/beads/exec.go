@@ -6,7 +6,7 @@ import (
 	"os/exec"
 	"strings"
 
-	"github.com/steveyegge/gastown/internal/util"
+	"github.com/jonbaldie/gastown/internal/util"
 )
 
 // SubprocessEnvMode describes how a bd subprocess should target Dolt and

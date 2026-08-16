@@ -5,11 +5,11 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/jonbaldie/gastown/internal/doltserver"
+	"github.com/jonbaldie/gastown/internal/style"
+	"github.com/jonbaldie/gastown/internal/wasteland"
+	"github.com/jonbaldie/gastown/internal/workspace"
 	"github.com/spf13/cobra"
-	"github.com/steveyegge/gastown/internal/doltserver"
-	"github.com/steveyegge/gastown/internal/style"
-	"github.com/steveyegge/gastown/internal/wasteland"
-	"github.com/steveyegge/gastown/internal/workspace"
 )
 
 var (
@@ -77,10 +77,10 @@ func runScorekeeperWithStore(store doltserver.WLCommonsStore) error {
 
 	if wlScorekeeperJSON {
 		summary := struct {
-			RigsScored   int            `json:"rigs_scored"`
-			TierDist     map[string]int `json:"tier_distribution"`
-			MaxTier      string         `json:"max_tier"`
-			ClusterNote  string         `json:"cluster_note"`
+			RigsScored  int            `json:"rigs_scored"`
+			TierDist    map[string]int `json:"tier_distribution"`
+			MaxTier     string         `json:"max_tier"`
+			ClusterNote string         `json:"cluster_note"`
 		}{
 			RigsScored:  len(entries),
 			TierDist:    tierDist,

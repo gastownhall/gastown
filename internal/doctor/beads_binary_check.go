@@ -3,7 +3,7 @@ package doctor
 import (
 	"fmt"
 
-	"github.com/steveyegge/gastown/internal/deps"
+	"github.com/jonbaldie/gastown/internal/deps"
 )
 
 // BeadsBinaryCheck verifies that the beads (bd) binary is installed and meets
@@ -38,8 +38,8 @@ func (c *BeadsBinaryCheck) Run(ctx *CheckContext) *CheckResult {
 
 	case deps.BeadsNotFound:
 		return &CheckResult{
-			Name:   c.Name(),
-			Status: StatusError,
+			Name:    c.Name(),
+			Status:  StatusError,
 			Message: "beads (bd) not found in PATH",
 			Details: []string{
 				"The bd CLI is required for beads operations",
@@ -49,8 +49,8 @@ func (c *BeadsBinaryCheck) Run(ctx *CheckContext) *CheckResult {
 
 	case deps.BeadsTooOld:
 		return &CheckResult{
-			Name:   c.Name(),
-			Status: StatusError,
+			Name:    c.Name(),
+			Status:  StatusError,
 			Message: fmt.Sprintf("bd %s is too old (minimum: %s)", version, deps.MinBeadsVersion),
 			Details: []string{
 				fmt.Sprintf("Installed version %s does not meet the minimum requirement of %s", version, deps.MinBeadsVersion),

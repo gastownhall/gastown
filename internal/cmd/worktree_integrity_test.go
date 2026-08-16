@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	worktreeintegrity "github.com/steveyegge/gastown/internal/worktree"
+	worktreeintegrity "github.com/jonbaldie/gastown/internal/worktree"
 )
 
 func TestEnsureRoleWorktreeIntegrityRequiresPolecatMetadata(t *testing.T) {

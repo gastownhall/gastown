@@ -8,7 +8,7 @@ import (
 	"strconv"
 	"strings"
 
-	agentconfig "github.com/steveyegge/gastown/internal/config"
+	agentconfig "github.com/jonbaldie/gastown/internal/config"
 )
 
 var envKeysCaseInsensitive = runtime.GOOS == "windows"

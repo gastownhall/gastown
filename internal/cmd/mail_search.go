@@ -5,9 +5,9 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/jonbaldie/gastown/internal/mail"
+	"github.com/jonbaldie/gastown/internal/style"
 	"github.com/spf13/cobra"
-	"github.com/steveyegge/gastown/internal/mail"
-	"github.com/steveyegge/gastown/internal/style"
 )
 
 // runMailSearch searches for messages matching a pattern.

@@ -24,7 +24,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/steveyegge/gastown/internal/events"
+	"github.com/jonbaldie/gastown/internal/events"
 )
 
 // Config defines TTL settings for ephemeral records.
@@ -50,12 +50,12 @@ type Config struct {
 // DefaultConfig returns the default KRC configuration.
 func DefaultConfig() *Config {
 	return &Config{
-		DefaultTTL:    7 * 24 * time.Hour, // 7 days
-		PruneInterval: 1 * time.Hour,
+		DefaultTTL:     7 * 24 * time.Hour, // 7 days
+		PruneInterval:  1 * time.Hour,
 		MinRetainCount: 100,
 		TTLs: map[string]time.Duration{
 			// Patrol events decay fastest - low forensic value after hours
-			"patrol_*":       24 * time.Hour,  // 1 day
+			"patrol_*":        24 * time.Hour, // 1 day
 			"polecat_checked": 24 * time.Hour, // 1 day
 			"polecat_nudged":  24 * time.Hour, // 1 day
 
@@ -64,22 +64,22 @@ func DefaultConfig() *Config {
 			"session_end":   3 * 24 * time.Hour, // 3 days
 
 			// Operational events - moderate TTL
-			"nudge":    3 * 24 * time.Hour,  // 3 days
-			"handoff":  7 * 24 * time.Hour,  // 7 days
+			"nudge":   3 * 24 * time.Hour, // 3 days
+			"handoff": 7 * 24 * time.Hour, // 7 days
 
 			// Higher-value events - longer TTL
-			"mail":          30 * 24 * time.Hour, // 30 days
-			"sling":         14 * 24 * time.Hour, // 14 days
-			"done":          14 * 24 * time.Hour, // 14 days
-			"hook":          14 * 24 * time.Hour, // 14 days
-			"unhook":        14 * 24 * time.Hour, // 14 days
+			"mail":   30 * 24 * time.Hour, // 30 days
+			"sling":  14 * 24 * time.Hour, // 14 days
+			"done":   14 * 24 * time.Hour, // 14 days
+			"hook":   14 * 24 * time.Hour, // 14 days
+			"unhook": 14 * 24 * time.Hour, // 14 days
 
 			// Death events - keep for forensics
 			"session_death": 30 * 24 * time.Hour, // 30 days
 			"mass_death":    90 * 24 * time.Hour, // 90 days
 
 			// Merge events - important for audit
-			"merge_*":       30 * 24 * time.Hour, // 30 days
+			"merge_*": 30 * 24 * time.Hour, // 30 days
 		},
 	}
 }

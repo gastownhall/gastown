@@ -5,7 +5,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/steveyegge/gastown/internal/util"
+	"github.com/jonbaldie/gastown/internal/util"
 )
 
 // loadAverage1Sysctl returns the 1-minute load average via sysctl on macOS.

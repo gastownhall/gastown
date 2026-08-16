@@ -6,7 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/steveyegge/gastown/internal/hooks"
+	"github.com/jonbaldie/gastown/internal/hooks"
 )
 
 // StaleTaskDispatchCheck detects settings.json files that still reference

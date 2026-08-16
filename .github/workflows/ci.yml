@@ -30,7 +30,7 @@ jobs:
           if grep -qE '^replace\s' go.mod; then
             echo "ERROR: go.mod contains replace directives."
             echo ""
-            echo "Replace directives break 'go install github.com/steveyegge/gastown/cmd/gt@latest'."
+            echo "Replace directives break 'go install github.com/jonbaldie/gastown/cmd/gt@main'."
             echo "See: https://github.com/steveyegge/gastown/issues/2230"
             echo ""
             echo "Found:"
@@ -231,3 +231,25 @@ jobs:
           python3 .github/scripts/junit-report.py junit-scheduler-3.xml "Scheduler Integration Failures 3" || status=1
           python3 .github/scripts/junit-report.py junit-scheduler-4.xml "Scheduler Integration Failures 4" || status=1
           exit "$status"
+
+  go-install:
+    name: Public go install
+    runs-on: ubuntu-latest
+    steps:
+      - name: Set up Go
+        uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6
+        with:
+          go-version: '1.26'
+
+      - name: Install gt from the public module path
+        env:
+          REF: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          tmpdir="$(mktemp -d)"
+          mkdir -p "$tmpdir/bin" "$tmpdir/work"
+          cd "$tmpdir/work"
+          GOWORK=off CGO_ENABLED=0 GOBIN="$tmpdir/bin" \
+            go install "github.com/jonbaldie/gastown/cmd/gt@$REF"
+          go version -m "$tmpdir/bin/gt" | grep 'github.com/jonbaldie/gastown/cmd/gt'
+          go version -m "$tmpdir/bin/gt" | grep 'mod[[:space:]]\+github.com/jonbaldie/gastown[[:space:]]'
+          "$tmpdir/bin/gt" version

@@ -9,7 +9,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/steveyegge/gastown/internal/constants"
+	"github.com/jonbaldie/gastown/internal/constants"
 )
 
 const (

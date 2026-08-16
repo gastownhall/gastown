@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/steveyegge/gastown/internal/session"
-	"github.com/steveyegge/gastown/internal/tmux"
+	"github.com/jonbaldie/gastown/internal/session"
+	"github.com/jonbaldie/gastown/internal/tmux"
 )
 
 // tmuxRenamer is the minimal tmux interface needed by Fix().
@@ -35,7 +35,7 @@ type MalformedSessionNameCheck struct {
 	FixableCheck
 	sessionListerForTest SessionLister // Injectable for testing; nil uses real tmux
 	registryForTest      *session.PrefixRegistry
-	tmuxForTest          tmuxRenamer // Injectable for Fix() testing; nil uses real tmux
+	tmuxForTest          tmuxRenamer     // Injectable for Fix() testing; nil uses real tmux
 	malformed            []sessionRename // Cached during Run for use in Fix
 }
 

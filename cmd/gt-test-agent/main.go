@@ -16,7 +16,7 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/steveyegge/gastown/internal/worker"
+	"github.com/jonbaldie/gastown/internal/worker"
 )
 
 func main() {

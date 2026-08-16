@@ -6,18 +6,18 @@ import (
 	"io"
 	"time"
 
-	"github.com/steveyegge/gastown/internal/ui"
+	"github.com/jonbaldie/gastown/internal/ui"
 )
 
 // Category constants for grouping checks
 const (
-	CategoryCore          = "Core"
+	CategoryCore           = "Core"
 	CategoryInfrastructure = "Infrastructure"
-	CategoryRig           = "Rig"
-	CategoryPatrol        = "Patrol"
-	CategoryConfig        = "Configuration"
-	CategoryCleanup       = "Cleanup"
-	CategoryHooks         = "Hooks"
+	CategoryRig            = "Rig"
+	CategoryPatrol         = "Patrol"
+	CategoryConfig         = "Configuration"
+	CategoryCleanup        = "Cleanup"
+	CategoryHooks          = "Hooks"
 )
 
 // CategoryOrder defines the display order for categories

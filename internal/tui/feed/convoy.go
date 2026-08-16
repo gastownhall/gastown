@@ -16,9 +16,9 @@ import (
 
 	"github.com/charmbracelet/lipgloss"
 
-	"github.com/steveyegge/gastown/internal/config"
-	"github.com/steveyegge/gastown/internal/constants"
-	"github.com/steveyegge/gastown/internal/util"
+	"github.com/jonbaldie/gastown/internal/config"
+	"github.com/jonbaldie/gastown/internal/constants"
+	"github.com/jonbaldie/gastown/internal/util"
 )
 
 // convoyIDPattern validates convoy IDs.

@@ -72,7 +72,7 @@ type MailMessageInfo struct {
 }
 
 const (
-	meterRecorderName = "github.com/steveyegge/gastown"
+	meterRecorderName = "github.com/jonbaldie/gastown"
 	loggerName        = "gastown"
 )
 
@@ -115,10 +115,10 @@ var (
 // contentLimits caches configurable truncation limits parsed from env at first use.
 // Env vars are read once — changing them at runtime has no effect.
 var (
-	limitsOnce       sync.Once
-	agentContentLim  int // GT_LOG_AGENT_CONTENT_LIMIT, default 512
-	bdContentLim     int // GT_LOG_BD_CONTENT_LIMIT, default 2048
-	paneContentLim   int // GT_LOG_PANE_CONTENT_LIMIT, default 8192
+	limitsOnce      sync.Once
+	agentContentLim int // GT_LOG_AGENT_CONTENT_LIMIT, default 512
+	bdContentLim    int // GT_LOG_BD_CONTENT_LIMIT, default 2048
+	paneContentLim  int // GT_LOG_PANE_CONTENT_LIMIT, default 8192
 )
 
 func initContentLimits() {

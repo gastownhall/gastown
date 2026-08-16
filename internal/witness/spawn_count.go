@@ -8,9 +8,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/steveyegge/gastown/internal/config"
-	"github.com/steveyegge/gastown/internal/lock"
-	"github.com/steveyegge/gastown/internal/workspace"
+	"github.com/jonbaldie/gastown/internal/config"
+	"github.com/jonbaldie/gastown/internal/lock"
+	"github.com/jonbaldie/gastown/internal/workspace"
 )
 
 // respawnMu serializes in-process access to the respawn state file.

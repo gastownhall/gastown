@@ -3,7 +3,7 @@ package convoy
 import (
 	"testing"
 
-	"github.com/steveyegge/gastown/internal/testutil"
+	"github.com/jonbaldie/gastown/internal/testutil"
 )
 
 func TestSetupTestStoreSkipsWithoutDoltContainer(t *testing.T) {

@@ -13,9 +13,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/steveyegge/gastown/internal/atomicfile"
-	"github.com/steveyegge/gastown/internal/constants"
-	"github.com/steveyegge/gastown/internal/townroot"
+	"github.com/jonbaldie/gastown/internal/atomicfile"
+	"github.com/jonbaldie/gastown/internal/constants"
+	"github.com/jonbaldie/gastown/internal/townroot"
 )
 
 // resolveConfigMu serializes agent config resolution across all callers.

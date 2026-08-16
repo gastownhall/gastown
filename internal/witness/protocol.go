@@ -7,7 +7,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/steveyegge/gastown/internal/beads"
+	"github.com/jonbaldie/gastown/internal/beads"
 )
 
 // Protocol message patterns for Witness inbox routing.
@@ -114,12 +114,12 @@ type HelpCategory string
 
 const (
 	HelpCategoryDecision  HelpCategory = "decision"  // Multiple valid paths, need choice
-	HelpCategoryHelp      HelpCategory = "help"       // Need guidance or expertise
-	HelpCategoryBlocked   HelpCategory = "blocked"    // Waiting on unresolvable dependency
-	HelpCategoryFailed    HelpCategory = "failed"     // Unexpected error, can't proceed
-	HelpCategoryEmergency HelpCategory = "emergency"  // Security or data integrity issue
-	HelpCategoryLifecycle HelpCategory = "lifecycle"   // Worker stuck or needs recycle
-	HelpCategoryUnknown   HelpCategory = "help"        // Default to general help
+	HelpCategoryHelp      HelpCategory = "help"      // Need guidance or expertise
+	HelpCategoryBlocked   HelpCategory = "blocked"   // Waiting on unresolvable dependency
+	HelpCategoryFailed    HelpCategory = "failed"    // Unexpected error, can't proceed
+	HelpCategoryEmergency HelpCategory = "emergency" // Security or data integrity issue
+	HelpCategoryLifecycle HelpCategory = "lifecycle" // Worker stuck or needs recycle
+	HelpCategoryUnknown   HelpCategory = "help"      // Default to general help
 )
 
 // HelpSeverity indicates the assessed urgency of a help request.
@@ -133,10 +133,10 @@ const (
 
 // HelpAssessment contains the assessed category, severity, and routing suggestion.
 type HelpAssessment struct {
-	Category   HelpCategory
-	Severity   HelpSeverity
-	SuggestTo  string // Suggested escalation target (e.g., "deacon", "mayor", "overseer")
-	Rationale  string // Brief explanation of why this classification was chosen
+	Category  HelpCategory
+	Severity  HelpSeverity
+	SuggestTo string // Suggested escalation target (e.g., "deacon", "mayor", "overseer")
+	Rationale string // Brief explanation of why this classification was chosen
 }
 
 // HelpPayload contains parsed data from a HELP message.
@@ -195,8 +195,8 @@ type DispatchAttemptPayload struct {
 
 // DispatchOKPayload contains parsed data from a DISPATCH_OK message.
 type DispatchOKPayload struct {
-	PolecatName string
-	BeadID      string
+	PolecatName  string
+	BeadID       string
 	DispatchedAt time.Time
 }
 

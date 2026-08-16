@@ -10,7 +10,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/steveyegge/gastown/internal/scheduler/capacity"
+	"github.com/jonbaldie/gastown/internal/scheduler/capacity"
 )
 
 // TownConfig represents the main town identity (mayor/town.json).

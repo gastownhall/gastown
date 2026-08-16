@@ -6,8 +6,8 @@ import (
 	"os/exec"
 	"strings"
 
+	"github.com/jonbaldie/gastown/internal/style"
 	"github.com/spf13/cobra"
-	"github.com/steveyegge/gastown/internal/style"
 )
 
 // Resume command checks for handoff messages.

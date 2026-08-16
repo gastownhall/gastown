@@ -5,7 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/steveyegge/gastown/internal/skills"
+	"github.com/jonbaldie/gastown/internal/skills"
 )
 
 func TestNewSkillsCheck(t *testing.T) {

@@ -10,8 +10,8 @@ import (
 	"os/exec"
 	"strings"
 
+	"github.com/jonbaldie/gastown/internal/style"
 	"github.com/spf13/cobra"
-	"github.com/steveyegge/gastown/internal/style"
 )
 
 const memoryKeyPrefix = "memory."

@@ -8,9 +8,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/steveyegge/gastown/internal/beads"
-	"github.com/steveyegge/gastown/internal/scheduler/capacity"
-	"github.com/steveyegge/gastown/internal/sling"
+	"github.com/jonbaldie/gastown/internal/beads"
+	"github.com/jonbaldie/gastown/internal/scheduler/capacity"
+	"github.com/jonbaldie/gastown/internal/sling"
 )
 
 func stubRawSlingCollaborators(t *testing.T, townRoot string) (spawnOpts *SlingSpawnOptions, createdConvoys *[]string) {

@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/steveyegge/gastown/internal/config"
+	"github.com/jonbaldie/gastown/internal/config"
 )
 
 func TestNotifyConvoyCompletion_StampsAndSkipsDuplicate(t *testing.T) {

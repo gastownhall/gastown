@@ -6,9 +6,9 @@ package cmd
 import (
 	"fmt"
 
+	"github.com/jonbaldie/gastown/internal/state"
+	"github.com/jonbaldie/gastown/internal/style"
 	"github.com/spf13/cobra"
-	"github.com/steveyegge/gastown/internal/state"
-	"github.com/steveyegge/gastown/internal/style"
 )
 
 var enableCmd = &cobra.Command{

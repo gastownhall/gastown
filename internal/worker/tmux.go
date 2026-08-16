@@ -3,7 +3,7 @@ package worker
 import (
 	"time"
 
-	"github.com/steveyegge/gastown/internal/tmux"
+	"github.com/jonbaldie/gastown/internal/tmux"
 )
 
 // TmuxAdapter wraps the existing tmux session so the fallback path stays

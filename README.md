@@ -129,64 +129,36 @@ Native installs require the host tools below. Docker installs only require Docke
 | Tool | Version | Notes |
 |---|---|---|
 | Git | 2.20+ | Worktree support |
-| Go | 1.26.2+ (see `go.mod`) | Required for the Linux and Windows paths and for macOS source builds. Not needed for `brew install gastown` or Docker setup. |
-| Beads (`bd`) | 0.57.0+ | Required for native installs. Homebrew and Docker supply it; source/native Go paths install it with `go install`. |
+| Go | 1.26.2+ (see `go.mod`) | Required for the Go install and source paths. Not needed for Docker setup. |
+| Beads (`bd`) | 0.57.0+ | Required for native installs. Install it with `go install`. |
 | sqlite3 | any | Used by convoy database queries. Usually pre-installed on macOS and Linux. |
-| ICU4C dev headers | varies | Required for source builds that compile the ICU-backed query layer. Use `libicu-dev` on Debian/Ubuntu, `libicu-devel` on Fedora/RHEL, `icu4c` on macOS, and MSYS2 ICU packages for native Windows. |
+| ICU4C dev headers | varies | Required only for `make build-cgo`, which compiles the optional embedded query layer. |
 | tmux | 3.0+ | Required for `gt up` and the tmux-backed roles (Mayor, Witnesses, Refineries, polecats). Optional only for minimal-mode workflows where you run runtime instances manually. |
 | Claude Code CLI | latest | Default runtime. See [Runtime Configuration](#runtime-configuration) for alternatives (Codex, Copilot, Gemini, Cursor). |
 
 ### Local setup
 
-Install the prerequisites listed above, then install `gt` for your platform.
-
-#### Install gt on macOS
-
-Homebrew installs `gt`, `bd`, and `dolt` together.
+Install `gt` globally with Go:
 
 ```bash
-brew install gastown
+CGO_ENABLED=0 go install github.com/jonbaldie/gastown/cmd/gt@main
 ```
 
-Avoid `go install` on macOS. The unsigned binary it produces gets killed by Gatekeeper. To build from source, install Dolt and ICU4C with Homebrew, install `bd` with Go, then build and install `gt` with `make install`. Put `$HOME/.local/bin` and `$HOME/go/bin` ahead of any stale binary locations on your `PATH` so the freshly installed `gt` and `bd` take precedence.
+The binary lands in `$GOBIN`, or `$GOPATH/bin` when `GOBIN` is unset. Put that directory before older `gt` installations on `PATH`. Native installs also require `bd` and Dolt:
 
 ```bash
-brew install dolt icu4c
-go install github.com/steveyegge/beads/cmd/bd@latest
-export PATH="$HOME/.local/bin:$HOME/go/bin:$PATH"
-git clone https://github.com/steveyegge/gastown.git
-cd gastown
-make install
-```
-
-#### Install gt on Linux
-
-Install Dolt by following the [Dolt installation guide](https://github.com/dolthub/dolt#installation), then install `gt` and `bd` with `go install`.
-
-```bash
-go install github.com/steveyegge/gastown/cmd/gt@latest
 go install github.com/steveyegge/beads/cmd/bd@latest
 ```
 
-Prepend the Go binary directory to your `PATH` if it is not already there, so freshly installed `gt` and `bd` binaries take precedence over stale copies. Append to `~/.zshrc` instead if you use zsh.
+On macOS, install Dolt with `brew install dolt`. On Linux and Windows, follow the [Dolt installation guide](https://github.com/dolthub/dolt#installation).
 
-```bash
-echo 'export PATH="$HOME/go/bin:$PATH"' >> ~/.bashrc
-source ~/.bashrc
-```
-
-#### Install gt on Windows
-
-Install Dolt first by following the [Dolt installation guide](https://github.com/dolthub/dolt#installation). Unlike the macOS Homebrew path, `go install` does not install Dolt. Then install `gt` and `bd` with `go install`.
+On Windows PowerShell, set the CGO environment variable before installing:
 
 ```powershell
-go install github.com/steveyegge/gastown/cmd/gt@latest
+$env:CGO_ENABLED = "0"
+go install github.com/jonbaldie/gastown/cmd/gt@main
 go install github.com/steveyegge/beads/cmd/bd@latest
 ```
-
-Both binaries land in `%USERPROFILE%\go\bin\`. Put that directory before older `gt` or `bd` install locations on `PATH`, then open a new shell for the change to take effect.
-
-`make build` defaults to `CGO_ENABLED=0`. Native Windows source builds that compile the ICU-backed embedded query layer (`make build-cgo`) need an MSYS2 UCRT64 or MinGW64 shell with matching `icu`, `toolchain`, and `pkg-config` packages; the repository's Windows CI uses `pacboy -S icu:p toolchain:p pkg-config:p`. Plain PowerShell/MSVC is not enough for that CGO build.
 
 For full tmux-backed workflows on Windows, use WSL or another Linux environment. Native Windows shells are best treated as minimal CLI-only environments.
 

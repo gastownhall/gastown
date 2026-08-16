@@ -3,7 +3,7 @@ package beads
 import (
 	"testing"
 
-	"github.com/steveyegge/gastown/internal/scheduler/capacity"
+	"github.com/jonbaldie/gastown/internal/scheduler/capacity"
 )
 
 func TestFormatParseSlingContextRoundTrip(t *testing.T) {

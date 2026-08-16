@@ -16,8 +16,8 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/steveyegge/gastown/internal/worker"
-	"github.com/steveyegge/gastown/internal/workspace"
+	"github.com/jonbaldie/gastown/internal/worker"
+	"github.com/jonbaldie/gastown/internal/workspace"
 )
 
 // MountainMaxFailures is the number of polecat failures before an issue is

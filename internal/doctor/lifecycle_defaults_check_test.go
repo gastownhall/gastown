@@ -6,7 +6,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/steveyegge/gastown/internal/daemon"
+	"github.com/jonbaldie/gastown/internal/daemon"
 )
 
 func TestLifecycleDefaultsCheck_NoConfig(t *testing.T) {

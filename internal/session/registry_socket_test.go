@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/steveyegge/gastown/internal/tmux"
+	"github.com/jonbaldie/gastown/internal/tmux"
 )
 
 // TestInitRegistry_SocketFromTownName verifies GT_TMUX_SOCKET socket selection:
@@ -23,35 +23,35 @@ func TestInitRegistry_SocketFromTownName(t *testing.T) {
 	})
 
 	tests := []struct {
-		name        string
+		name         string
 		gtTmuxSocket string // GT_TMUX_SOCKET value ("" = unset)
-		tmuxEnv     string  // $TMUX value
-		townDir     string  // basename of the town root directory
+		tmuxEnv      string // $TMUX value
+		townDir      string // basename of the town root directory
 	}{
 		{
-			name:        "unset → derived from town path",
+			name:         "unset → derived from town path",
 			gtTmuxSocket: "",
-			townDir:     "gt",
+			townDir:      "gt",
 		},
 		{
-			name:        "explicit default → derived from town path",
+			name:         "explicit default → derived from town path",
 			gtTmuxSocket: "default",
-			townDir:     "gt",
+			townDir:      "gt",
 		},
 		{
-			name:        "auto → derived from town path",
+			name:         "auto → derived from town path",
 			gtTmuxSocket: "auto",
-			townDir:     "gt",
+			townDir:      "gt",
 		},
 		{
-			name:        "auto → sanitized town name with spaces",
+			name:         "auto → sanitized town name with spaces",
 			gtTmuxSocket: "auto",
-			townDir:     "My Town",
+			townDir:      "My Town",
 		},
 		{
-			name:        "auto → sanitized town name with caps",
+			name:         "auto → sanitized town name with caps",
 			gtTmuxSocket: "auto",
-			townDir:     "GasTown",
+			townDir:      "GasTown",
 		},
 	}
 

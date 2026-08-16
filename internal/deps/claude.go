@@ -7,7 +7,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/steveyegge/gastown/internal/util"
+	"github.com/jonbaldie/gastown/internal/util"
 )
 
 // MinClaudeCodeVersion is the minimum compatible Claude Code version for Gas Town.

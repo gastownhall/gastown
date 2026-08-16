@@ -3,7 +3,7 @@ package cmd
 import (
 	"testing"
 
-	"github.com/steveyegge/gastown/internal/mail"
+	"github.com/jonbaldie/gastown/internal/mail"
 )
 
 func TestHasReplyPrefix(t *testing.T) {

@@ -3,9 +3,9 @@ package doctor
 import (
 	"fmt"
 
-	"github.com/steveyegge/gastown/internal/config"
-	"github.com/steveyegge/gastown/internal/session"
-	"github.com/steveyegge/gastown/internal/tmux"
+	"github.com/jonbaldie/gastown/internal/config"
+	"github.com/jonbaldie/gastown/internal/session"
+	"github.com/jonbaldie/gastown/internal/tmux"
 )
 
 // SessionEnvReader abstracts tmux session environment reads for testing.
@@ -45,7 +45,7 @@ func (r *tmuxEnvReaderWriter) SetEnvironment(session, key, value string) error {
 // EnvVarsCheck verifies that tmux session environment variables match expected values.
 type EnvVarsCheck struct {
 	FixableCheck
-	reader   SessionEnvReader  // nil means use real tmux
+	reader   SessionEnvReader   // nil means use real tmux
 	accessor SessionEnvAccessor // non-nil when Fix() support is needed
 }
 

@@ -5,7 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/steveyegge/gastown/internal/formula"
+	"github.com/jonbaldie/gastown/internal/formula"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )

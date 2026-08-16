@@ -20,10 +20,10 @@ builds:
       - amd64
     ldflags:
       - -s -w
-      - -X github.com/steveyegge/gastown/internal/cmd.Version={{.Version}}
-      - -X github.com/steveyegge/gastown/internal/cmd.Build={{.ShortCommit}}
-      - -X github.com/steveyegge/gastown/internal/cmd.Commit={{.Commit}}
-      - -X github.com/steveyegge/gastown/internal/cmd.Branch={{.Branch}}
+      - -X github.com/jonbaldie/gastown/internal/cmd.Version={{.Version}}
+      - -X github.com/jonbaldie/gastown/internal/cmd.Build={{.ShortCommit}}
+      - -X github.com/jonbaldie/gastown/internal/cmd.Commit={{.Commit}}
+      - -X github.com/jonbaldie/gastown/internal/cmd.Branch={{.Branch}}
 
   - id: gt-linux-arm64
     main: ./cmd/gt
@@ -38,10 +38,10 @@ builds:
       - arm64
     ldflags:
       - -s -w
-      - -X github.com/steveyegge/gastown/internal/cmd.Version={{.Version}}
-      - -X github.com/steveyegge/gastown/internal/cmd.Build={{.ShortCommit}}
-      - -X github.com/steveyegge/gastown/internal/cmd.Commit={{.Commit}}
-      - -X github.com/steveyegge/gastown/internal/cmd.Branch={{.Branch}}
+      - -X github.com/jonbaldie/gastown/internal/cmd.Version={{.Version}}
+      - -X github.com/jonbaldie/gastown/internal/cmd.Build={{.ShortCommit}}
+      - -X github.com/jonbaldie/gastown/internal/cmd.Commit={{.Commit}}
+      - -X github.com/jonbaldie/gastown/internal/cmd.Branch={{.Branch}}
 
   - id: gt-darwin-amd64
     main: ./cmd/gt
@@ -54,10 +54,10 @@ builds:
       - amd64
     ldflags:
       - -s -w
-      - -X github.com/steveyegge/gastown/internal/cmd.Version={{.Version}}
-      - -X github.com/steveyegge/gastown/internal/cmd.Build={{.ShortCommit}}
-      - -X github.com/steveyegge/gastown/internal/cmd.Commit={{.Commit}}
-      - -X github.com/steveyegge/gastown/internal/cmd.Branch={{.Branch}}
+      - -X github.com/jonbaldie/gastown/internal/cmd.Version={{.Version}}
+      - -X github.com/jonbaldie/gastown/internal/cmd.Build={{.ShortCommit}}
+      - -X github.com/jonbaldie/gastown/internal/cmd.Commit={{.Commit}}
+      - -X github.com/jonbaldie/gastown/internal/cmd.Branch={{.Branch}}
 
   - id: gt-darwin-arm64
     main: ./cmd/gt
@@ -70,10 +70,10 @@ builds:
       - arm64
     ldflags:
       - -s -w
-      - -X github.com/steveyegge/gastown/internal/cmd.Version={{.Version}}
-      - -X github.com/steveyegge/gastown/internal/cmd.Build={{.ShortCommit}}
-      - -X github.com/steveyegge/gastown/internal/cmd.Commit={{.Commit}}
-      - -X github.com/steveyegge/gastown/internal/cmd.Branch={{.Branch}}
+      - -X github.com/jonbaldie/gastown/internal/cmd.Version={{.Version}}
+      - -X github.com/jonbaldie/gastown/internal/cmd.Build={{.ShortCommit}}
+      - -X github.com/jonbaldie/gastown/internal/cmd.Commit={{.Commit}}
+      - -X github.com/jonbaldie/gastown/internal/cmd.Branch={{.Branch}}
 
   - id: gt-windows-amd64
     main: ./cmd/gt
@@ -88,10 +88,10 @@ builds:
       - amd64
     ldflags:
       - -s -w
-      - -X github.com/steveyegge/gastown/internal/cmd.Version={{.Version}}
-      - -X github.com/steveyegge/gastown/internal/cmd.Build={{.ShortCommit}}
-      - -X github.com/steveyegge/gastown/internal/cmd.Commit={{.Commit}}
-      - -X github.com/steveyegge/gastown/internal/cmd.Branch={{.Branch}}
+      - -X github.com/jonbaldie/gastown/internal/cmd.Version={{.Version}}
+      - -X github.com/jonbaldie/gastown/internal/cmd.Build={{.ShortCommit}}
+      - -X github.com/jonbaldie/gastown/internal/cmd.Commit={{.Commit}}
+      - -X github.com/jonbaldie/gastown/internal/cmd.Branch={{.Branch}}
       - -buildmode=exe
 
   - id: gt-freebsd-amd64
@@ -105,10 +105,10 @@ builds:
       - amd64
     ldflags:
       - -s -w
-      - -X github.com/steveyegge/gastown/internal/cmd.Version={{.Version}}
-      - -X github.com/steveyegge/gastown/internal/cmd.Build={{.ShortCommit}}
-      - -X github.com/steveyegge/gastown/internal/cmd.Commit={{.Commit}}
-      - -X github.com/steveyegge/gastown/internal/cmd.Branch={{.Branch}}
+      - -X github.com/jonbaldie/gastown/internal/cmd.Version={{.Version}}
+      - -X github.com/jonbaldie/gastown/internal/cmd.Build={{.ShortCommit}}
+      - -X github.com/jonbaldie/gastown/internal/cmd.Commit={{.Commit}}
+      - -X github.com/jonbaldie/gastown/internal/cmd.Branch={{.Branch}}
 
 
 archives:
@@ -150,7 +150,7 @@ changelog:
 
 release:
   github:
-    owner: gastownhall
+    owner: jonbaldie
     name: gastown
   draft: false
   prerelease: auto
@@ -163,14 +163,9 @@ release:
 
     ### Installation
 
-    **Homebrew (macOS/Linux):**
+    **Go:**
     ```bash
-    brew install gastown
-    ```
-
-    **npm (Node.js):**
-    ```bash
-    npm install -g @gastown/gt
+    CGO_ENABLED=0 go install github.com/jonbaldie/gastown/cmd/gt@main
     ```
 
     **Manual Install:**

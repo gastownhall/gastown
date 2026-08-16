@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	gtevents "github.com/steveyegge/gastown/internal/events"
+	gtevents "github.com/jonbaldie/gastown/internal/events"
 )
 
 func TestRunLogCrashEmitsFeedSessionDeath(t *testing.T) {

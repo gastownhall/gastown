@@ -9,25 +9,25 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/steveyegge/gastown/internal/config"
-	"github.com/steveyegge/gastown/internal/constants"
+	"github.com/jonbaldie/gastown/internal/config"
+	"github.com/jonbaldie/gastown/internal/constants"
 )
 
 // mockExecutor implements TmuxExecutor for testing.
 // All mutable fields are protected by mu for concurrent executeOne calls.
 type mockExecutor struct {
-	mu            sync.Mutex
-	envSets       map[string]map[string]string // session -> key -> value
-	paneIDs       map[string]string            // session -> pane ID (read-only after setup)
-	remainOnExit  map[string]bool              // pane -> value
-	killed        []string                     // panes that had processes killed
-	cleared       []string                     // panes that had history cleared
-	respawned     map[string]string            // pane -> command
+	mu           sync.Mutex
+	envSets      map[string]map[string]string // session -> key -> value
+	paneIDs      map[string]string            // session -> pane ID (read-only after setup)
+	remainOnExit map[string]bool              // pane -> value
+	killed       []string                     // panes that had processes killed
+	cleared      []string                     // panes that had history cleared
+	respawned    map[string]string            // pane -> command
 
 	// Error injection (read-only after setup)
-	setEnvErr     map[string]error // session -> error
-	getPaneIDErr  map[string]error // session -> error
-	respawnErr    map[string]error // pane -> error
+	setEnvErr    map[string]error // session -> error
+	getPaneIDErr map[string]error // session -> error
+	respawnErr   map[string]error // pane -> error
 }
 
 func newMockExecutor() *mockExecutor {
@@ -97,8 +97,8 @@ func (m *mockExecutor) RespawnPane(pane, command string) error {
 	return nil
 }
 
-func (m *mockExecutor) AcceptStartupDialogs(_ string) error          { return nil }
-func (m *mockExecutor) AcceptWorkspaceTrustDialog(_ string) error    { return nil }
+func (m *mockExecutor) AcceptStartupDialogs(_ string) error       { return nil }
+func (m *mockExecutor) AcceptWorkspaceTrustDialog(_ string) error { return nil }
 func (m *mockExecutor) AcceptBypassPermissionsWarning(_ string) error {
 	return nil
 }
@@ -557,7 +557,7 @@ func (f *failingNonCriticalExecutor) RespawnPane(pane, command string) error {
 func (f *failingNonCriticalExecutor) AcceptStartupDialogs(_ string) error {
 	return fmt.Errorf("accept startup dialogs failed")
 }
-func (f *failingNonCriticalExecutor) AcceptWorkspaceTrustDialog(_ string) error    { return nil }
+func (f *failingNonCriticalExecutor) AcceptWorkspaceTrustDialog(_ string) error { return nil }
 func (f *failingNonCriticalExecutor) AcceptBypassPermissionsWarning(_ string) error {
 	return fmt.Errorf("accept bypass permissions failed")
 }

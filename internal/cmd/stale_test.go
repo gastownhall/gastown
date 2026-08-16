@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/steveyegge/gastown/internal/version"
+	"github.com/jonbaldie/gastown/internal/version"
 )
 
 // TestOutputStaleText exercises the pure text renderer for `gt stale`,
@@ -13,9 +13,8 @@ import (
 // the leading glyph, not the message text) so it is colour-agnostic.
 //
 // Note: outputStaleText is a plain function; this test never executes the
-// cobra command tree, so the macOS unsigned-binary guard in
-// persistentPreRun is not tripped. Run targeted (`-run TestOutputStaleText`)
-// to avoid sibling tests that do execute commands.
+// cobra command tree. Run targeted (`-run TestOutputStaleText`) to avoid
+// sibling tests that do execute commands.
 func TestOutputStaleText(t *testing.T) {
 	tests := []struct {
 		name    string

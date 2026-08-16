@@ -67,7 +67,7 @@ RUN for i in 1 2 3; do \
 COPY . .
 
 # Build gt binary
-RUN go build -ldflags "-X github.com/steveyegge/gastown/internal/cmd.BuiltProperly=1" -o /usr/local/bin/gt ./cmd/gt
+RUN go build -o /usr/local/bin/gt ./cmd/gt
 
 # Run e2e tests (all TestInstall* functions from install_integration_test.go)
 # Note: Using -count=1 to disable test caching, -parallel 1 for sequential execution

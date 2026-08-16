@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/steveyegge/gastown/internal/estop"
+	"github.com/jonbaldie/gastown/internal/estop"
 )
 
 func setupEstopCommandTestTown(t *testing.T) string {

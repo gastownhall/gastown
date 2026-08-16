@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/steveyegge/gastown/internal/tmux/tmuxtest"
+	"github.com/jonbaldie/gastown/internal/tmux/tmuxtest"
 )
 
 // TestNudgeSubmit_NamedEnterNoop_LiteralCRRequired replays GH#4666 defect 3:

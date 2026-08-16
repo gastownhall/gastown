@@ -3,9 +3,9 @@ package cmd
 import (
 	"fmt"
 
+	gitpkg "github.com/jonbaldie/gastown/internal/git"
+	"github.com/jonbaldie/gastown/internal/style"
 	"github.com/spf13/cobra"
-	gitpkg "github.com/steveyegge/gastown/internal/git"
-	"github.com/steveyegge/gastown/internal/style"
 )
 
 var (

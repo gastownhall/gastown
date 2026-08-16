@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/steveyegge/gastown/internal/tmux"
+	"github.com/jonbaldie/gastown/internal/tmux"
 )
 
 func TestNew(t *testing.T) {
@@ -26,8 +26,8 @@ func TestNew(t *testing.T) {
 
 func TestLockInfo_IsStale(t *testing.T) {
 	tests := []struct {
-		name     string
-		pid      int
+		name      string
+		pid       int
 		wantStale bool
 	}{
 		{"current process", os.Getpid(), false},

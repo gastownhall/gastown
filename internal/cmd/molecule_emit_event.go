@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/jonbaldie/gastown/internal/channelevents"
 	"github.com/spf13/cobra"
-	"github.com/steveyegge/gastown/internal/channelevents"
 )
 
 var (

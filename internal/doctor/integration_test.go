@@ -18,9 +18,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/steveyegge/gastown/internal/beads"
-	"github.com/steveyegge/gastown/internal/session"
-	"github.com/steveyegge/gastown/internal/tmux"
+	"github.com/jonbaldie/gastown/internal/beads"
+	"github.com/jonbaldie/gastown/internal/session"
+	"github.com/jonbaldie/gastown/internal/tmux"
 )
 
 // TestIntegrationTownSetup verifies that a fresh town setup passes all doctor checks.
@@ -135,9 +135,9 @@ func TestIntegrationCrewSessionProtection(t *testing.T) {
 	session.SetDefaultRegistry(r)
 
 	tests := []struct {
-		name     string
-		session  string
-		isCrew   bool
+		name    string
+		session string
+		isCrew  bool
 	}{
 		{"simple_crew", "ga-crew-max", true},
 		{"crew_with_numbers", "ga-crew-worker1", true},
@@ -200,39 +200,39 @@ func TestIntegrationBeadsDirRigLevel(t *testing.T) {
 	createTestRig(t, townRoot, "niflheim")
 
 	tests := []struct {
-		name           string
-		role           string
-		rig            string
+		name            string
+		role            string
+		rig             string
 		wantBeadsSuffix string // Expected suffix in BEADS_DIR path
 	}{
 		{
-			name:           "mayor_uses_town_beads",
-			role:           "mayor",
-			rig:            "",
+			name:            "mayor_uses_town_beads",
+			role:            "mayor",
+			rig:             "",
 			wantBeadsSuffix: "/.beads",
 		},
 		{
-			name:           "deacon_uses_town_beads",
-			role:           "deacon",
-			rig:            "",
+			name:            "deacon_uses_town_beads",
+			role:            "deacon",
+			rig:             "",
 			wantBeadsSuffix: "/.beads",
 		},
 		{
-			name:           "witness_uses_rig_beads",
-			role:           "witness",
-			rig:            "gastown",
+			name:            "witness_uses_rig_beads",
+			role:            "witness",
+			rig:             "gastown",
 			wantBeadsSuffix: "/gastown/.beads",
 		},
 		{
-			name:           "refinery_uses_rig_beads",
-			role:           "refinery",
-			rig:            "niflheim",
+			name:            "refinery_uses_rig_beads",
+			role:            "refinery",
+			rig:             "niflheim",
 			wantBeadsSuffix: "/niflheim/.beads",
 		},
 		{
-			name:           "crew_uses_rig_beads",
-			role:           "crew",
-			rig:            "gastown",
+			name:            "crew_uses_rig_beads",
+			role:            "crew",
+			rig:             "gastown",
 			wantBeadsSuffix: "/gastown/.beads",
 		},
 	}
@@ -717,7 +717,7 @@ func TestIntegrationMultiTownSocketIsolation(t *testing.T) {
 // used to isolate split-brain tests from the real "default" tmux socket.
 type emptySessionLister struct{}
 
-func (e *emptySessionLister) ListSessions() ([]string, error) { return nil, nil }
+func (e *emptySessionLister) ListSessions() ([]string, error)       { return nil, nil }
 func (e *emptySessionLister) KillSessionWithProcesses(string) error { return nil }
 
 // mockEnvReaderIntegration implements SessionEnvReader for integration tests.

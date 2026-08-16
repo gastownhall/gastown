@@ -6,16 +6,15 @@ import (
 	"encoding/json"
 	"os/exec"
 
-	"github.com/steveyegge/gastown/internal/beads"
-	"github.com/steveyegge/gastown/internal/constants"
-	"github.com/steveyegge/gastown/internal/util"
+	"github.com/jonbaldie/gastown/internal/beads"
+	"github.com/jonbaldie/gastown/internal/constants"
+	"github.com/jonbaldie/gastown/internal/util"
 )
 
 type trackedStatus struct {
 	ID     string
 	Status string
 }
-
 
 // getTrackedIssueStatus queries tracked issues and their status.
 func getTrackedIssueStatus(beadsDir, convoyID string) []trackedStatus {

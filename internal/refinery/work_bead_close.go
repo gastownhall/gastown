@@ -5,7 +5,7 @@ import (
 	"io"
 	"strings"
 
-	"github.com/steveyegge/gastown/internal/beads"
+	"github.com/jonbaldie/gastown/internal/beads"
 )
 
 type mergedWorkBeadCloseRequest struct {

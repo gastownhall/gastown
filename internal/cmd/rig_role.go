@@ -3,9 +3,9 @@ package cmd
 import (
 	"fmt"
 
+	"github.com/jonbaldie/gastown/internal/config"
+	"github.com/jonbaldie/gastown/internal/style"
 	"github.com/spf13/cobra"
-	"github.com/steveyegge/gastown/internal/config"
-	"github.com/steveyegge/gastown/internal/style"
 )
 
 var rigRoleCmd = &cobra.Command{

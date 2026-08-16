@@ -8,8 +8,8 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/jonbaldie/gastown/internal/workspace"
 	"github.com/spf13/cobra"
-	"github.com/steveyegge/gastown/internal/workspace"
 )
 
 // mountainForce controls whether to launch a mountain with warnings.

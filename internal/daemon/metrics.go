@@ -9,7 +9,7 @@ import (
 	"go.opentelemetry.io/otel/metric"
 )
 
-const meterName = "github.com/steveyegge/gastown/daemon"
+const meterName = "github.com/jonbaldie/gastown/daemon"
 
 // daemonMetrics holds OTel instruments for the daemon.
 // All methods are nil-safe so callers don't need to guard against disabled telemetry.

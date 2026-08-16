@@ -8,8 +8,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/jonbaldie/gastown/internal/version"
 	"github.com/spf13/cobra"
-	"github.com/steveyegge/gastown/internal/version"
 )
 
 // Version information - set at build time via ldflags
@@ -20,9 +20,6 @@ var (
 	// Commit and Branch - the git revision the binary was built from (optional ldflag)
 	Commit = ""
 	Branch = ""
-	// BuiltProperly is set to "1" by `make build`. If empty, the binary was built
-	// with raw `go build` and is likely unsigned (will be killed on macOS).
-	BuiltProperly = ""
 )
 
 var versionVerbose bool

@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/steveyegge/gastown/internal/worker"
+	"github.com/jonbaldie/gastown/internal/worker"
 )
 
 func writeStoppedWithoutDoneTown(t *testing.T, beadID string) string {

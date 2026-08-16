@@ -10,8 +10,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/steveyegge/gastown/internal/boot"
-	"github.com/steveyegge/gastown/internal/tmux"
+	"github.com/jonbaldie/gastown/internal/boot"
+	"github.com/jonbaldie/gastown/internal/tmux"
 )
 
 func writeFakeTmux(t *testing.T, dir string) {

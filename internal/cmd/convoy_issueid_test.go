@@ -3,7 +3,7 @@ package cmd
 import (
 	"testing"
 
-	"github.com/steveyegge/gastown/internal/session"
+	"github.com/jonbaldie/gastown/internal/session"
 )
 
 func TestLooksLikeIssueID(t *testing.T) {
@@ -28,16 +28,16 @@ func TestLooksLikeIssueID(t *testing.T) {
 		{"longpfx-jkl345", true},
 		{"nv-short", true},
 		{"ab-min", true},
-		{"abc-max3", true},            // 3-char prefix matches heuristic
-		{"abcd-four", false},          // 4-char unregistered prefix: not matched by heuristic
-		{"abcde-five", false},         // 5-char prefix exceeds heuristic limit
-		{"abcdef-max6", false},        // 6-char prefix exceeds heuristic limit
-		{"test-plan", false},          // 4-char common word: not a false-positive
-		{"gthq-deacon", true},         // legacy gthq prefix via HasKnownPrefix
+		{"abc-max3", true},     // 3-char prefix matches heuristic
+		{"abcd-four", false},   // 4-char unregistered prefix: not matched by heuristic
+		{"abcde-five", false},  // 5-char prefix exceeds heuristic limit
+		{"abcdef-max6", false}, // 6-char prefix exceeds heuristic limit
+		{"test-plan", false},   // 4-char common word: not a false-positive
+		{"gthq-deacon", true},  // legacy gthq prefix via HasKnownPrefix
 		{"notvalid", false},
-		{"no-hyphen-after", true},     // "no" is a 2-char lowercase prefix
-		{"alpha-release", false},      // 5-char word: not a false-positive
-		{"deploy-backend", false},     // 6-char word: not a false-positive
+		{"no-hyphen-after", true}, // "no" is a 2-char lowercase prefix
+		{"alpha-release", false},  // 5-char word: not a false-positive
+		{"deploy-backend", false}, // 6-char word: not a false-positive
 		{"A-uppercase", false},
 		{"1-number", false},
 		{"", false},

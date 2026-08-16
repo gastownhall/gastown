@@ -11,9 +11,9 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/jonbaldie/gastown/internal/beads"
+	"github.com/jonbaldie/gastown/internal/util"
 	beadsdk "github.com/steveyegge/beads"
-	"github.com/steveyegge/gastown/internal/beads"
-	"github.com/steveyegge/gastown/internal/util"
 )
 
 // CheckConvoysForIssue finds any convoys tracking the given issue and triggers

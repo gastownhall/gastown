@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/steveyegge/gastown/internal/dog"
+	"github.com/jonbaldie/gastown/internal/dog"
 )
 
 func TestFeedStrandedStateFile(t *testing.T) {

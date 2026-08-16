@@ -9,7 +9,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/steveyegge/gastown/internal/lock"
+	"github.com/jonbaldie/gastown/internal/lock"
 )
 
 // Issue status constants kept as untyped strings for backward compatibility.

@@ -160,11 +160,11 @@ async function install() {
     console.log(`Installing gt v${VERSION} for ${platformName}-${archName}...`);
 
     // Construct download URL
-    // Format: https://github.com/steveyegge/gastown/releases/download/v0.1.0/gastown_0.1.0_darwin_amd64.tar.gz
+    // Format: https://github.com/jonbaldie/gastown/releases/download/v0.1.0/gastown_0.1.0_darwin_amd64.tar.gz
     const releaseVersion = VERSION;
     const archiveExt = platformName === 'windows' ? 'zip' : 'tar.gz';
     const archiveName = `gastown_${releaseVersion}_${platformName}_${archName}.${archiveExt}`;
-    const downloadUrl = `https://github.com/steveyegge/gastown/releases/download/v${releaseVersion}/${archiveName}`;
+    const downloadUrl = `https://github.com/jonbaldie/gastown/releases/download/v${releaseVersion}/${archiveName}`;
 
     // Determine destination paths
     const binDir = path.join(__dirname, '..', 'bin');
@@ -202,8 +202,8 @@ async function install() {
     console.error(`Error installing gt: ${err.message}`);
     console.error('');
     console.error('Installation failed. You can try:');
-    console.error('1. Installing manually from: https://github.com/steveyegge/gastown/releases');
-    console.error('2. Opening an issue: https://github.com/steveyegge/gastown/issues');
+    console.error('1. Installing manually from: https://github.com/jonbaldie/gastown/releases');
+    console.error('2. Opening an issue: https://github.com/jonbaldie/gastown/issues');
     process.exit(1);
   }
 }

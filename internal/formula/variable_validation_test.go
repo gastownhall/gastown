@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/steveyegge/gastown/internal/constants"
+	"github.com/jonbaldie/gastown/internal/constants"
 )
 
 // TestExtractTemplateVariables verifies we can find all {{variable}} patterns.

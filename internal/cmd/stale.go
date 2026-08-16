@@ -5,9 +5,9 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/jonbaldie/gastown/internal/style"
+	"github.com/jonbaldie/gastown/internal/version"
 	"github.com/spf13/cobra"
-	"github.com/steveyegge/gastown/internal/style"
-	"github.com/steveyegge/gastown/internal/version"
 )
 
 var staleJSON bool

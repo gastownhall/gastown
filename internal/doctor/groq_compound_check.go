@@ -7,9 +7,8 @@ import (
 	"os/exec"
 	"strings"
 
-	"github.com/steveyegge/gastown/internal/config"
+	"github.com/jonbaldie/gastown/internal/config"
 )
-
 
 // GroqCompoundCheck probes the groq-compound agent for JSON output compliance.
 // It is skipped when groq-compound is not configured in any role.

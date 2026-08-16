@@ -8,8 +8,8 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/jonbaldie/gastown/internal/beads"
 	"github.com/spf13/cobra"
-	"github.com/steveyegge/gastown/internal/beads"
 )
 
 var (

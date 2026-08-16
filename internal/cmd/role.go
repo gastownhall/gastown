@@ -8,11 +8,11 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/jonbaldie/gastown/internal/config"
+	"github.com/jonbaldie/gastown/internal/constants"
+	"github.com/jonbaldie/gastown/internal/style"
+	"github.com/jonbaldie/gastown/internal/workspace"
 	"github.com/spf13/cobra"
-	"github.com/steveyegge/gastown/internal/config"
-	"github.com/steveyegge/gastown/internal/constants"
-	"github.com/steveyegge/gastown/internal/style"
-	"github.com/steveyegge/gastown/internal/workspace"
 )
 
 // Environment variables for role detection
@@ -30,12 +30,12 @@ type RoleInfo struct {
 	Home          string `json:"home"`
 	Rig           string `json:"rig,omitempty"`
 	Polecat       string `json:"polecat,omitempty"`
-	EnvRole       string `json:"env_role,omitempty"`    // Value of GT_ROLE if set
-	CwdRole       Role   `json:"cwd_role,omitempty"`    // Role detected from cwd
-	Mismatch      bool   `json:"mismatch,omitempty"`    // True if env != cwd detection
+	EnvRole       string `json:"env_role,omitempty"`       // Value of GT_ROLE if set
+	CwdRole       Role   `json:"cwd_role,omitempty"`       // Role detected from cwd
+	Mismatch      bool   `json:"mismatch,omitempty"`       // True if env != cwd detection
 	EnvIncomplete bool   `json:"env_incomplete,omitempty"` // True if env was set but missing rig/polecat, filled from cwd
 	TownRoot      string `json:"town_root,omitempty"`
-	WorkDir       string `json:"work_dir,omitempty"`    // Current working directory
+	WorkDir       string `json:"work_dir,omitempty"` // Current working directory
 }
 
 var roleCmd = &cobra.Command{

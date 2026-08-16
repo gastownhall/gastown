@@ -6,9 +6,9 @@ import (
 	"os"
 	"strings"
 
+	"github.com/jonbaldie/gastown/internal/mail"
+	"github.com/jonbaldie/gastown/internal/style"
 	"github.com/spf13/cobra"
-	"github.com/steveyegge/gastown/internal/mail"
-	"github.com/steveyegge/gastown/internal/style"
 )
 
 func runMailThread(cmd *cobra.Command, args []string) error {

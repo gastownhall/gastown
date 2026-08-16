@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/jonbaldie/gastown/internal/constants"
 	"github.com/spf13/cobra"
-	"github.com/steveyegge/gastown/internal/constants"
 )
 
 var patrolNewRole string

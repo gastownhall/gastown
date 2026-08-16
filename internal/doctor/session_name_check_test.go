@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/steveyegge/gastown/internal/session"
+	"github.com/jonbaldie/gastown/internal/session"
 )
 
 // testRegistryForNameCheck returns a PrefixRegistry with a few known rigs
@@ -99,8 +99,8 @@ func TestMalformedSessionNameCheck_Run_NonGasTownWithRigSubstring(t *testing.T) 
 	check := NewMalformedSessionNameCheck()
 	check.registryForTest = testRegistryForNameCheck()
 	check.sessionListerForTest = &mockSessionLister{sessions: []string{
-		"my-niflheim-witness",       // "my" is not a known Gastown prefix
-		"foo-gastown-refinery",      // "foo" is not a known Gastown prefix
+		"my-niflheim-witness",              // "my" is not a known Gastown prefix
+		"foo-gastown-refinery",             // "foo" is not a known Gastown prefix
 		"test-whatsapp_automation-witness", // "test" is not a known Gastown prefix
 	}}
 
@@ -121,7 +121,7 @@ func TestMalformedSessionNameCheck_Run_PolecatWithRigSubstring(t *testing.T) {
 	check := NewMalformedSessionNameCheck()
 	check.registryForTest = testRegistryForNameCheck()
 	check.sessionListerForTest = &mockSessionLister{sessions: []string{
-		"gt-fix-gastown-witness",   // polecat "fix-gastown-witness", prefix "gt-fix" is not known
+		"gt-fix-gastown-witness",      // polecat "fix-gastown-witness", prefix "gt-fix" is not known
 		"nif-debug-niflheim-refinery", // prefix "nif-debug" is not a known prefix
 	}}
 
@@ -142,9 +142,9 @@ func TestMalformedSessionNameCheck_Run_DetectsMismatch(t *testing.T) {
 	check.registryForTest = testRegistryForNameCheck()
 	check.sessionListerForTest = &mockSessionLister{sessions: []string{
 		"hq-mayor",
-		"gt-niflheim-witness",   // legacy: should be nif-witness
-		"gt-niflheim-refinery",  // legacy: should be nif-refinery
-		"nif-refinery",          // already canonical — should not be flagged
+		"gt-niflheim-witness",  // legacy: should be nif-witness
+		"gt-niflheim-refinery", // legacy: should be nif-refinery
+		"nif-refinery",         // already canonical — should not be flagged
 	}}
 
 	ctx := &CheckContext{TownRoot: t.TempDir()}
@@ -238,9 +238,9 @@ func TestMalformedSessionNameCheck_Fix_Rename(t *testing.T) {
 	}
 
 	mt := &mockTmux{
-		sessions:     map[string]bool{"gt-niflheim-witness": true},
-		renamedFrom:  []string{},
-		renamedTo:    []string{},
+		sessions:    map[string]bool{"gt-niflheim-witness": true},
+		renamedFrom: []string{},
+		renamedTo:   []string{},
 	}
 	check.tmuxForTest = mt
 
@@ -359,10 +359,10 @@ func TestMalformedSessionNameCheck_Fix_HasSessionError(t *testing.T) {
 
 // mockTmux is a tmux.Tmux stub for testing Fix() without real tmux.
 type mockTmux struct {
-	sessions       map[string]bool
-	renamedFrom    []string
-	renamedTo      []string
-	hasSessionErr  error // If non-nil, HasSession returns this error
+	sessions      map[string]bool
+	renamedFrom   []string
+	renamedTo     []string
+	hasSessionErr error // If non-nil, HasSession returns this error
 }
 
 func (m *mockTmux) HasSession(name string) (bool, error) {

@@ -3,8 +3,8 @@ package cmd
 import (
 	"fmt"
 
-	"github.com/steveyegge/gastown/internal/beads"
-	"github.com/steveyegge/gastown/internal/style"
+	"github.com/jonbaldie/gastown/internal/beads"
+	"github.com/jonbaldie/gastown/internal/style"
 )
 
 // slingStatusDecision is the Lifecycle-owned assignment policy: closed,

@@ -9,8 +9,8 @@ import (
 	"path/filepath"
 	"sync"
 
-	"github.com/steveyegge/gastown/internal/atomicfile"
-	"github.com/steveyegge/gastown/internal/util"
+	"github.com/jonbaldie/gastown/internal/atomicfile"
+	"github.com/jonbaldie/gastown/internal/util"
 )
 
 // WispConfigDir is the directory for wisp config storage (never synced via git).
@@ -290,4 +290,3 @@ func (c *Config) Clear() error {
 	}
 	return c.save(cfg)
 }
-

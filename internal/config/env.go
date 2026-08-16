@@ -11,7 +11,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/steveyegge/gastown/internal/constants"
+	"github.com/jonbaldie/gastown/internal/constants"
 )
 
 // IdentityEnvVars are agent identity env vars that must not leak across

@@ -5,7 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/steveyegge/gastown/internal/constants"
+	"github.com/jonbaldie/gastown/internal/constants"
 )
 
 // TestConvoyFeedWorkflow_Integration is a high-level integration test that verifies
@@ -97,7 +97,8 @@ func TestConvoyFeedWorkflow_Integration(t *testing.T) {
 // Deacon's dogs) can pass variable validation for wisp creation.
 //
 // Dog formulas are special because they're invoked via:
-//   gt sling mol-<name> deacon/dogs/<dog> --var convoy=<id>
+//
+//	gt sling mol-<name> deacon/dogs/<dog> --var convoy=<id>
 //
 // The wisp creation validates that all template variables are either:
 // - Provided via --var flags, OR

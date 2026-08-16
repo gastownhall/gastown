@@ -4,8 +4,8 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/steveyegge/gastown/internal/sling"
-	"github.com/steveyegge/gastown/internal/style"
+	"github.com/jonbaldie/gastown/internal/sling"
+	"github.com/jonbaldie/gastown/internal/style"
 )
 
 // defaultSlingLifecycle is the single production Lifecycle. Direct and

@@ -3,8 +3,8 @@ package mail
 import (
 	"strings"
 
-	"github.com/steveyegge/gastown/internal/constants"
-	"github.com/steveyegge/gastown/internal/session"
+	"github.com/jonbaldie/gastown/internal/constants"
+	"github.com/jonbaldie/gastown/internal/session"
 )
 
 const dogAddressPrefix = constants.RoleDeacon + "/dogs/"

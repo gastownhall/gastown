@@ -4,7 +4,7 @@ import (
 	_ "embed"
 	"strings"
 
-	"github.com/steveyegge/gastown/internal/cli"
+	"github.com/jonbaldie/gastown/internal/cli"
 )
 
 //go:embed townroot/claude.md

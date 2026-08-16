@@ -9,10 +9,10 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/jonbaldie/gastown/internal/style"
+	"github.com/jonbaldie/gastown/internal/worker"
+	"github.com/jonbaldie/gastown/internal/workspace"
 	"github.com/spf13/cobra"
-	"github.com/steveyegge/gastown/internal/style"
-	"github.com/steveyegge/gastown/internal/worker"
-	"github.com/steveyegge/gastown/internal/workspace"
 )
 
 var (

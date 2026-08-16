@@ -13,8 +13,8 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/steveyegge/gastown/internal/atomicfile"
-	"github.com/steveyegge/gastown/internal/config"
+	"github.com/jonbaldie/gastown/internal/atomicfile"
+	"github.com/jonbaldie/gastown/internal/config"
 )
 
 // HookEntry represents a single hook matcher with its associated hooks.

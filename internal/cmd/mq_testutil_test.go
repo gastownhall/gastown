@@ -1,7 +1,7 @@
 package cmd
 
 import (
-	"github.com/steveyegge/gastown/internal/beads"
+	"github.com/jonbaldie/gastown/internal/beads"
 )
 
 // mockBeads is a test double for beads.Beads

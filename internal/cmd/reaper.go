@@ -7,10 +7,10 @@ import (
 	"strings"
 	"time"
 
+	agentconfig "github.com/jonbaldie/gastown/internal/config"
+	"github.com/jonbaldie/gastown/internal/reaper"
+	"github.com/jonbaldie/gastown/internal/style"
 	"github.com/spf13/cobra"
-	agentconfig "github.com/steveyegge/gastown/internal/config"
-	"github.com/steveyegge/gastown/internal/reaper"
-	"github.com/steveyegge/gastown/internal/style"
 )
 
 var (

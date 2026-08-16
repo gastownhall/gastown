@@ -22,7 +22,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/steveyegge/gastown/internal/util"
+	"github.com/jonbaldie/gastown/internal/util"
 )
 
 // TrustTier represents a rig's trust level in the Wasteland.

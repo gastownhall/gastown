@@ -9,13 +9,13 @@ import (
 	"strings"
 	"time"
 
+	agentconfig "github.com/jonbaldie/gastown/internal/config"
+	"github.com/jonbaldie/gastown/internal/daemon"
+	"github.com/jonbaldie/gastown/internal/style"
+	"github.com/jonbaldie/gastown/internal/templates"
+	"github.com/jonbaldie/gastown/internal/util"
+	"github.com/jonbaldie/gastown/internal/workspace"
 	"github.com/spf13/cobra"
-	agentconfig "github.com/steveyegge/gastown/internal/config"
-	"github.com/steveyegge/gastown/internal/daemon"
-	"github.com/steveyegge/gastown/internal/style"
-	"github.com/steveyegge/gastown/internal/templates"
-	"github.com/steveyegge/gastown/internal/util"
-	"github.com/steveyegge/gastown/internal/workspace"
 )
 
 var daemonCmd = &cobra.Command{

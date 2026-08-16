@@ -11,10 +11,10 @@ import (
 	"strings"
 	"time"
 
+	"github.com/jonbaldie/gastown/internal/config"
+	"github.com/jonbaldie/gastown/internal/style"
+	"github.com/jonbaldie/gastown/internal/workspace"
 	"github.com/spf13/cobra"
-	"github.com/steveyegge/gastown/internal/config"
-	"github.com/steveyegge/gastown/internal/style"
-	"github.com/steveyegge/gastown/internal/workspace"
 )
 
 // runMailAnnounces lists announce channels or reads messages from a channel.
@@ -184,7 +184,7 @@ func listAnnounceMessages(townRoot, channelName string) ([]announceMessage, erro
 		"--label", "gt:message",
 		"--label", "announce_channel:" + channelName,
 		"--sort", "-created", // Newest first
-		"--limit", "0",       // No limit
+		"--limit", "0", // No limit
 		"--json",
 	}
 

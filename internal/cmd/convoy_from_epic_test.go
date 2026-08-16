@@ -4,8 +4,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/steveyegge/gastown/internal/beads"
-	convoyops "github.com/steveyegge/gastown/internal/convoy"
+	"github.com/jonbaldie/gastown/internal/beads"
+	convoyops "github.com/jonbaldie/gastown/internal/convoy"
 )
 
 // ---------------------------------------------------------------------------

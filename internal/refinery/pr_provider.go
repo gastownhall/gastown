@@ -1,6 +1,6 @@
 package refinery
 
-import "github.com/steveyegge/gastown/internal/git"
+import "github.com/jonbaldie/gastown/internal/git"
 
 // PRProvider abstracts VCS-specific PR operations for the merge queue.
 // Implementations exist for GitHub (default) and Bitbucket Cloud.

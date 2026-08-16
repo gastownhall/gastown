@@ -11,14 +11,14 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/jonbaldie/gastown/internal/config"
+	"github.com/jonbaldie/gastown/internal/constants"
+	"github.com/jonbaldie/gastown/internal/quota"
+	"github.com/jonbaldie/gastown/internal/style"
+	ttmux "github.com/jonbaldie/gastown/internal/tmux"
+	"github.com/jonbaldie/gastown/internal/util"
+	"github.com/jonbaldie/gastown/internal/workspace"
 	"github.com/spf13/cobra"
-	"github.com/steveyegge/gastown/internal/config"
-	"github.com/steveyegge/gastown/internal/constants"
-	"github.com/steveyegge/gastown/internal/quota"
-	"github.com/steveyegge/gastown/internal/style"
-	ttmux "github.com/steveyegge/gastown/internal/tmux"
-	"github.com/steveyegge/gastown/internal/util"
-	"github.com/steveyegge/gastown/internal/workspace"
 )
 
 // quotaLogger adapts style.PrintWarning to the quota.Logger interface.
@@ -800,8 +800,6 @@ func executeKeychainRotation(
 	result.Rotated = true
 	return result
 }
-
-
 
 // Watch command flags
 var (

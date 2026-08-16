@@ -8,10 +8,10 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/jonbaldie/gastown/internal/beads"
+	"github.com/jonbaldie/gastown/internal/mail"
+	"github.com/jonbaldie/gastown/internal/workspace"
 	"github.com/spf13/cobra"
-	"github.com/steveyegge/gastown/internal/beads"
-	"github.com/steveyegge/gastown/internal/mail"
-	"github.com/steveyegge/gastown/internal/workspace"
 )
 
 // stopHookResponse is the JSON response for Claude Code's Stop hook.
@@ -37,8 +37,8 @@ If nothing is queued, outputs {"decision":"approve"} and the agent goes idle.
 
 This command must complete in <500ms as it runs on every turn boundary.
 All output goes to stdout as JSON for Claude Code to consume.`,
-	Args:    cobra.NoArgs,
-	RunE:    runSignalStop,
+	Args: cobra.NoArgs,
+	RunE: runSignalStop,
 	// Silence usage on error — this is a machine-consumed command
 	SilenceUsage:  true,
 	SilenceErrors: true,

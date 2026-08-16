@@ -7,8 +7,8 @@ import (
 	"testing"
 
 	"github.com/gofrs/flock"
-	"github.com/steveyegge/gastown/internal/config"
-	"github.com/steveyegge/gastown/internal/scheduler/capacity"
+	"github.com/jonbaldie/gastown/internal/config"
+	"github.com/jonbaldie/gastown/internal/scheduler/capacity"
 )
 
 func installFakeBD(t *testing.T, script string) {

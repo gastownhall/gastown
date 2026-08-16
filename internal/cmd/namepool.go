@@ -6,11 +6,11 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/jonbaldie/gastown/internal/config"
+	"github.com/jonbaldie/gastown/internal/constants"
+	"github.com/jonbaldie/gastown/internal/polecat"
+	"github.com/jonbaldie/gastown/internal/workspace"
 	"github.com/spf13/cobra"
-	"github.com/steveyegge/gastown/internal/config"
-	"github.com/steveyegge/gastown/internal/constants"
-	"github.com/steveyegge/gastown/internal/polecat"
-	"github.com/steveyegge/gastown/internal/workspace"
 )
 
 var (
@@ -379,7 +379,7 @@ func runNamepoolReset(cmd *cobra.Command, args []string) error {
 	}
 
 	pool.Reset()
-	
+
 	if err := pool.Save(); err != nil {
 		return fmt.Errorf("saving pool: %w", err)
 	}

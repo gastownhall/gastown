@@ -6,9 +6,9 @@ import (
 	"os"
 	"time"
 
+	"github.com/jonbaldie/gastown/internal/agentlog"
+	"github.com/jonbaldie/gastown/internal/telemetry"
 	"github.com/spf13/cobra"
-	"github.com/steveyegge/gastown/internal/agentlog"
-	"github.com/steveyegge/gastown/internal/telemetry"
 )
 
 var (

@@ -7,7 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/steveyegge/gastown/internal/doltserver"
+	"github.com/jonbaldie/gastown/internal/doltserver"
 )
 
 // NullAssigneeCheck detects in_progress beads with a NULL or empty assignee.
@@ -92,7 +92,7 @@ func (c *NullAssigneeCheck) Run(ctx *CheckContext) *CheckResult {
 	}
 
 	return &CheckResult{
-		Name: c.Name(),
+		Name:   c.Name(),
 		Status: StatusWarning,
 		Message: fmt.Sprintf(
 			"%d in_progress bead(s) with NULL assignee — invisible to bd, blocking molecule progress",

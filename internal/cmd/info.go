@@ -6,8 +6,8 @@ import (
 	"os"
 	"strings"
 
+	"github.com/jonbaldie/gastown/internal/version"
 	"github.com/spf13/cobra"
-	"github.com/steveyegge/gastown/internal/version"
 )
 
 var infoCmd = &cobra.Command{

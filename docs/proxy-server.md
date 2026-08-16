@@ -44,8 +44,8 @@ The binaries live alongside `gt` in the same module:
 
 ```bash
 # Build both binaries
-go install github.com/steveyegge/gastown/cmd/gt-proxy-server@latest
-go install github.com/steveyegge/gastown/cmd/gt-proxy-client@latest
+CGO_ENABLED=0 go install github.com/jonbaldie/gastown/cmd/gt-proxy-server@main
+CGO_ENABLED=0 go install github.com/jonbaldie/gastown/cmd/gt-proxy-client@main
 ```
 
 ---

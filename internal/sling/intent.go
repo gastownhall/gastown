@@ -11,7 +11,7 @@ package sling
 import (
 	"strings"
 
-	"github.com/steveyegge/gastown/internal/scheduler/capacity"
+	"github.com/jonbaldie/gastown/internal/scheduler/capacity"
 )
 
 // Intent is complete Sling intent. Every field that scheduling persists and

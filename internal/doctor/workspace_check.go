@@ -6,7 +6,7 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/steveyegge/gastown/internal/atomicfile"
+	"github.com/jonbaldie/gastown/internal/atomicfile"
 )
 
 // TownConfigExistsCheck verifies mayor/town.json exists.

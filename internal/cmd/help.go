@@ -5,8 +5,8 @@ import (
 	"regexp"
 	"strings"
 
+	"github.com/jonbaldie/gastown/internal/ui"
 	"github.com/spf13/cobra"
-	"github.com/steveyegge/gastown/internal/ui"
 )
 
 // colorizedHelpFunc wraps Cobra's default help with semantic coloring.

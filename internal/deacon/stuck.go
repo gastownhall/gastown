@@ -9,7 +9,7 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/steveyegge/gastown/internal/config"
+	"github.com/jonbaldie/gastown/internal/config"
 )
 
 // Default parameters for stuck-session detection.
@@ -159,9 +159,9 @@ type HealthCheckResult struct {
 
 // Common errors for stuck-session detection.
 var (
-	ErrAgentInCooldown  = errors.New("agent is in cooldown period after recent force-kill")
-	ErrAgentNotFound    = errors.New("agent not found or session doesn't exist")
-	ErrAgentResponsive  = errors.New("agent is responsive, no action needed")
+	ErrAgentInCooldown = errors.New("agent is in cooldown period after recent force-kill")
+	ErrAgentNotFound   = errors.New("agent not found or session doesn't exist")
+	ErrAgentResponsive = errors.New("agent is responsive, no action needed")
 )
 
 // RecordPing records that a health check ping was sent to an agent.

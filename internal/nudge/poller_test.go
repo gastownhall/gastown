@@ -8,7 +8,7 @@ import (
 	"strconv"
 	"testing"
 
-	"github.com/steveyegge/gastown/internal/util"
+	"github.com/jonbaldie/gastown/internal/util"
 )
 
 func TestPollerPidFile(t *testing.T) {

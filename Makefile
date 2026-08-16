@@ -23,10 +23,9 @@ COMMIT := $(shell git rev-parse --short HEAD 2>/dev/null || echo "unknown")
 BUILD_TIME := $(shell date -u +"%Y-%m-%dT%H:%M:%SZ")
 
 LDFLAGS := -s -w \
-           -X github.com/steveyegge/gastown/internal/cmd.Version=$(VERSION) \
-           -X github.com/steveyegge/gastown/internal/cmd.Commit=$(COMMIT) \
-           -X github.com/steveyegge/gastown/internal/cmd.BuildTime=$(BUILD_TIME) \
-           -X github.com/steveyegge/gastown/internal/cmd.BuiltProperly=1
+           -X github.com/jonbaldie/gastown/internal/cmd.Version=$(VERSION) \
+           -X github.com/jonbaldie/gastown/internal/cmd.Commit=$(COMMIT) \
+           -X github.com/jonbaldie/gastown/internal/cmd.BuildTime=$(BUILD_TIME)
 
 # ICU4C detection for macOS (required by go-icu-regex transitive dependency).
 # Homebrew installs icu4c as a keg-only package, so headers/libs aren't on the
@@ -121,10 +120,10 @@ install: check-up-to-date build
 	@mkdir -p $(INSTALL_DIR)
 	@rm -f $(INSTALL_DIR)/$(BINARY)
 	@cp $(BUILD_DIR)/$(BINARY) $(INSTALL_DIR)/$(BINARY)
-	@# Nuke any stale go-install binaries that shadow the canonical location
+	@# Remove shadowed GOPATH/bin copies so INSTALL_DIR wins PATH.
 	@for bad in $(HOME)/go/bin/$(BINARY) $(HOME)/bin/$(BINARY); do \
 		if [ -f "$$bad" ]; then \
-			echo "Removing stale $$bad (use make install, not go install)"; \
+			echo "Removing shadowed $$bad so $(INSTALL_DIR)/$(BINARY) is used"; \
 			rm -f "$$bad"; \
 		fi; \
 	done
@@ -153,10 +152,10 @@ safe-install: check-up-to-date check-forward-only build
 	@# Atomic-ish replace: copy to temp then move (move is atomic on same filesystem)
 	@cp $(BUILD_DIR)/$(BINARY) $(INSTALL_DIR)/$(BINARY).new
 	@mv $(INSTALL_DIR)/$(BINARY).new $(INSTALL_DIR)/$(BINARY)
-	@# Nuke any stale go-install binaries that shadow the canonical location
+	@# Remove shadowed GOPATH/bin copies so INSTALL_DIR wins PATH.
 	@for bad in $(HOME)/go/bin/$(BINARY) $(HOME)/bin/$(BINARY); do \
 		if [ -f "$$bad" ]; then \
-			echo "Removing stale $$bad (use make install, not go install)"; \
+			echo "Removing shadowed $$bad so $(INSTALL_DIR)/$(BINARY) is used"; \
 			rm -f "$$bad"; \
 		fi; \
 	done

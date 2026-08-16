@@ -5,7 +5,7 @@ package cmd
 import (
 	"fmt"
 
-	"github.com/steveyegge/gastown/internal/style"
+	"github.com/jonbaldie/gastown/internal/style"
 )
 
 // cleanupOrphanedClaude is a Windows stub.

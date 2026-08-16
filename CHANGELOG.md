@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **Home install path is jonbaldie/gastown.** `CGO_ENABLED=0 go install github.com/jonbaldie/gastown/cmd/gt@main` is the global install command. The Go module path is now `github.com/jonbaldie/gastown`. Raw `go install` binaries on macOS no longer exit before running. Use `@main` until a post-migration release tag exists.
+
 ### Added
 
 - **Mixed agent types** — `gt config mix` assigns different runtimes to

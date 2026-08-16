@@ -3,19 +3,19 @@ package quota
 import (
 	"fmt"
 
-	"github.com/steveyegge/gastown/internal/config"
-	"github.com/steveyegge/gastown/internal/util"
+	"github.com/jonbaldie/gastown/internal/config"
+	"github.com/jonbaldie/gastown/internal/util"
 )
 
 // RotateResult holds the result of rotating a single session.
 type RotateResult struct {
-	Session        string `json:"session"`                  // tmux session name
-	OldAccount     string `json:"old_account,omitempty"`    // previous account handle
-	NewAccount     string `json:"new_account,omitempty"`    // new account handle
-	Rotated        bool   `json:"rotated"`                  // whether rotation occurred
+	Session        string `json:"session"`                   // tmux session name
+	OldAccount     string `json:"old_account,omitempty"`     // previous account handle
+	NewAccount     string `json:"new_account,omitempty"`     // new account handle
+	Rotated        bool   `json:"rotated"`                   // whether rotation occurred
 	ResumedSession string `json:"resumed_session,omitempty"` // session ID that was resumed (empty if fresh start)
 	KeychainSwap   bool   `json:"keychain_swap,omitempty"`   // whether keychain was swapped
-	Error          string `json:"error,omitempty"`          // error message if rotation failed
+	Error          string `json:"error,omitempty"`           // error message if rotation failed
 }
 
 // RotatePlan describes what the rotator will do.

@@ -7,8 +7,8 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/steveyegge/gastown/internal/testutil"
-	"github.com/steveyegge/gastown/internal/tmux"
+	"github.com/jonbaldie/gastown/internal/testutil"
+	"github.com/jonbaldie/gastown/internal/tmux"
 )
 
 func TestMain(m *testing.M) {

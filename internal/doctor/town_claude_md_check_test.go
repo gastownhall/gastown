@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/steveyegge/gastown/internal/templates"
+	"github.com/jonbaldie/gastown/internal/templates"
 )
 
 func TestTownCLAUDEmdCheck_Missing(t *testing.T) {

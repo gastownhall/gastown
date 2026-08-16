@@ -9,7 +9,7 @@ import (
 	"os/exec"
 	"time"
 
-	"github.com/steveyegge/gastown/internal/events"
+	"github.com/jonbaldie/gastown/internal/events"
 )
 
 // Worker is the town module for session talk. Nudge, prime, mail, sling,

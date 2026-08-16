@@ -3,8 +3,8 @@ package sling
 import (
 	"testing"
 
-	"github.com/steveyegge/gastown/internal/beads"
-	"github.com/steveyegge/gastown/internal/scheduler/capacity"
+	"github.com/jonbaldie/gastown/internal/beads"
+	"github.com/jonbaldie/gastown/internal/scheduler/capacity"
 )
 
 func TestFromContextPreservesCompleteIntent(t *testing.T) {

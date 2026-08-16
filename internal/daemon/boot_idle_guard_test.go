@@ -12,9 +12,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jonbaldie/gastown/internal/deacon"
+	"github.com/jonbaldie/gastown/internal/tmux"
 	beadsdk "github.com/steveyegge/beads"
-	"github.com/steveyegge/gastown/internal/deacon"
-	"github.com/steveyegge/gastown/internal/tmux"
 )
 
 // searchStorage is a minimal Storage stub for hasActiveWork tests.
@@ -111,7 +111,7 @@ func TestHasActiveWork(t *testing.T) {
 		{
 			name: "active work in second store only",
 			stores: map[string]beadsdk.Storage{
-				"hq":  &searchStorage{results: map[string][]*beadsdk.Issue{}},
+				"hq": &searchStorage{results: map[string][]*beadsdk.Issue{}},
 				"rig": &searchStorage{results: map[string][]*beadsdk.Issue{
 					"in_progress": {{ID: "nw-xyz"}},
 				}},

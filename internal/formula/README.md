@@ -15,7 +15,7 @@ The formula package parses and validates structured workflow definitions, enabli
 ## Installation
 
 ```go
-import "github.com/steveyegge/gastown/internal/formula"
+import "github.com/jonbaldie/gastown/internal/formula"
 ```
 
 ## Quick Start

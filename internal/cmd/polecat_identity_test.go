@@ -4,7 +4,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/steveyegge/gastown/internal/style"
+	"github.com/jonbaldie/gastown/internal/style"
 )
 
 func TestExtractWorkType(t *testing.T) {
@@ -208,4 +208,3 @@ func TestFormatCountStyled(t *testing.T) {
 		t.Errorf("formatCountStyled(42) = %q, does not contain '42'", got)
 	}
 }
-

@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/steveyegge/gastown/internal/skills"
+	"github.com/jonbaldie/gastown/internal/skills"
 )
 
 // SkillsCheck validates that town-level mattpocock skills are provisioned.

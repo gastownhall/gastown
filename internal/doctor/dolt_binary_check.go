@@ -3,7 +3,7 @@ package doctor
 import (
 	"fmt"
 
-	"github.com/steveyegge/gastown/internal/deps"
+	"github.com/jonbaldie/gastown/internal/deps"
 )
 
 // DoltBinaryCheck verifies that the dolt binary is installed, accessible in PATH,
@@ -38,8 +38,8 @@ func (c *DoltBinaryCheck) Run(ctx *CheckContext) *CheckResult {
 
 	case deps.DoltNotFound:
 		return &CheckResult{
-			Name:   c.Name(),
-			Status: StatusError,
+			Name:    c.Name(),
+			Status:  StatusError,
 			Message: "dolt not found in PATH",
 			Details: []string{
 				"Dolt is required for the beads storage backend",
@@ -49,8 +49,8 @@ func (c *DoltBinaryCheck) Run(ctx *CheckContext) *CheckResult {
 
 	case deps.DoltTooOld:
 		return &CheckResult{
-			Name:   c.Name(),
-			Status: StatusError,
+			Name:    c.Name(),
+			Status:  StatusError,
 			Message: fmt.Sprintf("dolt %s is too old (minimum: %s)", version, deps.MinDoltVersion),
 			Details: []string{
 				fmt.Sprintf("Installed version %s does not meet the minimum requirement of %s", version, deps.MinDoltVersion),
@@ -60,8 +60,8 @@ func (c *DoltBinaryCheck) Run(ctx *CheckContext) *CheckResult {
 
 	case deps.DoltExecFailed:
 		return &CheckResult{
-			Name:   c.Name(),
-			Status: StatusError,
+			Name:    c.Name(),
+			Status:  StatusError,
 			Message: fmt.Sprintf("dolt found but 'dolt version' failed: %s", detail),
 			Details: []string{
 				"The dolt binary exists but could not report its version",
@@ -71,8 +71,8 @@ func (c *DoltBinaryCheck) Run(ctx *CheckContext) *CheckResult {
 
 	case deps.DoltUnknown:
 		return &CheckResult{
-			Name:   c.Name(),
-			Status: StatusWarning,
+			Name:    c.Name(),
+			Status:  StatusWarning,
 			Message: fmt.Sprintf("dolt found but version could not be parsed: %s", detail),
 			FixHint: fmt.Sprintf("Reinstall dolt: %s", deps.DoltInstallURL),
 		}
