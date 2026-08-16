@@ -15,7 +15,6 @@ import (
 	"github.com/jonbaldie/gastown/internal/session"
 	"github.com/jonbaldie/gastown/internal/templates"
 	"github.com/jonbaldie/gastown/internal/tmux"
-	"github.com/jonbaldie/gastown/internal/worker"
 	"github.com/jonbaldie/gastown/internal/workspace"
 )
 
@@ -45,9 +44,16 @@ type MayorStatus struct {
 	Running bool // Deprecated: use Active
 }
 
+// tmuxOps is the tmux seam for mayor start and stop. Production uses *tmux.Tmux.
+type tmuxOps interface {
+	session.TmuxOps
+	GetSessionInfo(name string) (*tmux.SessionInfo, error)
+}
+
 // Manager handles mayor lifecycle operations.
 type Manager struct {
 	townRoot string
+	tmux     tmuxOps
 }
 
 // CombinedStatus returns the combined status of the mayor across all modes.
@@ -92,6 +98,7 @@ func (m *Manager) IsActive() (bool, Mode) {
 func NewManager(townRoot string) *Manager {
 	return &Manager{
 		townRoot: townRoot,
+		tmux:     tmux.NewTmux(),
 	}
 }
 
@@ -134,12 +141,12 @@ func (m *Manager) StartTMUX(agentOverride string) error {
 		return ErrAlreadyRunning
 	}
 
-	t := tmux.NewTmux()
+	t := m.tmux
 	sessionID := m.SessionName()
 
 	// Kill any existing zombie session (tmux alive but agent dead).
 	// Returns error if session is healthy and already running.
-	_, err := session.KillExistingSession(t, sessionID, true)
+	_, err := session.KillExistingSession(t, m.townRoot, sessionID, true)
 	if err != nil {
 		return ErrAlreadyRunning
 	}
@@ -160,10 +167,9 @@ func (m *Manager) StartTMUX(agentOverride string) error {
 
 	// Use unified session lifecycle for config → settings → command → create → env → theme → wait.
 	theme := tmux.ResolveSessionTheme(m.townRoot, "", "mayor", "")
-	_, err = session.StartSession(t, session.SessionConfig{
+	_, err = session.StartSession(t, "mayor", session.Work{
 		SessionID:        sessionID,
 		WorkDir:          mayorDir,
-		Role:             "mayor",
 		TownRoot:         m.townRoot,
 		AgentName:        "Mayor",
 		RuntimeConfigDir: claudeConfigDir,
@@ -174,10 +180,6 @@ func (m *Manager) StartTMUX(agentOverride string) error {
 		},
 		AgentOverride: agentOverride,
 		Theme:         theme,
-		WaitForAgent:  true,
-		WaitFatal:     true,
-		AutoRespawn:   true,
-		AcceptBypass:  true,
 	})
 	if err != nil {
 		return err
@@ -328,42 +330,21 @@ func (m *Manager) StartACP(ctx context.Context, agentOverride, rigName string) e
 
 // Stop stops the mayor session.
 func (m *Manager) Stop() error {
-	t := tmux.NewTmux()
-	sessionID := m.SessionName()
-
-	// Check if session exists
-	running, err := t.HasSession(sessionID)
-	if err != nil {
-		return fmt.Errorf("checking session: %w", err)
-	}
-	if !running {
+	err := session.StopSession(m.tmux, m.townRoot, m.SessionName(), true)
+	if errors.Is(err, session.ErrNotFound) {
 		return ErrNotRunning
 	}
-
-	// Try graceful shutdown first (best-effort interrupt)
-	_ = t.SendKeysRaw(sessionID, "C-c")
-	time.Sleep(100 * time.Millisecond)
-
-	// Kill the session and all its processes
-	if err := t.KillSessionWithProcesses(sessionID); err != nil {
-		return fmt.Errorf("killing session: %w", err)
-	}
-	if err := worker.MarkSessionStopped(m.townRoot, sessionID); err != nil {
-		return fmt.Errorf("recording stopped worker run: %w", err)
-	}
-
-	return nil
+	return err
 }
 
 // IsRunning checks if the mayor session is active in TMUX mode.
 func (m *Manager) IsRunning() (bool, error) {
-	t := tmux.NewTmux()
-	return t.HasSession(m.SessionName())
+	return m.tmux.HasSession(m.SessionName())
 }
 
 // Status returns information about the mayor session.
 func (m *Manager) Status() (*tmux.SessionInfo, error) {
-	t := tmux.NewTmux()
+	t := m.tmux
 	sessionID := m.SessionName()
 
 	running, err := t.HasSession(sessionID)

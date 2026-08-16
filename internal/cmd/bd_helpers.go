@@ -167,11 +167,22 @@ func (b *bdCmd) buildEnv() []string {
 // This allows callers to further customize the command before execution.
 func (b *bdCmd) Build() *exec.Cmd {
 	args := b.resolvedArgs()
-	cmd := exec.Command("bd", args...)
-	cmd.Dir = b.dir
-	cmd.Env = b.buildEnv()
+	beadsDir := b.beadsDir
+	if beadsDir == "" && b.dir != "" && !b.routing {
+		beadsDir = beads.ResolveBeadsDir(b.dir)
+	}
+	mode := beads.SubprocessModeForArgs(args)
+	if beadsDir != "" {
+		if beads.ArgsAreReadOnly(args) && !b.autoCommit {
+			mode = beads.ReadOnlyPinned
+		} else {
+			mode = beads.MutationPinned
+		}
+	}
+	cmd := beads.Command(b.dir, beadsDir, mode, args...)
 	cmd.Stdin = b.stdin
 	cmd.Stderr = b.stderr
+	cmd.Env = b.buildEnv()
 	return cmd
 }
 
@@ -186,12 +197,23 @@ func resolveBdCmdTimeout() time.Duration {
 
 func (b *bdCmd) buildContextCommand(ctx context.Context) *exec.Cmd {
 	args := b.resolvedArgs()
-	cmd := exec.CommandContext(ctx, "bd", args...)
+	beadsDir := b.beadsDir
+	if beadsDir == "" && b.dir != "" && !b.routing {
+		beadsDir = beads.ResolveBeadsDir(b.dir)
+	}
+	mode := beads.SubprocessModeForArgs(args)
+	if beadsDir != "" {
+		if beads.ArgsAreReadOnly(args) && !b.autoCommit {
+			mode = beads.ReadOnlyPinned
+		} else {
+			mode = beads.MutationPinned
+		}
+	}
+	cmd := beads.CommandContext(ctx, b.dir, beadsDir, mode, args...)
 	util.SetProcessGroup(cmd)
-	cmd.Dir = b.dir
-	cmd.Env = b.buildEnv()
 	cmd.Stdin = b.stdin
 	cmd.Stderr = b.stderr
+	cmd.Env = b.buildEnv()
 	return cmd
 }
 
@@ -281,12 +303,8 @@ func (b *bdCmd) CombinedOutput() ([]byte, error) {
 	deadline := resolveBdCmdTimeout()
 	ctx, cancel := context.WithTimeout(context.Background(), deadline)
 	defer cancel()
-	args := b.resolvedArgs()
-	cmd := exec.CommandContext(ctx, "bd", args...)
-	util.SetProcessGroup(cmd)
-	cmd.Dir = b.dir
-	cmd.Env = b.buildEnv()
-	cmd.Stdin = b.stdin
+	cmd := b.buildContextCommand(ctx)
+	cmd.Stderr = nil
 	out, err := cmd.CombinedOutput()
 	return out, b.wrapCommandError(ctx, err, deadline)
 }

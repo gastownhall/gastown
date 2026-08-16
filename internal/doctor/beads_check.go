@@ -293,7 +293,7 @@ type dbPrefixGetter interface {
 type realDBPrefixGetter struct{}
 
 func (r *realDBPrefixGetter) GetDBPrefix(rigPath string) (string, error) {
-	cmd := exec.Command("bd", "config", "get", "issue_prefix")
+	cmd := beads.Spawn("config", "get", "issue_prefix")
 	cmd.Dir = rigPath
 	beadsDir := beads.ResolveBeadsDir(rigPath)
 	cmd.Env = append(stripEnvPrefixes(os.Environ(), "BEADS_DIR=", "BEADS_DB=", "BEADS_DOLT_SERVER_DATABASE="), beadsCommandEnv(beadsDir)...)
@@ -492,7 +492,7 @@ func (c *DatabasePrefixCheck) Fix(ctx *CheckContext) error {
 		fmt.Fprintf(os.Stderr, "WARNING: database-prefix fix: %s: changing issue_prefix from %q to %q (per routes.jsonl)\n",
 			m.rigPath, m.dbPrefix, m.routesPrefix)
 
-		cmd := exec.Command("bd", "config", "set", "issue_prefix", m.routesPrefix)
+		cmd := beads.Spawn("config", "set", "issue_prefix", m.routesPrefix)
 		cmd.Dir = filepath.Join(ctx.TownRoot, m.rigPath)
 		beadsDir := beads.ResolveBeadsDir(cmd.Dir)
 		cmd.Env = append(stripEnvPrefixes(os.Environ(), "BEADS_DIR=", "BEADS_DB=", "BEADS_DOLT_SERVER_DATABASE="), beadsCommandEnv(beadsDir)...)

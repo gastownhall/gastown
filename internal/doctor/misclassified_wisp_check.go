@@ -3,7 +3,6 @@ package doctor
 import (
 	"encoding/csv"
 	"fmt"
-	"os/exec"
 	"path/filepath"
 	"strings"
 
@@ -115,7 +114,7 @@ func (c *CheckMisclassifiedWisps) Run(ctx *CheckContext) *CheckResult {
 // No heuristics — only the ephemeral flag matters.
 func (c *CheckMisclassifiedWisps) findMisplacedEphemeralsDolt(rigDir, rigName string) ([]misclassifiedWisp, int) {
 	issueQuery := `SELECT id, title FROM issues WHERE ephemeral = 1`
-	cmd := exec.Command("bd", "sql", "--csv", issueQuery) //nolint:gosec // G204: query is a constant
+	cmd := beads.Spawn("sql", "--csv", issueQuery) //nolint:gosec // G204: query is a constant
 	cmd.Dir = rigDir
 	issueOutput, err := cmd.CombinedOutput()
 	if err != nil {
@@ -298,7 +297,7 @@ func (c *CheckMisclassifiedWisps) purgeRigBatch(ctx *CheckContext, workDir, rigN
 // bdTableExistsDoctor checks if a table exists by attempting to query it.
 // Doctor-local wrapper (wisps_migrate.go has its own unexported copy).
 func bdTableExistsDoctor(workDir, tableName string) bool {
-	cmd := exec.Command("bd", "sql", fmt.Sprintf("SELECT 1 FROM `%s` LIMIT 1", tableName)) //nolint:gosec // G204: tableName is hardcoded
+	cmd := beads.Spawn("sql", fmt.Sprintf("SELECT 1 FROM `%s` LIMIT 1", tableName)) //nolint:gosec // G204: tableName is hardcoded
 	cmd.Dir = workDir
 	err := cmd.Run()
 	return err == nil

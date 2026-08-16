@@ -645,7 +645,7 @@ func (c *CustomTypesCheck) Run(ctx *CheckContext) *CheckResult {
 
 	// Get current custom types configuration
 	// Use Output() not CombinedOutput() to avoid capturing bd's stderr messages
-	cmd := exec.Command("bd", "config", "get", "types.custom")
+	cmd := beads.Spawn("config", "get", "types.custom")
 	cmd.Dir = beadsDir
 	cmd.Env = doctorConfigEnv(beadsDir)
 	output, err := cmd.Output()
@@ -683,7 +683,7 @@ func (c *CustomTypesCheck) Run(ctx *CheckContext) *CheckResult {
 	}
 
 	if len(missing) == 0 {
-		infraCmd := exec.Command("bd", "config", "get", "types.infra")
+		infraCmd := beads.Spawn("config", "get", "types.infra")
 		infraCmd.Dir = beadsDir
 		infraCmd.Env = doctorConfigEnv(beadsDir)
 		infraOutput, infraErr := infraCmd.Output()
@@ -741,7 +741,7 @@ func parseConfigOutput(output []byte) string {
 
 // Fix registers the missing custom types.
 func (c *CustomTypesCheck) Fix(ctx *CheckContext) error {
-	getCmd := exec.Command("bd", "config", "get", "types.custom")
+	getCmd := beads.Spawn("config", "get", "types.custom")
 	getCmd.Dir = c.targetBeadsDir
 	getCmd.Env = doctorConfigEnv(c.targetBeadsDir)
 	existingOutput, _ := getCmd.Output()
@@ -765,14 +765,14 @@ func (c *CustomTypesCheck) Fix(ctx *CheckContext) error {
 	}
 	sort.Strings(merged)
 
-	cmd := exec.Command("bd", "config", "set", "types.custom", strings.Join(merged, ","))
+	cmd := beads.Spawn("config", "set", "types.custom", strings.Join(merged, ","))
 	cmd.Dir = c.targetBeadsDir
 	cmd.Env = doctorConfigEnv(c.targetBeadsDir)
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("bd config set types.custom: %s", strings.TrimSpace(string(output)))
 	}
-	infraCmd := exec.Command("bd", "config", "set", "types.infra", constants.BeadsInfraTypes)
+	infraCmd := beads.Spawn("config", "set", "types.infra", constants.BeadsInfraTypes)
 	infraCmd.Dir = c.targetBeadsDir
 	infraCmd.Env = doctorConfigEnv(c.targetBeadsDir)
 	infraOutput, err := infraCmd.CombinedOutput()
@@ -822,7 +822,7 @@ func (c *CustomStatusesCheck) Run(ctx *CheckContext) *CheckResult {
 	}
 
 	// Get current custom statuses configuration
-	cmd := exec.Command("bd", "config", "get", "status.custom")
+	cmd := beads.Spawn("config", "get", "status.custom")
 	cmd.Dir = beadsDir
 	cmd.Env = doctorConfigEnv(beadsDir)
 	output, err := cmd.Output()
@@ -883,7 +883,7 @@ func (c *CustomStatusesCheck) Run(ctx *CheckContext) *CheckResult {
 // Fix registers the missing custom statuses by merging with existing ones.
 func (c *CustomStatusesCheck) Fix(ctx *CheckContext) error {
 	// Read existing statuses
-	getCmd := exec.Command("bd", "config", "get", "status.custom")
+	getCmd := beads.Spawn("config", "get", "status.custom")
 	getCmd.Dir = c.targetBeadsDir
 	getCmd.Env = doctorConfigEnv(c.targetBeadsDir)
 	existingOutput, _ := getCmd.Output()
@@ -908,7 +908,7 @@ func (c *CustomStatusesCheck) Fix(ctx *CheckContext) error {
 	}
 	sort.Strings(merged)
 
-	cmd := exec.Command("bd", "config", "set", "status.custom", strings.Join(merged, ","))
+	cmd := beads.Spawn("config", "set", "status.custom", strings.Join(merged, ","))
 	cmd.Dir = c.targetBeadsDir
 	cmd.Env = doctorConfigEnv(c.targetBeadsDir)
 	output, err := cmd.CombinedOutput()

@@ -869,7 +869,7 @@ func (c *BeadsConfigValidCheck) Run(ctx *CheckContext) *CheckResult {
 	}
 
 	// Check if bd command works
-	cmd := exec.Command("bd", "stats", "--json")
+	cmd := beads.Spawn("stats", "--json")
 	cmd.Dir = c.rigPath
 	if err := cmd.Run(); err != nil {
 		return &CheckResult{
@@ -1066,7 +1066,7 @@ func (c *BeadsRedirectCheck) Fix(ctx *CheckContext) error {
 			"BEADS_DIR="+rigBeadsDir,
 			"BEADS_DOLT_SERVER_DATABASE="+ctx.RigName,
 		)
-		cmd := exec.Command("bd", initArgs...)
+		cmd := beads.Spawn(initArgs...)
 		cmd.Dir = rigPath
 		cmd.Env = bdEnv
 		if output, err := cmd.CombinedOutput(); err != nil {
@@ -1083,7 +1083,7 @@ func (c *BeadsRedirectCheck) Fix(ctx *CheckContext) error {
 				{"types.custom", constants.BeadsCustomTypes},
 				{"types.infra", constants.BeadsInfraTypes},
 			} {
-				configCmd := exec.Command("bd", "config", "set", cfg.key, cfg.value)
+				configCmd := beads.Spawn("config", "set", cfg.key, cfg.value)
 				configCmd.Dir = rigPath
 				configCmd.Env = bdEnv
 				_, _ = configCmd.CombinedOutput() // Ignore errors - older beads don't need this

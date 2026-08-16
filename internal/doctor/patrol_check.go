@@ -4,8 +4,8 @@ import (
 	"encoding/csv"
 	"encoding/json"
 	"fmt"
+	"github.com/jonbaldie/gastown/internal/beads"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
@@ -307,7 +307,7 @@ const stuckWispsQuery = `SELECT id, title, status, updated_at FROM issues WHERE 
 // checkStuckWispsDolt queries the Dolt database for stuck wisps using bd sql.
 // Returns an error if the query fails (caller should fall back to JSONL).
 func (c *PatrolNotStuckCheck) checkStuckWispsDolt(rigPath string, rigName string) ([]string, error) {
-	cmd := exec.Command("bd", "sql", "--csv", stuckWispsQuery) //nolint:gosec // G204: query is a constant
+	cmd := beads.Spawn("sql", "--csv", stuckWispsQuery) //nolint:gosec // G204: query is a constant
 	cmd.Dir = rigPath
 	output, err := cmd.CombinedOutput()
 	if err != nil {

@@ -28,6 +28,7 @@ func TestNudgeSubmit_NamedEnterNoop_LiteralCRRequired(t *testing.T) {
 
 	stub := tmuxtest.InstallStub(t)
 	tm := NewTmuxWithSocketAndBinary(socket, stub)
+	tm.SetCapabilities(Capabilities{LiteralCR: true})
 
 	msg := "hello-from-4666"
 	nudgeErr := tm.NudgeSessionWithOpts(session, msg, NudgeOpts{})
@@ -64,6 +65,7 @@ func TestStartupDialogSubmit_NamedEnterNoop_LiteralCRRequired(t *testing.T) {
 
 	stub := tmuxtest.InstallStub(t)
 	tm := NewTmuxWithSocketAndBinary(socket, stub)
+	tm.SetCapabilities(Capabilities{LiteralCR: true})
 	if err := tm.AcceptWorkspaceTrustDialog(session); err != nil {
 		t.Fatalf("AcceptWorkspaceTrustDialog: %v", err)
 	}
@@ -95,6 +97,7 @@ func TestNudgeSendKeys_DoesNotPassUnknown37bFlags(t *testing.T) {
 
 	stub := tmuxtest.InstallStub(t)
 	tm := NewTmuxWithSocketAndBinary(socket, stub)
+	tm.SetCapabilities(Capabilities{LiteralCR: true})
 	nudgeErr := tm.NudgeSessionWithOpts(session, "flag-probe", NudgeOpts{})
 	if nudgeErr != nil && sendKeysUsedUnknown37bFlag(nudgeErr.Error()) {
 		t.Fatalf("production send-keys used a tmux 3.7b-unknown flag: %v", nudgeErr)

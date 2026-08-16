@@ -425,14 +425,14 @@ func TestRigAddCreatesCorrectStructure(t *testing.T) {
 	}
 
 	// NOTE: Most agent settings are installed at startup time, not by gt rig add.
-	// Exception: polecats/.claude/ is scaffolded by gt rig add so polecat sessions
-	// don't fail on startup due to missing hooks (gt-ke4mj).
+	// Exception: rig.Provision on the refinery worktree installs parent-dir
+	// settings as part of the shared workspace setup. Witness and crew still
+	// wait until their own start/add paths.
 	parentSettingsThatShouldNotExist := []struct {
 		path string
 		desc string
 	}{
 		{filepath.Join(rigPath, "witness", ".claude", "settings.json"), "witness/.claude/settings.json"},
-		{filepath.Join(rigPath, "refinery", ".claude", "settings.json"), "refinery/.claude/settings.json"},
 		{filepath.Join(rigPath, "crew", ".claude", "settings.json"), "crew/.claude/settings.json"},
 	}
 
@@ -440,6 +440,11 @@ func TestRigAddCreatesCorrectStructure(t *testing.T) {
 		if _, err := os.Stat(s.path); err == nil {
 			t.Errorf("%s should NOT exist after gt rig add (agents install settings at startup)", s.desc)
 		}
+	}
+
+	refinerySettings := filepath.Join(rigPath, "refinery", ".claude", "settings.json")
+	if _, err := os.Stat(refinerySettings); os.IsNotExist(err) {
+		t.Errorf("refinery/.claude/settings.json should exist after gt rig add (rig.Provision)")
 	}
 
 	// Polecats settings should be scaffolded by gt rig add (gt-ke4mj).

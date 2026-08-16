@@ -7,8 +7,6 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
-
-	agentconfig "github.com/jonbaldie/gastown/internal/config"
 )
 
 var envKeysCaseInsensitive = runtime.GOOS == "windows"
@@ -348,8 +346,6 @@ func envKeyHasPrefix(keyName, prefix string) bool {
 func addResolvedDoltConnectionEnv(env []string, beadsDir string) []string {
 	gtHost := envValue(env, "GT_DOLT_HOST")
 	gtPort := envValue(env, "GT_DOLT_PORT")
-	// GT_DOLT_DATA is intentionally not translated to BEADS_DOLT_DATA_DIR here:
-	// data-dir env selects direct-mode storage and can override metadata routing.
 	if gtHost != "" {
 		env = StripEnvKey(env, "BEADS_DOLT_SERVER_HOST")
 		env = append(env, "BEADS_DOLT_SERVER_HOST="+gtHost)
@@ -362,30 +358,13 @@ func addResolvedDoltConnectionEnv(env []string, beadsDir string) []string {
 	if beadsDir == "" {
 		return env
 	}
-	townRoot := FindTownRoot(filepath.Dir(beadsDir))
-	if townRoot == "" {
-		return env
+	host, port := NewAuthorityFromBeadsDir(beadsDir).DoltEndpoint()
+	if envValue(env, "BEADS_DOLT_SERVER_HOST") == "" && host != "" {
+		env = append(env, "BEADS_DOLT_SERVER_HOST="+host)
 	}
-	managedHost, managedPort, hasManagedConfig := agentconfig.ManagedDoltEndpoint(townRoot)
-	if envValue(env, "BEADS_DOLT_SERVER_HOST") == "" {
-		if hasManagedConfig {
-			if managedHost != "" {
-				env = append(env, "BEADS_DOLT_SERVER_HOST="+managedHost)
-			}
-		} else if host := agentconfig.ResolveDoltHost(townRoot); host != "" {
-			env = append(env, "BEADS_DOLT_SERVER_HOST="+host)
-		}
-	}
-	if envValue(env, "BEADS_DOLT_SERVER_PORT") == "" && envValue(env, "BEADS_DOLT_PORT") == "" {
-		if hasManagedConfig {
-			if managedPort > 0 {
-				portStr := strconv.Itoa(managedPort)
-				env = append(env, "BEADS_DOLT_SERVER_PORT="+portStr, "BEADS_DOLT_PORT="+portStr)
-			}
-		} else if port := agentconfig.ResolveDoltPort(townRoot); port > 0 {
-			portStr := strconv.Itoa(port)
-			env = append(env, "BEADS_DOLT_SERVER_PORT="+portStr, "BEADS_DOLT_PORT="+portStr)
-		}
+	if envValue(env, "BEADS_DOLT_SERVER_PORT") == "" && envValue(env, "BEADS_DOLT_PORT") == "" && port > 0 {
+		portStr := strconv.Itoa(port)
+		env = append(env, "BEADS_DOLT_SERVER_PORT="+portStr, "BEADS_DOLT_PORT="+portStr)
 	}
 	return env
 }

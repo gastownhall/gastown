@@ -2,10 +2,13 @@ package deacon
 
 import (
 	"errors"
+	"os"
 	"path/filepath"
 	"testing"
 	"time"
 
+	"github.com/jonbaldie/gastown/internal/config"
+	"github.com/jonbaldie/gastown/internal/constants"
 	"github.com/jonbaldie/gastown/internal/tmux"
 )
 
@@ -60,11 +63,17 @@ func (m *mockTmux) WaitForCommand(_ string, _ []string, _ time.Duration) error {
 	return m.waitErr
 }
 
-func (m *mockTmux) SetAutoRespawnHook(_ string) error             { return nil }
-func (m *mockTmux) AcceptStartupDialogs(_ string) error           { return nil }
-func (m *mockTmux) AcceptWorkspaceTrustDialog(_ string) error     { return nil }
-func (m *mockTmux) AcceptBypassPermissionsWarning(_ string) error { return nil }
-func (m *mockTmux) SendKeysRaw(_, _ string) error                 { return m.sendKeysErr }
+func (m *mockTmux) GetPanePID(_ string) (string, error) { return "1", nil }
+func (m *mockTmux) CheckStartupBlocked(_ string) error  { return nil }
+func (m *mockTmux) WaitForRuntimeReady(_ string, _ *config.RuntimeConfig, _ time.Duration) error {
+	return nil
+}
+func (m *mockTmux) CheckSessionHealth(_ string, _ time.Duration) tmux.ZombieStatus {
+	return tmux.SessionHealthy
+}
+func (m *mockTmux) SetAutoRespawnHook(_ string) error   { return nil }
+func (m *mockTmux) AcceptStartupDialogs(_ string) error { return nil }
+func (m *mockTmux) SendKeysRaw(_, _ string) error       { return m.sendKeysErr }
 func (m *mockTmux) GetSessionInfo(_ string) (*tmux.SessionInfo, error) {
 	return m.sessionInfo, m.sessionInfoErr
 }
@@ -355,25 +364,22 @@ func TestStop_StopsNudgePoller(t *testing.T) {
 	mock := &mockTmux{
 		hasSessionResult: true,
 	}
-	m := newTestManager(t.TempDir(), mock)
-
-	var calls int
-	m.stopPoller = func(townRoot, session string) error {
-		calls++
-		if townRoot != m.townRoot {
-			t.Fatalf("townRoot = %q, want %q", townRoot, m.townRoot)
-		}
-		if session != m.SessionName() {
-			t.Fatalf("session = %q, want %q", session, m.SessionName())
-		}
-		return nil
+	townRoot := t.TempDir()
+	m := newTestManager(townRoot, mock)
+	pidDir := filepath.Join(townRoot, constants.DirRuntime, "nudge_poller")
+	if err := os.MkdirAll(pidDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	pidPath := filepath.Join(pidDir, m.SessionName()+".pid")
+	if err := os.WriteFile(pidPath, []byte("999999\n"), 0644); err != nil {
+		t.Fatal(err)
 	}
 
 	if err := m.Stop(); err != nil {
 		t.Fatalf("Stop() error = %v, want nil", err)
 	}
-	if calls != 1 {
-		t.Errorf("stopPoller calls = %d, want 1", calls)
+	if _, err := os.Stat(pidPath); !os.IsNotExist(err) {
+		t.Fatal("expected StopSession to remove the nudge poller pid file")
 	}
 }
 

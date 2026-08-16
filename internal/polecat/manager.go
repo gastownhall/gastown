@@ -23,7 +23,6 @@ import (
 	"github.com/jonbaldie/gastown/internal/doltserver"
 	"github.com/jonbaldie/gastown/internal/git"
 	"github.com/jonbaldie/gastown/internal/rig"
-	"github.com/jonbaldie/gastown/internal/runtime"
 	"github.com/jonbaldie/gastown/internal/session"
 	"github.com/jonbaldie/gastown/internal/style"
 	"github.com/jonbaldie/gastown/internal/telemetry"
@@ -823,32 +822,9 @@ func (m *Manager) addWithOptionsLocked(name string, opts AddOptions, polecatDir 
 		style.PrintWarning("could not provision polecat instruction pair: %v", err)
 	}
 
-	if err := m.setupSharedBeads(clonePath); err != nil {
+	if err := m.provisionWorktree(clonePath); err != nil {
 		cleanupOnError()
 		return nil, fmt.Errorf("setting up shared beads: %w (polecat cannot submit MRs without shared beads)", err)
-	}
-
-	if err := beads.ProvisionPrimeMDForWorktree(clonePath); err != nil {
-		style.PrintWarning("could not provision PRIME.md: %v", err)
-	}
-
-	if err := rig.CopyOverlay(m.rig.Path, clonePath); err != nil {
-		style.PrintWarning("could not copy overlay files: %v", err)
-	}
-
-	if err := rig.EnsureLocalExcludePatterns(clonePath); err != nil {
-		style.PrintWarning("could not update local git excludes: %v", err)
-	}
-
-	townRoot := filepath.Dir(m.rig.Path)
-	runtimeConfig := config.ResolveRoleAgentConfig("polecat", townRoot, m.rig.Path)
-	polecatSettingsDir := config.RoleSettingsDir("polecat", m.rig.Path)
-	if err := runtime.EnsureSettingsForRole(polecatSettingsDir, clonePath, "polecat", runtimeConfig); err != nil {
-		style.PrintWarning("could not install runtime settings: %v", err)
-	}
-
-	if err := rig.RunSetupHooks(m.rig.Path, clonePath); err != nil {
-		style.PrintWarning("could not run setup hooks: %v", err)
 	}
 	if err := m.runSetupCommand(clonePath); err != nil {
 		cleanupOnError()
@@ -1035,46 +1011,9 @@ func (m *Manager) AddWithOptions(name string, opts AddOptions) (_ *Polecat, retE
 	// This eliminates git sync overhead - all polecats share one database.
 	// Fatal: without shared beads, gt done writes MR beads to a local .beads/
 	// that the Refinery never reads, causing the merge queue to stay empty.
-	if err := m.setupSharedBeads(clonePath); err != nil {
+	if err := m.provisionWorktree(clonePath); err != nil {
 		cleanupOnError()
 		return nil, fmt.Errorf("setting up shared beads: %w (polecat cannot submit MRs without shared beads)", err)
-	}
-
-	// Provision PRIME.md with Gas Town context for this worker.
-	// This is the fallback if SessionStart hook fails - ensures polecats
-	// always have GUPP and essential Gas Town context.
-	if err := beads.ProvisionPrimeMDForWorktree(clonePath); err != nil {
-		// Non-fatal - polecat can still work via hook, warn but don't fail
-		style.PrintWarning("could not provision PRIME.md: %v", err)
-	}
-
-	// Copy overlay files from .runtime/overlay/ to polecat root.
-	// This allows services to have .env and other config files at their root.
-	if err := rig.CopyOverlay(m.rig.Path, clonePath); err != nil {
-		// Non-fatal - log warning but continue
-		style.PrintWarning("could not copy overlay files: %v", err)
-	}
-
-	// Keep worktree runtime ignores local so the tracked tree stays clean.
-	if err := rig.EnsureLocalExcludePatterns(clonePath); err != nil {
-		style.PrintWarning("could not update local git excludes: %v", err)
-	}
-
-	// Install runtime settings in the shared polecats parent directory.
-	// Settings are passed to Claude Code via --settings flag.
-	townRoot := filepath.Dir(m.rig.Path)
-	runtimeConfig := config.ResolveRoleAgentConfig("polecat", townRoot, m.rig.Path)
-	polecatSettingsDir := config.RoleSettingsDir("polecat", m.rig.Path)
-	if err := runtime.EnsureSettingsForRole(polecatSettingsDir, clonePath, "polecat", runtimeConfig); err != nil {
-		// Non-fatal - log warning but continue
-		style.PrintWarning("could not install runtime settings: %v", err)
-	}
-
-	// Run setup hooks from .runtime/setup-hooks/.
-	// These hooks can inject local git config, copy secrets, or perform other setup tasks.
-	if err := rig.RunSetupHooks(m.rig.Path, clonePath); err != nil {
-		// Non-fatal - log warning but continue
-		style.PrintWarning("could not run setup hooks: %v", err)
 	}
 	if err := m.runSetupCommand(clonePath); err != nil {
 		cleanupOnError()
@@ -1695,23 +1634,12 @@ func (m *Manager) RepairWorktreeWithOptions(name string, force bool, opts AddOpt
 	}
 
 	// Set up shared beads — fatal during repair too, same reason as spawn.
-	if err := m.setupSharedBeads(newClonePath); err != nil {
+	if err := m.provisionWorktree(newClonePath); err != nil {
 		_ = repoGit.WorktreeRemove(newClonePath, true)
 		_ = os.RemoveAll(newClonePath)
 		return nil, fmt.Errorf("setting up shared beads after repair: %w (polecat cannot submit MRs without shared beads)", err)
 	}
 
-	// Copy overlay files from .runtime/overlay/ to polecat root.
-	if err := rig.CopyOverlay(m.rig.Path, newClonePath); err != nil {
-		style.PrintWarning("could not copy overlay files: %v", err)
-	}
-
-	// Keep worktree runtime ignores local so the tracked tree stays clean.
-	if err := rig.EnsureLocalExcludePatterns(newClonePath); err != nil {
-		style.PrintWarning("could not update local git excludes: %v", err)
-	}
-
-	// NOTE: Slash commands inherited from town level - no per-workspace copies needed.
 	if err := m.runSetupCommand(newClonePath); err != nil {
 		_ = repoGit.WorktreeRemove(newClonePath, true)
 		_ = os.RemoveAll(newClonePath)
@@ -2884,17 +2812,15 @@ func isCurrentHookedIssueForAssignee(issue *beads.Issue, assignee string) bool {
 		issue.Assignee == assignee
 }
 
-// setupSharedBeads creates a redirect file so the polecat uses the rig's shared .beads database.
-// This eliminates the need for git sync between polecat clones - all polecats share one database.
-// Also propagates beads git config (role, issue_prefix) so bd commands work without warnings.
-func (m *Manager) setupSharedBeads(clonePath string) error {
-	townRoot := filepath.Dir(m.rig.Path)
-	if err := beads.SetupRedirect(townRoot, clonePath); err != nil {
+func (m *Manager) provisionWorktree(clonePath string) error {
+	if err := rig.Provision(m.rig.Path, clonePath, "polecat"); err != nil {
 		return err
 	}
+	return m.writeBeadsGitConfig(clonePath)
+}
 
-	// Propagate beads git config to the worktree so bd commands in polecat
-	// sessions don't warn about missing role/prefix.
+func (m *Manager) writeBeadsGitConfig(clonePath string) error {
+	townRoot := filepath.Dir(m.rig.Path)
 	prefix := beads.GetPrefixForRig(townRoot, m.rig.Name)
 	if prefix != "" {
 		cmd := exec.Command("git", "-C", clonePath, "config", "beads.issue-prefix", prefix)
@@ -2904,7 +2830,6 @@ func (m *Manager) setupSharedBeads(clonePath string) error {
 	cmd := exec.Command("git", "-C", clonePath, "config", "beads.role", "contributor")
 	util.SetDetachedProcessGroup(cmd)
 	_ = cmd.Run()
-
 	return nil
 }
 

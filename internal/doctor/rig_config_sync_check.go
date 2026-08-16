@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -437,7 +436,7 @@ func (c *RigConfigSyncCheck) Fix(ctx *CheckContext) error {
 		// Run bd init against the rig-name database, not the prefix-derived default.
 		doltCfg := doltserver.DefaultConfig(ctx.TownRoot)
 		destroyToken := fmt.Sprintf("DESTROY-%s", entry.BeadsConfig.Prefix)
-		cmd := exec.Command("bd", "init", "--prefix", entry.BeadsConfig.Prefix, "--database", rigName, "--server", "--server-port", strconv.Itoa(doltCfg.Port), "--force", "--destroy-token="+destroyToken)
+		cmd := beads.Spawn("init", "--prefix", entry.BeadsConfig.Prefix, "--database", rigName, "--server", "--server-port", strconv.Itoa(doltCfg.Port), "--force", "--destroy-token="+destroyToken)
 		cmd.Dir = cmdDir
 		cmd.Env = append(stripEnvPrefixes(os.Environ(), "BEADS_DIR=", "BEADS_DB=", "BEADS_DOLT_SERVER_DATABASE="),
 			"BEADS_DIR="+beadsDir,
@@ -540,7 +539,7 @@ func (c *RigConfigSyncCheck) Fix(ctx *CheckContext) error {
 
 		// Add status:docked label if the rig should be docked
 		rigBeadID := fmt.Sprintf("%s-rig-%s", info.prefix, info.rigName)
-		cmd := exec.Command("bd", "label", rigBeadID, "--add", "status:docked")
+		cmd := beads.Spawn("label", rigBeadID, "--add", "status:docked")
 		cmd.Dir = rigPath
 		cmd.Env = append(stripEnvPrefixes(os.Environ(), "BEADS_DIR="), "BEADS_DIR="+beadsDir)
 		_ = cmd.Run() // Best effort - ignore errors
@@ -569,7 +568,7 @@ func (c *RigConfigSyncCheck) doltDatabaseExists(ctx *CheckContext, dbName string
 // rigBeadExists checks if a rig identity bead exists.
 func (c *RigConfigSyncCheck) rigBeadExists(rigBeadID, rigPath, beadsDir string) bool {
 	// Try to show the bead using bd
-	cmd := exec.Command("bd", "show", rigBeadID, "--json")
+	cmd := beads.Spawn("show", rigBeadID, "--json")
 	cmd.Dir = rigPath
 	cmd.Env = append(stripEnvPrefixes(os.Environ(), "BEADS_DIR="), "BEADS_DIR="+beadsDir)
 	output, err := cmd.CombinedOutput()

@@ -2,11 +2,8 @@
 
 package cmd
 
-import "syscall"
+import "github.com/jonbaldie/gastown/internal/process"
 
 func processAlive(pid int) bool {
-	if pid <= 0 {
-		return false
-	}
-	return syscall.Kill(pid, 0) == nil
+	return process.Alive(pid)
 }

@@ -9,9 +9,8 @@ import (
 )
 
 func TestStartSession_RequiresSessionID(t *testing.T) {
-	_, err := StartSession(nil, SessionConfig{
+	_, err := StartSession(nil, "polecat", Work{
 		WorkDir: "/tmp",
-		Role:    "polecat",
 	})
 	if err == nil {
 		t.Fatal("expected error for missing SessionID")
@@ -22,9 +21,8 @@ func TestStartSession_RequiresSessionID(t *testing.T) {
 }
 
 func TestStartSession_RequiresWorkDir(t *testing.T) {
-	_, err := StartSession(nil, SessionConfig{
+	_, err := StartSession(nil, "polecat", Work{
 		SessionID: "gt-test",
-		Role:      "polecat",
 	})
 	if err == nil {
 		t.Fatal("expected error for missing WorkDir")
@@ -34,14 +32,26 @@ func TestStartSession_RequiresWorkDir(t *testing.T) {
 	}
 }
 
+func TestStartSession_RequiresRole(t *testing.T) {
+	_, err := StartSession(nil, "", Work{
+		SessionID: "gt-test",
+		WorkDir:   "/tmp",
+	})
+	if err == nil {
+		t.Fatal("expected error for missing Role")
+	}
+	if err.Error() != "Role is required" {
+		t.Errorf("unexpected error: %v", err)
+	}
+}
+
 func TestResolveRuntimeConfig_CrewUsesWorkerResolver(t *testing.T) {
-	cfg := SessionConfig{
-		Role:      "crew",
+	work := Work{
 		AgentName: "denali",
 		TownRoot:  t.TempDir(),
 		RigPath:   t.TempDir(),
 	}
-	rc, err := resolveRuntimeConfig(cfg)
+	rc, err := resolveRuntimeConfig("crew", work)
 	if err != nil {
 		t.Fatalf("resolveRuntimeConfig: %v", err)
 	}
@@ -51,14 +61,13 @@ func TestResolveRuntimeConfig_CrewUsesWorkerResolver(t *testing.T) {
 }
 
 func TestResolveRuntimeConfig_OverrideWinsOverCrewWorker(t *testing.T) {
-	cfg := SessionConfig{
-		Role:          "crew",
+	work := Work{
 		AgentName:     "denali",
 		TownRoot:      t.TempDir(),
 		RigPath:       t.TempDir(),
 		AgentOverride: "opencode",
 	}
-	rc, err := resolveRuntimeConfig(cfg)
+	rc, err := resolveRuntimeConfig("crew", work)
 	if err != nil {
 		t.Fatalf("resolveRuntimeConfig: %v", err)
 	}
@@ -66,15 +75,13 @@ func TestResolveRuntimeConfig_OverrideWinsOverCrewWorker(t *testing.T) {
 		t.Fatal("expected runtime config")
 	}
 	if rc.ResolvedAgent != "opencode" && rc.Command == "" {
-		// Override should resolve to the named agent, not the crew role default.
 		t.Fatalf("override was ignored: %+v", rc)
 	}
 }
 
 func TestBuildCommand_IncludesSessionIdentity(t *testing.T) {
-	cfg := SessionConfig{
+	work := Work{
 		SessionID: "gt-gastown-Toast",
-		Role:      "polecat",
 		RigName:   "gastown",
 		AgentName: "Toast",
 		TownRoot:  t.TempDir(),
@@ -84,7 +91,7 @@ func TestBuildCommand_IncludesSessionIdentity(t *testing.T) {
 			MolID: "gt-abc",
 		},
 	}
-	cmd, err := buildCommand(cfg, "test prompt")
+	cmd, err := buildCommand("polecat", work, "test prompt")
 	if err != nil {
 		t.Fatalf("buildCommand: %v", err)
 	}
@@ -101,14 +108,14 @@ func TestKillExistingSession_ErrSessionAliveSentinel(t *testing.T) {
 }
 
 func TestBuildPrompt_BeaconOnly(t *testing.T) {
-	cfg := SessionConfig{
+	work := Work{
 		Beacon: BeaconConfig{
 			Recipient: "boot",
 			Sender:    "daemon",
 			Topic:     "triage",
 		},
 	}
-	prompt := buildPrompt(cfg)
+	prompt := buildPrompt(work)
 	if prompt == "" {
 		t.Fatal("expected non-empty prompt")
 	}
@@ -118,7 +125,7 @@ func TestBuildPrompt_BeaconOnly(t *testing.T) {
 }
 
 func TestBuildPrompt_WithInstructions(t *testing.T) {
-	cfg := SessionConfig{
+	work := Work{
 		Beacon: BeaconConfig{
 			Recipient: "boot",
 			Sender:    "daemon",
@@ -126,7 +133,7 @@ func TestBuildPrompt_WithInstructions(t *testing.T) {
 		},
 		Instructions: "Run gt boot triage now.",
 	}
-	prompt := buildPrompt(cfg)
+	prompt := buildPrompt(work)
 	if !contains(prompt, "Run gt boot triage now.") {
 		t.Errorf("prompt should contain instructions: %s", prompt)
 	}
@@ -136,11 +143,10 @@ func TestBuildPrompt_WithInstructions(t *testing.T) {
 }
 
 func TestBuildCommand_DefaultAgent(t *testing.T) {
-	cfg := SessionConfig{
-		Role:     "boot",
+	work := Work{
 		TownRoot: "/tmp/town",
 	}
-	cmd, err := buildCommand(cfg, "test prompt")
+	cmd, err := buildCommand("boot", work, "test prompt")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -150,12 +156,11 @@ func TestBuildCommand_DefaultAgent(t *testing.T) {
 }
 
 func TestBuildCommand_WithAgentOverride(t *testing.T) {
-	cfg := SessionConfig{
-		Role:          "boot",
+	work := Work{
 		TownRoot:      "/tmp/town",
 		AgentOverride: "opencode",
 	}
-	cmd, err := buildCommand(cfg, "test prompt")
+	cmd, err := buildCommand("boot", work, "test prompt")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}

@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -8,6 +9,7 @@ import (
 	"time"
 
 	"github.com/jonbaldie/gastown/internal/beads"
+	"github.com/jonbaldie/gastown/internal/sling"
 	"github.com/jonbaldie/gastown/internal/style"
 	"github.com/jonbaldie/gastown/internal/workspace"
 )
@@ -239,10 +241,10 @@ func runEpicSlingByID(epicID string, opts epicScheduleOpts) error {
 		}
 
 		fmt.Printf("\n[%d/%d] Dispatching %s → %s...\n", i+1, len(candidates), c.ID, c.RigName)
-		_, err := executeSlingIntent(SlingParams{
+		_, err := executeSling(context.Background(), sling.Intent{
 			BeadID:        c.ID,
 			RigName:       c.RigName,
-			FormulaName:   formula,
+			Formula:       formula,
 			Force:         opts.Force,
 			HookRawBead:   opts.HookRawBead,
 			NoConvoy:      true, // Epic is the organizing structure

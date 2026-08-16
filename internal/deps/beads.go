@@ -4,6 +4,7 @@ package deps
 import (
 	"context"
 	"fmt"
+	"github.com/jonbaldie/gastown/internal/beads"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -46,7 +47,7 @@ func CheckBeads() (BeadsStatus, string) {
 	// packages), even a trivial shell script can take >3s to start.
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, "bd", "version")
+	cmd := beads.SpawnContext(ctx, "version")
 	util.SetDetachedProcessGroup(cmd)
 	output, err := cmd.Output()
 	if err != nil {

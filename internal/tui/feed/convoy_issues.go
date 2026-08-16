@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"os/exec"
 
 	"github.com/jonbaldie/gastown/internal/beads"
 	"github.com/jonbaldie/gastown/internal/constants"
@@ -26,7 +25,7 @@ func getTrackedIssueStatus(beadsDir, convoyID string) []trackedStatus {
 	defer cancel()
 
 	// Query tracked issues using bd dep list (returns full issue details)
-	cmd := exec.CommandContext(ctx, "bd", "dep", "list", convoyID, "-t", "tracks", "--json")
+	cmd := beads.SpawnContext(ctx, "dep", "list", convoyID, "-t", "tracks", "--json")
 	util.SetDetachedProcessGroup(cmd)
 	cmd.Dir = beadsDir
 	var stdout bytes.Buffer
@@ -80,7 +79,7 @@ func refreshTrackedStatus(ctx context.Context, deps []struct {
 	}
 	args = append(args, "--json")
 
-	cmd := exec.CommandContext(ctx, "bd", args...)
+	cmd := beads.SpawnContext(ctx, args...)
 	util.SetDetachedProcessGroup(cmd)
 	var stdout bytes.Buffer
 	cmd.Stdout = &stdout

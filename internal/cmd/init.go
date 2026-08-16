@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"fmt"
+	"github.com/jonbaldie/gastown/internal/beads"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -177,7 +178,7 @@ func registerCustomTypes(workDir string) error {
 		{"types.custom", constants.BeadsCustomTypes},
 		{"types.infra", constants.BeadsInfraTypes},
 	} {
-		cmd := exec.Command("bd", "config", "set", cfg.key, cfg.value)
+		cmd := beads.Spawn("config", "set", cfg.key, cfg.value)
 		cmd.Dir = workDir
 		output, err := cmd.CombinedOutput()
 		if err != nil {

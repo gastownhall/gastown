@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"regexp"
 	"sort"
@@ -152,7 +151,7 @@ func TypeConfigSentinelValue() string {
 }
 
 func setBDConfig(beadsDir string, env []string, key, value string) error {
-	cmd := exec.Command("bd", "config", "set", key, value)
+	cmd := Spawn("config", "set", key, value)
 	cmd.Dir = beadsDir
 	util.SetDetachedProcessGroup(cmd)
 	// Set BEADS_DIR and BEADS_DOLT_SERVER_DATABASE explicitly to ensure bd
@@ -166,7 +165,7 @@ func setBDConfig(beadsDir string, env []string, key, value string) error {
 }
 
 func verifyBDConfig(beadsDir string, env []string, key, want string) error {
-	cmd := exec.Command("bd", "config", "get", key)
+	cmd := Spawn("config", "get", key)
 	cmd.Dir = beadsDir
 	cmd.Env = env
 	util.SetDetachedProcessGroup(cmd)
@@ -245,7 +244,7 @@ func EnsureCustomStatuses(beadsDir string) error {
 	}
 
 	// Read current custom statuses and merge with required ones
-	getCmd := exec.Command("bd", "config", "get", "status.custom")
+	getCmd := Spawn("config", "get", "status.custom")
 	getCmd.Dir = beadsDir
 	util.SetDetachedProcessGroup(getCmd)
 	getEnv := BuildReadOnlyPinnedBDEnv(os.Environ(), beadsDir)
@@ -275,7 +274,7 @@ func EnsureCustomStatuses(beadsDir string) error {
 	mergedStr := strings.Join(merged, ",")
 
 	// Configure custom statuses via bd CLI
-	cmd := exec.Command("bd", "config", "set", "status.custom", mergedStr)
+	cmd := Spawn("config", "set", "status.custom", mergedStr)
 	cmd.Dir = beadsDir
 	util.SetDetachedProcessGroup(cmd)
 	setEnv := BuildMutationPinnedBDEnv(os.Environ(), beadsDir)
@@ -359,7 +358,7 @@ func ensureDatabaseInitialized(beadsDir string) error {
 		initArgs = append(initArgs, "--prefix", prefix)
 	}
 	initArgs = append(initArgs, "--server")
-	cmd := exec.Command("bd", initArgs...)
+	cmd := Spawn(initArgs...)
 	cmd.Dir = parentDir
 	util.SetDetachedProcessGroup(cmd)
 	initEnv := BuildMutationPinnedBDEnv(os.Environ(), beadsDir)
@@ -378,7 +377,7 @@ func ensureDatabaseInitialized(beadsDir string) error {
 	// Explicitly set issue_prefix — bd init --prefix may not persist it
 	// in newer versions (see rig/manager.go InitBeads).
 	if prefix != "" {
-		pfxCmd := exec.Command("bd", "config", "set", "issue_prefix", prefix)
+		pfxCmd := Spawn("config", "set", "issue_prefix", prefix)
 		pfxCmd.Dir = parentDir
 		util.SetDetachedProcessGroup(pfxCmd)
 		pfxEnv := BuildMutationPinnedBDEnv(os.Environ(), beadsDir)
@@ -394,7 +393,7 @@ func ensureDatabaseInitialized(beadsDir string) error {
 	// the new database in its catalog. Retry once after a short delay if the
 	// first migrate attempt fails (GH#1769).
 	migrateEnv := BuildMutationPinnedBDEnv(os.Environ(), beadsDir)
-	migrateCmd := exec.Command("bd", "migrate", "--yes")
+	migrateCmd := Spawn("migrate", "--yes")
 	migrateCmd.Dir = parentDir
 	migrateCmd.Env = migrateEnv
 	util.SetDetachedProcessGroup(migrateCmd)
@@ -402,7 +401,7 @@ func ensureDatabaseInitialized(beadsDir string) error {
 		// First attempt failed — server may not have registered the database yet.
 		// Wait briefly and retry once.
 		time.Sleep(500 * time.Millisecond)
-		retryCmd := exec.Command("bd", "migrate", "--yes")
+		retryCmd := Spawn("migrate", "--yes")
 		retryCmd.Dir = parentDir
 		retryCmd.Env = migrateEnv
 		util.SetDetachedProcessGroup(retryCmd)

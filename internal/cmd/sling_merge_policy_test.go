@@ -1,12 +1,14 @@
 package cmd
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/jonbaldie/gastown/internal/beads"
+	"github.com/jonbaldie/gastown/internal/sling"
 )
 
 func stubSlingSpawnAndHook(t *testing.T, townRoot string) {
@@ -32,7 +34,7 @@ func stubSlingSpawnAndHook(t *testing.T, townRoot string) {
 
 func executeRawSling(t *testing.T, townRoot, rigPath string, merge string) *SlingResult {
 	t.Helper()
-	result, err := executeSling(SlingParams{
+	result, err := executeSling(context.Background(), sling.Intent{
 		BeadID:      "gt-rawrollback",
 		RigName:     "gastown",
 		TownRoot:    townRoot,
@@ -100,7 +102,7 @@ func TestExecuteSlingAppliesStoredLocalMergeToNewConvoy(t *testing.T) {
 		return nil
 	}
 
-	result, err := executeSling(SlingParams{
+	result, err := executeSling(context.Background(), sling.Intent{
 		BeadID:      "gt-rawrollback",
 		RigName:     "gastown",
 		TownRoot:    townRoot,
@@ -129,7 +131,7 @@ func TestExecuteSlingFailsClosedWhenLocalMergePersistFails(t *testing.T) {
 	stubSlingSpawnAndHook(t, townRoot)
 	t.Setenv("BD_FAIL_DESCRIPTION_UPDATE", "1")
 
-	result, err := executeSling(SlingParams{
+	result, err := executeSling(context.Background(), sling.Intent{
 		BeadID:      "gt-rawrollback",
 		RigName:     "gastown",
 		TownRoot:    townRoot,

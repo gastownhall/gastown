@@ -848,6 +848,29 @@ func GetProcessNames(agentName string) []string {
 	return info.ProcessNames
 }
 
+// AllProcessNames returns the union of process names across every registered
+// agent preset. Orphan scanners and liveness checks use this instead of a
+// hardcoded list so a new agent type needs one registry edit.
+func AllProcessNames() []string {
+	seen := make(map[string]struct{})
+	var out []string
+	for _, name := range ListAgentPresets() {
+		for _, n := range GetProcessNames(name) {
+			n = strings.TrimSpace(n)
+			if n == "" {
+				continue
+			}
+			if _, ok := seen[n]; ok {
+				continue
+			}
+			seen[n] = struct{}{}
+			out = append(out, n)
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
 // wrapperCommands lists process wrappers that exec into another binary listed
 // in their arguments (e.g., `env -u VAR claude ...`). When the agent's Command
 // is one of these, ResolveProcessNames must look past the wrapper to find the

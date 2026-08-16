@@ -81,7 +81,7 @@ func stopTownSessionInternal(t *tmux.Tmux, ts TownSession, force bool) (bool, er
 // Returns true if the process exited on its own, false if the timeout was reached.
 // This allows graceful shutdown (e.g., after Ctrl-C) to actually complete before
 // falling through to forceful termination.
-func WaitForSessionExit(t *tmux.Tmux, sessionID string, timeout time.Duration) bool {
+func WaitForSessionExit(t TmuxOps, sessionID string, timeout time.Duration) bool {
 	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {
 		running, err := t.HasSession(sessionID)

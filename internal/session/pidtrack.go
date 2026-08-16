@@ -9,7 +9,6 @@ import (
 	"strings"
 	"syscall"
 
-	"github.com/jonbaldie/gastown/internal/tmux"
 	"github.com/jonbaldie/gastown/internal/util"
 )
 
@@ -42,7 +41,7 @@ func pidFile(townRoot, sessionID string) string {
 // This is best-effort — errors are returned but callers should treat them
 // as non-fatal since the primary kill mechanism (KillSessionWithProcesses)
 // doesn't depend on PID files.
-func TrackSessionPID(townRoot, sessionID string, t *tmux.Tmux) error {
+func TrackSessionPID(townRoot, sessionID string, t TmuxOps) error {
 	pidStr, err := t.GetPanePID(sessionID)
 	if err != nil {
 		return fmt.Errorf("getting pane PID: %w", err)

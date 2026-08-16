@@ -395,7 +395,7 @@ func runInstall(cmd *cobra.Command, args []string) error {
 		}
 
 		// Set beads routing mode to explicit (required by gt doctor).
-		routingCmd := exec.Command("bd", "config", "set", "routing.mode", "explicit")
+		routingCmd := beads.Spawn("config", "set", "routing.mode", "explicit")
 		routingCmd.Dir = absPath
 		routingCmd.Env = withBeadsDirEnv(filepath.Join(absPath, ".beads"))
 		if out, err := routingCmd.CombinedOutput(); err != nil {
@@ -681,7 +681,7 @@ func initTownBeads(townPath string) error {
 	// bd init targets durable town config, so config.yaml beats ambient
 	// GT_DOLT_PORT that may be stale in long-lived agent sessions.
 	bdInitArgs := buildBdInitArgs(townPath)
-	cmd := exec.Command("bd", bdInitArgs...)
+	cmd := beads.Spawn(bdInitArgs...)
 	cmd.Dir = townPath
 	cmd.Env = withBeadsDirEnv(filepath.Join(townPath, ".beads"))
 
@@ -782,7 +782,7 @@ func ensureCustomTypes(beadsPath string) error {
 		{"types.custom", constants.BeadsCustomTypes},
 		{"types.infra", constants.BeadsInfraTypes},
 	} {
-		cmd := exec.Command("bd", "config", "set", cfg.key, cfg.value)
+		cmd := beads.Spawn("config", "set", cfg.key, cfg.value)
 		cmd.Dir = beadsPath
 		output, err := cmd.CombinedOutput()
 		if err != nil {
@@ -878,7 +878,7 @@ func ensureBeadsCustomTypes(workDir string, types []string) error {
 		{"types.custom", strings.Join(types, ",")},
 		{"types.infra", constants.BeadsInfraTypes},
 	} {
-		cmd := exec.Command("bd", "config", "set", cfg.key, cfg.value)
+		cmd := beads.Spawn("config", "set", cfg.key, cfg.value)
 		cmd.Dir = workDir
 		output, err := cmd.CombinedOutput()
 		if err != nil {

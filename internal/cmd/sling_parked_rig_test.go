@@ -1,12 +1,14 @@
 package cmd
 
 import (
+	"context"
 	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/jonbaldie/gastown/internal/sling"
 	"github.com/jonbaldie/gastown/internal/wisp"
 )
 
@@ -44,13 +46,13 @@ func TestExecuteSling_ParkedRig(t *testing.T) {
 	}
 
 	// Try to execute sling to the parked rig
-	params := SlingParams{
+	params := sling.Intent{
 		BeadID:   "test-123",
 		RigName:  rigName,
 		TownRoot: townRoot,
 	}
 
-	result, err := executeSling(params)
+	result, err := executeSling(context.Background(), params)
 	if err == nil {
 		t.Fatal("expected error when slinging to parked rig, got nil")
 	}

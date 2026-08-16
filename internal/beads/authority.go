@@ -1,8 +1,11 @@
 package beads
 
 import (
+	"context"
+	"os/exec"
 	"path/filepath"
 
+	agentconfig "github.com/jonbaldie/gastown/internal/config"
 	beadsdk "github.com/steveyegge/beads"
 )
 
@@ -200,6 +203,42 @@ func (s Session) Close(reason string) error {
 func (s Session) Hook(agent string) error {
 	status := StatusHooked
 	return s.Update(UpdateOptions{Status: &status, Assignee: &agent})
+}
+
+// Command builds a bd subprocess targeted at this Session's database.
+func (s Session) Command(mode SubprocessEnvMode, args ...string) *exec.Cmd {
+	return Command(s.workDir, s.beadsDir, mode, args...)
+}
+
+// CommandContext builds a context-bound bd subprocess targeted at this Session's database.
+func (s Session) CommandContext(ctx context.Context, mode SubprocessEnvMode, args ...string) *exec.Cmd {
+	return CommandContext(ctx, s.workDir, s.beadsDir, mode, args...)
+}
+
+// Command builds a bd subprocess against the Authority fallback store.
+func (a *Authority) Command(mode SubprocessEnvMode, args ...string) *exec.Cmd {
+	if a == nil {
+		return Command("", "", mode, args...)
+	}
+	return Command(parentDir(a.fallbackDir), a.fallbackDir, mode, args...)
+}
+
+// DoltEndpoint is the host/port chain for this Authority's town.
+func (a *Authority) DoltEndpoint() (host string, port int) {
+	if a == nil {
+		return "", 0
+	}
+	townRoot := a.townRoot
+	if townRoot == "" && a.fallbackDir != "" {
+		townRoot = FindTownRoot(filepath.Dir(a.fallbackDir))
+	}
+	if townRoot == "" {
+		return "", 0
+	}
+	if h, p, ok := agentconfig.ManagedDoltEndpoint(townRoot); ok {
+		return h, p
+	}
+	return agentconfig.ResolveDoltHost(townRoot), agentconfig.ResolveDoltPort(townRoot)
 }
 
 func parentDir(path string) string {

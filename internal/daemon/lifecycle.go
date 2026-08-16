@@ -379,60 +379,45 @@ func (d *Daemon) restartSession(sessionName, identity string) error {
 		d.syncWorkspace(workDir)
 	}
 
-	// Build startup command BEFORE creating the session so we can use
-	// NewSessionWithCommand (command as initial pane process). This eliminates
-	// the race condition in the old EnsureSessionFresh + SendKeys pattern where
-	// the shell might not be ready to receive keystrokes, producing empty windows.
-	startCmd := d.getStartCommand(roleConfig, parsed)
-
-	// Build core identity env vars to pass via -e flags. The startup command
-	// already embeds these via PrependEnv, but -e flags provide defense-in-depth:
-	// they seed the session environment before any shell starts, overriding
-	// global env values (e.g., BD_ACTOR=daemon inherited from the daemon process).
-	// Without this, a polecat session restarted by the daemon could inherit
-	// BD_ACTOR=daemon and have gt done reject it with "you are daemon" (gt-xyr).
 	rigPath := ""
 	if parsed != nil && parsed.RigName != "" {
 		rigPath = filepath.Join(d.config.TownRoot, parsed.RigName)
 	}
-	rc := config.ResolveRoleAgentConfig(parsed.RoleType, d.config.TownRoot, rigPath)
-	var sessionIDEnv string
-	if rc.Session != nil {
-		sessionIDEnv = rc.Session.SessionIDEnv
-	}
-	envVars := config.AgentEnv(config.AgentEnvConfig{
-		Role:         parsed.RoleType,
-		Rig:          parsed.RigName,
-		AgentName:    parsed.AgentName,
-		TownRoot:     d.config.TownRoot,
-		SessionIDEnv: sessionIDEnv,
-	})
-	config.SanitizeAgentEnv(envVars, map[string]string{})
 
-	// Create session with command as initial process (replaces EnsureSessionFresh + SendKeys).
-	// EnsureSessionFreshWithCommandAndEnv kills zombie sessions and creates a new one atomically,
-	// seeding env via -e flags before the shell starts (gt-xyr defense-in-depth).
-	if err := d.tmux.EnsureSessionFreshWithCommandAndEnv(sessionName, workDir, startCmd, envVars); err != nil {
-		if errors.Is(err, tmux.ErrSessionRunning) {
+	work := session.Work{
+		SessionID: sessionName,
+		WorkDir:   workDir,
+		TownRoot:  d.config.TownRoot,
+		RigPath:   rigPath,
+		RigName:   parsed.RigName,
+		AgentName: parsed.AgentName,
+		Beacon: session.BeaconConfig{
+			Recipient: session.BeaconRecipient(parsed.RoleType, parsed.AgentName, parsed.RigName),
+			Sender:    "daemon",
+			Topic:     "lifecycle-restart",
+		},
+		Instructions: "Run `gt prime --hook` and begin work.",
+		Theme:        tmux.ResolveSessionTheme(d.config.TownRoot, parsed.RigName, parsed.RoleType, parsed.AgentName),
+	}
+	if roleConfig != nil && roleConfig.StartCommand != "" {
+		rc := config.ResolveRoleAgentConfig(parsed.RoleType, d.config.TownRoot, rigPath)
+		if config.IsResolvedAgentClaude(rc) && !isBuiltinClaudeStartCommand(roleConfig.StartCommand) {
+			work.Command = d.getStartCommand(roleConfig, parsed)
+		}
+	}
+
+	if _, err := session.KillExistingSession(d.tmux, d.config.TownRoot, sessionName, true); err != nil {
+		if errors.Is(err, session.ErrSessionAlive) {
 			d.logger.Printf("Session %s already running with healthy agent, skipping restart", sessionName)
 			return nil
 		}
-		return fmt.Errorf("creating session: %w", err)
+		return err
 	}
 
-	// Set environment variables in tmux session table (for debugging/monitoring tools).
-	d.setSessionEnvironment(sessionName, roleConfig, parsed)
-
-	// Apply theme (non-fatal: theming failure doesn't affect operation)
-	d.applySessionTheme(sessionName, parsed)
-
-	// Wait for Claude to start, then accept startup dialogs if they appear.
-	if err := d.tmux.WaitForCommand(sessionName, constants.SupportedShells, constants.ClaudeStartTimeout); err != nil {
-		// Non-fatal - Claude might still start
+	if _, err := session.StartSession(d.tmux, parsed.RoleType, work); err != nil {
+		return err
 	}
-	_ = d.tmux.AcceptStartupDialogs(sessionName)
 	time.Sleep(constants.ShutdownNotifyDelay)
-
 	return nil
 }
 

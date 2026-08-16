@@ -1387,7 +1387,7 @@ func (h *APIHandler) runBdCommand(ctx context.Context, timeout time.Duration, ar
 		return "", fmt.Errorf("command slot unavailable: %w", ctx.Err())
 	}
 
-	cmd := exec.CommandContext(ctx, "bd", args...)
+	cmd := beads.SpawnContext(ctx, args...)
 	if h.workDir != "" {
 		cmd.Dir = h.workDir
 	}

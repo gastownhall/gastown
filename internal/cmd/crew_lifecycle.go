@@ -127,7 +127,7 @@ func runCrewRemove(cmd *cobra.Command, args []string) error {
 		if crewPurge {
 			// --purge: DELETE the agent bead entirely (obliterate)
 			deleteArgs := []string{"delete", agentBeadID, "--force"}
-			deleteCmd := exec.Command("bd", deleteArgs...)
+			deleteCmd := beads.Spawn(deleteArgs...)
 			deleteCmd.Dir = r.Path
 			if output, err := deleteCmd.CombinedOutput(); err != nil {
 				// Non-fatal: bead might not exist
@@ -142,7 +142,7 @@ func runCrewRemove(cmd *cobra.Command, args []string) error {
 			// Unassign any beads assigned to this crew member
 			agentAddr := fmt.Sprintf("%s/crew/%s", r.Name, name)
 			unassignArgs := []string{"list", "--assignee=" + agentAddr, "--format=id"}
-			unassignCmd := exec.Command("bd", unassignArgs...)
+			unassignCmd := beads.Spawn(unassignArgs...)
 			unassignCmd.Dir = r.Path
 			if output, err := unassignCmd.CombinedOutput(); err == nil {
 				ids := strings.Fields(strings.TrimSpace(string(output)))
@@ -150,7 +150,7 @@ func runCrewRemove(cmd *cobra.Command, args []string) error {
 					if id == "" {
 						continue
 					}
-					updateCmd := exec.Command("bd", "update", id, "--unassign")
+					updateCmd := beads.Spawn("update", id, "--unassign")
 					updateCmd.Dir = r.Path
 					if _, err := updateCmd.CombinedOutput(); err == nil {
 						fmt.Printf("Unassigned: %s\n", id)
@@ -170,7 +170,7 @@ func runCrewRemove(cmd *cobra.Command, args []string) error {
 			if sessionID := runtime.SessionIDFromEnv(); sessionID != "" {
 				closeArgs = append(closeArgs, "--session="+sessionID)
 			}
-			closeCmd := exec.Command("bd", closeArgs...)
+			closeCmd := beads.Spawn(closeArgs...)
 			closeCmd.Dir = r.Path
 			if output, err := closeCmd.CombinedOutput(); err != nil {
 				// Non-fatal: bead might not exist or already be closed

@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -499,7 +498,7 @@ func listChannelMessages(townRoot, channelName string) ([]channelMessage, error)
 		"--json",
 	}
 
-	cmd := exec.Command("bd", args...)
+	cmd := beads.Spawn(args...)
 	cmd.Env = append(os.Environ(), "BEADS_DIR="+beadsDir)
 
 	var stdout, stderr bytes.Buffer

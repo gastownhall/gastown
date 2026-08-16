@@ -490,7 +490,7 @@ func fetchCrossRigBeadStatus(townRoot string, ids []string) map[string]*beadsdk.
 		}
 
 		args := append([]string{"show", "--json"}, prefixIDs...)
-		cmd := exec.Command("bd", args...)
+		cmd := beads.Spawn(args...)
 		cmd.Dir = rigPath
 		util.SetDetachedProcessGroup(cmd)
 		out, err := cmd.Output()

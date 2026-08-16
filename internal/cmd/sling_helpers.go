@@ -23,6 +23,7 @@ import (
 	"github.com/jonbaldie/gastown/internal/formula"
 	rigpkg "github.com/jonbaldie/gastown/internal/rig"
 	"github.com/jonbaldie/gastown/internal/session"
+	"github.com/jonbaldie/gastown/internal/sling"
 	"github.com/jonbaldie/gastown/internal/style"
 	"github.com/jonbaldie/gastown/internal/telemetry"
 	"github.com/jonbaldie/gastown/internal/tmux"
@@ -615,26 +616,26 @@ func slingFieldsRequireDurableWrite(updates beadFieldUpdates) bool {
 	return updates.NoMerge || updates.ReviewOnly || beads.IsLocalMergeStrategy(updates.MergeStrategy)
 }
 
-func newSlingDispatchFieldUpdates(actor string, params SlingParams, vars []string, formulaVars, convoyID, attachedMoleculeID string) beadFieldUpdates {
+func newSlingDispatchFieldUpdates(actor string, intent sling.Intent, vars []string, formulaVars, convoyID, attachedMoleculeID string) beadFieldUpdates {
 	attachedFormula := ""
-	if params.FormulaName != "" && attachedMoleculeID != "" {
-		attachedFormula = params.FormulaName
+	if intent.Formula != "" && attachedMoleculeID != "" {
+		attachedFormula = intent.Formula
 	}
 	updates := buildSlingFieldUpdates(
 		actor,
-		params.Args,
+		intent.Args,
 		vars,
 		attachedMoleculeID,
 		attachedFormula,
-		params.NoMerge,
-		params.ReviewOnly,
-		params.Mode,
+		intent.NoMerge,
+		intent.ReviewOnly,
+		intent.Mode,
 		formulaVars,
 		convoyID,
-		params.Merge,
-		params.Owned,
+		intent.Merge,
+		intent.Owned,
 	)
-	if params.FormulaName != "" && attachedMoleculeID == "" {
+	if intent.Formula != "" && attachedMoleculeID == "" {
 		updates.ClearAttachment = true
 		updates.Vars = nil
 		updates.FormulaVars = ""
@@ -642,8 +643,8 @@ func newSlingDispatchFieldUpdates(actor string, params SlingParams, vars []strin
 	return updates
 }
 
-func createSlingAutoConvoy(params SlingParams, info *beadInfo) string {
-	id, _ := resolveSlingConvoy(params, info)
+func createSlingAutoConvoy(intent sling.Intent, info *beadInfo) string {
+	id, _ := resolveSlingConvoy(intent, info)
 	return id
 }
 
@@ -651,20 +652,20 @@ func createSlingAutoConvoy(params SlingParams, info *beadInfo) string {
 // this attempt created it. Recorded and already-tracking Convoys are reused
 // so deferred dispatch cannot spawn a duplicate. Compensation must only close
 // a Convoy this attempt created.
-func resolveSlingConvoy(params SlingParams, info *beadInfo) (id string, created bool) {
-	if params.Convoy != "" {
-		fmt.Printf("  %s Reusing convoy %s\n", style.Dim.Render("○"), params.Convoy)
-		return params.Convoy, false
+func resolveSlingConvoy(intent sling.Intent, info *beadInfo) (id string, created bool) {
+	if intent.Convoy != "" {
+		fmt.Printf("  %s Reusing convoy %s\n", style.Dim.Render("○"), intent.Convoy)
+		return intent.Convoy, false
 	}
-	if params.NoConvoy {
+	if intent.NoConvoy {
 		return "", false
 	}
-	existingConvoy := isTrackedByConvoy(params.BeadID)
+	existingConvoy := isTrackedByConvoy(intent.BeadID)
 	if existingConvoy != "" {
 		fmt.Printf("  %s Already tracked by convoy %s\n", style.Dim.Render("○"), existingConvoy)
 		return existingConvoy, false
 	}
-	convoyID, err := createAutoConvoy(params.BeadID, info.Title, params.Owned, params.Merge, params.BaseBranch)
+	convoyID, err := createAutoConvoy(intent.BeadID, info.Title, intent.Owned, intent.Merge, intent.BaseBranch)
 	if err != nil {
 		fmt.Printf("  %s Could not create auto-convoy: %v\n", style.Dim.Render("Warning:"), err)
 		return "", false

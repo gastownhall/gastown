@@ -7,7 +7,6 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -338,7 +337,7 @@ func (m *SessionManager) Start(polecat string, opts SessionStartOptions) error {
 	// (manager.go:cleanupOrphanedDirs) intentionally keeps the conservative
 	// isSessionProcessDead path to avoid killing healthy sessions during
 	// transient pgrep/ps failures.
-	if _, err := session.KillExistingSession(m.tmux, sessionID, true); err != nil {
+	if _, err := session.KillExistingSession(m.tmux, filepath.Dir(m.rig.Path), sessionID, true); err != nil {
 		if errors.Is(err, session.ErrSessionAlive) {
 			return fmt.Errorf("%w: %s", ErrSessionRunning, sessionID)
 		}
@@ -395,10 +394,9 @@ func (m *SessionManager) Start(polecat string, opts SessionStartOptions) error {
 		}
 	}
 
-	result, err := session.StartSession(m.tmux, session.SessionConfig{
+	result, err := session.StartSession(m.tmux, "polecat", session.Work{
 		SessionID:        sessionID,
 		WorkDir:          workDir,
-		Role:             "polecat",
 		TownRoot:         townRoot,
 		RigPath:          m.rig.Path,
 		RigName:          m.rig.Name,
@@ -409,11 +407,6 @@ func (m *SessionManager) Start(polecat string, opts SessionStartOptions) error {
 		RuntimeConfigDir: opts.RuntimeConfigDir,
 		ExtraEnv:         extra,
 		Theme:            tmux.ResolveSessionTheme(townRoot, m.rig.Name, "polecat", polecat),
-		WaitForAgent:     true,
-		AcceptBypass:     true,
-		ReadyDelay:       true,
-		TrackPID:         true,
-		VerifySurvived:   true,
 	})
 	if err != nil {
 		return err
@@ -487,27 +480,11 @@ func (m *SessionManager) isSessionStale(sessionID string) bool {
 func (m *SessionManager) Stop(polecat string, force bool) error {
 	sessionID := m.SessionName(polecat)
 
-	running, err := m.tmux.HasSession(sessionID)
-	if err != nil {
-		return fmt.Errorf("checking session: %w", err)
-	}
-	if !running {
+	err := session.StopSession(m.tmux, filepath.Dir(m.rig.Path), sessionID, !force)
+	if errors.Is(err, session.ErrNotFound) {
 		return ErrSessionNotFound
 	}
-
-	// Try graceful shutdown first
-	if !force {
-		_ = m.tmux.SendKeysRaw(sessionID, "C-c")
-		session.WaitForSessionExit(m.tmux, sessionID, constants.GracefulShutdownTimeout)
-	}
-
-	// Use KillSessionWithProcesses to ensure all descendant processes are killed.
-	// This prevents orphan bash processes from Claude's Bash tool surviving session termination.
-	if err := m.tmux.KillSessionWithProcesses(sessionID); err != nil {
-		return fmt.Errorf("killing session: %w", err)
-	}
-
-	return nil
+	return err
 }
 
 // IsRunning checks if a polecat session is active and healthy.
@@ -718,7 +695,7 @@ func (m *SessionManager) validateIssue(issueID, workDir string) error {
 
 	ctx, cancel := context.WithTimeout(context.Background(), constants.BdCommandTimeout)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, "bd", "show", issueID, "--json") //nolint:gosec // G204: bd is a trusted internal tool
+	cmd := beads.SpawnContext(ctx, "show", issueID, "--json") //nolint:gosec // G204: bd is a trusted internal tool
 	util.SetDetachedProcessGroup(cmd)
 	cmd.Dir = bdWorkDir
 	output, err := cmd.Output()
@@ -816,7 +793,7 @@ func (m *SessionManager) hookIssue(issueID, agentID, workDir string) error {
 
 	ctx, cancel := context.WithTimeout(context.Background(), constants.BdCommandTimeout)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, "bd", "update", issueID, "--status=hooked", "--assignee="+agentID) //nolint:gosec // G204: bd is a trusted internal tool
+	cmd := beads.SpawnContext(ctx, "update", issueID, "--status=hooked", "--assignee="+agentID) //nolint:gosec // G204: bd is a trusted internal tool
 	util.SetDetachedProcessGroup(cmd)
 	cmd.Dir = bdWorkDir
 	cmd.Stderr = os.Stderr

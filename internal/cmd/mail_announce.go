@@ -4,8 +4,8 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"github.com/jonbaldie/gastown/internal/beads"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -188,7 +188,7 @@ func listAnnounceMessages(townRoot, channelName string) ([]announceMessage, erro
 		"--json",
 	}
 
-	cmd := exec.Command("bd", args...)
+	cmd := beads.Spawn(args...)
 	cmd.Env = append(os.Environ(), "BEADS_DIR="+beadsDir)
 
 	var stdout, stderr bytes.Buffer

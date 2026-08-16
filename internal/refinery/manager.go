@@ -64,11 +64,18 @@ type Manager struct {
 	rig     *rig.Rig
 	workDir string
 	output  io.Writer // Output destination for user-facing messages
+	tmux    tmuxOps
 }
 
 type scoredIssue struct {
 	issue *beads.Issue
 	score float64
+}
+
+// tmuxOps is the tmux seam for refinery start and stop. Production uses *tmux.Tmux.
+type tmuxOps interface {
+	session.TmuxOps
+	GetSessionInfo(name string) (*tmux.SessionInfo, error)
 }
 
 // NewManager creates a new refinery manager for a rig.
@@ -77,6 +84,7 @@ func NewManager(r *rig.Rig) *Manager {
 		rig:     r,
 		workDir: r.Path,
 		output:  os.Stdout,
+		tmux:    tmux.NewTmux(),
 	}
 }
 
@@ -97,9 +105,7 @@ func (m *Manager) SessionName() string {
 // ZFC: tmux session existence is the source of truth for session state,
 // but agent liveness determines if the session is actually functional.
 func (m *Manager) IsRunning() (bool, error) {
-	t := tmux.NewTmux()
-	sessionName := m.SessionName()
-	status := t.CheckSessionHealth(sessionName, 0)
+	status := m.tmux.CheckSessionHealth(m.SessionName(), 0)
 	return status == tmux.SessionHealthy, nil
 }
 
@@ -109,14 +115,13 @@ func (m *Manager) IsRunning() (bool, error) {
 // Returns the detailed ZombieStatus for callers that need to distinguish
 // between different failure modes.
 func (m *Manager) IsHealthy(maxInactivity time.Duration) tmux.ZombieStatus {
-	t := tmux.NewTmux()
-	return t.CheckSessionHealth(m.SessionName(), maxInactivity)
+	return m.tmux.CheckSessionHealth(m.SessionName(), maxInactivity)
 }
 
 // Status returns information about the refinery session.
 // ZFC-compliant: tmux session is the source of truth.
 func (m *Manager) Status() (*tmux.SessionInfo, error) {
-	t := tmux.NewTmux()
+	t := m.tmux
 	sessionID := m.SessionName()
 
 	running, err := t.HasSession(sessionID)
@@ -146,7 +151,7 @@ func (m *Manager) StartAllowingForkRig(foreground bool, agentOverride string) er
 }
 
 func (m *Manager) start(foreground bool, agentOverride string, allowForkRig bool) error {
-	t := tmux.NewTmux()
+	t := m.tmux
 	sessionID := m.SessionName()
 
 	if foreground {
@@ -168,7 +173,7 @@ func (m *Manager) start(foreground bool, agentOverride string, allowForkRig bool
 	if stop != nil {
 		if running, _ := t.HasSession(sessionID); running {
 			_, _ = fmt.Fprintf(m.output, "Refinery %s is safety-stopped; killing leftover session %s.\n", m.rig.Name, sessionID)
-			if err := t.KillSessionWithProcesses(sessionID); err != nil {
+			if err := session.StopSession(t, townRoot, sessionID, false); err != nil && !errors.Is(err, session.ErrNotFound) {
 				return fmt.Errorf("%w: killing leftover refinery session: %v", NewSafetyStoppedError(stop), err)
 			}
 		}
@@ -176,7 +181,7 @@ func (m *Manager) start(foreground bool, agentOverride string, allowForkRig bool
 	}
 
 	// Check if session already exists
-	if _, err := session.KillExistingSession(t, sessionID, true); err != nil {
+	if _, err := session.KillExistingSession(t, townRoot, sessionID, true); err != nil {
 		if errors.Is(err, session.ErrSessionAlive) {
 			return ErrAlreadyRunning
 		}
@@ -219,8 +224,8 @@ func (m *Manager) start(foreground bool, agentOverride string, allowForkRig bool
 	}
 
 	// Ensure .gitignore has required Gas Town patterns
-	if err := rig.EnsureGitignorePatterns(refineryRigDir); err != nil {
-		style.PrintWarning("could not update refinery .gitignore: %v", err)
+	if err := rig.Provision(m.rig.Path, refineryRigDir, "refinery"); err != nil {
+		style.PrintWarning("could not provision refinery workspace: %v", err)
 	}
 
 	beacon := session.BeaconConfig{
@@ -228,10 +233,9 @@ func (m *Manager) start(foreground bool, agentOverride string, allowForkRig bool
 		Sender:    "deacon",
 		Topic:     "patrol",
 	}
-	result, err := session.StartSession(t, session.SessionConfig{
+	result, err := session.StartSession(t, "refinery", session.Work{
 		SessionID:        sessionID,
 		WorkDir:          refineryRigDir,
-		Role:             "refinery",
 		TownRoot:         townRoot,
 		RigPath:          m.rig.Path,
 		RigName:          m.rig.Name,
@@ -242,27 +246,20 @@ func (m *Manager) start(foreground bool, agentOverride string, allowForkRig bool
 		Theme:            tmux.ResolveSessionTheme(townRoot, m.rig.Name, "refinery", ""),
 		Beacon:           beacon,
 		Instructions:     "Run `gt prime --hook` and begin patrol.",
-		AcceptBypass:     true,
-		TrackPID:         true,
 	})
 	if err != nil {
 		return err
-	}
-
-	// WaitForRuntimeReady is fatal for refinery. StartSession's ReadyDelay
-	// only warns, so the caller owns this wait.
-	if err := t.WaitForRuntimeReady(sessionID, result.RuntimeConfig, constants.ClaudeStartTimeout); err != nil {
-		_ = t.KillSessionWithProcesses(sessionID)
-		return fmt.Errorf("waiting for refinery to start: %w", err)
 	}
 
 	if _, pollerErr := nudge.StartPoller(townRoot, sessionID); pollerErr != nil {
 		log.Printf("warning: could not start nudge poller for %s: %v", sessionID, pollerErr)
 	}
 
-	_ = runtime.RunStartupFallback(t, sessionID, "refinery", result.RuntimeConfig)
-	initialPrompt := session.BuildStartupPrompt(beacon, "Run `gt prime --hook` and begin patrol.")
-	_ = runtime.DeliverStartupPromptFallback(t, sessionID, initialPrompt, result.RuntimeConfig, constants.ClaudeStartTimeout)
+	if real, ok := t.(*tmux.Tmux); ok {
+		_ = runtime.RunStartupFallback(real, sessionID, "refinery", result.RuntimeConfig)
+		initialPrompt := session.BuildStartupPrompt(beacon, "Run `gt prime --hook` and begin patrol.")
+		_ = runtime.DeliverStartupPromptFallback(real, sessionID, initialPrompt, result.RuntimeConfig, constants.ClaudeStartTimeout)
+	}
 
 	return nil
 }
@@ -280,10 +277,10 @@ func (m *Manager) ForkRigStartError() error {
 // BlockForkRigStart applies the fork-rig startup guard and kills any leftover
 // refinery session that would otherwise keep processing a fork-backed rig.
 func (m *Manager) BlockForkRigStart() error {
-	return m.blockForkRigStart(tmux.NewTmux())
+	return m.blockForkRigStart(m.tmux)
 }
 
-func (m *Manager) blockForkRigStart(t *tmux.Tmux) error {
+func (m *Manager) blockForkRigStart(t session.TmuxOps) error {
 	err := m.ForkRigStartError()
 	if err == nil {
 		return nil
@@ -330,6 +327,9 @@ func (m *Manager) repairRefineryWorktree(refineryRigDir string) error {
 		// Non-fatal: worktree is usable without hooks
 		_, _ = fmt.Fprintf(m.output, "⚠ Could not configure hooks for repaired worktree: %v\n", err)
 	}
+	if err := rig.Provision(m.rig.Path, refineryRigDir, "refinery"); err != nil {
+		_, _ = fmt.Fprintf(m.output, "⚠ Could not provision repaired refinery workspace: %v\n", err)
+	}
 
 	_, _ = fmt.Fprintf(m.output, "✓ Auto-repaired missing refinery worktree at %s\n", refineryRigDir)
 	return nil
@@ -338,17 +338,11 @@ func (m *Manager) repairRefineryWorktree(refineryRigDir string) error {
 // Stop stops the refinery.
 // ZFC-compliant: tmux session is the source of truth.
 func (m *Manager) Stop() error {
-	t := tmux.NewTmux()
-	sessionID := m.SessionName()
-
-	// Check if tmux session exists
-	running, _ := t.HasSession(sessionID)
-	if !running {
+	err := session.StopSession(m.tmux, filepath.Dir(m.rig.Path), m.SessionName(), true)
+	if errors.Is(err, session.ErrNotFound) {
 		return ErrNotRunning
 	}
-
-	// Kill the tmux session
-	return t.KillSession(sessionID)
+	return err
 }
 
 // Queue returns the current merge queue.

@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -12,6 +13,7 @@ import (
 	"github.com/jonbaldie/gastown/internal/git"
 	"github.com/jonbaldie/gastown/internal/polecat"
 	"github.com/jonbaldie/gastown/internal/rig"
+	"github.com/jonbaldie/gastown/internal/sling"
 	"github.com/jonbaldie/gastown/internal/style"
 	"github.com/jonbaldie/gastown/internal/tmux"
 	"github.com/jonbaldie/gastown/internal/workspace"
@@ -146,9 +148,9 @@ func runBatchSling(beadIDs []string, rigName string, townBeadsDir string) error 
 
 		fmt.Printf("\n[%d/%d] Slinging %s...\n", i+1, len(beadIDs), beadID)
 
-		params := SlingParams{
+		params := sling.Intent{
 			BeadID:           beadID,
-			FormulaName:      formulaName,
+			Formula:          formulaName,
 			RigName:          rigName,
 			Args:             slingArgs,
 			Vars:             slingVars,
@@ -171,7 +173,7 @@ func runBatchSling(beadIDs []string, rigName string, townBeadsDir string) error 
 			BeadsDir:         townBeadsDir,
 		}
 
-		result, err := executeSlingIntent(params)
+		result, err := executeSling(context.Background(), params)
 		if err != nil {
 			errMsg := ""
 			if result != nil {

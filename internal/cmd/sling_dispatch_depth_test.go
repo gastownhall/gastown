@@ -1,11 +1,14 @@
 package cmd
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"runtime"
 	"strings"
 	"testing"
+
+	"github.com/jonbaldie/gastown/internal/sling"
 )
 
 func TestExecuteSling_FlagLikeTitle(t *testing.T) {
@@ -40,7 +43,7 @@ exit 0
 		return nil, nil
 	}
 
-	_, err := executeSling(SlingParams{
+	_, err := executeSling(context.Background(), sling.Intent{
 		BeadID:   "gt-flaglike",
 		RigName:  "gastown",
 		TownRoot: townRoot,
@@ -92,12 +95,12 @@ exit 0
 		return nil, nil
 	}
 
-	result, err := executeSling(SlingParams{
-		BeadID:      "gt-abc",
-		RigName:     "gastown",
-		FormulaName: "mol-polecat-work",
-		TownRoot:    townRoot,
-		NoBoot:      true,
+	result, err := executeSling(context.Background(), sling.Intent{
+		BeadID:   "gt-abc",
+		RigName:  "gastown",
+		Formula:  "mol-polecat-work",
+		TownRoot: townRoot,
+		NoBoot:   true,
 	})
 	if err != nil {
 		t.Fatalf("expected no-op success, got %v", err)
@@ -138,12 +141,12 @@ exit 0
 	t.Cleanup(func() { isHookedAgentDeadFn = prevDead })
 	isHookedAgentDeadFn = func(string) bool { return false }
 
-	_, err := executeSling(SlingParams{
-		BeadID:      "gt-abc",
-		RigName:     "gastown",
-		FormulaName: "mol-review",
-		TownRoot:    townRoot,
-		NoBoot:      true,
+	_, err := executeSling(context.Background(), sling.Intent{
+		BeadID:   "gt-abc",
+		RigName:  "gastown",
+		Formula:  "mol-review",
+		TownRoot: townRoot,
+		NoBoot:   true,
 	})
 	if err == nil {
 		t.Fatal("expected already-hooked error when applying a new formula without --force")
@@ -155,13 +158,13 @@ exit 0
 
 func TestIsDefaultRigSlingNoop(t *testing.T) {
 	info := &beadInfo{Assignee: "gastown/polecats/toast"}
-	if !isDefaultRigSlingNoop(SlingParams{RigName: "gastown", FormulaName: "mol-polecat-work"}, info, "") {
+	if !isDefaultRigSlingNoop(sling.Intent{RigName: "gastown", Formula: "mol-polecat-work"}, info, "") {
 		t.Fatal("default formula on matching rig should no-op")
 	}
-	if isDefaultRigSlingNoop(SlingParams{RigName: "gastown", FormulaName: "mol-review"}, info, "") {
+	if isDefaultRigSlingNoop(sling.Intent{RigName: "gastown", Formula: "mol-review"}, info, "") {
 		t.Fatal("explicit other formula should not no-op")
 	}
-	if isDefaultRigSlingNoop(SlingParams{RigName: "other", FormulaName: ""}, info, "") {
+	if isDefaultRigSlingNoop(sling.Intent{RigName: "other", Formula: ""}, info, "") {
 		t.Fatal("different rig should not no-op")
 	}
 }

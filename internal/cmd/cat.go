@@ -2,8 +2,8 @@ package cmd
 
 import (
 	"fmt"
+	"github.com/jonbaldie/gastown/internal/beads"
 	"os"
-	"os/exec"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -48,7 +48,7 @@ func runCat(cmd *cobra.Command, args []string) error {
 		bdArgs = append(bdArgs, "--json")
 	}
 
-	bdCmd := exec.Command("bd", bdArgs...)
+	bdCmd := beads.Spawn(bdArgs...)
 	bdCmd.Stdout = os.Stdout
 	bdCmd.Stderr = os.Stderr
 	// Route to the correct rig database via prefix resolution.

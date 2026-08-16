@@ -3,8 +3,8 @@ package cmd
 import (
 	"encoding/json"
 	"fmt"
+	"github.com/jonbaldie/gastown/internal/beads"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -168,7 +168,7 @@ func collectChangelogEntries(townRoot string, since time.Time) ([]ChangelogEntry
 
 // fetchClosedBeads queries a single beads location for non-ephemeral closed beads since cutoff.
 func fetchClosedBeads(dir, rig string, since time.Time) ([]ChangelogEntry, error) {
-	cmd := exec.Command("bd", "list", "--status=closed", "--all", "--limit=0", "--json")
+	cmd := beads.Spawn("list", "--status=closed", "--all", "--limit=0", "--json")
 	cmd.Dir = dir
 	out, err := cmd.Output()
 	if err != nil {

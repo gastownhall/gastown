@@ -20,6 +20,7 @@ import (
 	"github.com/jonbaldie/gastown/internal/events"
 	"github.com/jonbaldie/gastown/internal/git"
 	"github.com/jonbaldie/gastown/internal/polecat"
+	"github.com/jonbaldie/gastown/internal/process"
 	"github.com/jonbaldie/gastown/internal/rig"
 	"github.com/jonbaldie/gastown/internal/session"
 	"github.com/jonbaldie/gastown/internal/style"
@@ -750,49 +751,20 @@ func verifyShutdown(t *tmux.Tmux, townRoot string) []string {
 // which avoids false positives on unrelated Node.js applications (VS Code
 // extensions, web servers, etc.).
 func findOrphanedClaudeProcesses(townRoot string) []int {
-	// Use ps to get PID, process name, and full command line in a single pass.
-	// Previous implementation used "pgrep -l node" which matched ALL node
-	// processes on the system regardless of whether they belonged to Gas Town.
-	out, err := exec.Command("ps", "-eo", "pid,comm,args").Output()
+	table, err := process.Capture()
 	if err != nil {
 		return nil
 	}
 
 	var orphaned []int
-	for _, line := range strings.Split(string(out), "\n") {
-		line = strings.TrimSpace(line)
-		if line == "" {
+	for _, p := range table.All() {
+		if !process.IsKnownAgent(p.Name) {
 			continue
 		}
-
-		fields := strings.Fields(line)
-		if len(fields) < 3 {
-			continue
-		}
-
-		var pid int
-		if _, err := fmt.Sscanf(fields[0], "%d", &pid); err != nil {
-			continue
-		}
-
-		// Only consider known Gas Town process names
-		comm := strings.ToLower(fields[1])
-		switch comm {
-		case "claude", "claude-code", "codex", "opencode", "cursor-agent", "agent", "copilot", "node":
-			// Potential Gas Town process
-		default:
-			continue
-		}
-
-		// Verify the process's command line references the town root.
-		// This filters out unrelated node processes (VS Code, web servers, etc.)
-		// whose command lines won't contain the Gas Town directory path.
-		args := strings.Join(fields[2:], " ")
-		if strings.Contains(args, townRoot) {
-			orphaned = append(orphaned, pid)
+		if strings.Contains(p.Args, townRoot) {
+			orphaned = append(orphaned, p.PID)
 		}
 	}
-
 	return orphaned
 }
 
@@ -850,7 +822,7 @@ func stopIdleMonitors(pids []int) int {
 // directory is within the town root but NOT the canonical .dolt-data/ dir.
 // These are rogues spawned by bd from .beads/dolt/ directories.
 func findOrphanDoltServers(townRoot string) []int {
-	out, err := exec.Command("ps", "-eo", "pid,args").Output()
+	table, err := process.Capture()
 	if err != nil {
 		return nil
 	}
@@ -859,22 +831,13 @@ func findOrphanDoltServers(townRoot string) []int {
 	townAbs, _ := filepath.Abs(townRoot)
 
 	var pids []int
-	for _, line := range strings.Split(string(out), "\n") {
-		line = strings.TrimSpace(line)
+	for _, p := range table.All() {
+		line := p.Args
 		if !strings.Contains(line, "dolt") || !strings.Contains(line, "sql-server") {
 			continue
 		}
-		fields := strings.Fields(line)
-		if len(fields) < 2 {
-			continue
-		}
-		pid, err := strconv.Atoi(fields[0])
-		if err != nil {
-			continue
-		}
 
-		// Check the process's working directory via lsof
-		cwdOut, err := exec.Command("lsof", "-p", strconv.Itoa(pid), "-Fn", "-d", "cwd").Output()
+		cwdOut, err := exec.Command("lsof", "-p", strconv.Itoa(p.PID), "-Fn", "-d", "cwd").Output()
 		if err != nil {
 			continue
 		}
@@ -890,12 +853,10 @@ func findOrphanDoltServers(townRoot string) []int {
 		}
 
 		cwdAbs, _ := filepath.Abs(cwd)
-		// Only target processes rooted in our town but NOT in canonical data dir.
-		// Use path-boundary check to avoid false matches on sibling paths.
 		inTown := cwdAbs == townAbs || strings.HasPrefix(cwdAbs, townAbs+string(filepath.Separator))
 		notCanonical := !strings.HasPrefix(cwdAbs, canonicalDir)
 		if inTown && notCanonical {
-			pids = append(pids, pid)
+			pids = append(pids, p.PID)
 		}
 	}
 	return pids

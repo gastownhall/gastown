@@ -3,7 +3,6 @@ package mail
 import (
 	"bytes"
 	"context"
-	"os/exec"
 	"strings"
 	"time"
 
@@ -69,7 +68,7 @@ func runBdCommand(ctx context.Context, args []string, workDir, beadsDir string, 
 	// own injection. (GH#2746)
 	args = beads.InjectFlatForListJSON(args)
 
-	cmd := exec.CommandContext(ctx, "bd", args...) //nolint:gosec // G204: bd is a trusted internal tool
+	cmd := beads.SpawnContext(ctx, args...) //nolint:gosec // G204: bd is a trusted internal tool
 	cmd.Dir = workDir
 	util.SetDetachedProcessGroup(cmd)
 
@@ -92,7 +91,7 @@ func runBdCommand(ctx context.Context, args []string, workDir, beadsDir string, 
 		}
 		stdout.Reset()
 		stderr.Reset()
-		retryCmd := exec.CommandContext(ctx, "bd", retryArgs...) //nolint:gosec // G204: bd is a trusted internal tool
+		retryCmd := beads.SpawnContext(ctx, retryArgs...) //nolint:gosec // G204: bd is a trusted internal tool
 		retryCmd.Dir = workDir
 		util.SetDetachedProcessGroup(retryCmd)
 		retryCmd.Env = cmd.Env

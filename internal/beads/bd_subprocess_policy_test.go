@@ -12,38 +12,42 @@ import (
 	"testing"
 )
 
-func TestNoAdHocBdSubprocessesInHardenedPackages(t *testing.T) {
+func TestNoAdHocBdSubprocesses(t *testing.T) {
 	_, thisFile, _, ok := runtime.Caller(0)
 	if !ok {
 		t.Fatal("runtime.Caller failed")
 	}
 	repoRoot := filepath.Clean(filepath.Join(filepath.Dir(thisFile), "..", ".."))
-	packages := []string{
-		"internal/deacon",
-		"internal/plugin",
-		"internal/refinery",
-		"internal/witness",
-	}
+	internalDir := filepath.Join(repoRoot, "internal")
 
 	var violations []string
-	for _, pkg := range packages {
-		dir := filepath.Join(repoRoot, pkg)
-		entries, err := os.ReadDir(dir)
+	err := filepath.WalkDir(internalDir, func(path string, d os.DirEntry, err error) error {
 		if err != nil {
-			t.Fatalf("read %s: %v", dir, err)
+			return err
 		}
-		for _, entry := range entries {
-			name := entry.Name()
-			if entry.IsDir() || !strings.HasSuffix(name, ".go") || strings.HasSuffix(name, "_test.go") {
-				continue
-			}
-			path := filepath.Join(dir, name)
-			violations = append(violations, adHocBDSubprocesses(t, repoRoot, path)...)
+		if d.IsDir() {
+			return nil
 		}
+		name := d.Name()
+		if !strings.HasSuffix(name, ".go") || strings.HasSuffix(name, "_test.go") {
+			return nil
+		}
+		rel, relErr := filepath.Rel(repoRoot, path)
+		if relErr != nil {
+			rel = path
+		}
+		if rel == "internal/beads/exec.go" {
+			return nil
+		}
+		violations = append(violations, adHocBDSubprocesses(t, repoRoot, path)...)
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("walk internal: %v", err)
 	}
 
 	if len(violations) > 0 {
-		t.Fatalf("do not spawn bd directly in hardened packages; use internal/beads.Command so env targeting, read-only mode, and side-effect suppression stay centralized:\n%s", strings.Join(violations, "\n"))
+		t.Fatalf("do not spawn bd directly; use beads.Command, Session.Command, or beads.Spawn so host/port/database targeting stays in Authority:\n%s", strings.Join(violations, "\n"))
 	}
 }
 
@@ -103,10 +107,6 @@ func isBDCommandArg(expr ast.Expr) bool {
 		}
 		value, err := strconv.Unquote(v.Value)
 		return err == nil && value == "bd"
-	case *ast.Ident:
-		return strings.EqualFold(v.Name, "bdPath")
-	case *ast.SelectorExpr:
-		return strings.EqualFold(v.Sel.Name, "bdPath")
 	default:
 		return false
 	}

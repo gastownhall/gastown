@@ -12,7 +12,6 @@ import (
 	"github.com/gofrs/flock"
 
 	"github.com/jonbaldie/gastown/internal/atomicfile"
-	"github.com/jonbaldie/gastown/internal/beads"
 	"github.com/jonbaldie/gastown/internal/config"
 	"github.com/jonbaldie/gastown/internal/git"
 	"github.com/jonbaldie/gastown/internal/nudge"
@@ -22,7 +21,6 @@ import (
 	"github.com/jonbaldie/gastown/internal/style"
 	"github.com/jonbaldie/gastown/internal/tmux"
 	"github.com/jonbaldie/gastown/internal/util"
-	"github.com/jonbaldie/gastown/internal/worker"
 )
 
 // Common errors
@@ -34,15 +32,6 @@ var (
 	ErrSessionRunning  = errors.New("session already running")
 	ErrSessionNotFound = errors.New("session not found")
 )
-
-// startupDialogPolicy makes every unattended crew startup wait for the runtime
-// and dismiss blocking dialogs, regardless of the selected agent preset.
-func startupDialogPolicy(interactive bool) (waitForAgent, acceptDialogs bool) {
-	if interactive {
-		return false, false
-	}
-	return true, true
-}
 
 // StartOptions configures crew session startup.
 type StartOptions struct {
@@ -135,17 +124,25 @@ func validateCrewName(name string) error {
 	return nil
 }
 
+// tmuxOps is the tmux seam for crew start and stop. Production uses *tmux.Tmux.
+type tmuxOps interface {
+	session.TmuxOps
+	SetCrewCycleBindings(session string) error
+}
+
 // Manager handles crew worker lifecycle.
 type Manager struct {
-	rig *rig.Rig
-	git *git.Git
+	rig  *rig.Rig
+	git  *git.Git
+	tmux tmuxOps
 }
 
 // NewManager creates a new crew manager.
 func NewManager(r *rig.Rig, g *git.Git) *Manager {
 	return &Manager{
-		rig: r,
-		git: g,
+		rig:  r,
+		git:  g,
+		tmux: tmux.NewTmux(),
 	}
 }
 
@@ -280,47 +277,14 @@ func (m *Manager) addLocked(name string, createBranch bool) (*CrewWorker, error)
 		return nil, fmt.Errorf("creating mail dir: %w", err)
 	}
 
-	// Set up shared beads: crew uses rig's shared beads via redirect file
-	if err := m.setupSharedBeads(crewPath); err != nil {
-		// Non-fatal - crew can still work, warn but don't fail
-		style.PrintWarning("could not set up shared beads: %v", err)
+	if err := rig.Provision(m.rig.Path, crewPath, "crew"); err != nil {
+		style.PrintWarning("could not provision crew workspace: %v", err)
 	}
 
-	// Provision PRIME.md with Gas Town context for this worker.
-	// This is the fallback if SessionStart hook fails - ensures crew workers
-	// always have GUPP and essential Gas Town context.
-	if err := beads.ProvisionPrimeMDForWorktree(crewPath); err != nil {
-		// Non-fatal - crew can still work via hook, warn but don't fail
-		style.PrintWarning("could not provision PRIME.md: %v", err)
-	}
-
-	// Copy overlay files from .runtime/overlay/ to crew root.
-	// This allows services to have .env and other config files at their root.
-	if err := rig.CopyOverlay(m.rig.Path, crewPath); err != nil {
-		// Non-fatal - log warning but continue
-		style.PrintWarning("could not copy overlay files: %v", err)
-	}
-
-	// Run setup hooks from .runtime/setup-hooks/.
-	// These hooks can inject local config, copy secrets, or perform other setup tasks.
-	if err := rig.RunSetupHooks(m.rig.Path, crewPath); err != nil {
-		// Non-fatal - log warning but continue
-		style.PrintWarning("could not run setup hooks: %v", err)
-	}
-
-	// Ensure .gitignore has required Gas Town patterns
-	if err := rig.EnsureGitignorePatterns(crewPath); err != nil {
-		// Non-fatal - log warning but continue
-		style.PrintWarning("could not update .gitignore: %v", err)
-	}
-
-	// Install runtime settings in the shared crew parent directory.
-	// Settings are passed to Claude Code via --settings flag.
 	addTownRoot := filepath.Dir(m.rig.Path)
 	addRuntimeConfig := config.ResolveWorkerAgentConfig(name, addTownRoot, m.rig.Path)
 	crewSettingsDir := config.RoleSettingsDir("crew", m.rig.Path)
 	if err := runtime.EnsureSettingsForRole(crewSettingsDir, crewPath, "crew", addRuntimeConfig); err != nil {
-		// Non-fatal - log warning but continue
 		style.PrintWarning("could not install runtime settings: %v", err)
 	}
 
@@ -674,13 +638,6 @@ type PristineResult struct {
 	SyncError  string `json:"sync_error,omitempty"`
 }
 
-// setupSharedBeads creates a redirect file so the crew worker uses the rig's shared .beads database.
-// This eliminates the need for git sync between crew clones - all crew members share one database.
-func (m *Manager) setupSharedBeads(crewPath string) error {
-	townRoot := filepath.Dir(m.rig.Path)
-	return beads.SetupRedirect(townRoot, crewPath)
-}
-
 // SessionName returns the tmux session name for a crew member.
 func (m *Manager) SessionName(name string) string {
 	return session.CrewSessionName(session.PrefixFor(m.rig.Name), name)
@@ -790,16 +747,16 @@ func (m *Manager) Start(name string, opts StartOptions) error {
 		}
 	}
 
-	t := tmux.NewTmux()
+	t := m.tmux
 	sessionID := m.SessionName(name)
 
 	// Check if session already exists — kill AFTER command is fully built
 	// so validation failures don't destroy the user's running session.
 	if opts.KillExisting {
-		if _, err := session.KillExistingSession(t, sessionID, false); err != nil {
+		if _, err := session.KillExistingSession(t, townRoot, sessionID, false); err != nil {
 			return err
 		}
-	} else if _, err := session.KillExistingSession(t, sessionID, true); err != nil {
+	} else if _, err := session.KillExistingSession(t, townRoot, sessionID, true); err != nil {
 		if errors.Is(err, session.ErrSessionAlive) {
 			return fmt.Errorf("%w: %s", ErrSessionRunning, sessionID)
 		}
@@ -822,16 +779,13 @@ func (m *Manager) Start(name string, opts StartOptions) error {
 		}
 	}
 
-	waitForAgent, acceptBypass := startupDialogPolicy(opts.Interactive)
-
 	topic := opts.Topic
 	if topic == "" {
 		topic = "start"
 	}
-	_, err = session.StartSession(t, session.SessionConfig{
+	_, err = session.StartSession(t, "crew", session.Work{
 		SessionID:        sessionID,
 		WorkDir:          worker.ClonePath,
-		Role:             "crew",
 		TownRoot:         townRoot,
 		RigPath:          m.rig.Path,
 		RigName:          m.rig.Name,
@@ -845,9 +799,7 @@ func (m *Manager) Start(name string, opts StartOptions) error {
 			Sender:    "human",
 			Topic:     topic,
 		},
-		WaitForAgent: waitForAgent,
-		AcceptBypass: acceptBypass,
-		TrackPID:     true,
+		Interactive: opts.Interactive,
 	})
 	if err != nil {
 		return err
@@ -870,41 +822,16 @@ func (m *Manager) Stop(name string) error {
 		return err
 	}
 
-	t := tmux.NewTmux()
-	sessionID := m.SessionName(name)
-
-	// Check if session exists
-	running, err := t.HasSession(sessionID)
-	if err != nil {
-		return fmt.Errorf("checking session: %w", err)
-	}
-	if !running {
+	err := session.StopSession(m.tmux, filepath.Dir(m.rig.Path), m.SessionName(name), false)
+	if errors.Is(err, session.ErrNotFound) {
 		return ErrSessionNotFound
 	}
-
-	// Stop the background nudge poller before killing the session.
-	// Non-fatal — the poller will exit on its own when the session dies.
-	townRoot := filepath.Dir(m.rig.Path)
-	if pollerErr := nudge.StopPoller(townRoot, sessionID); pollerErr != nil {
-		style.PrintWarning("could not stop nudge poller for %s: %v", name, pollerErr)
-	}
-
-	// Kill the session.
-	// Use KillSessionWithProcesses to ensure all descendant processes are killed.
-	// This prevents orphan bash processes from Claude's Bash tool surviving session termination.
-	if err := t.KillSessionWithProcesses(sessionID); err != nil {
-		return fmt.Errorf("killing session: %w", err)
-	}
-	if err := worker.MarkSessionStopped(townRoot, sessionID); err != nil {
-		return fmt.Errorf("recording stopped worker run: %w", err)
-	}
-
-	return nil
+	return err
 }
 
 // IsRunning checks if a crew member's session is active.
 func (m *Manager) IsRunning(name string) (bool, error) {
-	t := tmux.NewTmux()
+	t := m.tmux
 	sessionID := m.SessionName(name)
 	return t.HasSession(sessionID)
 }

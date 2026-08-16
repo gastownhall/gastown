@@ -1,6 +1,7 @@
 package testutil
 
 import (
+	"github.com/jonbaldie/gastown/internal/beads"
 	"os"
 	"os/exec"
 	"strings"
@@ -32,13 +33,12 @@ func CleanGTEnv(extraEnv ...string) []string {
 	return append(clean, extraEnv...)
 }
 
-// NewBDCommand creates an exec.Command for the bd CLI with GT_DOLT_PORT
-// automatically propagated. The command inherits the full process environment
-// (which includes GT_DOLT_PORT set by TestMain).
+// NewBDCommand creates an exec.Command for the bd CLI. Dolt targeting comes
+// from beads.Spawn so host, port, and database choice stay in Authority.
 //
-// Use this instead of bare exec.Command("bd", ...) in tests.
+// Use this instead of bare beads.Spawn(...) in tests.
 func NewBDCommand(args ...string) *exec.Cmd {
-	return exec.Command("bd", args...)
+	return beads.Spawn(args...)
 }
 
 // NewGTCommand creates an exec.Command for the gt CLI with GT_DOLT_PORT
@@ -55,7 +55,7 @@ func NewGTCommand(args ...string) *exec.Cmd {
 // to isolate a subprocess from the parent Gas Town workspace but still route
 // to the test Dolt server.
 func NewIsolatedBDCommand(args ...string) *exec.Cmd {
-	cmd := exec.Command("bd", args...)
+	cmd := beads.Spawn(args...)
 	cmd.Env = CleanGTEnv()
 	return cmd
 }

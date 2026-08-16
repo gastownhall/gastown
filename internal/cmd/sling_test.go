@@ -13,6 +13,7 @@ import (
 
 	"github.com/jonbaldie/gastown/internal/beads"
 	"github.com/jonbaldie/gastown/internal/config"
+	"github.com/jonbaldie/gastown/internal/sling"
 	"github.com/spf13/cobra"
 )
 
@@ -1438,7 +1439,7 @@ func TestExecuteSlingRejectsMissingTargetRigDatabaseBeforeSpawn(t *testing.T) {
 		return &SpawnedPolecatInfo{RigName: rigName, PolecatName: "toast", ClonePath: filepath.Join(townRoot, "fake-polecat")}, nil
 	}
 
-	_, err := executeSling(SlingParams{
+	_, err := executeSling(context.Background(), sling.Intent{
 		BeadID:   "gt-r2405",
 		RigName:  "gastown",
 		TownRoot: townRoot,
@@ -1891,7 +1892,7 @@ func TestExecuteSlingRawReviewOnlyHookFailureClearsPreHookMetadata(t *testing.T)
 		return errors.New("forced hook failure")
 	}
 
-	_, err := executeSling(SlingParams{
+	_, err := executeSling(context.Background(), sling.Intent{
 		BeadID:      "gt-rawrollback",
 		RigName:     "gastown",
 		TownRoot:    townRoot,
@@ -1934,7 +1935,7 @@ func TestExecuteSlingRawReviewOnlyHookFailureRestoresOriginalMetadata(t *testing
 		return errors.New("forced hook failure")
 	}
 
-	_, err := executeSling(SlingParams{
+	_, err := executeSling(context.Background(), sling.Intent{
 		BeadID:      "gt-rawrollback",
 		RigName:     "gastown",
 		TownRoot:    townRoot,
@@ -1980,7 +1981,7 @@ func TestExecuteSlingRawReviewOnlySuccessKeepsMetadata(t *testing.T) {
 		return nil
 	}
 
-	result, err := executeSling(SlingParams{
+	result, err := executeSling(context.Background(), sling.Intent{
 		BeadID:      "gt-rawrollback",
 		RigName:     "gastown",
 		TownRoot:    townRoot,
@@ -2037,7 +2038,7 @@ func TestExecuteSlingStoresLocalMergeStrategyOnIssue(t *testing.T) {
 		return nil
 	}
 
-	result, err := executeSling(SlingParams{
+	result, err := executeSling(context.Background(), sling.Intent{
 		BeadID:      "gt-rawrollback",
 		RigName:     "gastown",
 		TownRoot:    townRoot,

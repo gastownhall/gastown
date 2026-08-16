@@ -19,6 +19,7 @@ import (
 
 	"github.com/jonbaldie/gastown/internal/config"
 	"github.com/jonbaldie/gastown/internal/constants"
+	"github.com/jonbaldie/gastown/internal/process"
 	"github.com/jonbaldie/gastown/internal/telemetry"
 )
 
@@ -181,8 +182,11 @@ func BuildCommandContext(ctx context.Context, args ...string) *exec.Cmd {
 
 // Tmux wraps tmux operations.
 type Tmux struct {
-	socketName string // tmux socket name (-L flag), empty = default socket
-	binary     string // optional tmux executable override; empty means "tmux"
+	socketName   string // tmux socket name (-L flag), empty = default socket
+	binary       string // optional tmux executable override; empty means "tmux"
+	capsOnce     sync.Once
+	caps         Capabilities
+	capsOverride *Capabilities
 }
 
 // noTownSocket is a sentinel socket name used when no town socket is configured.
@@ -381,7 +385,7 @@ func (t *Tmux) NewSessionWithCommand(name, workDir, command string) error {
 	// On Windows (psmux), respawn-pane doesn't support passing a command
 	// argument, so we use send-keys to type the command into the shell.
 	if runtime.GOOS == "windows" {
-		if _, err := t.run("send-keys", "-t", name, command, "Enter"); err != nil {
+		if err := t.sendCommandAndSubmit(name, command); err != nil {
 			_ = t.KillSession(name)
 			return fmt.Errorf("failed to send command in session %q: %w", name, err)
 		}
@@ -443,7 +447,7 @@ func (t *Tmux) NewSessionWithCommandAndEnv(name, workDir, command string, env ma
 
 	// Replace the initial shell with the actual command.
 	if runtime.GOOS == "windows" {
-		if _, err := t.run("send-keys", "-t", name, command, "Enter"); err != nil {
+		if err := t.sendCommandAndSubmit(name, command); err != nil {
 			_ = t.KillSession(name)
 			return fmt.Errorf("failed to send command in session %q: %w", name, err)
 		}
@@ -863,11 +867,20 @@ type processSnapshot struct {
 // getAllDescendants finds all descendant PIDs of a process from one process snapshot.
 // Returns PIDs in deepest-first order so killing them doesn't orphan grandchildren.
 func getAllDescendants(pid string) []string {
-	out, err := exec.Command("ps", "-axo", "pid=,ppid=,comm=").Output()
+	table, err := process.Capture()
 	if err != nil {
 		return nil
 	}
-	return descendantsFromPS(pid, out)
+	n, err := strconv.Atoi(strings.TrimSpace(pid))
+	if err != nil || n < 0 {
+		return nil
+	}
+	desc := table.Descendants(n)
+	out := make([]string, len(desc))
+	for i, d := range desc {
+		out[i] = strconv.Itoa(d)
+	}
+	return out
 }
 
 func descendantsFromPS(pid string, out []byte) []string {
@@ -879,32 +892,17 @@ func descendantsFromPS(pid string, out []byte) []string {
 }
 
 func parseProcessSnapshot(out []byte) processSnapshot {
+	table := process.Parse(out)
 	snapshot := processSnapshot{
 		children: make(map[string][]string),
 		names:    make(map[string]string),
 	}
-
-	for _, line := range strings.Split(string(out), "\n") {
-		fields := strings.Fields(strings.TrimSpace(line))
-		if len(fields) < 2 {
-			continue
-		}
-
-		pid, ok := normalizeProcessID(fields[0])
-		if !ok {
-			continue
-		}
-		ppid, ok := normalizeProcessID(fields[1])
-		if !ok {
-			continue
-		}
-
-		if len(fields) > 2 {
-			snapshot.names[pid] = strings.Join(fields[2:], " ")
-		}
+	for _, p := range table.All() {
+		pid := strconv.Itoa(p.PID)
+		ppid := strconv.Itoa(p.PPID)
+		snapshot.names[pid] = p.Name
 		snapshot.children[ppid] = append(snapshot.children[ppid], pid)
 	}
-
 	return snapshot
 }
 
@@ -1295,8 +1293,7 @@ func (t *Tmux) SendKeysDebounced(session, keys string, debounceMs int) (retErr e
 	if debounceMs > 0 {
 		time.Sleep(time.Duration(debounceMs) * time.Millisecond)
 	}
-	// Send Enter separately - more reliable than appending to send-keys
-	_, retErr = t.run("send-keys", "-t", session, "Enter")
+	retErr = t.submitEnter(session)
 	return retErr
 }
 
@@ -1529,14 +1526,6 @@ func (t *Tmux) dismissRewindMode(target string) {
 	time.Sleep(300 * time.Millisecond)
 }
 
-// sendLiteralCR submits the current line with a literal carriage return.
-// Named-key Enter/C-m/KPEnter are not delivered on some tmux builds
-// (tmux 3.7b on macOS Homebrew); send-keys -l with CR is. (GH#4666)
-func sendLiteralCR(t *Tmux, target string) error {
-	_, err := t.run("send-keys", "-t", target, "-l", "\r")
-	return err
-}
-
 // sendEnterVerified sends a submit keystroke to a tmux target and verifies it
 // was processed by checking that the pane content changes. Under load, tmux may
 // buffer keystrokes, causing the submit to race with text delivery.
@@ -1556,7 +1545,7 @@ func (t *Tmux) sendEnterVerified(target string) error {
 	// Snapshot pane content before submit so we can detect processing.
 	preSnapshot, preErr := t.CapturePane(target, verifyLines)
 
-	if err := sendLiteralCR(t, target); err != nil {
+	if err := t.submitEnter(target); err != nil {
 		return fmt.Errorf("send Enter: %w", err)
 	}
 
@@ -1581,7 +1570,7 @@ func (t *Tmux) sendEnterVerified(target string) error {
 		}
 
 		// Content unchanged — CR may not have been processed. Retry.
-		if err := sendLiteralCR(t, target); err != nil {
+		if err := t.submitEnter(target); err != nil {
 			return fmt.Errorf("send Enter (retry %d): %w", retry+1, err)
 		}
 
@@ -2031,7 +2020,7 @@ func (t *Tmux) AcceptWorkspaceTrustDialog(session string) error {
 		// detection alone would exit too early.
 		if containsWorkspaceTrustDialog(content) {
 			// Dialog found — accept it (option 1 is pre-selected, just press Enter)
-			if err := sendLiteralCR(t, session); err != nil {
+			if err := t.submitEnter(session); err != nil {
 				return err
 			}
 			// Wait for dialog to dismiss before proceeding
@@ -2179,7 +2168,7 @@ func (t *Tmux) AcceptBypassPermissionsWarning(session string) error {
 				return err
 			}
 			time.Sleep(200 * time.Millisecond)
-			if err := sendLiteralCR(t, session); err != nil {
+			if err := t.submitEnter(session); err != nil {
 				return err
 			}
 			return nil
@@ -2214,7 +2203,7 @@ func (t *Tmux) AcceptBypassPermissionsWarning(session string) error {
 // precision matters, use AcceptStartupDialogs instead.
 func (t *Tmux) DismissStartupDialogsBlind(session string) error {
 	// Step 1: Send Enter to dismiss trust dialog (if present)
-	if err := sendLiteralCR(t, session); err != nil {
+	if err := t.submitEnter(session); err != nil {
 		return fmt.Errorf("sending Enter for trust dialog: %w", err)
 	}
 	time.Sleep(500 * time.Millisecond)
@@ -2224,7 +2213,7 @@ func (t *Tmux) DismissStartupDialogsBlind(session string) error {
 		return fmt.Errorf("sending Down for bypass dialog: %w", err)
 	}
 	time.Sleep(200 * time.Millisecond)
-	if err := sendLiteralCR(t, session); err != nil {
+	if err := t.submitEnter(session); err != nil {
 		return fmt.Errorf("sending Enter for bypass dialog: %w", err)
 	}
 
@@ -3821,8 +3810,7 @@ func (t *Tmux) RespawnPane(pane, command string) error {
 		if _, err := t.run("respawn-pane", "-k", "-t", pane); err != nil {
 			return err
 		}
-		_, err := t.run("send-keys", "-t", pane, command, "Enter")
-		return err
+		return t.sendCommandAndSubmit(pane, command)
 	}
 	_, err := t.run("respawn-pane", "-k", "-t", pane, command)
 	return err
@@ -3839,11 +3827,9 @@ func (t *Tmux) RespawnPaneWithWorkDir(pane, workDir, command string) error {
 		// Change directory first if needed, then run command
 		if workDir != "" {
 			cdCmd := fmt.Sprintf("Set-Location %s; %s", psQuoteValue(workDir), command)
-			_, err := t.run("send-keys", "-t", pane, cdCmd, "Enter")
-			return err
+			return t.sendCommandAndSubmit(pane, cdCmd)
 		}
-		_, err := t.run("send-keys", "-t", pane, command, "Enter")
-		return err
+		return t.sendCommandAndSubmit(pane, command)
 	}
 	args := []string{"respawn-pane", "-k", "-t", pane}
 	if workDir != "" {

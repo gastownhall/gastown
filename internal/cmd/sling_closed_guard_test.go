@@ -1,11 +1,14 @@
 package cmd
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"runtime"
 	"strings"
 	"testing"
+
+	"github.com/jonbaldie/gastown/internal/sling"
 )
 
 // TestExecuteSling_ClosedBead verifies that executeSling rejects closed beads.
@@ -36,13 +39,13 @@ exit 0
 
 	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
 
-	params := SlingParams{
+	params := sling.Intent{
 		BeadID:   "test-closed1",
 		RigName:  "testrig",
 		TownRoot: townRoot,
 	}
 
-	result, err := executeSling(params)
+	result, err := executeSling(context.Background(), params)
 	if err == nil {
 		t.Fatal("expected error when slinging closed bead, got nil")
 	}
@@ -84,13 +87,13 @@ exit 0
 
 	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
 
-	params := SlingParams{
+	params := sling.Intent{
 		BeadID:   "test-tomb1",
 		RigName:  "testrig",
 		TownRoot: townRoot,
 	}
 
-	result, err := executeSling(params)
+	result, err := executeSling(context.Background(), params)
 	if err == nil {
 		t.Fatal("expected error when slinging tombstone bead, got nil")
 	}
@@ -133,14 +136,14 @@ exit 0
 
 	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
 
-	params := SlingParams{
+	params := sling.Intent{
 		BeadID:   "test-closed2",
 		RigName:  "testrig",
 		TownRoot: townRoot,
 		Force:    true, // --force should NOT bypass closed guard
 	}
 
-	_, err := executeSling(params)
+	_, err := executeSling(context.Background(), params)
 	if err == nil {
 		t.Fatal("expected error when slinging closed bead with --force, got nil")
 	}

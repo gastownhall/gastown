@@ -3,7 +3,7 @@ package doctor
 import (
 	"encoding/json"
 	"fmt"
-	"os/exec"
+	"github.com/jonbaldie/gastown/internal/beads"
 	"path/filepath"
 	"time"
 )
@@ -88,7 +88,7 @@ func (c *WispGCCheck) Run(ctx *CheckContext) *CheckResult {
 // Queries the wisps table via bd mol wisp list (Dolt server is required).
 func (c *WispGCCheck) countAbandonedWisps(rigPath string) int {
 	// Query wisps table via bd CLI
-	cmd := exec.Command("bd", "mol", "wisp", "list", "--json")
+	cmd := beads.Spawn("mol", "wisp", "list", "--json")
 	cmd.Dir = rigPath
 
 	output, err := cmd.Output()
@@ -134,7 +134,7 @@ func (c *WispGCCheck) Fix(ctx *CheckContext) error {
 		rigPath := filepath.Join(ctx.TownRoot, rigName)
 
 		// Run bd mol wisp gc
-		cmd := exec.Command("bd", "mol", "wisp", "gc")
+		cmd := beads.Spawn("mol", "wisp", "gc")
 		cmd.Dir = rigPath
 		if output, err := cmd.CombinedOutput(); err != nil {
 			lastErr = fmt.Errorf("%s: %v (%s)", rigName, err, string(output))

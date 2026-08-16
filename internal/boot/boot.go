@@ -179,10 +179,9 @@ func (b *Boot) spawnTmux(agentOverride string) error {
 	}
 
 	// Use unified session lifecycle for config → settings → command → create → env.
-	_, err := session.StartSession(b.tmux, session.SessionConfig{
+	_, err := session.StartSession(b.tmux, "boot", session.Work{
 		SessionID: session.BootSessionName(),
 		WorkDir:   b.bootDir,
-		Role:      "boot",
 		TownRoot:  b.townRoot,
 		Beacon: session.BeaconConfig{
 			Recipient: "boot",

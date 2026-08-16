@@ -53,6 +53,13 @@ if [[ "$cmd" == "has-session" ]]; then
   exit 0
 fi
 
+# StartSession waits until the pane is not a shell. Returning a non-shell
+# command lets Deacon restart in the very-stale path finish immediately.
+if [[ "$cmd" == "display-message" ]]; then
+  echo "claude"
+  exit 0
+fi
+
 exit 0
 `
 	path := filepath.Join(dir, "tmux")

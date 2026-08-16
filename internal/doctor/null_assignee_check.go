@@ -3,7 +3,7 @@ package doctor
 import (
 	"encoding/csv"
 	"fmt"
-	"os/exec"
+	"github.com/jonbaldie/gastown/internal/beads"
 	"path/filepath"
 	"strings"
 
@@ -145,7 +145,7 @@ func (c *NullAssigneeCheck) Fix(ctx *CheckContext) error {
 // queryNullAssigneeBeads returns in_progress beads with NULL/empty assignee for a rig.
 // Uses bd sql --csv (raw SQL passthrough, not affected by bd ORM deserialization).
 func queryNullAssigneeBeads(rigDir string) ([]nullAssigneeRow, error) {
-	cmd := exec.Command("bd", "sql", "--csv", nullAssigneeSelectQuery) //nolint:gosec // G204: args are constants
+	cmd := beads.Spawn("sql", "--csv", nullAssigneeSelectQuery) //nolint:gosec // G204: args are constants
 	cmd.Dir = rigDir
 	output, err := cmd.CombinedOutput()
 	if err != nil {
@@ -174,7 +174,7 @@ func queryNullAssigneeBeads(rigDir string) ([]nullAssigneeRow, error) {
 
 // execBdSQLWrite executes a SQL write statement via bd sql.
 func execBdSQLWrite(rigDir, query string) error {
-	cmd := exec.Command("bd", "sql", query) //nolint:gosec // G204: query is a constant
+	cmd := beads.Spawn("sql", query) //nolint:gosec // G204: query is a constant
 	cmd.Dir = rigDir
 	output, err := cmd.CombinedOutput()
 	if err != nil {

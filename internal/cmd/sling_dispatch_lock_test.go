@@ -1,11 +1,14 @@
 package cmd
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"runtime"
 	"strings"
 	"testing"
+
+	"github.com/jonbaldie/gastown/internal/sling"
 )
 
 // TestExecuteSling_AcquiresBeadLock verifies that executeSling acquires the
@@ -42,13 +45,13 @@ exit 0
 	writeBDStub(t, binDir, bdScript, "")
 	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
 
-	params := SlingParams{
+	params := sling.Intent{
 		BeadID:   beadID,
 		RigName:  "testrig",
 		TownRoot: townRoot,
 	}
 
-	_, err = executeSling(params)
+	_, err = executeSling(context.Background(), params)
 	if err == nil {
 		t.Fatal("expected executeSling to fail when lock is held, got nil error")
 	}
@@ -83,20 +86,20 @@ exit 0
 	writeBDStub(t, binDir, bdScript, "")
 	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
 
-	params := SlingParams{
+	params := sling.Intent{
 		BeadID:   beadID,
 		RigName:  "testrig",
 		TownRoot: townRoot,
 	}
 
 	// First call — acquires lock, fails on closed guard, releases lock
-	_, err := executeSling(params)
+	_, err := executeSling(context.Background(), params)
 	if err == nil {
 		t.Fatal("expected closed guard error")
 	}
 
 	// Second call — should acquire the lock (not contention error)
-	_, err = executeSling(params)
+	_, err = executeSling(context.Background(), params)
 	if err == nil {
 		t.Fatal("expected closed guard error on second call")
 	}

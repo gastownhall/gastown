@@ -84,12 +84,21 @@ func TestNewBDCommand_InheritsEnv(t *testing.T) {
 	t.Setenv("GT_DOLT_PORT", "13307")
 
 	cmd := NewBDCommand("version")
-	// cmd.Env should be nil (inherits process env)
-	if cmd.Env != nil {
-		t.Error("NewBDCommand should not set cmd.Env (nil inherits process env)")
-	}
 	if cmd.Path == "" {
 		t.Error("NewBDCommand returned empty command path")
+	}
+	if cmd.Env == nil {
+		t.Fatal("NewBDCommand must set env through beads.Spawn so Dolt targeting is applied")
+	}
+	found := false
+	for _, e := range cmd.Env {
+		if strings.HasPrefix(e, "GT_DOLT_PORT=13307") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Error("NewBDCommand env missing GT_DOLT_PORT from process env")
 	}
 }
 

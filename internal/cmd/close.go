@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/jonbaldie/gastown/internal/beads"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -82,7 +83,7 @@ func runClose(cmd *cobra.Command, args []string) error {
 	// the bead's prefix to the owning rig's directory and strip BEADS_DIR so
 	// bd discovers the database from the working directory.
 	bdArgs := append([]string{"close"}, convertedArgs...)
-	bdCmd := exec.Command("bd", bdArgs...)
+	bdCmd := beads.Spawn(bdArgs...)
 	bdCmd.Stdin = os.Stdin
 	bdCmd.Stdout = os.Stdout
 	bdCmd.Stderr = os.Stderr
@@ -145,7 +146,7 @@ func closeChildren(parentID string, visited map[string]bool, depth int) error {
 
 	// Query children via bd children --json.
 	// Route to the correct rig database via prefix resolution.
-	childCmd := exec.Command("bd", "children", parentID, "--json")
+	childCmd := beads.Spawn("children", parentID, "--json")
 	if dir := resolveBeadDir(parentID); dir != "" && dir != "." {
 		childCmd.Dir = dir
 		childCmd.Env = filterEnvKey(os.Environ(), "BEADS_DIR")
@@ -192,7 +193,7 @@ func closeChildren(parentID string, visited map[string]bool, depth int) error {
 
 	fmt.Fprintf(os.Stderr, "Cascade: closing %d children of %s\n", len(childIDs), parentID)
 
-	closeBd := exec.Command("bd", closeArgs...)
+	closeBd := beads.Spawn(closeArgs...)
 	closeBd.Stdout = os.Stdout
 	closeBd.Stderr = os.Stderr
 	if dir := resolveBeadDir(parentID); dir != "" && dir != "." {

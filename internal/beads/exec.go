@@ -36,6 +36,17 @@ func CommandContext(ctx context.Context, dir, fallbackBeadsDir string, mode Subp
 	return cmd
 }
 
+// Spawn is the package-wide constructor for a bd subprocess. Callers that do
+// not yet have a Session still go through Command so Dolt targeting stays here.
+func Spawn(args ...string) *exec.Cmd {
+	return Command("", "", SubprocessModeForArgs(args), args...)
+}
+
+// SpawnContext is the context-bound form of Spawn.
+func SpawnContext(ctx context.Context, args ...string) *exec.Cmd {
+	return CommandContext(ctx, "", "", SubprocessModeForArgs(args), args...)
+}
+
 // ConfigureCommand applies the shared bd subprocess policy to an existing
 // command. This is for callers that need a custom bd path.
 func ConfigureCommand(cmd *exec.Cmd, dir, fallbackBeadsDir string, mode SubprocessEnvMode) {

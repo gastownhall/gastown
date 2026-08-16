@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/jonbaldie/gastown/internal/events"
+	"github.com/jonbaldie/gastown/internal/process"
 	"github.com/jonbaldie/gastown/internal/session"
 	"github.com/jonbaldie/gastown/internal/tmux"
 )
@@ -443,78 +444,48 @@ func gasTownRuntimeYOLO(cmdName, args string) bool {
 // in argv (not comm name alone): claude/codex --dangerously-skip-permissions, cursor-agent -f,
 // copilot --yolo, etc.
 func (c *OrphanProcessCheck) findRuntimeProcesses() ([]processInfo, error) {
-	var procs []processInfo
-
-	// Use ps with args to get full command line (needed to check for Gas Town signature)
-	out, err := exec.Command("ps", "-eo", "pid,ppid,args").Output()
+	table, err := process.Capture()
 	if err != nil {
 		return nil, err
 	}
 
-	for _, line := range strings.Split(string(out), "\n") {
-		fields := strings.Fields(line)
-		if len(fields) < 3 {
+	var procs []processInfo
+	for _, p := range table.All() {
+		if !gasTownRuntimeYOLO(p.Name, p.Args) {
 			continue
 		}
-
-		// Extract command name (without path)
-		cmd := fields[2]
-		if idx := strings.LastIndex(cmd, "/"); idx >= 0 {
-			cmd = cmd[idx+1:]
-		}
-
-		// Get full args
-		args := strings.Join(fields[2:], " ")
-
-		if !gasTownRuntimeYOLO(cmd, args) {
-			continue
-		}
-
-		var pid, ppid int
-		if _, err := fmt.Sscanf(fields[0], "%d", &pid); err != nil {
-			continue
-		}
-		if _, err := fmt.Sscanf(fields[1], "%d", &ppid); err != nil {
-			continue
-		}
-
 		procs = append(procs, processInfo{
-			pid:  pid,
-			ppid: ppid,
-			cmd:  args,
+			pid:  p.PID,
+			ppid: p.PPID,
+			cmd:  p.Args,
 		})
 	}
-
 	return procs, nil
 }
 
 // isOrphanProcess checks if a runtime process is orphaned.
 // A process is orphaned if its parent (or ancestor) is not a tmux session.
 func (c *OrphanProcessCheck) isOrphanProcess(proc processInfo, tmuxPIDs map[int]bool) bool {
-	// Walk up the process tree looking for a tmux parent
+	table, err := process.Capture()
+	if err != nil {
+		return true
+	}
 	currentPPID := proc.ppid
 	visited := make(map[int]bool)
 
 	for currentPPID > 1 && !visited[currentPPID] {
 		visited[currentPPID] = true
 
-		// Check if this is a tmux process
 		if tmuxPIDs[currentPPID] {
-			return false // Has tmux ancestor, not orphaned
+			return false
 		}
 
-		// Get parent's parent
-		out, err := exec.Command("ps", "-p", fmt.Sprintf("%d", currentPPID), "-o", "ppid=").Output() //nolint:gosec // G204: PID is numeric from internal state
-		if err != nil {
+		p, ok := table.Lookup(currentPPID)
+		if !ok {
 			break
 		}
-
-		var nextPPID int
-		if _, err := fmt.Sscanf(strings.TrimSpace(string(out)), "%d", &nextPPID); err != nil {
-			break
-		}
-		currentPPID = nextPPID
+		currentPPID = p.PPID
 	}
 
-	return true // No tmux ancestor found
+	return true
 }
