@@ -59,6 +59,38 @@ func TestCleanGTEnv_PreservesBeadsDoltPort(t *testing.T) {
 	}
 }
 
+func TestCleanGTEnv_ForcesDoltAutoStartOff(t *testing.T) {
+	t.Setenv("BEADS_DOLT_AUTO_START", "1")
+
+	env := CleanGTEnv()
+
+	var values []string
+	for _, e := range env {
+		if strings.HasPrefix(e, "BEADS_DOLT_AUTO_START=") {
+			values = append(values, e)
+		}
+	}
+	if len(values) != 1 || values[0] != "BEADS_DOLT_AUTO_START=0" {
+		t.Fatalf("CleanGTEnv AUTO_START = %v, want [BEADS_DOLT_AUTO_START=0]", values)
+	}
+}
+
+func TestCleanGTEnv_ExtraEnvCanOverrideAutoStart(t *testing.T) {
+	t.Setenv("BEADS_DOLT_AUTO_START", "0")
+
+	env := CleanGTEnv("BEADS_DOLT_AUTO_START=1")
+
+	var values []string
+	for _, e := range env {
+		if strings.HasPrefix(e, "BEADS_DOLT_AUTO_START=") {
+			values = append(values, e)
+		}
+	}
+	if len(values) != 1 || values[0] != "BEADS_DOLT_AUTO_START=1" {
+		t.Fatalf("CleanGTEnv AUTO_START = %v, want [BEADS_DOLT_AUTO_START=1]", values)
+	}
+}
+
 func TestCleanGTEnv_ExtraEnv(t *testing.T) {
 	env := CleanGTEnv("HOME=/tmp/test", "FOO=bar")
 

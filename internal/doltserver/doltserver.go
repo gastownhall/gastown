@@ -1426,7 +1426,7 @@ func ReapOwnedTestServers(townRoot string) (int, error) {
 		if !isDoltSQLServerProcess(pid) {
 			continue
 		}
-		if !doltProcessMatchesTown(absRoot, pid, config) {
+		if !doltProcessMatchesTown(absRoot, pid, config) && !doltProcessCWDUnderTown(absRoot, pid) {
 			continue
 		}
 		proc, err := os.FindProcess(pid)
@@ -1497,9 +1497,6 @@ func findOwnedDoltTestServerCandidatesFromPS(output, townRoot, dataDir string) [
 		if line == "" || !strings.Contains(line, "sql-server") || !strings.Contains(line, "dolt") {
 			continue
 		}
-		if !containsPathBoundary(line, absRoot) && !containsPathBoundary(line, absDataDir) {
-			continue
-		}
 		fields := strings.Fields(line)
 		if len(fields) < 3 {
 			continue
@@ -1508,11 +1505,31 @@ func findOwnedDoltTestServerCandidatesFromPS(output, townRoot, dataDir string) [
 		if err != nil || pid <= 0 {
 			continue
 		}
-		if isDoltSQLServerArgs(fields[1:]) {
+		if !isDoltSQLServerArgs(fields[1:]) {
+			continue
+		}
+		if containsPathBoundary(line, absRoot) || containsPathBoundary(line, absDataDir) || doltProcessCWDUnderTown(absRoot, pid) {
 			pids = append(pids, pid)
 		}
 	}
 	return pids
+}
+
+func doltProcessCWDUnderTown(townRoot string, pid int) bool {
+	cwd := getProcessCWD(pid)
+	if cwd == "" {
+		return false
+	}
+	absRoot, err := filepath.Abs(townRoot)
+	if err != nil {
+		return false
+	}
+	absCWD, err := filepath.Abs(cwd)
+	if err != nil {
+		return false
+	}
+	rel, err := filepath.Rel(absRoot, absCWD)
+	return err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) && !filepath.IsAbs(rel)
 }
 
 func isDoltSQLServerProcess(pid int) bool {
@@ -2767,7 +2784,7 @@ func openRigStoreFromConfig(ctx context.Context, townRoot, beadsDir, rigName str
 		}
 	}()
 
-	return beadssdk.OpenFromConfig(ctx, beadsDir)
+	return beads.OpenFromConfig(ctx, beadsDir)
 }
 
 func issuePrefixForRigInit(townRoot, rigName string) string {

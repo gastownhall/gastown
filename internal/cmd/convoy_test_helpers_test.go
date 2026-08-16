@@ -12,6 +12,7 @@ import (
 
 	"github.com/jonbaldie/gastown/internal/beads"
 	"github.com/jonbaldie/gastown/internal/constants"
+	"github.com/jonbaldie/gastown/internal/testutil"
 )
 
 // ---------------------------------------------------------------------------
@@ -374,6 +375,7 @@ func (d *testDAG) Setup(t *testing.T) (townRoot, logPath string) {
 	t.Helper()
 
 	townRoot = t.TempDir()
+	testutil.ReapOwnedDoltOnCleanup(t, townRoot)
 
 	// Create workspace marker directories.
 	if err := os.MkdirAll(filepath.Join(townRoot, "mayor", "rig"), 0755); err != nil {

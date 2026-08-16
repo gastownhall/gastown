@@ -10,11 +10,15 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
 	"strings"
+	"sync"
 	"time"
 
 	beadsdk "github.com/steveyegge/beads"
 )
+
+var beadsOpenEnvMu sync.Mutex
 
 // SetStore configures an in-process beadsdk.Storage for this Beads instance.
 // When set, methods that have in-process implementations will use the store
@@ -63,7 +67,7 @@ func (b *Beads) OpenStore(ctx context.Context) (beadsdk.Storage, func(), error) 
 		return nil, nil, fmt.Errorf("no beads directory found")
 	}
 
-	store, err := beadsdk.OpenFromConfig(ctx, beadsDir)
+	store, err := OpenFromConfig(ctx, beadsDir)
 	if err != nil {
 		return nil, nil, fmt.Errorf("opening beads store: %w", err)
 	}
@@ -72,6 +76,35 @@ func (b *Beads) OpenStore(ctx context.Context) (beadsdk.Storage, func(), error) 
 		_ = store.Close()
 	}
 	return store, cleanup, nil
+}
+
+// OpenFromConfig opens a beads store without letting the Beads SDK auto-start
+// a private dolt sql-server. Gas Town owns the town Dolt lifecycle; SDK
+// auto-start detaches `dolt sql-server -H 127.0.0.1 -P <ephemeral>` under
+// .beads/dolt and leaves it running after Close().
+func OpenFromConfig(ctx context.Context, beadsDir string) (beadsdk.Storage, error) {
+	return withDisabledDoltAutoStart(func() (beadsdk.Storage, error) {
+		return beadsdk.OpenFromConfig(ctx, beadsDir)
+	})
+}
+
+func withDisabledDoltAutoStart[T any](fn func() (T, error)) (T, error) {
+	beadsOpenEnvMu.Lock()
+	defer beadsOpenEnvMu.Unlock()
+
+	oldValue, had := os.LookupEnv("BEADS_DOLT_AUTO_START")
+	if err := os.Setenv("BEADS_DOLT_AUTO_START", "0"); err != nil {
+		var zero T
+		return zero, err
+	}
+	defer func() {
+		if had {
+			_ = os.Setenv("BEADS_DOLT_AUTO_START", oldValue)
+		} else {
+			_ = os.Unsetenv("BEADS_DOLT_AUTO_START")
+		}
+	}()
+	return fn()
 }
 
 // storeCtx returns a context with a standard timeout for store operations.

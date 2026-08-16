@@ -11,13 +11,22 @@ import (
 // GT_DOLT_PORT, GT_DOLT_HOST, and GT_TEST_EXTERNAL_DOLT which are preserved so
 // subprocesses connect to and reuse the test Dolt server. BEADS_DOLT_PORT and
 // BEADS_DOLT_SERVER_HOST (prefix BEADS_, not BD_) pass through implicitly since
-// only BD_* is stripped.
+// only BD_* is stripped. BEADS_DOLT_AUTO_START is forced to 0 unless extraEnv
+// supplies an explicit override, so isolated bd/gt subprocesses cannot spawn
+// leftover private Dolt servers.
 //
 // Use this when setting cmd.Env on bd/gt subprocess calls in tests.
 // If you do NOT set cmd.Env, the process env (including GT_DOLT_PORT) is
 // inherited automatically — no need for this function in that case.
 func CleanGTEnv(extraEnv ...string) []string {
 	var clean []string
+	hasAutoStart := false
+	for _, e := range extraEnv {
+		if strings.HasPrefix(e, "BEADS_DOLT_AUTO_START=") {
+			hasAutoStart = true
+			break
+		}
+	}
 	for _, e := range os.Environ() {
 		if strings.HasPrefix(e, "GT_") &&
 			!strings.HasPrefix(e, "GT_DOLT_PORT=") &&
@@ -28,7 +37,13 @@ func CleanGTEnv(extraEnv ...string) []string {
 		if strings.HasPrefix(e, "BD_") {
 			continue
 		}
+		if strings.HasPrefix(e, "BEADS_DOLT_AUTO_START=") {
+			continue
+		}
 		clean = append(clean, e)
+	}
+	if !hasAutoStart {
+		clean = append(clean, "BEADS_DOLT_AUTO_START=0")
 	}
 	return append(clean, extraEnv...)
 }

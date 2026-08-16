@@ -329,6 +329,19 @@ func TestFindOwnedDoltTestServerCandidatesFromPS(t *testing.T) {
 	}
 }
 
+func TestDoltProcessCWDUnderTown(t *testing.T) {
+	cwd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !doltProcessCWDUnderTown(cwd, os.Getpid()) {
+		t.Fatalf("current process cwd %s should be under itself", cwd)
+	}
+	if doltProcessCWDUnderTown(filepath.Join(cwd, "no-such-child"), os.Getpid()) {
+		t.Fatal("current process cwd should not be under a missing child")
+	}
+}
+
 func TestReapOwnedTestServersRefusesNonTempRoot(t *testing.T) {
 	if _, err := ReapOwnedTestServers(string(filepath.Separator)); err == nil {
 		t.Fatal("expected non-temp root to be rejected")
