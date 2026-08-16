@@ -53,9 +53,9 @@ state.json
 .beads/backup/
 .beads-wisp/
 
-# Clone-specific CLAUDE.md (regenerated locally per clone)
-CLAUDE.md
-# But keep the embedded template for gt doctor version checks
+# CLAUDE.md is a tracked symlink to AGENTS.md (canonical agent instructions).
+# CLAUDE.local.md stays local: polecat overlay when the tracked file exists.
+# Keep the embedded town-root template for gt doctor version checks.
 !internal/templates/townroot/claude.md
 
 # Formulas: source of truth is internal/formula/formulas/ (embedded in binary).

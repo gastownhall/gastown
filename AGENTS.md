@@ -1,8 +1,6 @@
 # Agent Instructions
 
-See **CLAUDE.md** for complete agent context and instructions.
-
-This file exists for compatibility with tools that look for AGENTS.md.
+**jonbaldie/gastown** is home. Ship to `origin`. `upstream` is `gastownhall/gastown` for syncs when asked. For a `gastownhall/gastown` contribution, read CONTRIBUTING.md.
 
 > **Recovery**: Run `gt prime` after compaction, clear, or new session
 
