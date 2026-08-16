@@ -7,9 +7,9 @@
 - Mock only third-party services or process boundaries that we cannot control. Do not mock packages or business rules that we own.
 - For command and workflow changes, the default proof is to run the real command against a temporary town or rig and assert exit status, output, and persisted state.
 - Assert results produced by production code. Do not assert values assembled only by test helpers, copied production logic, or mocks configured by the same test.
-- Use `testutil.RequireDoltContainer`, `testutil.StartIsolatedDoltContainer`, or `testutil.RequireTownEnv` when a test needs those resources. Self-contained tests that create their own temporary town do not need an integration guard.
+- Use `testutil.RequireDoltContainer`, `testutil.StartIsolatedDoltContainer`, or `testutil.RequireTownEnv` when a test needs those resources. Self-contained tests that create their own temporary town do not need an integration guard. Container helpers compile only with `-tags=integration`; default `go test` skips them.
 - Keep concurrency tests deterministic. Synchronize on observable state or explicit test seams instead of sleeps when possible, and run race-sensitive packages with `go test -race ./path/to/package`.
-- Use `make test` as the repository-wide unit-test gate; it includes shell checks before `go test ./...`. Run tagged integration tests for affected command paths and use `make test-e2e-container` for installation or full-workspace behaviour.
+- Use `make test` as the repository-wide unit-test gate; it includes shell checks before `go test ./...`. Run `make test-integration` or `go test -tags=integration` for Docker-backed Dolt helpers. Use `make test-e2e-container` for installation or full-workspace behaviour.
 
 ## Comments and docs
 

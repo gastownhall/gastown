@@ -186,7 +186,7 @@ go install github.com/steveyegge/beads/cmd/bd@latest
 
 Both binaries land in `%USERPROFILE%\go\bin\`. Put that directory before older `gt` or `bd` install locations on `PATH`, then open a new shell for the change to take effect.
 
-Native Windows source builds that compile the ICU-backed query layer need an MSYS2 UCRT64 or MinGW64 shell with matching `icu`, `toolchain`, and `pkg-config` packages; the repository's Windows CI uses `pacboy -S icu:p toolchain:p pkg-config:p`. Plain PowerShell/MSVC is not enough for that CGO build.
+`make build` defaults to `CGO_ENABLED=0`. Native Windows source builds that compile the ICU-backed embedded query layer (`make build-cgo`) need an MSYS2 UCRT64 or MinGW64 shell with matching `icu`, `toolchain`, and `pkg-config` packages; the repository's Windows CI uses `pacboy -S icu:p toolchain:p pkg-config:p`. Plain PowerShell/MSVC is not enough for that CGO build.
 
 For full tmux-backed workflows on Windows, use WSL or another Linux environment. Native Windows shells are best treated as minimal CLI-only environments.
 

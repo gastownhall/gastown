@@ -1,4 +1,4 @@
-//go:build windows
+//go:build integration && windows
 
 package testutil
 
@@ -6,10 +6,6 @@ import (
 	"fmt"
 	"testing"
 )
-
-// DoltDockerImage is the Docker image used for Dolt test containers.
-// Kept in sync with doltserver.go; see that file for details.
-const DoltDockerImage = "dolthub/dolt-sql-server:2.0.7"
 
 // StartIsolatedDoltContainer is not supported on Windows CI.
 func StartIsolatedDoltContainer(t *testing.T) string {
@@ -29,11 +25,10 @@ func RequireDoltContainer(t *testing.T) {
 	t.Skip("Docker not available on Windows CI")
 }
 
-// DoltContainerAddr returns empty string on Windows.
 func DoltContainerAddr() string { return "" }
 
-// DoltContainerPort returns empty string on Windows.
 func DoltContainerPort() string { return "" }
 
-// TerminateDoltContainer is a no-op on Windows.
 func TerminateDoltContainer() {}
+
+func DoltContainersEnabled() bool { return false }

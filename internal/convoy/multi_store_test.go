@@ -9,11 +9,13 @@ import (
 
 	beadsdk "github.com/steveyegge/beads"
 	beadsRouting "github.com/steveyegge/gastown/internal/beads"
+	"github.com/steveyegge/gastown/internal/testutil"
 )
 
 // setupTestStoreWithPrefix opens a test store and sets a specific prefix.
 func setupTestStoreWithPrefix(t *testing.T, prefix string) (beadsdk.Storage, func()) {
 	t.Helper()
+	testutil.SkipWithoutDoltContainer(t)
 	t.Setenv("BEADS_TEST_MODE", "1")
 
 	dir := t.TempDir()

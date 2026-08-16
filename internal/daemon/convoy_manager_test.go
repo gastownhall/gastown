@@ -14,12 +14,14 @@ import (
 	"time"
 
 	beadsdk "github.com/steveyegge/beads"
+	"github.com/steveyegge/gastown/internal/testutil"
 )
 
 // setupTestStore opens a real beads database for integration tests.
-// Skips if unavailable. Caller must run cleanup when done.
+// Skips unless the shared Dolt test container is running.
 func setupTestStore(t *testing.T) (beadsdk.Storage, func()) {
 	t.Helper()
+	testutil.SkipWithoutDoltContainer(t)
 	t.Setenv("BEADS_TEST_MODE", "1")
 	dir := t.TempDir()
 	beadsDir := filepath.Join(dir, ".beads")

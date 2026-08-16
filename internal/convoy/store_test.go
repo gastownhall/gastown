@@ -8,13 +8,15 @@ import (
 	"time"
 
 	beadsdk "github.com/steveyegge/beads"
+	"github.com/steveyegge/gastown/internal/testutil"
 )
 
 // setupTestStore opens a real beads database in a temp dir for integration tests.
-// Skips the test if the store cannot be opened (e.g. no CGO, no Dolt).
-// Caller must run the returned cleanup when done.
+// Skips unless the shared Dolt test container is running, so CGO builds cannot
+// fall back to an embedded engine and leave testdb_* orphans.
 func setupTestStore(t *testing.T) (beadsdk.Storage, func()) {
 	t.Helper()
+	testutil.SkipWithoutDoltContainer(t)
 
 	t.Setenv("BEADS_TEST_MODE", "1")
 

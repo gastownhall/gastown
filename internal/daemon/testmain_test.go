@@ -19,9 +19,9 @@ func TestMain(m *testing.M) {
 	// destroyed when the container is terminated at cleanup —
 	// preventing orphan accumulation in the shared production Dolt data dir.
 	//
-	// When Docker is unavailable, Dolt-needing tests self-skip via
-	// setupTestStore → beadsdk.Open failure. Non-Dolt tests (e.g.
-	// boot_spawn_frequency_test.go) still run. (fixes gt-kw4449)
+	// When the container is unavailable, Dolt-needing tests skip via
+	// testutil.SkipWithoutDoltContainer in setupTestStore. Non-Dolt tests
+	// (e.g. boot_spawn_frequency_test.go) still run. (fixes gt-kw4449)
 	if err := testutil.EnsureDoltContainerForTestMain(); err != nil {
 		fmt.Fprintf(os.Stderr, "daemon TestMain: Dolt container unavailable (%v), Dolt-dependent tests will skip\n", err)
 	}

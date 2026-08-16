@@ -44,10 +44,14 @@ jobs:
 
       - name: Build binary
         shell: msys2 {0}
+        env:
+          CGO_ENABLED: "0"
         run: go build -v ./cmd/gt
 
       - name: Build all packages
         shell: msys2 {0}
+        env:
+          CGO_ENABLED: "0"
         run: go build ./...
 
       - name: Vet

@@ -195,8 +195,10 @@ update script runs `go mod download` to refresh module deps after a pull.
 
 ### Build / lint / test / run
 
-- Build: `make build` → produces `gt`, `gt-proxy-server`, `gt-proxy-client` at repo root. First
-  build compiles a large dep tree (~1.5 min). `go run ./cmd/gt …` also works.
+- Build: `make build` → produces `gt`, `gt-proxy-server`, `gt-proxy-client` at repo root.
+  Default is `CGO_ENABLED=0` (no beads embedded Dolt engine).
+  `make build-dev` builds only `gt`. `make build-cgo` restores the CGO graph.
+  Bare `go build` / `go run` do not set `CGO_ENABLED`; use `make` or `CGO_ENABLED=0`.
 - Lint: `golangci-lint run --timeout=5m` (installed at `~/go/bin`).
   - GOTCHA: `golangci-lint` refuses to run if it was built with an older Go than `go.mod`'s
     `1.26.2` ("the Go language version go1.25 ... is lower than the targeted Go version 1.26.2").
@@ -206,8 +208,8 @@ update script runs `go mod download` to refresh module deps after a pull.
 - Test (unit): `go test -short ./...`. Full suite is slow (~15-20 min) because many packages spawn
   real `git`/`tmux` subprocesses.
 - Integration tests are build-tagged and need Dolt: `go test -tags=integration ./internal/cmd/...`.
-  Some use `internal/testutil` helpers that start Dolt Docker containers and skip gracefully when
-  prerequisites are missing.
+  Dolt Docker helpers in `internal/testutil` compile only with `-tags=integration`.
+  Default `go test` uses skip stubs so unit compiles do not pull testcontainers.
 - Run the app: `gt install <path>` creates a town HQ and auto-starts a Dolt SQL server; then
   `gt status`, `bd create/list/update/close` (beads work ledger), `gt rig add`, etc. `gt` must be on
   `PATH` for hooks/crew workflows (`cp gt ~/go/bin/` or `make install` → `~/.local/bin`).

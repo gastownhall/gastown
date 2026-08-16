@@ -1,4 +1,4 @@
-.PHONY: build desktop-build desktop-run install safe-install check-forward-only check-version-tag check-install-path clean test test-makefile test-e2e-container check-up-to-date
+.PHONY: build build-dev build-cgo cgo-enabled desktop-build desktop-run install safe-install check-forward-only check-version-tag check-install-path clean test test-makefile test-integration test-e2e-container check-up-to-date
 
 BINARY := gt
 BINARY_DESKTOP := gt-desktop
@@ -9,6 +9,13 @@ E2E_BUILD_FLAGS ?=
 E2E_RUN_FLAGS ?= --rm
 E2E_BUILD_RETRIES ?= 1
 E2E_RUN_RETRIES ?= 1
+
+# Daily builds do not compile beads' CGO embedded Dolt engine. Gas Town
+# talks to Dolt as an external SQL server via OpenFromConfig. CGO_ENABLED=1
+# compiles the unused embedded engine (dolthub/driver, ICU, and cloud SDKs).
+# Use `make build-cgo` when you need an in-process embedded engine.
+CGO_ENABLED ?= 0
+export CGO_ENABLED
 
 # Get version info for ldflags
 VERSION := $(shell git describe --tags --always --dirty 2>/dev/null || echo "dev")
@@ -36,6 +43,17 @@ build:
 	go build -ldflags "$(LDFLAGS)" -o $(BUILD_DIR)/$(BINARY)-proxy-server ./cmd/gt-proxy-server
 	go build -ldflags "$(LDFLAGS)" -o $(BUILD_DIR)/$(BINARY)-proxy-client ./cmd/gt-proxy-client
 	go build -ldflags "$(LDFLAGS)" -o $(BUILD_DIR)/$(BINARY) ./cmd/gt
+
+# Inner-loop target: only the gt binary, same CGO default as build.
+build-dev:
+	go build -ldflags "$(LDFLAGS)" -o $(BUILD_DIR)/$(BINARY) ./cmd/gt
+
+# Full CGO build that links beads' embedded Dolt engine.
+build-cgo:
+	$(MAKE) build CGO_ENABLED=1
+
+cgo-enabled:
+	@printf '%s\n' '$(CGO_ENABLED)'
 
 desktop-build:
 	go build -ldflags "$(LDFLAGS)" -o $(BUILD_DIR)/$(BINARY_DESKTOP) ./cmd/gt-desktop
@@ -181,6 +199,10 @@ clean:
 
 test: test-makefile
 	go test ./...
+
+# Compiles testcontainers Dolt helpers. Use this for Docker-backed tests.
+test-integration:
+	go test -tags=integration ./...
 
 test-makefile:
 	bash scripts/check-install-path_test.sh

@@ -1,4 +1,4 @@
-//go:build !windows
+//go:build integration && !windows
 
 package testutil
 
@@ -16,11 +16,6 @@ import (
 	"github.com/testcontainers/testcontainers-go"
 	"github.com/testcontainers/testcontainers-go/modules/dolt"
 )
-
-// DoltDockerImage is the Docker image used for Dolt test containers.
-// DOLT_ROOT_HOST=% tells the entrypoint to create root@'%' (available
-// since Dolt 1.46.0), which lets testcontainers connect via TCP.
-const DoltDockerImage = "dolthub/dolt-sql-server:2.0.7"
 
 var (
 	doltCtr     *dolt.DoltContainer
@@ -197,4 +192,9 @@ func TerminateDoltContainer() {
 		_ = testcontainers.TerminateContainer(doltCtr)
 		doltCtr = nil
 	}
+}
+
+// DoltContainersEnabled reports whether TestMain started a usable Dolt container.
+func DoltContainersEnabled() bool {
+	return doltCtr != nil && doltCtrErr == nil
 }

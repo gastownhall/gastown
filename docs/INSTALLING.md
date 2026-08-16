@@ -92,7 +92,7 @@ sudo dnf install -y tmux
 
 Install Go and Dolt first, then install `gt` and `bd` with Go. The binaries land in `%USERPROFILE%\go\bin`; put that directory before older `gt` or `bd` install locations on `PATH`, then open a new shell. For Docker setup, install Docker Desktop with Compose support.
 
-Native Windows source builds that compile the ICU-backed query layer need an MSYS2 UCRT64 or MinGW64 shell with matching `icu`, `toolchain`, and `pkg-config` packages. The repository's Windows CI uses `pacboy -S icu:p toolchain:p pkg-config:p` before running Go commands; plain PowerShell/MSVC is not enough for that CGO build.
+`make build` defaults to `CGO_ENABLED=0` and talks to Dolt as an external SQL server. Native Windows source builds that compile the ICU-backed embedded query layer (`make build-cgo`) need an MSYS2 UCRT64 or MinGW64 shell with matching `icu`, `toolchain`, and `pkg-config` packages. The repository's Windows CI uses `pacboy -S icu:p toolchain:p pkg-config:p` before running Go commands; plain PowerShell/MSVC is not enough for that CGO build.
 
 ```powershell
 go install github.com/steveyegge/gastown/cmd/gt@latest

@@ -98,7 +98,7 @@ jobs:
         run: go install gotest.tools/gotestsum@latest
 
       - name: Build
-        run: go build -v ./cmd/gt
+        run: CGO_ENABLED=0 go build -v ./cmd/gt
 
       - name: Test with Coverage
         run: |
