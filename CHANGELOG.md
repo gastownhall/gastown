@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Custom Codex aliases inherit trust flags.** `gt config agent set`
+  aliases such as `codex -m gpt-5.3-codex-spark` now keep
+  `--dangerously-bypass-approvals-and-sandbox` and
+  `-c check_for_update_on_startup=false` unless the command already sets
+  a sandbox or approval policy. `gt up` no longer blocks on the Codex
+  workspace trust prompt for those aliases.
+
 ## [1.2.2] - 2026-08-16
 
 ### Changed

@@ -498,8 +498,13 @@ ID during lifecycle hooks, and resumes interrupted sessions with `pi --session`.
 ```bash
 gt config agent set claude-glm "claude-glm --model glm-4"
 gt config agent set claude "claude-opus"  # Override built-in
+gt config agent set codex-cheap "codex -m gpt-5.3-codex-spark" --provider codex
 gt config default-agent claude-glm       # Set default
 ```
+
+Codex aliases inherit `--dangerously-bypass-approvals-and-sandbox` and
+`-c check_for_update_on_startup=false` unless the command already sets a
+sandbox or approval policy.
 
 **Advanced agent config** (`settings/agents.json`):
 ```json

@@ -1096,12 +1096,27 @@ func containsArgSequence(args, sequence []string) bool {
 	return false
 }
 
+const (
+	codexSandboxBypassFlag = "--dangerously-bypass-approvals-and-sandbox"
+	codexSandboxFlag       = "--sandbox"
+)
+
 func ensureCodexAutomationArgs(command string, args []string) []string {
-	if !isCodexRuntime(command) || hasCodexUpdateCheckConfig(args) {
+	if !isCodexRuntime(command) {
 		return args
 	}
-	result := make([]string, 0, len(args)+2)
-	result = append(result, "-c", codexUpdateCheckConfig)
+	prefix := make([]string, 0, 3)
+	if !hasCodexUpdateCheckConfig(args) {
+		prefix = append(prefix, "-c", codexUpdateCheckConfig)
+	}
+	if !hasCodexSandboxPolicy(args) {
+		prefix = append(prefix, codexSandboxBypassFlag)
+	}
+	if len(prefix) == 0 {
+		return args
+	}
+	result := make([]string, 0, len(prefix)+len(args))
+	result = append(result, prefix...)
 	result = append(result, args...)
 	return result
 }
@@ -1113,6 +1128,22 @@ func isCodexRuntime(command string) bool {
 func hasCodexUpdateCheckConfig(args []string) bool {
 	for _, arg := range args {
 		if arg == codexUpdateCheckKey || strings.HasPrefix(arg, codexUpdateCheckKey+"=") {
+			return true
+		}
+	}
+	return false
+}
+
+func hasCodexSandboxPolicy(args []string) bool {
+	for _, arg := range args {
+		switch {
+		case arg == codexSandboxBypassFlag,
+			arg == "--full-auto",
+			arg == "-a",
+			arg == "--ask-for-approval",
+			strings.HasPrefix(arg, "--ask-for-approval="),
+			arg == codexSandboxFlag,
+			strings.HasPrefix(arg, codexSandboxFlag+"="):
 			return true
 		}
 	}

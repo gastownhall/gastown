@@ -84,11 +84,17 @@ matches a known preset (e.g., "gemini", "claude"). Use --provider to
 set it explicitly for custom binary names. The provider controls
 session handling, tmux detection, hooks, and other runtime defaults.
 
+Codex aliases inherit the built-in non-interactive flags
+(--dangerously-bypass-approvals-and-sandbox and
+-c check_for_update_on_startup=false) unless the command already sets a
+sandbox or approval policy.
+
 Examples:
   gt config agent set claude-glm \"claude-glm --model glm-4\"
   gt config agent set gemini-custom gemini --approval-mode yolo
   gt config agent set claude \"claude-glm\"  # Override built-in claude
-  gt config agent set my-bot my-bot-cli --provider claude  # Use Claude defaults`,
+  gt config agent set my-bot my-bot-cli --provider claude  # Use Claude defaults
+  gt config agent set codex-cheap \"codex -m gpt-5.3-codex-spark\" --provider codex`,
 	Args: cobra.ExactArgs(2),
 	RunE: runConfigAgentSet,
 }

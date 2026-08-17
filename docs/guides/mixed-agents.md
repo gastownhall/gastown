@@ -5,6 +5,20 @@ mix is Codex for workers and Pi for Mayor. Session start, hooks, mail,
 and nudge resolve the agent for that role or crew worker. There is no
 town-wide lock to a single provider.
 
+## Custom Codex aliases
+
+`gt config agent set` can encode a model or thinking flag on a Codex
+alias. Gas Town still injects the built-in non-interactive flags
+(`--dangerously-bypass-approvals-and-sandbox` and
+`-c check_for_update_on_startup=false`) so `gt up` does not block on the
+workspace trust prompt. Set `--sandbox` or `--ask-for-approval` yourself
+to opt out of the bypass.
+
+```bash
+gt config agent set codex-cheap "codex -m gpt-5.3-codex-spark" --provider codex
+gt config mix default=codex-cheap mayor=pi:high
+```
+
 ## One-command mix
 
 ```bash

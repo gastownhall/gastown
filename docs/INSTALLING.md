@@ -181,7 +181,9 @@ Gas Town supports built-in runtimes (`claude`, `gemini`, `codex`, `kiro`, `curso
 # List available agents
 gt config agent list
 
-# Create an alias (aliases can encode model/thinking flags)
+# Create an alias (aliases can encode model/thinking flags).
+# Codex aliases inherit --dangerously-bypass-approvals-and-sandbox and
+# -c check_for_update_on_startup=false unless you set a sandbox/approval policy.
 gt config agent set codex-low "codex --thinking low"
 gt config agent set claude-haiku "claude --model haiku --dangerously-skip-permissions"
 

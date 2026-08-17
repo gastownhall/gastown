@@ -3779,6 +3779,74 @@ func TestCodexBuildCommandWithPromptIncludesBootstrapPrompt(t *testing.T) {
 	}
 }
 
+func TestCustomCodexAliasInheritsTrustFlags(t *testing.T) {
+	// UAT: gt config agent set codex-cheap "codex -m gpt-5.3-codex-spark" --provider codex
+	// Custom aliases replace Args entirely, so fillRuntimeDefaults must re-attach
+	// the built-in non-interactive flags. Without them, gt up blocks on trust.
+	rc := fillRuntimeDefaults(&RuntimeConfig{
+		Provider: "codex",
+		Command:  "codex",
+		Args:     []string{"-m", "gpt-5.3-codex-spark"},
+	})
+	cmd := rc.BuildCommand()
+
+	if !strings.Contains(cmd, "-m gpt-5.3-codex-spark") {
+		t.Fatalf("custom model flag missing: %q", cmd)
+	}
+	if !strings.Contains(cmd, "--dangerously-bypass-approvals-and-sandbox") {
+		t.Fatalf("custom Codex alias missing trust/sandbox-bypass flag: %q", cmd)
+	}
+	if !strings.Contains(cmd, "check_for_update_on_startup=false") {
+		t.Fatalf("custom Codex alias missing update-check disable: %q", cmd)
+	}
+	if strings.Count(cmd, "--dangerously-bypass-approvals-and-sandbox") != 1 {
+		t.Fatalf("sandbox-bypass flag duplicated: %q", cmd)
+	}
+}
+
+func TestCustomCodexAliasDoesNotDuplicateExistingBypass(t *testing.T) {
+	rc := fillRuntimeDefaults(&RuntimeConfig{
+		Provider: "codex",
+		Command:  "codex",
+		Args:     []string{"-c", "check_for_update_on_startup=false", "--dangerously-bypass-approvals-and-sandbox", "-m", "gpt-5.3-codex-spark"},
+	})
+	cmd := rc.BuildCommand()
+
+	if strings.Count(cmd, "--dangerously-bypass-approvals-and-sandbox") != 1 {
+		t.Fatalf("existing bypass flag should not be duplicated: %q", cmd)
+	}
+	if strings.Count(cmd, "check_for_update_on_startup") != 1 {
+		t.Fatalf("existing update-check config should not be duplicated: %q", cmd)
+	}
+}
+
+func TestCustomCodexAliasKeepsExplicitSandboxPolicy(t *testing.T) {
+	tests := []struct {
+		name string
+		args []string
+	}{
+		{name: "sandbox flag", args: []string{"--sandbox", "workspace-write", "-m", "gpt-5.3-codex-spark"}},
+		{name: "sandbox equals", args: []string{"--sandbox=workspace-write", "-m", "gpt-5.3-codex-spark"}},
+		{name: "ask-for-approval", args: []string{"--ask-for-approval", "on-request", "-m", "gpt-5.3-codex-spark"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			rc := fillRuntimeDefaults(&RuntimeConfig{
+				Provider: "codex",
+				Command:  "codex",
+				Args:     tt.args,
+			})
+			cmd := rc.BuildCommand()
+			if strings.Contains(cmd, "--dangerously-bypass-approvals-and-sandbox") {
+				t.Fatalf("explicit sandbox policy should skip the built-in bypass: %q", cmd)
+			}
+			if !strings.Contains(cmd, "check_for_update_on_startup=false") {
+				t.Fatalf("custom Codex alias missing update-check disable: %q", cmd)
+			}
+		})
+	}
+}
+
 func TestFillRuntimeDefaultsCodexCustomArgsSuppressesUpdateCheck(t *testing.T) {
 	rc := fillRuntimeDefaults(&RuntimeConfig{
 		Provider: "codex",
