@@ -82,6 +82,11 @@ Inspect the effective town-wide map:
 gt config role list
 ```
 
+A dated snapshot of cheap Codex, xAI, and OpenRouter models is in
+[2026-08-17 cheap Pi model eval](research/2026-08-17-pi-cheap-model-eval.md).
+Prices and free-tier routing change; re-run before treating that ranking as
+current.
+
 Clear a role assignment and return it to the town defaults:
 
 ```bash
