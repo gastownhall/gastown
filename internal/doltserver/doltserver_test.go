@@ -4712,6 +4712,65 @@ func TestWriteServerConfig_Overwrites(t *testing.T) {
 	}
 }
 
+// TestWriteServerConfig_TownScopedSocket is the UAT regression for Low #13:
+// Dolt on a new TCP port still defaults to the shared /tmp/mysql.sock.
+// Each town must emit a unique listener.socket so two towns on 3307 vs 3327
+// do not fight over the global MySQL socket.
+func TestWriteServerConfig_TownScopedSocket(t *testing.T) {
+	townA := t.TempDir()
+	townB := t.TempDir()
+
+	writeAndParseSocket := func(townRoot string, port int) string {
+		t.Helper()
+		dataDir := filepath.Join(townRoot, ".dolt-data")
+		if err := os.MkdirAll(dataDir, 0755); err != nil {
+			t.Fatalf("mkdir data dir: %v", err)
+		}
+		configPath := filepath.Join(dataDir, "config.yaml")
+		cfg := DefaultConfig(townRoot)
+		cfg.Port = port
+		if err := writeServerConfig(cfg, configPath); err != nil {
+			t.Fatalf("writeServerConfig: %v", err)
+		}
+		data, err := os.ReadFile(configPath)
+		if err != nil {
+			t.Fatalf("read config: %v", err)
+		}
+		content := string(data)
+		if strings.Contains(content, "/tmp/mysql.sock") {
+			t.Fatalf("config.yaml still uses shared /tmp/mysql.sock:\n%s", content)
+		}
+		var parsed struct {
+			Listener struct {
+				Socket string `yaml:"socket"`
+			} `yaml:"listener"`
+		}
+		if err := yaml.Unmarshal(data, &parsed); err != nil {
+			t.Fatalf("invalid YAML: %v\n%s", err, content)
+		}
+		if parsed.Listener.Socket == "" {
+			t.Fatalf("listener.socket missing; Dolt would fall back to /tmp/mysql.sock:\n%s", content)
+		}
+		if parsed.Listener.Socket == "/tmp/mysql.sock" {
+			t.Fatalf("listener.socket = %q, want town-scoped path", parsed.Listener.Socket)
+		}
+		want := SocketPath(townRoot)
+		if parsed.Listener.Socket != want {
+			t.Fatalf("listener.socket = %q, want %q", parsed.Listener.Socket, want)
+		}
+		if !strings.HasPrefix(filepath.Base(parsed.Listener.Socket), "gt-dolt-") {
+			t.Fatalf("listener.socket = %q, want gt-dolt-*.sock", parsed.Listener.Socket)
+		}
+		return parsed.Listener.Socket
+	}
+
+	sockA := writeAndParseSocket(townA, 3307)
+	sockB := writeAndParseSocket(townB, 3327)
+	if sockA == sockB {
+		t.Fatalf("two towns share socket %q", sockA)
+	}
+}
+
 // TestBuildDatabaseToRigMap tests the database name to rig name mapping.
 func TestBuildDatabaseToRigMap(t *testing.T) {
 	townRoot := t.TempDir()

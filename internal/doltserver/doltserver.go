@@ -29,7 +29,9 @@ package doltserver
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"database/sql"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -272,6 +274,40 @@ type Config struct {
 	// "off" (or false/0/disabled), typically via GT_DOLT_AUTO_GC, to disable it
 	// without a source revert+rebuild — a runtime escape hatch.
 	AutoGC string
+}
+
+// SocketPath returns the town-scoped Unix socket for a managed Dolt server.
+// Dolt defaults to /tmp/mysql.sock when listener.socket is omitted, so two
+// towns on different TCP ports still collide. Use a short hashed path under
+// /tmp: macOS rejects long unix socket paths such as a nested .dolt-data file.
+func SocketPath(townRoot string) string {
+	if townRoot == "" {
+		return ""
+	}
+	canonical, err := filepath.EvalSymlinks(townRoot)
+	if err != nil {
+		canonical, err = filepath.Abs(townRoot)
+		if err != nil {
+			canonical = townRoot
+		}
+	}
+	sum := sha256.Sum256([]byte(canonical))
+	return filepath.Join(os.TempDir(), "gt-dolt-"+hex.EncodeToString(sum[:8])+".sock")
+}
+
+// SocketPathForConfig returns the socket written into config.yaml for this
+// managed server. Prefer TownRoot; fall back to hashing DataDir's parent.
+func SocketPathForConfig(config *Config) string {
+	if config == nil {
+		return ""
+	}
+	if sock := SocketPath(config.TownRoot); sock != "" {
+		return sock
+	}
+	if config.DataDir == "" {
+		return ""
+	}
+	return SocketPath(filepath.Dir(config.DataDir))
 }
 
 // DefaultConfig returns the default Dolt server configuration.
@@ -1641,6 +1677,10 @@ func writeServerConfig(config *Config, configPath string) error {
 	if config.MaxConnections > 0 {
 		maxConnLine = fmt.Sprintf("\n  max_connections: %d", config.MaxConnections)
 	}
+	socketLine := ""
+	if sock := SocketPathForConfig(config); sock != "" {
+		socketLine = fmt.Sprintf("\n  socket: %s", filepath.ToSlash(sock))
+	}
 	eventSchedulerLine := "  event_scheduler: \"OFF\"\n"
 	if strings.EqualFold(config.EventScheduler, "omit") {
 		eventSchedulerLine = ""
@@ -1674,7 +1714,7 @@ func writeServerConfig(config *Config, configPath string) error {
 log_level: %s
 
 listener:
-  port: %d%s%s%s%s
+  port: %d%s%s%s%s%s
 
 data_dir: "%s"
 
@@ -1687,6 +1727,7 @@ behavior:
 		maxConnLine,
 		readTimeoutLine,
 		writeTimeoutLine,
+		socketLine,
 		filepath.ToSlash(config.DataDir),
 		eventSchedulerLine,
 		autoGcBlock,
@@ -1870,30 +1911,17 @@ func Start(townRoot string) error {
 		return fmt.Errorf("opening log file: %w", err)
 	}
 
-	// Remove stale Unix socket left behind by a previous Dolt crash.
-	// Dolt creates /tmp/mysql.sock by default; if not cleaned up, the
-	// next start emits "unix socket set up failed: file already in use"
-	// and falls back to TCP-only. (GH#2687)
-	cleanStaleDoltSocket()
+	// Remove a stale town-scoped Unix socket left by a previous Dolt crash.
+	// Managed config writes listener.socket to /tmp/gt-dolt-<id>.sock; if that
+	// file lingers, the next start emits "unix socket set up failed" and falls
+	// back to TCP-only. Do not touch /tmp/mysql.sock: that path is shared with
+	// other Dolt/MySQL servers on the machine.
+	cleanStaleDoltSocket(config)
 
 	// Validate port is available before starting (catches multi-town port conflicts)
 	if err := checkPortAvailable(config.Port); err != nil {
 		logFile.Close()
 		return err
-	}
-
-	// Clean stale Unix socket from prior crash. Dolt creates /tmp/mysql.sock by
-	// default (or a port-specific variant). If the server crashed, the socket file
-	// persists and Dolt warns "unix socket set up failed: file already in use".
-	// Safe to remove: if a Dolt server were actually running, IsRunning() above
-	// would have detected it and we'd have returned already. (gh-2687)
-	socketPath := "/tmp/mysql.sock"
-	if config.Port != 3306 {
-		socketPath = fmt.Sprintf("/tmp/mysql.%d.sock", config.Port)
-	}
-	if _, statErr := os.Stat(socketPath); statErr == nil {
-		fmt.Fprintf(os.Stderr, "Removing stale Unix socket: %s\n", socketPath)
-		_ = os.Remove(socketPath)
 	}
 
 	// Always write a managed config.yaml from the Config struct before starting.
@@ -2026,15 +2054,18 @@ func Start(townRoot string) error {
 // cleanupStaleDoltLock previously removed stale .dolt/noms/LOCK files.
 // This was unsafe — Dolt manages its own lock files on startup.
 
-// DefaultDoltSocketPath is the default Unix socket Dolt creates.
+// DefaultDoltSocketPath is Dolt's product default Unix socket. Gas Town must
+// not bind or remove this path: other Dolt servers on the machine may own it.
 const DefaultDoltSocketPath = "/tmp/mysql.sock"
 
-// cleanStaleDoltSocket removes the default Unix socket file that Dolt creates
-// at /tmp/mysql.sock. After a crash, this file lingers and prevents the next
-// server start from binding the Unix socket, causing a warning and TCP-only
-// fallback.
-func cleanStaleDoltSocket() {
-	cleanStaleSocket(DefaultDoltSocketPath)
+// cleanStaleDoltSocket removes this town's managed Unix socket if no process
+// holds it. After a crash the file lingers and the next start cannot bind it.
+func cleanStaleDoltSocket(config *Config) {
+	socketPath := SocketPathForConfig(config)
+	if socketPath == "" || socketPath == DefaultDoltSocketPath {
+		return
+	}
+	cleanStaleSocket(socketPath)
 }
 
 // cleanStaleSocket removes a Unix socket file if it exists and no process

@@ -144,6 +144,35 @@ func TestBuildDoltDSNFromConfig_LocalHostFallbackPreserved(t *testing.T) {
 	}
 }
 
+func TestBuildDoltDSNFromConfig_TownScopedSocketPreferred(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("unix domain sockets not supported on Windows")
+	}
+
+	townRoot := t.TempDir()
+	dataDir := filepath.Join(townRoot, ".dolt-data")
+	if err := os.MkdirAll(dataDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	sockPath := doltserver.SocketPath(townRoot)
+	_ = os.Remove(sockPath)
+	listener, err := net.Listen("unix", sockPath)
+	if err != nil {
+		t.Fatalf("listen unix: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = listener.Close()
+		_ = os.Remove(sockPath)
+	})
+
+	cfg := &doltserver.Config{User: "root", TownRoot: townRoot, Port: 3327}
+	got := buildDoltDSNFromConfig(cfg, "hq", dsnOpts{})
+	want := "root@unix(" + sockPath + ")/hq"
+	if got != want {
+		t.Errorf("got\n  %s\nwant\n  %s", got, want)
+	}
+}
+
 // TestLocalDoltSocketPath_RealSocket verifies the actual probe (not the
 // test mock) recognizes a live unix socket.
 func TestLocalDoltSocketPath_RealSocket(t *testing.T) {

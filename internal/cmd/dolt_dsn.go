@@ -37,33 +37,55 @@ func (o dsnOpts) queryString() string {
 	return strings.Join(parts, "&")
 }
 
-// localDoltSocketPath returns Dolt's default unix socket path for a given
-// port if a unix socket is currently accepting connections at that path;
-// otherwise returns "". Mirrors the path-derivation logic already in this
-// package (see internal/doltserver/doltserver.go cleanStaleDoltSocket):
-// Dolt listens on /tmp/mysql.sock on port 3306, /tmp/mysql.{port}.sock for
-// any other port.
+// localDoltSocketPath returns a live unix socket path for the given town
+// and port, or "" when none is accepting connections.
 //
-// Declared as a var (not const) so unit tests can swap it for a temp-dir
-// socket without depending on a real Dolt server.
+// Managed towns listen on a hashed /tmp/gt-dolt-<id>.sock path. The
+// historical Dolt defaults (/tmp/mysql.sock, /tmp/mysql.{port}.sock) remain
+// as fallbacks for leftover servers that were started before isolation.
+// Never treat /tmp/mysql.sock as this town's socket when a town-scoped
+// path exists: that file is shared with other Dolt/MySQL servers.
+//
+// Declared as a var so unit tests can swap it for a temp-dir socket
+// without depending on a real Dolt server.
 var localDoltSocketPath = func(port int) string {
-	p := "/tmp/mysql.sock"
-	if port != 0 && port != 3306 {
-		p = fmt.Sprintf("/tmp/mysql.%d.sock", port)
+	return liveDoltSocketPath("", port)
+}
+
+func liveDoltSocketPath(townRoot string, port int) string {
+	candidates := make([]string, 0, 3)
+	if sock := doltserver.SocketPath(townRoot); sock != "" {
+		candidates = append(candidates, sock)
 	}
+	if port != 0 && port != 3306 {
+		candidates = append(candidates, fmt.Sprintf("/tmp/mysql.%d.sock", port))
+	}
+	// Only use the global default when no town-scoped candidate exists.
+	if len(candidates) == 0 {
+		candidates = append(candidates, doltserver.DefaultDoltSocketPath)
+	}
+	for _, p := range candidates {
+		if usableUnixSocket(p) {
+			return p
+		}
+	}
+	return ""
+}
+
+func usableUnixSocket(p string) bool {
 	info, err := os.Stat(p)
 	if err != nil {
-		return ""
+		return false
 	}
 	if info.Mode()&os.ModeSocket == 0 {
-		return ""
+		return false
 	}
 	conn, err := net.DialTimeout("unix", p, 100*time.Millisecond)
 	if err != nil {
-		return ""
+		return false
 	}
 	_ = conn.Close()
-	return p
+	return true
 }
 
 func formatDoltDSN(user, network, address, dbName string, opts dsnOpts) string {
@@ -112,7 +134,7 @@ func buildDoltDSN(user string, port int, dbName string, opts dsnOpts) string {
 // dolt_flatten.go / dolt_rebase.go callsite pattern).
 func buildDoltDSNFromConfig(c *doltserver.Config, dbName string, opts dsnOpts) string {
 	if !c.IsRemote() {
-		if sock := localDoltSocketPath(c.Port); sock != "" {
+		if sock := liveDoltSocketPath(c.TownRoot, c.Port); sock != "" {
 			return formatDoltDSN(c.User, "unix", sock, dbName, opts)
 		}
 	}
