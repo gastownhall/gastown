@@ -2279,8 +2279,8 @@ func ProvisionPrimeMD(beadsDir string) error {
 	}
 
 	// Create .beads directory if it doesn't exist
-	if err := os.MkdirAll(beadsDir, 0755); err != nil {
-		return fmt.Errorf("creating beads dir: %w", err)
+	if err := EnsureDir(beadsDir); err != nil {
+		return err
 	}
 
 	// Write PRIME.md

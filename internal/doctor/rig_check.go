@@ -1048,7 +1048,7 @@ func (c *BeadsRedirectCheck) Fix(ctx *CheckContext) error {
 		prefix := config.GetRigPrefix(ctx.TownRoot, ctx.RigName)
 
 		// Create .beads directory
-		if err := os.MkdirAll(rigBeadsDir, 0755); err != nil {
+		if err := beads.EnsureDir(rigBeadsDir); err != nil {
 			return fmt.Errorf("creating .beads directory: %w", err)
 		}
 
@@ -1069,7 +1069,11 @@ func (c *BeadsRedirectCheck) Fix(ctx *CheckContext) error {
 		cmd := beads.Spawn(initArgs...)
 		cmd.Dir = rigPath
 		cmd.Env = bdEnv
-		if output, err := cmd.CombinedOutput(); err != nil {
+		output, err := cmd.CombinedOutput()
+		if chmodErr := beads.EnsureDir(rigBeadsDir); chmodErr != nil {
+			return chmodErr
+		}
+		if err != nil {
 			// bd might not be installed — create config.yaml via shared helper.
 			if writeErr := beads.EnsureConfigYAML(rigBeadsDir, prefix); writeErr != nil {
 				return fmt.Errorf("bd init failed (%v) and fallback config creation failed: %w", err, writeErr)
@@ -1106,7 +1110,7 @@ func (c *BeadsRedirectCheck) Fix(ctx *CheckContext) error {
 		}
 
 		// Create .beads directory if needed
-		if err := os.MkdirAll(rigBeadsDir, 0755); err != nil {
+		if err := beads.EnsureDir(rigBeadsDir); err != nil {
 			return fmt.Errorf("creating .beads directory: %w", err)
 		}
 

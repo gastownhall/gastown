@@ -58,8 +58,8 @@ func TestEnsureDir_Permissions(t *testing.T) {
 		t.Fatalf("Failed to stat directory: %v", err)
 	}
 
-	// Check directory permissions are 0755
-	expectedPerm := os.FileMode(0755)
+	// Check directory permissions are Beads-recommended 0700
+	expectedPerm := os.FileMode(0700)
 	if info.Mode().Perm() != expectedPerm {
 		t.Errorf("Directory permissions = %v, want %v", info.Mode().Perm(), expectedPerm)
 	}

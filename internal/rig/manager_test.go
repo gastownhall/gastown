@@ -599,6 +599,16 @@ func TestInitBeads_TrackedBeads_CreatesRedirect(t *testing.T) {
 	if _, err := os.Stat(rigConfigPath); !os.IsNotExist(err) {
 		t.Errorf("expected no config.yaml at rig level when using redirect, but it exists")
 	}
+
+	if runtime.GOOS != "windows" {
+		info, err := os.Stat(filepath.Join(rigPath, ".beads"))
+		if err != nil {
+			t.Fatalf("stat .beads: %v", err)
+		}
+		if got := info.Mode().Perm(); got != 0o700 {
+			t.Fatalf(".beads mode = %04o, want 0700", got)
+		}
+	}
 }
 
 func TestInitBeads_LocalBeads_CreatesDatabase(t *testing.T) {
@@ -641,6 +651,45 @@ exit 0
 	beadsDir := filepath.Join(rigPath, ".beads")
 	if _, err := os.Stat(beadsDir); os.IsNotExist(err) {
 		t.Errorf("expected .beads directory to be created")
+	}
+}
+
+func TestInitBeads_CreatesBeadsDirWithMode0700(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("directory permission bits are not reliable on Windows")
+	}
+	// Beads warns when .beads is 0755 and recommends 0700. Rig init must create
+	// the directory with that mode so every later bd command stays quiet.
+	// Fake bd mimics real bd init, which creates .beads as 0755.
+	rigPath := t.TempDir()
+	mayorRigDir := filepath.Join(rigPath, "mayor", "rig")
+	if err := os.MkdirAll(mayorRigDir, 0755); err != nil {
+		t.Fatalf("mkdir mayor/rig: %v", err)
+	}
+
+	script := `#!/usr/bin/env bash
+set -e
+if [[ "$1" == "init" ]]; then
+  mkdir -p .beads
+  chmod 0755 .beads
+fi
+exit 0
+`
+	windowsScript := "@echo off\r\nexit /b 0\r\n"
+	binDir := writeFakeBD(t, script, windowsScript)
+	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	manager := &Manager{}
+	if err := manager.InitBeads(rigPath, "gt", ""); err != nil {
+		t.Fatalf("InitBeads: %v", err)
+	}
+
+	info, err := os.Stat(filepath.Join(rigPath, ".beads"))
+	if err != nil {
+		t.Fatalf("stat .beads: %v", err)
+	}
+	if got := info.Mode().Perm(); got != 0o700 {
+		t.Fatalf(".beads mode = %04o, want 0700", got)
 	}
 }
 

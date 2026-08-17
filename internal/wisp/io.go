@@ -2,16 +2,16 @@ package wisp
 
 import (
 	"fmt"
-	"os"
 	"path/filepath"
 
 	"github.com/jonbaldie/gastown/internal/atomicfile"
+	"github.com/jonbaldie/gastown/internal/beads"
 )
 
 // EnsureDir ensures the .beads directory exists in the given root.
 func EnsureDir(root string) (string, error) {
 	dir := filepath.Join(root, WispDir)
-	if err := os.MkdirAll(dir, 0755); err != nil {
+	if err := beads.EnsureDir(dir); err != nil {
 		return "", fmt.Errorf("create beads dir: %w", err)
 	}
 	return dir, nil

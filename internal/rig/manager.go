@@ -1112,7 +1112,7 @@ func (m *Manager) InitBeads(rigPath, prefix, rigName string) error {
 	// If so, create a redirect file instead of a new database.
 	if _, err := os.Stat(mayorRigBeads); err == nil {
 		// Tracked beads exist - create redirect to mayor/rig/.beads
-		if err := os.MkdirAll(beadsDir, 0755); err != nil {
+		if err := beads.EnsureDir(beadsDir); err != nil {
 			return err
 		}
 		redirectPath := filepath.Join(beadsDir, "redirect")
@@ -1123,7 +1123,7 @@ func (m *Manager) InitBeads(rigPath, prefix, rigName string) error {
 	}
 
 	// No tracked beads - create local database
-	if err := os.MkdirAll(beadsDir, 0755); err != nil {
+	if err := beads.EnsureDir(beadsDir); err != nil {
 		return err
 	}
 
@@ -1151,6 +1151,10 @@ func (m *Manager) InitBeads(rigPath, prefix, rigName string) error {
 	cmd.Dir = rigPath
 	cmd.Env = filteredEnv
 	_, bdInitErr := cmd.CombinedOutput()
+	// bd init may create or reset .beads to 0755; tighten after it returns.
+	if err := beads.EnsureDir(beadsDir); err != nil {
+		return err
+	}
 	if bdInitErr != nil {
 		// bd might not be installed or failed — the shared helper below will
 		// create config.yaml with the required defaults as a fallback.

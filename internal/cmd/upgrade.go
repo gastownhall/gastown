@@ -132,6 +132,7 @@ func upgradeDoctor(townRoot string) upgradeResult {
 	d.Register(doctor.NewClaudeSettingsCheck())
 	d.Register(doctor.NewDaemonCheck())
 	d.Register(doctor.NewTownBeadsConfigCheck())
+	d.Register(doctor.NewBeadsDirPermsCheck())
 	d.Register(doctor.NewCustomTypesCheck())
 	d.Register(doctor.NewCustomStatusesCheck())
 	d.Register(doctor.NewFormulaCheck())

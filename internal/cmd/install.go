@@ -700,6 +700,10 @@ func initTownBeads(townPath string) error {
 	if _, statErr := os.Stat(beadsDir); os.IsNotExist(statErr) {
 		return fmt.Errorf("bd init succeeded but .beads directory not created (check bd daemon interference)")
 	}
+	// bd init creates .beads as 0755; Beads recommends 0700 and warns otherwise.
+	if err := beads.EnsureDir(beadsDir); err != nil {
+		return err
+	}
 
 	// Ensure metadata.json has dolt_database set (EnsureMetadata fills missing
 	// values but does not overwrite existing ones).
