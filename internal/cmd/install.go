@@ -611,7 +611,7 @@ func doltReinstallHint(goos string) string {
 // instruction-file provisioner. AGENTS.md is the canonical file. CLAUDE.md is
 // a symlink to it.
 func createTownRootAgentMDs(townRoot string) (bool, error) {
-	return instructions.Provision(townRoot, templates.TownIdentity(), "# Gas Town")
+	return instructions.Provision(townRoot, templates.TownRootAgentsMD(), "# Gas Town")
 }
 
 func writeJSON(path string, data interface{}) error {
@@ -726,6 +726,12 @@ func initTownBeads(townPath string) error {
 	// an older bd binary through legacy schema initialization.
 	if err := beads.EnsureCustomTypesConfigYAML(beadsDir); err != nil {
 		return fmt.Errorf("ensuring custom types: %w", err)
+	}
+
+	// Register convoy staging statuses so a brand-new town is not left with
+	// beads-custom-statuses warnings that gt doctor --fix would otherwise repair.
+	if err := beads.EnsureCustomStatuses(beadsDir); err != nil {
+		fmt.Printf("   %s Could not register custom statuses: %v\n", style.Dim.Render("⚠"), err)
 	}
 
 	// Configure allowed_prefixes for convoy beads (hq-cv-* IDs).

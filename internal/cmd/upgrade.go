@@ -186,7 +186,7 @@ func upgradeAgentsMD(townRoot string) upgradeResult {
 
 	fmt.Printf("\n  %s %s\n", style.Bold.Render("2."), "Syncing AGENTS.md from template...")
 
-	expected := templates.TownIdentity()
+	expected := templates.TownRootAgentsMD()
 	current, err := os.ReadFile(filepath.Join(townRoot, instructions.CanonicalFile))
 	if err != nil && !os.IsNotExist(err) {
 		result.details = append(result.details, fmt.Sprintf("error reading: %v", err))

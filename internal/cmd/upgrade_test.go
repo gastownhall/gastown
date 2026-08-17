@@ -51,7 +51,7 @@ func TestUpgradeAgentsMD_CreatesMissingFile(t *testing.T) {
 		t.Fatalf("AGENTS.md not created: %v", err)
 	}
 
-	expected := templates.TownIdentity()
+	expected := templates.TownRootAgentsMD()
 	if string(data) != expected {
 		t.Error("AGENTS.md content doesn't match expected template")
 	}
@@ -78,7 +78,7 @@ func TestUpgradeAgentsMD_CreatesMissingFile(t *testing.T) {
 func TestUpgradeAgentsMD_UpToDate(t *testing.T) {
 	tmpDir := t.TempDir()
 
-	expected := templates.TownIdentity()
+	expected := templates.TownRootAgentsMD()
 	if err := os.WriteFile(filepath.Join(tmpDir, "AGENTS.md"), []byte(expected), 0644); err != nil {
 		t.Fatal(err)
 	}
@@ -98,7 +98,7 @@ func TestUpgradeAgentsMD_UpToDate(t *testing.T) {
 
 func TestUpgradeAgentsMD_FlipsOldSymlinkDirection(t *testing.T) {
 	tmpDir := t.TempDir()
-	expected := templates.TownIdentity()
+	expected := templates.TownRootAgentsMD()
 	if err := os.WriteFile(filepath.Join(tmpDir, "CLAUDE.md"), []byte(expected), 0644); err != nil {
 		t.Fatal(err)
 	}
@@ -149,8 +149,16 @@ func TestCreateTownRootAgentMDs_WritesAgentsCanonical(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if string(got) != templates.TownIdentity() {
-		t.Error("AGENTS.md missing identity text")
+	content := string(got)
+	// Fresh install must write the complete town-root template so
+	// `gt doctor` town-agents-md is not missing 2 sections on a brand-new HQ.
+	for _, section := range templates.TownRootRequiredSections() {
+		if !contains(content, section.Heading) {
+			t.Errorf("fresh-install AGENTS.md missing required section %q (%s)", section.Name, section.Heading)
+		}
+	}
+	if content != templates.TownRootAgentsMD() {
+		t.Error("fresh-install AGENTS.md is not the complete town-root template")
 	}
 	target, err := os.Readlink(filepath.Join(tmpDir, "CLAUDE.md"))
 	if err != nil {

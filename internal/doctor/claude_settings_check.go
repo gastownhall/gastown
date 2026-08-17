@@ -73,6 +73,13 @@ func (c *ClaudeSettingsCheck) Run(ctx *CheckContext) *CheckResult {
 	for _, sf := range settingsFiles {
 		// Missing settings.local.json files need agent restart to create
 		if sf.missingFile {
+			// Non-Claude roles never write .claude/settings.json. A missing file
+			// there is expected after gt install / gt up on a Pi/Codex town and
+			// must not fail doctor.
+			if !roleUsesClaudeSettings(ctx.TownRoot, sf.rigName, sf.agentType) {
+				details = append(details, fmt.Sprintf("%s: missing (not required for non-Claude %s)", sf.path, sf.agentType))
+				continue
+			}
 			c.staleSettings = append(c.staleSettings, sf)
 			details = append(details, fmt.Sprintf("%s: missing (restart %s to create)", sf.path, sf.agentType))
 			hasMissingFiles = true
@@ -833,6 +840,39 @@ func fileExists(path string) bool {
 		return false
 	}
 	return !info.IsDir()
+}
+
+// roleUsesClaudeSettings reports whether the configured agent for role writes
+// a Claude .claude/settings.json. Missing that file is only an error for
+// Claude-backed roles.
+func roleUsesClaudeSettings(townRoot, rigName, role string) bool {
+	rigPath := ""
+	if rigName != "" {
+		rigPath = filepath.Join(townRoot, rigName)
+	}
+	agentName, _ := config.ResolveRoleAgentName(role, townRoot, rigPath)
+	if agentName == "" {
+		return true
+	}
+	townSettings, err := config.LoadOrCreateTownSettings(config.TownSettingsPath(townRoot))
+	if err != nil {
+		townSettings = config.NewTownSettings()
+	}
+	var rigSettings *config.RigSettings
+	if rigPath != "" {
+		if loaded, loadErr := config.LoadRigSettings(config.RigSettingsPath(rigPath)); loadErr == nil {
+			rigSettings = loaded
+		}
+	}
+	preset := config.ResolveAgentPreset(agentName, townSettings, rigSettings)
+	if preset == nil {
+		return true
+	}
+	hooksProvider := preset.HooksProvider
+	if hooksProvider == "" {
+		hooksProvider = string(preset.Name)
+	}
+	return hooksProvider == "claude"
 }
 
 // isIdentityAnchor checks if a CLAUDE.md file is the Gas Town town-root

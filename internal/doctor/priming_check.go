@@ -425,7 +425,7 @@ func (c *PrimingCheck) Fix(ctx *CheckContext) error {
 			}
 
 		case "missing_town_agents_md":
-			if _, err := instructions.Provision(ctx.TownRoot, templates.TownIdentity(), "# Gas Town"); err != nil {
+			if _, err := instructions.Provision(ctx.TownRoot, templates.TownRootAgentsMD(), "# Gas Town"); err != nil {
 				errors = append(errors, fmt.Sprintf("town-root identity pair: %v", err))
 			}
 

@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/jonbaldie/gastown/internal/config"
 )
 
 func TestNewClaudeSettingsCheck(t *testing.T) {
@@ -1483,5 +1485,75 @@ func TestClaudeSettingsCheck_FixDoesNotDeleteMissingFiles(t *testing.T) {
 	// Witness directory should still exist
 	if _, err := os.Stat(witnessDir); os.IsNotExist(err) {
 		t.Error("expected witness directory to still exist after fix")
+	}
+}
+
+// TestClaudeSettingsCheck_NonClaudeTownMissingSettingsIsNotError is the UAT
+// regression for a fresh town that is not using Claude (Pi Mayor + Codex
+// workers). Missing settings.json after gt install / gt up / polecat spawn
+// currently fails `gt doctor` with:
+//   claude-settings: Found 1 agent(s) missing settings.json
+// A non-Claude / not-yet-started agent must not fail the town.
+func TestClaudeSettingsCheck_NonClaudeTownMissingSettingsIsNotError(t *testing.T) {
+	tmpDir := t.TempDir()
+	rigName := "testrig"
+
+	settings := config.NewTownSettings()
+	settings.DefaultAgent = "codex"
+	settings.RoleAgents = map[string]string{
+		"mayor":    "pi",
+		"deacon":   "pi",
+		"witness":  "codex",
+		"refinery": "codex",
+		"polecat":  "codex",
+		"crew":     "codex",
+	}
+	if err := os.MkdirAll(filepath.Dir(config.TownSettingsPath(tmpDir)), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := config.SaveTownSettings(config.TownSettingsPath(tmpDir), settings); err != nil {
+		t.Fatal(err)
+	}
+
+	// Minimal UAT shape after polecats spawn: polecats/ exists, no Claude settings.json.
+	if err := os.MkdirAll(filepath.Join(tmpDir, rigName, "polecats", "nux"), 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	check := NewClaudeSettingsCheck()
+	result := check.Run(&CheckContext{TownRoot: tmpDir})
+
+	if result.Status == StatusError {
+		t.Fatalf("non-Claude town missing settings.json must not fail doctor; got %v: %s\nDetails: %v",
+			result.Status, result.Message, result.Details)
+	}
+}
+
+func TestClaudeSettingsCheck_ClaudeTownMissingSettingsStillErrors(t *testing.T) {
+	tmpDir := t.TempDir()
+	rigName := "testrig"
+
+	settings := config.NewTownSettings()
+	settings.DefaultAgent = "claude"
+	settings.RoleAgents = map[string]string{"polecat": "claude"}
+	if err := os.MkdirAll(filepath.Dir(config.TownSettingsPath(tmpDir)), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := config.SaveTownSettings(config.TownSettingsPath(tmpDir), settings); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(tmpDir, rigName, "polecats", "nux"), 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	check := NewClaudeSettingsCheck()
+	result := check.Run(&CheckContext{TownRoot: tmpDir})
+
+	if result.Status != StatusError {
+		t.Fatalf("Claude-backed polecat missing settings.json must still fail doctor; got %v: %s",
+			result.Status, result.Message)
+	}
+	if !strings.Contains(result.Message, "missing settings.json") {
+		t.Fatalf("expected missing-settings message, got %q", result.Message)
 	}
 }
