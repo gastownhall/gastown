@@ -55,6 +55,49 @@ func TestRenderRole_Mayor(t *testing.T) {
 	}
 }
 
+func TestRenderRole_Mayor_ShowsRigBeadCreatePath(t *testing.T) {
+	tmpl, err := New()
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+
+	output, err := tmpl.RenderRole("mayor", RoleData{
+		Role:          "mayor",
+		TownRoot:      "/test/town",
+		TownName:      "town",
+		WorkDir:       "/test/town",
+		DefaultBranch: "main",
+		MayorSession:  "gt-town-mayor",
+		DeaconSession: "gt-town-deacon",
+	})
+	if err != nil {
+		t.Fatalf("RenderRole() error = %v", err)
+	}
+
+	assertRigBeadCreateRecipe(t, output)
+}
+
+func TestTownRootAgentsMD_ShowsRigBeadCreatePath(t *testing.T) {
+	assertRigBeadCreateRecipe(t, TownRootAgentsMD())
+}
+
+func assertRigBeadCreateRecipe(t *testing.T, text string) {
+	t.Helper()
+	for _, needle := range []string{
+		"bd -C",
+		"create --title=",
+		"convoy create",
+		"convoy add",
+		"--merge=local",
+		"hq-cv-",
+		"hq-mayor",
+	} {
+		if !strings.Contains(text, needle) {
+			t.Errorf("missing %q", needle)
+		}
+	}
+}
+
 func TestRenderRole_Polecat(t *testing.T) {
 	tmpl, err := New()
 	if err != nil {

@@ -41,8 +41,25 @@ The Mayor is a **coordinator**, not a solo coder. When a user asks you to do
 something, your default response is to use the Gas Town machinery:
 
 ```
-User request → bd create "..." → {{ cmd }} sling <bead-id> <rig>
+User request → bd -C <rig> create → convoy → {{ cmd }} sling <rig-id> <rig>
 ```
+
+**Create work IN the target rig.** Do not `bd create` from town root for
+rig work — that makes `hq-*` beads you cannot sling.
+
+```bash
+# 1. File the bead in the rig that owns the code
+bd -C {{ .TownRoot }}/<rig> create --title="..." --type=feature
+
+# 2. Track it (optional if sling will auto-convoy)
+{{ cmd }} convoy create "..." <rig-prefix-id>
+{{ cmd }} convoy add <convoy-id> <rig-prefix-id>
+
+# 3. Dispatch. Use --merge=local (or --push-url) for third-party remotes.
+{{ cmd }} sling <rig-prefix-id> <rig> --merge=local
+```
+
+Do **not** sling infrastructure beads (`hq-cv-*`, `hq-mayor`, …). Those stay at town.
 
 This is not bureaucracy — it is the whole point. Every slung bead:
 - Becomes a **ledger entry** — transparent, auditable work
@@ -167,6 +184,8 @@ Routes defined in `{{ .TownRoot }}/.beads/routes.jsonl`. `{{ cmd }} rig add` aut
 | Cross-rig coordination, convoys, mail | **HQ** | `bd create "..."` (default) |
 
 **IMPORTANT:** Issues are created with `bd create`, not `gt` commands.
+Use `bd -C {{ .TownRoot }}/<rig> create --title=... --type=feature` so the
+bead gets the rig prefix. Town-root `bd create` makes `hq-*` beads.
 
 **The test**: "Which repo would the fix be committed to?"
 - Fix in `anthropics/beads` → file in beads rig

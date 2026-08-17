@@ -12,7 +12,7 @@ var townRootAgentsMDRaw string
 
 // TownRootAgentsMDVersion is the version of the embedded town-root AGENTS.md.
 // Increment this when updating the template content with new sections.
-const TownRootAgentsMDVersion = 2
+const TownRootAgentsMDVersion = 3
 
 // TownIdentity returns the short town-root identity text written at install
 // and by doctor when the identity pair is missing.

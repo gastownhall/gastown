@@ -380,7 +380,9 @@ rm -rf ~/gt
 After installation:
 
 1. **Read the README** - Core concepts and workflows
-2. **Try a simple workflow** - `bd create "Test task"` then `gt convoy create "Test" <bead-id>`
+2. **Try a simple workflow** - create work in the target rig, then convoy and sling it:
+   `bd -C ~/gt/<rig> create --title="Test task" --type=feature`
+   then `gt convoy create "Test" <rig-prefix-id>` and `gt sling <rig-prefix-id> <rig> --merge=local`
 3. **Explore docs** - `docs/reference.md` for command reference
 4. **Run doctor regularly** - `gt doctor` catches problems early
 5. **Join the Wasteland** - `gt wl join hop/wl-commons` to browse and claim federated work (see [WASTELAND.md](WASTELAND.md))

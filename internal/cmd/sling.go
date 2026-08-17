@@ -37,6 +37,18 @@ This is THE command for assigning work in Gas Town. It handles:
   - Formula instantiation and wisp creation
   - Auto-convoy creation for dashboard visibility
 
+Create work in the target rig:
+  File the bead where the code lives. Do not create town hq-* work beads
+  and sling them to a rig.
+
+  bd -C <town>/<rig> create --title=... --type=feature
+  gt convoy create "..." <rig-prefix-id>
+  gt convoy add <convoy-id> <rig-prefix-id>
+  gt sling <rig-prefix-id> <rig> --merge=local   # third-party remotes
+
+  Do not sling infrastructure beads (hq-cv-*, hq-mayor, ...). Those stay at town.
+  Use --merge=local (or --push-url) for third-party public clones.
+
 Auto-Convoy:
   When slinging a single issue (not a formula), sling automatically creates
   a convoy to track the work unless --no-convoy is specified. This ensures

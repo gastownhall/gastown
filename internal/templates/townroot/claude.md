@@ -75,6 +75,25 @@ creates nothing. **Default to nudge for routine agent-to-agent communication.**
 Only use mail when the message MUST survive the recipient's session death
 (handoffs, structured protocol messages, escalations). See `mail-protocol.md`.
 
+## Rig Work Beads
+
+Create work **in the target rig**. Town-root `bd create` makes `hq-*` beads
+that cannot be slung to a rig.
+
+```bash
+# 1. File the bead in the rig that owns the code
+bd -C <town>/<rig> create --title="..." --type=feature
+
+# 2. Track it
+{{cmd}} convoy create "..." <rig-prefix-id>
+{{cmd}} convoy add <convoy-id> <rig-prefix-id>
+
+# 3. Dispatch. Use --merge=local (or --push-url) for third-party remotes.
+{{cmd}} sling <rig-prefix-id> <rig> --merge=local
+```
+
+Do **not** sling infrastructure beads (`hq-cv-*`, `hq-mayor`, …).
+
 ## Agent Memory
 
 **Use `{{cmd}} remember`, not MEMORY.md.** Memories are stored in beads and injected
