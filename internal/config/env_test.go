@@ -1234,6 +1234,64 @@ func TestResolveDoltPort_FromConfigYAML(t *testing.T) {
 	}
 }
 
+func TestResolveDoltPort_ExternalEndpointBeatsManagedConfig(t *testing.T) {
+	// Given
+	t.Setenv("GT_DOLT_EXTERNAL", "")
+	t.Setenv("GT_DOLT_PORT", "")
+	townRoot := t.TempDir()
+	doltDataDir := filepath.Join(townRoot, ".dolt-data")
+	if err := os.MkdirAll(doltDataDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(doltDataDir, "config.yaml"), []byte("listener:\n  port: 3307\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	mayorDir := filepath.Join(townRoot, "mayor")
+	if err := os.MkdirAll(mayorDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(mayorDir, "daemon.json"), []byte(`{"env":{"GT_DOLT_EXTERNAL":"true","GT_DOLT_PORT":"3308"}}`), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	// When
+	port := ResolveDoltPort(townRoot)
+
+	// Then
+	if port != 3308 {
+		t.Fatalf("ResolveDoltPort() = %d, want 3308", port)
+	}
+}
+
+func TestResolveDoltHost_ExternalEndpointBeatsManagedConfig(t *testing.T) {
+	// Given
+	t.Setenv("GT_DOLT_EXTERNAL", "")
+	t.Setenv("GT_DOLT_HOST", "")
+	townRoot := t.TempDir()
+	doltDataDir := filepath.Join(townRoot, ".dolt-data")
+	if err := os.MkdirAll(doltDataDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(doltDataDir, "config.yaml"), []byte("listener:\n  host: 127.0.0.2\n  port: 3307\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	mayorDir := filepath.Join(townRoot, "mayor")
+	if err := os.MkdirAll(mayorDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(mayorDir, "daemon.json"), []byte(`{"env":{"GT_DOLT_EXTERNAL":"true","GT_DOLT_HOST":"127.0.0.1"}}`), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	// When
+	host := ResolveDoltHost(townRoot)
+
+	// Then
+	if host != "127.0.0.1" {
+		t.Fatalf("ResolveDoltHost() = %q, want 127.0.0.1", host)
+	}
+}
+
 func TestResolveDoltPort_FromEnvVar(t *testing.T) {
 	tmpDir := t.TempDir()
 	t.Setenv("GT_DOLT_PORT", "3310")
