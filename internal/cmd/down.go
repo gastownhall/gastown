@@ -25,6 +25,7 @@ import (
 	"github.com/jonbaldie/gastown/internal/session"
 	"github.com/jonbaldie/gastown/internal/style"
 	"github.com/jonbaldie/gastown/internal/tmux"
+	"github.com/jonbaldie/gastown/internal/worker"
 	"github.com/jonbaldie/gastown/internal/workspace"
 	"github.com/spf13/cobra"
 )
@@ -64,6 +65,7 @@ Infrastructure agents stopped:
   • Deacon     - Health orchestrator
   • Daemon     - Go background process
   • Dolt       - Shared SQL database server
+  • Worker     - Town gt worker serve process
 
 This is a "pause" operation - use 'gt start' to bring everything back up.
 For permanent cleanup (removing worktrees), use 'gt shutdown' instead.
@@ -328,6 +330,24 @@ func runDown(cmd *cobra.Command, args []string) error {
 		if len(orphanDolts) > 0 {
 			printDownStatus("Dolt orphans", true, fmt.Sprintf("%d rogue server(s) would stop", len(orphanDolts)))
 		}
+	}
+
+	// Phase 4b-iiia: Stop this town's `gt worker serve` process.
+	workerPIDs := worker.FindServePIDs(townRoot)
+	if len(workerPIDs) > 0 {
+		if downDryRun {
+			printDownStatus("Worker serve", true, fmt.Sprintf("%d would stop", len(workerPIDs)))
+		} else {
+			stopped := worker.StopServe(townRoot)
+			if leftover := worker.FindServePIDs(townRoot); len(leftover) > 0 {
+				printDownStatus("Worker serve", false, fmt.Sprintf("still running (PIDs %v)", leftover))
+				allOK = false
+			} else if stopped > 0 {
+				printDownStatus("Worker serve", true, fmt.Sprintf("stopped %d", stopped))
+			}
+		}
+	} else if !downDryRun {
+		printDownStatus("Worker serve", true, "not running")
 	}
 
 	// Phase 4b-iv: Remove .beads/dolt directories.
@@ -738,6 +758,13 @@ func verifyShutdown(t *tmux.Tmux, townRoot string) []string {
 	// Check for orphan Dolt servers from .beads/dolt directories
 	if pids := findOrphanDoltServers(townRoot); len(pids) > 0 {
 		respawned = append(respawned, fmt.Sprintf("orphan Dolt servers (PIDs: %v)", pids))
+	}
+
+	if running, pid, err := doltserver.IsRunning(townRoot); err == nil && running {
+		respawned = append(respawned, fmt.Sprintf("town Dolt server (PID %d)", pid))
+	}
+	if pids := worker.FindServePIDs(townRoot); len(pids) > 0 {
+		respawned = append(respawned, fmt.Sprintf("gt worker serve (PIDs: %v)", pids))
 	}
 
 	return respawned

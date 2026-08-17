@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`gt shutdown` now stops this town's Dolt SQL server and `gt worker serve`.**
+  The done-for-the-day path previously killed tmux sessions and the daemon,
+  then left the town Dolt listener and `gt worker serve --town <that-town>`
+  running. Shutdown and `gt down` now stop those processes using the town's
+  configured port, pid file, and data dir, then verify they are gone.
+
 - **Local merge closes the work bead.** `merge_strategy=local` still skips
   push and the merge queue, but a successful `gt done` now closes the
   hooked work bead instead of leaving it open with `DONE_CLOSE_SKIPPED`.

@@ -85,6 +85,10 @@ var shutdownCmd = &cobra.Command{
 This is the "done for the day" command - it stops everything AND removes
 polecat worktrees/branches. For a reversible pause, use 'gt down' instead.
 
+Infrastructure stopped for THIS town (scoped by port, pid file, and data dir):
+  • Town Dolt SQL server
+  • Town gt worker serve --town <that-town> process
+
 Comparison:
   gt down      - Pause (stop processes, keep worktrees) - reversible
   gt shutdown  - Done (stop + cleanup worktrees) - permanent cleanup
@@ -518,11 +522,17 @@ func runShutdown(cmd *cobra.Command, args []string) error {
 	if len(toStop) == 0 {
 		fmt.Printf("%s Gas Town was not running\n", style.Dim.Render("○"))
 
-		// Still check for orphaned daemons even if no sessions are running
+		// Still stop town-scoped infrastructure even if no sessions are running.
+		// --polecats-only leaves Dolt and worker serve running.
 		if townRoot != "" {
 			fmt.Println()
 			fmt.Println("Checking for orphaned daemon...")
 			stopDaemonIfRunning(townRoot)
+			if !shutdownPolecatsOnly {
+				fmt.Println()
+				fmt.Println("Stopping town Dolt and worker serve...")
+				stopTownDoltAndWorker(townRoot)
+			}
 		}
 
 		return nil
@@ -667,9 +677,18 @@ func runGracefulShutdown(t *tmux.Tmux, gtSessions []string, townRoot string) err
 		stopDaemonIfRunning(townRoot)
 	}
 
-	// Phase 8: Verify no Claude processes survived
-	fmt.Printf("\nPhase 8: Verifying shutdown...\n")
+	// Phase 8: Stop this town's Dolt SQL server and worker serve process.
+	if townRoot != "" && !shutdownPolecatsOnly {
+		fmt.Printf("\nPhase 8: Stopping town Dolt and worker serve...\n")
+		stopTownDoltAndWorker(townRoot)
+	}
+
+	// Phase 9: Verify no Claude processes survived
+	fmt.Printf("\nPhase 9: Verifying shutdown...\n")
 	verifyNoOrphans()
+	if townRoot != "" && !shutdownPolecatsOnly {
+		verifyTownInfraStopped(townRoot)
+	}
 
 	fmt.Println()
 	fmt.Printf("%s Graceful shutdown complete (%d sessions stopped)\n", style.Bold.Render("✓"), stopped)
@@ -709,10 +728,20 @@ func runImmediateShutdown(t *tmux.Tmux, gtSessions []string, townRoot string) er
 		stopDaemonIfRunning(townRoot)
 	}
 
+	// Stop this town's Dolt SQL server and worker serve process.
+	if townRoot != "" && !shutdownPolecatsOnly {
+		fmt.Println()
+		fmt.Println("Stopping town Dolt and worker serve...")
+		stopTownDoltAndWorker(townRoot)
+	}
+
 	// Verify no Claude processes survived
 	fmt.Println()
 	fmt.Println("Verifying shutdown...")
 	verifyNoOrphans()
+	if townRoot != "" && !shutdownPolecatsOnly {
+		verifyTownInfraStopped(townRoot)
+	}
 
 	fmt.Println()
 	fmt.Printf("%s Gas Town shutdown complete (%d sessions stopped)\n", style.Bold.Render("✓"), stopped)

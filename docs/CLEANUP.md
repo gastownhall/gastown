@@ -52,11 +52,11 @@ A comprehensive catalog of all cleanup-related commands in the gastown/beads eco
 
 | Command | What it does |
 |---------|-------------|
-| `gt down` | Stops all infrastructure (refinery, witness, mayor, boot, deacon, daemon, dolt) |
+| `gt down` | Stops all infrastructure (refinery, witness, mayor, boot, deacon, daemon, dolt, worker serve) |
 | `gt down --polecats` | Also stops all polecat sessions |
 | `gt down --all` | Full shutdown with orphan cleanup and verification |
 | `gt down --nuke` | Kills entire tmux server (DESTRUCTIVE - kills non-GT sessions too) |
-| `gt shutdown` | "Done for the day" - stops agents AND removes polecat worktrees/branches. Flags control aggressiveness (`--graceful`, `--force`, `--nuclear`, `--polecats-only`, etc.) |
+| `gt shutdown` | "Done for the day" - stops agents, this town's Dolt server, this town's `gt worker serve`, AND removes polecat worktrees/branches. Flags control aggressiveness (`--graceful`, `--force`, `--nuclear`, `--polecats-only`, etc.) |
 
 ## Crew Workspace Cleanup
 
