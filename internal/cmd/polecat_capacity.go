@@ -113,6 +113,20 @@ func acquirePolecatAdmission(townRoot, rigName, beadID, operation string) (*pole
 	if err != nil {
 		return nil, polecatCapacitySnapshot{}, err
 	}
+	// The load sentinel gates every admission, including direct dispatch
+	// (max <= 0): an external governor saying "the host is overloaded"
+	// outranks the scheduler being disabled, the same way ESTOP does.
+	if reason, present, serr := loadSentinelReason(townRoot); serr != nil {
+		return nil, polecatCapacitySnapshot{}, serr
+	} else if present {
+		return nil, polecatCapacitySnapshot{Max: max, ActiveSessions: countActivePolecats()},
+			&polecatCapacityAdmissionError{
+				Snapshot: polecatCapacitySnapshot{Max: max},
+				Rig:      rigName,
+				Bead:     beadID,
+				Reason:   reason,
+			}
+	}
 	if max <= 0 {
 		return &polecatAdmissionHandle{disabled: true}, polecatCapacitySnapshot{Max: max, ActiveSessions: countActivePolecats()}, nil
 	}
@@ -147,6 +161,38 @@ func acquirePolecatAdmission(townRoot, rigName, beadID, operation string) (*pole
 	snapshot.Reservations++
 	snapshot.Free--
 	return &polecatAdmissionHandle{townRoot: townRoot, id: reservation.ID, path: path}, snapshot, nil
+}
+
+// loadSentinelReason reports whether the configured load sentinel file
+// exists and, if so, the admission-refusal reason derived from its first
+// line. No sentinel configured or present means admission proceeds.
+func loadSentinelReason(townRoot string) (string, bool, error) {
+	settings, err := config.LoadOrCreateTownSettings(config.TownSettingsPath(townRoot))
+	if err != nil {
+		return "", false, fmt.Errorf("loading town settings for load sentinel: %w", err)
+	}
+	if settings.Scheduler == nil || settings.Scheduler.LoadSentinelFile == "" {
+		return "", false, nil
+	}
+	path := settings.Scheduler.LoadSentinelFile
+	if !filepath.IsAbs(path) {
+		path = filepath.Join(townRoot, path)
+	}
+	data, err := os.ReadFile(path)
+	if os.IsNotExist(err) {
+		return "", false, nil
+	}
+	if err != nil {
+		// An unreadable sentinel fails open: a broken governor must not
+		// wedge the town, mirroring how stale reservations are cleaned
+		// up rather than trusted.
+		return "", false, nil
+	}
+	reason := strings.TrimSpace(strings.SplitN(string(data), "\n", 2)[0])
+	if reason == "" {
+		reason = "load sentinel present"
+	}
+	return fmt.Sprintf("load sentinel %s: %s", path, reason), true, nil
 }
 
 func configuredSchedulerMaxPolecats(townRoot string) (int, error) {
