@@ -8,8 +8,11 @@ import (
 
 func TestPolicyFor_RoleTable(t *testing.T) {
 	boot := policyFor(constants.RoleBoot, Work{})
-	if boot.WaitForAgent || boot.AcceptBypass || boot.ReadyFatal {
-		t.Fatalf("boot waits for nothing, got %+v", boot)
+	if boot.WaitForAgent || boot.ReadyFatal {
+		t.Fatalf("boot stays ephemeral, got %+v", boot)
+	}
+	if !boot.AcceptBypass {
+		t.Fatal("boot must dismiss Codex workspace-trust dialogs")
 	}
 
 	refinery := policyFor(constants.RoleRefinery, Work{})

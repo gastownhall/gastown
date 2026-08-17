@@ -13,6 +13,7 @@ import (
 
 	"github.com/jonbaldie/gastown/internal/doltserver"
 	"github.com/jonbaldie/gastown/internal/process"
+	"github.com/jonbaldie/gastown/internal/session"
 	"github.com/jonbaldie/gastown/internal/tmux"
 	"github.com/jonbaldie/gastown/internal/worker"
 )
@@ -172,4 +173,51 @@ func containsPID(pids []int, want int) bool {
 		}
 	}
 	return false
+}
+
+// TestImmediateShutdownKillsLatePolecatSession is the red-capable loop for the
+// UAT3 leftover: Witness spawned cl-nux after shutdown listed sessions once.
+func TestImmediateShutdownKillsLatePolecatSession(t *testing.T) {
+	if testing.Short() {
+		t.Skip("starts tmux sessions")
+	}
+	if _, err := exec.LookPath("tmux"); err != nil {
+		t.Skip("tmux not installed")
+	}
+
+	old := session.DefaultRegistry()
+	reg := session.NewPrefixRegistry()
+	reg.Register("cl", "clock")
+	session.SetDefaultRegistry(reg)
+	t.Cleanup(func() { session.SetDefaultRegistry(old) })
+
+	socket := fmt.Sprintf("gt-fix-shutdown-late-%d", time.Now().UnixNano())
+	tm := tmux.NewTmuxWithSocket(socket)
+	t.Cleanup(func() {
+		_ = tm.KillServer()
+	})
+
+	early := "cl-furiosa"
+	late := "cl-nux"
+	if err := tm.NewSession(early, ""); err != nil {
+		t.Fatalf("NewSession %s: %v", early, err)
+	}
+
+	// Witness-style spawn: a new known session appears after the first list.
+	go func() {
+		time.Sleep(80 * time.Millisecond)
+		_ = tm.NewSession(late, "")
+	}()
+
+	if err := runImmediateShutdown(tm, []string{early}, t.TempDir()); err != nil {
+		t.Fatalf("runImmediateShutdown: %v", err)
+	}
+
+	exists, err := tm.HasSession(late)
+	if err != nil {
+		t.Fatalf("HasSession %s: %v", late, err)
+	}
+	if exists {
+		t.Fatalf("gt shutdown left late polecat session %s running", late)
+	}
 }

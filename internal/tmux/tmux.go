@@ -2015,23 +2015,17 @@ func (t *Tmux) AcceptWorkspaceTrustDialog(session string) error {
 			continue
 		}
 
-		// Look for characteristic trust dialog text before prompt detection.
-		// Codex trust screens include a leading ">" banner line, so prompt
-		// detection alone would exit too early.
-		if containsWorkspaceTrustDialog(content) {
-			// Dialog found — accept it (option 1 is pre-selected, just press Enter)
+		switch workspaceTrustPollAction(content) {
+		case workspaceTrustAccept:
+			// Dialog found — accept it (option 1 is pre-selected, just press Enter).
+			// Keep polling until the dialog is gone; one Enter can miss Codex's
+			// numbered trust screen if it is still painting.
 			if err := t.submitEnter(session); err != nil {
 				return err
 			}
-			// Wait for dialog to dismiss before proceeding
-			time.Sleep(500 * time.Millisecond)
-			return nil
-		}
-
-		// Early exit: if agent prompt or shell prompt is visible, no trust dialog will appear.
-		// Claude prompt is ">", shell prompts are "$", "%", "#".
-		// Also exit if bypass permissions dialog is next (handled by AcceptBypassPermissionsWarning).
-		if containsPromptIndicator(content) || strings.Contains(content, "Bypass Permissions mode") {
+			time.Sleep(constants.DialogPollInterval)
+			continue
+		case workspaceTrustReady:
 			return nil
 		}
 
@@ -2040,6 +2034,57 @@ func (t *Tmux) AcceptWorkspaceTrustDialog(session string) error {
 
 	// Timeout — no dialog detected, safe to proceed
 	return nil
+}
+
+type workspaceTrustPollKind int
+
+const (
+	workspaceTrustWait workspaceTrustPollKind = iota
+	workspaceTrustAccept
+	workspaceTrustReady
+)
+
+func workspaceTrustPollAction(content string) workspaceTrustPollKind {
+	// Codex trust screens include a leading ">" banner line, so prompt
+	// detection alone would exit too early.
+	if containsWorkspaceTrustDialog(content) {
+		return workspaceTrustAccept
+	}
+	// Early exit: if agent prompt or shell prompt is visible, no trust dialog will appear.
+	// Claude prompt is ">", Codex uses "›", shell prompts are "$", "%", "#".
+	// A lone ">" is Codex's banner, not a ready prompt — keep waiting.
+	// Also exit if bypass permissions dialog is next (handled by AcceptBypassPermissionsWarning).
+	if strings.Contains(content, "Bypass Permissions mode") {
+		return workspaceTrustReady
+	}
+	if containsReadyPrompt(content) {
+		return workspaceTrustReady
+	}
+	return workspaceTrustWait
+}
+
+func containsReadyPrompt(content string) bool {
+	hasLoneGT := false
+	hasOtherText := false
+	for _, line := range strings.Split(content, "\n") {
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "" {
+			continue
+		}
+		if trimmed == ">" {
+			hasLoneGT = true
+			continue
+		}
+		hasOtherText = true
+		for _, suffix := range promptSuffixes {
+			if strings.HasSuffix(trimmed, suffix) {
+				return true
+			}
+		}
+	}
+	// Claude ready is other text plus a lone ">". A lone ">" by itself is
+	// Codex painting its banner before the trust dialog.
+	return hasLoneGT && hasOtherText
 }
 
 func containsWorkspaceTrustDialog(content string) bool {

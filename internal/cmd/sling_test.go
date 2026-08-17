@@ -1238,7 +1238,13 @@ case "$cmd" in
     exit 1
     ;;
   create)
-    if [ "${BEADS_DIR:-}" = "${TARGET_BEADS_DIR}" ] || echo " $* " | grep -q -- " --prefix ck-"; then
+    # Current bd (1.0.5+) has no --prefix flag. Creating in the target
+    # beads directory is what assigns the rig prefix.
+    if echo " $* " | grep -q -- " --prefix "; then
+      echo 'Error: unknown flag: --prefix' >&2
+      exit 1
+    fi
+    if [ "${BEADS_DIR:-}" = "${TARGET_BEADS_DIR}" ]; then
       echo ck-moved > "${RIG_CREATED}"
       echo ck-moved
       exit 0

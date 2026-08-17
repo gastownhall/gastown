@@ -653,6 +653,7 @@ func runGracefulShutdown(t *tmux.Tmux, gtSessions []string, townRoot string) err
 	mayorSession := getMayorSessionName()
 	deaconSession := getDeaconSessionName()
 	stopped := killSessionsInOrder(t, gtSessions, mayorSession, deaconSession)
+	stopped += killLateKnownSessions(t)
 
 	// Phase 5: Always clean up orphaned Claude processes after killing sessions.
 	// Processes can survive session kills if they caught/ignored SIGHUP or called setsid().
@@ -685,6 +686,7 @@ func runGracefulShutdown(t *tmux.Tmux, gtSessions []string, townRoot string) err
 
 	// Phase 9: Verify no Claude processes survived
 	fmt.Printf("\nPhase 9: Verifying shutdown...\n")
+	stopped += killLateKnownSessions(t)
 	verifyNoOrphans()
 	if townRoot != "" && !shutdownPolecatsOnly {
 		verifyTownInfraStopped(townRoot)
@@ -701,6 +703,7 @@ func runImmediateShutdown(t *tmux.Tmux, gtSessions []string, townRoot string) er
 	mayorSession := getMayorSessionName()
 	deaconSession := getDeaconSessionName()
 	stopped := killSessionsInOrder(t, gtSessions, mayorSession, deaconSession)
+	stopped += killLateKnownSessions(t)
 
 	// Always clean up orphaned Claude processes after killing sessions.
 	// Processes can survive session kills if they caught/ignored SIGHUP or called setsid().
@@ -738,6 +741,7 @@ func runImmediateShutdown(t *tmux.Tmux, gtSessions []string, townRoot string) er
 	// Verify no Claude processes survived
 	fmt.Println()
 	fmt.Println("Verifying shutdown...")
+	stopped += killLateKnownSessions(t)
 	verifyNoOrphans()
 	if townRoot != "" && !shutdownPolecatsOnly {
 		verifyTownInfraStopped(townRoot)
@@ -856,6 +860,34 @@ func killSessionsInOrder(t *tmux.Tmux, sessions []string, mayorSession, deaconSe
 	}
 
 	return stopped
+}
+
+// killLateKnownSessions stops Gas Town sessions that appeared after the first
+// shutdown list. Witness can spawn a Polecat while earlier sessions are dying.
+func killLateKnownSessions(t *tmux.Tmux) int {
+	stopped := 0
+	announced := false
+	deadline := time.Now().Add(300 * time.Millisecond)
+	for {
+		sessions, err := t.ListSessions()
+		if err != nil {
+			return stopped
+		}
+		toStop, _ := categorizeSessions(sessions)
+		if len(toStop) > 0 {
+			if !announced {
+				fmt.Println()
+				fmt.Println("Stopping sessions that appeared during shutdown...")
+				announced = true
+			}
+			stopped += killSessionsInOrder(t, toStop, getMayorSessionName(), getDeaconSessionName())
+			continue
+		}
+		if time.Now().After(deadline) {
+			return stopped
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
 }
 
 // cleanupPolecats removes polecat worktrees and branches for all rigs.

@@ -8,6 +8,7 @@ import (
 
 	"github.com/jonbaldie/gastown/internal/beads"
 	"github.com/jonbaldie/gastown/internal/style"
+	"github.com/jonbaldie/gastown/internal/workspace"
 	"github.com/spf13/cobra"
 )
 
@@ -108,9 +109,10 @@ type moveBeadInfo struct {
 func runBeadMove(cmd *cobra.Command, args []string) error {
 	sourceID := args[0]
 	targetPrefix := args[1]
+	townRoot, _ := workspace.FindFromCwd()
 
 	if beadMoveDryRun {
-		if err := previewBeadMove(sourceID, targetPrefix, ""); err != nil {
+		if err := previewBeadMove(sourceID, targetPrefix, townRoot); err != nil {
 			return err
 		}
 		fmt.Printf("\nDry run - would:\n")
@@ -119,7 +121,7 @@ func runBeadMove(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 
-	newID, err := moveBeadToPrefix(sourceID, targetPrefix, "")
+	newID, err := moveBeadToPrefix(sourceID, targetPrefix, townRoot)
 	if err != nil {
 		return err
 	}
@@ -201,18 +203,15 @@ func moveBeadToPrefix(sourceID, targetPrefix, townRoot string) (string, error) {
 	fmt.Printf("  Title: %s\n", source.Title)
 	fmt.Printf("  Type: %s\n", source.Type)
 
-	// Build create command for target.
-	// Skip --prefix for empty or bare "-" (normalization above turns "" into "-").
-	createArgs := []string{"create"}
-	if targetPrefix != "" && targetPrefix != "-" {
-		createArgs = append(createArgs, "--prefix", targetPrefix)
-	}
-	createArgs = append(createArgs,
-		"--title="+source.Title,
+	// Create in the target beads directory. Current bd has no --prefix flag
+	// on create; the directory's configured prefix assigns the new ID.
+	createArgs := []string{
+		"create",
+		"--title=" + source.Title,
 		"--type", source.Type,
 		"--priority", fmt.Sprintf("%d", source.Priority),
 		"--silent", // Only output the ID
-	)
+	}
 
 	if source.Description != "" {
 		createArgs = append(createArgs, "--description", source.Description)
@@ -225,26 +224,19 @@ func moveBeadToPrefix(sourceID, targetPrefix, townRoot string) (string, error) {
 	}
 
 	var newID string
+	targetDir := resolveBeadDir(targetPrefix + "x")
 	if townRoot != "" {
-		targetDir := resolveBeadDirFromTownRoot(townRoot, targetPrefix+"x")
-		out, err := BdCmd(createArgs...).
-			Dir(targetDir).
-			StripBeadsDir().
-			WithAutoCommit().
-			Output()
-		if err != nil {
-			return "", fmt.Errorf("creating new bead: %w", err)
-		}
-		newID = strings.TrimSpace(string(out))
-	} else {
-		createCmd := beads.Spawn(createArgs...)
-		createCmd.Stderr = os.Stderr
-		newIDBytes, err := createCmd.Output()
-		if err != nil {
-			return "", fmt.Errorf("creating new bead: %w", err)
-		}
-		newID = strings.TrimSpace(string(newIDBytes))
+		targetDir = resolveBeadDirFromTownRoot(townRoot, targetPrefix+"x")
 	}
+	out, err := BdCmd(createArgs...).
+		Dir(targetDir).
+		StripBeadsDir().
+		WithAutoCommit().
+		Output()
+	if err != nil {
+		return "", fmt.Errorf("creating new bead: %w", err)
+	}
+	newID = strings.TrimSpace(string(out))
 	if newID == "" {
 		return "", fmt.Errorf("creating new bead: empty ID")
 	}

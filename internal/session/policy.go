@@ -19,7 +19,9 @@ type rolePolicy struct {
 // rolePolicies is the single start-policy table. A new role is added here.
 var rolePolicies = map[string]rolePolicy{
 	constants.RoleBoot: {
-		// Boot is ephemeral. It waits for nothing.
+		// Boot is ephemeral, but Codex still shows a workspace-trust dialog
+		// that blocks triage until someone accepts it.
+		AcceptBypass: true,
 	},
 	constants.RoleMayor: {
 		WaitForAgent: true,

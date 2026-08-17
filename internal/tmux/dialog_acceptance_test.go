@@ -224,6 +224,24 @@ func TestContainsWorkspaceTrustDialog(t *testing.T) {
 	}
 }
 
+func TestWorkspaceTrustPollAction_WaitsOnCodexBanner(t *testing.T) {
+	t.Parallel()
+	// Codex paints a lone ">" banner before the numbered trust dialog.
+	// Treating that ">" as a ready prompt is the UAT3 miss.
+	got := workspaceTrustPollAction(">")
+	if got != workspaceTrustWait {
+		t.Fatalf("workspaceTrustPollAction(lone >) = %v, want wait", got)
+	}
+}
+
+func TestWorkspaceTrustPollAction_ClaudeReadyIsReady(t *testing.T) {
+	t.Parallel()
+	got := workspaceTrustPollAction("Hello! How can I help?\n>")
+	if got != workspaceTrustReady {
+		t.Fatalf("workspaceTrustPollAction(claude ready) = %v, want ready", got)
+	}
+}
+
 func TestContainsBlockingStartupDialog(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
@@ -244,6 +262,12 @@ Skip until next version`,
 		{
 			name:        "codex trust modal",
 			content:     "> You are in /tmp/demo\nDo you trust the contents of this directory?",
+			wantBlocked: true,
+			wantName:    "workspace trust prompt",
+		},
+		{
+			name: "codex 0.147 numbered trust modal",
+			content: "> You are in /private/tmp/gt-uat3/town/deacon/dogs/boot\n\n  Note: You’re in a subdirectory of a Git project. Trusting will apply to the\n  repository root: /private/tmp/gt-uat3/town\n\n  Do you trust the contents of this directory? Working with untrusted contents\n  comes with higher risk of prompt injection. Trusting the directory allows\n  project-local config, hooks, and exec policies to load.\n\n› 1. Yes, continue\n  2. No, quit\n\n  Press enter to continue",
 			wantBlocked: true,
 			wantName:    "workspace trust prompt",
 		},
