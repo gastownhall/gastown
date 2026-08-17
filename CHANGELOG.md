@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Local merge closes the work bead.** `merge_strategy=local` still skips
+  push and the merge queue, but a successful `gt done` now closes the
+  hooked work bead instead of leaving it open with `DONE_CLOSE_SKIPPED`.
+  Local-merge convoys can land after every polecat finishes.
+
 - **Custom Codex aliases inherit trust flags.** `gt config agent set`
   aliases such as `codex -m gpt-5.3-codex-spark` now keep
   `--dangerously-bypass-approvals-and-sandbox` and
