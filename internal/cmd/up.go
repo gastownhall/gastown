@@ -213,6 +213,16 @@ func runUp(cmd *cobra.Command, args []string) error {
 	go func() {
 		defer startupWg.Done()
 		cfg := doltserver.DefaultConfig(townRoot)
+		if cfg.IsExternallyManaged() {
+			running, _, _ := doltserver.IsRunning(townRoot)
+			doltOK = running
+			if running {
+				doltDetail = "externally managed and reachable"
+			} else {
+				doltDetail = fmt.Sprintf("externally managed and unreachable at %s", cfg.HostPort())
+			}
+			return
+		}
 		if _, err := os.Stat(cfg.DataDir); os.IsNotExist(err) {
 			doltSkipped = true
 			return

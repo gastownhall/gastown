@@ -111,7 +111,7 @@ func buildDoltDSN(user string, port int, dbName string, opts dsnOpts) string {
 // and host from a *doltserver.Config (matches the maintain.go /
 // dolt_flatten.go / dolt_rebase.go callsite pattern).
 func buildDoltDSNFromConfig(c *doltserver.Config, dbName string, opts dsnOpts) string {
-	if !c.IsRemote() {
+	if !c.IsExternallyManaged() {
 		if sock := localDoltSocketPath(c.Port); sock != "" {
 			return formatDoltDSN(c.User, "unix", sock, dbName, opts)
 		}

@@ -176,6 +176,14 @@ func normalizeDoltServerConfig(townRoot string, config *DoltServerConfig) *DoltS
 		return nil
 	}
 	normalized := *config
+	if agentconfig.ResolveDoltExternal(townRoot) {
+		normalized.External = true
+		normalized.Host = agentconfig.ResolveDoltHost(townRoot)
+		if port := agentconfig.ResolveDoltPort(townRoot); port > 0 {
+			normalized.Port = port
+		}
+		return &normalized
+	}
 	if host, port, ok := agentconfig.ManagedDoltEndpoint(townRoot); ok {
 		normalized.Host = host
 		if port > 0 {
@@ -907,6 +915,9 @@ behavior:
 func (m *DoltServerManager) Start() error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if m.IsExternal() {
+		return fmt.Errorf("Dolt server is externally managed")
+	}
 	return m.startLocked()
 }
 
@@ -998,6 +1009,9 @@ func (m *DoltServerManager) startLocked() error {
 func (m *DoltServerManager) Stop() error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if m.IsExternal() {
+		return fmt.Errorf("Dolt server is externally managed")
+	}
 	m.stopLocked()
 	return nil
 }
