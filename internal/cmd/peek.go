@@ -33,19 +33,70 @@ The nudge/peek pair provides the canonical interface for agent sessions:
   gt peek  - read output FROM a session (capture-pane wrapper)
 
 Supports polecats, crew workers, and town-level agents:
-  - Polecats: rig/name format (e.g., greenplace/furiosa)
+  - Polecats: rig/name or rig/polecats/name (e.g., greenplace/furiosa)
   - Crew: rig/crew/name format (e.g., beads/crew/dave)
+  - Rig roles: rig/witness, rig/refinery
   - Town-level: mayor, deacon, boot (or hq/mayor, hq/deacon, hq/boot)
 
 Examples:
-  gt peek greenplace/furiosa         # Polecat: last 100 lines (default)
-  gt peek greenplace/furiosa 50      # Polecat: last 50 lines
-  gt peek beads/crew/dave            # Crew: last 100 lines
-  gt peek beads/crew/dave -n 200     # Crew: last 200 lines
-  gt peek mayor                      # Mayor: last 100 lines
-  gt peek deacon -n 50               # Deacon: last 50 lines`,
+  gt peek greenplace/furiosa              # Polecat short form
+  gt peek greenplace/polecats/furiosa     # Polecat long form (same session)
+  gt peek greenplace/furiosa 50           # Polecat: last 50 lines
+  gt peek beads/crew/dave                 # Crew: last 100 lines
+  gt peek beads/crew/dave -n 200          # Crew: last 200 lines
+  gt peek greenplace/witness              # Witness
+  gt peek greenplace/refinery             # Refinery
+  gt peek mayor                           # Mayor: last 100 lines
+  gt peek deacon -n 50                    # Deacon: last 50 lines`,
 	Args: cobra.RangeArgs(1, 2),
 	RunE: runPeek,
+}
+
+// peekTownAgentSessions maps town-level peek aliases to tmux session names.
+// Keep these before the identity parser: "hq/mayor" would otherwise look like a polecat.
+var peekTownAgentSessions = map[string]string{
+	"mayor":     session.MayorSessionName(),
+	"hq/mayor":  session.MayorSessionName(),
+	"deacon":    session.DeaconSessionName(),
+	"hq/deacon": session.DeaconSessionName(),
+	"boot":      session.BootSessionName(),
+	"hq/boot":   session.BootSessionName(),
+}
+
+// peekSessionName maps a peek address to the tmux session name that runPeek captures.
+// Accept both short (rig/name) and long (rig/polecats/name) polecat forms.
+func peekSessionName(address string) (string, error) {
+	if sessionName, ok := peekTownAgentSessions[address]; ok {
+		return sessionName, nil
+	}
+
+	// Prefer the domain identity parser so long polecat paths, crew paths,
+	// witness, and refinery share one mapping with mail and status.
+	if ident, err := session.ParseAddress(address); err == nil {
+		if name := ident.SessionName(); name != "" {
+			return name, nil
+		}
+	}
+
+	// Fall back for cwd-inferred short names that have no slash.
+	rigName, polecatName, err := parseAddress(address)
+	if err != nil {
+		return "", err
+	}
+	switch {
+	case polecatName == "witness":
+		return session.WitnessSessionName(session.PrefixFor(rigName)), nil
+	case polecatName == "refinery":
+		return session.RefinerySessionName(session.PrefixFor(rigName)), nil
+	case strings.HasPrefix(polecatName, "crew/"):
+		crewName := strings.TrimPrefix(polecatName, "crew/")
+		return session.CrewSessionName(session.PrefixFor(rigName), crewName), nil
+	case strings.HasPrefix(polecatName, "polecats/"):
+		pcName := strings.TrimPrefix(polecatName, "polecats/")
+		return session.PolecatSessionName(session.PrefixFor(rigName), pcName), nil
+	default:
+		return session.PolecatSessionName(session.PrefixFor(rigName), polecatName), nil
+	}
 }
 
 func runPeek(cmd *cobra.Command, args []string) error {
@@ -61,17 +112,15 @@ func runPeek(cmd *cobra.Command, args []string) error {
 		lines = n
 	}
 
-	// Handle town-level agents: mayor, deacon, boot
-	// These use session names like "hq-mayor", "hq-deacon" but have no rig.
-	townAgentSessions := map[string]string{
-		"mayor":     "hq-mayor",
-		"hq/mayor":  "hq-mayor",
-		"deacon":    "hq-deacon",
-		"hq/deacon": "hq-deacon",
-		"boot":      "hq-boot",
-		"hq/boot":   "hq-boot",
+	sessionName, err := peekSessionName(address)
+	if err != nil {
+		if !strings.Contains(address, "/") {
+			return fmt.Errorf("not in a rig directory. Use full address format: gt peek <rig>/<polecat>")
+		}
+		return err
 	}
-	if sessionName, ok := townAgentSessions[address]; ok {
+
+	if _, ok := peekTownAgentSessions[address]; ok {
 		_, err := workspace.FindFromCwdOrError()
 		if err != nil {
 			return fmt.Errorf("not in a Gas Town workspace: %w", err)
@@ -85,7 +134,7 @@ func runPeek(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 
-	rigName, polecatName, err := parseAddress(address)
+	rigName, _, err := parseAddress(address)
 	if err != nil {
 		if !strings.Contains(address, "/") {
 			return fmt.Errorf("not in a rig directory. Use full address format: gt peek <rig>/<polecat>")
@@ -101,18 +150,7 @@ func runPeek(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	var output string
-
-	// Handle crew/ prefix for cross-rig crew workers
-	// e.g., "beads/crew/dave" -> session name "gt-beads-crew-dave"
-	if strings.HasPrefix(polecatName, "crew/") {
-		crewName := strings.TrimPrefix(polecatName, "crew/")
-		sessionID := session.CrewSessionName(session.PrefixFor(rigName), crewName)
-		output, err = mgr.CaptureSession(sessionID, lines)
-	} else {
-		output, err = mgr.Capture(polecatName, lines)
-	}
-
+	output, err := mgr.CaptureSession(sessionName, lines)
 	if err != nil {
 		return fmt.Errorf("capturing output: %w", err)
 	}

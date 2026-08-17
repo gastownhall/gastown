@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`gt peek` accepts the long polecat path.** `gt peek <rig>/polecats/<name>`
+  now resolves to the same session as `gt peek <rig>/<name>`. Status, mail,
+  and sling already use the long identity, so copied addresses no longer fail
+  with `session not found`. Help text documents both forms. `rig/witness` and
+  `rig/refinery` also resolve consistently.
+
 - **`gt shutdown` now stops this town's Dolt SQL server and `gt worker serve`.**
   The done-for-the-day path previously killed tmux sessions and the daemon,
   then left the town Dolt listener and `gt worker serve --town <that-town>`
