@@ -4,6 +4,8 @@
 
 > **Recovery**: Run `gt prime` after compaction, clear, or new session
 
+Domain language: [`CONTEXT.md`](CONTEXT.md) — read it when naming Town, Rig, Role, Bead, Hook, or other glossary terms.
+
 Full context is injected by `gt prime` at session start.
 
 <!-- beads-agent-instructions-v2 -->
