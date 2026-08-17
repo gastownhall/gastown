@@ -81,11 +81,22 @@ func (m *Manager) stopNudgePoller(sessionID string) {
 // agentOverride allows specifying an alternate agent alias (e.g., for testing).
 // Restarts are handled by daemon via ensureDeaconRunning on each heartbeat.
 func (m *Manager) Start(agentOverride string) error {
+	return m.start(agentOverride, false)
+}
+
+// StartImmediate starts the Deacon session without waiting for the runtime prompt.
+func (m *Manager) StartImmediate(agentOverride string) error {
+	return m.start(agentOverride, true)
+}
+
+func (m *Manager) start(agentOverride string, skipReady bool) error {
 	t := m.tmux
 	sessionID := m.SessionName()
 
-	// Check if session already exists
-	running, _ := t.HasSession(sessionID)
+	running, err := t.HasSession(sessionID)
+	if err != nil {
+		return fmt.Errorf("checking session: %w", err)
+	}
 	if running {
 		if t.IsAgentAlive(sessionID) {
 			m.startNudgePoller(sessionID)
@@ -116,12 +127,15 @@ func (m *Manager) Start(agentOverride string) error {
 		AgentOverride: agentOverride,
 		Theme:         theme,
 		AgentName:     "Deacon",
+		SkipReady:     skipReady,
 	}); err != nil {
 		return err
 	}
 
 	m.startNudgePoller(sessionID)
-	time.Sleep(constants.ShutdownNotifyDelay)
+	if !skipReady {
+		time.Sleep(constants.ShutdownNotifyDelay)
+	}
 	return nil
 }
 

@@ -687,6 +687,17 @@ func bdInitDoltConfig(townPath string) *doltserver.Config {
 // Town beads use the "hq-" prefix for mayor mail and cross-rig coordination.
 // Uses Dolt backend in server mode (Gas Town requires a running Dolt sql-server).
 func initTownBeads(townPath string) error {
+	return initTownBeadsWith(townPath, buildBdInitArgs(townPath), 20, 500*time.Millisecond, "10s")
+}
+
+func initNowBeads(townPath string) error {
+	args := append(append([]string{}, buildBdInitArgs(townPath)...),
+		"--skip-agents", "--skip-hooks", "--non-interactive", "--quiet",
+		"--external", "--role", "maintainer")
+	return initTownBeadsWith(townPath, args, 40, 50*time.Millisecond, "2s")
+}
+
+func initTownBeadsWith(townPath string, bdInitArgs []string, attempts int, delay time.Duration, waitLabel string) error {
 	// Dolt server is required — wait for it to accept queries before proceeding.
 	// The server may have just been started by gt install and TCP reachability
 	// alone is not sufficient; we need MySQL protocol readiness.
@@ -694,7 +705,7 @@ func initTownBeads(townPath string) error {
 	// wa-d6f: socket-first DSN (TCP fallback) — same rationale.
 	dsn := buildDoltDSNFromConfig(cfg, "", dsnOpts{})
 	var lastErr error
-	for attempt := 0; attempt < 20; attempt++ {
+	for attempt := 0; attempt < attempts; attempt++ {
 		db, err := sql.Open("mysql", dsn)
 		if err == nil {
 			err = db.Ping()
@@ -705,10 +716,10 @@ func initTownBeads(townPath string) error {
 			break
 		}
 		lastErr = err
-		time.Sleep(500 * time.Millisecond)
+		time.Sleep(delay)
 	}
 	if lastErr != nil {
-		return fmt.Errorf("Dolt server is not ready after 10s: %w", lastErr)
+		return fmt.Errorf("Dolt server is not ready after %s: %w", waitLabel, lastErr)
 	}
 
 	// Run: bd init --prefix hq --server --server-port <port>
@@ -717,7 +728,6 @@ func initTownBeads(townPath string) error {
 	// Always pass --server-port so bd connects to the correct Dolt server.
 	// bd init targets durable town config, so config.yaml beats ambient
 	// GT_DOLT_PORT that may be stale in long-lived agent sessions.
-	bdInitArgs := buildBdInitArgs(townPath)
 	cmd := beads.Spawn(bdInitArgs...)
 	cmd.Dir = townPath
 	cmd.Env = withBeadsDirEnv(filepath.Join(townPath, ".beads"))

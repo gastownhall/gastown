@@ -25,7 +25,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `--dry-run` prints the plan without writing. See
   `docs/guides/local-rig-bootstrap.md`.
 
+- **`gt now` starts a Town from a git repository in five seconds.** From a
+  project repo, `gt now` finds or creates a Town at `~/gt` (or `$GT_TOWN_ROOT`
+  / `--town`), registers the repo as a Rig without a network clone, writes
+  Mayor and worker mix from `--mayor` / `--workers`, starts Dolt, the daemon,
+  and the Mayor, then attaches. Default mix is the first agent CLI on `PATH`
+  with high Mayor effort and low worker effort. The project is not converted
+  into a Town HQ. `gt install`, `gt rig add`, `gt up`, and `gt config mix`
+  stay.
+
 ### Fixed
+
+- **`gt now` installs runtime hooks before the Mayor starts.** SkipReady still
+  skips skill trees, slash commands, and the Cursor ready delay, but Pi needs
+  `mayor/.pi/extensions/gastown-hooks.js` or the pane exits immediately.
 
 - **Install docs no longer treat `gt enable` as town-scoped.** `gt enable`
   / `gt disable` stay machine-wide (`~/.local/state/gastown/state.json`).

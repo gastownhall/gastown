@@ -98,14 +98,37 @@ func (s *Store) saveIndex(idx *runIndex) error {
 	if err != nil {
 		return fmt.Errorf("marshaling worker runs: %w", err)
 	}
-	tmp := s.runsPath() + ".tmp"
-	if err := os.WriteFile(tmp, data, fileMode); err != nil {
+	if err := writeFileAtomic(s.runsPath(), data); err != nil {
 		return fmt.Errorf("writing worker runs: %w", err)
 	}
-	if err := os.Rename(tmp, s.runsPath()); err != nil {
-		return fmt.Errorf("replacing worker runs: %w", err)
-	}
 	return nil
+}
+
+// writeFileAtomic replaces path with data, staging it in a uniquely named file
+// in the same directory. A fixed staging name would collide: every accessor
+// builds its own Store, so the mutex guards nothing between callers, and the
+// daemon writes the same files from another process. Concurrent writers would
+// then share one staging path and the loser's rename would find it already
+// consumed by the winner.
+func writeFileAtomic(path string, data []byte) error {
+	staged, err := os.CreateTemp(filepath.Dir(path), filepath.Base(path)+".*.tmp")
+	if err != nil {
+		return fmt.Errorf("creating staging file: %w", err)
+	}
+	name := staged.Name()
+	defer func() { _ = os.Remove(name) }()
+
+	if _, err := staged.Write(data); err != nil {
+		_ = staged.Close()
+		return err
+	}
+	if err := staged.Close(); err != nil {
+		return err
+	}
+	if err := os.Chmod(name, fileMode); err != nil {
+		return err
+	}
+	return os.Rename(name, path)
 }
 
 func (s *Store) putRun(run *Run) error {
@@ -367,11 +390,10 @@ func (s *Store) saveQueue(q *queueFile) error {
 	if err != nil {
 		return fmt.Errorf("marshaling worker queue: %w", err)
 	}
-	tmp := s.queuePath() + ".tmp"
-	if err := os.WriteFile(tmp, data, fileMode); err != nil {
+	if err := writeFileAtomic(s.queuePath(), data); err != nil {
 		return fmt.Errorf("writing worker queue: %w", err)
 	}
-	return os.Rename(tmp, s.queuePath())
+	return nil
 }
 
 func (s *Store) enqueue(item QueuedPrompt) (int, error) {

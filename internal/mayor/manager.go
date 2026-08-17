@@ -134,9 +134,28 @@ func (m *Manager) Start(agentOverride string) error {
 	return m.StartTMUX(agentOverride)
 }
 
+// StartImmediate starts the Mayor session without waiting for the runtime prompt.
+// Attach is the ready state.
+func (m *Manager) StartImmediate(agentOverride string) error {
+	status, err := m.CombinedStatus()
+	if err == nil && status.Active {
+		switch status.Mode {
+		case ModeACP, ModeBoth:
+			return ErrACPActive
+		case ModeTMUX:
+			return ErrAlreadyRunning
+		}
+	}
+	return m.startTMUX(agentOverride, true)
+}
+
 // StartTMUX starts the mayor session in TMUX mode.
 // agentOverride optionally specifies a different agent alias to use.
 func (m *Manager) StartTMUX(agentOverride string) error {
+	return m.startTMUX(agentOverride, false)
+}
+
+func (m *Manager) startTMUX(agentOverride string, skipReady bool) error {
 	if IsACPActive(m.townRoot) {
 		return ErrAlreadyRunning
 	}
@@ -180,12 +199,15 @@ func (m *Manager) StartTMUX(agentOverride string) error {
 		},
 		AgentOverride: agentOverride,
 		Theme:         theme,
+		SkipReady:     skipReady,
 	})
 	if err != nil {
 		return err
 	}
 
-	time.Sleep(session.ShutdownDelay())
+	if !skipReady {
+		time.Sleep(session.ShutdownDelay())
+	}
 
 	return nil
 }

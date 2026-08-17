@@ -244,17 +244,15 @@ func TestStart_SuccessStartsNudgePoller(t *testing.T) {
 }
 
 func TestStart_HasSessionError(t *testing.T) {
-	// HasSession error is ignored (line 59: running, _ := ...).
-	// When HasSession errors, running=false, so Start proceeds normally.
 	mock := &mockTmux{
 		hasSessionResult: false,
 		hasSessionErr:    errors.New("tmux not available"),
 	}
 	m := newTestManager(t.TempDir(), mock)
 
-	_ = m.Start("")
-
-	// Should NOT have tried to kill anything
+	if err := m.Start(""); err == nil {
+		t.Fatal("Start() should return error when HasSession fails")
+	}
 	if len(mock.killCalls) != 0 {
 		t.Errorf("expected 0 kill calls when HasSession errors, got %d", len(mock.killCalls))
 	}

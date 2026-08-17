@@ -125,6 +125,7 @@ func upgradeDoctor(townRoot string) upgradeResult {
 	d.Register(doctor.NewBeadsBinaryCheck())
 	d.Register(doctor.NewDoltBinaryCheck())
 	d.Register(doctor.NewClaudeBinaryCheck())
+	d.Register(doctor.NewMayorBinaryCheck())
 	d.Register(doctor.NewDoltServerReachableCheck())
 	d.Register(doctor.NewTownGitCheck())
 	d.Register(doctor.NewTownRootBranchCheck())

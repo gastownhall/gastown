@@ -85,5 +85,15 @@ func policyFor(role string, work Work) rolePolicy {
 		p.WaitForAgent = false
 		p.AcceptBypass = false
 	}
+	if work.SkipReady {
+		p.WaitForAgent = false
+		p.WaitFatal = false
+		p.AcceptBypass = false
+		p.ReadyDelay = false
+		p.ReadyFatal = false
+		p.RemainOnExit = true
+		p.VerifySurvived = false
+		p.AutoRespawn = false
+	}
 	return p
 }

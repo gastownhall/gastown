@@ -45,6 +45,7 @@ Town root protection:
 Infrastructure checks:
   - stale-binary             Check if gt binary is up to date with repo
   - beads-binary             Check that beads (bd) is installed and meets minimum version
+  - mayor-binary             Check that the configured Mayor agent binary is on PATH
   - daemon                   Check if daemon is running (fixable)
   - boot-health              Check Boot watchdog health (vet mode)
   - town-beads-config        Verify town .beads/config.yaml exists (fixable)
@@ -205,6 +206,7 @@ func newDoctorForCommand(rig string) *doctor.Doctor {
 	d.Register(doctor.NewBeadsBinaryCheck())
 	d.Register(doctor.NewDoltBinaryCheck())
 	d.Register(doctor.NewClaudeBinaryCheck())
+	d.Register(doctor.NewMayorBinaryCheck())
 	d.Register(doctor.NewGroqCompoundCheck())
 	d.Register(doctor.NewDoltServerReachableCheck())
 

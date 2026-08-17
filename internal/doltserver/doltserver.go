@@ -1739,6 +1739,15 @@ behavior:
 
 // Start starts the Dolt SQL server.
 func Start(townRoot string) error {
+	return StartContext(context.Background(), townRoot)
+}
+
+// StartContext starts the Dolt SQL server and honors ctx during lock wait and readiness polling.
+// The server process itself is not tied to ctx; cancel stops waiting, not a running server.
+func StartContext(ctx context.Context, townRoot string) error {
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	config := DefaultConfig(townRoot)
 
 	// Ensure daemon directory exists
@@ -1776,6 +1785,9 @@ func Start(townRoot string) error {
 		interval := 500 * time.Millisecond
 		deadline := time.Now().Add(lockTimeout)
 		for time.Now().Before(deadline) {
+			if err := ctx.Err(); err != nil {
+				return err
+			}
 			time.Sleep(interval)
 			locked, err = fileLock.TryLock()
 			if err == nil && locked {
@@ -1993,13 +2005,14 @@ func Start(townRoot string) error {
 	if dbCount < 1 {
 		dbCount = 1
 	}
-	maxAttempts := dbCount * 10 // 10 × 500ms = 5s per database
+	totalTimeout := time.Duration(dbCount) * 5 * time.Second
+	deadline := time.Now().Add(totalTimeout)
 	var lastErr error
 	tcpReachable := false
-	for attempt := 0; attempt < maxAttempts; attempt++ {
-		time.Sleep(500 * time.Millisecond)
-
-		// Check if the process we started is still alive.
+	for {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		if !processIsAlive(cmd.Process.Pid) {
 			return fmt.Errorf("Dolt server process died during startup (check logs with 'gt dolt logs')")
 		}
@@ -2007,39 +2020,35 @@ func Start(townRoot string) error {
 		if !tcpReachable {
 			if err := CheckServerReachable(townRoot); err != nil {
 				lastErr = err
-				continue
+			} else {
+				tcpReachable = true
 			}
-			tcpReachable = true
 		}
 
-		// TCP listener is up. Verify that the expected on-disk databases are
-		// actually being served before declaring success. Without this check
-		// Start() can return on the first iteration where Dolt has bound its
-		// port but is still discovering/loading databases — leaving callers
-		// (and waiting agents) connected to a server that only exposes
-		// information_schema and mysql. Symptom: gt down + gt up cycle leaves
-		// SHOW DATABASES showing no rig databases until the user manually
-		// runs gt dolt stop + gt dolt start. (gt-nq1)
-		if len(databases) == 0 {
-			applyWaitTimeout(townRoot, config) // Best-effort; see gh-3623.
-			applyTimeZone(townRoot, config)    // Best-effort; see hq-57jr8.
-			return nil                         // Nothing to verify — fresh install or empty data dir
+		if tcpReachable {
+			if len(databases) == 0 {
+				applyWaitTimeout(townRoot, config) // Best-effort; see gh-3623.
+				applyTimeZone(townRoot, config)    // Best-effort; see hq-57jr8.
+				return nil                         // Nothing to verify — fresh install or empty data dir
+			}
+			_, missing, verifyErr := VerifyDatabases(townRoot)
+			if verifyErr != nil {
+				lastErr = fmt.Errorf("verifying databases: %w", verifyErr)
+			} else if len(missing) == 0 {
+				applyWaitTimeout(townRoot, config) // Best-effort; see gh-3623.
+				applyTimeZone(townRoot, config)    // Best-effort; see hq-57jr8.
+				return nil                         // Server is up and serving every expected database
+			} else {
+				lastErr = fmt.Errorf("server is reachable but %d/%d databases not yet served (missing: %v)",
+					len(missing), len(databases), missing)
+			}
 		}
-		_, missing, verifyErr := VerifyDatabases(townRoot)
-		if verifyErr != nil {
-			lastErr = fmt.Errorf("verifying databases: %w", verifyErr)
-			continue
+
+		if !time.Now().Before(deadline) {
+			break
 		}
-		if len(missing) == 0 {
-			applyWaitTimeout(townRoot, config) // Best-effort; see gh-3623.
-			applyTimeZone(townRoot, config)    // Best-effort; see hq-57jr8.
-			return nil                         // Server is up and serving every expected database
-		}
-		lastErr = fmt.Errorf("server is reachable but %d/%d databases not yet served (missing: %v)",
-			len(missing), len(databases), missing)
+		time.Sleep(50 * time.Millisecond)
 	}
-
-	totalTimeout := time.Duration(dbCount) * 5 * time.Second
 	if !tcpReachable {
 		return fmt.Errorf("Dolt server process started (PID %d) but not accepting connections after %v (%d databases × 5s): %w\nCheck logs with: gt dolt logs", cmd.Process.Pid, totalTimeout, dbCount, lastErr)
 	}

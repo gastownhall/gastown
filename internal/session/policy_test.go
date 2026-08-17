@@ -35,3 +35,16 @@ func TestPolicyFor_CrewInteractive(t *testing.T) {
 		t.Fatalf("unattended crew waits and dismisses dialogs, got %+v", unattended)
 	}
 }
+
+func TestPolicyFor_SkipReady(t *testing.T) {
+	got := policyFor(constants.RoleMayor, Work{SkipReady: true})
+	if got.WaitForAgent || got.WaitFatal || got.ReadyDelay || got.ReadyFatal {
+		t.Fatalf("skip-ready mayor must not wait, got %+v", got)
+	}
+	if !got.RemainOnExit {
+		t.Fatal("skip-ready mayor keeps the pane so attach can proceed")
+	}
+	if got.AutoRespawn {
+		t.Fatal("skip-ready mayor does not wait to install a respawn hook")
+	}
+}

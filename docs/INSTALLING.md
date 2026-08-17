@@ -126,6 +126,21 @@ bd version
 dolt version
 ```
 
+### Shortest path: `gt now`
+
+From a project git repository, one command starts a Town and attaches this terminal to the Mayor session. The Town default is `~/gt`, or `$GT_TOWN_ROOT` if that is set. The project is registered as a Rig. The command does not clone over the network, does not convert the project into a Town HQ, and does not run `gt enable`.
+
+```bash
+cd my-repo
+gt now
+# or:
+gt now --mayor cursor:grok-4.6:high --workers cursor:grok-4.6:low
+```
+
+`--mayor` and `--workers` take `runtime[:model[:effort]]`. Mayor and Deacon share `--mayor`. Witness, Polecats, Refinery, Crew, Boot, and Dogs share `--workers`. Use `--town` for a test Town, `--name` when two folders share a directory name, and `--no-attach` in scripts.
+
+The steps below remain for a dedicated HQ with `--shell` and `--git`.
+
 ### Step 2: Create Your Workspace
 
 Run these workspace steps on macOS, Linux, or WSL. Native Windows shells are minimal CLI-only environments; use WSL for `--shell`, `gt up`, tmux-backed roles, and Mayor sessions.

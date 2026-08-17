@@ -2,6 +2,7 @@ package runtime
 
 import (
 	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -230,6 +231,18 @@ func TestStartupFallbackCommands_RoleCasing(t *testing.T) {
 	commands := StartupFallbackCommands("POLECAT", rc)
 	if commands == nil {
 		t.Error("StartupFallbackCommands() should handle uppercase role")
+	}
+}
+
+func TestEnsureHooksForRole_WritesPiHook(t *testing.T) {
+	dir := t.TempDir()
+	rc := config.RuntimeConfigFromPreset(config.AgentPi)
+	if err := EnsureHooksForRole(dir, dir, "mayor", rc); err != nil {
+		t.Fatalf("EnsureHooksForRole: %v", err)
+	}
+	hook := filepath.Join(dir, ".pi", "extensions", "gastown-hooks.js")
+	if _, err := os.Stat(hook); err != nil {
+		t.Fatalf("pi hook missing: %v", err)
 	}
 }
 

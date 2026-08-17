@@ -36,21 +36,7 @@ func EnsureSettingsForRole(settingsDir, workDir, role string, rc *config.Runtime
 	if err := provisionRoleSkills(workDir, provider); err != nil {
 		return err
 	}
-
-	if rc.Hooks == nil {
-		return nil
-	}
-	if provider == "" || provider == "none" {
-		return nil
-	}
-
-	// 1. Provider-specific settings via generic installer.
-	// Reads template metadata from the preset and installs the appropriate template.
-	useSettingsDir := false
-	if preset := config.GetAgentPresetByName(provider); preset != nil {
-		useSettingsDir = preset.HooksUseSettingsDir
-	}
-	if err := hooks.InstallForRole(provider, settingsDir, workDir, role, rc.Hooks.Dir, rc.Hooks.SettingsFile, useSettingsDir); err != nil {
+	if err := EnsureHooksForRole(settingsDir, workDir, role, rc); err != nil {
 		return err
 	}
 	if provider == "gemini" {
@@ -71,6 +57,23 @@ func EnsureSettingsForRole(settingsDir, workDir, role string, rc *config.Runtime
 	}
 
 	return nil
+}
+
+// EnsureHooksForRole writes the provider hook file the runtime needs to start.
+// gt now SkipReady still calls this so Pi can load gastown-hooks.js.
+func EnsureHooksForRole(settingsDir, workDir, role string, rc *config.RuntimeConfig) error {
+	if rc == nil || rc.Hooks == nil {
+		return nil
+	}
+	provider := rc.Hooks.Provider
+	if provider == "" || provider == "none" {
+		return nil
+	}
+	useSettingsDir := false
+	if preset := config.GetAgentPresetByName(provider); preset != nil {
+		useSettingsDir = preset.HooksUseSettingsDir
+	}
+	return hooks.InstallForRole(provider, settingsDir, workDir, role, rc.Hooks.Dir, rc.Hooks.SettingsFile, useSettingsDir)
 }
 
 func provisionRoleSkills(workDir, provider string) error {

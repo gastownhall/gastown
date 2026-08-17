@@ -881,6 +881,70 @@ func (g *Git) CloneBareWithReferenceAndBranch(url, dest, reference, branch strin
 	return g.cloneInternal(url, dest, cloneOptions{bare: true, reference: reference, singleBranch: true, depth: 1, branch: branch})
 }
 
+// CloneBareLocal clones a local repository as a bare repo using git --local.
+// The clone lands on the destination filesystem so hardlinks survive.
+// It does not fetch from the network.
+func (g *Git) CloneBareLocal(ctx context.Context, src, dest string) error {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	src = gitPathAbs(src, "")
+	dest = gitPathAbs(dest, "")
+	if protectedTownRuntimePath(dest) {
+		return fmt.Errorf("%w: clone destination %s", ErrUnsafeTownRootGitMutation, dest)
+	}
+
+	destParent := filepath.Dir(dest)
+	if err := os.MkdirAll(destParent, 0755); err != nil {
+		return fmt.Errorf("creating destination parent: %w", err)
+	}
+
+	tmpDir, err := os.MkdirTemp(destParent, ".gt-clone-*")
+	if err != nil {
+		return fmt.Errorf("creating temp dir: %w", err)
+	}
+	defer func() { _ = os.RemoveAll(tmpDir) }()
+
+	tmpDest := filepath.Join(tmpDir, filepath.Base(dest))
+	args := []string{"clone", "--bare", "--local", src, tmpDest}
+	cmd := exec.CommandContext(ctx, "git", args...)
+	util.SetDetachedProcessGroup(cmd)
+	cmd.Dir = tmpDir
+	cmd.Env = append(os.Environ(), "GIT_CEILING_DIRECTORIES="+tmpDir)
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		return g.wrapError(err, stdout.String(), stderr.String(), args)
+	}
+
+	if err := os.Rename(tmpDest, dest); err != nil {
+		if moveErr := moveDir(tmpDest, dest); moveErr != nil {
+			return fmt.Errorf("moving clone to destination: %w", moveErr)
+		}
+	}
+
+	return configureLocalBareRefspec(ctx, dest)
+}
+
+func configureLocalBareRefspec(ctx context.Context, repoPath string) error {
+	gitDir := filepath.Clean(repoPath)
+	var stderr bytes.Buffer
+	configCmd := exec.CommandContext(ctx, "git", "--git-dir", gitDir, "config", "remote.origin.fetch", "+refs/heads/*:refs/remotes/origin/*")
+	util.SetDetachedProcessGroup(configCmd)
+	configCmd.Stderr = &stderr
+	if err := configCmd.Run(); err != nil {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		return fmt.Errorf("configuring refspec: %s: %w", strings.TrimSpace(stderr.String()), err)
+	}
+	return nil
+}
+
 // Checkout checks out the given ref.
 func (g *Git) Checkout(ref string) error {
 	_, err := g.run("checkout", ref)
