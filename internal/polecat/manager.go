@@ -114,14 +114,15 @@ func isDoltConfigError(err error) bool {
 var checkDiskSpace = util.CheckDiskSpace
 
 var (
-	ErrPolecatExists      = errors.New("polecat already exists")
-	ErrPolecatNotFound    = errors.New("polecat not found")
-	ErrHasChanges         = errors.New("polecat has uncommitted changes")
-	ErrHasUncommittedWork = errors.New("polecat has uncommitted work")
-	ErrShellInWorktree    = errors.New("shell working directory is inside polecat worktree")
-	ErrDoltUnhealthy      = errors.New("dolt health check failed")
-	ErrDoltAtCapacity     = errors.New("dolt server at connection capacity")
-	ErrDiskSpaceLow       = errors.New("insufficient disk space")
+	ErrPolecatExists        = errors.New("polecat already exists")
+	ErrPolecatNotFound      = errors.New("polecat not found")
+	ErrHasChanges           = errors.New("polecat has uncommitted changes")
+	ErrHasUncommittedWork   = errors.New("polecat has uncommitted work")
+	ErrShellInWorktree      = errors.New("shell working directory is inside polecat worktree")
+	ErrDoltUnhealthy        = errors.New("dolt health check failed")
+	ErrDoltAtCapacity       = errors.New("dolt server at connection capacity")
+	ErrDiskSpaceLow         = errors.New("insufficient disk space")
+	ErrPolecatNeedsRecovery = errors.New("polecat needs recovery before reuse")
 )
 
 // UncommittedWorkError provides details about uncommitted work.
@@ -499,24 +500,7 @@ func (m *Manager) pendingPath(name string) string {
 // New structure: polecats/<name>/<rigname>/ - gives LLMs recognizable repo context.
 // Falls back to old structure: polecats/<name>/ for backward compatibility.
 func (m *Manager) clonePath(name string) string {
-	// New structure: polecats/<name>/<rigname>/
-	newPath := filepath.Join(m.rig.Path, "polecats", name, m.rig.Name)
-	if info, err := os.Stat(newPath); err == nil && info.IsDir() {
-		return newPath
-	}
-
-	// Old structure: polecats/<name>/ (backward compat)
-	oldPath := filepath.Join(m.rig.Path, "polecats", name)
-	if info, err := os.Stat(oldPath); err == nil && info.IsDir() {
-		// Check if this is actually a git worktree (has .git file or dir)
-		gitPath := filepath.Join(oldPath, ".git")
-		if _, err := os.Stat(gitPath); err == nil {
-			return oldPath
-		}
-	}
-
-	// Default to new structure for new polecats
-	return newPath
+	return ClonePathFor(m.rig.Path, m.rig.Name, name)
 }
 
 // ClonePath returns the path to a polecat's git worktree.
@@ -2320,155 +2304,21 @@ func (m *Manager) FindIdlePolecat() (*Polecat, error) {
 
 // ReuseDecisionForPolecat exposes the same reuse verdict used by FindIdlePolecat
 // so admission planning cannot drift from the destructive reuse gate.
-func (m *Manager) ReuseDecisionForPolecat(name string, state State) SlotReuseDecision {
+func (m *Manager) ReuseDecisionForPolecat(name string, state State) WorkstateDisposition {
 	return m.reuseDecisionForPolecat(name, state)
 }
 
 // WorkstateDispositionForPolecat exposes the canonical lifecycle disposition
 // used by reuse, recovery, list, witness, and scheduler capacity projections.
 func (m *Manager) WorkstateDispositionForPolecat(name string, state State, issue string) WorkstateDisposition {
-	return DecideWorkstate(m.workstateInputForPolecat(name, state, issue))
+	if m.beads == nil {
+		return WorkstateDisposition{Reason: "beads-unavailable"}
+	}
+	return InspectWorkstate(name, m.beads, m.clonePath(name), state, issue)
 }
 
-func (m *Manager) reuseDecisionForPolecat(name string, state State) SlotReuseDecision {
-	d := m.WorkstateDispositionForPolecat(name, state, "")
-	return SlotReuseDecision{Reusable: d.Reusable, Reason: d.Reason}
-}
-
-func (m *Manager) workstateInputForPolecat(name string, state State, issue string) WorkstateInput {
-	input := WorkstateInput{State: state, CleanupStatus: CleanupUnknown}
-	agentID := m.agentBeadID(name)
-	activeMR := ""
-	sourceHint := ""
-	_, fields, err := m.agentBeads().GetAgentBead(agentID)
-	hookSafe := true
-	hookTerminal := false
-	if err != nil {
-		input.GitCheckFailed = true
-	}
-	if err == nil && fields != nil {
-		hookSafe, hookTerminal = m.hookBeadSafeForWorkstate(fields.HookBead)
-		if !hookSafe {
-			input.HookBead = fields.HookBead
-		}
-		input.PushFailed = fields.PushFailed
-		input.MRFailed = fields.MRFailed
-		input.ActiveMR = fields.ActiveMR
-		activeMR = fields.ActiveMR
-		sourceHint = issue
-		if sourceHint == "" {
-			sourceHint = fields.LastSourceIssue
-		}
-		if sourceHint == "" {
-			sourceHint = fields.HookBead
-		}
-		if fields.CleanupStatus != "" {
-			input.CleanupStatus = CleanupStatus(fields.CleanupStatus)
-		}
-	}
-	clonePath := m.clonePath(name)
-	g := git.NewGit(clonePath)
-	branch, branchErr := g.CurrentBranch()
-	if branchErr != nil {
-		input.GitCheckFailed = true
-	} else {
-		input.Branch = branch
-	}
-	targetRefs, targetRefLookupFailed := m.reuseTargetRefs(fields, branch)
-	if targetRefLookupFailed {
-		input.MQLookupFailed = true
-	}
-	if status, err := g.CheckUncommittedWork(); err == nil {
-		input.GitDirty = !status.CleanExcludingRuntime()
-		input.StashCount = status.StashCount
-		input.UnpushedCommits = status.UnpushedCommits
-	} else {
-		input.GitCheckFailed = true
-	}
-	if branch != "" {
-		if preservation, err := g.BranchPreservationStatus(branch, "origin", targetRefs); err == nil {
-			input.UnpushedCommits = preservation.UnpreservedPatchCount
-		} else {
-			input.GitCheckFailed = true
-		}
-	}
-	// Legacy/test polecats can lack agent cleanup metadata. If git proves there is
-	// no local work at risk, treat the missing cleanup_status as clean; otherwise
-	// DecideSlotReuse will continue to fail closed on CleanupUnknown.
-	gitSafe := !input.GitCheckFailed && !input.GitDirty && input.StashCount == 0 && input.UnpushedCommits == 0
-	if input.CleanupStatus == CleanupUnknown && gitSafe {
-		input.CleanupStatus = CleanupClean
-	}
-	activeMRSafe := true
-	sourceTerminal := sourceHint != "" && m.assignedBeadTerminal(sourceHint)
-	if activeMR != "" {
-		assessment := AssessActiveMR(m.agentBeads(), ActiveMRInput{ActiveMR: activeMR, SourceIssueHint: sourceHint, RequireGitSafe: true, GitSafe: gitSafe})
-		if assessment.Pending {
-			input.ActiveMRBlocker = assessment.Reason
-		}
-		activeMRSafe = !assessment.Pending
-		if assessment.SourceTerminal {
-			sourceTerminal = true
-		}
-	}
-	workIssue := issue
-	if workIssue == "" {
-		workIssue = sourceHint
-	}
-	input.MQCheckRequired = input.Branch != ""
-	input.HasSubmittableWork = hasSubmittableWorkForWorkstate(clonePath, targetRefs)
-	input.AssignedBeadTerminal = m.assignedBeadTerminal(workIssue)
-	workTerminal := input.AssignedBeadTerminal || sourceTerminal || hookTerminal
-	if CanIgnoreStaleCleanupStatus(input.CleanupStatus, workTerminal, hookSafe, activeMRSafe, gitSafe) {
-		input.IgnoreCleanupStatus = true
-	}
-	input.MQNotRequired = m.mqNotRequiredSource(workIssue)
-	if input.MQCheckRequired && input.HasSubmittableWork && !input.AssignedBeadTerminal && !input.MQNotRequired {
-		mr, err := m.beads.FindMRForBranchAny(input.Branch)
-		if err != nil {
-			input.MQLookupFailed = true
-		} else {
-			input.MRSubmitted = mr != nil
-		}
-	}
-	return input
-}
-
-func (m *Manager) hookBeadSafeForWorkstate(hookBead string) (safe bool, terminal bool) {
-	if hookBead == "" {
-		return true, false
-	}
-	issue, err := m.beads.Show(hookBead)
-	if err != nil || issue == nil {
-		return false, false
-	}
-	if beads.IssueStatus(issue.Status).IsTerminal() {
-		return true, true
-	}
-	return false, false
-}
-
-func (m *Manager) assignedBeadTerminal(issueID string) bool {
-	if issueID == "" {
-		return false
-	}
-	issue, err := m.beads.Show(issueID)
-	return err == nil && issue != nil && beads.IssueStatus(issue.Status).IsTerminal()
-}
-
-func (m *Manager) mqNotRequiredSource(issueID string) bool {
-	if issueID == "" {
-		return false
-	}
-	issue, err := m.beads.Show(issueID)
-	if err != nil || issue == nil {
-		return false
-	}
-	attachment := beads.ParseAttachmentFields(issue)
-	if attachment == nil {
-		return false
-	}
-	return attachment.NoMerge || attachment.ReviewOnly || strings.EqualFold(strings.TrimSpace(attachment.MergeStrategy), "local")
+func (m *Manager) reuseDecisionForPolecat(name string, state State) WorkstateDisposition {
+	return m.WorkstateDispositionForPolecat(name, state, "")
 }
 
 func hasSubmittableWorkForWorkstate(worktreePath string, targetRefs []string) bool {
@@ -2476,47 +2326,6 @@ func hasSubmittableWorkForWorkstate(worktreePath string, targetRefs []string) bo
 	branch, _ := g.CurrentBranch()
 	status, err := g.BranchTargetStatus(branch, "origin", targetRefs)
 	return err == nil && status.UnpreservedPatchCount > 0
-}
-
-func (m *Manager) reuseTargetRefs(fields *beads.AgentFields, branch string) ([]string, bool) {
-	if fields == nil {
-		return nil, false
-	}
-	var refs []string
-	lookupFailed := false
-	if fields.ActiveMR != "" {
-		if issue, err := m.beads.Show(fields.ActiveMR); err == nil {
-			if mrFields := beads.ParseMRFields(issue); mrFields != nil && mrFields.Target != "" {
-				refs = append(refs, mrFields.Target)
-			}
-		} else if !errors.Is(err, beads.ErrNotFound) {
-			lookupFailed = true
-		}
-	}
-	if branch != "" {
-		if issue, err := m.beads.FindMRForBranchAny(branch); err == nil {
-			if mrFields := beads.ParseMRFields(issue); mrFields != nil && mrFields.Target != "" {
-				refs = append(refs, mrFields.Target)
-			}
-		} else if !errors.Is(err, beads.ErrNotFound) {
-			lookupFailed = true
-		}
-	}
-	if fields.LastSourceIssue != "" && fields.LastSourceIssue != fields.HookBead {
-		if issue, err := m.beads.Show(fields.LastSourceIssue); err == nil {
-			refs = append(refs, attachmentTargetRefs(m.beads, issue)...)
-		} else {
-			lookupFailed = true
-		}
-	}
-	if fields.HookBead != "" {
-		if issue, err := m.beads.Show(fields.HookBead); err == nil {
-			refs = append(refs, attachmentTargetRefs(m.beads, issue)...)
-		} else {
-			lookupFailed = true
-		}
-	}
-	return uniqueRefs(refs), lookupFailed
 }
 
 func attachmentTargetRefs(bd *beads.Beads, issue *beads.Issue) []string {

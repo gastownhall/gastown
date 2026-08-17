@@ -22,7 +22,7 @@ var tryAcquireSlingAssigneeLockFn = tryAcquireSlingAssigneeLock
 type townSlingLifecycle struct{}
 
 func (townSlingLifecycle) Execute(ctx context.Context, intent sling.Intent) (*sling.Outcome, error) {
-	result, err := executeSling(ctx, intent)
+	result, err := runTownSling(ctx, intent)
 	return outcomeFromSlingResult(result), err
 }
 
@@ -69,6 +69,9 @@ func compensateSlingAttempt(c slingCompensation) {
 	if c.spawnInfo != nil {
 		fmt.Printf("  %s %s, rolling back spawned polecat %s...\n", style.Warning.Render("⚠"), c.reason, c.spawnInfo.PolecatName)
 		rollbackSlingArtifactsFn(c.spawnInfo, c.beadID, c.hookWorkDir, c.createdConvoy)
+	} else if c.createdConvoy != "" {
+		fmt.Printf("  %s %s, closing convoy %s created by this attempt...\n", style.Warning.Render("⚠"), c.reason, c.createdConvoy)
+		closeConvoy(c.createdConvoy, "Sling rollback - "+c.reason)
 	}
 	restoreRollbackRawWorkflowFieldsFromCurrent(c.beadID, c.townRoot, c.hookWorkDir, c.originalInfo)
 	if c.force && c.originalInfo != nil && c.originalInfo.Status == "pinned" {

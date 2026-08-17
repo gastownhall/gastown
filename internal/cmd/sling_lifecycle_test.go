@@ -737,3 +737,214 @@ func TestLifecycleNamedTargetDeadAgentAutoForce(t *testing.T) {
 		t.Fatalf("outcome = %+v, want successful re-sling", outcome)
 	}
 }
+
+func TestLifecycleNamedPolecatAssigneeLockFailureCompensates(t *testing.T) {
+	townRoot, rigPath, descPath := setupMutableBDRawSlingTest(t, "Keep this body.")
+	prevSpawn := spawnPolecatForSling
+	prevResolve := resolveTargetAgentFn
+	prevLock := tryAcquireSlingAssigneeLockFn
+	prevRollback := rollbackSlingArtifactsFn
+	t.Cleanup(func() {
+		spawnPolecatForSling = prevSpawn
+		resolveTargetAgentFn = prevResolve
+		tryAcquireSlingAssigneeLockFn = prevLock
+		rollbackSlingArtifactsFn = prevRollback
+	})
+
+	spawnPolecatForSling = func(rigName string, opts SlingSpawnOptions) (*SpawnedPolecatInfo, error) {
+		return &SpawnedPolecatInfo{
+			RigName:     rigName,
+			PolecatName: "toast",
+			ClonePath:   filepath.Join(townRoot, "gastown", "polecats", "toast"),
+		}, nil
+	}
+	resolveTargetAgentFn = func(string) (string, string, string, error) {
+		return "", "", "", errors.New("no live polecat")
+	}
+	tryAcquireSlingAssigneeLockFn = func(string, string) (func(), error) {
+		return nil, errors.New("forced assignee lock failure")
+	}
+	var rolledBack *SpawnedPolecatInfo
+	var rolledBackConvoy string
+	rollbackSlingArtifactsFn = func(spawnInfo *SpawnedPolecatInfo, beadID, hookWorkDir, convoyID string) {
+		rolledBack = spawnInfo
+		rolledBackConvoy = convoyID
+	}
+
+	_, err := executeDeepSling(context.Background(), sling.Intent{
+		BeadID:           "gt-rawrollback",
+		Target:           "gastown/polecats/toast",
+		Create:           true,
+		HookRawBead:      true,
+		NoMerge:          true,
+		ReviewOnly:       true,
+		NoConvoy:         true,
+		NoBoot:           true,
+		FormulaFailFatal: true,
+		TownRoot:         townRoot,
+		BeadsDir:         filepath.Join(rigPath, ".beads"),
+	})
+	if err == nil {
+		t.Fatal("expected assignee-lock failure")
+	}
+	if !strings.Contains(err.Error(), "serializing hook write") {
+		t.Fatalf("error = %v, want assignee-lock failure", err)
+	}
+	if rolledBack == nil || rolledBack.PolecatName != "toast" {
+		t.Fatalf("named sling left spawned polecat uncompensated: %+v", rolledBack)
+	}
+	if rolledBackConvoy != "" {
+		t.Fatalf("reused/absent convoy was closed: %q", rolledBackConvoy)
+	}
+	desc := readMutableBDDescription(t, descPath)
+	if strings.Contains(desc, "review_only: true") {
+		t.Fatalf("failed attempt leaked review_only:\n%s", desc)
+	}
+}
+
+func TestLifecycleNamedHookFailureClosesCreatedConvoyOnly(t *testing.T) {
+	townRoot, rigPath, descPath := setupMutableBDRawSlingTest(t, "Keep this body.")
+	prevSpawn := spawnPolecatForSling
+	prevResolve := resolveTargetAgentFn
+	prevHook := hookBeadWithRetryFn
+	prevHookTown := hookBeadWithRetryWithTownRootFn
+	prevAdd := addTrackingRelationFn
+	prevRollback := rollbackSlingArtifactsFn
+	t.Cleanup(func() {
+		spawnPolecatForSling = prevSpawn
+		resolveTargetAgentFn = prevResolve
+		hookBeadWithRetryFn = prevHook
+		hookBeadWithRetryWithTownRootFn = prevHookTown
+		addTrackingRelationFn = prevAdd
+		rollbackSlingArtifactsFn = prevRollback
+	})
+
+	spawnPolecatForSling = func(rigName string, opts SlingSpawnOptions) (*SpawnedPolecatInfo, error) {
+		return &SpawnedPolecatInfo{
+			RigName:     rigName,
+			PolecatName: "toast",
+			ClonePath:   filepath.Join(townRoot, "gastown", "polecats", "toast"),
+		}, nil
+	}
+	resolveTargetAgentFn = func(string) (string, string, string, error) {
+		return "", "", "", errors.New("no live polecat")
+	}
+	hookFail := errors.New("forced hook failure")
+	hookBeadWithRetryFn = func(string, string, string) error { return hookFail }
+	hookBeadWithRetryWithTownRootFn = func(string, string, string, string) error { return hookFail }
+	var created []string
+	addTrackingRelationFn = func(gotTownRoot, convoyID, issueID string) error {
+		created = append(created, convoyID)
+		return nil
+	}
+	var rolledBackConvoy string
+	var rolledBackSpawn *SpawnedPolecatInfo
+	rollbackSlingArtifactsFn = func(spawnInfo *SpawnedPolecatInfo, beadID, hookWorkDir, convoyID string) {
+		rolledBackSpawn = spawnInfo
+		rolledBackConvoy = convoyID
+	}
+
+	_, err := executeDeepSling(context.Background(), sling.Intent{
+		BeadID:           "gt-rawrollback",
+		Target:           "gastown/polecats/toast",
+		Create:           true,
+		HookRawBead:      true,
+		Owned:            true,
+		Merge:            "local",
+		NoBoot:           true,
+		FormulaFailFatal: true,
+		TownRoot:         townRoot,
+		BeadsDir:         filepath.Join(rigPath, ".beads"),
+	})
+	if err == nil {
+		t.Fatal("expected hook failure")
+	}
+	if len(created) != 1 {
+		t.Fatalf("created convoys = %v, want one new convoy", created)
+	}
+	if rolledBackSpawn == nil || rolledBackSpawn.PolecatName != "toast" {
+		t.Fatalf("hook failure did not compensate spawned polecat: %+v", rolledBackSpawn)
+	}
+	if rolledBackConvoy != created[0] {
+		t.Fatalf("hook failure closed convoy %q, want created %q", rolledBackConvoy, created[0])
+	}
+	desc := readMutableBDDescription(t, descPath)
+	if !strings.Contains(desc, "Keep this body.") {
+		t.Fatalf("body lost:\n%s", desc)
+	}
+}
+
+func TestLifecycleNamedHookFailureKeepsReusedConvoy(t *testing.T) {
+	townRoot, rigPath, descPath := setupMutableBDRawSlingTest(t, "no_merge: true\n\nKeep this body.")
+	prevSpawn := spawnPolecatForSling
+	prevResolve := resolveTargetAgentFn
+	prevHook := hookBeadWithRetryFn
+	prevHookTown := hookBeadWithRetryWithTownRootFn
+	prevAdd := addTrackingRelationFn
+	prevRollback := rollbackSlingArtifactsFn
+	t.Cleanup(func() {
+		spawnPolecatForSling = prevSpawn
+		resolveTargetAgentFn = prevResolve
+		hookBeadWithRetryFn = prevHook
+		hookBeadWithRetryWithTownRootFn = prevHookTown
+		addTrackingRelationFn = prevAdd
+		rollbackSlingArtifactsFn = prevRollback
+	})
+
+	spawnPolecatForSling = func(rigName string, opts SlingSpawnOptions) (*SpawnedPolecatInfo, error) {
+		return &SpawnedPolecatInfo{
+			RigName:     rigName,
+			PolecatName: "toast",
+			ClonePath:   filepath.Join(townRoot, "gastown", "polecats", "toast"),
+		}, nil
+	}
+	resolveTargetAgentFn = func(string) (string, string, string, error) {
+		return "", "", "", errors.New("no live polecat")
+	}
+	hookFail := errors.New("forced hook failure")
+	hookBeadWithRetryFn = func(string, string, string) error { return hookFail }
+	hookBeadWithRetryWithTownRootFn = func(string, string, string, string) error { return hookFail }
+	var created []string
+	addTrackingRelationFn = func(gotTownRoot, convoyID, issueID string) error {
+		created = append(created, convoyID)
+		return nil
+	}
+	var rolledBackConvoy string
+	rollbackSlingArtifactsFn = func(spawnInfo *SpawnedPolecatInfo, beadID, hookWorkDir, convoyID string) {
+		rolledBackConvoy = convoyID
+	}
+
+	_, err := executeDeepSling(context.Background(), sling.Intent{
+		BeadID:           "gt-rawrollback",
+		Target:           "gastown/polecats/toast",
+		Create:           true,
+		Convoy:           "hq-cv-existing",
+		HookRawBead:      true,
+		NoMerge:          true,
+		ReviewOnly:       true,
+		NoBoot:           true,
+		FormulaFailFatal: true,
+		TownRoot:         townRoot,
+		BeadsDir:         filepath.Join(rigPath, ".beads"),
+	})
+	if err == nil {
+		t.Fatal("expected hook failure")
+	}
+	if len(created) != 0 {
+		t.Fatalf("reused convoy was recreated: %v", created)
+	}
+	if rolledBackConvoy != "" {
+		t.Fatalf("reused convoy was closed: %q", rolledBackConvoy)
+	}
+	desc := readMutableBDDescription(t, descPath)
+	if !strings.Contains(desc, "Keep this body.") {
+		t.Fatalf("body lost:\n%s", desc)
+	}
+	fields := beads.ParseAttachmentFields(&beads.Issue{Description: desc})
+	if fields == nil || !fields.NoMerge {
+		t.Fatalf("prior no_merge was not restored: %+v\n%s", fields, desc)
+	}
+	if fields != nil && fields.ReviewOnly {
+		t.Fatalf("failed attempt review_only leaked onto bead: %+v", fields)
+	}
+}

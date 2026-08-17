@@ -226,7 +226,8 @@ func polecatCapacitySnapshotForTownNoCleanup(townRoot string) (polecatCapacitySn
 			agentID := beads.PolecatBeadIDWithPrefix(prefix, rigName, name)
 			issue := agents[agentID]
 			fields := parsePolecatAgentFields(issue)
-			applyAgentFieldsToCapacitySnapshot(&snapshot, rigName, name, fields, activeWork[name], sessions)
+			clonePath := polecat.ClonePathFor(rigPath, rigName, name)
+			applyAgentFieldsToCapacitySnapshot(&snapshot, rigName, name, clonePath, rigBeads, fields, activeWork[name], sessions)
 		}
 	}
 
@@ -262,8 +263,8 @@ func listPolecatDirectoryNames(rigPath string) ([]string, error) {
 	return names, nil
 }
 
-func applyAgentFieldsToCapacitySnapshot(snapshot *polecatCapacitySnapshot, rigName, polecatName string, fields *beads.AgentFields, activeWork *beads.Issue, sessions polecatSessionSet) {
-	item := buildPolecatInventoryItem(rigName, polecatName, fields, activeWork, sessions)
+func applyAgentFieldsToCapacitySnapshot(snapshot *polecatCapacitySnapshot, rigName, polecatName, clonePath string, bd *beads.Beads, fields *beads.AgentFields, activeWork *beads.Issue, sessions polecatSessionSet) {
+	item := buildPolecatInventoryItem(rigName, polecatName, clonePath, bd, fields, activeWork, sessions)
 	applyWorkstateDispositionToCapacitySnapshot(snapshot, item.State, item.Disposition)
 }
 

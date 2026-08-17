@@ -197,8 +197,8 @@ func TestNotifyMayorSlotOpen_SchedulerDispatchSuppressesMayor(t *testing.T) {
 	slotOpenRecoveryCheck = func(workDir, rigName, polecatName string) (string, error) {
 		return `{"verdict":"SAFE_TO_NUKE"}`, nil
 	}
-	slotOpenDecisionForNotify = func(workDir, townRoot, rigName, polecatName, exitType string) polecat.SlotReuseDecision {
-		return polecat.SlotReuseDecision{Reusable: true}
+	slotOpenDecisionForNotify = func(workDir, townRoot, rigName, polecatName, exitType string) polecat.WorkstateDisposition {
+		return polecat.WorkstateDisposition{Reusable: true}
 	}
 	called := false
 	runSchedulerForSlotOpen = func(gotTownRoot string) (slotOpenSchedulerResult, error) {
@@ -235,8 +235,8 @@ func TestNotifyMayorSlotOpen_DispatchThenEmptyEmitsSchedulerOpen(t *testing.T) {
 	slotOpenRecoveryCheck = func(workDir, rigName, polecatName string) (string, error) {
 		return `{"verdict":"SAFE_TO_NUKE"}`, nil
 	}
-	slotOpenDecisionForNotify = func(workDir, townRoot, rigName, polecatName, exitType string) polecat.SlotReuseDecision {
-		return polecat.SlotReuseDecision{Reusable: true}
+	slotOpenDecisionForNotify = func(workDir, townRoot, rigName, polecatName, exitType string) polecat.WorkstateDisposition {
+		return polecat.WorkstateDisposition{Reusable: true}
 	}
 	runSchedulerForSlotOpen = func(gotTownRoot string) (slotOpenSchedulerResult, error) {
 		var result slotOpenSchedulerResult
@@ -275,8 +275,8 @@ func TestNotifyMayorSlotOpen_DispatchWithStatusErrorSuppressesMayor(t *testing.T
 	slotOpenRecoveryCheck = func(workDir, rigName, polecatName string) (string, error) {
 		return `{"verdict":"SAFE_TO_NUKE"}`, nil
 	}
-	slotOpenDecisionForNotify = func(workDir, townRoot, rigName, polecatName, exitType string) polecat.SlotReuseDecision {
-		return polecat.SlotReuseDecision{Reusable: true}
+	slotOpenDecisionForNotify = func(workDir, townRoot, rigName, polecatName, exitType string) polecat.WorkstateDisposition {
+		return polecat.WorkstateDisposition{Reusable: true}
 	}
 	runSchedulerForSlotOpen = func(gotTownRoot string) (slotOpenSchedulerResult, error) {
 		return slotOpenSchedulerResult{Dispatched: 1}, errors.New("status read failed")
@@ -305,8 +305,8 @@ func TestNotifyMayorSlotOpen_EmitsSchedulerOpenWhenQueueEmpty(t *testing.T) {
 	slotOpenRecoveryCheck = func(workDir, rigName, polecatName string) (string, error) {
 		return `{"verdict":"SAFE_TO_NUKE"}`, nil
 	}
-	slotOpenDecisionForNotify = func(workDir, townRoot, rigName, polecatName, exitType string) polecat.SlotReuseDecision {
-		return polecat.SlotReuseDecision{Reusable: true}
+	slotOpenDecisionForNotify = func(workDir, townRoot, rigName, polecatName, exitType string) polecat.WorkstateDisposition {
+		return polecat.WorkstateDisposition{Reusable: true}
 	}
 	runSchedulerForSlotOpen = func(gotTownRoot string) (slotOpenSchedulerResult, error) {
 		var result slotOpenSchedulerResult
@@ -346,8 +346,8 @@ func TestNotifyMayorSlotOpen_QueuedReadyWithoutDispatchFallsBack(t *testing.T) {
 	slotOpenRecoveryCheck = func(workDir, rigName, polecatName string) (string, error) {
 		return `{"verdict":"SAFE_TO_NUKE"}`, nil
 	}
-	slotOpenDecisionForNotify = func(workDir, townRoot, rigName, polecatName, exitType string) polecat.SlotReuseDecision {
-		return polecat.SlotReuseDecision{Reusable: true}
+	slotOpenDecisionForNotify = func(workDir, townRoot, rigName, polecatName, exitType string) polecat.WorkstateDisposition {
+		return polecat.WorkstateDisposition{Reusable: true}
 	}
 	runSchedulerForSlotOpen = func(gotTownRoot string) (slotOpenSchedulerResult, error) {
 		var result slotOpenSchedulerResult
@@ -386,8 +386,8 @@ func TestNotifyMayorSlotOpen_NoDispatchAfterCapacityFillsSuppressesMayor(t *test
 	slotOpenRecoveryCheck = func(workDir, rigName, polecatName string) (string, error) {
 		return `{"verdict":"SAFE_TO_NUKE"}`, nil
 	}
-	slotOpenDecisionForNotify = func(workDir, townRoot, rigName, polecatName, exitType string) polecat.SlotReuseDecision {
-		return polecat.SlotReuseDecision{Reusable: true}
+	slotOpenDecisionForNotify = func(workDir, townRoot, rigName, polecatName, exitType string) polecat.WorkstateDisposition {
+		return polecat.WorkstateDisposition{Reusable: true}
 	}
 	runSchedulerForSlotOpen = func(gotTownRoot string) (slotOpenSchedulerResult, error) {
 		var result slotOpenSchedulerResult

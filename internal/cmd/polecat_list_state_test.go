@@ -361,9 +361,16 @@ func TestPolecatReuseStatus(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := polecatReuseStatus(tt.state, tt.cleanupStatus, tt.activeMR, tt.branch, tt.activeMRBlocks, tt.staleCleanupSafe)
+			input := polecat.WorkstateInput{State: tt.state, CleanupStatus: polecat.CleanupStatus(tt.cleanupStatus), ActiveMR: tt.activeMR, Branch: tt.branch}
+			if tt.activeMRBlocks {
+				input.ActiveMRBlocker = "active_mr=" + tt.activeMR + " status=open"
+			}
+			if tt.staleCleanupSafe {
+				input.IgnoreCleanupStatus = true
+			}
+			got := polecat.DecideWorkstate(input).ReuseStatus
 			if got != tt.want {
-				t.Fatalf("polecatReuseStatus() = %q, want %q", got, tt.want)
+				t.Fatalf("DecideWorkstate().ReuseStatus = %q, want %q", got, tt.want)
 			}
 		})
 	}

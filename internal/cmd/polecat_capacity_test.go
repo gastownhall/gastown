@@ -286,46 +286,49 @@ func TestConcurrentPolecatAdmissionReservationsDoNotExceedCap(t *testing.T) {
 	}
 }
 
-func TestApplyAgentFieldsToCapacitySnapshotSeparatesPendingMR(t *testing.T) {
+func TestApplyWorkstateDispositionToCapacitySnapshotSeparatesPendingMR(t *testing.T) {
 	tests := []struct {
-		name       string
-		fields     *beads.AgentFields
-		activeWork *beads.Issue
-		want       polecatCapacitySnapshot
+		name        string
+		state       polecat.State
+		disposition polecat.WorkstateDisposition
+		want        polecatCapacitySnapshot
 	}{
 		{
-			name:   "active mr is pending capacity",
-			fields: &beads.AgentFields{AgentState: string(beads.AgentStateIdle), CleanupStatus: "clean", ActiveMR: "gt-mr-open"},
-			want:   polecatCapacitySnapshot{PendingMR: 1},
+			name:        "active mr is pending capacity",
+			state:       polecat.StateIdle,
+			disposition: polecat.WorkstateDisposition{Verdict: polecat.WorkstateVerdictPendingMR, ReuseStatus: "idle-pr-open"},
+			want:        polecatCapacitySnapshot{PendingMR: 1},
 		},
 		{
-			name:   "push failed remains recovery blocked",
-			fields: &beads.AgentFields{AgentState: string(beads.AgentStateIdle), CleanupStatus: "clean", ActiveMR: "gt-mr-open", PushFailed: true},
-			want:   polecatCapacitySnapshot{RecoveryBlocked: 1, capacityUsed: 1},
+			name:        "push failed remains recovery blocked",
+			state:       polecat.StateIdle,
+			disposition: polecat.WorkstateDisposition{Verdict: polecat.WorkstateVerdictNeedsRecovery, NeedsRecovery: true, CountsTowardCapacity: true},
+			want:        polecatCapacitySnapshot{RecoveryBlocked: 1, capacityUsed: 1},
 		},
 		{
-			name:   "clean idle is reusable",
-			fields: &beads.AgentFields{AgentState: string(beads.AgentStateIdle), CleanupStatus: "clean"},
-			want:   polecatCapacitySnapshot{ReusableIdle: 1},
+			name:        "clean idle is reusable",
+			state:       polecat.StateIdle,
+			disposition: polecat.WorkstateDisposition{Verdict: polecat.WorkstateVerdictSafeToNuke, Reusable: true, SafeToNuke: true},
+			want:        polecatCapacitySnapshot{ReusableIdle: 1},
 		},
 		{
-			name:       "active work consumes capacity",
-			fields:     &beads.AgentFields{AgentState: string(beads.AgentStateIdle), CleanupStatus: "clean"},
-			activeWork: &beads.Issue{ID: "gt-work", Status: string(beads.StatusOpen), Assignee: "gastown/polecats/synth"},
-			want:       polecatCapacitySnapshot{RecoveryBlocked: 1, capacityUsed: 1},
+			name:        "active work consumes capacity",
+			state:       polecat.StateStalled,
+			disposition: polecat.WorkstateDisposition{Verdict: polecat.WorkstateVerdictNeedsRecovery, NeedsRecovery: true, CountsTowardCapacity: true},
+			want:        polecatCapacitySnapshot{RecoveryBlocked: 1, capacityUsed: 1},
 		},
 		{
-			name:       "deferred work blocks recovery without capacity",
-			fields:     &beads.AgentFields{AgentState: string(beads.AgentStateIdle), CleanupStatus: "clean"},
-			activeWork: &beads.Issue{ID: "gt-paused", Status: string(beads.StatusDeferred), Assignee: "gastown/polecats/synth"},
-			want:       polecatCapacitySnapshot{RecoveryBlocked: 1},
+			name:        "deferred work blocks recovery without capacity",
+			state:       polecat.StateIdle,
+			disposition: polecat.WorkstateDisposition{Verdict: polecat.WorkstateVerdictNeedsRecovery, NeedsRecovery: true},
+			want:        polecatCapacitySnapshot{RecoveryBlocked: 1},
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			snapshot := polecatCapacitySnapshot{}
-			applyAgentFieldsToCapacitySnapshot(&snapshot, "gastown", "synth", tt.fields, tt.activeWork, nil)
+			applyWorkstateDispositionToCapacitySnapshot(&snapshot, tt.state, tt.disposition)
 			if snapshot.Working != tt.want.Working || snapshot.RecoveryBlocked != tt.want.RecoveryBlocked || snapshot.ReusableIdle != tt.want.ReusableIdle || snapshot.PendingMR != tt.want.PendingMR || snapshot.capacityUsed != tt.want.capacityUsed {
 				t.Fatalf("snapshot = %+v, want %+v", snapshot, tt.want)
 			}

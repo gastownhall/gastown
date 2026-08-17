@@ -73,11 +73,7 @@ func polecatSessionKey(rigName, polecatName string) string {
 	return rigName + polecatSessionKeySep + polecatName
 }
 
-func buildPolecatInventoryItem(rigName, polecatName string, fields *beads.AgentFields, activeWork *beads.Issue, sessions polecatSessionSet) polecatInventoryItem {
-	return buildPolecatInventoryItemFromEvidence(rigName, polecatName, fields, assessPolecatAssignedIssueWork(activeWork), sessions)
-}
-
-func buildPolecatInventoryItemFromEvidence(rigName, polecatName string, fields *beads.AgentFields, activeWorkEvidence polecatActiveWorkEvidence, sessions polecatSessionSet) polecatInventoryItem {
+func buildPolecatInventoryItem(rigName, polecatName, clonePath string, bd *beads.Beads, fields *beads.AgentFields, activeWork *beads.Issue, sessions polecatSessionSet) polecatInventoryItem {
 	sessionName, running := sessions.lookup(rigName, polecatName)
 	item := polecatInventoryItem{
 		Rig:            rigName,
@@ -86,56 +82,43 @@ func buildPolecatInventoryItemFromEvidence(rigName, polecatName string, fields *
 		SessionRunning: running,
 		SessionName:    sessionName,
 	}
-
-	input := polecat.WorkstateInput{State: polecat.StateIdle}
 	if fields != nil {
 		item.CleanupStatus = strings.TrimSpace(fields.CleanupStatus)
 		item.ActiveMR = strings.TrimSpace(fields.ActiveMR)
 		item.Branch = strings.TrimSpace(fields.Branch)
-		switch beads.AgentState(strings.TrimSpace(fields.AgentState)) {
-		case beads.AgentStateDone:
+		if beads.AgentState(strings.TrimSpace(fields.AgentState)) == beads.AgentStateDone {
 			item.State = polecat.StateDone
 		}
-		input.CleanupStatus = polecat.CleanupStatus(item.CleanupStatus)
-		input.PushFailed = fields.PushFailed
-		input.MRFailed = fields.MRFailed
-		input.Branch = item.Branch
-		input.ActiveMR = item.ActiveMR
 	}
-
-	if !activeWorkEvidence.BlocksCleanup && fields != nil {
-		activeWorkEvidence = assessPolecatAgentStateWork(beads.AgentState(strings.TrimSpace(fields.AgentState)))
-	}
-
-	if activeWorkEvidence.BlocksCleanup {
-		item.Issue = activeWorkEvidence.AssignedIssue
-		if activeWorkEvidence.RequiresRestart || activeWorkEvidence.CountsTowardCapacity {
+	issue := ""
+	if activeWork != nil {
+		issue = activeWork.ID
+		evidence := assessPolecatAssignedIssueWork(activeWork)
+		if evidence.RequiresRestart || evidence.CountsTowardCapacity {
 			if running {
 				item.State = polecat.StateWorking
 			} else {
 				item.State = polecat.StateStalled
 			}
-		} else if running && !polecat.CleanupStatus(item.CleanupStatus).IsSafe() {
-			item.State = polecat.StateReviewNeeded
-		}
-		input.ActiveWorkBlocker = activeWorkEvidence.Blocker
-		input.ActiveWorkCountsTowardCapacity = activeWorkEvidence.CountsTowardCapacity
-	} else if item.State == polecat.StateIdle && running && !polecat.CleanupStatus(item.CleanupStatus).IsSafe() {
-		item.State = polecat.StateReviewNeeded
-	}
-
-	if fields != nil && !activeWorkEvidence.BlocksCleanup {
-		if hookBead := strings.TrimSpace(fields.HookBead); hookBead != "" {
-			input.ActiveWorkBlocker = fmt.Sprintf("hook_bead=%s status=unverified", hookBead)
 		}
 	}
-	if item.ActiveMR != "" {
-		input.ActiveMRBlocker = "active_mr=" + item.ActiveMR + " status=unknown"
-	}
-
-	input.State = item.State
-	item.Disposition = polecat.DecideWorkstate(input)
+	item.Issue = issue
+	item.Disposition = polecat.InspectWorkstate(polecatName, bd, clonePath, item.State, issue)
 	return item
+}
+
+func failClosedAssignedWorkLookup(d polecat.WorkstateDisposition, err error) polecat.WorkstateDisposition {
+	if err == nil {
+		return d
+	}
+	d.Reusable = false
+	d.SafeToNuke = false
+	d.NeedsRecovery = true
+	d.Verdict = polecat.WorkstateVerdictNeedsRecovery
+	d.Reason = "active-work"
+	d.ReuseStatus = "idle-recovery-needed"
+	d.Blockers = append([]string{fmt.Sprintf("assigned_work status=lookup_error: %v", err)}, d.Blockers...)
+	return d
 }
 
 var polecatSummaryWorkStatuses = []beads.IssueStatus{
@@ -218,37 +201,6 @@ func polecatSummaryIssueRequiresRestart(status beads.IssueStatus) bool {
 		return true
 	default:
 		return false
-	}
-}
-
-func assessPolecatAgentStateWork(state beads.AgentState) polecatActiveWorkEvidence {
-	if state == "" || state == beads.AgentStateIdle || state == beads.AgentStateDone || state == beads.AgentStateNuked {
-		return polecatActiveWorkEvidence{}
-	}
-	if state.IsActive() {
-		return polecatActiveWorkEvidence{
-			BlocksCleanup:        true,
-			RequiresRestart:      true,
-			CountsTowardCapacity: true,
-			Blocker:              fmt.Sprintf("agent_state=%s", state),
-		}
-	}
-	if state.ProtectsFromCleanup() || state == beads.AgentStateEscalated {
-		return polecatActiveWorkEvidence{
-			BlocksCleanup: true,
-			Blocker:       fmt.Sprintf("agent_state=%s", state),
-		}
-	}
-	return polecatActiveWorkEvidence{}
-}
-
-func polecatActiveWorkLookupError(err error) polecatActiveWorkEvidence {
-	if err == nil {
-		return polecatActiveWorkEvidence{}
-	}
-	return polecatActiveWorkEvidence{
-		BlocksCleanup: true,
-		Blocker:       fmt.Sprintf("assigned_work status=lookup_error: %v", err),
 	}
 }
 

@@ -175,26 +175,24 @@ func runBatchSling(beadIDs []string, rigName string, townBeadsDir string) error 
 			BeadsDir:         townBeadsDir,
 		}
 
-		result, err := executeSling(context.Background(), params)
+		outcome, err := executeDeepSling(context.Background(), params)
 		if err != nil {
-			errMsg := ""
-			if result != nil {
-				errMsg = result.ErrMsg
-			}
-			if errMsg == "" {
-				errMsg = err.Error()
-			}
+			errMsg := err.Error()
 			polecatName := ""
-			if result != nil {
-				polecatName = result.PolecatName
+			if outcome != nil {
+				polecatName = outcome.PolecatName
 			}
 			results = append(results, batchResult{beadID: beadID, polecat: polecatName, success: false, errMsg: errMsg})
 			fmt.Printf("  %s %s\n", style.Dim.Render("✗"), errMsg)
 			continue
 		}
 
+		polecatName := ""
+		if outcome != nil {
+			polecatName = outcome.PolecatName
+		}
 		activeCount++
-		results = append(results, batchResult{beadID: beadID, polecat: result.PolecatName, success: true})
+		results = append(results, batchResult{beadID: beadID, polecat: polecatName, success: true})
 
 		// Delay between spawns to prevent Dolt lock contention — sequential
 		// spawns without delay cause database lock timeouts when multiple bd

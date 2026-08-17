@@ -29,136 +29,22 @@ func TestPolecatSessionSet(t *testing.T) {
 	}
 }
 
-func TestBuildPolecatInventoryItem(t *testing.T) {
+func TestBuildPolecatInventoryItemMapsKnownState(t *testing.T) {
 	setupPolecatTestRegistry(t)
 	sessions := newPolecatSessionSet([]string{"gt-running"})
-	tests := []struct {
-		name         string
-		polecatName  string
-		fields       *beads.AgentFields
-		activeWork   *beads.Issue
-		wantState    polecat.State
-		wantIssue    string
-		wantVerdict  string
-		wantReusable bool
-		wantRecovery bool
-		wantCapacity bool
-	}{
-		{
-			name:         "clean idle reusable",
-			polecatName:  "idle",
-			fields:       &beads.AgentFields{AgentState: string(beads.AgentStateIdle), CleanupStatus: string(polecat.CleanupClean)},
-			wantState:    polecat.StateIdle,
-			wantVerdict:  polecat.WorkstateVerdictSafeToNuke,
-			wantReusable: true,
-		},
-		{
-			name:         "hooked running is working capacity",
-			polecatName:  "running",
-			fields:       &beads.AgentFields{AgentState: string(beads.AgentStateIdle), CleanupStatus: string(polecat.CleanupClean)},
-			activeWork:   &beads.Issue{ID: "gt-hook", Status: string(beads.IssueStatusHooked), Assignee: "gastown/polecats/running"},
-			wantState:    polecat.StateWorking,
-			wantIssue:    "gt-hook",
-			wantVerdict:  polecat.WorkstateVerdictWorking,
-			wantCapacity: true,
-		},
-		{
-			name:         "open stopped is stalled capacity",
-			polecatName:  "stopped",
-			fields:       &beads.AgentFields{AgentState: string(beads.AgentStateIdle), CleanupStatus: string(polecat.CleanupClean)},
-			activeWork:   &beads.Issue{ID: "gt-open", Status: string(beads.StatusOpen), Assignee: "gastown/polecats/stopped"},
-			wantState:    polecat.StateStalled,
-			wantIssue:    "gt-open",
-			wantVerdict:  polecat.WorkstateVerdictNeedsRecovery,
-			wantRecovery: true,
-			wantCapacity: true,
-		},
-		{
-			name:         "deferred protects without capacity",
-			polecatName:  "deferred",
-			fields:       &beads.AgentFields{AgentState: string(beads.AgentStateIdle), CleanupStatus: string(polecat.CleanupClean)},
-			activeWork:   &beads.Issue{ID: "gt-deferred", Status: string(beads.StatusDeferred), Assignee: "gastown/polecats/deferred"},
-			wantState:    polecat.StateIdle,
-			wantIssue:    "gt-deferred",
-			wantVerdict:  polecat.WorkstateVerdictNeedsRecovery,
-			wantRecovery: true,
-		},
-		{
-			name:         "hook fallback protects without capacity",
-			polecatName:  "hookonly",
-			fields:       &beads.AgentFields{AgentState: string(beads.AgentStateIdle), CleanupStatus: string(polecat.CleanupClean), HookBead: "gt-old"},
-			wantState:    polecat.StateIdle,
-			wantVerdict:  polecat.WorkstateVerdictNeedsRecovery,
-			wantRecovery: true,
-		},
-		{
-			name:         "paused agent state protects without capacity",
-			polecatName:  "paused",
-			fields:       &beads.AgentFields{AgentState: string(beads.AgentStatePaused), CleanupStatus: string(polecat.CleanupClean)},
-			wantState:    polecat.StateIdle,
-			wantVerdict:  polecat.WorkstateVerdictNeedsRecovery,
-			wantRecovery: true,
-		},
-		{
-			name:        "active mr is pending non capacity",
-			polecatName: "pendingmr",
-			fields:      &beads.AgentFields{AgentState: string(beads.AgentStateIdle), CleanupStatus: string(polecat.CleanupClean), ActiveMR: "gt-mr"},
-			wantState:   polecat.StateIdle,
-			wantVerdict: polecat.WorkstateVerdictPendingMR,
-		},
-		{
-			name:         "done without active mr and clean cleanup is reusable",
-			polecatName:  "done",
-			fields:       &beads.AgentFields{AgentState: string(beads.AgentStateDone), CleanupStatus: string(polecat.CleanupClean)},
-			wantState:    polecat.StateDone,
-			wantVerdict:  polecat.WorkstateVerdictSafeToNuke,
-			wantReusable: true,
-		},
-		{
-			name:         "done without active mr blocks reuse when cleanup is dirty",
-			polecatName:  "donedirty",
-			fields:       &beads.AgentFields{AgentState: string(beads.AgentStateDone), CleanupStatus: string(polecat.CleanupUnpushed)},
-			wantState:    polecat.StateDone,
-			wantVerdict:  polecat.WorkstateVerdictNeedsRecovery,
-			wantRecovery: true,
-			wantCapacity: true,
-		},
-		{
-			name:        "done with active mr remains pending",
-			polecatName: "donepending",
-			fields:      &beads.AgentFields{AgentState: string(beads.AgentStateDone), CleanupStatus: string(polecat.CleanupClean), ActiveMR: "gt-mr"},
-			wantState:   polecat.StateDone,
-			wantVerdict: polecat.WorkstateVerdictPendingMR,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			item := buildPolecatInventoryItem("gastown", tt.polecatName, tt.fields, tt.activeWork, sessions)
-			if item.State != tt.wantState || item.Issue != tt.wantIssue || item.Disposition.Verdict != tt.wantVerdict || item.Disposition.Reusable != tt.wantReusable || item.Disposition.NeedsRecovery != tt.wantRecovery || item.Disposition.CountsTowardCapacity != tt.wantCapacity {
-				t.Fatalf("item = %+v disposition=%+v", item, item.Disposition)
-			}
-		})
+	item := buildPolecatInventoryItem("gastown", "running", "", nil, &beads.AgentFields{AgentState: string(beads.AgentStateIdle), CleanupStatus: string(polecat.CleanupClean)}, &beads.Issue{ID: "gt-hook", Status: string(beads.IssueStatusHooked)}, sessions)
+	if item.State != polecat.StateWorking || item.Issue != "gt-hook" || !item.SessionRunning {
+		t.Fatalf("item = %+v", item)
 	}
 }
 
-func TestBuildPolecatInventoryItemActiveWorkLookupErrorFailsClosed(t *testing.T) {
-	item := buildPolecatInventoryItemFromEvidence(
-		"gastown",
-		"lookup",
-		&beads.AgentFields{AgentState: string(beads.AgentStateIdle), CleanupStatus: string(polecat.CleanupClean)},
-		polecatActiveWorkLookupError(errors.New("bd failed")),
-		polecatSessionSet{},
-	)
-
-	if item.Disposition.Reusable || item.Disposition.SafeToNuke || !item.Disposition.NeedsRecovery || item.Disposition.CountsTowardCapacity {
-		t.Fatalf("lookup error disposition = %+v", item.Disposition)
+func TestFailClosedAssignedWorkLookup(t *testing.T) {
+	got := failClosedAssignedWorkLookup(polecat.WorkstateDisposition{Reusable: true, SafeToNuke: true, Verdict: polecat.WorkstateVerdictSafeToNuke}, errors.New("bd failed"))
+	if got.Reusable || got.SafeToNuke || !got.NeedsRecovery || got.Reason != "active-work" {
+		t.Fatalf("lookup error disposition = %+v", got)
 	}
-	if item.Disposition.Reason != "active-work" {
-		t.Fatalf("reason = %q, want active-work", item.Disposition.Reason)
-	}
-	if len(item.Disposition.Blockers) != 1 || !strings.Contains(item.Disposition.Blockers[0], "lookup_error") {
-		t.Fatalf("blockers = %v, want lookup_error", item.Disposition.Blockers)
+	if len(got.Blockers) != 1 || !strings.Contains(got.Blockers[0], "lookup_error") {
+		t.Fatalf("blockers = %v, want lookup_error", got.Blockers)
 	}
 }
 

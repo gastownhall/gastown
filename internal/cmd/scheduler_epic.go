@@ -241,7 +241,7 @@ func runEpicSlingByID(epicID string, opts epicScheduleOpts) error {
 		}
 
 		fmt.Printf("\n[%d/%d] Dispatching %s → %s...\n", i+1, len(candidates), c.ID, c.RigName)
-		_, err := executeSling(context.Background(), sling.Intent{
+		_, err := executeDeepSling(context.Background(), sling.Intent{
 			BeadID:        c.ID,
 			RigName:       c.RigName,
 			Formula:       formula,

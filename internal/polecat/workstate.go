@@ -39,9 +39,9 @@ type WorkstateInput struct {
 	MQLookupFailed                 bool
 }
 
-// WorkstateDisposition is the canonical polecat lifecycle decision. It is pure
-// policy: callers gather facts, this classifier decides how every subsystem
-// should present and count the polecat.
+// WorkstateDisposition is the canonical polecat lifecycle decision. InspectWorkstate
+// gathers Beads and git facts and DecideWorkstate classifies them. Callers must
+// not gather those facts themselves.
 type WorkstateDisposition struct {
 	Verdict              string   `json:"verdict"`
 	Reason               string   `json:"reason,omitempty"`
