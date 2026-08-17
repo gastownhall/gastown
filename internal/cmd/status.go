@@ -216,25 +216,75 @@ func resolveAgentDisplay(townRoot string, townSettings *config.TownSettings, rol
 		}
 	}
 
-	// If session is running, inspect the actual process
+	configured := configuredAgentInfo(townSettings, alias)
+	var detected string
 	if running && sessionName != "" {
-		if detected := detectRuntimeFromSession(sessionName); detected != "" {
-			info = detected
-			return alias, info
-		}
+		detected = detectRuntimeFromSessionFn(sessionName)
 	}
-
-	// Fall back to config-based display
-	if townSettings != nil && alias != "" {
-		rc := townSettings.Agents[alias]
-		if rc != nil {
-			info = buildInfoFromConfig(rc)
-		} else {
-			info = alias
-		}
-	}
-	return alias, info
+	return alias, chooseAgentInfo(detected, configured)
 }
+
+// configuredAgentInfo is the model string implied by the role's alias config.
+func configuredAgentInfo(townSettings *config.TownSettings, alias string) string {
+	if townSettings == nil || alias == "" {
+		return ""
+	}
+	if rc := townSettings.Agents[alias]; rc != nil {
+		return buildInfoFromConfig(rc)
+	}
+	return alias
+}
+
+// chooseAgentInfo picks gt status agent_info.
+// Prefer a live process model when it was actually present on the cmdline.
+// Prefer the configured alias model when the live model cannot be read, or
+// when detection only recovered an unrelated ~/.pi default.
+func chooseAgentInfo(detected, configured string) string {
+	if preferConfiguredAgentInfo(detected, configured) {
+		return configured
+	}
+	if detected != "" {
+		return detected
+	}
+	return configured
+}
+
+func preferConfiguredAgentInfo(detected, configured string) bool {
+	if configured == "" {
+		return false
+	}
+	if detected == "" {
+		return true
+	}
+	if detected == configured {
+		return false
+	}
+	detCmd, detModel, detHasModel := splitRuntimeInfo(detected)
+	cfgCmd, _, cfgHasModel := splitRuntimeInfo(configured)
+	// Runtime-only detection ("pi") is not a live model read.
+	if !detHasModel && cfgHasModel {
+		return true
+	}
+	// A leftover ~/.pi default is not the live session model.
+	if detHasModel && cfgHasModel && detCmd == cfgCmd {
+		if piDefault := readPiDefaultsFn(); piDefault != "" && detModel == piDefault {
+			return true
+		}
+	}
+	return false
+}
+
+func splitRuntimeInfo(info string) (cmd, model string, hasModel bool) {
+	cmd, model, ok := strings.Cut(info, "/")
+	if !ok || model == "" {
+		return info, "", false
+	}
+	return cmd, model, true
+}
+
+// detectRuntimeFromSessionFn is the session inspector used by resolveAgentDisplay.
+// Tests replace it to inject a detected runtime without spawning tmux.
+var detectRuntimeFromSessionFn = detectRuntimeFromSession
 
 // detectRuntimeFromSession inspects the actual process tree in a tmux session
 // to determine what agent runtime and model are in use.
@@ -408,15 +458,15 @@ func parseRuntimeInfo(cmdline string) string {
 		return cmd + "/" + provider
 	}
 
-	// For pi, check its settings file for actual default provider/model
-	if cmd == "pi" {
-		if piInfo := readPiDefaults(); piInfo != "" {
-			return "pi/" + piInfo
-		}
-	}
-
+	// Do not invent ~/.pi defaultProvider/defaultModel here. That home-wide
+	// leftover is not the live session model and hid configured alias --model
+	// values from gt status (UAT: pi-cheap reported as pi/grok-4.6).
 	return cmd
 }
+
+// readPiDefaultsFn is the ~/.pi default-model lookup used when deciding
+// whether a detected model is just the leftover home default.
+var readPiDefaultsFn = readPiDefaults
 
 // readPiDefaults reads ~/.pi/agent/settings.json to get the actual default provider/model.
 func readPiDefaults() string {

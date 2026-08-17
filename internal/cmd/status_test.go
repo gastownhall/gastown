@@ -387,13 +387,11 @@ func TestParseRuntimeInfo(t *testing.T) {
 
 func TestParseRuntimeInfo_PiBare(t *testing.T) {
 	t.Parallel()
-	// Bare pi (no --model flag) calls readPiDefaults() which reads
-	// ~/.pi/agent/settings.json. The result is either "pi" (if no settings)
-	// or "pi/<default-model>" (if settings exist). Both are valid.
+	// Bare pi (no --model flag) must not invent ~/.pi defaultModel.
 	cmdline := "pi\x00-e\x00gastown-hooks.js"
 	got := parseRuntimeInfo(cmdline)
-	if !strings.HasPrefix(got, "pi") {
-		t.Errorf("parseRuntimeInfo(pi bare) = %q, want prefix 'pi'", got)
+	if got != "pi" {
+		t.Errorf("parseRuntimeInfo(pi bare) = %q, want pi", got)
 	}
 }
 
@@ -438,6 +436,121 @@ func TestBuildInfoFromConfig(t *testing.T) {
 				t.Errorf("buildInfoFromConfig(%s) = %q, want %q", tt.name, got, tt.want)
 			}
 		})
+	}
+}
+
+func TestChooseAgentInfo(t *testing.T) {
+	const configured = "pi/openrouter/cohere/north-mini-code:free"
+	oldPi := readPiDefaultsFn
+	readPiDefaultsFn = func() string { return "grok-4.6" }
+	t.Cleanup(func() { readPiDefaultsFn = oldPi })
+
+	tests := []struct {
+		name       string
+		detected   string
+		configured string
+		want       string
+	}{
+		{
+			name:       "uat leftover home default loses to configured alias",
+			detected:   "pi/grok-4.6",
+			configured: configured,
+			want:       configured,
+		},
+		{
+			name:       "unread live session prefers configured alias",
+			detected:   "",
+			configured: configured,
+			want:       configured,
+		},
+		{
+			name:       "runtime-only detection prefers configured alias",
+			detected:   "pi",
+			configured: configured,
+			want:       configured,
+		},
+		{
+			name:       "explicit live model is kept",
+			detected:   "pi/openrouter/cohere/north-mini-code:free",
+			configured: configured,
+			want:       configured,
+		},
+		{
+			name:       "different live model is kept",
+			detected:   "pi/openrouter/other-model:free",
+			configured: configured,
+			want:       "pi/openrouter/other-model:free",
+		},
+		{
+			name:       "detected only when config is empty",
+			detected:   "pi/grok-4.6",
+			configured: "",
+			want:       "pi/grok-4.6",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := chooseAgentInfo(tt.detected, tt.configured)
+			if got != tt.want {
+				t.Errorf("chooseAgentInfo(%q, %q) = %q, want %q", tt.detected, tt.configured, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestParseRuntimeInfo_BarePiDoesNotInventHomeDefault(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	settingsDir := filepath.Join(home, ".pi", "agent")
+	if err := os.MkdirAll(settingsDir, 0o755); err != nil {
+		t.Fatalf("mkdir pi settings: %v", err)
+	}
+	settingsPath := filepath.Join(settingsDir, "settings.json")
+	if err := os.WriteFile(settingsPath, []byte(`{"defaultProvider":"xai","defaultModel":"grok-4.6"}`), 0o644); err != nil {
+		t.Fatalf("write pi settings: %v", err)
+	}
+
+	got := parseRuntimeInfo("pi\x00-e\x00gastown-hooks.js")
+	if got != "pi" {
+		t.Fatalf("parseRuntimeInfo(bare pi) = %q, want pi", got)
+	}
+}
+
+func TestResolveAgentDisplay_CustomPiAliasUsesConfiguredModelNotPiDefault(t *testing.T) {
+	// UAT: town mix set Mayor to custom alias pi-cheap with
+	// `pi --model openrouter/cohere/north-mini-code:free`.
+	// gt peek showed the live OpenRouter model, but gt status reported
+	// leftover ~/.pi default grok-4.6 when the live session model could
+	// not be distinguished from that unrelated default.
+	oldDetect := detectRuntimeFromSessionFn
+	detectRuntimeFromSessionFn = func(string) string {
+		return "pi/grok-4.6"
+	}
+	t.Cleanup(func() { detectRuntimeFromSessionFn = oldDetect })
+	oldPi := readPiDefaultsFn
+	readPiDefaultsFn = func() string { return "grok-4.6" }
+	t.Cleanup(func() { readPiDefaultsFn = oldPi })
+
+	settings := &config.TownSettings{
+		DefaultAgent: "pi",
+		RoleAgents:   map[string]string{constants.RoleMayor: "pi-cheap"},
+		Agents: map[string]*config.RuntimeConfig{
+			"pi-cheap": {
+				Provider: "pi",
+				Command:  "pi",
+				Args:     []string{"--model", "openrouter/cohere/north-mini-code:free"},
+			},
+		},
+	}
+
+	alias, info := resolveAgentDisplay(t.TempDir(), settings, constants.RoleMayor, "gt-mayor", true)
+	if alias != "pi-cheap" {
+		t.Errorf("resolveAgentDisplay alias = %q, want pi-cheap", alias)
+	}
+	wantInfo := "pi/openrouter/cohere/north-mini-code:free"
+	if info != wantInfo {
+		t.Errorf("resolveAgentDisplay info = %q, want %q", info, wantInfo)
 	}
 }
 
