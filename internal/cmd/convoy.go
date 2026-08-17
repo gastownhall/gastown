@@ -96,6 +96,7 @@ var (
 	convoyLandKeep     bool
 	convoyLandDryRun   bool
 	convoyFromEpic     string
+	convoyAddIssues    []string
 )
 
 const (
@@ -209,6 +210,7 @@ TRACKING SEMANTICS:
 COMMANDS:
   create    Create a convoy tracking specified issues
   add       Add issues to an existing convoy (reopens if closed)
+  update    Alias of add (also accepts --add-issues)
   close     Close a convoy (verifies all items done, or use --force)
   land      Land an owned convoy (cleanup worktrees, close convoy)
   status    Show convoy progress, tracked issues, and active workers
@@ -279,16 +281,20 @@ Examples:
 }
 
 var convoyAddCmd = &cobra.Command{
-	Use:   "add <convoy-id> <issue-id> [issue-id...]",
-	Short: "Add issues to an existing convoy",
+	Use:     "add <convoy-id> <issue-id> [issue-id...]",
+	Aliases: []string{"update"},
+	Short:   "Add issues to an existing convoy",
 	Long: `Add issues to an existing convoy.
 
 If the convoy is closed, it will be automatically reopened.
 
+"update" is an alias of "add". Issues may be positional or passed with --add-issues.
+
 Examples:
   gt convoy add hq-cv-abc gt-new-issue
-  gt convoy add hq-cv-abc gt-issue1 gt-issue2 gt-issue3`,
-	Args:         cobra.MinimumNArgs(2),
+  gt convoy add hq-cv-abc gt-issue1 gt-issue2 gt-issue3
+  gt convoy update hq-cv-abc --add-issues gt-issue1 gt-issue2`,
+	Args:         cobra.MinimumNArgs(1),
 	SilenceUsage: true,
 	RunE:         runConvoyAdd,
 }
@@ -421,6 +427,9 @@ func init() {
 	convoyLandCmd.Flags().BoolVarP(&convoyLandForce, "force", "f", false, "Land even if tracked issues are not all closed")
 	convoyLandCmd.Flags().BoolVar(&convoyLandKeep, "keep-worktrees", false, "Skip worktree cleanup")
 	convoyLandCmd.Flags().BoolVar(&convoyLandDryRun, "dry-run", false, "Show what would happen without acting")
+
+	// Add / update flags
+	convoyAddCmd.Flags().StringSliceVar(&convoyAddIssues, "add-issues", nil, "Issue IDs to add (also accepted as positional arguments)")
 
 	// Add subcommands
 	convoyCmd.AddCommand(convoyCreateCmd)
@@ -892,9 +901,24 @@ func runConvoyCreate(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
+func collectConvoyAddIssues(args []string) (convoyID string, issues []string, err error) {
+	if len(args) == 0 {
+		return "", nil, fmt.Errorf("convoy ID required")
+	}
+	convoyID = args[0]
+	issues = append(issues, args[1:]...)
+	issues = append(issues, convoyAddIssues...)
+	if len(issues) == 0 {
+		return "", nil, fmt.Errorf("at least one issue ID is required (positional or --add-issues)")
+	}
+	return convoyID, issues, nil
+}
+
 func runConvoyAdd(cmd *cobra.Command, args []string) error {
-	convoyID := args[0]
-	issuesToAdd := args[1:]
+	convoyID, issuesToAdd, err := collectConvoyAddIssues(args)
+	if err != nil {
+		return err
+	}
 
 	townBeads, err := getTownBeadsDir()
 	if err != nil {
