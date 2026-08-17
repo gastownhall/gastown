@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [2.0.1] - 2026-08-17
+## [1.3.0] - 2026-08-17
 
 ### Changed
 
@@ -16,6 +16,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `github.com/jonbaldie/gastown/cmd/gt@latest`. From a project git
   repository, `gt now` is the start path. Use `@main` only for the
   unreleased tip. The Mayor is an agent session, not a Claude-only role.
+  This cut is `v1.3.0`, not `v2.x`: the module path is still
+  `github.com/jonbaldie/gastown`, so a `v2` tag is not a valid Go version.
+  The `v2.0.1` tag is retracted.
 
 - **`gt prime` standing skill lines** now say to use `/to-spec` if you need
   to make a bead epic, and `/to-tickets` if you need to make bead children

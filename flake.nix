@@ -26,7 +26,7 @@
         packages = {
           gt = pkgs.buildGoModule {
             pname = "gt";
-            version = "2.0.1";
+            version = "1.3.0";
             src = ./.;
             vendorHash = "sha256-mJzpsl4XnIm3ZSg7fFn0MOdQQW1bdOkAJ+TikiLMXJM=";
 

@@ -1,6 +1,6 @@
 {
   "name": "@gastown/gt",
-  "version": "2.0.1",
+  "version": "1.3.0",
   "description": "Gas Town CLI - multi-agent workspace manager with native binary support",
   "main": "bin/gt.js",
   "bin": {
