@@ -809,26 +809,7 @@ Use crew for your own workspace. Polecats are for batch work dispatch.
 	// Use the town's default_agent for scaffolding, falling back to claude.
 	// This ensures that when the town is configured with opencode (or another agent),
 	// the polecat directory gets the correct config dir (e.g. .opencode/) instead of .claude/.
-	townSettings, tsErr := config.LoadOrCreateTownSettings(config.TownSettingsPath(m.townRoot))
-	if tsErr != nil {
-		townSettings = config.NewTownSettings()
-	}
-	defaultAgentName := townSettings.DefaultAgent
-	if defaultAgentName == "" {
-		defaultAgentName = string(config.AgentClaude)
-	}
-	defaultPreset := config.GetAgentPresetByName(defaultAgentName)
-	if defaultPreset != nil && defaultPreset.HooksProvider != "" {
-		if err := hooks.InstallForRole(defaultPreset.HooksProvider, polecatsPath, polecatsPath, "polecat",
-			defaultPreset.HooksDir, defaultPreset.HooksSettingsFile, defaultPreset.HooksUseSettingsDir); err != nil {
-			// Non-fatal: session startup will retry via EnsureSettingsForRole
-			fmt.Printf("  %s Could not scaffold polecat settings: %v\n", "!", err)
-		}
-	}
-	if err := commands.ProvisionFor(polecatsPath, defaultAgentName); err != nil {
-		// Non-fatal: commands are convenience, not critical
-		fmt.Printf("  %s Could not scaffold polecat commands: %v\n", "!", err)
-	}
+	scaffoldPolecatWorkspace(m.townRoot, polecatsPath)
 
 	// Register route in town-level routes.jsonl BEFORE creating agent beads.
 	// initAgentBeads calls ResolveRoutingTarget which needs the route to exist.
@@ -1993,4 +1974,29 @@ See docs/deacon-plugins.md for full documentation.
 		}
 	}
 	return nil
+}
+
+// scaffoldPolecatWorkspace writes polecat settings and slash-command files
+// for the town default agent. Custom aliases inherit the provider's config dir.
+func scaffoldPolecatWorkspace(townRoot, polecatsPath string) {
+	townSettings, tsErr := config.LoadOrCreateTownSettings(config.TownSettingsPath(townRoot))
+	if tsErr != nil {
+		townSettings = config.NewTownSettings()
+	}
+	defaultAgentName := townSettings.DefaultAgent
+	if defaultAgentName == "" {
+		defaultAgentName = string(config.AgentClaude)
+	}
+	defaultPreset := config.ResolveAgentPreset(defaultAgentName, townSettings, nil)
+	if defaultPreset != nil && defaultPreset.HooksProvider != "" {
+		if err := hooks.InstallForRole(defaultPreset.HooksProvider, polecatsPath, polecatsPath, "polecat",
+			defaultPreset.HooksDir, defaultPreset.HooksSettingsFile, defaultPreset.HooksUseSettingsDir); err != nil {
+			// Non-fatal: session startup will retry via EnsureSettingsForRole
+			fmt.Printf("  %s Could not scaffold polecat settings: %v\n", "!", err)
+		}
+	}
+	if err := commands.ProvisionForSettings(polecatsPath, defaultAgentName, townSettings); err != nil {
+		// Non-fatal: commands are convenience, not critical
+		fmt.Printf("  %s Could not scaffold polecat commands: %v\n", "!", err)
+	}
 }

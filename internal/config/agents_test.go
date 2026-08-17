@@ -113,6 +113,46 @@ func TestGetAgentPresetByName(t *testing.T) {
 	}
 }
 
+func TestResolveAgentPreset_CustomAliasUsesProvider(t *testing.T) {
+	town := NewTownSettings()
+	town.Agents["codex-cheap"] = &RuntimeConfig{
+		Provider: "codex",
+		Command:  "codex",
+		Args:     []string{"-m", "gpt-5.3-codex-spark"},
+	}
+	got := ResolveAgentPreset("codex-cheap", town, nil)
+	if got == nil {
+		t.Fatal("ResolveAgentPreset(codex-cheap) = nil")
+	}
+	if got.Name != AgentCodex {
+		t.Fatalf("ResolveAgentPreset(codex-cheap).Name = %q, want %q", got.Name, AgentCodex)
+	}
+}
+
+func TestResolveAgentPreset_CustomAliasUsesCommand(t *testing.T) {
+	town := NewTownSettings()
+	town.Agents["pi-luna"] = &RuntimeConfig{
+		Command: "pi",
+	}
+	got := ResolveAgentPreset("pi-luna", town, nil)
+	if got == nil {
+		t.Fatal("ResolveAgentPreset(pi-luna) = nil")
+	}
+	if got.Name != AgentPi {
+		t.Fatalf("ResolveAgentPreset(pi-luna).Name = %q, want %q", got.Name, AgentPi)
+	}
+}
+
+func TestResolveAgentPreset_UnknownBinaryStaysUnknown(t *testing.T) {
+	town := NewTownSettings()
+	town.Agents["mystery-bot"] = &RuntimeConfig{
+		Command: "mystery-bot",
+	}
+	if got := ResolveAgentPreset("mystery-bot", town, nil); got != nil {
+		t.Fatalf("ResolveAgentPreset(mystery-bot) = %+v, want nil", got)
+	}
+}
+
 func TestRuntimeConfigFromPreset(t *testing.T) {
 	t.Parallel()
 	// Read the compile-time table, not the live registry. RuntimeConfigFromPreset

@@ -28,9 +28,10 @@ type Command struct {
 }
 
 // getAgentConfigDir returns the config directory for an agent from the preset registry.
-// Returns empty string if the agent has no config directory.
-func getAgentConfigDir(agent string) string {
-	preset := config.GetAgentPresetByName(agent)
+// Custom aliases inherit the provider or command runtime's config directory.
+// Returns empty string if the agent is unknown or the known runtime has no config dir.
+func getAgentConfigDir(agent string, townSettings *config.TownSettings) string {
+	preset := config.ResolveAgentPreset(agent, townSettings, nil)
 	if preset == nil {
 		return ""
 	}
@@ -97,17 +98,28 @@ func BuildCommand(cmd Command, agent string) (string, error) {
 
 // ProvisionFor provisions commands for an agent.
 func ProvisionFor(workspacePath, agent string) error {
+	return ProvisionForSettings(workspacePath, agent, nil)
+}
+
+// ProvisionForSettings provisions commands for an agent, resolving custom
+// aliases from town settings when the name is not a built-in preset.
+func ProvisionForSettings(workspacePath, agent string, townSettings *config.TownSettings) error {
 	agent = strings.ToLower(agent)
-	configDir := getAgentConfigDir(agent)
-	if configDir == "" {
+	preset := config.ResolveAgentPreset(agent, townSettings, nil)
+	if preset == nil {
 		return fmt.Errorf("unknown agent or no config dir: %s", agent)
 	}
+	if preset.ConfigDir == "" {
+		// Known runtime with no workspace command dir (Codex, Pi).
+		return nil
+	}
 
-	dir := filepath.Join(workspacePath, configDir, "commands")
+	dir := filepath.Join(workspacePath, preset.ConfigDir, "commands")
 	if err := os.MkdirAll(dir, 0755); err != nil {
 		return fmt.Errorf("creating dir: %w", err)
 	}
 
+	runtimeName := string(preset.Name)
 	for _, cmd := range Commands {
 		path := filepath.Join(dir, cmd.Name+".md")
 
@@ -116,7 +128,7 @@ func ProvisionFor(workspacePath, agent string) error {
 			continue
 		}
 
-		content, err := BuildCommand(cmd, agent)
+		content, err := BuildCommand(cmd, runtimeName)
 		if err != nil {
 			return fmt.Errorf("building %s: %w", cmd.Name, err)
 		}
@@ -132,7 +144,7 @@ func ProvisionFor(workspacePath, agent string) error {
 // MissingFor returns commands missing for an agent.
 func MissingFor(workspacePath, agent string) []string {
 	agent = strings.ToLower(agent)
-	configDir := getAgentConfigDir(agent)
+	configDir := getAgentConfigDir(agent, nil)
 	if configDir == "" {
 		return nil
 	}
@@ -171,5 +183,5 @@ func Names() []string {
 
 // IsKnownAgent returns true if the agent has a config directory for command provisioning.
 func IsKnownAgent(agent string) bool {
-	return getAgentConfigDir(strings.ToLower(agent)) != ""
+	return getAgentConfigDir(strings.ToLower(agent), nil) != ""
 }

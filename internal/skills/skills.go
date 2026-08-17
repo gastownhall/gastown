@@ -104,7 +104,7 @@ func MissingFor(workspacePath, agent string) []string {
 }
 
 func agentConfigDir(agent string) string {
-	preset := config.GetAgentPresetByName(strings.ToLower(agent))
+	preset := config.ResolveAgentPreset(strings.ToLower(agent), nil, nil)
 	if preset == nil {
 		return ""
 	}

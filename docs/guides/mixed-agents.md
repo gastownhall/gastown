@@ -12,7 +12,9 @@ alias. Gas Town still injects the built-in non-interactive flags
 (`--dangerously-bypass-approvals-and-sandbox` and
 `-c check_for_update_on_startup=false`) so `gt up` does not block on the
 workspace trust prompt. Set `--sandbox` or `--ask-for-approval` yourself
-to opt out of the bypass.
+to opt out of the bypass. `gt rig add` also resolves that alias to the
+Codex runtime when it scaffolds polecat commands, so the default agent
+name does not warn as unknown.
 
 ```bash
 gt config agent set codex-cheap "codex -m gpt-5.3-codex-spark" --provider codex

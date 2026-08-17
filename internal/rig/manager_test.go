@@ -1,8 +1,10 @@
 package rig
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -2271,5 +2273,105 @@ esac
 	}
 	if strings.Contains(cmds, "--discard-remote") {
 		t.Errorf("bd init should NOT have --discard-remote without sync.remote; got:\n%s", cmds)
+	}
+}
+
+func captureStdout(t *testing.T, fn func()) string {
+	t.Helper()
+	old := os.Stdout
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("os.Pipe: %v", err)
+	}
+	os.Stdout = w
+	var buf bytes.Buffer
+	done := make(chan struct{})
+	go func() {
+		_, _ = io.Copy(&buf, r)
+		close(done)
+	}()
+	fn()
+	_ = w.Close()
+	<-done
+	os.Stdout = old
+	return buf.String()
+}
+
+func TestScaffoldPolecatWorkspace_CustomCodexAliasDoesNotWarn(t *testing.T) {
+	townRoot := t.TempDir()
+	settings := config.NewTownSettings()
+	settings.DefaultAgent = "codex-cheap"
+	settings.Agents["codex-cheap"] = &config.RuntimeConfig{
+		Provider: "codex",
+		Command:  "codex",
+		Args:     []string{"-m", "gpt-5.3-codex-spark"},
+	}
+	if err := config.SaveTownSettings(config.TownSettingsPath(townRoot), settings); err != nil {
+		t.Fatalf("SaveTownSettings: %v", err)
+	}
+
+	polecats := filepath.Join(t.TempDir(), "polecats")
+	if err := os.MkdirAll(polecats, 0755); err != nil {
+		t.Fatalf("mkdir polecats: %v", err)
+	}
+	out := captureStdout(t, func() {
+		scaffoldPolecatWorkspace(townRoot, polecats)
+	})
+	if strings.Contains(out, "Could not scaffold polecat commands") {
+		t.Fatalf("custom Codex alias warned during scaffold: %q", out)
+	}
+	if strings.Contains(out, "unknown agent or no config dir: codex-cheap") {
+		t.Fatalf("custom Codex alias treated as unknown: %q", out)
+	}
+}
+
+func TestScaffoldPolecatWorkspace_UnknownBinaryStillWarns(t *testing.T) {
+	townRoot := t.TempDir()
+	settings := config.NewTownSettings()
+	settings.DefaultAgent = "mystery-bot"
+	settings.Agents["mystery-bot"] = &config.RuntimeConfig{
+		Command: "mystery-bot",
+	}
+	if err := config.SaveTownSettings(config.TownSettingsPath(townRoot), settings); err != nil {
+		t.Fatalf("SaveTownSettings: %v", err)
+	}
+
+	polecats := filepath.Join(t.TempDir(), "polecats")
+	if err := os.MkdirAll(polecats, 0755); err != nil {
+		t.Fatalf("mkdir polecats: %v", err)
+	}
+	out := captureStdout(t, func() {
+		scaffoldPolecatWorkspace(townRoot, polecats)
+	})
+	if !strings.Contains(out, "unknown agent or no config dir: mystery-bot") {
+		t.Fatalf("expected unknown custom binary to fail loudly, got: %q", out)
+	}
+}
+
+func TestScaffoldPolecatWorkspace_ClaudeAliasUsesClaudeConfigDir(t *testing.T) {
+	townRoot := t.TempDir()
+	settings := config.NewTownSettings()
+	settings.DefaultAgent = "claude-cheap"
+	settings.Agents["claude-cheap"] = &config.RuntimeConfig{
+		Provider: "claude",
+		Command:  "claude",
+	}
+	if err := config.SaveTownSettings(config.TownSettingsPath(townRoot), settings); err != nil {
+		t.Fatalf("SaveTownSettings: %v", err)
+	}
+
+	polecats := filepath.Join(t.TempDir(), "polecats")
+	if err := os.MkdirAll(polecats, 0755); err != nil {
+		t.Fatalf("mkdir polecats: %v", err)
+	}
+	out := captureStdout(t, func() {
+		scaffoldPolecatWorkspace(townRoot, polecats)
+	})
+	if strings.Contains(out, "Could not scaffold polecat commands") {
+		t.Fatalf("custom Claude alias warned during scaffold: %q", out)
+	}
+	cmdPath := filepath.Join(polecats, ".claude", "commands", "handoff.md")
+	if _, err := os.Stat(cmdPath); err != nil {
+		t.Fatalf("expected Claude command scaffold at %s: %v", cmdPath, err)
 	}
 }

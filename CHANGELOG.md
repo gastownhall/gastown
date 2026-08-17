@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Custom agent aliases scaffold polecat commands.** `gt rig add` now
+  resolves `gt config agent set` aliases such as `codex-cheap` to the
+  provider or command runtime. Known runtimes with no workspace config
+  dir (Codex, Pi) stay silent. Unknown custom binaries still warn.
+
 - **`gt peek` accepts the long polecat path.** `gt peek <rig>/polecats/<name>`
   now resolves to the same session as `gt peek <rig>/<name>`. Status, mail,
   and sling already use the long identity, so copied addresses no longer fail

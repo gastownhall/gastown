@@ -722,6 +722,37 @@ func GetAgentPresetByName(name string) *AgentPresetInfo {
 	return globalRegistry.Agents[name]
 }
 
+// ResolveAgentPreset looks up a built-in preset for name, then for a custom
+// alias's provider or command. Town and rig settings supply those aliases.
+func ResolveAgentPreset(name string, townSettings *TownSettings, rigSettings *RigSettings) *AgentPresetInfo {
+	if name == "" {
+		return nil
+	}
+	if preset := GetAgentPresetByName(name); preset != nil {
+		return preset
+	}
+	rc := lookupCustomAgentConfig(name, townSettings, rigSettings)
+	if rc == nil {
+		return nil
+	}
+	for _, candidate := range []string{rc.Provider, commandBaseName(rc.Command)} {
+		if candidate == "" || strings.EqualFold(candidate, name) {
+			continue
+		}
+		if preset := GetAgentPresetByName(candidate); preset != nil {
+			return preset
+		}
+	}
+	return nil
+}
+
+func commandBaseName(command string) string {
+	if command == "" {
+		return ""
+	}
+	return filepath.Base(command)
+}
+
 // ListAgentPresets returns all known agent preset names.
 func ListAgentPresets() []string {
 	registryMu.Lock()
