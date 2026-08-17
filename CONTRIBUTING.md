@@ -198,6 +198,12 @@ For packages with many Dolt-dependent tests, prefer adding
 `testutil.EnsureDoltContainerForTestMain()` in a `TestMain` function so all
 tests in the package share a single container.
 
+**A note on Ollama:** if a test needs a real LLM provider, check resource use
+before reaching for a local Ollama install — a local model can OOM or hang the
+host machine (dev laptop or CI runner alike). If you're determined to exercise
+Ollama, prefer running it in Docker with capped CPU/memory (`--cpus`, `--memory`)
+over a bare host install.
+
 ## Releasing
 
 Releases are cut from tags of the form `vX.Y.Z`. See [RELEASING.md](RELEASING.md)
