@@ -210,9 +210,9 @@ update script runs `go mod download` to refresh module deps after a pull.
 - Integration tests are build-tagged and need Dolt: `go test -tags=integration ./internal/cmd/...`.
   Dolt Docker helpers in `internal/testutil` compile only with `-tags=integration`.
   Default `go test` uses skip stubs so unit compiles do not pull testcontainers.
-- Run the app: `gt install <path>` creates a town HQ and auto-starts a Dolt SQL server; then
-  `gt status`, `bd create/list/update/close` (beads work ledger), `gt rig add`, etc. `gt` must be on
-  `PATH` for hooks/crew workflows (`cp gt ~/go/bin/` or `make install` → `~/.local/bin`).
+- Run the app: from a project git repository, `gt now` starts a town and attaches to the Mayor.
+  `gt install <path>` still creates a dedicated HQ. Then `gt status`, `bd create/list/update/close`,
+  `gt rig add`. `gt` must be on `PATH` (`cp gt ~/go/bin/` or `make install` → `~/.local/bin`).
 
 ### Known environment-induced test failures (NOT code bugs)
 

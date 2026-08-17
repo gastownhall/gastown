@@ -165,7 +165,7 @@ release:
 
     **Go:**
     ```bash
-    CGO_ENABLED=0 go install github.com/jonbaldie/gastown/cmd/gt@main
+    CGO_ENABLED=0 go install github.com/jonbaldie/gastown/cmd/gt@latest
     ```
 
     **Manual Install:**

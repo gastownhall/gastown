@@ -2,7 +2,7 @@
 
 Complete setup guide for Gas Town multi-agent orchestrator.
 
-For the shortest native path, install `gt` globally with `CGO_ENABLED=0 go install github.com/jonbaldie/gastown/cmd/gt@main`. Use `@main` until a post-migration release tag exists; `@latest` still resolves to the pre-migration `v1.2.1` module path. Install `bd` and Dolt separately as described below. Docker supplies the runtime tools inside the container.
+For the shortest native path, install `gt` globally with `CGO_ENABLED=0 go install github.com/jonbaldie/gastown/cmd/gt@latest`. From a project git repository, run `gt now`. Install `bd` and Dolt separately as described below. Docker supplies the runtime tools inside the container. Use `@main` only when you want the unreleased tip.
 
 ## Prerequisites
 
@@ -25,8 +25,9 @@ Native source installs require these host tools. Docker installs only require Do
 | Tool | Version | Check | Install |
 |------|---------|-------|---------|
 | **tmux** | 3.0+ | `tmux -V` | See below |
-| **Claude Code** (default) | >= 2.0.20 | `claude --version` | See [claude.ai/claude-code](https://claude.ai/claude-code) |
-| **Pi** (optional) | latest | `pi --version` | See [Pi runtime](PI.md) |
+| **Cursor** | latest | `cursor --version` | See [cursor.com](https://cursor.com) |
+| **Claude Code** | >= 2.0.20 | `claude --version` | See [claude.ai/claude-code](https://claude.ai/claude-code) |
+| **Pi** | latest | `pi --version` | See [Pi runtime](PI.md) |
 | **Codex CLI** (optional) | latest | `codex --version` | See [developers.openai.com/codex/cli](https://developers.openai.com/codex/cli) |
 | **OpenCode CLI** (optional) | latest | `opencode --version` | See [opencode.ai](https://opencode.ai) |
 | **GitHub Copilot CLI** (optional) | latest | `copilot --version` | See [cli.github.com](https://cli.github.com) (requires Copilot seat) |
@@ -39,7 +40,7 @@ Install Go and Dolt with Homebrew, then install `gt` and `bd` with Go.
 
 ```bash
 brew install go dolt
-CGO_ENABLED=0 go install github.com/jonbaldie/gastown/cmd/gt@main
+CGO_ENABLED=0 go install github.com/jonbaldie/gastown/cmd/gt@latest
 go install github.com/steveyegge/beads/cmd/bd@latest
 
 # Optional: Docker setup only
@@ -91,7 +92,7 @@ Install Go and Dolt first, then install `gt` and `bd` with Go. The binaries land
 
 ```powershell
 $env:CGO_ENABLED = "0"
-go install github.com/jonbaldie/gastown/cmd/gt@main
+go install github.com/jonbaldie/gastown/cmd/gt@latest
 go install github.com/steveyegge/beads/cmd/bd@latest
 ```
 
@@ -114,7 +115,7 @@ tmux -V           # (Optional) Should show 3.0 or higher
 On macOS and Linux, install `gt` and Beads with Go after installing Dolt separately:
 
 ```bash
-CGO_ENABLED=0 go install github.com/jonbaldie/gastown/cmd/gt@main
+CGO_ENABLED=0 go install github.com/jonbaldie/gastown/cmd/gt@latest
 go install github.com/steveyegge/beads/cmd/bd@latest
 ```
 
@@ -369,10 +370,10 @@ bd doctor                  # Run beads health check
 
 ## Updating
 
-Reinstall `gt` from `main` to pick up updates:
+Reinstall `gt` from `@latest` to pick up updates:
 
 ```bash
-CGO_ENABLED=0 go install github.com/jonbaldie/gastown/cmd/gt@main
+CGO_ENABLED=0 go install github.com/jonbaldie/gastown/cmd/gt@latest
 command -v gt              # Should be $GOBIN or $GOPATH/bin, usually ~/go/bin/gt
 gt version
 gt doctor --fix            # Fix any post-update issues

@@ -47,7 +47,7 @@ graph TB
 
 ### The Mayor 🎩
 
-Your primary AI coordinator. The Mayor is a Claude Code instance with full context about your workspace, projects, and agents. **Start here** - just tell the Mayor what you want to accomplish.
+Your primary AI coordinator. The Mayor is an agent session with full context about your workspace, projects, and agents. **Start here** - just tell the Mayor what you want to accomplish.
 
 ### Town 🏘️
 
@@ -134,14 +134,14 @@ Native installs require the host tools below. Docker installs only require Docke
 | sqlite3 | any | Used by convoy database queries. Usually pre-installed on macOS and Linux. |
 | ICU4C dev headers | varies | Required only for `make build-cgo`, which compiles the optional embedded query layer. |
 | tmux | 3.0+ | Required for `gt up` and the tmux-backed roles (Mayor, Witnesses, Refineries, polecats). Optional only for minimal-mode workflows where you run runtime instances manually. |
-| Claude Code CLI | latest | Default runtime. See [Runtime Configuration](#runtime-configuration) for alternatives (Codex, Copilot, Gemini, Cursor). |
+| Agent CLI | latest | One of Cursor, Claude, Pi, or another supported runtime. |
 
 ### Local setup
 
 Install `gt` globally with Go:
 
 ```bash
-CGO_ENABLED=0 go install github.com/jonbaldie/gastown/cmd/gt@main
+CGO_ENABLED=0 go install github.com/jonbaldie/gastown/cmd/gt@latest
 ```
 
 The binary lands in `$GOBIN`, or `$GOPATH/bin` when `GOBIN` is unset. Put that directory before older `gt` installations on `PATH`. Native installs also require `bd` and Dolt:
@@ -156,7 +156,7 @@ On Windows PowerShell, set the CGO environment variable before installing:
 
 ```powershell
 $env:CGO_ENABLED = "0"
-go install github.com/jonbaldie/gastown/cmd/gt@main
+go install github.com/jonbaldie/gastown/cmd/gt@latest
 go install github.com/steveyegge/beads/cmd/bd@latest
 ```
 
