@@ -1152,6 +1152,178 @@ exit /b 0
 	}
 }
 
+// TestSlingMovesTownBeadIntoTargetRigBeforeDispatch is the Mayor workflow:
+// create an hq-* bead in the town database, then gt sling <hq-bead> <rig>.
+// The sling must move/copy that work into the target rig and continue,
+// not refuse because the town prefix is not already present in the rig DB.
+func TestSlingMovesTownBeadIntoTargetRigBeforeDispatch(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("skipping on windows: shell stub uses POSIX env logging")
+	}
+
+	townRoot := t.TempDir()
+	rigDir := filepath.Join(townRoot, "clock", "mayor", "rig")
+	townBeadsDir := filepath.Join(townRoot, ".beads")
+	rigBeadsDir := filepath.Join(rigDir, ".beads")
+	for _, dir := range []string{
+		townBeadsDir,
+		rigBeadsDir,
+		filepath.Join(townRoot, "mayor", "rig"),
+	} {
+		if err := os.MkdirAll(dir, 0755); err != nil {
+			t.Fatalf("mkdir %s: %v", dir, err)
+		}
+	}
+	if err := os.WriteFile(filepath.Join(townRoot, "mayor", "town.json"), []byte(`{"version":1}`), 0644); err != nil {
+		t.Fatalf("write town marker: %v", err)
+	}
+	rigs := &config.RigsConfig{
+		Version: 1,
+		Rigs: map[string]config.RigEntry{
+			"clock": {
+				GitURL:  "git@github.com:test/clock.git",
+				AddedAt: time.Now().Truncate(time.Second),
+				BeadsConfig: &config.BeadsConfig{
+					Repo:   "local",
+					Prefix: "ck-",
+				},
+			},
+		},
+	}
+	if err := config.SaveRigsConfig(filepath.Join(townRoot, "mayor", "rigs.json"), rigs); err != nil {
+		t.Fatalf("SaveRigsConfig: %v", err)
+	}
+	routes := strings.Join([]string{
+		`{"prefix":"hq-","path":"."}`,
+		`{"prefix":"ck-","path":"clock/mayor/rig"}`,
+		"",
+	}, "\n")
+	if err := os.WriteFile(filepath.Join(townBeadsDir, "routes.jsonl"), []byte(routes), 0644); err != nil {
+		t.Fatalf("write routes.jsonl: %v", err)
+	}
+
+	binDir := filepath.Join(townRoot, "bin")
+	if err := os.MkdirAll(binDir, 0755); err != nil {
+		t.Fatalf("mkdir binDir: %v", err)
+	}
+	logPath := filepath.Join(townRoot, "bd.log")
+	rigCreatedPath := filepath.Join(townRoot, "rig-created.txt")
+	bdScript := `#!/bin/sh
+set -e
+printf '%s|BEADS_DIR=%s\n' "$*" "${BEADS_DIR:-}" >> "${BD_LOG}"
+cmd="$1"
+shift || true
+if [ "$cmd" = "--allow-stale" ]; then
+  cmd="$1"
+  shift || true
+fi
+case "$cmd" in
+  show)
+    id="$1"
+    if [ "${BEADS_DIR:-}" = "${TARGET_BEADS_DIR}" ]; then
+      if [ -f "${RIG_CREATED}" ]; then
+        echo '[{"id":"ck-moved","title":"Town-owned issue","status":"open","assignee":"","description":""}]'
+        exit 0
+      fi
+      exit 1
+    fi
+    if [ "$id" = "hq-0yt" ]; then
+      echo '[{"id":"hq-0yt","title":"Town-owned issue","status":"open","assignee":"","description":""}]'
+      exit 0
+    fi
+    if [ "$id" = "ck-moved" ] && [ -f "${RIG_CREATED}" ]; then
+      echo '[{"id":"ck-moved","title":"Town-owned issue","status":"open","assignee":"","description":""}]'
+      exit 0
+    fi
+    exit 1
+    ;;
+  create)
+    if [ "${BEADS_DIR:-}" = "${TARGET_BEADS_DIR}" ] || echo " $* " | grep -q -- " --prefix ck-"; then
+      echo ck-moved > "${RIG_CREATED}"
+      echo ck-moved
+      exit 0
+    fi
+    echo "unexpected create: $* BEADS_DIR=${BEADS_DIR:-}" >&2
+    exit 2
+    ;;
+  close)
+    exit 0
+    ;;
+  update|cook|mol|dep)
+    exit 0
+    ;;
+esac
+exit 0
+`
+	_ = writeBDStub(t, binDir, bdScript, "")
+
+	t.Setenv("BD_LOG", logPath)
+	t.Setenv("TARGET_BEADS_DIR", rigBeadsDir)
+	t.Setenv("RIG_CREATED", rigCreatedPath)
+	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	t.Setenv(EnvGTRole, "mayor")
+	t.Setenv("GT_POLECAT", "")
+	t.Setenv("GT_CREW", "")
+	t.Setenv("TMUX_PANE", "")
+	t.Setenv("GT_TEST_NO_NUDGE", "1")
+	t.Setenv("GT_TEST_SKIP_HOOK_VERIFY", "1")
+
+	cwd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("getwd: %v", err)
+	}
+	t.Cleanup(func() { _ = os.Chdir(cwd) })
+	if err := os.Chdir(filepath.Join(townRoot, "mayor", "rig")); err != nil {
+		t.Fatalf("chdir: %v", err)
+	}
+
+	prevSpawn := spawnPolecatForSling
+	prevHook := hookBeadWithRetryWithTownRootFn
+	t.Cleanup(func() {
+		spawnPolecatForSling = prevSpawn
+		hookBeadWithRetryWithTownRootFn = prevHook
+	})
+
+	spawnCalled := false
+	spawnPolecatForSling = func(rigName string, opts SlingSpawnOptions) (*SpawnedPolecatInfo, error) {
+		spawnCalled = true
+		return &SpawnedPolecatInfo{
+			RigName:     rigName,
+			PolecatName: "toast",
+			ClonePath:   filepath.Join(townRoot, "clock", "polecats", "toast"),
+			Pane:        "%1",
+		}, nil
+	}
+	hookBeadWithRetryWithTownRootFn = func(beadID, targetAgent, hookDir, townRoot string) error {
+		return nil
+	}
+
+	result, err := executeSling(context.Background(), sling.Intent{
+		BeadID:      "hq-0yt",
+		RigName:     "clock",
+		TownRoot:    townRoot,
+		BeadsDir:    townBeadsDir,
+		HookRawBead: true,
+		NoConvoy:    true,
+		NoBoot:      true,
+	})
+	if err != nil {
+		t.Fatalf("gt sling hq-0yt clock should move the town bead into the target rig and continue, got: %v", err)
+	}
+	if result == nil || !result.Success {
+		t.Fatalf("executeSling result not successful: %+v", result)
+	}
+	if result.BeadID != "ck-moved" {
+		t.Fatalf("result.BeadID = %q, want ck-moved after town-bead move", result.BeadID)
+	}
+	if !spawnCalled {
+		t.Fatal("expected sling to continue into polecat spawn after moving the town bead")
+	}
+	if _, statErr := os.Stat(rigCreatedPath); statErr != nil {
+		t.Fatal("expected sling to create a rig-prefixed copy of the town bead before dispatch")
+	}
+}
+
 func TestTargetRigDatabaseAllowsRouteResolvedGtBead(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("skipping on windows: shell stub uses POSIX env logging")

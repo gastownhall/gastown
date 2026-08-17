@@ -57,6 +57,12 @@ Auto-Convoy:
   gt sling gt-abc gastown              # Creates "Work: <issue-title>" convoy
   gt sling gt-abc gastown --no-convoy  # Skip auto-convoy creation
 
+Town Beads:
+  Mayor-created town work (hq-*) can be slung to a rig. Sling moves the bead
+  into the target rig with the same path as "gt bead move", then dispatches
+  the new rig-prefixed ID. Convoys (hq-cv-*) and town agent/channel/group
+  beads stay in HQ and are not auto-moved.
+
 Merge Strategy (--merge):
   Controls how completed work lands. Stored on the auto-convoy and on the issue.
   gt sling gt-abc gastown --merge=direct  # Push branch directly to main

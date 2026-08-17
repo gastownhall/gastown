@@ -92,6 +92,16 @@ func executeNamedTargetSling(ctx context.Context, intent sling.Intent) (*SlingRe
 		result.ErrMsg = err.Error()
 		return result, err
 	}
+	if resolved.BeadID != "" && resolved.BeadID != beadID {
+		beadID = resolved.BeadID
+		intent.BeadID = resolved.BeadID
+		result.BeadID = resolved.BeadID
+		info, err = getBeadInfoFromTownRoot(townRoot, beadID)
+		if err != nil {
+			result.ErrMsg = err.Error()
+			return result, fmt.Errorf("checking moved bead status: %w", err)
+		}
+	}
 	targetAgent := resolved.Agent
 	targetPane := resolved.Pane
 	hookWorkDir := resolved.WorkDir

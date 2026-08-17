@@ -44,6 +44,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `-c check_for_update_on_startup=false` unless the command already sets
   a sandbox or approval policy. `gt up` no longer blocks on the Codex
   workspace trust prompt for those aliases.
+- **`gt sling` can send a town work bead to a rig.** Mayor-created `hq-*`
+  work used to fail with "not present in target rig beads database". Sling
+  now moves the bead into the target rig (same path as `gt bead move`) and
+  continues with the new rig-prefixed ID. Convoys (`hq-cv-*`) and town
+  agent/channel/group beads are left in HQ. `--dry-run` previews the move
+  without mutating beads.
 
 ## [1.2.2] - 2026-08-16
 

@@ -29,10 +29,12 @@ func runBatchSling(beadIDs []string, rigName string, townBeadsDir string) error 
 		}
 	}
 	townRoot := filepath.Dir(townBeadsDir)
-	for _, beadID := range beadIDs {
-		if err := verifyBeadExistsInTargetRigDatabase(beadID, rigName, townRoot); err != nil {
+	for i, beadID := range beadIDs {
+		movedID, err := ensureBeadInTargetRig(beadID, rigName, townRoot, slingDryRun)
+		if err != nil {
 			return err
 		}
+		beadIDs[i] = movedID
 	}
 
 	// Cross-rig guard: check all beads match the target rig before spawning (gt-myecw)

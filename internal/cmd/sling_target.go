@@ -145,13 +145,14 @@ type ResolvedTarget struct {
 	DelayedDogInfo    *DogDispatchInfo
 	NewPolecatInfo    *SpawnedPolecatInfo
 	IsSelfSling       bool
+	BeadID            string // May differ from the input when a town bead is moved into the target rig
 }
 
 // resolveTarget resolves a target specification to agent, pane, and working directory.
 // Handles: "." or empty (self), dog targets, rig targets (auto-spawn polecat),
 // existing agents (with dead polecat fallback).
 func resolveTarget(target string, opts ResolveTargetOptions) (*ResolvedTarget, error) {
-	result := &ResolvedTarget{}
+	result := &ResolvedTarget{BeadID: opts.BeadID}
 
 	// Empty target or "." = self-sling
 	if target == "" || target == "." {
@@ -224,13 +225,20 @@ func resolveTarget(target string, opts ResolveTargetOptions) (*ResolvedTarget, e
 			}
 		}
 
-		if opts.BeadID != "" && !opts.Force {
-			if err := checkCrossRigGuard(opts.BeadID, rigName+"/polecats/_", opts.TownRoot); err != nil {
+		if opts.BeadID != "" {
+			originalBeadID := opts.BeadID
+			movedID, err := ensureBeadInTargetRig(opts.BeadID, rigName, opts.TownRoot, opts.DryRun)
+			if err != nil {
 				return nil, err
 			}
+			opts.BeadID = movedID
+			result.BeadID = movedID
+			if opts.HookBead == "" || opts.HookBead == originalBeadID {
+				opts.HookBead = movedID
+			}
 		}
-		if opts.BeadID != "" {
-			if err := verifyBeadExistsInTargetRigDatabase(opts.BeadID, rigName, opts.TownRoot); err != nil {
+		if opts.BeadID != "" && !opts.Force {
+			if err := checkCrossRigGuard(opts.BeadID, rigName+"/polecats/_", opts.TownRoot); err != nil {
 				return nil, err
 			}
 		}
@@ -292,13 +300,20 @@ func resolveTarget(target string, opts ResolveTargetOptions) (*ResolvedTarget, e
 				return nil, fmt.Errorf("resolving target after starting crew member: %w", err)
 			}
 		} else if rigName, ok := missingPolecatTargetRig(target, opts.Create, opts.TownRoot); ok {
-			if opts.BeadID != "" && !opts.Force {
-				if err := checkCrossRigGuard(opts.BeadID, rigName+"/polecats/_", opts.TownRoot); err != nil {
+			if opts.BeadID != "" {
+				originalBeadID := opts.BeadID
+				movedID, err := ensureBeadInTargetRig(opts.BeadID, rigName, opts.TownRoot, opts.DryRun)
+				if err != nil {
 					return nil, err
 				}
+				opts.BeadID = movedID
+				result.BeadID = movedID
+				if opts.HookBead == "" || opts.HookBead == originalBeadID {
+					opts.HookBead = movedID
+				}
 			}
-			if opts.BeadID != "" {
-				if err := verifyBeadExistsInTargetRigDatabase(opts.BeadID, rigName, opts.TownRoot); err != nil {
+			if opts.BeadID != "" && !opts.Force {
+				if err := checkCrossRigGuard(opts.BeadID, rigName+"/polecats/_", opts.TownRoot); err != nil {
 					return nil, err
 				}
 			}
@@ -334,8 +349,15 @@ func resolveTarget(target string, opts ResolveTargetOptions) (*ResolvedTarget, e
 		parts := strings.Split(agentID, "/")
 		if len(parts) >= 3 && parts[1] == "polecats" {
 			rigName := parts[0]
-			if err := verifyBeadExistsInTargetRigDatabase(opts.BeadID, rigName, opts.TownRoot); err != nil {
+			originalBeadID := opts.BeadID
+			movedID, err := ensureBeadInTargetRig(opts.BeadID, rigName, opts.TownRoot, opts.DryRun)
+			if err != nil {
 				return nil, err
+			}
+			opts.BeadID = movedID
+			result.BeadID = movedID
+			if opts.HookBead == "" || opts.HookBead == originalBeadID {
+				opts.HookBead = movedID
 			}
 		}
 	}

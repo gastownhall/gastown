@@ -373,3 +373,27 @@ func TestResolveBeadDirFromTownRootUsesAuthority(t *testing.T) {
 		t.Fatalf("empty town work dir = %q, want .", got)
 	}
 }
+
+func TestIsTownWorkBead(t *testing.T) {
+	tests := []struct {
+		id   string
+		want bool
+	}{
+		{"hq-0yt", true},
+		{"hq-abc123", true},
+		{"hq-cv-abc", false},
+		{"hq-mayor", false},
+		{"hq-deacon", false},
+		{"hq-dog-alpha", false},
+		{"hq-group-ops", false},
+		{"hq-channel-alerts", false},
+		{"hq-boot", false},
+		{"ck-abc", false},
+		{"gt-abc", false},
+	}
+	for _, tt := range tests {
+		if got := isTownWorkBead(tt.id); got != tt.want {
+			t.Errorf("isTownWorkBead(%q) = %v, want %v", tt.id, got, tt.want)
+		}
+	}
+}

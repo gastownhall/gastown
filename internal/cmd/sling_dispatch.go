@@ -134,15 +134,25 @@ func executeRigSling(ctx context.Context, intent sling.Intent) (*SlingResult, er
 	intent.Force = status.Force
 	intent.Merge = status.Merge
 
-	if intent.RigName != "" && !explicitForce {
-		if err := checkCrossRigGuard(intent.BeadID, intent.RigName+"/polecats/_", townRoot); err != nil {
+	if intent.RigName != "" {
+		movedID, err := ensureBeadInTargetRig(intent.BeadID, intent.RigName, townRoot, intent.DryRun)
+		if err != nil {
 			result.ErrMsg = err.Error()
 			return result, err
 		}
+		if movedID != intent.BeadID {
+			intent.BeadID = movedID
+			result.BeadID = movedID
+			info, err = getBeadInfoFromTownRoot(townRoot, movedID)
+			if err != nil {
+				result.ErrMsg = err.Error()
+				return result, fmt.Errorf("could not get moved bead info: %w", err)
+			}
+		}
 	}
 
-	if intent.RigName != "" {
-		if err := verifyBeadExistsInTargetRigDatabase(intent.BeadID, intent.RigName, townRoot); err != nil {
+	if intent.RigName != "" && !explicitForce {
+		if err := checkCrossRigGuard(intent.BeadID, intent.RigName+"/polecats/_", townRoot); err != nil {
 			result.ErrMsg = err.Error()
 			return result, err
 		}

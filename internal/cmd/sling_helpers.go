@@ -403,6 +403,72 @@ func verifyBeadExists(beadID string) error {
 	return nil
 }
 
+// isTownWorkBead reports whether beadID is a Mayor-created town work item
+// (hq-*) that can be moved into a rig. Town infrastructure beads stay put.
+func isTownWorkBead(beadID string) bool {
+	if beads.ExtractPrefix(beadID) != beads.TownBeadsPrefix+"-" {
+		return false
+	}
+	switch {
+	case strings.HasPrefix(beadID, "hq-cv-"),
+		strings.HasPrefix(beadID, "hq-mayor"),
+		strings.HasPrefix(beadID, "hq-deacon"),
+		strings.HasPrefix(beadID, "hq-dog-"),
+		strings.HasPrefix(beadID, "hq-group-"),
+		strings.HasPrefix(beadID, "hq-channel-"),
+		strings.HasPrefix(beadID, "hq-boot"):
+		return false
+	}
+	return true
+}
+
+// prepareTownBeadForRigSling moves a town-level work bead into the target rig
+// using the existing gt bead move path. The Mayor workflow is "create hq-*
+// then sling to a rig"; polecats can only execute beads that live in the
+// target rig database. dryRun previews the move without creating or closing beads.
+func prepareTownBeadForRigSling(beadID, targetRig, townRoot string, dryRun bool) (string, error) {
+	if !isTownWorkBead(beadID) || targetRig == "" || townRoot == "" {
+		return beadID, nil
+	}
+	if err := verifyBeadExistsInTargetRigDatabase(beadID, targetRig, townRoot); err == nil {
+		return beadID, nil
+	}
+	targetPrefix := beads.GetPrefixForRig(townRoot, targetRig)
+	if targetPrefix == "" || targetPrefix == beads.TownBeadsPrefix {
+		return "", fmt.Errorf("cannot sling town bead %s to rig %q: no rig prefix is registered\nCreate the work in the target rig first:\n  bd -C %s create --title=...\nor move it explicitly:\n  gt bead move %s <rig-prefix>", beadID, targetRig, targetRig, beadID)
+	}
+	if dryRun {
+		if err := previewBeadMove(beadID, targetPrefix, townRoot); err != nil {
+			return "", err
+		}
+		fmt.Printf("Would move town bead %s into rig %s (prefix %s)\n", beadID, targetRig, normalizeBeadPrefix(targetPrefix))
+		return beadID, nil
+	}
+	newID, err := moveBeadToPrefix(beadID, targetPrefix, townRoot)
+	if err != nil {
+		return "", fmt.Errorf("moving town bead %s into rig %q: %w\nCreate the work in the target rig first:\n  bd -C %s create --title=...\nor move it explicitly:\n  gt bead move %s %s-", beadID, targetRig, err, targetRig, beadID, targetPrefix)
+	}
+	fmt.Printf("%s Moved town bead %s → %s for rig %s\n", style.Bold.Render("→"), beadID, newID, targetRig)
+	return newID, nil
+}
+
+// ensureBeadInTargetRig moves a town work bead into the target rig when needed,
+// then confirms the dispatched ID exists in that rig database. Dry-run previews
+// a town-bead move and skips the existence check so preview does not mutate.
+func ensureBeadInTargetRig(beadID, targetRig, townRoot string, dryRun bool) (string, error) {
+	newID, err := prepareTownBeadForRigSling(beadID, targetRig, townRoot, dryRun)
+	if err != nil {
+		return "", err
+	}
+	if dryRun && isTownWorkBead(beadID) {
+		return newID, nil
+	}
+	if err := verifyBeadExistsInTargetRigDatabase(newID, targetRig, townRoot); err != nil {
+		return "", err
+	}
+	return newID, nil
+}
+
 // verifyBeadExistsInTargetRigDatabase checks the target rig's beads database
 // directly instead of following prefix routing. This prevents gt sling from
 // spawning polecats or creating molecule/hook side effects for beads that only

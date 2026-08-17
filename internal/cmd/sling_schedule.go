@@ -78,9 +78,11 @@ func scheduleBead(beadID, rigName string, opts ScheduleOptions) error {
 	if _, isRig := IsRigName(rigName); !isRig {
 		return fmt.Errorf("'%s' is not a known rig", rigName)
 	}
-	if err := verifyBeadExistsInTargetRigDatabase(beadID, rigName, townRoot); err != nil {
+	movedID, err := ensureBeadInTargetRig(beadID, rigName, townRoot, opts.DryRun)
+	if err != nil {
 		return err
 	}
+	beadID = movedID
 
 	if !opts.Force {
 		if err := checkCrossRigGuard(beadID, rigName+"/polecats/_", townRoot); err != nil {

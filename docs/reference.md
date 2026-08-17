@@ -606,6 +606,9 @@ gt sling <proto> --on gt-def <rig>       # With workflow template
 
 # Quick sling (auto-creates convoy)
 gt sling <bead> <rig>                    # Auto-convoy for dashboard visibility
+
+# Town work created by the Mayor (hq-*) is moved into the target rig first
+gt sling hq-abc <rig>                    # Copies into <rig-prefix>-*, then slings
 ```
 
 Agent overrides:
