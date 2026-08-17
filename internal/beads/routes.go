@@ -4,6 +4,7 @@ package beads
 import (
 	"bufio"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -11,6 +12,24 @@ import (
 
 	"github.com/jonbaldie/gastown/internal/config"
 )
+
+// ErrPrefixInUse reports that a Beads prefix is already routed to a different rig.
+var ErrPrefixInUse = errors.New("prefix already in use")
+
+// PrefixInUseError names the existing rig that owns a prefix.
+type PrefixInUseError struct {
+	Prefix      string
+	ExistingRig string
+	Path        string
+}
+
+func (e *PrefixInUseError) Error() string {
+	return fmt.Sprintf("prefix %q is already used by %s (path: %s)", e.Prefix, e.ExistingRig, e.Path)
+}
+
+func (e *PrefixInUseError) Unwrap() error {
+	return ErrPrefixInUse
+}
 
 // Route represents a prefix-to-path routing rule.
 // This mirrors the structure in bd's internal/routing package.
@@ -212,7 +231,7 @@ func CheckPrefixAvailable(townRoot string, prefix string, newPath string) error 
 		if r.Prefix == prefix {
 			existingRig := strings.SplitN(r.Path, "/", 2)[0]
 			if existingRig != newRig {
-				return fmt.Errorf("prefix %q is already used by %s (path: %s); use --prefix to specify a different prefix", prefix, existingRig, r.Path)
+				return &PrefixInUseError{Prefix: prefix, ExistingRig: existingRig, Path: r.Path}
 			}
 		}
 	}

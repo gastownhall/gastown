@@ -1319,6 +1319,31 @@ func TestDeriveBeadsPrefix(t *testing.T) {
 	}
 }
 
+func TestSanitizeName(t *testing.T) {
+	tests := []struct {
+		in, want string
+	}{
+		{"my-app", "my_app"},
+		{"my.app", "my_app"},
+		{"my app", "my_app"},
+		{"auth", "auth"},
+	}
+	for _, tt := range tests {
+		if got := SanitizeName(tt.in); got != tt.want {
+			t.Errorf("SanitizeName(%q) = %q, want %q", tt.in, got, tt.want)
+		}
+	}
+}
+
+func TestIsReservedName(t *testing.T) {
+	if !IsReservedName("hq") || !IsReservedName("HQ") {
+		t.Fatal("hq should be reserved")
+	}
+	if IsReservedName("auth") {
+		t.Fatal("auth should not be reserved")
+	}
+}
+
 func TestSplitCompoundWord(t *testing.T) {
 	tests := []struct {
 		word string

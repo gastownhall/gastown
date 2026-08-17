@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/jonbaldie/gastown/internal/rig"
 	"github.com/jonbaldie/gastown/internal/style"
 	"github.com/jonbaldie/gastown/internal/workspace"
 	"github.com/spf13/cobra"
@@ -70,7 +71,7 @@ func runRigQuickAdd(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("no git remote found: %w", err)
 	}
 
-	rigName := sanitizeRigName(filepath.Base(gitRoot))
+	rigName := rig.SanitizeName(filepath.Base(gitRoot))
 
 	townRoot, err := findOrCreateTown()
 	if err != nil {
@@ -155,13 +156,6 @@ func findGitRemoteURL(gitRoot string) (string, error) {
 		return "", err
 	}
 	return strings.TrimSpace(string(out)), nil
-}
-
-func sanitizeRigName(name string) string {
-	name = strings.ReplaceAll(name, "-", "_")
-	name = strings.ReplaceAll(name, ".", "_")
-	name = strings.ReplaceAll(name, " ", "_")
-	return name
 }
 
 func findOrCreateTown() (string, error) {

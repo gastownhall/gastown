@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **`gt from` creates a Town from a parent folder of local Git repositories.**
+  The first path is the parent of project repositories, not Town HQ. The
+  default HQ is the sibling `<parent>.gt`. Each immediate child Git
+  repository becomes one Rig using the child's origin (or a `file://` URL
+  when origin is missing) plus a local-repo reference. The command does not
+  use `--adopt`, does not change source trees, and does not start agents.
+  `--dry-run` prints the plan without writing. See
+  `docs/guides/local-rig-bootstrap.md`.
+
 ### Fixed
 
 - **Install docs no longer treat `gt enable` as town-scoped.** `gt enable`

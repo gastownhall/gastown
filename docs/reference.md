@@ -455,7 +455,9 @@ at session start. Interactive agents wait for user prompts.
 ### Town Management
 
 ```bash
-gt install [path]            # Create town
+gt from <parent> [town]      # Town from a parent folder of local Git repos
+gt from <parent> --dry-run   # Print planned Town path and Rigs without writing
+gt install [path]            # Create town HQ
 gt install --git             # With git init
 gt doctor                    # Health check
 gt doctor --fix              # Auto-repair

@@ -65,6 +65,7 @@ var beadsExemptCommands = map[string]bool{
 	"scheduler":     true,
 	"config":        true,
 	"install":       true,
+	"from":          true,
 	"tap":           true,
 	"dnd":           true,
 	"estop":         true, // E-stop must work when Dolt is down
@@ -90,6 +91,7 @@ var branchCheckExemptCommands = map[string]bool{
 	"estop":       true, // Emergency stop must always work
 	"thaw":        true, // Thaw must always work
 	"install":     true, // Initial setup
+	"from":        true, // Create a Town from local repositories
 	"git-init":    true, // Git setup
 	"upgrade":     true, // Post-install migration
 	"scheduler":   true, // Daemon hot path; scheduler handles beads internally

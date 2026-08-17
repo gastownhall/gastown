@@ -1,6 +1,7 @@
 package beads
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -635,6 +636,24 @@ func TestCheckPrefixAvailable_NoRoutes(t *testing.T) {
 	err := CheckPrefixAvailable(tmpDir, "gt-", "gastown")
 	if err != nil {
 		t.Errorf("expected no error with no routes file, got: %v", err)
+	}
+}
+
+func TestCheckPrefixAvailable_PrefixInUse(t *testing.T) {
+	tmpDir := t.TempDir()
+	beadsDir := filepath.Join(tmpDir, ".beads")
+	if err := os.MkdirAll(beadsDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(beadsDir, "routes.jsonl"), []byte(`{"prefix":"gt-","path":"gastown"}`+"\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	err := CheckPrefixAvailable(tmpDir, "gt-", "other")
+	if !errors.Is(err, ErrPrefixInUse) {
+		t.Fatalf("error = %v, want ErrPrefixInUse", err)
+	}
+	if strings.Contains(err.Error(), "--prefix") {
+		t.Fatalf("prefix-in-use error should not mention --prefix, got %v", err)
 	}
 }
 

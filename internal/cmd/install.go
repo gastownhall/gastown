@@ -96,10 +96,47 @@ func init() {
 }
 
 func runInstall(cmd *cobra.Command, args []string) error {
-	// Determine target path
 	targetPath := "."
 	if len(args) > 0 {
 		targetPath = args[0]
+	}
+	return installTown(installTownOptions{
+		destPath:   targetPath,
+		name:       installName,
+		owner:      installOwner,
+		publicName: installPublicName,
+		noBeads:    installNoBeads,
+		git:        installGit,
+		github:     installGitHub,
+		public:     installPublic,
+		shell:      installShell,
+		wrappers:   installWrappers,
+		supervisor: installSupervisor,
+		doltPort:   installDoltPort,
+		force:      installForce,
+	})
+}
+
+type installTownOptions struct {
+	destPath   string
+	name       string
+	owner      string
+	publicName string
+	noBeads    bool
+	git        bool
+	github     string
+	public     bool
+	shell      bool
+	wrappers   bool
+	supervisor bool
+	doltPort   int
+	force      bool
+}
+
+func installTown(opts installTownOptions) error {
+	targetPath := opts.destPath
+	if targetPath == "" {
+		targetPath = "."
 	}
 
 	// Expand ~ and resolve to absolute path
@@ -117,15 +154,15 @@ func runInstall(cmd *cobra.Command, args []string) error {
 	}
 
 	// Determine town name
-	townName := installName
+	townName := opts.name
 	if townName == "" {
 		townName = filepath.Base(absPath)
 	}
 
 	// Check if already a workspace
-	if isWS, _ := workspace.IsWorkspace(absPath); isWS && !installForce {
+	if isWS, _ := workspace.IsWorkspace(absPath); isWS && !opts.force {
 		// If only --wrappers is requested in existing town, just install wrappers and exit
-		if installWrappers {
+		if opts.wrappers {
 			if err := wrappers.Install(); err != nil {
 				return fmt.Errorf("installing wrapper scripts: %w", err)
 			}
@@ -136,7 +173,7 @@ func runInstall(cmd *cobra.Command, args []string) error {
 	}
 
 	// Check if inside an existing workspace (e.g., crew worktree, rig directory)
-	if existingRoot, _ := workspace.Find(absPath); existingRoot != "" && existingRoot != absPath && !installForce {
+	if existingRoot, _ := workspace.Find(absPath); existingRoot != "" && existingRoot != absPath && !opts.force {
 		return fmt.Errorf("cannot create HQ inside existing Gas Town workspace\n"+
 			"  Current location: %s\n"+
 			"  Town root: %s\n\n"+
@@ -145,7 +182,7 @@ func runInstall(cmd *cobra.Command, args []string) error {
 	}
 
 	// Ensure beads (bd) is available before proceeding
-	if !installNoBeads {
+	if !opts.noBeads {
 		if err := deps.EnsureBeads(true); err != nil {
 			return fmt.Errorf("beads dependency check failed: %w", err)
 		}
@@ -162,8 +199,8 @@ func runInstall(cmd *cobra.Command, args []string) error {
 		// Preflight: check Dolt port availability before creating any files.
 		// A port conflict would leave a partial install that needs --force to retry.
 		port := doltserver.DefaultPort
-		if installDoltPort != 0 {
-			port = installDoltPort
+		if opts.doltPort != 0 {
+			port = opts.doltPort
 			os.Setenv("GT_DOLT_PORT", strconv.Itoa(port))
 		} else if p := os.Getenv("GT_DOLT_PORT"); p != "" {
 			if envPort, err := strconv.Atoi(p); err == nil {
@@ -213,7 +250,7 @@ func runInstall(cmd *cobra.Command, args []string) error {
 	fmt.Printf("   ✓ Created mayor/\n")
 
 	// Determine owner (defaults to git user.email)
-	owner := installOwner
+	owner := opts.owner
 	if owner == "" {
 		out, err := exec.Command("git", "config", "user.email").Output()
 		if err == nil {
@@ -222,7 +259,7 @@ func runInstall(cmd *cobra.Command, args []string) error {
 	}
 
 	// Determine public name (defaults to town name)
-	publicName := installPublicName
+	publicName := opts.publicName
 	if publicName == "" {
 		publicName = townName
 	}
@@ -339,9 +376,9 @@ func runInstall(cmd *cobra.Command, args []string) error {
 
 	// Initialize git BEFORE beads so that bd can compute repository fingerprint.
 	// The fingerprint is required for the daemon to start properly.
-	if installGit || installGitHub != "" {
+	if opts.git || opts.github != "" {
 		fmt.Println()
-		if err := InitGitForHarness(absPath, installGitHub, !installPublic); err != nil {
+		if err := InitGitForHarness(absPath, opts.github, !opts.public); err != nil {
 			return fmt.Errorf("git initialization failed: %w", err)
 		}
 	}
@@ -349,7 +386,7 @@ func runInstall(cmd *cobra.Command, args []string) error {
 	// Initialize town-level beads database (optional)
 	// Town beads (hq- prefix) stores mayor mail, cross-rig coordination, and handoffs.
 	// Rig beads are separate and have their own prefixes.
-	if !installNoBeads {
+	if !opts.noBeads {
 		port := doltserver.DefaultConfig(absPath).Port
 		externalTestDolt := useExternalTestDoltServer(port)
 
@@ -451,7 +488,7 @@ func runInstall(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	if installShell {
+	if opts.shell {
 		fmt.Println()
 		if err := shell.Install(); err != nil {
 			fmt.Printf("   %s Could not install shell integration: %v\n", style.Dim.Render("⚠"), err)
@@ -465,7 +502,7 @@ func runInstall(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	if installWrappers {
+	if opts.wrappers {
 		fmt.Println()
 		if err := wrappers.Install(); err != nil {
 			fmt.Printf("   %s Could not install wrapper scripts: %v\n", style.Dim.Render("⚠"), err)
@@ -475,7 +512,7 @@ func runInstall(cmd *cobra.Command, args []string) error {
 	}
 
 	// Configure supervisor (launchd/systemd) for daemon auto-restart
-	if installSupervisor {
+	if opts.supervisor {
 		fmt.Println()
 		if msg, err := templates.ProvisionSupervisor(absPath); err != nil {
 			fmt.Printf("   %s Could not configure supervisor: %v\n", style.Dim.Render("⚠"), err)
@@ -488,7 +525,7 @@ func runInstall(cmd *cobra.Command, args []string) error {
 	fmt.Println()
 	fmt.Println("Next steps:")
 	step := 1
-	if !installGit && installGitHub == "" {
+	if !opts.git && opts.github == "" {
 		fmt.Printf("  %d. Initialize git: %s\n", step, style.Dim.Render("gt git-init"))
 		step++
 	}
@@ -498,7 +535,7 @@ func runInstall(cmd *cobra.Command, args []string) error {
 	step++
 	fmt.Printf("  %d. Enter the Mayor's office: %s\n", step, style.Dim.Render("gt mayor attach"))
 	fmt.Println()
-	if !installNoBeads {
+	if !opts.noBeads {
 		fmt.Printf("Note: Dolt server is running (stop with %s)\n", style.Dim.Render("gt dolt stop"))
 	}
 

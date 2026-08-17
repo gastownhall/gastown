@@ -17,6 +17,9 @@ import (
 	"github.com/jonbaldie/gastown/internal/util"
 )
 
+// ErrRemoteNotConfigured reports that a named remote has no stored URL.
+var ErrRemoteNotConfigured = errors.New("remote is not configured")
+
 var errNoComparisonRefs = errors.New("no comparison refs resolved")
 
 // GitError contains raw output from a git command for agent observation.
@@ -629,6 +632,12 @@ func (g *Git) cloneInternal(url, dest string, opts cloneOptions) error {
 
 	// Build clone args
 	var args []string
+	// Git refuses file-protocol fetches unless protocol.file.allow is always.
+	// A local --reference fetch uses the file protocol even when the clone URL
+	// is https:// or git@ and insteadOf rewrites it onto file://.
+	if strings.HasPrefix(url, "file://") || opts.reference != "" {
+		args = append(args, "-c", "protocol.file.allow=always")
+	}
 	// Windows symlink fix for non-bare reference clones
 	if opts.reference != "" && !opts.bare && runtime.GOOS == "windows" {
 		args = append(args, "-c", "core.symlinks=true")
@@ -1403,8 +1412,34 @@ func (g *Git) HasUncommittedChanges() (bool, error) {
 }
 
 // RemoteURL returns the URL for the given remote.
+// This applies url.*.insteadOf rewrites from Git config.
 func (g *Git) RemoteURL(remote string) (string, error) {
 	return g.run("remote", "get-url", remote)
+}
+
+// ConfiguredRemoteURL returns the remote URL stored in the repository config.
+// Unlike RemoteURL, this does not apply url.*.insteadOf rewrites.
+func (g *Git) ConfiguredRemoteURL(remote string) (string, error) {
+	out, err := g.run("config", "--local", "--get", "remote."+remote+".url")
+	if err != nil {
+		if isGitConfigKeyMissing(err) {
+			return "", fmt.Errorf("%w: %s", ErrRemoteNotConfigured, remote)
+		}
+		return "", err
+	}
+	return out, nil
+}
+
+func isGitConfigKeyMissing(err error) bool {
+	var ge *GitError
+	if !errors.As(err, &ge) {
+		return false
+	}
+	var exit *exec.ExitError
+	if !errors.As(ge.Err, &exit) {
+		return false
+	}
+	return exit.ExitCode() == 1
 }
 
 // AddRemote adds a new remote with the given name and URL.

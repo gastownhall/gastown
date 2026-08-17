@@ -306,6 +306,91 @@ func TestIsRepo(t *testing.T) {
 	}
 }
 
+func TestCloneFileURLAllowsProtocol(t *testing.T) {
+	tmp := t.TempDir()
+	src := filepath.Join(tmp, "src")
+	dst := filepath.Join(tmp, "dst")
+
+	if err := exec.Command("git", "init", "--initial-branch=main", src).Run(); err != nil {
+		t.Fatalf("init src: %v", err)
+	}
+	_ = exec.Command("git", "-C", src, "config", "user.email", "test@test.com").Run()
+	_ = exec.Command("git", "-C", src, "config", "user.name", "Test User").Run()
+	if err := os.WriteFile(filepath.Join(src, "README.md"), []byte("# Test\n"), 0644); err != nil {
+		t.Fatalf("write file: %v", err)
+	}
+	_ = exec.Command("git", "-C", src, "add", ".").Run()
+	if err := exec.Command("git", "-C", src, "commit", "-m", "initial").Run(); err != nil {
+		t.Fatalf("commit: %v", err)
+	}
+
+	// The production clone helper must still succeed for local file URLs when
+	// protocol.file.allow is never.
+	t.Setenv("GIT_CONFIG_COUNT", "1")
+	t.Setenv("GIT_CONFIG_KEY_0", "protocol.file.allow")
+	t.Setenv("GIT_CONFIG_VALUE_0", "never")
+
+	fileURL := "file://" + src
+	g := NewGit(tmp)
+	if err := g.Clone(fileURL, dst); err != nil {
+		t.Fatalf("Clone(%q): %v", fileURL, err)
+	}
+	if _, err := os.Stat(filepath.Join(dst, "README.md")); err != nil {
+		t.Fatalf("expected cloned README.md: %v", err)
+	}
+}
+
+func TestConfiguredRemoteURLIgnoresInsteadOf(t *testing.T) {
+	tmp := t.TempDir()
+	src := filepath.Join(tmp, "src")
+	if err := exec.Command("git", "init", "--initial-branch=main", src).Run(); err != nil {
+		t.Fatalf("init: %v", err)
+	}
+	_ = exec.Command("git", "-C", src, "config", "user.email", "test@test.com").Run()
+	_ = exec.Command("git", "-C", src, "config", "user.name", "Test User").Run()
+	if err := os.WriteFile(filepath.Join(src, "README.md"), []byte("# Test\n"), 0644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	_ = exec.Command("git", "-C", src, "add", ".").Run()
+	if err := exec.Command("git", "-C", src, "commit", "-m", "initial").Run(); err != nil {
+		t.Fatalf("commit: %v", err)
+	}
+	origin := "https://github.com/acme/src.git"
+	if err := exec.Command("git", "-C", src, "remote", "add", "origin", origin).Run(); err != nil {
+		t.Fatalf("remote add: %v", err)
+	}
+
+	cfg := filepath.Join(tmp, "gitconfig")
+	content := fmt.Sprintf("[url \"file://%s\"]\n\tinsteadOf = %s\n", src, origin)
+	if err := os.WriteFile(cfg, []byte(content), 0644); err != nil {
+		t.Fatalf("write gitconfig: %v", err)
+	}
+	t.Setenv("GIT_CONFIG_GLOBAL", cfg)
+	t.Setenv("GIT_CONFIG_NOSYSTEM", "1")
+
+	g := NewGit(src)
+	got, err := g.ConfiguredRemoteURL("origin")
+	if err != nil {
+		t.Fatalf("ConfiguredRemoteURL: %v", err)
+	}
+	if got != origin {
+		t.Fatalf("ConfiguredRemoteURL = %q, want stored origin %q", got, origin)
+	}
+}
+
+func TestConfiguredRemoteURLMissingOrigin(t *testing.T) {
+	tmp := t.TempDir()
+	src := filepath.Join(tmp, "src")
+	if err := exec.Command("git", "init", "--initial-branch=main", src).Run(); err != nil {
+		t.Fatalf("init: %v", err)
+	}
+	g := NewGit(src)
+	_, err := g.ConfiguredRemoteURL("origin")
+	if !errors.Is(err, ErrRemoteNotConfigured) {
+		t.Fatalf("ConfiguredRemoteURL missing origin = %v, want ErrRemoteNotConfigured", err)
+	}
+}
+
 func TestCloneWithReferenceCreatesAlternates(t *testing.T) {
 	tmp := t.TempDir()
 	src := filepath.Join(tmp, "src")

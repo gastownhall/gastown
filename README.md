@@ -187,7 +187,15 @@ gt doctor --fix
 
 #### Add a project
 
-Use `gt rig add` to clone a repository into your HQ as a rig.
+For a parent folder of local Git repositories, use `gt from`. That creates a
+Town next to the folder and one Rig per child repository. Original folders
+stay in place.
+
+```bash
+gt from ~/code
+```
+
+For one hosted repository, use `gt rig add` to clone it into an existing HQ as a rig.
 
 ```bash
 gt rig add myproject https://github.com/you/repo.git

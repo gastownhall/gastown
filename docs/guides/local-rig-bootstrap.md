@@ -1,6 +1,19 @@
 # Local Rig Bootstrap
 
-For a NightRider-style local setup, prefer a clean bootstrap over `gt rig add --adopt`.
+For a parent folder of project repositories, use `gt from`. That command
+creates a Town next to the folder (or at a path you pass) and adds one Rig
+per child Git repository. Original working trees stay in place so Compose
+can keep running from the parent folder.
+
+```bash
+gt from ~/code
+gt from ~/code ~/gt
+gt from ~/code --dry-run
+```
+
+`gt from` never uses `--adopt`. Use `--adopt` only for an already-assembled
+Rig directory. Use the bootstrap script below for one local repository when
+you already have a Town.
 
 `--adopt` is meant for registering an already-assembled rig directory. It trusts the
 existing shape, which makes it a poor fit for manually assembled local rigs where
