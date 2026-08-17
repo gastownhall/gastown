@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -348,19 +349,64 @@ func TestDoneTreatPushAsLocalFallback(t *testing.T) {
 	}
 }
 
-func TestSourceCloseRejectsLocalMergeStrategy(t *testing.T) {
+func TestSourceCloseAllowsLocalMergeStrategy(t *testing.T) {
 	issue := &beads.Issue{
-		ID:          "gt-work",
+		ID:          "ck-7vj",
 		Type:        "task",
-		Description: "merge_strategy: local\n",
+		Status:      "hooked",
+		Description: "merge_strategy: local\nconvoy_id: hq-cv-ilwtm\n",
 	}
 
 	reason, fatal := doneSourceCloseSkipReason(nil, issue.ID, issue)
-	if reason == "" || fatal {
-		t.Fatalf("local source close gate = %q, %v; want non-fatal skip", reason, fatal)
+	if reason != "" || fatal {
+		t.Fatalf("successful local-merge done must close the work bead; skip reason = %q, fatal = %v", reason, fatal)
 	}
-	if !strings.Contains(reason, "merge_strategy=local") {
-		t.Fatalf("reason = %q, want local merge strategy reason", reason)
+}
+
+func TestCloseHookedWorkOnDoneClosesLocalMergeBead(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("shell script bd stub not supported on Windows")
+	}
+
+	townRoot, closesLog := setupFormulaDoneTown(t, `#!/bin/sh
+while [ "$1" = "--allow-stale" ]; do shift; done
+cmd="$1"
+shift || true
+case "$cmd" in
+  show)
+    case "$1" in
+      ck-7vj)
+        echo '[{"id":"ck-7vj","title":"local work","status":"hooked","issue_type":"task","description":"merge_strategy: local\\nconvoy_id: hq-cv-ilwtm"}]'
+        ;;
+    esac
+    ;;
+  list)
+    echo '[]'
+    ;;
+  close)
+    for arg in "$@"; do
+      case "$arg" in --*) continue ;; esac
+      echo "$arg" >> "%s"
+    done
+    ;;
+  comments|comment)
+    exit 0
+    ;;
+esac
+exit 0
+`)
+
+	bd := beads.New(townRoot)
+	if err := closeHookedWorkOnDone(bd, "ck-7vj", "", ""); err != nil {
+		t.Fatalf("closeHookedWorkOnDone: %v", err)
+	}
+
+	closesBytes, err := os.ReadFile(closesLog)
+	if err != nil {
+		t.Fatalf("successful local-merge done left ck-7vj HOOKED (no close): %v", err)
+	}
+	if !strings.Contains(string(closesBytes), "ck-7vj") {
+		t.Fatalf("successful local-merge done left ck-7vj HOOKED; closes=%q", closesBytes)
 	}
 }
 

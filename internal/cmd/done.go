@@ -488,9 +488,8 @@ func doneSourceCloseSkipReasonForHead(bd *beads.Beads, issueID string, issue *be
 	if err := validateConcreteSourceIssue(issueID, issue); err != nil {
 		return err.Error(), true
 	}
-	if attachment := beads.ParseAttachmentFields(issue); attachment != nil && strings.EqualFold(strings.TrimSpace(attachment.MergeStrategy), "local") {
-		return fmt.Sprintf("issue %s has merge_strategy=local — skipping close", issueID), false
-	}
+	// merge_strategy=local skips push and the merge queue. It does not skip close.
+	// A successful local gt done must close the work bead so convoy progress lands.
 	if skipReason, fatal := doneReviewOnlyCloseSkipReasonForHead(bd, issueID, issue, currentHead); skipReason != "" {
 		return skipReason, fatal
 	}
