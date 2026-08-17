@@ -138,6 +138,10 @@ git config --global user.email "you@example.com"
 # Create a Gas Town workspace (HQ)
 gt install ~/gt --shell --git
 
+# --shell also enables Gas Town machine-wide (Claude Code SessionStart
+# hooks and shell cd hooks). Omit --shell for a throwaway or second town
+# so the host enable flag stays untouched.
+
 # This creates:
 #   ~/gt/
 #   ├── AGENTS.md          # Identity anchor (CLAUDE.md symlinks here)
@@ -166,12 +170,18 @@ gt rig add myproject https://github.com/you/repo.git
 ```bash
 cd ~/gt
 
-gt enable              # enable Gas Town system-wide
-gt up                  # Start all services. Use gt down or gt shutdown for stopping. 
+gt up                  # Start all services. Use gt down or gt shutdown for stopping.
 
 gt doctor --fix        # Run health checks and fix post-install warnings
 gt status              # Show workspace status
 ```
+
+`gt enable` is machine-wide, not town-scoped. It writes
+`~/.local/state/gastown/state.json` so shell hooks and Claude Code
+SessionStart can run `gt prime`. Town services do not need it: a test
+or second town works after `gt install` and `gt up`. Only run `gt enable`
+on this machine when you want those session hooks everywhere.
+`gt install --shell` already enables the host for a production `~/gt`.
 
 ### Step 5: Configure Agents (Optional)
 

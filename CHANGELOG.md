@@ -9,6 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Install docs no longer treat `gt enable` as town-scoped.** `gt enable`
+  / `gt disable` stay machine-wide (`~/.local/state/gastown/state.json`).
+  `docs/INSTALLING.md` Step 4 now boots with `gt up` only. A test or
+  second town does not need a prior `gt enable`; that flag is for host
+  shell hooks and Claude Code SessionStart. `gt install --shell` still
+  enables the host for a production `~/gt`.
+
 - **Custom agent aliases scaffold polecat commands.** `gt rig add` now
   resolves `gt config agent set` aliases such as `codex-cheap` to the
   provider or command runtime. Known runtimes with no workspace config

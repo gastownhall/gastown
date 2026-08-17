@@ -141,7 +141,10 @@ Use --restore to also start:
   • Polecats   - Those with pinned beads (work attached)
 
 Running 'gt up' multiple times is safe - it only starts services that
-aren't already running.`,
+aren't already running.
+
+This command does not require a prior 'gt enable'. Enable is machine-wide
+(shell hooks and Claude Code SessionStart), not town-scoped.`,
 	RunE: runUp,
 }
 

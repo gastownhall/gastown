@@ -1,5 +1,5 @@
-// ABOUTME: Command to enable Gas Town system-wide.
-// ABOUTME: Sets the global state to enabled for all agentic coding tools.
+// ABOUTME: Command to enable Gas Town machine-wide.
+// ABOUTME: Sets the host-global state to enabled for all agentic coding tools.
 
 package cmd
 
@@ -14,13 +14,19 @@ import (
 var enableCmd = &cobra.Command{
 	Use:     "enable",
 	GroupID: GroupConfig,
-	Short:   "Enable Gas Town system-wide",
-	Long: `Enable Gas Town for all agentic coding tools.
+	Short:   "Enable Gas Town machine-wide",
+	Long: `Enable Gas Town machine-wide for all agentic coding tools on this machine.
+
+This writes ~/.local/state/gastown/state.json. It is not town-scoped.
+A second or test town does not need this command.
 
 When enabled:
   - Shell hooks set GT_TOWN_ROOT and GT_RIG environment variables
   - Claude Code SessionStart hooks run 'gt prime' for context
   - Git repos are auto-registered as rigs (configurable)
+
+Town services do not require this. Use 'gt install' then 'gt up' to boot
+a town. 'gt up' does not require a prior 'gt enable'.
 
 Use 'gt disable' to turn off. Use 'gt status' to check state.
 

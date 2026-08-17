@@ -38,9 +38,8 @@ docker compose exec gastown zsh
 The entrypoint runs `gt install /gt --git` automatically on first start. After you exec a shell into the running container, finish bootstrapping with the commands below.
 
 ```bash
-gt enable
-gt shell install
 gt up --restore
+gt shell install    # optional: host shell hooks + machine-wide enable
 gt mayor attach
 ```
 
@@ -222,9 +221,8 @@ The `exec` command drops you into a shell as the `agent` user with the right `PA
 The entrypoint's `gt install /gt --git` does not run `gt up`, install shell integration, or restore agent settings. Those steps happen on first interactive use.
 
 ```bash
-gt enable           # turn on shell hooks for Claude Code SessionStart events
-gt shell install    # install zsh integration (sets GT_TOWN_ROOT, GT_RIG)
 gt up --restore     # start the daemon and restore crew and polecats
+gt shell install    # optional: zsh hooks, Claude Code SessionStart, machine-wide enable
 ```
 
 After the sequence above, `gt doctor` should report mostly clean. See *Known issues* below for the `claude-settings` failure that persists in the docker setup.

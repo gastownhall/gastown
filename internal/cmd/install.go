@@ -72,7 +72,7 @@ Examples:
   gt install ~/gt --git                        # Also init git with .gitignore
   gt install ~/gt --github=user/repo           # Create private GitHub repo (default)
   gt install ~/gt --github=user/repo --public  # Create public GitHub repo
-  gt install ~/gt --shell                      # Install shell integration (sets GT_TOWN_ROOT/GT_RIG)
+  gt install ~/gt --shell                      # Install shell hooks and enable Gas Town machine-wide
   gt install ~/gt --supervisor                 # Configure launchd/systemd for daemon auto-restart`,
 	Args:         cobra.MaximumNArgs(1),
 	RunE:         runInstall,
@@ -88,7 +88,7 @@ func init() {
 	installCmd.Flags().BoolVar(&installGit, "git", false, "Initialize git with .gitignore")
 	installCmd.Flags().StringVar(&installGitHub, "github", "", "Create GitHub repo (format: owner/repo, private by default)")
 	installCmd.Flags().BoolVar(&installPublic, "public", false, "Make GitHub repo public (use with --github)")
-	installCmd.Flags().BoolVar(&installShell, "shell", false, "Install shell integration (sets GT_TOWN_ROOT/GT_RIG env vars)")
+	installCmd.Flags().BoolVar(&installShell, "shell", false, "Install shell integration and enable Gas Town machine-wide")
 	installCmd.Flags().BoolVar(&installWrappers, "wrappers", false, "Install gt-codex/gt-gemini/gt-opencode wrapper scripts to ~/bin/")
 	installCmd.Flags().BoolVar(&installSupervisor, "supervisor", false, "Configure launchd/systemd for daemon auto-restart")
 	installCmd.Flags().IntVar(&installDoltPort, "dolt-port", 0, "Dolt SQL server port (default 3307; set when another instance owns the default port)")

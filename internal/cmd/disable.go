@@ -1,5 +1,5 @@
-// ABOUTME: Command to disable Gas Town system-wide.
-// ABOUTME: Sets the global state to disabled so tools work vanilla.
+// ABOUTME: Command to disable Gas Town machine-wide.
+// ABOUTME: Sets the host-global state to disabled so tools work vanilla.
 
 package cmd
 
@@ -17,8 +17,11 @@ var disableClean bool
 var disableCmd = &cobra.Command{
 	Use:     "disable",
 	GroupID: GroupConfig,
-	Short:   "Disable Gas Town system-wide",
-	Long: `Disable Gas Town for all agentic coding tools.
+	Short:   "Disable Gas Town machine-wide",
+	Long: `Disable Gas Town machine-wide for all agentic coding tools on this machine.
+
+This updates ~/.local/state/gastown/state.json. It is not town-scoped.
+Town workspaces stay on disk. 'gt up' in a town does not require enable.
 
 When disabled:
   - Shell hooks become no-ops
