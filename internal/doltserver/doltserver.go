@@ -200,6 +200,10 @@ type Config struct {
 	// Empty means localhost (backward-compatible default).
 	Host string
 
+	// External marks a server whose lifecycle is managed outside Gas Town.
+	// It applies even when the server binds only to a loopback address.
+	External bool
+
 	// Port is the MySQL protocol port.
 	Port int
 
@@ -326,6 +330,7 @@ func DefaultConfig(townRoot string) *Config {
 	if h := configpkg.ResolveDoltHost(townRoot); h != "" {
 		config.Host = h
 	}
+	config.External = configpkg.ResolveDoltExternal(townRoot)
 
 	if port := configpkg.ResolveDoltPort(townRoot); port > 0 {
 		config.Port = port
@@ -407,10 +412,16 @@ func (c *Config) IsRemote() bool {
 	return true
 }
 
+// IsExternallyManaged reports whether Gas Town must not manage the server
+// process, storage, or listener lifecycle.
+func (c *Config) IsExternallyManaged() bool {
+	return c.External || c.IsRemote()
+}
+
 // SQLArgs returns the dolt CLI flags needed to connect to a remote server.
 // Returns nil for local servers (dolt auto-detects the running local server).
 func (c *Config) SQLArgs() []string {
-	if !c.IsRemote() {
+	if !c.IsExternallyManaged() {
 		return nil
 	}
 	return []string{
@@ -627,7 +638,7 @@ func SaveState(townRoot string, state *State) error {
 }
 
 func refreshPIDStateFromLiveInfo(townRoot string, config *Config, pid int) (bool, error) {
-	if pid <= 0 || config == nil || config.IsRemote() {
+	if pid <= 0 || config == nil || config.IsExternallyManaged() {
 		return false, nil
 	}
 
@@ -698,8 +709,8 @@ func countDoltDatabases(dataDir string) int {
 func IsRunning(townRoot string) (bool, int, error) {
 	config := DefaultConfig(townRoot)
 
-	// Remote server: no local PID/process to check — just TCP reachability.
-	if config.IsRemote() {
+	// Externally managed servers have no Town-owned PID/process to inspect.
+	if config.IsExternallyManaged() {
 		conn, err := net.DialTimeout("tcp", config.HostPort(), 2*time.Second)
 		if err != nil {
 			return false, 0, nil
@@ -774,7 +785,7 @@ func CheckServerReachable(townRoot string) error {
 	conn, err := net.DialTimeout("tcp", addr, 2*time.Second)
 	if err != nil {
 		hint := ""
-		if !config.IsRemote() {
+		if !config.IsExternallyManaged() {
 			hint = "\n\nStart with: gt dolt start"
 		}
 		return fmt.Errorf("Dolt server not reachable at %s: %w%s", addr, err, hint)
@@ -894,7 +905,7 @@ func hasServerMode(beadsDir string) bool {
 // or (0, "") if the port is free or used by this town's own Dolt.
 func CheckPortConflict(townRoot string) (int, string) {
 	cfg := DefaultConfig(townRoot)
-	if cfg.IsRemote() {
+	if cfg.IsExternallyManaged() {
 		return 0, ""
 	}
 	pid := findDoltServerOnPort(cfg.Port)
@@ -1682,6 +1693,9 @@ behavior:
 // Start starts the Dolt SQL server.
 func Start(townRoot string) error {
 	config := DefaultConfig(townRoot)
+	if config.IsExternallyManaged() {
+		return fmt.Errorf("Dolt server is externally managed (%s)", config.HostPort())
+	}
 
 	// Ensure daemon directory exists
 	daemonDir := filepath.Dir(config.LogFile)
@@ -2084,6 +2098,9 @@ func drainConnectionsBeforeStop(config *Config) {
 // Works for both servers started via gt dolt start AND externally-started servers.
 func Stop(townRoot string) error {
 	config := DefaultConfig(townRoot)
+	if config.IsExternallyManaged() {
+		return fmt.Errorf("Dolt server is externally managed (%s)", config.HostPort())
+	}
 
 	running, pid, err := IsRunning(townRoot)
 	if err != nil {
@@ -2101,7 +2118,7 @@ func Stop(townRoot string) error {
 	// Drain active connections before stopping to reduce the nbs_manifest
 	// race window inside Dolt's NomsBlockStore.Close(). Non-fatal: proceeds even
 	// if drain times out (10s max). Skipped for remote servers (no local PID).
-	if !config.IsRemote() {
+	if !config.IsExternallyManaged() {
 		drainConnectionsBeforeStop(config)
 	}
 
@@ -2194,7 +2211,7 @@ func InvalidateDBCache() {
 func ListDatabases(townRoot string) ([]string, error) {
 	config := DefaultConfig(townRoot)
 
-	if config.IsRemote() {
+	if config.IsExternallyManaged() {
 		return listDatabasesCached(config)
 	}
 
