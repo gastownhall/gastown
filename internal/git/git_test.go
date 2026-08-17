@@ -3830,3 +3830,25 @@ func TestBranchPushedToRemote_NoPushURL(t *testing.T) {
 		t.Errorf("BranchPushedToRemote unpushed = %d, want >= 1", unpushed)
 	}
 }
+
+func TestIsNonWritableRemoteError(t *testing.T) {
+	tests := []struct {
+		name string
+		err  error
+		want bool
+	}{
+		{name: "nil", want: false},
+		{name: "http 403", err: errors.New("The requested URL returned error: 403"), want: true},
+		{name: "permission denied repo", err: errors.New("Permission to mattn/go-isatty.git denied"), want: true},
+		{name: "archived", err: errors.New("repository was archived so it is read-only"), want: true},
+		{name: "hook declined", err: errors.New("remote rejected polecat/x (pre-receive hook declined)"), want: true},
+		{name: "network timeout", err: errors.New("Failed to connect to github.com port 443 after 21000 ms: Couldn't connect to server"), want: false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := IsNonWritableRemoteError(tt.err); got != tt.want {
+				t.Fatalf("IsNonWritableRemoteError(%v) = %v, want %v", tt.err, got, tt.want)
+			}
+		})
+	}
+}

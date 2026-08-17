@@ -1178,20 +1178,10 @@ func (m *Manager) removeWithOptionsLocked(name string, force, nuclear, selfNuke 
 	// Best-effort: Push the polecat's branch to remote before removing the worktree.
 	// This preserves committed work that hasn't been pushed yet — without this,
 	// nuking a stalled polecat (e.g., after disk space recovery) permanently loses
-	// any commits on the branch. The push is non-blocking: failures are warnings,
-	// not errors, so nuke still proceeds. See: disk-space-resilience.
-	polecatGit := git.NewGit(clonePath)
-	if branch, brErr := polecatGit.CurrentBranch(); brErr == nil && branch != "" {
-		pushed, unpushedCount, checkErr := polecatGit.BranchPushedToRemote(branch, "origin")
-		if checkErr == nil && !pushed && unpushedCount > 0 {
-			if pushErr := polecatGit.Push("origin", branch, false); pushErr != nil {
-				style.PrintWarning("could not push branch %s before removal (%d unpushed commit(s)): %v",
-					branch, unpushedCount, pushErr)
-				style.PrintWarning("WORK AT RISK: branch %s has %d unpushed commit(s) in worktree %s",
-					branch, unpushedCount, clonePath)
-			}
-		}
-	}
+	// any commits on the branch. Skip when origin is not writable or the work is
+	// local-only: a 403 / archived push still deletes the worktree and loses the
+	// commits. Failures remain warnings so nuke still proceeds.
+	m.pushUnpushedBranchBeforeRemoval(name, clonePath)
 
 	// Get repo base to remove the worktree properly
 	repoGit, err := m.repoBase()
@@ -1249,6 +1239,102 @@ func (m *Manager) removeWithOptionsLocked(name string, force, nuclear, selfNuke 
 	_ = m.namePool.Save()
 
 	return nil
+}
+
+// removalPushDecision is the input for whether nuclear/force remove may push.
+type removalPushDecision struct {
+	LocalMerge    bool
+	PriorPushFail bool
+	HasPushURL    bool
+}
+
+// shouldPushBeforeRemoval reports whether remove should try origin before
+// deleting the worktree. Local-merge work and a prior 403 / non-writable
+// origin must stay local. A configured push URL is the writable-fork signal.
+func shouldPushBeforeRemoval(d removalPushDecision) bool {
+	if d.LocalMerge || d.PriorPushFail {
+		return false
+	}
+	return d.HasPushURL
+}
+
+func (m *Manager) pushUnpushedBranchBeforeRemoval(name, clonePath string) {
+	polecatGit := git.NewGit(clonePath)
+	branch, brErr := polecatGit.CurrentBranch()
+	if brErr != nil || branch == "" {
+		return
+	}
+	pushed, unpushedCount, checkErr := polecatGit.BranchPushedToRemote(branch, "origin")
+	if checkErr != nil || pushed || unpushedCount == 0 {
+		return
+	}
+	decision := m.removalPushDecision(name, polecatGit)
+	if !shouldPushBeforeRemoval(decision) {
+		style.PrintWarning("skipping origin push for %s before removal: local merge or origin is not writable",
+			branch)
+		style.PrintWarning("preserving local branch %s (%d unpushed commit(s)); worktree %s will still be removed",
+			branch, unpushedCount, clonePath)
+		return
+	}
+	if pushErr := polecatGit.Push("origin", branch, false); pushErr != nil {
+		style.PrintWarning("could not push branch %s before removal (%d unpushed commit(s)): %v",
+			branch, unpushedCount, pushErr)
+		if git.IsNonWritableRemoteError(pushErr) {
+			style.PrintWarning("origin is not writable; leaving local branch %s in the shared repo",
+				branch)
+			return
+		}
+		style.PrintWarning("WORK AT RISK: branch %s has %d unpushed commit(s) in worktree %s",
+			branch, unpushedCount, clonePath)
+	}
+}
+
+func (m *Manager) removalPushDecision(name string, polecatGit *git.Git) removalPushDecision {
+	d := removalPushDecision{}
+	if m.rig != nil && strings.TrimSpace(m.rig.PushURL) != "" {
+		d.HasPushURL = true
+	} else if m.rig != nil {
+		if cfg, err := rig.LoadRigConfig(m.rig.Path); err == nil && cfg != nil && strings.TrimSpace(cfg.PushURL) != "" {
+			d.HasPushURL = true
+		}
+	}
+	if !d.HasPushURL && polecatGit != nil && polecatGit.ForkBackedRemote("origin") {
+		d.HasPushURL = true
+	}
+	// A missing push URL on a hosted clone is treated as not-writable. Local
+	// file remotes stay writable so owned-repo shutdown still preserves work.
+	if !d.HasPushURL && polecatGit != nil {
+		if fetchURL, err := polecatGit.RemoteURL("origin"); err == nil && isLocalGitRemote(fetchURL) {
+			d.HasPushURL = true
+		}
+	}
+	agentID := m.agentBeadID(name)
+	_, fields, err := m.agentBeads().GetAgentBead(agentID)
+	if err == nil && fields != nil {
+		d.PriorPushFail = fields.PushFailed
+		sourceID := strings.TrimSpace(fields.HookBead)
+		if sourceID == "" {
+			sourceID = strings.TrimSpace(fields.LastSourceIssue)
+		}
+		if sourceID != "" {
+			if issue, showErr := m.beads.Show(sourceID); showErr == nil {
+				d.LocalMerge = beads.HasLocalMergeStrategy(beads.ParseAttachmentFields(issue)) ||
+					beads.IssueTextImpliesLocalMerge(issue.Title+"\n"+issue.Description)
+			}
+		}
+	}
+	return d
+}
+
+func isLocalGitRemote(raw string) bool {
+	s := strings.TrimSpace(raw)
+	if s == "" {
+		return false
+	}
+	if strings.HasPrefix(s, "file://") || strings.HasPrefix(s, "/") || strings.HasPrefix(s, "./") || strings.HasPrefix(s, "../") {
+		return true
+	}
+	return !strings.Contains(s, "://") && !strings.Contains(s, "@")
 }
 
 // ActiveMRRemovalBlocker returns the pending active-MR reason that should block

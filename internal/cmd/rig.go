@@ -77,6 +77,8 @@ Use --adopt to register an existing directory instead of creating new:
 
 For a repo you don't own, use fork mode (fetch upstream, push to fork).
 See docs/guides/fork-rig-setup.md for setup, verification, and recovery.
+Without --push-url, default merge will push to origin. Use --merge=local
+to keep work on a local feature branch.
 
 Example:
   gt rig add gastown https://github.com/jonbaldie/gastown
@@ -531,6 +533,7 @@ func runRigAdd(cmd *cobra.Command, args []string) error {
 	if rigAddLocalRepo != "" {
 		fmt.Printf("  Local repo: %s\n", rigAddLocalRepo)
 	}
+	warnThirdPartyRigAdd(gitURL, rigAddPushURL)
 
 	// Validate push URL if provided
 	rigAddPushURL = strings.TrimSpace(rigAddPushURL)
@@ -2502,6 +2505,37 @@ func commitTownConfigChanges(townRoot, rigName string) {
 			fmt.Fprintf(os.Stderr, "  Warning: could not commit town config files: %v\n", err)
 		}
 	}
+}
+
+// warnThirdPartyRigAdd tells the user that a public third-party clone will
+// push to origin unless they pass --push-url or use --merge=local.
+func warnThirdPartyRigAdd(gitURL, pushURL string) {
+	msg := thirdPartyRigAddWarning(gitURL, pushURL)
+	if msg == "" {
+		return
+	}
+	style.PrintWarning("%s", msg)
+}
+
+func thirdPartyRigAddWarning(gitURL, pushURL string) string {
+	if strings.TrimSpace(pushURL) != "" {
+		return ""
+	}
+	if !looksLikeHostedGitRemote(gitURL) {
+		return ""
+	}
+	return "default merge will push to origin. For a repo you do not own, pass --push-url <your-fork> or use --merge=local. See docs/guides/fork-rig-setup.md"
+}
+
+func looksLikeHostedGitRemote(raw string) bool {
+	s := strings.ToLower(strings.TrimSpace(raw))
+	if s == "" {
+		return false
+	}
+	return strings.Contains(s, "github.com/") ||
+		strings.Contains(s, "gitlab.com/") ||
+		strings.Contains(s, "bitbucket.org/") ||
+		strings.Contains(s, "codeberg.org/")
 }
 
 // isGitRemoteURL returns true if s looks like a remote git URL rather than a

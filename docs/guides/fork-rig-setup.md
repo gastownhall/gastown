@@ -18,6 +18,11 @@ Use fork mode whenever:
 If you own the canonical repo and push directly to it, you do **not** need
 these flags — the plain `gt rig add <name> <git-url>` is correct.
 
+`gt rig add` of a public third-party URL without `--push-url` warns that the
+default merge path will push to origin. Pass `--push-url` for a fork, or keep
+work local with `--merge=local`. `gt done` and `gt shutdown --nuclear` skip
+origin pushes when merge strategy is local or origin already returned 403.
+
 ## Setup
 
 ```bash

@@ -1060,6 +1060,29 @@ func sameGitRemoteURL(a, b string) bool {
 	return normalizeGitRemoteURL(a) == normalizeGitRemoteURL(b)
 }
 
+// IsNonWritableRemoteError reports whether a git push failed because the
+// remote refused write access. This covers HTTP 403, archived repos, and
+// "permission denied" auth failures. Transient network errors stay false.
+func IsNonWritableRemoteError(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := strings.ToLower(err.Error())
+	switch {
+	case strings.Contains(msg, "403"),
+		strings.Contains(msg, "permission to ") && strings.Contains(msg, " denied"),
+		strings.Contains(msg, "permission denied"),
+		strings.Contains(msg, "repository was archived"),
+		strings.Contains(msg, "read-only"),
+		strings.Contains(msg, "read only"),
+		strings.Contains(msg, "writing to ") && strings.Contains(msg, "not allowed"),
+		strings.Contains(msg, "remote rejected") && strings.Contains(msg, "hook declined"):
+		return true
+	default:
+		return false
+	}
+}
+
 func normalizeGitRemoteURL(raw string) string {
 	s := strings.TrimSpace(raw)
 	s = strings.TrimSuffix(s, "/")

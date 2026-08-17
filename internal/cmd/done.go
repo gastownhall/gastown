@@ -446,6 +446,13 @@ func doneSkipPushForLocalStrategy(convoyInfo *ConvoyInfo, sourceIssue *beads.Iss
 	return beads.IssueTextImpliesLocalMerge(sourceIssue.Title + "\n" + sourceIssue.Description)
 }
 
+// doneTreatPushAsLocalFallback reports whether a failed origin push is a
+// read-only / third-party remote rather than an agent crash. Those failures
+// must stay local and must not set PushFailed (HIGH mayor escalation).
+func doneTreatPushAsLocalFallback(err error) bool {
+	return git.IsNonWritableRemoteError(err)
+}
+
 func doneDirectMergeSkipReason(bd *beads.Beads, issueID string, issue *beads.Issue, targetBranch string) string {
 	if strings.TrimSpace(issueID) == "" {
 		return "source issue is required for direct merge"
@@ -1436,8 +1443,13 @@ func runDone(cmd *cobra.Command, args []string) (retErr error) {
 
 		if pushErr != nil {
 			// All push attempts failed
-			pushFailed = true
 			errMsg := fmt.Sprintf("push failed for branch '%s': %v", branch, pushErr)
+			if doneTreatPushAsLocalFallback(pushErr) {
+				style.PrintWarning("%s\nOrigin is not writable. Keeping work on the local branch; this is not an agent failure.", errMsg)
+				fmt.Printf("%s Local fallback: skipping merge queue. Use --push-url or --merge=local for third-party remotes.\n", style.Bold.Render("→"))
+				goto notifyWitness
+			}
+			pushFailed = true
 			doneErrors = append(doneErrors, errMsg)
 			style.PrintWarning("%s\nCommits exist locally but failed to push. Witness will be notified.", errMsg)
 			goto notifyWitness

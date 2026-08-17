@@ -328,6 +328,26 @@ func TestSourceCloseRejectsNonConcreteIssue(t *testing.T) {
 	}
 }
 
+func TestDoneTreatPushAsLocalFallback(t *testing.T) {
+	tests := []struct {
+		name string
+		err  error
+		want bool
+	}{
+		{name: "nil", want: false},
+		{name: "http 403", err: errors.New("The requested URL returned error: 403"), want: true},
+		{name: "archived", err: errors.New("repository was archived so it is read-only"), want: true},
+		{name: "network", err: errors.New("Could not resolve host: github.com"), want: false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := doneTreatPushAsLocalFallback(tt.err); got != tt.want {
+				t.Fatalf("doneTreatPushAsLocalFallback(%v) = %v, want %v", tt.err, got, tt.want)
+			}
+		})
+	}
+}
+
 func TestSourceCloseRejectsLocalMergeStrategy(t *testing.T) {
 	issue := &beads.Issue{
 		ID:          "gt-work",
