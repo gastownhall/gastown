@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **`gt prime` standing skill lines** now say to use `/to-spec` if you need
+  to make a bead epic, and `/to-tickets` if you need to make bead children
+  or individual beads. The old unconditional epic/children lines and the
+  parent-spec rule of thumb are gone.
+
 ### Added
 
 - **`gt from` creates a Town from a parent folder of local Git repositories.**

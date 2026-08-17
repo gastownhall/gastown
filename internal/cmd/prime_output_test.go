@@ -214,9 +214,8 @@ func TestOutputRoleContext_IncludesSkillDirectives(t *testing.T) {
 	for _, want := range []string{
 		"Working on production code: use /implement's SKILL.md rigorously.",
 		"Looking at a bug: use /diagnosing-bugs's SKILL.md rigorously.",
-		"Bead epics: use /to-spec's SKILL.md rigorously.",
-		"Bead children: use /to-tickets's SKILL.md rigorously.",
-		"Rule of thumb: synthesize one parent spec; children are one-window vertical slices that declare blockers.",
+		"If you need to make a bead epic: use /to-spec's SKILL.md rigorously.",
+		"If you need to make bead children or individual beads: use /to-tickets's SKILL.md rigorously.",
 		"Conflict-resolution beads: use /resolving-merge-conflicts's SKILL.md rigorously.",
 	} {
 		if !strings.Contains(output, want) {
@@ -225,7 +224,7 @@ func TestOutputRoleContext_IncludesSkillDirectives(t *testing.T) {
 	}
 }
 
-func TestOutputSkillDirectives_SixBluntLines(t *testing.T) {
+func TestOutputSkillDirectives_FiveBluntLines(t *testing.T) {
 	t.Parallel()
 
 	var buf bytes.Buffer
@@ -235,9 +234,8 @@ func TestOutputSkillDirectives_SixBluntLines(t *testing.T) {
 	want := []string{
 		"Working on production code: use /implement's SKILL.md rigorously.",
 		"Looking at a bug: use /diagnosing-bugs's SKILL.md rigorously.",
-		"Bead epics: use /to-spec's SKILL.md rigorously.",
-		"Bead children: use /to-tickets's SKILL.md rigorously.",
-		"Rule of thumb: synthesize one parent spec; children are one-window vertical slices that declare blockers.",
+		"If you need to make a bead epic: use /to-spec's SKILL.md rigorously.",
+		"If you need to make bead children or individual beads: use /to-tickets's SKILL.md rigorously.",
 		"Conflict-resolution beads: use /resolving-merge-conflicts's SKILL.md rigorously.",
 	}
 	for _, line := range want {
@@ -260,14 +258,14 @@ func TestOutputSkillDirectives_SixBluntLines(t *testing.T) {
 	if strings.Contains(got, "never `--abort`") || strings.Contains(got, "Do not invent new behaviour") {
 		t.Fatal("must not repeat /resolving-merge-conflicts SKILL.md contents")
 	}
-	beadsLines := primeToSpecDirective + primeToTicketsDirective + primeBeadsRuleOfThumb + primeConflictResolutionDirective
+	beadsLines := primeToSpecDirective + primeToTicketsDirective + primeConflictResolutionDirective
 	if strings.Contains(strings.ToLower(beadsLines), "sling") {
 		t.Fatal("bead directives must not use sling; that is gt sling")
 	}
 
 	lines := nonEmptyLines(got)
-	if len(lines) != 6 {
-		t.Fatalf("want exactly 6 lines, got %d: %q", len(lines), lines)
+	if len(lines) != 5 {
+		t.Fatalf("want exactly 5 lines, got %d: %q", len(lines), lines)
 	}
 }
 

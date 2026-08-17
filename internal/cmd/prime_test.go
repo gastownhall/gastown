@@ -1113,9 +1113,8 @@ func TestCompactResumeReminder_IncludesSkillDirectives(t *testing.T) {
 	for _, want := range []string{
 		"Working on production code: use /implement's SKILL.md rigorously.",
 		"Looking at a bug: use /diagnosing-bugs's SKILL.md rigorously.",
-		"Bead epics: use /to-spec's SKILL.md rigorously.",
-		"Bead children: use /to-tickets's SKILL.md rigorously.",
-		"Rule of thumb: synthesize one parent spec; children are one-window vertical slices that declare blockers.",
+		"If you need to make a bead epic: use /to-spec's SKILL.md rigorously.",
+		"If you need to make bead children or individual beads: use /to-tickets's SKILL.md rigorously.",
 		"Conflict-resolution beads: use /resolving-merge-conflicts's SKILL.md rigorously.",
 	} {
 		if !strings.Contains(output, want) {
@@ -1141,9 +1140,8 @@ func TestPrimeDryRun_PrintsStandingSkillDirectives(t *testing.T) {
 	for _, want := range []string{
 		"Working on production code: use /implement's SKILL.md rigorously.",
 		"Looking at a bug: use /diagnosing-bugs's SKILL.md rigorously.",
-		"Bead epics: use /to-spec's SKILL.md rigorously.",
-		"Bead children: use /to-tickets's SKILL.md rigorously.",
-		"Rule of thumb: synthesize one parent spec; children are one-window vertical slices that declare blockers.",
+		"If you need to make a bead epic: use /to-spec's SKILL.md rigorously.",
+		"If you need to make bead children or individual beads: use /to-tickets's SKILL.md rigorously.",
 		"Conflict-resolution beads: use /resolving-merge-conflicts's SKILL.md rigorously.",
 	} {
 		if !strings.Contains(got, want) {
