@@ -3899,7 +3899,7 @@ func (t *Tmux) SetTownCycleBindings(session string) error {
 //  2. Unguarded form (set by EnsureBindingsOnSocket): direct run-shell
 //     invoking "gt agents menu" or "gt feed --window".
 func (t *Tmux) isGTBinding(table, key string) bool {
-	output, err := t.run("list-keys", "-T", table, key)
+	output, err := t.keyBindingOutput(table, key)
 	if err != nil || output == "" {
 		return false
 	}
@@ -3917,7 +3917,7 @@ func (t *Tmux) isGTBinding(table, key string) bool {
 // --client for multi-client support. Older GT bindings without --client cause
 // switch-client to target the wrong client when multiple clients are attached.
 func (t *Tmux) isGTBindingWithClient(table, key string) bool {
-	output, err := t.run("list-keys", "-T", table, key)
+	output, err := t.keyBindingOutput(table, key)
 	if err != nil || output == "" {
 		return false
 	}
@@ -3929,7 +3929,7 @@ func (t *Tmux) isGTBindingWithClient(table, key string) bool {
 // current prefix pattern. Returns false if the binding is stale (e.g., after
 // gt rig add introduces a new prefix not yet in the grep pattern).
 func (t *Tmux) isGTBindingCurrent(table, key, currentPattern string) bool {
-	output, err := t.run("list-keys", "-T", table, key)
+	output, err := t.keyBindingOutput(table, key)
 	if err != nil || output == "" {
 		return false
 	}
@@ -3956,7 +3956,7 @@ func (t *Tmux) getKeyBinding(table, key string) string {
 	//   bind-key [-r] -T <table> <key> <command...>
 	// If tmux changes this format, parsing fails safely (returns ""),
 	// which causes the caller to use its default fallback.
-	output, err := t.run("list-keys", "-T", table, key)
+	output, err := t.keyBindingOutput(table, key)
 	if err != nil || output == "" {
 		return ""
 	}
@@ -4002,6 +4002,22 @@ func (t *Tmux) getKeyBinding(table, key string) string {
 	}
 
 	return cmd
+}
+
+func (t *Tmux) keyBindingOutput(table, key string) (string, error) {
+	output, err := t.run("list-keys", "-T", table)
+	if err != nil {
+		return "", err
+	}
+	for _, line := range strings.Split(output, "\n") {
+		fields := strings.Fields(line)
+		for index, field := range fields {
+			if field == "-T" && index+2 < len(fields) && fields[index+1] == table && fields[index+2] == key {
+				return line, nil
+			}
+		}
+	}
+	return "", nil
 }
 
 // safePrefixRe matches the character set guaranteed by beadsPrefixRegexp in
