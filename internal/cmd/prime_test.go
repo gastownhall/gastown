@@ -74,6 +74,21 @@ func TestRenderFormulaStepsFull_DeaconIncludesHeartbeatCommand(t *testing.T) {
 	}
 }
 
+func TestRenderFormulaStepsFull_ResolvesExtendsAndCompose(t *testing.T) {
+	out, err := renderFormulaStepsFull("mol-polecat-work-monorepo-tdd", t.TempDir(), "")
+	if err != nil {
+		t.Fatalf("renderFormulaStepsFull: %v", err)
+	}
+	for _, want := range []string{
+		"Load context and verify assignment", // inherited via extends from mol-polecat-work-monorepo
+		"Write failing tests",                // injected via compose.expand from tdd-cycle
+	} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("rendered mol-polecat-work-monorepo-tdd missing %q (extends/compose not resolved):\n%s", want, out)
+		}
+	}
+}
+
 func TestGetAgentBeadID_UsesRigPrefix(t *testing.T) {
 	townRoot := t.TempDir()
 	writeTestRoutes(t, townRoot, []beads.Route{

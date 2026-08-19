@@ -179,8 +179,33 @@ func resolveFormulaForRendering(formulaName, townRoot, rigName string, vars []st
 	if err != nil {
 		return nil, nil, fmt.Errorf("could not parse formula %s: %w", formulaName, err)
 	}
+
+	// Resolve extends/compose so child formulas (e.g. wc26-frontend extends
+	// mol-polecat-work) inherit their parent steps. Without this, formulas
+	// that only use extends/compose render zero steps.
+	f, err = formula.Resolve(f, formulaSearchPaths(townRoot, rigName))
+	if err != nil {
+		return nil, nil, fmt.Errorf("could not resolve formula %s: %w", formulaName, err)
+	}
+
 	applyFormulaOverlays(f, formulaName, townRoot, rigName)
 	return f, buildFormulaVarMap(f, vars), nil
+}
+
+// formulaSearchPaths returns on-disk directories Resolve uses to locate
+// parent formulas referenced via extends/compose. Mirrors the precedence
+// of ResolveFormulaContent: rig-level before town-level. Embedded formulas
+// are tried first inside Resolve, so these are fallbacks for rig-specific
+// formulas that are NOT embedded.
+func formulaSearchPaths(townRoot, rigName string) []string {
+	var paths []string
+	if townRoot != "" && rigName != "" {
+		paths = append(paths, filepath.Join(townRoot, rigName, ".beads", "formulas"))
+	}
+	if townRoot != "" {
+		paths = append(paths, filepath.Join(townRoot, ".beads", "formulas"))
+	}
+	return paths
 }
 
 func firstFormulaVars(extraVars [][]string) []string {

@@ -2226,6 +2226,9 @@ exit /b 0
 	if !strings.Contains(attachment, "version=1.2.3") || !strings.Contains(attachment, "channel=stable") {
 		t.Fatalf("formula vars missing from persisted description:\n%s", attachment)
 	}
+	if !strings.Contains(attachment, "issue=gt-wisp-xyz") {
+		t.Fatalf("issue= var (wisp root ID) missing from persisted standalone formula description:\n%s", attachment)
+	}
 	if !strings.Contains(attachment, "mode: ralph") {
 		t.Fatalf("ralph mode missing from persisted standalone formula description:\n%s", attachment)
 	}
