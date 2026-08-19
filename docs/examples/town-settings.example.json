@@ -86,7 +86,7 @@
     },
 
     "worker_status": {
-        "stale_threshold": "5m",
+        "stale_threshold": "15m",
         "stuck_threshold": "30m",
         "heartbeat_fresh_threshold": "5m",
         "mayor_active_threshold": "5m"

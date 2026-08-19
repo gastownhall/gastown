@@ -222,7 +222,7 @@ func NewLiveConvoyFetcher() (*LiveConvoyFetcher, error) {
 		cmdTimeout:              config.ParseDurationOrDefault(webCfg.CmdTimeout, 15*time.Second),
 		ghCmdTimeout:            config.ParseDurationOrDefault(webCfg.GhCmdTimeout, 10*time.Second),
 		tmuxCmdTimeout:          config.ParseDurationOrDefault(webCfg.TmuxCmdTimeout, 2*time.Second),
-		staleThreshold:          config.ParseDurationOrDefault(workerCfg.StaleThreshold, 5*time.Minute),
+		staleThreshold:          config.ParseDurationOrDefault(workerCfg.StaleThreshold, 15*time.Minute),
 		stuckThreshold:          config.ParseDurationOrDefault(workerCfg.StuckThreshold, constants.GUPPViolationTimeout),
 		heartbeatFreshThreshold: config.ParseDurationOrDefault(workerCfg.HeartbeatFreshThreshold, 5*time.Minute),
 		mayorActiveThreshold:    config.ParseDurationOrDefault(workerCfg.MayorActiveThreshold, 5*time.Minute),
@@ -946,23 +946,34 @@ func (f *LiveConvoyFetcher) FetchWorkers() ([]WorkerRow, error) {
 type assignedIssue struct {
 	ID    string
 	Title string
+	// Status is the issue's bd status ("in_progress" or "hooked"). It is only
+	// used internally by getAssignedIssuesMap to resolve duplicate-assignee
+	// precedence; callers of the map should not depend on it.
+	Status string
 }
 
 // getAssignedIssuesMap returns a map of assignee -> assigned issue.
-// Queries beads for all in_progress issues with assignees.
+// Queries beads for all in_progress and hooked issues with assignees.
+// hooked is a freshly-assigned issue an agent hasn't started acting on yet,
+// so both statuses count as "assigned" for dashboard display purposes. If an
+// assignee has issues in both statuses, in_progress takes precedence.
 func (f *LiveConvoyFetcher) getAssignedIssuesMap() map[string]assignedIssue {
 	result := make(map[string]assignedIssue)
 
-	// Query all in_progress issues (these are the ones being worked on)
-	stdout, err := f.runBdCmd(f.townRoot, "list", "--status=in_progress", "--json")
+	// Query all in_progress and hooked issues (these are the ones assigned to
+	// an agent, whether or not it has started acting on them). --limit=0
+	// avoids bd's default result-count truncation now that the filter spans
+	// two statuses.
+	stdout, err := f.runBdCmd(f.townRoot, "list", "--status=in_progress,hooked", "--json", "--limit=0")
 	if err != nil {
-		log.Printf("warning: bd list in_progress failed: %v", err)
+		log.Printf("warning: bd list in_progress,hooked failed: %v", err)
 		return result
 	}
 
 	var issues []struct {
 		ID       string `json:"id"`
 		Title    string `json:"title"`
+		Status   string `json:"status"`
 		Assignee string `json:"assignee"`
 	}
 	if err := json.Unmarshal(stdout.Bytes(), &issues); err != nil {
@@ -971,11 +982,21 @@ func (f *LiveConvoyFetcher) getAssignedIssuesMap() map[string]assignedIssue {
 	}
 
 	for _, issue := range issues {
-		if issue.Assignee != "" {
-			result[issue.Assignee] = assignedIssue{
-				ID:    issue.ID,
-				Title: issue.Title,
+		if issue.Assignee == "" {
+			continue
+		}
+		// Deterministic duplicate-assignee precedence regardless of bd's
+		// result ordering: an already-recorded in_progress issue is never
+		// replaced, and only an in_progress issue replaces a hooked one.
+		if existing, ok := result[issue.Assignee]; ok {
+			if existing.Status == "in_progress" || issue.Status != "in_progress" {
+				continue
 			}
+		}
+		result[issue.Assignee] = assignedIssue{
+			ID:     issue.ID,
+			Title:  issue.Title,
+			Status: issue.Status,
 		}
 	}
 

@@ -1003,3 +1003,74 @@ func TestFetchHealth_DeaconHeartbeatFieldName(t *testing.T) {
 		t.Error("HeartbeatFresh = false for a just-written heartbeat")
 	}
 }
+
+// TestGetAssignedIssuesMapIncludesHookedWork covers gastownhall/gastown#3828:
+// getAssignedIssuesMap must include hooked (freshly-assigned, not-yet-started)
+// issues alongside in_progress ones, query with --limit=0 to avoid bd's
+// default result-count truncation, skip blank assignees, and resolve
+// duplicate assignees deterministically (in_progress always wins over
+// hooked, regardless of array order; among multiple hooked issues for the
+// same assignee, the first one seen wins).
+func TestGetAssignedIssuesMapIncludesHookedWork(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("shell-based command test")
+	}
+	t.Parallel()
+
+	binDir := t.TempDir()
+	bdPath := filepath.Join(binDir, "bd")
+	argsPath := filepath.Join(binDir, "args.txt")
+	script := fmt.Sprintf(`#!/bin/sh
+echo "$*" > %q
+cat <<'JSON'
+[
+  {"id": "gt-alice", "title": "alice in_progress", "status": "in_progress", "assignee": "rig/polecats/alice"},
+  {"id": "gt-bob", "title": "bob hooked", "status": "hooked", "assignee": "rig/polecats/bob"},
+  {"id": "gt-carol-hooked", "title": "carol hooked", "status": "hooked", "assignee": "rig/polecats/carol"},
+  {"id": "gt-carol-inprogress", "title": "carol in_progress", "status": "in_progress", "assignee": "rig/polecats/carol"},
+  {"id": "gt-dave-first", "title": "dave first hooked", "status": "hooked", "assignee": "rig/polecats/dave"},
+  {"id": "gt-dave-second", "title": "dave second hooked", "status": "hooked", "assignee": "rig/polecats/dave"},
+  {"id": "gt-blank", "title": "no assignee", "status": "hooked", "assignee": ""}
+]
+JSON
+`, argsPath)
+	if err := os.WriteFile(bdPath, []byte(script), 0o755); err != nil {
+		t.Fatalf("write fake bd: %v", err)
+	}
+
+	f := &LiveConvoyFetcher{cmdTimeout: 5 * time.Second, bdBin: bdPath, townRoot: t.TempDir()}
+	got := f.getAssignedIssuesMap()
+
+	// carol has both statuses: in_progress must win regardless of the
+	// hooked entry appearing earlier in the JSON array.
+	if issue, ok := got["rig/polecats/carol"]; !ok || issue.ID != "gt-carol-inprogress" {
+		t.Errorf("rig/polecats/carol = %+v, want in_progress issue gt-carol-inprogress", issue)
+	}
+	// bob has only a hooked issue: it must still appear (this is the #3828 fix).
+	if issue, ok := got["rig/polecats/bob"]; !ok || issue.ID != "gt-bob" {
+		t.Errorf("rig/polecats/bob = %+v, want hooked issue gt-bob", issue)
+	}
+	// alice's plain in_progress case must still work.
+	if issue, ok := got["rig/polecats/alice"]; !ok || issue.ID != "gt-alice" {
+		t.Errorf("rig/polecats/alice = %+v, want gt-alice", issue)
+	}
+	// dave has two hooked issues: the first one seen must win, deterministically.
+	if issue, ok := got["rig/polecats/dave"]; !ok || issue.ID != "gt-dave-first" {
+		t.Errorf("rig/polecats/dave = %+v, want first-seen hooked issue gt-dave-first", issue)
+	}
+	// Blank assignee must be skipped entirely.
+	if len(got) != 4 {
+		t.Errorf("len(got) = %d, want 4 (blank assignee must be excluded): %+v", len(got), got)
+	}
+
+	argsBytes, err := os.ReadFile(argsPath)
+	if err != nil {
+		t.Fatalf("read captured args: %v", err)
+	}
+	args := string(argsBytes)
+	for _, want := range []string{"--status=in_progress,hooked", "--limit=0"} {
+		if !strings.Contains(args, want) {
+			t.Errorf("bd invoked with args %q, want it to contain %q", args, want)
+		}
+	}
+}

@@ -168,7 +168,7 @@ func DefaultWebTimeoutsConfig() *WebTimeoutsConfig {
 // WorkerStatusConfig configures activity-age thresholds for worker status classification.
 type WorkerStatusConfig struct {
 	// StaleThreshold is the activity age after which a worker is considered "stale".
-	// Default: "5m".
+	// Default: "15m".
 	StaleThreshold string `json:"stale_threshold,omitempty"`
 	// StuckThreshold is the activity age after which a worker is considered "stuck".
 	// Default: "30m".
@@ -184,7 +184,7 @@ type WorkerStatusConfig struct {
 // DefaultWorkerStatusConfig returns a WorkerStatusConfig with sensible defaults.
 func DefaultWorkerStatusConfig() *WorkerStatusConfig {
 	return &WorkerStatusConfig{
-		StaleThreshold:          "5m",
+		StaleThreshold:          "15m",
 		StuckThreshold:          "30m",
 		HeartbeatFreshThreshold: "5m",
 		MayorActiveThreshold:    "5m",
