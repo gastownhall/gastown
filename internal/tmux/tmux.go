@@ -2096,6 +2096,8 @@ func lastStartupBlockerLine(content string) int {
 		"trust this folder",
 		"Quick safety check",
 		"Do you trust the contents of this directory?",
+		"Yes, continue",
+		"No, quit",
 		"Not inside a trusted directory",
 		"--skip-git-repo-check",
 		"Bypass Permissions mode",

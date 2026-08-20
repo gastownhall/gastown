@@ -2158,6 +2158,12 @@ func (m *Manager) cleanupOrphanPolecatState() {
 
 		name := entry.Name()
 		polecatDir := filepath.Join(polecatsDir, name)
+		// A legacy-layout polecat stores its Git metadata directly in polecatDir.
+		// Even corrupt metadata is evidence of a prior worktree, not proof of a
+		// disposable partial spawn. Preserve it for explicit recovery.
+		if _, err := os.Stat(filepath.Join(polecatDir, ".git")); err == nil {
+			continue
+		}
 
 		// Only remove truly partial spawn artifacts here. Named polecats with any
 		// agent/work/session evidence must go through the locked reclaim path.
