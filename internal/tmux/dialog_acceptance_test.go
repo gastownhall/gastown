@@ -242,8 +242,37 @@ Skip until next version`,
 			wantName:    "codex update prompt",
 		},
 		{
-			name:        "codex trust modal",
-			content:     "> You are in /tmp/demo\nDo you trust the contents of this directory?",
+			name:        "codex git repo check error",
+			content:     "Not inside a trusted directory and --skip-git-repo-check was not specified.",
+			wantBlocked: true,
+			wantName:    "codex git repo check",
+		},
+		{
+			// Real Codex TUI from openai/codex#14547. The selector line uses
+			// the same › glyph as Codex's ready prompt. A false-negative here
+			// lets gt session start treat a live trust modal as "ready" and
+			// nudge it, which quits Codex ("No, quit") — GH#4670.
+			name: "codex trust modal with selector",
+			content: `> You are in /tmp/old-polecat
+
+Do you trust the contents of this directory? Working with untrusted
+contents comes with higher risk of prompt injection.
+
+› 1. Yes, continue
+  2. No, quit`,
+			wantBlocked: true,
+			wantName:    "workspace trust prompt",
+		},
+		{
+			// CapturePane sometimes lands the cursor on its own › line after
+			// the question. promptAppearsAfterStartupBlocker currently treats
+			// that as "stale dialog, agent is ready".
+			name: "codex trust modal with lone selector after question",
+			content: `> You are in /tmp/old-polecat
+Do you trust the contents of this directory?
+›
+1. Yes, continue
+2. No, quit`,
 			wantBlocked: true,
 			wantName:    "workspace trust prompt",
 		},

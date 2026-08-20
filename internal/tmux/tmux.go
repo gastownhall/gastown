@@ -486,8 +486,10 @@ func (t *Tmux) checkSessionAfterCreate(name, command string) error {
 		return err
 	}
 
-	// Pane is alive — restore default (no need to keep dead sessions around)
-	_, _ = t.run("set-option", "-t", name, "remain-on-exit", "off")
+	// Keep remain-on-exit on. Agents such as Codex can pass this 250ms window
+	// and then exit (git-repo-check, trust-dialog quit). Turning remain-on-exit
+	// off here destroys the pane before callers can capture the failure —
+	// GH#4670 "session died during startup (agent command may have failed)".
 	return nil
 }
 
@@ -2047,6 +2049,15 @@ func containsBlockingStartupDialog(content string) (string, bool) {
 	if promptAppearsAfterStartupBlocker(content) {
 		return "", false
 	}
+	// Live Codex trust TUIs include a › selector that looks like the ready
+	// prompt. It is blocking only when no later ready prompt proves the dialog
+	// belongs to stale scrollback (GH#4670).
+	if containsWorkspaceTrustDialog(content) && isLiveCodexTrustDialog(content) {
+		return "workspace trust prompt", true
+	}
+	if containsCodexGitRepoCheckError(content) {
+		return "codex git repo check", true
+	}
 	if containsCodexUpdateDialog(content) {
 		return "codex update prompt", true
 	}
@@ -2057,6 +2068,15 @@ func containsBlockingStartupDialog(content string) (string, bool) {
 		return "bypass permissions prompt", true
 	}
 	return "", false
+}
+
+func isLiveCodexTrustDialog(content string) bool {
+	return strings.Contains(content, "Yes, continue") || strings.Contains(content, "No, quit")
+}
+
+func containsCodexGitRepoCheckError(content string) bool {
+	return strings.Contains(content, "Not inside a trusted directory") &&
+		strings.Contains(content, "--skip-git-repo-check")
 }
 
 func promptAppearsAfterStartupBlocker(content string) bool {
@@ -2076,6 +2096,8 @@ func lastStartupBlockerLine(content string) int {
 		"trust this folder",
 		"Quick safety check",
 		"Do you trust the contents of this directory?",
+		"Not inside a trusted directory",
+		"--skip-git-repo-check",
 		"Bypass Permissions mode",
 	}
 	last := -1
