@@ -34,7 +34,7 @@ jobs:
       - name: Install cross-compilation toolchains
         run: |
           sudo apt-get update
-          sudo apt-get install -y gcc-mingw-w64-x86-64 gcc-aarch64-linux-gnu
+          sudo apt-get install -y gcc-aarch64-linux-gnu
 
       - name: Reject replace directives in go.mod
         run: |
@@ -59,9 +59,62 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-  goreleaser-macos:
+  goreleaser-windows:
     if: ${{ startsWith(github.ref, 'refs/tags/v') }}
     needs: goreleaser
+    runs-on: windows-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        with:
+          fetch-depth: 0
+
+      - name: Set up Go
+        uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6
+        with:
+          go-version: '1.26'
+          cache: false
+
+      - name: Install ICU4C
+        uses: msys2/setup-msys2@cafece8e6baf9247cf9b1bf95097b0b983cc558d # v2.31.0
+        with:
+          path-type: inherit
+          msystem: UCRT64
+          pacboy: icu:p toolchain:p pkg-config:p
+
+      - name: Build Windows binary
+        shell: msys2 {0}
+        run: |
+          set -euo pipefail
+          version="${GITHUB_REF_NAME#v}"
+          CGO_ENABLED=1 GOOS=windows GOARCH=amd64 go build -buildmode=exe -ldflags "-s -w -X github.com/steveyegge/gastown/internal/cmd.Version=${version} -X github.com/steveyegge/gastown/internal/cmd.Build=$(git rev-parse --short HEAD) -X github.com/steveyegge/gastown/internal/cmd.Commit=$(git rev-parse HEAD) -X github.com/steveyegge/gastown/internal/cmd.Branch=$(git branch --show-current)" -o gt.exe ./cmd/gt
+
+      - name: Package and upload Windows archive
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          $ErrorActionPreference = "Stop"
+          $version = $env:GITHUB_REF_NAME.Substring(1)
+          $staging = "gastown_${version}_windows_amd64"
+          New-Item -ItemType Directory -Path $staging | Out-Null
+          Copy-Item gt.exe "$staging/gt.exe"
+          Copy-Item LICENSE, README.md $staging
+          $archive = "${staging}.zip"
+          Compress-Archive -Path "$staging/*" -DestinationPath $archive
+          gh release upload $env:GITHUB_REF_NAME $archive --clobber
+          New-Item -ItemType Directory -Path checksums | Out-Null
+          $checksumName = "gastown_${version}_checksums.txt"
+          gh release download $env:GITHUB_REF_NAME --pattern $checksumName --dir checksums
+          $hash = (Get-FileHash -Algorithm SHA256 $archive).Hash.ToLowerInvariant()
+          Add-Content -Path "checksums/$checksumName" -Value "$hash  $archive"
+          gh release upload $env:GITHUB_REF_NAME "checksums/$checksumName" --clobber
+
+  goreleaser-macos:
+    if: ${{ startsWith(github.ref, 'refs/tags/v') }}
+    needs: goreleaser-windows
     runs-on: macos-latest
     permissions:
       contents: write
@@ -125,7 +178,7 @@ jobs:
 
   attest-release:
     if: ${{ startsWith(github.ref, 'refs/tags/v') }}
-    needs: [goreleaser, goreleaser-macos]
+    needs: goreleaser-macos
     runs-on: ubuntu-latest
     permissions:
       attestations: write
