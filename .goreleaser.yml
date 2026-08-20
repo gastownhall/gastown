@@ -117,9 +117,6 @@ changelog:
       order: 999
 
 release:
-  github:
-    owner: gastownhall
-    name: gastown
   draft: false
   prerelease: auto
   replace_existing_artifacts: true
