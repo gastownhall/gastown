@@ -2046,17 +2046,17 @@ func containsWorkspaceTrustDialog(content string) bool {
 }
 
 func containsBlockingStartupDialog(content string) (string, bool) {
+	if promptAppearsAfterStartupBlocker(content) {
+		return "", false
+	}
 	// Live Codex trust TUIs include a › selector that looks like the ready
-	// prompt. Treat those as blocking before promptAppearsAfterStartupBlocker
-	// can classify them as stale scrollback (GH#4670).
+	// prompt. It is blocking only when no later ready prompt proves the dialog
+	// belongs to stale scrollback (GH#4670).
 	if containsWorkspaceTrustDialog(content) && isLiveCodexTrustDialog(content) {
 		return "workspace trust prompt", true
 	}
 	if containsCodexGitRepoCheckError(content) {
 		return "codex git repo check", true
-	}
-	if promptAppearsAfterStartupBlocker(content) {
-		return "", false
 	}
 	if containsCodexUpdateDialog(content) {
 		return "codex update prompt", true
@@ -2096,6 +2096,8 @@ func lastStartupBlockerLine(content string) int {
 		"trust this folder",
 		"Quick safety check",
 		"Do you trust the contents of this directory?",
+		"Not inside a trusted directory",
+		"--skip-git-repo-check",
 		"Bypass Permissions mode",
 	}
 	last := -1

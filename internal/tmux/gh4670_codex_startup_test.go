@@ -47,6 +47,20 @@ func TestGH4670_CheckStartupBlocked_CodexTrustTUI(t *testing.T) {
 	}
 }
 
+func TestGH4670_CheckStartupBlocked_StaleTrustDialogBeforeReadyPrompt(t *testing.T) {
+	content := gh4670CodexTrustTUI + "\n\n› "
+	if name, blocked := containsBlockingStartupDialog(content); blocked {
+		t.Fatalf("stale trust dialog blocked healthy ready prompt: name=%q", name)
+	}
+}
+
+func TestGH4670_CheckStartupBlocked_StaleGitErrorBeforeReadyPrompt(t *testing.T) {
+	content := "Not inside a trusted directory; use --skip-git-repo-check\n\n› "
+	if name, blocked := containsBlockingStartupDialog(content); blocked {
+		t.Fatalf("stale git check blocked healthy ready prompt: name=%q", name)
+	}
+}
+
 func TestGH4670_DelayedAgentExitKeepsSessionForCapture(t *testing.T) {
 	// Codex git-repo-check / trust-quit often takes >250ms. The pane must
 	// remain after that delayed exit so callers can capture the failure

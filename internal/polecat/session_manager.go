@@ -493,7 +493,7 @@ func (m *SessionManager) Start(polecat string, opts SessionStartOptions) error {
 
 	// Accept startup dialogs (workspace trust + bypass permissions) if they appear
 	debugSession("AcceptStartupDialogs", m.tmux.AcceptStartupDialogs(sessionID))
-	if err := m.abortIfStartupFailed(sessionID, "after startup dialogs"); err != nil {
+	if err := m.abortIfStartupFailed(sessionID, "after startup dialogs", false); err != nil {
 		return err
 	}
 
@@ -501,7 +501,7 @@ func (m *SessionManager) Start(polecat string, opts SessionStartOptions) error {
 	// Uses prompt-based polling for agents with ReadyPromptPrefix (e.g., Claude "❯ "),
 	// falling back to ReadyDelayMs sleep for agents without prompt detection.
 	debugSession("WaitForRuntimeReady", m.tmux.WaitForRuntimeReady(sessionID, runtimeConfig, constants.ClaudeStartTimeout))
-	if err := m.abortIfStartupFailed(sessionID, "after runtime ready wait"); err != nil {
+	if err := m.abortIfStartupFailed(sessionID, "after runtime ready wait", false); err != nil {
 		return err
 	}
 
@@ -554,7 +554,7 @@ func (m *SessionManager) Start(polecat string, opts SessionStartOptions) error {
 
 	// Verify session survived startup - if the command crashed, the session may have died.
 	// Without this check, Start() would return success even if the pane died during initialization.
-	if err := m.abortIfStartupFailed(sessionID, "after startup nudges"); err != nil {
+	if err := m.abortIfStartupFailed(sessionID, "after startup nudges", true); err != nil {
 		return err
 	}
 
@@ -596,19 +596,21 @@ func (m *SessionManager) Start(polecat string, opts SessionStartOptions) error {
 // process is dead, or a blocking startup modal/error is still visible.
 // Pane output is included so Codex git-repo-check and trust-dialog failures
 // are not lost with the session (GH#4670).
-func (m *SessionManager) abortIfStartupFailed(sessionID, phase string) error {
+func (m *SessionManager) abortIfStartupFailed(sessionID, phase string, checkHealth bool) error {
 	running, err := m.tmux.HasSession(sessionID)
 	if err != nil {
 		return m.abortStartup(sessionID, "verifying session %s: %v", phase, err)
 	}
 	if !running {
-		return m.abortStartup(sessionID, "session %s died during startup (agent command may have failed)", sessionID)
+		return m.abortStartup(sessionID, "session %s died during startup %s (agent command may have failed)", sessionID, phase)
 	}
 	if err := m.tmux.CheckStartupBlocked(sessionID); err != nil {
-		return m.abortStartup(sessionID, "startup blocked: %v", err)
+		return m.abortStartup(sessionID, "startup blocked %s: %v", phase, err)
 	}
-	if status := m.tmux.CheckSessionHealth(sessionID, 0); status != tmux.SessionHealthy {
-		return m.abortStartup(sessionID, "session %s unhealthy during startup: %s", sessionID, status)
+	if checkHealth {
+		if status := m.tmux.CheckSessionHealth(sessionID, 0); status != tmux.SessionHealthy {
+			return m.abortStartup(sessionID, "session %s unhealthy during startup %s: %s", sessionID, phase, status)
+		}
 	}
 	return nil
 }

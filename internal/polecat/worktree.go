@@ -96,17 +96,12 @@ func VerifyWorktreeExists(clonePath string) error {
 // (GH#4670).
 func ResolveClonePath(rigPath, rigName, polecat string) string {
 	newPath := filepath.Join(rigPath, "polecats", polecat, rigName)
-	if hasGitMetadata(newPath) {
+	if VerifyWorktreeExists(newPath) == nil {
 		return newPath
 	}
 	oldPath := filepath.Join(rigPath, "polecats", polecat)
-	if hasGitMetadata(oldPath) {
+	if VerifyWorktreeExists(oldPath) == nil {
 		return oldPath
 	}
 	return newPath
-}
-
-func hasGitMetadata(dir string) bool {
-	_, err := os.Stat(filepath.Join(dir, ".git"))
-	return err == nil
 }
