@@ -3,11 +3,6 @@
 
 version: 2
 
-before:
-  hooks:
-    # Ensure dependencies are up to date
-    - go mod tidy
-
 builds:
   - id: gt-linux-amd64
     main: ./cmd/gt
