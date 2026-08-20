@@ -845,6 +845,72 @@ func TestIsPolecatActor(t *testing.T) {
 	}
 }
 
+// TestPrematureNoWorkClose verifies the antifalse-completion guard (hq-6ijuy):
+// a polecat closing a hooked CODE bead with zero commits must NOT auto-close
+// unless it explicitly confirms a no-op via --skip-verify or the task is a
+// genuine no-code (no_merge/review_only) task.
+func TestPrematureNoWorkClose(t *testing.T) {
+	tests := []struct {
+		name        string
+		isPolecat   bool
+		isNoMerge   bool
+		skipVerify  bool
+		wantGuardOn bool
+	}{
+		{"fresh polecat, code bead, no skip-verify → guard ON (don't auto-close)", true, false, false, true},
+		{"fresh polecat, code bead, skip-verify → guard OFF (explicit confirm)", true, false, true, false},
+		{"fresh polecat, no_merge task → guard OFF (genuine no-code)", true, true, false, false},
+		{"fresh polecat, review_only task → guard OFF", true, true, true, false},
+		{"non-polecat (crew), code bead → guard OFF", false, false, false, false},
+		{"non-polecat (mayor), no_merge → guard OFF", false, true, false, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := prematureNoWorkClose(tt.isPolecat, tt.isNoMerge, tt.skipVerify)
+			if got != tt.wantGuardOn {
+				t.Errorf("prematureNoWorkClose(%v,%v,%v) = %v, want %v",
+					tt.isPolecat, tt.isNoMerge, tt.skipVerify, got, tt.wantGuardOn)
+			}
+		})
+	}
+}
+
+// TestStackHasSpawnedPolecat verifies polecat detection from the same env vars
+// used by the gt done polecat-only guard.
+func TestStackHasSpawnedPolecat(t *testing.T) {
+	t.Setenv("GT_POLECAT", "")
+	t.Setenv("BD_ACTOR", "")
+
+	// GT_POLECAT set → polecat
+	t.Setenv("GT_POLECAT", "testrig/polecats/furiosa")
+	if !stackHasSpawnedPolecat() {
+		t.Error("expected polecat when GT_POLECAT set")
+	}
+	t.Setenv("GT_POLECAT", "")
+
+	// BD_ACTOR set with polecat identity → polecat
+	t.Setenv("BD_ACTOR", "testrig/polecats/nux")
+	if !stackHasSpawnedPolecat() {
+		t.Error("expected polecat when BD_ACTOR is a polecat identity")
+	}
+
+	// Crew / mayor → not a polecat
+	t.Setenv("BD_ACTOR", "gastown/crew/george")
+	if stackHasSpawnedPolecat() {
+		t.Error("did not expect polecat for crew identity")
+	}
+	t.Setenv("BD_ACTOR", "testrig/mayor")
+	if stackHasSpawnedPolecat() {
+		t.Error("did not expect polecat for mayor identity")
+	}
+
+	// Neither set → not a polecat
+	t.Setenv("BD_ACTOR", "")
+	if stackHasSpawnedPolecat() {
+		t.Error("did not expect polecat with no identity env vars")
+	}
+}
+
 // TestDoneIntentLabelFormat verifies the done-intent label format matches
 // the expected pattern: done-intent:<type>:<unix-ts>
 func TestDoneIntentLabelFormat(t *testing.T) {

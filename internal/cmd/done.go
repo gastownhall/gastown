@@ -77,8 +77,7 @@ const (
 	ExitDeferred  = "DEFERRED"
 )
 
-func doneContaminationBaseRef(defaultBranch, explicitTarget string) string {
-	targetBranch := defaultBranch
+func doneContaminationBaseRef(defaultBranch, explicitTarget string) string {	targetBranch := defaultBranch
 	if explicitTarget != "" {
 		targetBranch = strings.TrimSpace(explicitTarget)
 		if strings.HasPrefix(targetBranch, "origin/") || strings.HasPrefix(targetBranch, "upstream/") {
@@ -1070,6 +1069,26 @@ func runDone(cmd *cobra.Command, args []string) (retErr error) {
 					if fatal {
 						return fmt.Errorf("cannot complete review-only/no-MR work: %s", skipReason)
 					}
+					skipClose = true
+				}
+
+				// Antifalse-completion guard (hq-6ijuy): a polecat on a FRESH
+				// code bead with zero commits ahead is indistinguishable from a
+				// genuine no-op, and freshly-spawned polecats have repeatedly run
+				// `gt done` while the hook/assignment was still attaching (46s after
+				// boot, hook empty) — auto-closing the assigned bead with the
+				// "no code changes" reason even though the task was NOT done (it was
+				// never started). For a polecat closing a hooked CODE bead (not
+				// no_merge/review_only) with zero work, refuse to auto-close unless
+				// the polecat explicitly confirms the no-op via --skip-verify (the
+				// documented escape hatch for report-only / genuinely-no-code tasks).
+				// Otherwise leave the bead open and notify the witness/mayor to
+				// review, so a premature close never destroys an assignment.
+				if prematureNoWorkClose(stackHasSpawnedPolecat(), isNoMergeTask, doneSkipVerify) {
+					skipReason := "gt done with zero commits on an assigned code bead; premature-close guard (hq-6ijuy): does not auto-close. If this is a genuine no-work completion, re-run with --skip-verify."
+					style.PrintWarning("%s", skipReason)
+					fmt.Printf("  The bead remains open for witness/mayor review.\n")
+					notifyDoneCloseSkipped(townRoot, rigName, sender, issueID, skipReason)
 					skipClose = true
 				}
 
@@ -2488,6 +2507,29 @@ func isStaleBranchIssue(branchIssue, hookedIssue string) bool {
 		return false
 	}
 	return branchIssue != hookedIssue && !strings.HasPrefix(branchIssue, hookedIssue+".")
+}
+
+// prematureNoWorkClose reports whether a polecat's `gt done` on a hooked CODE
+// bead (not no_merge/review_only) with zero commits ahead should be refused
+// auto-close (hq-6ijuy antifalse-completion guard). Freshly-spawned polecats
+// have run gt done while the hook/assignment was still attaching, which
+// auto-closed the assigned bead with the "no code changes" reason even though
+// the task was never started. We refuse to auto-close unless the polecat
+// explicitly confirms the no-op via --skip-verify or the task is a genuine
+// no-code (no_merge/review_only) task.
+func prematureNoWorkClose(isPolecat, isNoMergeTask, skipVerify bool) bool {
+	return isPolecat && !isNoMergeTask && !skipVerify
+}
+
+// stackHasSpawnedPolecat reports whether the current actor is a spawned
+// polecat (as opposed to crew/mayor/witness/refinery/deacon). Identity comes
+// from the same env vars `gt done` uses for its polecat-only guard.
+func stackHasSpawnedPolecat() bool {
+	if os.Getenv("GT_POLECAT") != "" {
+		return true
+	}
+	actor := os.Getenv("BD_ACTOR")
+	return actor != "" && isPolecatActor(actor)
 }
 
 // selectAssignedIssue returns the one authoritative assignment to use for
