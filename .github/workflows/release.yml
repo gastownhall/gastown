@@ -59,9 +59,73 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-  attest-release:
+  goreleaser-macos:
     if: ${{ startsWith(github.ref, 'refs/tags/v') }}
     needs: goreleaser
+    runs-on: macos-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        with:
+          fetch-depth: 0
+
+      - name: Set up Go
+        uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6
+        with:
+          go-version: '1.26'
+
+      - name: Install ICU4C
+        run: brew install icu4c
+
+      - name: Build and package macOS binaries
+        env:
+          CGO_ENABLED: "1"
+          CGO_CPPFLAGS: -I${{ runner.temp }}/icu/include
+          CGO_LDFLAGS: -L${{ runner.temp }}/icu/lib
+        run: |
+          set -euo pipefail
+          version="${GITHUB_REF_NAME#v}"
+          icu_prefix="$(brew --prefix icu4c)"
+          export CGO_CPPFLAGS="-I${icu_prefix}/include"
+          export CGO_LDFLAGS="-L${icu_prefix}/lib"
+          for arch in arm64 amd64; do
+            export GOOS=darwin GOARCH="${arch}"
+            if [ "${arch}" = amd64 ]; then
+              export CC="clang -arch x86_64" CXX="clang++ -arch x86_64"
+            else
+              export CC=clang CXX=clang++
+            fi
+            binary="gt-darwin-${arch}"
+            go build -ldflags "-s -w -X github.com/steveyegge/gastown/internal/cmd.Version=${version} -X github.com/steveyegge/gastown/internal/cmd.Build=$(git rev-parse --short HEAD) -X github.com/steveyegge/gastown/internal/cmd.Commit=$(git rev-parse HEAD) -X github.com/steveyegge/gastown/internal/cmd.Branch=$(git branch --show-current)" -o "${binary}" ./cmd/gt
+            codesign -s - -f "${binary}"
+            staging="gastown_${version}_darwin_${arch}"
+            mkdir -p "${staging}"
+            cp "${binary}" "${staging}/gt"
+            cp LICENSE README.md "${staging}/"
+            tar -czf "${staging}.tar.gz" -C "${staging}" .
+            shasum -a 256 "${staging}.tar.gz" >> darwin-checksums.txt
+          done
+
+      - name: Upload macOS archives and append checksums
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          version="${GITHUB_REF_NAME#v}"
+          for arch in arm64 amd64; do
+            gh release upload "${GITHUB_REF_NAME}" "gastown_${version}_darwin_${arch}.tar.gz" --clobber
+          done
+          mkdir -p /tmp/gastown-checksums
+          gh release download "${GITHUB_REF_NAME}" --pattern "gastown_${version}_checksums.txt" --dir /tmp/gastown-checksums
+          checksums="/tmp/gastown-checksums/gastown_${version}_checksums.txt"
+          cat darwin-checksums.txt >> "${checksums}"
+          gh release upload "${GITHUB_REF_NAME}" "${checksums}" --clobber
+
+  attest-release:
+    if: ${{ startsWith(github.ref, 'refs/tags/v') }}
+    needs: [goreleaser, goreleaser-macos]
     runs-on: ubuntu-latest
     permissions:
       attestations: write
