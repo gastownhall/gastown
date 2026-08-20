@@ -31,11 +31,6 @@ jobs:
         with:
           go-version: '1.26'
 
-      - name: Install cross-compilation toolchains
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y gcc-aarch64-linux-gnu g++-aarch64-linux-gnu
-
       - name: Reject replace directives in go.mod
         run: |
           if grep -qE '^replace\s' go.mod; then
@@ -59,9 +54,59 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-  goreleaser-windows:
+  goreleaser-linux-arm64:
     if: ${{ startsWith(github.ref, 'refs/tags/v') }}
     needs: goreleaser
+    runs-on: ubuntu-24.04-arm
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        with:
+          fetch-depth: 0
+
+      - name: Set up Go
+        uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6
+        with:
+          go-version: '1.26'
+
+      - name: Install ICU4C
+        run: sudo apt-get install -y libicu-dev
+
+      - name: Build and package Linux ARM64 binary
+        env:
+          CGO_ENABLED: "1"
+          GOARCH: arm64
+          GOOS: linux
+        run: |
+          set -euo pipefail
+          version="${GITHUB_REF_NAME#v}"
+          go build -ldflags "-s -w -X github.com/steveyegge/gastown/internal/cmd.Version=${version} -X github.com/steveyegge/gastown/internal/cmd.Build=$(git rev-parse --short HEAD) -X github.com/steveyegge/gastown/internal/cmd.Commit=$(git rev-parse HEAD) -X github.com/steveyegge/gastown/internal/cmd.Branch=$(git branch --show-current)" -o gt ./cmd/gt
+          staging="gastown_${version}_linux_arm64"
+          mkdir -p "${staging}"
+          cp gt "${staging}/gt"
+          cp LICENSE README.md "${staging}/"
+          tar -czf "${staging}.tar.gz" -C "${staging}" .
+          sha256sum "${staging}.tar.gz" > linux-arm64-checksum.txt
+
+      - name: Upload Linux ARM64 archive and append checksum
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          version="${GITHUB_REF_NAME#v}"
+          archive="gastown_${version}_linux_arm64.tar.gz"
+          gh release upload "${GITHUB_REF_NAME}" "${archive}" --clobber
+          mkdir -p /tmp/gastown-checksums
+          gh release download "${GITHUB_REF_NAME}" --pattern "gastown_${version}_checksums.txt" --dir /tmp/gastown-checksums
+          checksums="/tmp/gastown-checksums/gastown_${version}_checksums.txt"
+          cat linux-arm64-checksum.txt >> "${checksums}"
+          gh release upload "${GITHUB_REF_NAME}" "${checksums}" --clobber
+
+  goreleaser-windows:
+    if: ${{ startsWith(github.ref, 'refs/tags/v') }}
+    needs: goreleaser-linux-arm64
     runs-on: windows-latest
     permissions:
       contents: write

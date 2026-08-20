@@ -20,24 +20,6 @@ builds:
       - -X github.com/steveyegge/gastown/internal/cmd.Commit={{.Commit}}
       - -X github.com/steveyegge/gastown/internal/cmd.Branch={{.Branch}}
 
-  - id: gt-linux-arm64
-    main: ./cmd/gt
-    binary: gt
-    env:
-      - CGO_ENABLED=1
-      - CC=aarch64-linux-gnu-gcc
-      - CXX=aarch64-linux-gnu-g++
-    goos:
-      - linux
-    goarch:
-      - arm64
-    ldflags:
-      - -s -w
-      - -X github.com/steveyegge/gastown/internal/cmd.Version={{.Version}}
-      - -X github.com/steveyegge/gastown/internal/cmd.Build={{.ShortCommit}}
-      - -X github.com/steveyegge/gastown/internal/cmd.Commit={{.Commit}}
-      - -X github.com/steveyegge/gastown/internal/cmd.Branch={{.Branch}}
-
   - id: gt-freebsd-amd64
     main: ./cmd/gt
     binary: gt
