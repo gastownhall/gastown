@@ -16,7 +16,7 @@ permissions: {}
 
 jobs:
   goreleaser:
-    if: ${{ github.repository == 'gastownhall/gastown' && startsWith(github.ref, 'refs/tags/v') }}
+    if: ${{ startsWith(github.ref, 'refs/tags/v') }}
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -56,12 +56,11 @@ jobs:
           version: '~> v2'
           args: >
             release --clean
-            ${{ github.repository != 'gastownhall/gastown' && '--skip=publish --skip=announce' || '' }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
   attest-release:
-    if: ${{ github.repository == 'gastownhall/gastown' && startsWith(github.ref, 'refs/tags/v') }}
+    if: ${{ startsWith(github.ref, 'refs/tags/v') }}
     needs: goreleaser
     runs-on: ubuntu-latest
     permissions:
