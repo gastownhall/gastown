@@ -15,8 +15,8 @@ import (
 //
 // The town-root CLAUDE.md (~/gt/CLAUDE.md) is loaded by Claude Code for
 // all agents running from within the town git tree (Mayor, Deacon).
-// It must contain operational norms (Dolt awareness, communication hygiene,
-// nudge-first) that guide agent behavior.
+// It must contain operational norms and canonical product-documentation
+// pointers that guide agent behavior without duplicating product runbooks.
 type TownCLAUDEmdCheck struct {
 	FixableCheck
 	missingSections []templates.TownRootRequiredSection
