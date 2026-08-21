@@ -35,8 +35,14 @@ var sessionNudgeLocks sync.Map // map[string]chan struct{}
 // blocking all future nudges to that session.
 const nudgeLockTimeout = 30 * time.Second
 
-// validSessionNameRe validates session names to prevent shell injection
-var validSessionNameRe = regexp.MustCompile(`^[a-zA-Z0-9_-]+$`)
+var (
+	// validSessionNameRe validates session names to prevent shell injection.
+	validSessionNameRe = regexp.MustCompile(`^[a-zA-Z0-9_-]+$`)
+	// directCommandRe matches commands whose words need no shell parsing.
+	// Anything with quoting, expansion, redirection, or control operators stays
+	// a single tmux shell-command so its existing shell semantics are preserved.
+	directCommandRe = regexp.MustCompile(`^[a-zA-Z0-9_./:@%+,=-]+(?:[ \t]+[a-zA-Z0-9_./:@%+,=-]+)*$`)
+)
 
 // Common errors
 var (
@@ -110,6 +116,44 @@ func validateCommandBinary(command string) error {
 		return fmt.Errorf("command binary not found: %s", binary)
 	}
 	return nil
+}
+
+// tmuxCommandArguments returns the command form to append to new-session or
+// respawn-pane. tmux runs one shell-command argument through the configured
+// shell, but executes multiple arguments directly. Use the direct form only
+// when every word is shell-independent; this avoids shell-specific process
+// identity for commands such as "sleep 300" without changing the behavior of
+// quoted or compound commands.
+func tmuxCommandArguments(command string) []string {
+	if strings.ContainsAny(command, "\r\n") {
+		return []string{command}
+	}
+
+	trimmed := strings.TrimSpace(command)
+	if trimmed == "" || !directCommandRe.MatchString(trimmed) {
+		return []string{command}
+	}
+
+	words := strings.Fields(trimmed)
+	if words[0] == "exec" {
+		words = words[1:]
+		if len(words) == 0 {
+			return []string{command}
+		}
+	}
+	if strings.Contains(words[0], "=") {
+		return []string{command}
+	}
+	if _, err := exec.LookPath(words[0]); err != nil {
+		return []string{command}
+	}
+	// tmux treats a lone argument as a shell-command. Prefix a one-word
+	// command with env so tmux receives multiple arguments and env replaces
+	// itself with the requested process.
+	if len(words) == 1 {
+		return []string{"env", words[0]}
+	}
+	return words
 }
 
 // defaultSocket is the tmux socket name (-L flag) for multi-instance isolation.
@@ -314,8 +358,9 @@ func (t *Tmux) NewSession(name, workDir string) error {
 
 // NewSessionWithCommand creates a new detached tmux session that immediately runs a command.
 // Unlike NewSession + SendKeys, this avoids race conditions where the shell isn't ready
-// or the command arrives before the shell prompt. The command runs directly as the
-// initial process of the pane.
+// or the command arrives before the shell prompt. Shell-independent command words run
+// directly as the initial pane process; commands requiring shell parsing retain their
+// shell-command semantics.
 //
 // Validates workDir (if non-empty) exists and is a directory. After creation, performs
 // a brief health check to catch immediate command failures (binary not found, syntax
@@ -379,7 +424,7 @@ func (t *Tmux) NewSessionWithCommand(name, workDir, command string) error {
 		if workDir != "" {
 			respawnArgs = append(respawnArgs, "-c", workDir)
 		}
-		respawnArgs = append(respawnArgs, command)
+		respawnArgs = append(respawnArgs, tmuxCommandArguments(command)...)
 		if _, err := t.run(respawnArgs...); err != nil {
 			_ = t.KillSession(name)
 			return fmt.Errorf("failed to start command in session %q: %w", name, err)
@@ -441,7 +486,7 @@ func (t *Tmux) NewSessionWithCommandAndEnv(name, workDir, command string, env ma
 		if workDir != "" {
 			respawnArgs = append(respawnArgs, "-c", workDir)
 		}
-		respawnArgs = append(respawnArgs, command)
+		respawnArgs = append(respawnArgs, tmuxCommandArguments(command)...)
 		if _, err := t.run(respawnArgs...); err != nil {
 			_ = t.KillSession(name)
 			return fmt.Errorf("failed to start command in session %q: %w", name, err)
@@ -543,10 +588,10 @@ func (t *Tmux) EnsureSessionFresh(name, workDir string) error {
 }
 
 // EnsureSessionFreshWithCommand is like EnsureSessionFresh but creates the
-// session with a command as the pane's initial process via NewSessionWithCommand.
+// session with a command via NewSessionWithCommand.
 // This eliminates the race condition in the EnsureSessionFresh + SendKeys pattern
 // where the shell may not be ready to receive keystrokes, resulting in empty
-// windows. The command runs as the pane's initial process — no shell involved.
+// windows. Shell-independent commands run as the pane's initial process.
 //
 // If an existing session has a healthy agent, returns ErrSessionRunning.
 func (t *Tmux) EnsureSessionFreshWithCommand(name, workDir, command string) error {
@@ -2248,6 +2293,10 @@ func (t *Tmux) firstPaneValue(session, format string) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	return parseFirstPaneValue(session, out)
+}
+
+func parseFirstPaneValue(session, out string) (string, error) {
 	out = strings.TrimSpace(out)
 	if out == "" {
 		return "", fmt.Errorf("no panes found in first window of session %s", session)
@@ -2259,10 +2308,10 @@ func (t *Tmux) firstPaneValue(session, format string) (string, error) {
 		found      bool
 	)
 	for _, line := range strings.Split(out, "\n") {
-		indexText, value, ok := strings.Cut(line, "\t")
-		if !ok {
-			return "", fmt.Errorf("invalid pane data for session %s: %q", session, line)
-		}
+		// run trims trailing whitespace, so a final "<index>\t" arrives as
+		// "<index>". Treat that numeric line as an empty value; Atoi below
+		// still rejects genuinely malformed separator-less data.
+		indexText, value, _ := strings.Cut(line, "\t")
 		index, err := strconv.Atoi(indexText)
 		if err != nil {
 			return "", fmt.Errorf("invalid pane index for session %s: %w", session, err)

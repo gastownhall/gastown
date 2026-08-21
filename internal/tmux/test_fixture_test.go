@@ -28,6 +28,10 @@ func hasTmux() bool {
 // no user config and receives only the environment needed to run test commands,
 // so active Gas Town sessions and shell initialization cannot affect it.
 func newTestTmux(t *testing.T) *Tmux {
+	return newTestTmuxWithShell(t, "/bin/sh")
+}
+
+func newTestTmuxWithShell(t *testing.T, shell string) *Tmux {
 	t.Helper()
 	if !hasTmux() {
 		t.Skip("tmux not installed")
@@ -38,7 +42,7 @@ func newTestTmux(t *testing.T) *Tmux {
 		"tmux", "-u", "-f", os.DevNull, "-L", socket,
 		"new-session", "-d", "-s", testTmuxSentinelSession,
 	)
-	cmd.Env = isolatedTmuxServerEnvironment()
+	cmd.Env = isolatedTmuxServerEnvironment(shell)
 	if output, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("start isolated tmux server %q: %v: %s", socket, err, strings.TrimSpace(string(output)))
 	}
@@ -52,7 +56,7 @@ func newTestTmux(t *testing.T) *Tmux {
 	return tm
 }
 
-func isolatedTmuxServerEnvironment() []string {
+func isolatedTmuxServerEnvironment(shell string) []string {
 	// Keep command discovery and ordinary process identity portable while
 	// excluding tmux, agent, and shell-hook state from the invoking session.
 	keys := []string{
@@ -65,7 +69,7 @@ func isolatedTmuxServerEnvironment() []string {
 			env = append(env, key+"="+value)
 		}
 	}
-	return append(env, "SHELL=/bin/sh", "PS1="+testTmuxPrompt)
+	return append(env, "SHELL="+shell, "PS1="+testTmuxPrompt)
 }
 
 func newReadyTestSession(t *testing.T, tm *Tmux, session string) {
@@ -141,4 +145,28 @@ func TestNewTestTmuxIsolatesStateAndEnvironment(t *testing.T) {
 			t.Errorf("isolated server inherited %s=%q", key, value)
 		}
 	}
+}
+
+func TestNewSessionWithCommandBypassesHoldingShell(t *testing.T) {
+	shellPath := t.TempDir() + "/holding-shell"
+	shell := `#!/bin/sh
+if [ "$1" = "-c" ]; then
+	/bin/sh -c "$2" &
+	child=$!
+	trap 'kill "$child" 2>/dev/null' EXIT HUP INT TERM
+	wait "$child"
+	exit $?
+fi
+while :; do sleep 1; done
+`
+	if err := os.WriteFile(shellPath, []byte(shell), 0o700); err != nil {
+		t.Fatalf("write controlled shell: %v", err)
+	}
+
+	tm := newTestTmuxWithShell(t, shellPath)
+	session := "gt-test-direct-command"
+	if err := tm.NewSessionWithCommand(session, "", "sleep 30"); err != nil {
+		t.Fatalf("NewSessionWithCommand: %v", err)
+	}
+	waitForPaneCommand(t, tm, session, "sleep")
 }
