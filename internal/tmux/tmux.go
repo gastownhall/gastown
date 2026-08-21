@@ -224,6 +224,13 @@ func (t *Tmux) run(args ...string) (string, error) {
 	return t.runContext(context.Background(), args...)
 }
 
+// runRaw executes a tmux command without trimming stdout. Most callers want
+// run(), but structured output parsers must preserve trailing delimiters when a
+// final field is empty.
+func (t *Tmux) runRaw(args ...string) (string, error) {
+	return t.runContextRaw(context.Background(), args...)
+}
+
 func (t *Tmux) commandContext(ctx context.Context, args ...string) *exec.Cmd {
 	allArgs := []string{"-u"}
 	if t.socketName != "" {
@@ -236,6 +243,14 @@ func (t *Tmux) commandContext(ctx context.Context, args ...string) *exec.Cmd {
 }
 
 func (t *Tmux) runContext(ctx context.Context, args ...string) (string, error) {
+	out, err := t.runContextRaw(ctx, args...)
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(out), nil
+}
+
+func (t *Tmux) runContextRaw(ctx context.Context, args ...string) (string, error) {
 	cmd := t.commandContext(ctx, args...)
 	if _, ok := ctx.Deadline(); ok {
 		cmd.WaitDelay = 100 * time.Millisecond
@@ -249,7 +264,7 @@ func (t *Tmux) runContext(ctx context.Context, args ...string) (string, error) {
 		return "", t.wrapError(err, stderr.String(), args)
 	}
 
-	return strings.TrimSpace(stdout.String()), nil
+	return stdout.String(), nil
 }
 
 // wrapError wraps tmux errors with context.
@@ -2244,11 +2259,17 @@ func (t *Tmux) DismissStartupDialogsBlind(session string) error {
 // window base index, while selecting the lowest pane index avoids following the
 // active pane after a user creates or selects a split.
 func (t *Tmux) firstPaneValue(session, format string) (string, error) {
-	out, err := t.run("list-panes", "-t", session+":^", "-F", "#{pane_index}\t"+format)
+	out, err := t.runRaw("list-panes", "-t", session+":^", "-F", "#{pane_index}\t"+format)
 	if err != nil {
 		return "", err
 	}
-	out = strings.TrimSpace(out)
+	return parseFirstPaneValue(session, out)
+}
+
+func parseFirstPaneValue(session, out string) (string, error) {
+	// Remove record terminators only. Trimming all whitespace would destroy the
+	// trailing tab that represents an empty value in the final pane record.
+	out = strings.TrimRight(out, "\r\n")
 	if out == "" {
 		return "", fmt.Errorf("no panes found in first window of session %s", session)
 	}
@@ -2259,9 +2280,15 @@ func (t *Tmux) firstPaneValue(session, format string) (string, error) {
 		found      bool
 	)
 	for _, line := range strings.Split(out, "\n") {
+		line = strings.TrimSuffix(line, "\r")
 		indexText, value, ok := strings.Cut(line, "\t")
 		if !ok {
-			return "", fmt.Errorf("invalid pane data for session %s: %q", session, line)
+			// A structured tmux record whose final value is empty may arrive as
+			// just the index if an older runner trimmed its trailing delimiter.
+			// Preserve that record as an empty value instead of rejecting all
+			// otherwise valid panes in the window.
+			indexText = line
+			value = ""
 		}
 		index, err := strconv.Atoi(indexText)
 		if err != nil {

@@ -583,15 +583,16 @@ func TestGetPaneCommand_MultiPane(t *testing.T) {
 	}
 
 	// Create a session running sleep (simulates an agent process in its first
-	// pane) with nondefault indexes to prevent hardcoded :0.0 targeting.
-	if err := tm.NewSessionWithCommand(sessionName, "", "sleep 300"); err != nil {
-		t.Fatalf("NewSessionWithCommand: %v", err)
+	// pane) with nondefault indexes to prevent hardcoded :0.0 targeting. Create
+	// the fixture directly so this pane-selection test does not depend on the
+	// production two-step shell/respawn startup path under race instrumentation.
+	if _, err := tm.run("new-session", "-d", "-s", sessionName, "exec sleep 300"); err != nil {
+		t.Fatalf("create direct tmux session: %v", err)
 	}
 	defer func() { _ = tm.KillSession(sessionName) }()
 
-	// respawn-pane may return before the requested process replaces tmux's
-	// bootstrap shell on a loaded runner. Make that fixture precondition explicit
-	// before exercising pane selection after a split.
+	// Make the direct fixture precondition explicit before exercising pane
+	// selection after a split.
 	waitForPaneCommand(t, tm, sessionName, "sleep")
 
 	// Capture the first pane's identity before the split.
@@ -656,6 +657,21 @@ func TestGetPaneCommand_MultiPane(t *testing.T) {
 	}
 	if wd != wdBefore {
 		t.Errorf("GetPaneWorkDir changed after split: before=%s, after=%s", wdBefore, wd)
+	}
+}
+
+func TestParseFirstPaneValue_TrailingEmptyPane(t *testing.T) {
+	for _, output := range []string{
+		"3\tsleep\n4\t\n",
+		"3\tsleep\n4\n",
+	} {
+		got, err := parseFirstPaneValue("test-session", output)
+		if err != nil {
+			t.Fatalf("parseFirstPaneValue(%q): %v", output, err)
+		}
+		if got != "sleep" {
+			t.Fatalf("parseFirstPaneValue(%q) = %q, want sleep", output, got)
+		}
 	}
 }
 

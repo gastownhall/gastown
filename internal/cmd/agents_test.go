@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -576,13 +577,9 @@ func newFindTestSocketsFixture(t *testing.T, sessionName string) string {
 
 	server := tmux.NewTmuxWithSocket(socketName)
 	t.Cleanup(func() {
-		if err := server.KillServer(); err != nil {
-			t.Errorf("clean up isolated tmux server %q: %v", socketName, err)
-			return
-		}
 		socketPath := filepath.Join(tmux.SocketDir(), socketName)
-		if err := os.Remove(socketPath); err != nil && !os.IsNotExist(err) {
-			t.Errorf("remove isolated tmux socket %q: %v", socketPath, err)
+		if err := cleanupFindTestSocketsFixture(socketPath, server.KillServer); err != nil {
+			t.Errorf("clean up isolated tmux server %q: %v", socketName, err)
 		}
 	})
 
@@ -599,6 +596,33 @@ func newFindTestSocketsFixture(t *testing.T, sessionName string) string {
 	}
 	t.Fatalf("tmux session %q on socket %q was not ready within %s: %v", sessionName, socketName, readyTimeout, lastErr)
 	return ""
+}
+
+func cleanupFindTestSocketsFixture(socketPath string, killServer func() error) error {
+	var cleanupErr error
+	if err := killServer(); err != nil {
+		cleanupErr = errors.Join(cleanupErr, fmt.Errorf("kill server: %w", err))
+	}
+	if err := os.Remove(socketPath); err != nil && !os.IsNotExist(err) {
+		cleanupErr = errors.Join(cleanupErr, fmt.Errorf("remove socket %q: %w", socketPath, err))
+	}
+	return cleanupErr
+}
+
+func TestCleanupFindTestSocketsFixture_RemovesSocketAfterKillFailure(t *testing.T) {
+	socketPath := filepath.Join(t.TempDir(), "tmux-socket")
+	if err := os.WriteFile(socketPath, nil, 0o600); err != nil {
+		t.Fatalf("create socket fixture: %v", err)
+	}
+
+	killErr := errors.New("injected kill failure")
+	err := cleanupFindTestSocketsFixture(socketPath, func() error { return killErr })
+	if !errors.Is(err, killErr) {
+		t.Fatalf("cleanup error = %v, want wrapped kill error", err)
+	}
+	if _, statErr := os.Stat(socketPath); !os.IsNotExist(statErr) {
+		t.Fatalf("socket still exists after kill failure: stat error = %v", statErr)
+	}
 }
 
 // TestFindTestSockets_Integration verifies that findTestSockets discovers
