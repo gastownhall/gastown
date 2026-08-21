@@ -239,11 +239,18 @@ jobs:
           set -euo pipefail
           test "${GITHUB_REPOSITORY}" = 'marlon-costa-dc/gastown'
           if gh release view "${GITHUB_REF_NAME}" >/dev/null 2>&1; then
-            echo "Release ${GITHUB_REF_NAME} already exists; refusing to mutate it." >&2
-            exit 1
+            is_draft="$(gh release view "${GITHUB_REF_NAME}" --json isDraft --jq .isDraft)"
+            if [ "${is_draft}" != true ]; then
+              echo "Published release ${GITHUB_REF_NAME} already exists; refusing to mutate it." >&2
+              exit 1
+            fi
+          else
+            gh release create "${GITHUB_REF_NAME}" \
+              --draft \
+              --prerelease \
+              --verify-tag \
+              --title "Gas Town ${GITHUB_REF_NAME}" \
+              --notes "Attested Gas Town fork build. Install only from the assets attached to this release."
           fi
-          gh release create "${GITHUB_REF_NAME}" dist/* \
-            --prerelease \
-            --verify-tag \
-            --title "Gas Town ${GITHUB_REF_NAME}" \
-            --notes "Attested Gas Town fork build. Install only from the assets attached to this release."
+          gh release upload "${GITHUB_REF_NAME}" dist/* --clobber
+          gh release edit "${GITHUB_REF_NAME}" --draft=false --prerelease

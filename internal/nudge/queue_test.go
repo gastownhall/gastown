@@ -659,12 +659,12 @@ func TestDeferredNudgeDeliveredAfterDelay(t *testing.T) {
 	townRoot := t.TempDir()
 	session := "gt-test-deferred-sequence"
 
-	shortDelay := QueuedNudge{
+	deferred := QueuedNudge{
 		Sender:       "system",
 		Message:      "reply via mail",
 		DeliverAfter: time.Now().Add(time.Hour),
 	}
-	if err := Enqueue(townRoot, session, shortDelay); err != nil {
+	if err := Enqueue(townRoot, session, deferred); err != nil {
 		t.Fatalf("Enqueue: %v", err)
 	}
 
