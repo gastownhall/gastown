@@ -351,6 +351,16 @@ func TestRunMoleculeAwaitSignalAgentBeadUsesCwdRigBeadsDirWhenBeadsDirPointsTown
 	bdScript := `#!/bin/sh
 printf 'cmd=%s BEADS_DIR=%s DB=%s READONLY=%s AUTO=%s\n' "$1" "${BEADS_DIR-}" "${BEADS_DOLT_SERVER_DATABASE-}" "${BD_READONLY-}" "${BD_DOLT_AUTO_COMMIT-}" >> "$BD_LOG"
 case "$1" in
+  list)
+    if [ "${BEADS_DIR-}" = "${TEST_RIG_BEADS-}" ]; then
+      printf '[{"id":"gt-gastown-refinery","issue_type":"agent","status":"open","labels":["gt:agent","idle:0"],"description":"role_type: refinery\\nrig: gastown"}]\n'
+    else
+      printf '[]\n'
+    fi
+    ;;
+  mol)
+    printf '{"wisps":[]}\n'
+    ;;
   show)
     printf '[{"labels":["gt:agent","idle:0"]}]\n'
     ;;
@@ -368,6 +378,7 @@ esac
 
 	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
 	t.Setenv("BD_LOG", logPath)
+	t.Setenv("TEST_RIG_BEADS", rigBeads)
 	t.Setenv("BEADS_DIR", townBeads)
 	t.Setenv("BEADS_DOLT_SERVER_DATABASE", "town")
 	t.Setenv("BD_READONLY", "true")
@@ -420,7 +431,13 @@ esac
 		t.Fatal("fake bd was not invoked")
 	}
 
+	var sawRigDiscovery, sawTownDiscovery, sawShow, sawUpdate bool
 	for _, line := range strings.Split(log, "\n") {
+		if strings.Contains(line, "cmd=list") || strings.Contains(line, "cmd=mol") {
+			sawRigDiscovery = sawRigDiscovery || strings.Contains(line, "BEADS_DIR="+rigBeads)
+			sawTownDiscovery = sawTownDiscovery || strings.Contains(line, "BEADS_DIR="+townBeads)
+			continue
+		}
 		if !strings.Contains(line, "BEADS_DIR="+rigBeads) {
 			t.Fatalf("bd call was not pinned to rig beads %q: %s\nfull log:\n%s", rigBeads, line, log)
 		}
@@ -434,11 +451,13 @@ esac
 			t.Fatalf("bd call used inherited town database: %s\nfull log:\n%s", line, log)
 		}
 		if strings.Contains(line, "cmd=show") {
+			sawShow = true
 			if !strings.Contains(line, "READONLY=true") || !strings.Contains(line, "AUTO=off") {
 				t.Fatalf("bd read was not read-only pinned: %s\nfull log:\n%s", line, log)
 			}
 		}
 		if strings.Contains(line, "cmd=update") {
+			sawUpdate = true
 			if !strings.Contains(line, "READONLY= ") && !strings.HasSuffix(line, "READONLY= AUTO=on") {
 				t.Fatalf("bd mutation inherited read-only mode: %s\nfull log:\n%s", line, log)
 			}
@@ -446,5 +465,11 @@ esac
 				t.Fatalf("bd mutation was not auto-commit pinned: %s\nfull log:\n%s", line, log)
 			}
 		}
+	}
+	if !sawRigDiscovery || !sawTownDiscovery {
+		t.Fatalf("resolver did not scan both rig and town ledgers:\n%s", log)
+	}
+	if !sawShow || !sawUpdate {
+		t.Fatalf("await-signal did not read and update the resolved rig identity:\n%s", log)
 	}
 }
