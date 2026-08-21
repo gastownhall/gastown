@@ -60,14 +60,69 @@ func TestRepositoryAgentsDelegatesToProductDocs(t *testing.T) {
 	}
 
 	for _, duplicate := range []string{
+		"bd ",
 		"bd ready",
 		"bd update",
 		"bd close",
+		"git rebase",
 		"git pull --rebase",
 		"MANDATORY WORKFLOW",
 	} {
 		if strings.Contains(content, duplicate) {
 			t.Errorf("repository AGENTS.md duplicates lifecycle guidance %q", duplicate)
+		}
+	}
+}
+
+func TestRepositoryReleaseDocsMatchForkWorkflow(t *testing.T) {
+	docs, err := os.ReadFile(filepath.Join("..", "..", "RELEASING.md"))
+	if err != nil {
+		t.Fatalf("reading repository RELEASING.md: %v", err)
+	}
+	workflow, err := os.ReadFile(filepath.Join("..", "..", ".github", "workflows", "release.yml"))
+	if err != nil {
+		t.Fatalf("reading fork release workflow: %v", err)
+	}
+
+	for _, want := range []string{
+		"marlon-costa-dc/gastown",
+		"## Downstream Fork Release Delta",
+		"vX.Y.Z-dcN",
+		"all six archives",
+		"It does not update Homebrew, npm, or upstream release metadata",
+	} {
+		if !strings.Contains(string(docs), want) {
+			t.Errorf("RELEASING.md missing current fork contract %q", want)
+		}
+	}
+	if !strings.Contains(string(workflow), "test \"${GITHUB_REPOSITORY}\" = 'marlon-costa-dc/gastown'") {
+		t.Error("release workflow no longer contains the documented fork repository gate")
+	}
+
+	for _, stale := range []string{
+		"The upstream automation deliberately does not publish fork tags",
+		"update-homebrew-formula",
+		"publish-npm",
+	} {
+		if strings.Contains(string(docs), stale) {
+			t.Errorf("RELEASING.md retains superseded release guidance %q", stale)
+		}
+	}
+}
+
+func TestGovernanceOwnersAvoidRebaseRunbooks(t *testing.T) {
+	paths := []string{
+		filepath.Join("..", "..", "AGENTS.md"),
+		filepath.Join("roles", "crew.md.tmpl"),
+		filepath.Join("townroot", "claude.md"),
+	}
+	for _, path := range paths {
+		data, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatalf("reading governance owner %s: %v", path, err)
+		}
+		if strings.Contains(string(data), "pull --rebase") {
+			t.Errorf("governance owner %s contains extinct rebase guidance", path)
 		}
 	}
 }
