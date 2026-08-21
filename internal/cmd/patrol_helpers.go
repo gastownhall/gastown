@@ -172,8 +172,25 @@ func burnPreviousPatrolWisps(cfg PatrolConfig) {
 			continue
 		}
 
-		// Close all descendant wisps, then the root
-		closeDescendants(b, bead.ID)
+		// Force-close all descendant wisps, then the root.
+		//
+		// Descendants must be FORCE-closed. Molecule steps carry sequencing
+		// dependencies on their predecessors, so a plain close of a step whose
+		// predecessor is still open fails deterministically with "blocked by
+		// open issues". Burning the root anyway would leave those steps behind
+		// as parentless orphan wisps that stay open forever — invisible to
+		// `bd purge`/`gt compact`, which only touch closed beads (gt-92jh).
+		// Force is correct here: this is end-of-lifecycle teardown of a
+		// superseded patrol cycle, so gate satisfaction no longer carries
+		// meaning. This mirrors the dog-molecule teardown path.
+		//
+		// If descendants cannot be closed, leave the root open rather than
+		// orphaning them: a live root is reachable and burnable next cycle,
+		// parentless steps are not (gt-7lx3).
+		if _, err := forceCloseDescendants(b, bead.ID); err != nil {
+			style.PrintWarning("burn: could not close descendants of %s (leaving root open): %v", bead.ID, err)
+			continue
+		}
 		if err := b.ForceCloseWithReason("burned: replaced by new patrol cycle", bead.ID); err != nil {
 			style.PrintWarning("burn: could not close patrol %s: %v", bead.ID, err)
 			continue
