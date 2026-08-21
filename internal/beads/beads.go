@@ -30,6 +30,15 @@ var (
 	ErrFlagTitle    = errors.New("title looks like a CLI flag (starts with '-'); use --title=\"...\" to set flag-like titles intentionally")
 )
 
+// Agent bead identity contract. AgentIssueType and AgentLabel are both
+// required on newly-created agent beads. Legacy task+gt:agent records remain
+// recognizable only long enough for doctor to migrate them in place.
+const (
+	AgentIssueType       = "agent"
+	LegacyAgentIssueType = "task"
+	AgentLabel           = "gt:agent"
+)
+
 // bdAllowStale caches whether the installed bd supports --allow-stale.
 // The cache is keyed by the resolved bd path so tests and subprocess stubs that
 // replace bd on PATH get re-probed instead of reusing stale capability state.
@@ -317,19 +326,32 @@ func HasUncheckedCriteria(issue *Issue) int {
 	return count
 }
 
-// IsAgentBead checks if an issue is an agent bead by checking for the gt:agent
-// label (preferred) or the legacy type == "agent" field. This handles the migration
-// from type-based to label-based agent identification (see gt-vja7b).
+// IsAgentBead reports whether issue satisfies the canonical agent identity
+// predicate or its single supported migration form. Arbitrary issue types with
+// a gt:agent label are not agent beads.
 func IsAgentBead(issue *Issue) bool {
 	if issue == nil {
 		return false
 	}
-	// Check legacy type field first for backward compatibility
-	if issue.Type == "agent" {
-		return true
-	}
-	// Check for gt:agent label (current standard)
-	return HasLabel(issue, "gt:agent")
+	issueType := strings.ToLower(strings.TrimSpace(issue.Type))
+	return issueType == AgentIssueType ||
+		(issueType == LegacyAgentIssueType && HasLabel(issue, AgentLabel))
+}
+
+// IsCanonicalAgentBead reports whether issue has the complete durable agent
+// identity: the canonical type and label.
+func IsCanonicalAgentBead(issue *Issue) bool {
+	return issue != nil &&
+		strings.EqualFold(strings.TrimSpace(issue.Type), AgentIssueType) &&
+		HasLabel(issue, AgentLabel)
+}
+
+// IsLegacyAgentBead reports whether issue is the sole supported pre-migration
+// representation for an agent bead.
+func IsLegacyAgentBead(issue *Issue) bool {
+	return issue != nil &&
+		strings.EqualFold(strings.TrimSpace(issue.Type), LegacyAgentIssueType) &&
+		HasLabel(issue, AgentLabel)
 }
 
 // IsProtectedBead checks if a bead has any protection labels that should
@@ -527,6 +549,7 @@ type CreateOptions struct {
 // UpdateOptions specifies options for updating an issue.
 type UpdateOptions struct {
 	Title        *string
+	Type         *string
 	Status       *string
 	Priority     *int
 	Description  *string
@@ -632,6 +655,24 @@ func (b *Beads) agentBeadTarget() *Beads {
 		return b
 	}
 	return b.ForAgentBead()
+}
+
+// pinnedToCurrentLedger returns a wrapper that operates on b's configured
+// ledger without applying issue-prefix routing. This is used for in-place
+// repairs discovered while explicitly scanning a town or rig ledger.
+func (b *Beads) pinnedToCurrentLedger() *Beads {
+	if b.noRoute {
+		return b
+	}
+	return &Beads{
+		workDir:    b.workDir,
+		beadsDir:   b.beadsDir,
+		isolated:   b.isolated,
+		serverPort: b.serverPort,
+		store:      b.store,
+		townRoot:   b.townRoot,
+		noRoute:    true,
+	}
 }
 
 // getActor returns the BD_ACTOR value for this context.
@@ -1978,6 +2019,9 @@ func (b *Beads) Update(id string, opts UpdateOptions) error {
 
 	if opts.Title != nil {
 		args = append(args, "--title="+*opts.Title)
+	}
+	if opts.Type != nil {
+		args = append(args, "--type="+*opts.Type)
 	}
 	if opts.Status != nil {
 		args = append(args, "--status="+*opts.Status)

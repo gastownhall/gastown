@@ -235,8 +235,8 @@ func (b *Beads) CreateAgentBead(id, title string, fields *AgentFields) (*Issue, 
 			"--id=" + id,
 			"--title=" + title,
 			"--description=" + description,
-			"--type=task",
-			"--labels=gt:agent",
+			"--type=" + AgentIssueType,
+			"--labels=" + AgentLabel,
 		}
 		if NeedsForceForID(id) {
 			a = append(a, "--force")
@@ -283,11 +283,11 @@ func (b *Beads) createAgentBeadViaStore(ctx context.Context, id, title, descript
 		Description: description,
 		Status:      beadsdk.StatusOpen,
 		Priority:    2,
-		IssueType:   beadsdk.TypeTask,
+		IssueType:   beadsdk.IssueType(AgentIssueType),
 		CreatedAt:   now,
 		UpdatedAt:   now,
 		CreatedBy:   actor,
-		Labels:      []string{"gt:agent"},
+		Labels:      []string{AgentLabel},
 	}
 	if err := store.CreateIssue(ctx, issue, actor); err != nil {
 		return nil, err
@@ -350,12 +350,12 @@ func (b *Beads) CreateOrReopenAgentBead(id, title string, fields *AgentFields) (
 		}
 	}
 
-	// Update the bead with new fields and ensure gt:agent label is set.
-	// Agent beads use type=task (a valid built-in type) and are identified
-	// by the gt:agent label, not by type (see IsAgentBead).
+	// Update the bead with new fields and restore its canonical identity.
 	description := FormatAgentDescription(title, fields)
+	issueType := AgentIssueType
 	updateOpts := UpdateOptions{
 		Title:       &title,
+		Type:        &issueType,
 		Description: &description,
 		SetLabels:   labelsForAgentBeadReuse(existing.Labels),
 	}
@@ -371,8 +371,8 @@ func (b *Beads) CreateOrReopenAgentBead(id, title string, fields *AgentFields) (
 }
 
 func labelsForAgentBeadReuse(existing []string) []string {
-	labels := []string{"gt:agent"}
-	seen := map[string]bool{"gt:agent": true}
+	labels := []string{AgentLabel}
+	seen := map[string]bool{AgentLabel: true}
 	for _, label := range existing {
 		if !strings.HasPrefix(label, "safety_stop:") || seen[label] {
 			continue
@@ -381,6 +381,43 @@ func labelsForAgentBeadReuse(existing []string) []string {
 		seen[label] = true
 	}
 	return labels
+}
+
+// EnsureCanonicalAgentBead migrates an agent bead in its current ledger
+// without changing any lifecycle fields, status, or existing labels. The
+// normal bd/SDK update path records the type transition in issue history.
+// It returns true when a repair was written.
+func (b *Beads) EnsureCanonicalAgentBead(issue *Issue) (bool, error) {
+	if !IsAgentBead(issue) {
+		return false, fmt.Errorf("issue %s is not an agent bead", issueID(issue))
+	}
+
+	target := b.pinnedToCurrentLedger()
+	changed := false
+	if IsLegacyAgentBead(issue) {
+		if err := EnsureCustomTypes(target.getResolvedBeadsDir()); err != nil {
+			return false, fmt.Errorf("configuring canonical agent type in %s: %w", target.getResolvedBeadsDir(), err)
+		}
+		issueType := AgentIssueType
+		if err := target.Update(issue.ID, UpdateOptions{Type: &issueType}); err != nil {
+			return false, fmt.Errorf("migrating agent bead %s to type %s: %w", issue.ID, AgentIssueType, err)
+		}
+		changed = true
+	}
+	if !HasLabel(issue, AgentLabel) {
+		if err := target.Update(issue.ID, UpdateOptions{AddLabels: []string{AgentLabel}}); err != nil {
+			return changed, fmt.Errorf("adding %s label to agent bead %s: %w", AgentLabel, issue.ID, err)
+		}
+		changed = true
+	}
+	return changed, nil
+}
+
+func issueID(issue *Issue) string {
+	if issue == nil {
+		return "<nil>"
+	}
+	return issue.ID
 }
 
 // ResetAgentBeadForReuse clears all mutable fields on an agent bead without closing it.
@@ -701,28 +738,16 @@ func (b *Beads) GetAgentBead(id string) (*Issue, *AgentFields, error) {
 	return issue, fields, nil
 }
 
-// ListAgentBeads returns all agent beads in a single query.
+// ListAgentBeads returns all agent beads from durable issues and wisps.
 // Returns a map of agent bead ID to Issue.
 //
 // Queries both the issues table (authoritative metadata source) and the
 // wisps table (fallback existence source). Issues take precedence for duplicate
 // IDs so labels/type are preserved for doctor validation.
 func (b *Beads) ListAgentBeads() (map[string]*Issue, error) {
-	// Query issues table first. Issues include labels and type metadata used by
-	// doctor checks (for example, validating gt:agent labels).
-	// Agent beads are type=agent (infrastructure), hidden by bd list default filter.
-	// Use --include-infra so they appear in results.
-	out, err := b.run("list", "--label=gt:agent", "--include-infra", "--json", "--flat", "--no-pager")
+	issuesByID, err := b.ListAgentBeadsFromIssues()
 	if err != nil {
 		return nil, err
-	}
-	issuesByID := make(map[string]*Issue)
-	var issues []*Issue
-	if jsonErr := json.Unmarshal(out, &issues); jsonErr != nil {
-		return nil, fmt.Errorf("parsing bd list --json output: %w (raw output %d bytes)", jsonErr, len(out))
-	}
-	for _, issue := range issues {
-		issuesByID[issue.ID] = issue
 	}
 
 	// Query wisps table as a fallback source.
@@ -731,6 +756,35 @@ func (b *Beads) ListAgentBeads() (map[string]*Issue, error) {
 	wispBeads, _ := b.ListAgentBeadsFromWisps()
 
 	return mergeAgentBeadSources(issuesByID, wispBeads), nil
+}
+
+// ListAgentBeadsFromIssues queries both sides of the explicit migration
+// boundary: canonical type=agent records and legacy task+gt:agent records.
+// Results are filtered through IsAgentBead so doctor and resolver share the
+// same identity predicate.
+func (b *Beads) ListAgentBeadsFromIssues() (map[string]*Issue, error) {
+	queries := [][]string{
+		{"list", "--type=" + AgentIssueType, "--include-infra", "--status=all", "--json", "--flat", "--no-pager", "--limit=0"},
+		{"list", "--label=" + AgentLabel, "--include-infra", "--status=all", "--json", "--flat", "--no-pager", "--limit=0"},
+	}
+
+	issuesByID := make(map[string]*Issue)
+	for _, args := range queries {
+		out, err := b.run(args...)
+		if err != nil {
+			return nil, err
+		}
+		var issues []*Issue
+		if err := json.Unmarshal(out, &issues); err != nil {
+			return nil, fmt.Errorf("parsing bd list --json output: %w (raw output %d bytes)", err, len(out))
+		}
+		for _, issue := range issues {
+			if IsAgentBead(issue) {
+				issuesByID[issue.ID] = issue
+			}
+		}
+	}
+	return issuesByID, nil
 }
 
 // mergeAgentBeadSources merges issue-backed and wisp-backed agent bead maps.

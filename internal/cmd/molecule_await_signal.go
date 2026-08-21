@@ -137,6 +137,12 @@ func runMoleculeAwaitSignal(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return fmt.Errorf("not in a beads workspace: %w", err)
 	}
+	if awaitSignalAgentBead != "" {
+		beadsDir, err = resolveAgentTrackingBeadsDirForID(awaitSignalAgentBead)
+		if err != nil {
+			return fmt.Errorf("resolving agent bead ledger: %w", err)
+		}
+	}
 
 	// Find town root for events file (events are always at <townRoot>/.events.jsonl)
 	townRoot, err := workspace.FindFromCwdOrError()

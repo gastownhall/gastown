@@ -423,6 +423,11 @@ func (b *Beads) storeUpdate(id string, opts UpdateOptions) error {
 	}
 
 	actor := b.getActor()
+	if opts.Type != nil {
+		if err := b.store.UpdateIssueType(ctx, id, *opts.Type, actor); err != nil {
+			return fmt.Errorf("store update: type for %s: %w", id, err)
+		}
+	}
 
 	// Apply updates if there are field changes
 	if len(updates) > 0 {
