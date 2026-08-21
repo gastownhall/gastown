@@ -56,6 +56,9 @@ func TestOutputRoleDirectives(t *testing.T) {
 		if !strings.Contains(out, "Always be polite.") {
 			t.Errorf("expected directive content, got: %s", out)
 		}
+		if !strings.Contains(out, "do not change installed command ownership: `bd` handles issue CRUD; `gt` handles orchestration") {
+			t.Errorf("expected command ownership boundary, got: %s", out)
+		}
 	})
 
 	t.Run("rig-level directive emits rig header", func(t *testing.T) {
@@ -196,5 +199,23 @@ func TestOutputCommandQuickReferenceBootBlocksRawTmux(t *testing.T) {
 	}
 	if strings.Contains(output, "tmux send-keys~~ (unreliable)") {
 		t.Fatalf("Boot quick reference still calls raw tmux merely unreliable:\n%s", output)
+	}
+}
+
+func TestOutputPrimeContextFallbackIncludesCommandOwnership(t *testing.T) {
+	output := captureStdout(t, func() {
+		outputPrimeContextFallback(RoleContext{Role: RolePolecat, Rig: "myrig", Polecat: "toast"})
+	})
+
+	for _, want := range []string{
+		"Use `bd` for issue CRUD in the ledger that owns the work",
+		"`gt sling <bead> <rig>` dispatches work",
+		"`gt done` submits completed polecat work to the merge queue",
+		"The Witness recovers stalled polecats",
+		"The Refinery verifies and integrates queued work",
+	} {
+		if !strings.Contains(output, want) {
+			t.Fatalf("fallback command contract missing %q:\n%s", want, output)
+		}
 	}
 }

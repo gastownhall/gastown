@@ -498,24 +498,7 @@ func (m *Manager) pendingPath(name string) string {
 // New structure: polecats/<name>/<rigname>/ - gives LLMs recognizable repo context.
 // Falls back to old structure: polecats/<name>/ for backward compatibility.
 func (m *Manager) clonePath(name string) string {
-	// New structure: polecats/<name>/<rigname>/
-	newPath := filepath.Join(m.rig.Path, "polecats", name, m.rig.Name)
-	if info, err := os.Stat(newPath); err == nil && info.IsDir() {
-		return newPath
-	}
-
-	// Old structure: polecats/<name>/ (backward compat)
-	oldPath := filepath.Join(m.rig.Path, "polecats", name)
-	if info, err := os.Stat(oldPath); err == nil && info.IsDir() {
-		// Check if this is actually a git worktree (has .git file or dir)
-		gitPath := filepath.Join(oldPath, ".git")
-		if _, err := os.Stat(gitPath); err == nil {
-			return oldPath
-		}
-	}
-
-	// Default to new structure for new polecats
-	return newPath
+	return ResolveClonePath(m.rig.Path, m.rig.Name, name)
 }
 
 // ClonePath returns the path to a polecat's git worktree.
@@ -2175,6 +2158,12 @@ func (m *Manager) cleanupOrphanPolecatState() {
 
 		name := entry.Name()
 		polecatDir := filepath.Join(polecatsDir, name)
+		// A legacy-layout polecat stores its Git metadata directly in polecatDir.
+		// Even corrupt metadata is evidence of a prior worktree, not proof of a
+		// disposable partial spawn. Preserve it for explicit recovery.
+		if _, err := os.Stat(filepath.Join(polecatDir, ".git")); err == nil {
+			continue
+		}
 
 		// Only remove truly partial spawn artifacts here. Named polecats with any
 		// agent/work/session evidence must go through the locked reclaim path.

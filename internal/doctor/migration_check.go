@@ -10,9 +10,9 @@ import (
 	"strings"
 	"time"
 
+	"github.com/steveyegge/gastown/internal/atomicfile"
 	"github.com/steveyegge/gastown/internal/config"
 	"github.com/steveyegge/gastown/internal/doltserver"
-	"github.com/steveyegge/gastown/internal/atomicfile"
 )
 
 var verifyExpectedDatabasesAtConfig = doltserver.VerifyExpectedDatabasesAtConfig
@@ -471,6 +471,14 @@ func (c *DoltServerReachableCheck) getServerAddr(beadsDir string, townRoot strin
 	}
 	if metadata.DoltMode != "server" {
 		return "", false
+	}
+
+	// External endpoint is authoritative: per-rig metadata may still record a
+	// stale locally-managed endpoint (e.g. port 3307) from before the cutover,
+	// which would make the check probe a dead local server instead of the
+	// declared shared endpoint.
+	if cfg := doltserver.DefaultConfig(townRoot); cfg.IsExternallyManaged() {
+		return cfg.HostPort(), true
 	}
 
 	host := metadata.DoltServerHost
