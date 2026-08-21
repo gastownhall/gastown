@@ -1,6 +1,10 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# Fixture subprocesses must inherit the test-controlled PATH. Operator shell
+# startup hooks can otherwise replace it and make the harness call live tools.
+unset BASH_ENV ENV
+
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 SCRIPT="$ROOT_DIR/plugins/stuck-agent-dog/run.sh"
 ORIGINAL_PATH="$PATH"

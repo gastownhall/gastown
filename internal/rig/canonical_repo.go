@@ -17,11 +17,11 @@ const CanonicalBareFetchRefspec = "+refs/heads/*:refs/remotes/origin/*"
 // CanonicalRepoResult reports which missing parts of a rig's canonical git
 // topology were created.
 type CanonicalRepoResult struct {
-	BareRepoPath             string
-	RefineryWorktreePath     string
-	DefaultBranch            string
-	BareRepoCreated          bool
-	RefineryWorktreeCreated  bool
+	BareRepoPath            string
+	RefineryWorktreePath    string
+	DefaultBranch           string
+	BareRepoCreated         bool
+	RefineryWorktreeCreated bool
 }
 
 // EnsureCanonicalRepoTopology creates or validates the shared .repo.git bare

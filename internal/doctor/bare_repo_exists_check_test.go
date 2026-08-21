@@ -95,8 +95,8 @@ func TestBareRepoExistsCheck_MissingBareRepo(t *testing.T) {
 	if result.Status != StatusError {
 		t.Errorf("expected StatusError when .repo.git is missing, got %v", result.Status)
 	}
-	if !strings.Contains(result.Message, "missing .repo.git") {
-		t.Errorf("expected message about missing .repo.git, got %q", result.Message)
+	if !strings.Contains(result.Message, "Canonical shared bare repo is missing") {
+		t.Errorf("expected canonical missing-repo message, got %q", result.Message)
 	}
 	if len(result.Details) < 2 {
 		t.Errorf("expected at least 2 details (bare repo path + worktree), got %d", len(result.Details))
@@ -137,8 +137,9 @@ func TestBareRepoExistsCheck_MultipleWorktreesMissing(t *testing.T) {
 	if result.Status != StatusError {
 		t.Errorf("expected StatusError, got %v", result.Status)
 	}
-	if !strings.Contains(result.Message, "2 worktree") {
-		t.Errorf("expected message about 2 worktrees, got %q", result.Message)
+	details := strings.Join(result.Details, "\n")
+	if !strings.Contains(details, "refinery/rig") || !strings.Contains(details, filepath.Join("polecats", "worker1", rigName)) {
+		t.Errorf("expected both broken worktrees in details, got %q", details)
 	}
 }
 
