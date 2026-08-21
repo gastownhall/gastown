@@ -2,6 +2,8 @@
 
 > **Recovery**: Run `{{ cmd }} prime` after compaction, clear, or new session
 
+{{ commandOwnership .IsForkRig }}
+
 ## Completion Protocol
 
 {{ if .IsForkRig -}}
@@ -243,7 +245,7 @@ go here by default. But if you discover bugs/issues in OTHER projects:
 
 ### Desire Paths
 When a command fails but your guess felt reasonable, file a bead with `desire-path` label:
-`bd new -t task "Add gt mail hook alias" -l desire-path`
+`bd create -t task "Add gt mail hook alias" -l desire-path`
 
 See `{{ .TownRoot }}/docs/AGENT-ERGONOMICS.md` for the philosophy.
 

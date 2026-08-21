@@ -79,6 +79,15 @@ Git-backed issue tracking system that stores work state as structured data.
 
 **Bead IDs** (also called **issue IDs**) use a prefix + 5-character alphanumeric format (e.g., `gt-abc12`, `hq-x7k2m`). The prefix indicates the item's origin or rig. Commands like `gt sling` and `gt convoy` accept these IDs to reference specific work items. The terms "bead" and "issue" are used interchangeably—beads are the underlying data format, while issues are the work items stored as beads.
 
+Use `bd` for issue CRUD in the owning rig's ledger: `bd create`, `bd show`,
+`bd update`, and `bd close`. Existing issue IDs route by prefix; use
+`bd create --repo <rig> "..."` when creating work for another registered rig.
+Use `gt` for execution: `gt sling` dispatches work, `gt convoy` tracks it, and
+`gt done` submits completed polecat work to the merge queue. The Witness handles
+polecat recovery, and the Refinery verifies and integrates queued work.
+Fork-backed assignments use their GitHub PR/no-merge workflow instead of the
+local merge queue.
+
 ### Molecules 🧬
 
 Workflow templates that coordinate multi-step work. Formulas (TOML definitions) are instantiated as molecules with tracked steps. Two modes: root-only wisps (steps materialized at runtime, lightweight) and poured wisps (steps materialized as sub-wisps with checkpoint recovery). See [Molecules](docs/concepts/molecules.md).
