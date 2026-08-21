@@ -10,6 +10,8 @@ Use `bd` for issue CRUD in the ledger that owns the work. Use `gt` for
 execution and lifecycle: `gt sling` dispatches work, `gt convoy` tracks it,
 and `gt done` submits completed polecat work to the merge queue. The Witness
 recovers stalled polecats; the Refinery verifies and integrates queued work.
+Fork-backed assignments use their GitHub PR/no-merge workflow instead of the
+local merge queue.
 
 Existing issue IDs route `bd show`, `bd update`, and `bd close` by prefix from
 any directory inside the town. `bd create` has no issue ID to route yet, so

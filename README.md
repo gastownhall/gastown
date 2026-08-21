@@ -85,6 +85,8 @@ Use `bd` for issue CRUD in the owning rig's ledger: `bd create`, `bd show`,
 Use `gt` for execution: `gt sling` dispatches work, `gt convoy` tracks it, and
 `gt done` submits completed polecat work to the merge queue. The Witness handles
 polecat recovery, and the Refinery verifies and integrates queued work.
+Fork-backed assignments use their GitHub PR/no-merge workflow instead of the
+local merge queue.
 
 ### Molecules 🧬
 

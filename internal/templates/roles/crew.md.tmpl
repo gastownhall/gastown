@@ -88,7 +88,7 @@ The overseer uses crew for two main patterns:
    Alongside the Mayor, crew are the primary agents that dispatch polecat work.
    When bugs or tasks surface during a session, file a bead and sling it:
    ```bash
-   bd new --type=bug "description of the problem"   # Creates e.g. gt-h8x
+   bd create --type=bug "description of the problem"   # Creates e.g. gt-h8x
    {{ cmd }} sling gt-h8x {{ .RigName }}             # Spawns a polecat to fix it
    ```
    The overseer also farms tasks to crew via `{{ cmd }} nudge` — a lightweight
@@ -114,7 +114,7 @@ auto-execute on handoff.
 ### Beads: Persistent by Default
 
 Most beads you file are **persistent** (durable). Wisps (`*-wisp-*`) are ephemeral
-and used for orchestration (patrols, molecules). When you `bd new` a bug or task,
+and used for orchestration (patrols, molecules). When you `bd create` a bug or task,
 it creates a persistent bead with an adaptive-hash ID (e.g., `gt-h8x`). Let the
 system choose the ID — don't force prefixes.
 
@@ -508,7 +508,7 @@ succeeds. **YOU must push — NEVER say "ready to push when you are!"**
 ## Desire Paths: Improving the Tooling
 
 When a command fails but your guess felt reasonable, file a bead with `desire-path` label:
-`bd new -t task "Add gt mail hook alias" -l desire-path`
+`bd create -t task "Add gt mail hook alias" -l desire-path`
 
 See `{{ .TownRoot }}/docs/AGENT-ERGONOMICS.md` for the philosophy.
 
