@@ -12,25 +12,6 @@ import (
 	"time"
 )
 
-func hasTmux() bool {
-	_, err := exec.LookPath("tmux")
-	return err == nil
-}
-
-// newTestTmux returns a Tmux instance connected to the package-level test
-// socket (set by TestMain in testmain_test.go). All tests in this package
-// share one tmux server, which is torn down after all tests complete.
-//
-// This isolates tests from the user's interactive tmux and from other
-// packages' tests that run in parallel during `go test ./...`.
-func newTestTmux(t *testing.T) *Tmux {
-	t.Helper()
-	if !hasTmux() {
-		t.Skip("tmux not installed")
-	}
-	return NewTmux()
-}
-
 func TestListSessionsNoServer(t *testing.T) {
 	tm := newTestTmux(t)
 	sessions, err := tm.ListSessions()
@@ -296,11 +277,7 @@ func TestEnsureSessionFresh_IdempotentOnZombie(t *testing.T) {
 }
 
 func TestEnsureSessionFreshWithCommand_NoExisting(t *testing.T) {
-	if !hasTmux() {
-		t.Skip("tmux not installed")
-	}
-
-	tm := NewTmux()
+	tm := newTestTmux(t)
 	sessionName := "gt-test-fwc-new-" + t.Name()
 
 	// Clean up any existing session
@@ -333,11 +310,7 @@ func TestEnsureSessionFreshWithCommand_NoExisting(t *testing.T) {
 }
 
 func TestEnsureSessionFreshWithCommand_KillsZombie(t *testing.T) {
-	if !hasTmux() {
-		t.Skip("tmux not installed")
-	}
-
-	tm := NewTmux()
+	tm := newTestTmux(t)
 	sessionName := "gt-test-fwc-zombie-" + t.Name()
 
 	// Clean up any existing session
@@ -1879,14 +1852,8 @@ func TestNudgeSession_WithRetry(t *testing.T) {
 	tm := newTestTmux(t)
 	sessionName := "gt-test-nudge-retry-" + fmt.Sprintf("%d", time.Now().UnixNano()%10000)
 
-	// Create a ready session
-	if err := tm.NewSession(sessionName, os.TempDir()); err != nil {
-		t.Fatalf("NewSession: %v", err)
-	}
+	newReadyTestSession(t, tm, sessionName)
 	defer func() { _ = tm.KillSession(sessionName) }()
-
-	// Give shell a moment to initialize
-	time.Sleep(200 * time.Millisecond)
 
 	// NudgeSession should succeed on a ready session
 	err := tm.NudgeSession(sessionName, "test message")
@@ -1899,12 +1866,8 @@ func TestNudgeSession_WithStoredPaneID(t *testing.T) {
 	tm := newTestTmux(t)
 	sessionName := "gt-test-nudge-paneid-" + fmt.Sprintf("%d", time.Now().UnixNano()%10000)
 
-	if err := tm.NewSession(sessionName, os.TempDir()); err != nil {
-		t.Fatalf("NewSession: %v", err)
-	}
+	newReadyTestSession(t, tm, sessionName)
 	defer func() { _ = tm.KillSession(sessionName) }()
-
-	time.Sleep(200 * time.Millisecond)
 
 	paneID, err := tm.GetPaneID(sessionName)
 	if err != nil {
@@ -1934,12 +1897,8 @@ func TestNudgeSession_WakesAgentWindowNotActiveWindow(t *testing.T) {
 	tm := newTestTmux(t)
 	sessionName := "gt-test-nudge-multiwin-" + fmt.Sprintf("%d", time.Now().UnixNano()%100000)
 
-	if err := tm.NewSession(sessionName, os.TempDir()); err != nil {
-		t.Fatalf("NewSession: %v", err)
-	}
+	newReadyTestSession(t, tm, sessionName)
 	defer func() { _ = tm.KillSession(sessionName) }()
-
-	time.Sleep(200 * time.Millisecond)
 
 	// The agent pane is window 0's pane. Record it as the declared identity so
 	// FindAgentPane resolves the nudge target to it.
