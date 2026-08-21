@@ -144,6 +144,10 @@ jobs:
         with:
           version: v2.11.4
           args: --timeout=5m
+          # Config schema verification fetches a remote JSON schema and made
+          # lint availability depend on golangci-lint.run. The pinned linter
+          # still parses and enforces the complete local config during run.
+          verify: false
 
   integration:
     name: Integration Tests

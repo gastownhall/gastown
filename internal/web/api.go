@@ -1923,7 +1923,7 @@ func (h *APIHandler) detectCrewState(ctx context.Context, sessionName, hook stri
 func (h *APIHandler) isClaudeRunningInSession(ctx context.Context, sessionName string) bool {
 	// Target pane 0 explicitly (:0.0) to avoid false positives from
 	// user-created split panes running shells or other commands.
-	cmd := exec.CommandContext(ctx, "tmux", "display-message", "-t", sessionName+":0.0", "-p", "#{pane_current_command}")
+	cmd := tmux.BuildCommandContext(ctx, "display-message", "-t", sessionName+":0.0", "-p", "#{pane_current_command}")
 	var stdout bytes.Buffer
 	cmd.Stdout = &stdout
 	if err := cmd.Run(); err != nil {
@@ -1953,7 +1953,7 @@ func paneCurrentCommandIsAgent(output string) bool {
 
 // hasQuestionInPane checks the last output for question indicators.
 func (h *APIHandler) hasQuestionInPane(ctx context.Context, sessionName string) bool {
-	cmd := exec.CommandContext(ctx, "tmux", "capture-pane", "-t", sessionName, "-p", "-J")
+	cmd := tmux.BuildCommandContext(ctx, "capture-pane", "-t", sessionName, "-p", "-J")
 	var stdout bytes.Buffer
 	cmd.Stdout = &stdout
 	if err := cmd.Run(); err != nil {
@@ -2118,7 +2118,7 @@ func (h *APIHandler) handleSessionPreview(w http.ResponseWriter, r *http.Request
 	ctx, cancel := context.WithTimeout(r.Context(), 3*time.Second)
 	defer cancel()
 
-	cmd := exec.CommandContext(ctx, "tmux", "capture-pane", "-t", sessionName, "-p", "-J", "-S", "-30")
+	cmd := tmux.BuildCommandContext(ctx, "capture-pane", "-t", sessionName, "-p", "-J", "-S", "-30")
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr

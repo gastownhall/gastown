@@ -86,6 +86,48 @@ func TestNewDoltServerManagerHonorsIgnoreConfig(t *testing.T) {
 	}
 }
 
+func TestNewDoltServerManager_ExternalLoopbackUsesDaemonEndpoint(t *testing.T) {
+	// Given
+	townRoot := t.TempDir()
+	t.Setenv("GT_DOLT_EXTERNAL", "")
+	t.Setenv("GT_DOLT_HOST", "")
+	t.Setenv("GT_DOLT_PORT", "")
+	mayorDir := filepath.Join(townRoot, "mayor")
+	if err := os.MkdirAll(mayorDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(mayorDir, "daemon.json"), []byte(`{"env":{"GT_DOLT_EXTERNAL":"true","GT_DOLT_HOST":"127.0.0.1","GT_DOLT_PORT":"3308"}}`), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	// When
+	manager := NewDoltServerManager(townRoot, &DoltServerConfig{Enabled: true}, func(string, ...interface{}) {})
+
+	// Then
+	if !manager.IsExternal() {
+		t.Fatal("external loopback endpoint must not be daemon managed")
+	}
+	if manager.config.Host != "127.0.0.1" || manager.config.Port != 3308 {
+		t.Fatalf("endpoint = %s:%d, want 127.0.0.1:3308", manager.config.Host, manager.config.Port)
+	}
+}
+
+func TestDoltServerManager_StartRejectsExternalEndpoint(t *testing.T) {
+	// Given
+	manager := &DoltServerManager{
+		config: &DoltServerConfig{Enabled: true, External: true},
+		logger: func(string, ...interface{}) {},
+	}
+
+	// When
+	err := manager.Start()
+
+	// Then
+	if err == nil {
+		t.Fatal("external server start must be rejected")
+	}
+}
+
 func TestApplyDoltServerConfigEnvUsesNormalizedManagerConfig(t *testing.T) {
 	townRoot := t.TempDir()
 	writeManagedDoltConfig(t, townRoot, "listener:\n  host: 127.0.0.2\n  port: 5507\n")
