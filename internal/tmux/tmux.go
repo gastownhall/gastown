@@ -3899,7 +3899,7 @@ func (t *Tmux) SetTownCycleBindings(session string) error {
 //  2. Unguarded form (set by EnsureBindingsOnSocket): direct run-shell
 //     invoking "gt agents menu" or "gt feed --window".
 func (t *Tmux) isGTBinding(table, key string) bool {
-	output, err := t.run("list-keys", "-T", table, key)
+	output, err := t.rawKeyBinding(table, key)
 	if err != nil || output == "" {
 		return false
 	}
@@ -3917,7 +3917,7 @@ func (t *Tmux) isGTBinding(table, key string) bool {
 // --client for multi-client support. Older GT bindings without --client cause
 // switch-client to target the wrong client when multiple clients are attached.
 func (t *Tmux) isGTBindingWithClient(table, key string) bool {
-	output, err := t.run("list-keys", "-T", table, key)
+	output, err := t.rawKeyBinding(table, key)
 	if err != nil || output == "" {
 		return false
 	}
@@ -3929,11 +3929,29 @@ func (t *Tmux) isGTBindingWithClient(table, key string) bool {
 // current prefix pattern. Returns false if the binding is stale (e.g., after
 // gt rig add introduces a new prefix not yet in the grep pattern).
 func (t *Tmux) isGTBindingCurrent(table, key, currentPattern string) bool {
-	output, err := t.run("list-keys", "-T", table, key)
+	output, err := t.rawKeyBinding(table, key)
 	if err != nil || output == "" {
 		return false
 	}
 	return strings.Contains(output, currentPattern)
+}
+
+// rawKeyBinding returns the command bound to key in table. Query the complete
+// table using tmux's documented key formats and select the exact key here.
+// tmux 3.7 accepts a positional key filter for list-keys but can return an
+// empty result with exit status 0, which makes freshness checks fail open.
+func (t *Tmux) rawKeyBinding(table, key string) (string, error) {
+	output, err := t.run("list-keys", "-T", table, "-F", "#{key_string}\t#{key_command}")
+	if err != nil {
+		return "", err
+	}
+	for _, line := range strings.Split(output, "\n") {
+		bindingKey, command, ok := strings.Cut(line, "\t")
+		if ok && bindingKey == key {
+			return command, nil
+		}
+	}
+	return "", nil
 }
 
 // getKeyBinding returns the current tmux command bound to the given key in the
@@ -3948,15 +3966,7 @@ func (t *Tmux) isGTBindingCurrent(table, key, currentPattern string) bool {
 // the presence of both "if-shell" and "gt " in the output), it is treated as
 // no prior binding to avoid recursive wrapping on repeated calls.
 func (t *Tmux) getKeyBinding(table, key string) string {
-	// tmux list-keys -T <table> <key> outputs a line like:
-	//   bind-key -T prefix g if-shell "..." "run-shell 'gt agents menu'" ":"
-	// We need to extract just the command portion.
-	//
-	// Assumed format (tested with tmux 3.3+):
-	//   bind-key [-r] -T <table> <key> <command...>
-	// If tmux changes this format, parsing fails safely (returns ""),
-	// which causes the caller to use its default fallback.
-	output, err := t.run("list-keys", "-T", table, key)
+	output, err := t.rawKeyBinding(table, key)
 	if err != nil || output == "" {
 		return ""
 	}
@@ -3972,36 +3982,7 @@ func (t *Tmux) getKeyBinding(table, key string) string {
 		return ""
 	}
 
-	// Parse the binding command from list-keys output.
-	// Format: "bind-key [-r] -T <table> <key> <command...>"
-	// We need everything after the key name.
-	// Find the key in the output and take everything after it.
-	fields := strings.Fields(output)
-	keyIdx := -1
-	for i, f := range fields {
-		if f == "-T" && i+2 < len(fields) {
-			// Skip table name, the next field is the key
-			keyIdx = i + 2
-			break
-		}
-	}
-	if keyIdx < 0 || keyIdx >= len(fields)-1 {
-		return ""
-	}
-
-	// Everything after the key is the command
-	// Rejoin from keyIdx+1 onward, but we need to preserve the original spacing.
-	// Find the key token in the original string and take everything after it.
-	idx := strings.Index(output, " "+fields[keyIdx]+" ")
-	if idx < 0 {
-		return ""
-	}
-	cmd := strings.TrimSpace(output[idx+len(" "+fields[keyIdx]+" "):])
-	if cmd == "" {
-		return ""
-	}
-
-	return cmd
+	return output
 }
 
 // safePrefixRe matches the character set guaranteed by beadsPrefixRegexp in
