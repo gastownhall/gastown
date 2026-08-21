@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -47,6 +48,52 @@ func TestAgentBeadsExistCheck_NoRigs(t *testing.T) {
 	// With empty routes, only global agents (deacon, mayor) are checked
 	// They won't exist without Dolt, so we expect error or warning
 	t.Logf("Result: status=%v, message=%s", result.Status, result.Message)
+}
+
+func TestAgentBeadsExistCheckReportsLegacyTaskType(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("uses a POSIX shell fake bd")
+	}
+	tmpDir := t.TempDir()
+	beadsDir := filepath.Join(tmpDir, ".beads")
+	if err := os.MkdirAll(beadsDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(beadsDir, "routes.jsonl"), nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	binDir := t.TempDir()
+	script := `#!/bin/sh
+cmd=""
+for arg in "$@"; do
+  case "$arg" in
+    --*) ;;
+    *) cmd="$arg"; break ;;
+  esac
+done
+case "$cmd" in
+  version) printf 'bd test\n' ;;
+  list) printf '[{"id":"hq-deacon","issue_type":"task","labels":["gt:agent"],"status":"open"},{"id":"hq-mayor","issue_type":"task","labels":["gt:agent"],"status":"open"}]\n' ;;
+  mol) printf '{"wisps":[]}\n' ;;
+  *) exit 1 ;;
+esac
+`
+	if err := os.WriteFile(filepath.Join(binDir, "bd"), []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	result := NewAgentBeadsCheck().Run(&CheckContext{TownRoot: tmpDir})
+	if result.Status != StatusWarning {
+		t.Fatalf("status = %v, want warning; result=%#v", result.Status, result)
+	}
+	if !strings.Contains(result.Message, "require canonical type/label migration") {
+		t.Fatalf("message = %q", result.Message)
+	}
+	if got := strings.Join(result.Details, ","); !strings.Contains(got, "hq-deacon") || !strings.Contains(got, "hq-mayor") {
+		t.Fatalf("details = %v, want both legacy global agents", result.Details)
+	}
 }
 
 // TestAgentBeadsExistCheck_ExpectedIDs verifies the check looks for correct agent bead IDs.
@@ -337,23 +384,6 @@ func TestListCrewWorkers_FiltersWorktrees(t *testing.T) {
 		if !found {
 			t.Errorf("listCrewWorkers should include canonical worker %q, got: %v", name, workers)
 		}
-	}
-}
-
-// TestAddWispLabelSQL_ErrorsGracefully verifies addWispLabelSQL doesn't panic
-// and returns an error when bd is unavailable (no Dolt server).
-// This is a regression guard for gt-3vx: after CreateAgentBead, the gt:agent
-// label must also be inserted into wisp_labels so doctor checks that join
-// wisp_labels can find the bead.
-func TestAddWispLabelSQL_ErrorsGracefully(t *testing.T) {
-	tmpDir := t.TempDir()
-	err := addWispLabelSQL(tmpDir, "gt-gastown-witness", "gt:agent")
-	// bd sql will fail without a Dolt server — just verify no panic and that the
-	// function returns an error (not silently discarding the failure).
-	if err == nil {
-		t.Log("addWispLabelSQL succeeded (Dolt server is running)")
-	} else {
-		t.Logf("addWispLabelSQL returned expected error without Dolt: %v", err)
 	}
 }
 

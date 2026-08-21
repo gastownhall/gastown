@@ -392,11 +392,13 @@ func (b *Beads) EnsureCanonicalAgentBead(issue *Issue) (bool, error) {
 		return false, fmt.Errorf("issue %s is not an agent bead", issueID(issue))
 	}
 
-	target := b.pinnedToCurrentLedger()
+	target := b.ForCurrentLedger()
 	changed := false
 	if IsLegacyAgentBead(issue) {
-		if err := EnsureCustomTypes(target.getResolvedBeadsDir()); err != nil {
-			return false, fmt.Errorf("configuring canonical agent type in %s: %w", target.getResolvedBeadsDir(), err)
+		if target.store == nil {
+			if err := EnsureCustomTypes(target.getResolvedBeadsDir()); err != nil {
+				return false, fmt.Errorf("configuring canonical agent type in %s: %w", target.getResolvedBeadsDir(), err)
+			}
 		}
 		issueType := AgentIssueType
 		if err := target.Update(issue.ID, UpdateOptions{Type: &issueType}); err != nil {

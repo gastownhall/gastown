@@ -4687,8 +4687,8 @@ func TestResetAgentBeadForReuse_NukeRespawnCycle(t *testing.T) {
 	t.Log("LIFECYCLE TEST PASSED: spawn → reset → respawn works without close/reopen")
 }
 
-// TestIsAgentBead verifies the IsAgentBead function correctly identifies agent
-// beads by checking both the gt:agent label (preferred) and the legacy type field.
+// TestIsAgentBead verifies the canonical predicate and its explicit legacy
+// task+gt:agent migration boundary.
 func TestIsAgentBead(t *testing.T) {
 	tests := []struct {
 		name  string
@@ -4701,7 +4701,7 @@ func TestIsAgentBead(t *testing.T) {
 			want:  false,
 		},
 		{
-			name: "agent with legacy type",
+			name: "canonical type is recognizable before label repair",
 			issue: &Issue{
 				ID:     "gt-gastown-polecat-toast",
 				Type:   "agent",
@@ -4726,6 +4726,15 @@ func TestIsAgentBead(t *testing.T) {
 				Labels: []string{"gt:agent", "other-label"},
 			},
 			want: true,
+		},
+		{
+			name: "other type with agent label is rejected",
+			issue: &Issue{
+				ID:     "gt-gastown-polecat-toast",
+				Type:   "bug",
+				Labels: []string{"gt:agent"},
+			},
+			want: false,
 		},
 		{
 			name: "not an agent - task type without label",
@@ -4763,6 +4772,22 @@ func TestIsAgentBead(t *testing.T) {
 				t.Errorf("IsAgentBead() = %v, want %v", got, tt.want)
 			}
 		})
+	}
+}
+
+func TestAgentBeadCanonicalPredicates(t *testing.T) {
+	canonical := &Issue{Type: AgentIssueType, Labels: []string{AgentLabel}}
+	legacy := &Issue{Type: LegacyAgentIssueType, Labels: []string{AgentLabel, "idle:2"}}
+	missingLabel := &Issue{Type: AgentIssueType}
+
+	if !IsCanonicalAgentBead(canonical) || IsLegacyAgentBead(canonical) {
+		t.Fatalf("canonical predicates disagree for %#v", canonical)
+	}
+	if !IsLegacyAgentBead(legacy) || IsCanonicalAgentBead(legacy) {
+		t.Fatalf("legacy predicates disagree for %#v", legacy)
+	}
+	if !IsAgentBead(missingLabel) || IsCanonicalAgentBead(missingLabel) {
+		t.Fatalf("type-only agent must be recognizable for label repair: %#v", missingLabel)
 	}
 }
 

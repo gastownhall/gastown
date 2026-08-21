@@ -130,6 +130,19 @@ func (m *mockStorage) UpdateIssue(_ context.Context, id string, updates map[stri
 	return nil
 }
 
+func (m *mockStorage) UpdateIssueType(_ context.Context, id, issueType, _ string) error {
+	if m.updateErr != nil {
+		return m.updateErr
+	}
+	issue, ok := m.issues[id]
+	if !ok {
+		return fmt.Errorf("issue %s not found", id)
+	}
+	issue.IssueType = beadsdk.IssueType(issueType)
+	issue.UpdatedAt = time.Now()
+	return nil
+}
+
 func (m *mockStorage) CloseIssue(_ context.Context, id, reason, actor, session string) error {
 	if m.closeErr != nil {
 		return m.closeErr
@@ -610,6 +623,20 @@ func TestStoreUpdate(t *testing.T) {
 	}
 	if store.issues["test-1"].Title != "updated" {
 		t.Fatalf("expected 'updated', got %q", store.issues["test-1"].Title)
+	}
+}
+
+func TestStoreUpdateType(t *testing.T) {
+	store := newMockStorage()
+	b := newTestBeads(store)
+
+	store.CreateIssue(context.Background(), &beadsdk.Issue{Title: "agent", IssueType: beadsdk.TypeTask}, "test")
+	issueType := AgentIssueType
+	if err := b.Update("test-1", UpdateOptions{Type: &issueType}); err != nil {
+		t.Fatalf("Update type: %v", err)
+	}
+	if got := string(store.issues["test-1"].IssueType); got != AgentIssueType {
+		t.Fatalf("issue type = %q, want %q", got, AgentIssueType)
 	}
 }
 

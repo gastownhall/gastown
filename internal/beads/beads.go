@@ -657,10 +657,10 @@ func (b *Beads) agentBeadTarget() *Beads {
 	return b.ForAgentBead()
 }
 
-// pinnedToCurrentLedger returns a wrapper that operates on b's configured
+// ForCurrentLedger returns a wrapper that operates on b's configured
 // ledger without applying issue-prefix routing. This is used for in-place
 // repairs discovered while explicitly scanning a town or rig ledger.
-func (b *Beads) pinnedToCurrentLedger() *Beads {
+func (b *Beads) ForCurrentLedger() *Beads {
 	if b.noRoute {
 		return b
 	}
