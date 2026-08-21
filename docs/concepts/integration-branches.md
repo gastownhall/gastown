@@ -15,6 +15,22 @@ Landing can happen on command or automatically via patrol. The result is that
 an entire epic flows through the system as a coherent unit, from first sling
 to final land, without any manual branch targeting.
 
+## Terminology Boundary
+
+A **project integration lane** and an **epic integration branch** are different
+things:
+
+- A project integration lane is the project-governance branch where an overall
+  increment is assembled and validated. In a maintained downstream fork this
+  can be the fork's `main` branch.
+- An epic integration branch is a Gas Town-managed, epic-scoped branch created
+  by `gt mq integration create`. Child MRs accumulate there until
+  `gt mq integration land` merges it into its recorded base.
+
+The project lane is not created, detected, or landed by the epic integration
+commands. In product docs, “integration branch” means only the epic-scoped Gas
+Town object described on this page.
+
 ## Workflow
 
 1. **Create the epic and its children.** Structure your work as an epic with
@@ -587,4 +603,5 @@ If you need to land early, close or remove the incomplete children first.
 ## See Also
 
 - [Polecat Lifecycle](polecat-lifecycle.md) — How polecats submit to the merge queue
+- [Fork-Based Rig Setup](../guides/fork-rig-setup.md) — Contribution and downstream fork branch roles
 - [Reference](../reference.md) — Full CLI reference including MQ commands

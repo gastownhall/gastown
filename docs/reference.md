@@ -4,20 +4,28 @@ Technical reference for Gas Town internals. Read the README first.
 
 > For directory structure details, see [architecture.md](design/architecture.md).
 
-## Beads Routing
+## Beads routing and command ownership
 
-Gas Town `gt` commands route beads work based on issue ID prefix. For direct
-`bd` commands, run from the owning repository/root so the active `.beads`
-directory matches the database you intend to touch.
+Use `bd` for issue CRUD in the ledger that owns the work. Use `gt` for
+execution and lifecycle: `gt sling` dispatches work, `gt convoy` tracks it,
+and standard-rig polecats use `gt done` to submit completed work. Existing
+issue IDs route by prefix; creation must name or run from the owning ledger.
+
+The canonical completion paths are documented in
+[Polecat lifecycle](concepts/polecat-lifecycle.md). Fork-backed assignments use
+the [fork contribution workflow](guides/fork-rig-setup.md) instead of sending
+upstream changes to a local merge queue.
 
 ```bash
-bd -C ~/gt/greenplace/mayor/rig show gp-xyz  # Greenplace rig beads
-bd -C ~/gt show hq-abc                       # Town-level beads
-bd -C ~/gt/wyvern/mayor/rig show wyv-123     # Wyvern rig beads
+bd show gp-xyz                              # Routes to Greenplace by gp- prefix
+bd update wyv-123 --status=in_progress      # Routes to Wyvern by wyv- prefix
+bd close hq-abc                             # Routes to the town ledger by hq- prefix
+bd create --repo greenplace "Fix auth"      # Creates in Greenplace's ledger
+bd -C ~/gt/wyvern/mayor/rig create "Quest"  # Explicit owning-root form
 ```
 
-**How it works**: Routes are defined in `~/gt/.beads/routes.jsonl`. Each rig's
-prefix maps to its beads location (the mayor's clone in that rig).
+Routes are defined in `~/gt/.beads/routes.jsonl`. Each rig's prefix maps to
+the canonical ledger in that rig's mayor clone.
 
 | Prefix | Routes To | Purpose |
 |--------|-----------|---------|
@@ -25,7 +33,7 @@ prefix maps to its beads location (the mayor's clone in that rig).
 | `gp-*` | `~/gt/greenplace/mayor/rig/.beads/` | Greenplace project issues |
 | `wyv-*` | `~/gt/wyvern/mayor/rig/.beads/` | Wyvern project issues |
 
-Debug routing: `BD_DEBUG_ROUTING=1 bd -C <owning-root> show <id>`
+Debug routing: `BD_DEBUG_ROUTING=1 bd show <id>`
 
 `bd --global` is not Gas Town's town database. In Beads it targets a separate
 shared-server database named `beads_global`; run `bd -C ~/gt ...` for
@@ -687,6 +695,9 @@ bd update <id> --status=in_progress
 bd close <id>
 bd dep add <child> <parent>  # child depends on parent
 ```
+
+These commands operate on the owning ledger described in
+[Beads routing and command ownership](#beads-routing-and-command-ownership).
 
 ## Patrol Agents
 
