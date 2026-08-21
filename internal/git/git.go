@@ -94,6 +94,29 @@ func (g *Git) IsRepo() bool {
 	return err == nil
 }
 
+// ValidateBareRepository verifies that g points at a structurally usable bare
+// repository. Checking HEAD explicitly catches partially deleted repositories
+// that still contain objects or worktree metadata but are no longer operable.
+func (g *Git) ValidateBareRepository() error {
+	if g.gitDir == "" {
+		return fmt.Errorf("no git directory configured for bare repository validation")
+	}
+	if _, err := os.Stat(filepath.Join(g.gitDir, "HEAD")); err != nil {
+		return fmt.Errorf("HEAD missing: %w", err)
+	}
+	if _, err := g.run("rev-parse", "--git-dir"); err != nil {
+		return fmt.Errorf("git rev-parse --git-dir failed: %w", err)
+	}
+	out, err := g.run("rev-parse", "--is-bare-repository")
+	if err != nil {
+		return fmt.Errorf("git rev-parse --is-bare-repository failed: %w", err)
+	}
+	if strings.TrimSpace(out) != "true" {
+		return fmt.Errorf("repository is not bare")
+	}
+	return nil
+}
+
 // run executes a git command and returns stdout.
 func (g *Git) run(args ...string) (string, error) {
 	if err := g.guardUnsafeTownRootMutation(args); err != nil {
@@ -1469,6 +1492,12 @@ func (g *Git) ConfigGet(key string) (string, error) {
 		return "", nil
 	}
 	return out, nil
+}
+
+// ConfigSet sets a repository-local git configuration value.
+func (g *Git) ConfigSet(key, value string) error {
+	_, err := g.run("config", key, value)
+	return err
 }
 
 // Merge merges the given branch into the current branch.

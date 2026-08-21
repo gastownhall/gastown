@@ -16,6 +16,7 @@ import (
 	"github.com/steveyegge/gastown/internal/constants"
 	"github.com/steveyegge/gastown/internal/doltserver"
 	"github.com/steveyegge/gastown/internal/git"
+	rigpkg "github.com/steveyegge/gastown/internal/rig"
 )
 
 // RigIsGitRepoCheck verifies the rig has a valid mayor/rig git clone.
@@ -515,23 +516,20 @@ func (c *RefineryExistsCheck) Run(ctx *CheckContext) *CheckResult {
 	c.needsClone = false
 	c.needsMail = false
 
-	// Check refinery/ directory
+	// Each required path is checked independently so a completely missing
+	// refinery directory repairs the mail directory and worktree in one pass.
 	if _, err := os.Stat(refineryDir); os.IsNotExist(err) {
 		issues = append(issues, "Missing: refinery/")
 		c.needsCreate = true
-	} else {
-		// Check refinery/rig/ clone
-		rigGit := filepath.Join(rigClone, ".git")
-		if _, err := os.Stat(rigGit); os.IsNotExist(err) {
-			issues = append(issues, "Missing: refinery/rig/ (git clone)")
-			c.needsClone = true
-		}
+	}
 
-		// Check refinery/mail/inbox.jsonl
-		if _, err := os.Stat(mailInbox); os.IsNotExist(err) {
-			issues = append(issues, "Missing: refinery/mail/inbox.jsonl")
-			c.needsMail = true
-		}
+	if _, err := os.Stat(filepath.Join(rigClone, ".git")); os.IsNotExist(err) {
+		issues = append(issues, "Missing: refinery/rig/ (git worktree)")
+		c.needsClone = true
+	}
+	if _, err := os.Stat(mailInbox); os.IsNotExist(err) {
+		issues = append(issues, "Missing: refinery/mail/inbox.jsonl")
+		c.needsMail = true
 	}
 
 	if len(issues) == 0 {
@@ -572,38 +570,10 @@ func (c *RefineryExistsCheck) Fix(ctx *CheckContext) error {
 		}
 	}
 
-	// Auto-repair refinery worktree from shared bare repo (.repo.git).
-	// The refinery/rig is a worktree (not a full clone), so we don't need
-	// the repo URL -- we just create a worktree from the local bare repo.
 	if c.needsClone {
-		bareRepoPath := filepath.Join(c.rigPath, ".repo.git")
-		if _, err := os.Stat(bareRepoPath); os.IsNotExist(err) {
-			return fmt.Errorf("cannot auto-create refinery/rig/ worktree: bare repo not found at %s", bareRepoPath)
+		if _, err := rigpkg.EnsureCanonicalRepoTopology(c.rigPath); err != nil {
+			return fmt.Errorf("repairing canonical refinery topology: %w", err)
 		}
-
-		bareGit := git.NewGitWithDir(bareRepoPath, "")
-		_ = bareGit.WorktreePrune()
-
-		rigClone := filepath.Join(refineryDir, "rig")
-		// Detect default branch from rig config
-		rigCfgPath := filepath.Join(c.rigPath, "settings", "rig.json")
-		defaultBranch := "main"
-		if data, err := os.ReadFile(rigCfgPath); err == nil {
-			var cfg struct {
-				DefaultBranch string `json:"default_branch"`
-			}
-			if json.Unmarshal(data, &cfg) == nil && cfg.DefaultBranch != "" {
-				defaultBranch = cfg.DefaultBranch
-			}
-		}
-
-		if err := bareGit.WorktreeAddExisting(rigClone, defaultBranch); err != nil {
-			return fmt.Errorf("creating refinery worktree from bare repo: %w", err)
-		}
-
-		// Configure hooks path
-		refineryGit := git.NewGit(rigClone)
-		_ = refineryGit.ConfigureHooksPath()
 	}
 
 	return nil
@@ -1138,34 +1108,7 @@ func hasBeadsData(beadsDir string) bool {
 // and also rejects a non-bare repo masquerading as .repo.git (which would let
 // refspec repair write into a working tree's git dir).
 func bareRepoHealth(bareRepoPath string) error {
-	if _, err := os.Stat(filepath.Join(bareRepoPath, "HEAD")); err != nil {
-		return fmt.Errorf("HEAD missing: %w", err)
-	}
-	cmd := exec.Command("git", "-C", bareRepoPath, "rev-parse", "--git-dir")
-	var stderr bytes.Buffer
-	cmd.Stderr = &stderr
-	if err := cmd.Run(); err != nil {
-		msg := strings.TrimSpace(stderr.String())
-		if msg == "" {
-			msg = err.Error()
-		}
-		return fmt.Errorf("git rev-parse --git-dir failed: %s", msg)
-	}
-	stderr.Reset()
-	bareCmd := exec.Command("git", "-C", bareRepoPath, "rev-parse", "--is-bare-repository")
-	bareCmd.Stderr = &stderr
-	out, err := bareCmd.Output()
-	if err != nil {
-		msg := strings.TrimSpace(stderr.String())
-		if msg == "" {
-			msg = err.Error()
-		}
-		return fmt.Errorf("git rev-parse --is-bare-repository failed: %s", msg)
-	}
-	if strings.TrimSpace(string(out)) != "true" {
-		return fmt.Errorf(".repo.git is not a bare repository")
-	}
-	return nil
+	return git.NewGitWithDir(bareRepoPath, "").ValidateBareRepository()
 }
 
 // BareRepoRefspecCheck verifies that the shared bare repo has the correct refspec configured.
@@ -1224,10 +1167,9 @@ func (c *BareRepoRefspecCheck) Run(ctx *CheckContext) *CheckResult {
 		}
 	}
 
-	// Check the refspec
-	cmd := exec.Command("git", "-C", bareRepoPath, "config", "--get", "remote.origin.fetch")
-	out, err := cmd.Output()
-	if err != nil {
+	// Check the refspec through the canonical git owner.
+	refspec, err := git.NewGitWithDir(bareRepoPath, "").ConfigGet("remote.origin.fetch")
+	if err != nil || refspec == "" {
 		return &CheckResult{
 			Name:    c.Name(),
 			Status:  StatusError,
@@ -1240,8 +1182,8 @@ func (c *BareRepoRefspecCheck) Run(ctx *CheckContext) *CheckResult {
 		}
 	}
 
-	refspec := strings.TrimSpace(string(out))
-	expectedRefspec := "+refs/heads/*:refs/remotes/origin/*"
+	refspec = strings.TrimSpace(refspec)
+	expectedRefspec := rigpkg.CanonicalBareFetchRefspec
 	if refspec != expectedRefspec {
 		return &CheckResult{
 			Name:    c.Name(),
@@ -1280,11 +1222,9 @@ func (c *BareRepoRefspecCheck) Fix(ctx *CheckContext) error {
 		return fmt.Errorf("refusing to set refspec: bare repo is structurally broken (%s); run bare-repo-exists fix to re-clone", healthErr)
 	}
 
-	cmd := exec.Command("git", "-C", bareRepoPath, "config", "remote.origin.fetch", "+refs/heads/*:refs/remotes/origin/*")
-	var stderr bytes.Buffer
-	cmd.Stderr = &stderr
-	if err := cmd.Run(); err != nil {
-		return fmt.Errorf("setting refspec: %s", strings.TrimSpace(stderr.String()))
+	bareGit := git.NewGitWithDir(bareRepoPath, "")
+	if err := bareGit.ConfigSet("remote.origin.fetch", rigpkg.CanonicalBareFetchRefspec); err != nil {
+		return fmt.Errorf("setting refspec: %w", err)
 	}
 	return nil
 }
@@ -1492,6 +1432,7 @@ type BareRepoExistsCheck struct {
 	FixableCheck
 	brokenWorktrees []string          // worktree paths with broken .repo.git references
 	pushURLMismatch bool              // config.json push_url differs from .repo.git push URL
+	bareRepoMissing bool              // canonical .repo.git is absent
 	bareRepoCorrupt bool              // .repo.git exists but is not a usable git directory
 	recoveredHeads  map[string]string // rig-relative worktree path -> HEAD ref captured before re-clone
 }
@@ -1526,6 +1467,7 @@ func (c *BareRepoExistsCheck) Run(ctx *CheckContext) *CheckResult {
 	// Reset mutable state to avoid stale values if check is reused across rigs.
 	c.brokenWorktrees = nil
 	c.pushURLMismatch = false
+	c.bareRepoMissing = false
 	c.bareRepoCorrupt = false
 	c.recoveredHeads = nil
 	worktreeDirs := c.findWorktreeDirs(rigPath, ctx.RigName)
@@ -1569,6 +1511,31 @@ func (c *BareRepoExistsCheck) Run(ctx *CheckContext) *CheckResult {
 				}
 				c.brokenWorktrees = append(c.brokenWorktrees, relPath)
 			}
+		}
+	}
+
+	if _, err := os.Stat(bareRepoPath); os.IsNotExist(err) {
+		c.bareRepoMissing = true
+		details := []string{"Missing: " + bareRepoPath}
+		if len(c.brokenWorktrees) > 0 {
+			details = append(details, c.brokenWorktrees...)
+		}
+		return &CheckResult{
+			Name:     c.Name(),
+			Status:   StatusError,
+			Message:  "Canonical shared bare repo is missing",
+			Details:  details,
+			FixHint:  "Run 'gt doctor --fix --rig " + ctx.RigName + "' to restore .repo.git and refinery/rig",
+			Category: c.Category(),
+		}
+	} else if err != nil {
+		return &CheckResult{
+			Name:     c.Name(),
+			Status:   StatusError,
+			Message:  "Cannot inspect canonical shared bare repo",
+			Details:  []string{err.Error()},
+			FixHint:  "Check permissions for " + bareRepoPath,
+			Category: c.Category(),
 		}
 	}
 
@@ -1737,25 +1704,10 @@ func (c *BareRepoExistsCheck) Run(ctx *CheckContext) *CheckResult {
 		}
 	}
 
-	// .repo.git missing but no worktrees depend on it
-	if len(c.brokenWorktrees) == 0 {
-		return &CheckResult{
-			Name:     c.Name(),
-			Status:   StatusOK,
-			Message:  "No worktrees depend on .repo.git",
-			Category: c.Category(),
-		}
-	}
-
 	return &CheckResult{
-		Name:    c.Name(),
-		Status:  StatusError,
-		Message: fmt.Sprintf("%d worktree(s) reference missing .repo.git", len(c.brokenWorktrees)),
-		Details: append(
-			[]string{"Missing: " + bareRepoPath},
-			c.brokenWorktrees...,
-		),
-		FixHint:  "Run 'gt doctor --fix --rig " + ctx.RigName + "' to recreate .repo.git from remote",
+		Name:     c.Name(),
+		Status:   StatusError,
+		Message:  "Canonical shared bare repo validation did not complete",
 		Category: c.Category(),
 	}
 }
@@ -1769,6 +1721,17 @@ func (c *BareRepoExistsCheck) Fix(ctx *CheckContext) error {
 
 	rigPath := ctx.RigPath()
 	bareRepoPath := filepath.Join(rigPath, ".repo.git")
+
+	// Adopted rigs can have a healthy Mayor clone and independent polecat
+	// worktrees without any canonical .repo.git reference. Restore the complete
+	// topology through the rig owner instead of treating that legacy shape as OK.
+	if c.bareRepoMissing && len(c.brokenWorktrees) == 0 {
+		if _, err := rigpkg.EnsureCanonicalRepoTopology(rigPath); err != nil {
+			return fmt.Errorf("restoring canonical repository topology: %w", err)
+		}
+		c.bareRepoMissing = false
+		return nil
+	}
 
 	// If .repo.git is corrupt (exists but unusable), nuke it so the missing-repo
 	// branch below re-clones from config.json. We cannot repair a partial-shell
