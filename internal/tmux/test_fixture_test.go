@@ -94,6 +94,23 @@ func waitForPaneText(t *testing.T, tm *Tmux, target, text string) {
 	t.Fatalf("pane %q did not contain %q within %s: output=%q err=%v", target, text, testTmuxReadyTimeout, lastOutput, lastErr)
 }
 
+func waitForPaneCommand(t *testing.T, tm *Tmux, target, command string) {
+	t.Helper()
+	deadline := time.Now().Add(testTmuxReadyTimeout)
+	var (
+		lastCommand string
+		lastErr     error
+	)
+	for time.Now().Before(deadline) {
+		lastCommand, lastErr = tm.GetPaneCommand(target)
+		if lastErr == nil && lastCommand == command {
+			return
+		}
+		time.Sleep(testTmuxReadyInterval)
+	}
+	t.Fatalf("pane %q command did not become %q within %s: command=%q err=%v", target, command, testTmuxReadyTimeout, lastCommand, lastErr)
+}
+
 func TestNewTestTmuxIsolatesStateAndEnvironment(t *testing.T) {
 	t.Setenv("BASH_ENV", "/operator/bash-env")
 	t.Setenv("TMUX", "/operator/socket,123,0")
