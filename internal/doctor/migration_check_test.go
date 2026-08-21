@@ -188,6 +188,10 @@ func TestGetServerAddr_NoMetadata(t *testing.T) {
 }
 
 func TestGetServerAddr_UsesConfigYAMLPort(t *testing.T) {
+	t.Setenv("GT_DOLT_HOST", "")
+	t.Setenv("GT_DOLT_PORT", "")
+	t.Setenv("GT_DOLT_IGNORE_CONFIG", "")
+
 	check := NewDoltServerReachableCheck()
 	townRoot := t.TempDir()
 
