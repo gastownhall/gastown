@@ -582,14 +582,10 @@ func TestGetPaneCommand_MultiPane(t *testing.T) {
 	}
 	defer func() { _ = tm.KillSession(sessionName) }()
 
-	// Verify pane 0 shows "sleep"
-	cmd, err := tm.GetPaneCommand(sessionName)
-	if err != nil {
-		t.Fatalf("GetPaneCommand before split: %v", err)
-	}
-	if cmd != "sleep" {
-		t.Fatalf("expected pane 0 command to be 'sleep', got %q", cmd)
-	}
+	// respawn-pane may return before the requested process replaces tmux's
+	// bootstrap shell on a loaded runner. Make that fixture precondition explicit
+	// before exercising pane selection after a split.
+	waitForPaneCommand(t, tm, sessionName, "sleep")
 
 	// Capture pane 0's PID and working directory before the split
 	pidBefore, err := tm.GetPanePID(sessionName)
@@ -607,7 +603,7 @@ func TestGetPaneCommand_MultiPane(t *testing.T) {
 	}
 
 	// GetPaneCommand should still return "sleep" (pane 0), not the shell
-	cmd, err = tm.GetPaneCommand(sessionName)
+	cmd, err := tm.GetPaneCommand(sessionName)
 	if err != nil {
 		t.Fatalf("GetPaneCommand after split: %v", err)
 	}
