@@ -14,8 +14,8 @@ func TestAcceptWorkspaceTrustDialog_NoDialog(t *testing.T) {
 	newReadyTestSession(t, tm, sessionName)
 	defer func() { _ = tm.KillSession(sessionName) }()
 
-	// Session starts with a shell prompt containing ">", "$", or "%"
-	// The polling loop should exit early when it sees the prompt.
+	// The controlled shell is ready before timing begins, so the polling loop
+	// should exit on its owned prompt rather than ambient shell startup.
 	start := time.Now()
 	err := tm.AcceptWorkspaceTrustDialog(sessionName)
 	elapsed := time.Since(start)

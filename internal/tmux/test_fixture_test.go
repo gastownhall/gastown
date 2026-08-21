@@ -35,7 +35,7 @@ func newTestTmux(t *testing.T) *Tmux {
 
 	socket := fmt.Sprintf("gt-test-%d-%d", os.Getpid(), testTmuxSocketSequence.Add(1))
 	cmd := exec.Command(
-		"tmux", "-u", "-f", "/dev/null", "-L", socket,
+		"tmux", "-u", "-f", os.DevNull, "-L", socket,
 		"new-session", "-d", "-s", testTmuxSentinelSession,
 	)
 	cmd.Env = isolatedTmuxServerEnvironment()

@@ -1850,7 +1850,7 @@ func TestSendKeysLiteralWithRetry_NonTransientFailsFast(t *testing.T) {
 
 func TestNudgeSession_WithRetry(t *testing.T) {
 	tm := newTestTmux(t)
-	sessionName := "gt-test-nudge-retry-" + fmt.Sprintf("%d", time.Now().UnixNano()%10000)
+	sessionName := "gt-test-nudge-retry"
 
 	newReadyTestSession(t, tm, sessionName)
 	defer func() { _ = tm.KillSession(sessionName) }()
@@ -1864,7 +1864,7 @@ func TestNudgeSession_WithRetry(t *testing.T) {
 
 func TestNudgeSession_WithStoredPaneID(t *testing.T) {
 	tm := newTestTmux(t)
-	sessionName := "gt-test-nudge-paneid-" + fmt.Sprintf("%d", time.Now().UnixNano()%10000)
+	sessionName := "gt-test-nudge-paneid"
 
 	newReadyTestSession(t, tm, sessionName)
 	defer func() { _ = tm.KillSession(sessionName) }()
@@ -1895,7 +1895,7 @@ func TestNudgeSession_WithStoredPaneID(t *testing.T) {
 // the active window — was the one woken.
 func TestNudgeSession_WakesAgentWindowNotActiveWindow(t *testing.T) {
 	tm := newTestTmux(t)
-	sessionName := "gt-test-nudge-multiwin-" + fmt.Sprintf("%d", time.Now().UnixNano()%100000)
+	sessionName := "gt-test-nudge-multiwin"
 
 	newReadyTestSession(t, tm, sessionName)
 	defer func() { _ = tm.KillSession(sessionName) }()
@@ -2545,14 +2545,8 @@ func TestGetKeyBinding_NoExistingBinding(t *testing.T) {
 func TestGetKeyBinding_CapturesDefaultBinding(t *testing.T) {
 	tm := newTestTmux(t)
 
-	// Query the default tmux binding for prefix-n (next-window).
-	// This works without a running tmux server because list-keys
-	// returns builtin defaults. Skip if already a GT binding (e.g.,
-	// when running inside an active gastown session).
+	// Query the builtin binding from the clean per-test server.
 	result := tm.getKeyBinding("prefix", "n")
-	if result == "" && tm.isGTBinding("prefix", "n") {
-		t.Skip("prefix-n is already a GT binding in this environment")
-	}
 	if result != "next-window" {
 		t.Errorf("expected 'next-window' for default prefix-n binding, got %q", result)
 	}
@@ -2570,12 +2564,6 @@ func TestGetKeyBinding_CapturesDefaultBindingWithArgs(t *testing.T) {
 
 func TestGetKeyBinding_SkipsGasTownBindings(t *testing.T) {
 	tm := newTestTmux(t)
-
-	// Bootstrap the isolated server (bind-key requires a running server)
-	if err := tm.NewSession("gt-test-bootstrap", ""); err != nil {
-		t.Fatalf("bootstrap session: %v", err)
-	}
-	defer tm.KillSession("gt-test-bootstrap")
 
 	// Set a GT-style if-shell binding (contains both "if-shell" and "gt ")
 	ifShell := fmt.Sprintf("echo '#{session_name}' | grep -Eq '%s'", sessionPrefixPattern())
@@ -2596,12 +2584,6 @@ func TestGetKeyBinding_SkipsGasTownBindings(t *testing.T) {
 func TestGetKeyBinding_CapturesUserBinding(t *testing.T) {
 	tm := newTestTmux(t)
 
-	// Bootstrap the isolated server (bind-key requires a running server)
-	if err := tm.NewSession("gt-test-bootstrap", ""); err != nil {
-		t.Fatalf("bootstrap session: %v", err)
-	}
-	defer tm.KillSession("gt-test-bootstrap")
-
 	// Set a user binding that doesn't contain "gt "
 	_, _ = tm.run("bind-key", "-T", "prefix", "F11", "display-message", "hello")
 
@@ -2620,12 +2602,6 @@ func TestGetKeyBinding_CapturesUserBinding(t *testing.T) {
 
 func TestIsGTBinding_DetectsGasTownBindings(t *testing.T) {
 	tm := newTestTmux(t)
-
-	// Bootstrap the isolated server (bind-key requires a running server)
-	if err := tm.NewSession("gt-test-bootstrap", ""); err != nil {
-		t.Fatalf("bootstrap session: %v", err)
-	}
-	defer tm.KillSession("gt-test-bootstrap")
 
 	// A plain user binding should NOT be detected as GT
 	_, _ = tm.run("bind-key", "-T", "prefix", "F11", "display-message", "hello")
@@ -2649,12 +2625,6 @@ func TestIsGTBinding_DetectsGasTownBindings(t *testing.T) {
 
 func TestSetBindings_PreserveFallbackOnRepeatedCalls(t *testing.T) {
 	tm := newTestTmux(t)
-
-	// Bootstrap the isolated server (bind-key requires a running server)
-	if err := tm.NewSession("gt-test-bootstrap", ""); err != nil {
-		t.Fatalf("bootstrap session: %v", err)
-	}
-	defer tm.KillSession("gt-test-bootstrap")
 
 	// Set a custom user binding on F11
 	_, _ = tm.run("bind-key", "-T", "prefix", "F11", "display-message", "custom-user-cmd")
