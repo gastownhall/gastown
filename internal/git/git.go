@@ -953,6 +953,16 @@ func (g *Git) FetchBranchShallow(remote, branch string) error {
 	return err
 }
 
+// FetchBranchTracking refreshes one remote-tracking branch without widening
+// the configured refspec to every remote branch. On an existing shallow clone,
+// omitting --depth lets git fetch the connecting commits back to its current
+// shallow boundary so a legitimate fast-forward can be verified locally.
+func (g *Git) FetchBranchTracking(remote, branch string) error {
+	refspec := branch + ":refs/remotes/" + remote + "/" + branch
+	_, err := g.run("fetch", remote, refspec)
+	return err
+}
+
 // Pull pulls from the remote branch.
 func (g *Git) Pull(remote, branch string) error {
 	_, err := g.run("pull", remote, branch)
@@ -2011,6 +2021,45 @@ func (g *Git) BranchExists(name string) (bool, error) {
 		return false, err
 	}
 	return true, nil
+}
+
+// AdvanceBranchIfBehind fast-forwards a local branch to target when target is
+// newer, leaves an already-ahead branch unchanged, and rejects divergence.
+// It updates only the ref, so callers must use it only when the branch is not
+// checked out in a live worktree.
+func (g *Git) AdvanceBranchIfBehind(name, target string) error {
+	branchRef := "refs/heads/" + name
+	currentSHA, err := g.Rev(branchRef)
+	if err != nil {
+		return fmt.Errorf("reading branch %s: %w", name, err)
+	}
+	targetSHA, err := g.Rev(target)
+	if err != nil {
+		return fmt.Errorf("reading target %s: %w", target, err)
+	}
+	if currentSHA == targetSHA {
+		return nil
+	}
+
+	behind, err := g.IsAncestor(currentSHA, targetSHA)
+	if err != nil {
+		return fmt.Errorf("checking whether %s can fast-forward to %s: %w", name, target, err)
+	}
+	if behind {
+		if _, err := g.run("update-ref", branchRef, targetSHA, currentSHA); err != nil {
+			return fmt.Errorf("fast-forwarding branch %s to %s: %w", name, target, err)
+		}
+		return nil
+	}
+
+	ahead, err := g.IsAncestor(targetSHA, currentSHA)
+	if err != nil {
+		return fmt.Errorf("checking whether %s is ahead of %s: %w", name, target, err)
+	}
+	if ahead {
+		return nil
+	}
+	return fmt.Errorf("branch %s has diverged from %s", name, target)
 }
 
 // RefExists checks if a ref exists (works for any ref including origin/<branch>).

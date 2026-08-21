@@ -164,6 +164,8 @@ func ensureCanonicalBareRepo(rigPath string, cfg *RigConfig) (*git.Git, string, 
 		if err := bareGit.FetchBranchShallow("origin", branch); err != nil {
 			return nil, "", "", false, fmt.Errorf("fetching integration branch %s into shared bare repository: %w", branch, err)
 		}
+	} else if err := bareGit.FetchBranchTracking("origin", branch); err != nil {
+		return nil, "", "", false, fmt.Errorf("refreshing integration branch %s in shared bare repository: %w", branch, err)
 	}
 
 	branchExists, err := bareGit.BranchExists(branch)
@@ -227,6 +229,10 @@ func ensureCanonicalRefineryWorktree(bareGit *git.Git, barePath, refineryPath, b
 			if strings.TrimSpace(currentBranch) != branch {
 				return false, fmt.Errorf("refinery/rig is on branch %q; canonical integration branch is %q", currentBranch, branch)
 			}
+			remoteBranch := "refs/remotes/origin/" + branch
+			if err := refineryGit.MergeFFOnly(remoteBranch); err != nil {
+				return false, fmt.Errorf("fast-forwarding refinery/rig to %s: %w", remoteBranch, err)
+			}
 			if err := bareGit.InitWorktreeSubmodules(refineryPath); err != nil {
 				return false, fmt.Errorf("initializing canonical refinery submodules: %w", err)
 			}
@@ -244,6 +250,10 @@ func ensureCanonicalRefineryWorktree(bareGit *git.Git, barePath, refineryPath, b
 	}
 	if err := bareGit.WorktreePrune(); err != nil {
 		return false, fmt.Errorf("pruning stale refinery worktree metadata: %w", err)
+	}
+	remoteBranch := "refs/remotes/origin/" + branch
+	if err := bareGit.AdvanceBranchIfBehind(branch, remoteBranch); err != nil {
+		return false, fmt.Errorf("synchronizing refinery integration branch: %w", err)
 	}
 	if err := bareGit.WorktreeAddExisting(refineryPath, branch); err != nil {
 		return false, fmt.Errorf("creating refinery worktree on %s: %w", branch, err)
