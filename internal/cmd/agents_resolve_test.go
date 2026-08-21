@@ -128,6 +128,16 @@ func TestAgentBeadMatchesDescriptionAndIDFallback(t *testing.T) {
 			want: true,
 		},
 		{
+			name: "registered long prefix ID fallback matches legacy metadata",
+			issue: &beads.Issue{
+				ID:          "flext-refinery",
+				Description: `role_type: refinery\nrig: flext`,
+			},
+			role: "refinery",
+			rig:  "flext",
+			want: true,
+		},
+		{
 			name: "role mismatch",
 			issue: &beads.Issue{
 				ID:          "gt-gastown-witness",

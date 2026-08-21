@@ -47,8 +47,8 @@ var ValidAgentRoles = []string{
 	"dog",                  // Town-level with name: gt-dog-<name>
 	constants.RoleWitness,  // Per-rig: gt-<rig>-witness
 	constants.RoleRefinery, // Per-rig: gt-<rig>-refinery
-	constants.RoleCrew,    // Per-rig with name: gt-<rig>-crew-<name>
-	constants.RolePolecat, // Per-rig with name: gt-<rig>-polecat-<name>
+	constants.RoleCrew,     // Per-rig with name: gt-<rig>-crew-<name>
+	constants.RolePolecat,  // Per-rig with name: gt-<rig>-polecat-<name>
 }
 
 // TownLevelRoles are agent roles that don't have a rig.
@@ -371,9 +371,8 @@ func PolecatBeadID(rig, name string) string {
 //   - "ff-polecat-nux" → rig="ff", role="polecat", name="nux"
 func ParseAgentBeadID(id string) (rig, role, name string, ok bool) {
 	// Find the prefix (everything before the first hyphen)
-	// Valid prefixes are 2-3 characters (e.g., "gt", "bd", "hq")
 	hyphenIdx := strings.Index(id, "-")
-	if hyphenIdx < 2 || hyphenIdx > 3 {
+	if hyphenIdx <= 0 || !prefixRe.MatchString(id[:hyphenIdx]) {
 		return "", "", "", false
 	}
 

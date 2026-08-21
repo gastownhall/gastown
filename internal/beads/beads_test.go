@@ -3177,9 +3177,13 @@ func TestParseAgentBeadID(t *testing.T) {
 		{"bd-beads-witness", "beads", "witness", "", true},            // bd prefix rig-level singleton
 		{"bd-beads-polecat-pearl", "beads", "polecat", "pearl", true}, // bd prefix rig-level named
 		{"hq-mayor", "", "mayor", "", true},                           // hq prefix town-level
+		// Prefixes follow the shared 1-20 character Beads prefix contract.
+		{"x-mayor", "", "mayor", "", true},
+		{"flext-refinery", "flext", "refinery", "", true},
+		{"CLIProxyAPI-witness", "CLIProxyAPI", "witness", "", true},
 		// Truly invalid patterns
-		{"x-mayor", "", "", "", false},    // Prefix too short (1 char)
-		{"abcd-mayor", "", "", "", false}, // Prefix too long (4 chars)
+		{"1x-mayor", "", "", "", false},                    // Prefix must start with a letter
+		{"abcdefghijklmnopqrstu-mayor", "", "", "", false}, // Prefix too long (21 chars)
 		{"", "", "", "", false},
 	}
 
