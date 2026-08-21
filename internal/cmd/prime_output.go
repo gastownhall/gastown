@@ -112,7 +112,8 @@ func roleRigContext(ctx RoleContext) (defaultBranch string, isForkRig bool, upst
 
 // outputRoleDirectives loads and emits operator-provided role directives.
 // These come from the directive file layout (town-level and/or rig-level)
-// and override formula defaults where they conflict.
+// and override formula workflow instructions where they conflict. Directives
+// cannot redefine the installed bd/gt command ownership contract.
 //
 // w and explainEnabled are injected so tests can capture output without
 // mutating os.Stdout or the primeExplain global (avoiding data races
@@ -163,13 +164,14 @@ func outputRoleDirectives(ctx RoleContext, w io.Writer, explainEnabled bool) {
 
 	fmt.Fprintln(w)
 	if hasTown && hasRig {
-		fmt.Fprintln(w, "## Town & Rig Directives (operator policy — overrides formula where they conflict)")
+		fmt.Fprintln(w, "## Town & Rig Directives (operator policy — overrides formula workflow where they conflict)")
 	} else if hasRig {
-		fmt.Fprintln(w, "## Rig Directives (operator policy — overrides formula where they conflict)")
+		fmt.Fprintln(w, "## Rig Directives (operator policy — overrides formula workflow where they conflict)")
 	} else {
-		fmt.Fprintln(w, "## Town Directives (operator policy — overrides formula where they conflict)")
+		fmt.Fprintln(w, "## Town Directives (operator policy — overrides formula workflow where they conflict)")
 	}
 	fmt.Fprintln(w)
+	fmt.Fprintf(w, "> Directives may refine workflow, but they do not change installed command ownership: `bd` handles issue CRUD; `%s` handles orchestration.\n\n", cli.Name())
 	fmt.Fprintln(w, content)
 }
 
@@ -190,6 +192,9 @@ func outputPrimeContextFallback(ctx RoleContext) {
 	default:
 		outputUnknownContext(ctx)
 	}
+
+	_, isForkRig, _ := roleRigContext(ctx)
+	fmt.Print(templates.CommandOwnership(isForkRig))
 }
 
 func outputMayorContext(ctx RoleContext) {

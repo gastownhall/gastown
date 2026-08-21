@@ -34,8 +34,9 @@ formula they are running.
 ```
 
 **Injection point:** After the role template, before context files and handoff
-content. Directives carry an authority marker: "Rig Policy — overrides formula
-instructions where they conflict."
+content. Directives carry an authority marker that lets them override formula
+workflow instructions. They cannot redefine the installed command contract:
+`bd` owns issue CRUD, while `gt` owns execution and lifecycle.
 
 **Precedence:** Town and rig directives **concatenate**. If both exist, the
 combined output is `<town content>\n<rig content>`. The rig directive gets the
@@ -287,13 +288,13 @@ effect immediately on the next `gt prime`.
 - **Follows hooks override precedent:** `~/.gt/hooks-overrides/<target>.json`
 - **Extends property layers:** Rig > town > system precedence
 - **ZFC-compliant:** Go transports the content, agents interpret the instructions
-- **Only touches gt:** `bd` doesn't render formulas, so overlays are gt-only
+- **Rendered through gt:** `bd` doesn't render formulas, so `gt prime` injects overlays
 
 ### Dissonance to Manage
 
-- **Conflicting instructions:** Directive says "don't X", formula says "do X" →
-  mitigated with clear authority framing at injection ("Rig Policy — overrides
-  formula instructions where they conflict")
+- **Conflicting workflow instructions:** Directive says "don't X", formula says
+  "do X" → mitigated with clear authority framing at injection. A directive that
+  changes installed command ownership is invalid rather than an override.
 - **Unstable step IDs:** Formula steps are not a stable API; step IDs can change
   across versions → `gt doctor` warns about stale overlays
 - **Discoverability:** `gt prime --explain` shows active directives/overlays
