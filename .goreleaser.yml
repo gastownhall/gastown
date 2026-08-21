@@ -9,6 +9,8 @@ builds:
     binary: gt
     env:
       - CGO_ENABLED=1
+    tags:
+      - gms_pure_go
     goos:
       - linux
     goarch:
@@ -19,12 +21,17 @@ builds:
       - -X github.com/steveyegge/gastown/internal/cmd.Build={{.ShortCommit}}
       - -X github.com/steveyegge/gastown/internal/cmd.Commit={{.Commit}}
       - -X github.com/steveyegge/gastown/internal/cmd.Branch={{.Branch}}
+    hooks:
+      post:
+        - ./scripts/verify-cgo.sh "{{ .Path }}"
 
   - id: gt-freebsd-amd64
     main: ./cmd/gt
     binary: gt
     env:
       - CGO_ENABLED=0
+    tags:
+      - gms_pure_go
     goos:
       - freebsd
     goarch:

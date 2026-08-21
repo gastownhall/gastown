@@ -49,32 +49,34 @@ jobs:
         run: go install gotest.tools/gotestsum@latest
 
       - name: Build
-        run: go build -v ./cmd/gt
+        run: |
+          CGO_ENABLED=1 go build -tags gms_pure_go -v -o gt ./cmd/gt
+          ./scripts/verify-cgo.sh gt
 
       - name: Run all integration tests
         run: |
           status=0
 
           gotestsum --format testname --junitfile junit.xml -- \
-            -v -tags=integration -timeout=20m ./... || status=1
+            -v -tags='gms_pure_go integration' -timeout=20m ./... || status=1
 
           gotestsum --format testname --junitfile junit-scheduler-1.xml -- \
-            -tags='integration scheduler_integration' -timeout=20m -v \
+            -tags='gms_pure_go integration scheduler_integration' -timeout=20m -v \
             -run '^(TestScheduler(CircuitBreakerExclusion|AutoConvoyCreation|BlockedStatusReporting|SlingDryRun|SlingContextIdempotency|SlingContextWorkBeadPristine))$' \
             ./internal/cmd || status=1
 
           gotestsum --format testname --junitfile junit-scheduler-2.xml -- \
-            -tags='integration scheduler_integration' -timeout=20m -v \
+            -tags='gms_pure_go integration scheduler_integration' -timeout=20m -v \
             -run '^(TestScheduler(MultiRigDispatch|MultiRigEpicAutoResolve|ConvoyFlagRejection|EpicFlagRejection|EpicDetection|MixedBatchRejection|MultiRigConvoyAutoResolve))$' \
             ./internal/cmd || status=1
 
           gotestsum --format testname --junitfile junit-scheduler-3.xml -- \
-            -tags='integration scheduler_integration' -timeout=20m -v \
+            -tags='gms_pure_go integration scheduler_integration' -timeout=20m -v \
             -run '^(TestScheduler(DisabledMode|DirectModeNoQueue|DeferredTaskWithoutRig|DeferredNonRigRejection|DeferredAcceptsDogTarget|DirectEpicDispatch|BatchEpicRejection))$' \
             ./internal/cmd || status=1
 
           gotestsum --format testname --junitfile junit-scheduler-4.xml -- \
-            -tags='integration scheduler_integration' -timeout=20m -v \
+            -tags='gms_pure_go integration scheduler_integration' -timeout=20m -v \
             -run '^(TestScheduler(InvalidJSONContextCleanup|ActualDispatchRoutesPollutedEnvToTargetRig|FormulaDispatchRoutesPollutedEnvToTargetRig|DispatchFailureRecordedInContextSourceDB|DirectConvoyDispatch)|TestScheduleBead_(RefusesClosed|RefusesTombstone|ClosedForceDoesNotBypass))$' \
             ./internal/cmd || status=1
 

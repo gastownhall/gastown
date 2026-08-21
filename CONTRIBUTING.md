@@ -7,7 +7,7 @@ Thanks for your interest in contributing! Gas Town is experimental software, and
 1. Fork the repository
 2. Clone your fork
 3. Install prerequisites (see README.md)
-4. Build and test: `go build -o gt ./cmd/gt && go test ./...`
+4. Build and test: `go build -tags gms_pure_go -o gt ./cmd/gt && go test -tags gms_pure_go ./...`
 
 ## Setting up a rig to contribute to Gas Town
 

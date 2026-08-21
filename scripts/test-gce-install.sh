@@ -50,9 +50,9 @@ log "Installing prerequisites..."
 # Update package manager
 if [[ "$OS" == "debian" || "$OS" == "ubuntu" ]]; then
     sudo apt-get update -qq
-    sudo apt-get install -y -qq git tmux curl
+    sudo apt-get install -y -qq git tmux curl build-essential
 elif [[ "$OS" == "fedora" || "$OS" == "centos" || "$OS" == "rhel" ]]; then
-    sudo dnf install -y git tmux curl
+    sudo dnf install -y git tmux curl gcc gcc-c++
 else
     warn "Unknown OS, assuming deps are installed"
 fi
@@ -90,7 +90,7 @@ if command -v bd &> /dev/null; then
     check "beads already installed: $(bd --version)"
 else
     # Install via go install
-    go install github.com/steveyegge/beads/cmd/bd@latest
+    CGO_ENABLED=1 GOFLAGS='-tags=gms_pure_go' go install github.com/steveyegge/beads/cmd/bd@latest
     if command -v bd &> /dev/null; then
         check "beads installed: $(bd --version)"
     else
@@ -103,7 +103,7 @@ fi
 # ============================================
 log "Installing Gas Town (gt)..."
 
-go install github.com/steveyegge/gastown/cmd/gt@latest
+CGO_ENABLED=1 GOFLAGS='-tags=gms_pure_go' go install github.com/steveyegge/gastown/cmd/gt@latest
 
 if command -v gt &> /dev/null; then
     check "gt installed: $(gt --version 2>/dev/null || echo 'version unknown')"

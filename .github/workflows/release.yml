@@ -64,8 +64,6 @@ jobs:
       - uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6
         with:
           go-version: '1.26'
-      - name: Install ICU4C
-        run: sudo apt-get update && sudo apt-get install -y libicu-dev
       - name: Build, smoke and package Linux ARM64
         env:
           CGO_ENABLED: '1'
@@ -75,8 +73,9 @@ jobs:
           set -euo pipefail
           version="${GITHUB_REF_NAME#v}"
           ldflags="-s -w -X github.com/steveyegge/gastown/internal/cmd.Version=${version} -X github.com/steveyegge/gastown/internal/cmd.Build=$(git rev-parse --short HEAD) -X github.com/steveyegge/gastown/internal/cmd.Commit=$(git rev-parse HEAD) -X github.com/steveyegge/gastown/internal/cmd.Branch=$(git branch --show-current)"
-          go build -ldflags "${ldflags}" -o gt ./cmd/gt
+          go build -tags gms_pure_go -ldflags "${ldflags}" -o gt ./cmd/gt
           ./gt version
+          ./scripts/verify-cgo.sh gt
           staging="gastown_${version}_linux_arm64"
           mkdir -p "${staging}"
           cp gt LICENSE README.md "${staging}/"
@@ -104,15 +103,16 @@ jobs:
         with:
           path-type: inherit
           msystem: UCRT64
-          pacboy: icu:p toolchain:p pkg-config:p
+          pacboy: toolchain:p pkg-config:p
       - name: Build Windows AMD64
         shell: msys2 {0}
         run: |
           set -euo pipefail
           version="${GITHUB_REF_NAME#v}"
           ldflags="-s -w -X github.com/steveyegge/gastown/internal/cmd.Version=${version} -X github.com/steveyegge/gastown/internal/cmd.Build=$(git rev-parse --short HEAD) -X github.com/steveyegge/gastown/internal/cmd.Commit=$(git rev-parse HEAD) -X github.com/steveyegge/gastown/internal/cmd.Branch=$(git branch --show-current)"
-          CGO_ENABLED=1 GOOS=windows GOARCH=amd64 go build -buildmode=exe -ldflags "${ldflags}" -o gt.exe ./cmd/gt
+          CGO_ENABLED=1 GOOS=windows GOARCH=amd64 go build -tags gms_pure_go -buildmode=exe -ldflags "${ldflags}" -o gt.exe ./cmd/gt
           ./gt.exe version
+          ./scripts/verify-cgo.sh gt.exe
       - name: Package Windows AMD64
         shell: pwsh
         run: |
@@ -149,8 +149,6 @@ jobs:
       - uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6
         with:
           go-version: '1.26'
-      - name: Install ICU4C
-        run: brew install icu4c
       - name: Build, smoke and package macOS
         env:
           CGO_ENABLED: '1'
@@ -159,13 +157,11 @@ jobs:
         run: |
           set -euo pipefail
           version="${GITHUB_REF_NAME#v}"
-          icu_prefix="$(brew --prefix icu4c)"
-          export CGO_CPPFLAGS="-I${icu_prefix}/include"
-          export CGO_LDFLAGS="-L${icu_prefix}/lib"
           ldflags="-s -w -X github.com/steveyegge/gastown/internal/cmd.Version=${version} -X github.com/steveyegge/gastown/internal/cmd.Build=$(git rev-parse --short HEAD) -X github.com/steveyegge/gastown/internal/cmd.Commit=$(git rev-parse HEAD) -X github.com/steveyegge/gastown/internal/cmd.Branch=$(git branch --show-current)"
-          go build -ldflags "${ldflags}" -o gt ./cmd/gt
+          go build -tags gms_pure_go -ldflags "${ldflags}" -o gt ./cmd/gt
           codesign -s - -f gt
           ./gt version
+          ./scripts/verify-cgo.sh gt
           staging="gastown_${version}_darwin_${GOARCH}"
           mkdir -p "${staging}"
           cp gt LICENSE README.md "${staging}/"

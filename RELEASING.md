@@ -25,6 +25,13 @@ upstream runbook:
 - fresh build, test, and installed-binary evidence from the fork integration
   lane.
 
+Fork release binaries that keep embedded Dolt support must build with
+`CGO_ENABLED=1` and the dependency-owner `gms_pure_go` tag. This keeps the
+embedded backend while removing the version-specific ICU shared-library
+dependency. Run `scripts/verify-cgo.sh` on each CGO release binary before
+publication; an archive that links `libicu` is not portable and must not be
+published.
+
 The upstream automation deliberately does not publish fork tags:
 
 - `.github/workflows/release.yml` gates publishing jobs to the

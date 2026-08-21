@@ -4,6 +4,7 @@ BINARY := gt
 BINARY_DESKTOP := gt-desktop
 BUILD_DIR := .
 INSTALL_DIR := $(HOME)/.local/bin
+BUILD_TAGS := gms_pure_go
 E2E_IMAGE ?= gastown-test
 E2E_BUILD_FLAGS ?=
 E2E_RUN_FLAGS ?= --rm
@@ -21,27 +22,18 @@ LDFLAGS := -s -w \
            -X github.com/steveyegge/gastown/internal/cmd.BuildTime=$(BUILD_TIME) \
            -X github.com/steveyegge/gastown/internal/cmd.BuiltProperly=1
 
-# ICU4C detection for macOS (required by go-icu-regex transitive dependency).
-# Homebrew installs icu4c as a keg-only package, so headers/libs aren't on the
-# default search path. Auto-detect the prefix and export CGo flags.
-ifeq ($(shell uname),Darwin)
-  ICU_PREFIX := $(shell brew --prefix icu4c 2>/dev/null)
-  ifneq ($(ICU_PREFIX),)
-    export CGO_CPPFLAGS += -I$(ICU_PREFIX)/include
-    export CGO_LDFLAGS  += -L$(ICU_PREFIX)/lib
-  endif
-endif
-
 build:
-	go build -ldflags "$(LDFLAGS)" -o $(BUILD_DIR)/$(BINARY)-proxy-server ./cmd/gt-proxy-server
-	go build -ldflags "$(LDFLAGS)" -o $(BUILD_DIR)/$(BINARY)-proxy-client ./cmd/gt-proxy-client
-	go build -ldflags "$(LDFLAGS)" -o $(BUILD_DIR)/$(BINARY) ./cmd/gt
+	go build -tags "$(BUILD_TAGS)" -ldflags "$(LDFLAGS)" -o $(BUILD_DIR)/$(BINARY)-proxy-server ./cmd/gt-proxy-server
+	go build -tags "$(BUILD_TAGS)" -ldflags "$(LDFLAGS)" -o $(BUILD_DIR)/$(BINARY)-proxy-client ./cmd/gt-proxy-client
+	go build -tags "$(BUILD_TAGS)" -ldflags "$(LDFLAGS)" -o $(BUILD_DIR)/$(BINARY) ./cmd/gt
+	./scripts/verify-cgo.sh "$(BUILD_DIR)/$(BINARY)"
 
 desktop-build:
-	go build -ldflags "$(LDFLAGS)" -o $(BUILD_DIR)/$(BINARY_DESKTOP) ./cmd/gt-desktop
+	go build -tags "$(BUILD_TAGS)" -ldflags "$(LDFLAGS)" -o $(BUILD_DIR)/$(BINARY_DESKTOP) ./cmd/gt-desktop
+	./scripts/verify-cgo.sh "$(BUILD_DIR)/$(BINARY_DESKTOP)"
 
 desktop-run:
-	go run ./cmd/gt-desktop
+	go run -tags "$(BUILD_TAGS)" ./cmd/gt-desktop
 
 check-up-to-date:
 ifndef SKIP_UPDATE_CHECK
@@ -180,10 +172,11 @@ clean:
 	rm -f $(BUILD_DIR)/$(BINARY)
 
 test: test-makefile
-	go test ./...
+	go test -tags "$(BUILD_TAGS)" ./...
 
 test-makefile:
 	bash scripts/check-install-path_test.sh
+	bash -n scripts/verify-cgo.sh
 	bash -n plugins/stuck-agent-dog/run.sh
 	bash -n plugins/stuck-agent-dog/run_test.sh
 	bash plugins/stuck-agent-dog/run_test.sh

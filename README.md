@@ -137,7 +137,7 @@ Native installs require the host tools below. Docker installs only require Docke
 | Go | 1.26.2+ (see `go.mod`) | Required for the Linux and Windows paths and for macOS source builds. Not needed for `brew install gastown` or Docker setup. |
 | Beads (`bd`) | 0.57.0+ | Required for native installs. Homebrew and Docker supply it; source/native Go paths install it with `go install`. |
 | sqlite3 | any | Used by convoy database queries. Usually pre-installed on macOS and Linux. |
-| ICU4C dev headers | varies | Required for source builds that compile the ICU-backed query layer. Use `libicu-dev` on Debian/Ubuntu, `libicu-devel` on Fedora/RHEL, `icu4c` on macOS, and MSYS2 ICU packages for native Windows. |
+| C/C++ compiler | current | Required for embedded-capable source builds. Gas Town uses the `gms_pure_go` build tag, so neither source builds nor release binaries require ICU4C. |
 | tmux | 3.0+ | Required for `gt up` and the tmux-backed roles (Mayor, Witnesses, Refineries, polecats). Optional only for minimal-mode workflows where you run runtime instances manually. |
 | Claude Code CLI | latest | Default runtime. See [Runtime Configuration](#runtime-configuration) for alternatives (Codex, Copilot, Gemini, Cursor). |
 
@@ -153,11 +153,11 @@ Homebrew installs `gt`, `bd`, and `dolt` together.
 brew install gastown
 ```
 
-Avoid `go install` on macOS. The unsigned binary it produces gets killed by Gatekeeper. To build from source, install Dolt and ICU4C with Homebrew, install `bd` with Go, then build and install `gt` with `make install`. Put `$HOME/.local/bin` and `$HOME/go/bin` ahead of any stale binary locations on your `PATH` so the freshly installed `gt` and `bd` take precedence.
+Avoid `go install` on macOS. The unsigned binary it produces gets killed by Gatekeeper. To build from source, install Dolt with Homebrew, install `bd` in embedded-capable pure-Go-regex mode, then build and install `gt` with `make install`. Put `$HOME/.local/bin` and `$HOME/go/bin` ahead of any stale binary locations on your `PATH` so the freshly installed `gt` and `bd` take precedence.
 
 ```bash
-brew install dolt icu4c
-go install github.com/steveyegge/beads/cmd/bd@latest
+brew install dolt
+CGO_ENABLED=1 GOFLAGS='-tags=gms_pure_go' go install github.com/steveyegge/beads/cmd/bd@latest
 export PATH="$HOME/.local/bin:$HOME/go/bin:$PATH"
 git clone https://github.com/steveyegge/gastown.git
 cd gastown
@@ -169,8 +169,8 @@ make install
 Install Dolt by following the [Dolt installation guide](https://github.com/dolthub/dolt#installation), then install `gt` and `bd` with `go install`.
 
 ```bash
-go install github.com/steveyegge/gastown/cmd/gt@latest
-go install github.com/steveyegge/beads/cmd/bd@latest
+CGO_ENABLED=1 GOFLAGS='-tags=gms_pure_go' go install github.com/steveyegge/gastown/cmd/gt@latest
+CGO_ENABLED=1 GOFLAGS='-tags=gms_pure_go' go install github.com/steveyegge/beads/cmd/bd@latest
 ```
 
 Prepend the Go binary directory to your `PATH` if it is not already there, so freshly installed `gt` and `bd` binaries take precedence over stale copies. Append to `~/.zshrc` instead if you use zsh.
@@ -185,13 +185,15 @@ source ~/.bashrc
 Install Dolt first by following the [Dolt installation guide](https://github.com/dolthub/dolt#installation). Unlike the macOS Homebrew path, `go install` does not install Dolt. Then install `gt` and `bd` with `go install`.
 
 ```powershell
+$env:CGO_ENABLED = "1"
+$env:GOFLAGS = "-tags=gms_pure_go"
 go install github.com/steveyegge/gastown/cmd/gt@latest
 go install github.com/steveyegge/beads/cmd/bd@latest
 ```
 
 Both binaries land in `%USERPROFILE%\go\bin\`. Put that directory before older `gt` or `bd` install locations on `PATH`, then open a new shell for the change to take effect.
 
-Native Windows source builds that compile the ICU-backed query layer need an MSYS2 UCRT64 or MinGW64 shell with matching `icu`, `toolchain`, and `pkg-config` packages; the repository's Windows CI uses `pacboy -S icu:p toolchain:p pkg-config:p`. Plain PowerShell/MSVC is not enough for that CGO build.
+Native Windows embedded-capable source builds need an MSYS2 UCRT64 or MinGW64 C/C++ toolchain. The `gms_pure_go` tag removes the ICU dependency; the repository's Windows CI installs only the toolchain and `pkg-config`. Plain PowerShell/MSVC is not enough for that CGO build.
 
 For full tmux-backed workflows on Windows, use WSL or another Linux environment. Native Windows shells are best treated as minimal CLI-only environments.
 

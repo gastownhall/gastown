@@ -15,7 +15,7 @@ Native source installs require these host tools. Homebrew and Docker installs pr
 | **Go** | 1.26.2+ | `go version` | See [golang.org](https://go.dev/doc/install) |
 | **Git** | 2.20+ | `git --version` | See below |
 | **sqlite3** | any | `sqlite3 --version` | Usually pre-installed on macOS; Linux packages are commonly named `sqlite3` |
-| **ICU4C dev headers** | varies | `pkg-config --modversion icu-uc`, `dpkg -l libicu-dev`, `rpm -q libicu-devel`, or `brew --prefix icu4c` | Source builds need Debian/Ubuntu `libicu-dev`, Fedora/RHEL `libicu-devel` with `pkgconf-pkg-config`, macOS `icu4c`, or native Windows MSYS2 ICU/toolchain/pkg-config packages |
+| **C/C++ compiler** | current | `cc --version`, `c++ --version` | Required for embedded-capable source builds. The `gms_pure_go` build tag removes the ICU4C dependency. |
 | **Dolt** | >= 2.0.7 | `dolt version` | macOS: `brew install dolt`; other platforms: see [dolthub/dolt](https://github.com/dolthub/dolt?tab=readme-ov-file#installation) |
 | **Beads** | >= 0.57.0 | `bd version` | Installed by `brew install gastown`, or from source with `go install github.com/steveyegge/beads/cmd/bd@latest` |
 | **Docker Compose** | v2+ | `docker compose version` | Docker setup only. Install Docker Desktop or Docker Engine with the Compose plugin. |
@@ -43,8 +43,8 @@ Use Homebrew for the normal macOS install. It installs `gt`, `bd`, and `dolt` to
 # Recommended install
 brew install gastown
 
-# Optional: source builds also need Go, Dolt, and ICU4C
-brew install go dolt icu4c
+# Optional: source builds also need Go and Dolt
+brew install go dolt
 
 # Optional: Docker setup only
 # Install Docker Desktop or another Docker Engine with Compose v2.
@@ -58,7 +58,7 @@ brew install tmux
 ```bash
 # Required
 sudo apt update
-sudo apt install -y git sqlite3 libicu-dev
+sudo apt install -y git sqlite3 build-essential
 
 # Install Go (apt version may be outdated, use official installer)
 wget https://go.dev/dl/go1.26.2.linux-amd64.tar.gz
@@ -78,7 +78,7 @@ sudo apt install -y tmux
 
 ```bash
 # Required
-sudo dnf install -y git sqlite libicu-devel pkgconf-pkg-config
+sudo dnf install -y git sqlite gcc gcc-c++
 # Install Go 1.26.2+ from your distro if available, otherwise use the official Go installer.
 # Install Dolt: see https://github.com/dolthub/dolt?tab=readme-ov-file#installation
 # Docker setup only: install Docker Engine with the Compose plugin.
@@ -91,9 +91,11 @@ sudo dnf install -y tmux
 
 Install Go and Dolt first, then install `gt` and `bd` with Go. The binaries land in `%USERPROFILE%\go\bin`; put that directory before older `gt` or `bd` install locations on `PATH`, then open a new shell. For Docker setup, install Docker Desktop with Compose support.
 
-Native Windows source builds that compile the ICU-backed query layer need an MSYS2 UCRT64 or MinGW64 shell with matching `icu`, `toolchain`, and `pkg-config` packages. The repository's Windows CI uses `pacboy -S icu:p toolchain:p pkg-config:p` before running Go commands; plain PowerShell/MSVC is not enough for that CGO build.
+Native Windows embedded-capable source builds need an MSYS2 UCRT64 or MinGW64 C/C++ toolchain. The `gms_pure_go` tag removes the ICU dependency; the repository's Windows CI installs only the toolchain and `pkg-config`. Plain PowerShell/MSVC is not enough for that CGO build.
 
 ```powershell
+$env:CGO_ENABLED = "1"
+$env:GOFLAGS = "-tags=gms_pure_go"
 go install github.com/steveyegge/gastown/cmd/gt@latest
 go install github.com/steveyegge/beads/cmd/bd@latest
 ```
@@ -125,21 +127,22 @@ dolt version
 On Linux and Windows, install `gt` and `bd` with Go after installing Dolt separately:
 
 ```bash
-go install github.com/steveyegge/gastown/cmd/gt@latest
-go install github.com/steveyegge/beads/cmd/bd@latest
+CGO_ENABLED=1 GOFLAGS='-tags=gms_pure_go' go install github.com/steveyegge/gastown/cmd/gt@latest
+CGO_ENABLED=1 GOFLAGS='-tags=gms_pure_go' go install github.com/steveyegge/beads/cmd/bd@latest
 ```
 
 Homebrew installs the runtime dependencies declared by the core formula. The
 `gastownhall/gastown` tap is reserved for emergency updates. If you build from
-source instead, install `dolt` and ICU4C first, install `bd` with Go, and ensure both
+source instead, install `dolt` first, install `bd` with Go's
+`gms_pure_go` tag, and ensure both
 `~/.local/bin` and `$GOPATH/bin` (usually `~/go/bin`) appear before older
 install locations. On macOS, do not install `gt` with `go install`:
 unsigned binaries may be killed by the OS. Clone the repository and use `make`
 instead.
 
 ```bash
-brew install dolt icu4c
-go install github.com/steveyegge/beads/cmd/bd@latest
+brew install dolt
+CGO_ENABLED=1 GOFLAGS='-tags=gms_pure_go' go install github.com/steveyegge/beads/cmd/bd@latest
 export PATH="$HOME/.local/bin:$HOME/go/bin:$PATH"
 git clone https://github.com/steveyegge/gastown.git
 cd gastown
@@ -294,7 +297,7 @@ If you also installed Beads with Go, keep `$HOME/go/bin` in PATH for `bd`.
 Beads CLI not installed:
 
 ```bash
-go install github.com/steveyegge/beads/cmd/bd@latest
+CGO_ENABLED=1 GOFLAGS='-tags=gms_pure_go' go install github.com/steveyegge/beads/cmd/bd@latest
 ```
 
 ### `gt doctor` shows errors
@@ -369,7 +372,7 @@ gt doctor --fix
 If you maintain Beads separately from Homebrew, update `bd` from its own source:
 
 ```bash
-go install github.com/steveyegge/beads/cmd/bd@latest
+CGO_ENABLED=1 GOFLAGS='-tags=gms_pure_go' go install github.com/steveyegge/beads/cmd/bd@latest
 ```
 
 Run the `command -v gt` and `gt version` checks before `gt doctor --fix` so a
