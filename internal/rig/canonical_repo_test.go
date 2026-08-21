@@ -121,6 +121,12 @@ func TestEnsureCanonicalRepoTopologyRestoresMissingRefineryWorktree(t *testing.T
 	if err := git.NewGit(rigPath).CloneBareWithBranch(remote, barePath, "main"); err != nil {
 		t.Fatalf("create existing bare repo: %v", err)
 	}
+	if err := os.WriteFile(filepath.Join(remote, "after-bare-clone.txt"), []byte("advance integration branch\n"), 0644); err != nil {
+		t.Fatalf("write integration advance: %v", err)
+	}
+	runGitForCanonicalRepoTest(t, "-C", remote, "add", "after-bare-clone.txt")
+	runGitForCanonicalRepoTest(t, "-C", remote, "commit", "-m", "advance integration branch")
+	advancedCommit := gitOutputForCanonicalRepoTest(t, "-C", remote, "rev-parse", "HEAD")
 
 	result, err := EnsureCanonicalRepoTopology(rigPath)
 	if err != nil {
@@ -133,14 +139,17 @@ func TestEnsureCanonicalRepoTopologyRestoresMissingRefineryWorktree(t *testing.T
 		t.Fatal("missing refinery worktree was not reported as restored")
 	}
 	assertCanonicalRepoTopology(t, rigPath, remote, "main")
+	if got := gitOutputForCanonicalRepoTest(t, "-C", filepath.Join(rigPath, "refinery", "rig"), "rev-parse", "HEAD"); got != advancedCommit {
+		t.Fatalf("restored refinery HEAD = %q, want advanced integration commit %q", got, advancedCommit)
+	}
 }
 
-func TestEnsureCanonicalRepoTopologyRetriesIncompleteSubmodules(t *testing.T) {
+func TestEnsureCanonicalRepoTopologyRetriesAfterForwardSubmoduleRepair(t *testing.T) {
 	t.Setenv("GIT_CONFIG_COUNT", "1")
 	t.Setenv("GIT_CONFIG_KEY_0", "protocol.file.allow")
 	t.Setenv("GIT_CONFIG_VALUE_0", "always")
 
-	remote, submoduleWorktree, pinnedCommit := createCanonicalRepoWithUnpublishedSubmodule(t)
+	remote, parentWorktree, submoduleWorktree, pinnedCommit, publishedCommit := createCanonicalRepoWithUnpublishedSubmodule(t)
 	rigPath := filepath.Join(t.TempDir(), "submodule-retry")
 	if err := os.MkdirAll(rigPath, 0755); err != nil {
 		t.Fatalf("create rig: %v", err)
@@ -174,17 +183,26 @@ func TestEnsureCanonicalRepoTopologyRetriesIncompleteSubmodules(t *testing.T) {
 		t.Fatalf("retry error = %q, want canonical submodule failure", err)
 	}
 
-	runGitForCanonicalRepoTest(t, "-C", submoduleWorktree, "push", "origin", "HEAD:main")
+	runGitForCanonicalRepoTest(t, "-C", submoduleWorktree, "checkout", "--detach", publishedCommit)
+	runGitForCanonicalRepoTest(t, "-C", parentWorktree, "add", "libs/sub")
+	runGitForCanonicalRepoTest(t, "-C", parentWorktree, "commit", "-m", "repair dangling submodule pin")
+	runGitForCanonicalRepoTest(t, "-C", parentWorktree, "push", "origin", "main")
+	repairedParentCommit := gitOutputForCanonicalRepoTest(t, "-C", parentWorktree, "rev-parse", "HEAD")
+
 	result, err := EnsureCanonicalRepoTopology(rigPath)
 	if err != nil {
-		t.Fatalf("ensure after publishing pinned submodule: %v", err)
+		t.Fatalf("ensure after forward parent repair: %v", err)
 	}
 	if result.BareRepoCreated || result.RefineryWorktreeCreated {
 		t.Fatalf("retry recreated existing canonical topology: %+v", result)
 	}
+	gotParentCommit := gitOutputForCanonicalRepoTest(t, "-C", filepath.Join(rigPath, "refinery", "rig"), "rev-parse", "HEAD")
+	if gotParentCommit != repairedParentCommit {
+		t.Fatalf("refinery HEAD = %q, want repaired parent commit %q", gotParentCommit, repairedParentCommit)
+	}
 	gotCommit := gitOutputForCanonicalRepoTest(t, "-C", filepath.Join(rigPath, "refinery", "rig", "libs", "sub"), "rev-parse", "HEAD")
-	if gotCommit != pinnedCommit {
-		t.Fatalf("submodule HEAD = %q, want pinned commit %q", gotCommit, pinnedCommit)
+	if gotCommit != publishedCommit {
+		t.Fatalf("submodule HEAD = %q, want repaired published commit %q (dangling pin was %q)", gotCommit, publishedCommit, pinnedCommit)
 	}
 }
 
@@ -280,7 +298,7 @@ func gitOutputForCanonicalRepoTest(t *testing.T, args ...string) string {
 	return strings.TrimSpace(string(out))
 }
 
-func createCanonicalRepoWithUnpublishedSubmodule(t *testing.T) (string, string, string) {
+func createCanonicalRepoWithUnpublishedSubmodule(t *testing.T) (string, string, string, string, string) {
 	t.Helper()
 	root := t.TempDir()
 	submoduleRemote := filepath.Join(root, "submodule.git")
@@ -297,6 +315,7 @@ func createCanonicalRepoWithUnpublishedSubmodule(t *testing.T) (string, string, 
 	}
 	runGitForCanonicalRepoTest(t, "-C", submoduleWorktree, "add", "lib.txt")
 	runGitForCanonicalRepoTest(t, "-C", submoduleWorktree, "commit", "-m", "published")
+	publishedCommit := gitOutputForCanonicalRepoTest(t, "-C", submoduleWorktree, "rev-parse", "HEAD")
 	runGitForCanonicalRepoTest(t, "-C", submoduleWorktree, "remote", "add", "origin", submoduleRemote)
 	runGitForCanonicalRepoTest(t, "-C", submoduleWorktree, "push", "-u", "origin", "main")
 
@@ -327,5 +346,5 @@ func createCanonicalRepoWithUnpublishedSubmodule(t *testing.T) (string, string, 
 	runGitForCanonicalRepoTest(t, "-C", parentWorktree, "commit", "-m", "pin unpublished submodule")
 	runGitForCanonicalRepoTest(t, "-C", parentWorktree, "push", "origin", "main")
 
-	return parentRemote, submoduleCheckout, pinnedCommit
+	return parentRemote, parentWorktree, submoduleCheckout, pinnedCommit, publishedCommit
 }
