@@ -579,9 +579,9 @@ func NewIsolated(workDir string) *Beads {
 }
 
 // NewIsolatedWithPort creates a Beads wrapper for test isolation that targets
-// a specific Dolt server port. Init() passes --server-port to bd init, and all
-// commands get GT_DOLT_PORT in their environment. This prevents tests from
-// creating databases on the production Dolt server (port 3307).
+// a specific loopback Dolt server port. Init() passes --server-port to bd init,
+// and all commands get pinned host and port aliases in their environment. This
+// prevents ambient routing from sending tests to a production Dolt server.
 func NewIsolatedWithPort(workDir string, serverPort int) *Beads {
 	return &Beads{workDir: workDir, isolated: true, serverPort: serverPort}
 }
@@ -940,15 +940,7 @@ func isSubprocessCrash(err error) bool {
 // appended by run(). This was the root cause of gt-uygpe / GH #803.
 func (b *Beads) buildRunEnv() []string {
 	if b.isolated {
-		env := filterBeadsEnv(os.Environ())
-		if b.serverPort > 0 {
-			env = stripEnvPrefixes(env, "GT_DOLT_PORT=", "BEADS_DOLT_SERVER_PORT=", "BEADS_DOLT_PORT=", "BEADS_DOLT_AUTO_START=")
-			env = append(env, fmt.Sprintf("GT_DOLT_PORT=%d", b.serverPort))
-			env = append(env, fmt.Sprintf("BEADS_DOLT_SERVER_PORT=%d", b.serverPort))
-			env = append(env, fmt.Sprintf("BEADS_DOLT_PORT=%d", b.serverPort))
-			env = append(env, "BEADS_DOLT_AUTO_START=0")
-		}
-		return SuppressBDSideEffects(env)
+		return b.buildIsolatedEnv()
 	}
 	// runWithStdin appends BEADS_DIR after probing bd --allow-stale support, so
 	// keep buildRunEnv focused on Dolt target isolation and avoid duplicate
@@ -963,22 +955,42 @@ func (b *Beads) buildRunEnv() []string {
 // In isolated mode: also strips BD_ACTOR, BEADS_*, GT_ROOT, HOME.
 func (b *Beads) buildRoutingEnv() []string {
 	if b.isolated {
-		env := filterBeadsEnv(os.Environ())
-		if b.serverPort > 0 {
-			env = stripEnvPrefixes(env, "GT_DOLT_PORT=", "BEADS_DOLT_SERVER_PORT=", "BEADS_DOLT_PORT=", "BEADS_DOLT_AUTO_START=")
-			env = append(env, fmt.Sprintf("GT_DOLT_PORT=%d", b.serverPort))
-			env = append(env, fmt.Sprintf("BEADS_DOLT_SERVER_PORT=%d", b.serverPort))
-			env = append(env, fmt.Sprintf("BEADS_DOLT_PORT=%d", b.serverPort))
-			env = append(env, "BEADS_DOLT_AUTO_START=0")
-		}
-		return SuppressBDSideEffects(env)
+		return b.buildIsolatedEnv()
 	}
 	return BuildRoutingBDEnv(os.Environ(), b.getResolvedBeadsDir())
 }
 
+// buildIsolatedEnv removes ambient workspace and shell routing. When a server
+// port is explicit, both host aliases are pinned to loopback and every port
+// alias is replaced so the subprocess can only reach the test-owned endpoint.
+func (b *Beads) buildIsolatedEnv() []string {
+	env := filterBeadsEnv(os.Environ())
+	if b.serverPort > 0 {
+		for _, key := range []string{
+			"GT_DOLT_HOST",
+			"GT_DOLT_PORT",
+			"BEADS_DOLT_SERVER_HOST",
+			"BEADS_DOLT_SERVER_PORT",
+			"BEADS_DOLT_PORT",
+		} {
+			env = StripEnvKey(env, key)
+		}
+		port := strconv.Itoa(b.serverPort)
+		env = append(env,
+			"GT_DOLT_HOST=127.0.0.1",
+			"GT_DOLT_PORT="+port,
+			"BEADS_DOLT_SERVER_HOST=127.0.0.1",
+			"BEADS_DOLT_SERVER_PORT="+port,
+			"BEADS_DOLT_PORT="+port,
+		)
+	}
+	return SuppressBDSideEffects(env)
+}
+
 // filterBeadsEnv removes beads-related environment variables from the given
 // environment slice. This ensures test isolation by preventing inherited
-// BD_ACTOR, BEADS_DB, GT_ROOT, HOME etc. from routing commands to production databases.
+// BD_ACTOR, BEADS_DB, GT_ROOT, HOME, and BASH_ENV from routing commands or
+// injecting shell initialization into isolated subprocesses.
 //
 // Preserves GT_DOLT host/port and Beads Dolt endpoint aliases so isolated-mode
 // tests can reach a test Dolt server on a non-default port/host.
@@ -1009,7 +1021,8 @@ func filterBeadsEnv(environ []string) []string {
 			envKeyHasPrefix(keyName, "BEADS_") ||
 			envKeyMatches(keyName, "GT_DOLT_DATA") ||
 			envKeyMatches(keyName, "GT_ROOT") ||
-			envKeyMatches(keyName, "HOME") {
+			envKeyMatches(keyName, "HOME") ||
+			envKeyMatches(keyName, "BASH_ENV") {
 			continue
 		}
 		filtered = append(filtered, env)
