@@ -8,13 +8,17 @@ Technical reference for Gas Town internals. Read the README first.
 
 Use `bd` for issue CRUD in the ledger that owns the work. Use `gt` for
 execution and lifecycle: `gt sling` dispatches work, `gt convoy` tracks it,
-and standard-rig polecats use `gt done` to submit completed work. Existing
-issue IDs route by prefix; creation must name or run from the owning ledger.
+and standard-rig polecats use `gt done` to submit completed work. The Witness
+recovers stalled polecats; the Refinery verifies and integrates queued work.
 
 The canonical completion paths are documented in
 [Polecat lifecycle](concepts/polecat-lifecycle.md). Fork-backed assignments use
 the [fork contribution workflow](guides/fork-rig-setup.md) instead of sending
 upstream changes to a local merge queue.
+
+Existing issue IDs route `bd show`, `bd update`, and `bd close` by prefix from
+any directory inside the town. `bd create` has no issue ID to route yet, so
+create from the owning rig or pass `--repo` explicitly:
 
 ```bash
 bd show gp-xyz                              # Routes to Greenplace by gp- prefix

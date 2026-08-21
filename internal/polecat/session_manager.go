@@ -154,24 +154,7 @@ func (m *SessionManager) polecatDir(polecat string) string {
 // New structure: polecats/<name>/<rigname>/ - gives LLMs recognizable repo context.
 // Falls back to old structure: polecats/<name>/ for backward compatibility.
 func (m *SessionManager) clonePath(polecat string) string {
-	// New structure: polecats/<name>/<rigname>/
-	newPath := filepath.Join(m.rig.Path, "polecats", polecat, m.rig.Name)
-	if info, err := os.Stat(newPath); err == nil && info.IsDir() {
-		return newPath
-	}
-
-	// Old structure: polecats/<name>/ (backward compat)
-	oldPath := filepath.Join(m.rig.Path, "polecats", polecat)
-	if info, err := os.Stat(oldPath); err == nil && info.IsDir() {
-		// Check if this is actually a git worktree (has .git file or dir)
-		gitPath := filepath.Join(oldPath, ".git")
-		if _, err := os.Stat(gitPath); err == nil {
-			return oldPath
-		}
-	}
-
-	// Default to new structure for new polecats
-	return newPath
+	return ResolveClonePath(m.rig.Path, m.rig.Name, polecat)
 }
 
 // freshBranchName returns a unique branch name for a new polecat session.
@@ -510,18 +493,16 @@ func (m *SessionManager) Start(polecat string, opts SessionStartOptions) error {
 
 	// Accept startup dialogs (workspace trust + bypass permissions) if they appear
 	debugSession("AcceptStartupDialogs", m.tmux.AcceptStartupDialogs(sessionID))
-	if err := m.tmux.CheckStartupBlocked(sessionID); err != nil {
-		_ = m.tmux.KillSessionWithProcesses(sessionID)
-		return fmt.Errorf("startup blocked: %w", err)
+	if err := m.abortIfStartupFailed(sessionID, "after startup dialogs", false); err != nil {
+		return err
 	}
 
 	// Wait for runtime to be fully ready at the prompt (not just started).
 	// Uses prompt-based polling for agents with ReadyPromptPrefix (e.g., Claude "❯ "),
 	// falling back to ReadyDelayMs sleep for agents without prompt detection.
 	debugSession("WaitForRuntimeReady", m.tmux.WaitForRuntimeReady(sessionID, runtimeConfig, constants.ClaudeStartTimeout))
-	if err := m.tmux.CheckStartupBlocked(sessionID); err != nil {
-		_ = m.tmux.KillSessionWithProcesses(sessionID)
-		return fmt.Errorf("startup blocked: %w", err)
+	if err := m.abortIfStartupFailed(sessionID, "after runtime ready wait", false); err != nil {
+		return err
 	}
 
 	// Handle fallback nudges for non-hook agents.
@@ -573,16 +554,8 @@ func (m *SessionManager) Start(polecat string, opts SessionStartOptions) error {
 
 	// Verify session survived startup - if the command crashed, the session may have died.
 	// Without this check, Start() would return success even if the pane died during initialization.
-	running, err = m.tmux.HasSession(sessionID)
-	if err != nil {
-		return fmt.Errorf("verifying session: %w", err)
-	}
-	if !running {
-		return fmt.Errorf("session %s died during startup (agent command may have failed)", sessionID)
-	}
-	if status := m.tmux.CheckSessionHealth(sessionID, 0); status != tmux.SessionHealthy {
-		_ = m.tmux.KillSessionWithProcesses(sessionID)
-		return fmt.Errorf("session %s unhealthy during startup: %s", sessionID, status)
+	if err := m.abortIfStartupFailed(sessionID, "after startup nudges", true); err != nil {
+		return err
 	}
 
 	// Validate GT_AGENT is set. Without GT_AGENT, IsAgentAlive falls back to
@@ -617,6 +590,40 @@ func (m *SessionManager) Start(polecat string, opts SessionStartOptions) error {
 		"polecat", polecat, sessionID, m.rig.Name, townRoot, opts.Issue, workDir)
 
 	return nil
+}
+
+// abortIfStartupFailed fails fast when the tmux session is gone, the agent
+// process is dead, or a blocking startup modal/error is still visible.
+// Pane output is included so Codex git-repo-check and trust-dialog failures
+// are not lost with the session (GH#4670).
+func (m *SessionManager) abortIfStartupFailed(sessionID, phase string, checkHealth bool) error {
+	running, err := m.tmux.HasSession(sessionID)
+	if err != nil {
+		return m.abortStartup(sessionID, "verifying session %s: %v", phase, err)
+	}
+	if !running {
+		return m.abortStartup(sessionID, "session %s died during startup %s (agent command may have failed)", sessionID, phase)
+	}
+	if err := m.tmux.CheckStartupBlocked(sessionID); err != nil {
+		return m.abortStartup(sessionID, "startup blocked %s: %v", phase, err)
+	}
+	if checkHealth {
+		if status := m.tmux.CheckSessionHealth(sessionID, 0); status != tmux.SessionHealthy {
+			return m.abortStartup(sessionID, "session %s unhealthy during startup %s: %s", sessionID, phase, status)
+		}
+	}
+	return nil
+}
+
+func (m *SessionManager) abortStartup(sessionID, format string, args ...any) error {
+	pane, _ := m.tmux.CapturePane(sessionID, 80)
+	_ = m.tmux.KillSessionWithProcesses(sessionID)
+	msg := fmt.Sprintf(format, args...)
+	pane = strings.TrimSpace(pane)
+	if pane != "" {
+		return fmt.Errorf("%s\npane output:\n%s", msg, pane)
+	}
+	return fmt.Errorf("%s", msg)
 }
 
 // isSessionStale checks if a tmux session's pane process has died.

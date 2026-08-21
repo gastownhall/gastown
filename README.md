@@ -81,8 +81,8 @@ Git-backed issue tracking system that stores work state as structured data.
 
 See [Beads routing and command ownership](docs/reference.md#beads-routing-and-command-ownership)
 for the supported issue and execution surfaces. Completion behavior is owned by
-the [polecat lifecycle](docs/concepts/polecat-lifecycle.md), including the
-fork-backed delivery path.
+the [polecat lifecycle](docs/concepts/polecat-lifecycle.md), including standard
+merge-queue and fork-backed PR/no-merge delivery paths.
 
 ### Molecules 🧬
 

@@ -281,7 +281,7 @@ var builtinPresets = map[AgentPreset]*AgentPresetInfo{
 	AgentCodex: {
 		Name:                AgentCodex,
 		Command:             "codex",
-		Args:                []string{"-c", codexUpdateCheckConfig, "--dangerously-bypass-approvals-and-sandbox"},
+		Args:                []string{"-c", codexUpdateCheckConfig, "--dangerously-bypass-approvals-and-sandbox", codexSkipGitRepoCheckFlag},
 		ProcessNames:        []string{"codex"}, // Codex CLI binary
 		SessionIDEnv:        "",                // Codex captures from JSONL output
 		ResumeFlag:          "resume",

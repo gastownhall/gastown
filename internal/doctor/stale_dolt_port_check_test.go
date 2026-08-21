@@ -174,3 +174,50 @@ listener:
 		t.Errorf("expected StatusOK after fix, got %v: %s", result.Status, result.Message)
 	}
 }
+
+func TestStaleDoltPortCheck_PreservesExternalLoopbackEndpoint(t *testing.T) {
+	// Given
+	townRoot := t.TempDir()
+	doltDataDir := filepath.Join(townRoot, ".dolt-data")
+	if err := os.MkdirAll(doltDataDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(doltDataDir, "config.yaml"), []byte("listener:\n  port: 3307\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	mayorDir := filepath.Join(townRoot, "mayor")
+	if err := os.MkdirAll(mayorDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(mayorDir, "daemon.json"), []byte(`{"env":{"GT_DOLT_EXTERNAL":"true","GT_DOLT_PORT":"3308"}}`), 0644); err != nil {
+		t.Fatal(err)
+	}
+	beadsDir := filepath.Join(townRoot, ".beads")
+	if err := os.MkdirAll(beadsDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	metadata := map[string]interface{}{
+		"dolt_mode":        "server",
+		"dolt_server_host": "127.0.0.1",
+		"dolt_server_port": 3308,
+		"dolt_database":    "hq",
+	}
+	metadataBytes, err := json.MarshalIndent(metadata, "", "  ")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(beadsDir, "metadata.json"), metadataBytes, 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(beadsDir, "dolt-server.port"), []byte("3308"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	// When
+	result := NewStaleDoltPortCheck().Run(&CheckContext{TownRoot: townRoot})
+
+	// Then
+	if result.Status != StatusOK {
+		t.Fatalf("external loopback endpoint was treated as stale: %s", result.Message)
+	}
+}

@@ -3789,6 +3789,61 @@ func TestIsRemote(t *testing.T) {
 	}
 }
 
+func TestConfig_IsExternallyManaged_when_loopback_external_is_declared(t *testing.T) {
+	// Given
+	config := &Config{Host: "127.0.0.1", External: true}
+
+	// When
+	managed := config.IsExternallyManaged()
+
+	// Then
+	if !managed {
+		t.Fatal("loopback external server must not be owned by Gas Town")
+	}
+}
+
+func TestDefaultConfig_ExternalLoopbackUsesDaemonEndpoint(t *testing.T) {
+	// Given
+	townRoot := t.TempDir()
+	t.Setenv("GT_DOLT_EXTERNAL", "")
+	t.Setenv("GT_DOLT_HOST", "")
+	t.Setenv("GT_DOLT_PORT", "")
+	mayorDir := filepath.Join(townRoot, "mayor")
+	if err := os.MkdirAll(mayorDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(mayorDir, "daemon.json"), []byte(`{"env":{"GT_DOLT_EXTERNAL":"true","GT_DOLT_HOST":"127.0.0.1","GT_DOLT_PORT":"3308"}}`), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	// When
+	config := DefaultConfig(townRoot)
+
+	// Then
+	if !config.IsExternallyManaged() {
+		t.Fatal("loopback external server must not be owned by Gas Town")
+	}
+	if config.HostPort() != "127.0.0.1:3308" {
+		t.Fatalf("HostPort() = %q, want 127.0.0.1:3308", config.HostPort())
+	}
+}
+
+func TestStart_RejectsExternalLoopbackEndpoint(t *testing.T) {
+	// Given
+	townRoot := t.TempDir()
+	t.Setenv("GT_DOLT_EXTERNAL", "true")
+	t.Setenv("GT_DOLT_HOST", "127.0.0.1")
+	t.Setenv("GT_DOLT_PORT", "3308")
+
+	// When
+	err := Start(townRoot)
+
+	// Then
+	if err == nil || !strings.Contains(err.Error(), "externally managed") {
+		t.Fatalf("Start() error = %v, want externally managed error", err)
+	}
+}
+
 func TestSQLArgs(t *testing.T) {
 	tests := []struct {
 		name string
