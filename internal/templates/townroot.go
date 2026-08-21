@@ -12,7 +12,7 @@ var townRootCLAUDEmdRaw string
 
 // TownRootCLAUDEmdVersion is the version of the embedded town-root CLAUDE.md.
 // Increment this when updating the template content with new sections.
-const TownRootCLAUDEmdVersion = 2
+const TownRootCLAUDEmdVersion = 3
 
 // TownRootCLAUDEmd returns the canonical town-root CLAUDE.md content
 // with the CLI command name substituted.
@@ -37,6 +37,10 @@ func TownRootRequiredSections() []TownRootRequiredSection {
 		{
 			Name:    "Communication hygiene",
 			Heading: "### Communication hygiene",
+		},
+		{
+			Name:    "Product documentation authority",
+			Heading: "## Product Documentation Authority",
 		},
 	}
 }

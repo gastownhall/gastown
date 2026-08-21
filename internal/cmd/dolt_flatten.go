@@ -57,6 +57,10 @@ func runDoltFlatten(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return fmt.Errorf("not in a Gas Town workspace: %w", err)
 	}
+	config := doltserver.DefaultConfig(townRoot)
+	if config.IsExternallyManaged() {
+		return fmt.Errorf("Dolt server is externally managed (%s) — flatten requires a Town-owned server", config.HostPort())
+	}
 
 	// Verify server is running.
 	running, _, err := doltserver.IsRunning(townRoot)
@@ -64,7 +68,6 @@ func runDoltFlatten(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("Dolt server is not running — start with 'gt dolt start'")
 	}
 
-	config := doltserver.DefaultConfig(townRoot)
 	// wa-d6f: socket-first DSN (TCP fallback) — eliminates TIME_WAIT churn.
 	dsn := buildDoltDSNFromConfig(config, dbName, dsnOpts{
 		ParseTime:    true,

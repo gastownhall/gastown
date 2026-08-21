@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -332,6 +333,50 @@ func TestCheckStuckWispsDolt_ErrorOnMissingBd(t *testing.T) {
 	_, err := check.checkStuckWispsDolt("/nonexistent/rig/path", "testrig")
 	if err == nil {
 		t.Error("expected error when bd sql fails on nonexistent path")
+	}
+}
+
+func TestParseStuckWisps_DoltTimestampLayout(t *testing.T) {
+	// Dolt emits updated_at in Go's default time.Time.String() layout:
+	// "2026-08-03 16:25:21 +0000 UTC". Regression test: this layout must be
+	// treated as stale when older than the cutoff (town gt-ty4: bare layout
+	// and RFC3339 both reject this format, so stuck wisps were never detected).
+	cutoff := time.Date(2026, 8, 18, 12, 0, 0, 0, time.UTC)
+	records := [][]string{
+		{"id", "title", "status", "updated_at"},
+		{"dolt-1", "Stale wisp in Dolt default layout", "in_progress", "2026-08-03 16:25:21 +0000 UTC"},
+		{"dolt-2", "Recent wisp in Dolt default layout", "in_progress", "2026-08-18 13:25:21 +0000 UTC"},
+		{"bare-1", "Bare layout still supported", "in_progress", "2026-08-03 16:25:21"},
+		{"rfc-1", "RFC3339 still supported", "in_progress", "2026-08-03T16:25:21Z"},
+	}
+	stuck := parseStuckWisps(records, "testrig", cutoff)
+	if len(stuck) != 3 {
+		t.Fatalf("len(stuck) = %d, want 3; got %v", len(stuck), stuck)
+	}
+	wantIDs := []string{"dolt-1", "bare-1", "rfc-1"}
+	for i, want := range wantIDs {
+		if !strings.Contains(stuck[i], want) {
+			t.Errorf("stuck[%d] = %q, want it to mention %q", i, stuck[i], want)
+		}
+	}
+}
+
+func TestParseStuckWisps_SkipsHeaderOnly(t *testing.T) {
+	records := [][]string{{"id", "title", "status", "updated_at"}}
+	stuck := parseStuckWisps(records, "testrig", time.Now().UTC())
+	if len(stuck) != 0 {
+		t.Fatalf("len(stuck) = %d, want 0", len(stuck))
+	}
+}
+
+func TestParseStuckWisps_SkipsUnparseableTimestamps(t *testing.T) {
+	records := [][]string{
+		{"id", "title", "status", "updated_at"},
+		{"bad-1", "Unparseable timestamp skipped", "in_progress", "not-a-timestamp"},
+	}
+	stuck := parseStuckWisps(records, "testrig", time.Now().UTC())
+	if len(stuck) != 0 {
+		t.Fatalf("len(stuck) = %d, want 0", len(stuck))
 	}
 }
 

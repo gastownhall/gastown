@@ -315,6 +315,9 @@ func (c *RigConfigSyncCheck) Run(ctx *CheckContext) *CheckResult {
 
 // Fix creates missing config.json files, Dolt databases, and rig identity beads.
 func (c *RigConfigSyncCheck) Fix(ctx *CheckContext) error {
+	if config.ResolveDoltExternal(ctx.TownRoot) {
+		return nil
+	}
 	rigsConfigPath := filepath.Join(ctx.TownRoot, "mayor", "rigs.json")
 	rigsConfig, err := config.LoadRigsConfig(rigsConfigPath)
 	if err != nil {
