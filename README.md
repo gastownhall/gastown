@@ -79,14 +79,10 @@ Git-backed issue tracking system that stores work state as structured data.
 
 **Bead IDs** (also called **issue IDs**) use a prefix + 5-character alphanumeric format (e.g., `gt-abc12`, `hq-x7k2m`). The prefix indicates the item's origin or rig. Commands like `gt sling` and `gt convoy` accept these IDs to reference specific work items. The terms "bead" and "issue" are used interchangeably—beads are the underlying data format, while issues are the work items stored as beads.
 
-Use `bd` for issue CRUD in the owning rig's ledger: `bd create`, `bd show`,
-`bd update`, and `bd close`. Existing issue IDs route by prefix; use
-`bd create --repo <rig> "..."` when creating work for another registered rig.
-Use `gt` for execution: `gt sling` dispatches work, `gt convoy` tracks it, and
-`gt done` submits completed polecat work to the merge queue. The Witness handles
-polecat recovery, and the Refinery verifies and integrates queued work.
-Fork-backed assignments use their GitHub PR/no-merge workflow instead of the
-local merge queue.
+See [Beads routing and command ownership](docs/reference.md#beads-routing-and-command-ownership)
+for the supported issue and execution surfaces. Completion behavior is owned by
+the [polecat lifecycle](docs/concepts/polecat-lifecycle.md), including standard
+merge-queue and fork-backed PR/no-merge delivery paths.
 
 ### Molecules 🧬
 
@@ -810,8 +806,12 @@ For deeper technical details, see the design docs in `docs/`:
 | Wasteland | [docs/WASTELAND.md](docs/WASTELAND.md) |
 | OTEL data model | [docs/otel-data-model.md](docs/otel-data-model.md) |
 | Witness design | [docs/design/witness-at-team-lead.md](docs/design/witness-at-team-lead.md) |
-| Convoy lifecycle | [docs/design/convoy/](docs/design/convoy/) |
-| Polecat lifecycle | [docs/design/polecat-lifecycle-patrol.md](docs/design/polecat-lifecycle-patrol.md) |
+| Convoys | [docs/concepts/convoy.md](docs/concepts/convoy.md) |
+| Convoy lifecycle design | [docs/design/convoy/convoy-lifecycle.md](docs/design/convoy/convoy-lifecycle.md) |
+| Polecat lifecycle | [docs/concepts/polecat-lifecycle.md](docs/concepts/polecat-lifecycle.md) |
+| Epic integration branches | [docs/concepts/integration-branches.md](docs/concepts/integration-branches.md) |
+| Fork-backed rigs | [docs/guides/fork-rig-setup.md](docs/guides/fork-rig-setup.md) |
+| Releases | [RELEASING.md](RELEASING.md) |
 | Plugin system | [docs/design/plugin-system.md](docs/design/plugin-system.md) |
 | Agent providers | [docs/agent-provider-integration.md](docs/agent-provider-integration.md) |
 | Hooks | [docs/HOOKS.md](docs/HOOKS.md) |

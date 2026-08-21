@@ -1,5 +1,8 @@
 # Releasing Gas Town
 
+This document owns the upstream `gastownhall/gastown` release process. The
+workflow below is not a generic fork release mechanism.
+
 ## Distribution Channels
 
 | Channel | Mechanism | Automatic? |
@@ -8,6 +11,39 @@
 | **Homebrew tap** (`gastownhall/gastown`) | Actions writes an asset-based formula after archives upload | Yes |
 | **Homebrew core** (if listed) | Homebrew bot detects new release | Yes (24-48h delay) |
 | **npm** (`@gastown/gt`) | Actions workflow, OIDC trusted publishing | Yes (when org is set up) |
+
+## Downstream Fork Release Delta
+
+A maintained downstream fork has a separate release authority and integration
+lane. Its release procedure must define all of the following outside the
+upstream runbook:
+
+- the upstream tag or commit used as the base;
+- the reviewed fork-only commit delta;
+- the downstream version/channel and every consumer pin;
+- the artifact repository, signing/provenance owner, and install target;
+- fresh build, test, and installed-binary evidence from the fork integration
+  lane.
+
+The upstream automation deliberately does not publish fork tags:
+
+- `.github/workflows/release.yml` gates publishing jobs to the
+  `gastownhall/gastown` repository;
+- `scripts/bump-version.sh` accepts upstream `MAJOR.MINOR.PATCH` versions, not a
+  downstream suffix scheme;
+- the release formula, Homebrew, npm, and attestation destinations are upstream
+  owners.
+
+Therefore a downstream release needs downstream-owned automation or an
+explicitly documented manual owner. Do not push a fork tag expecting the
+upstream workflow to publish it, and do not modify upstream release metadata to
+encode a local-only version.
+
+The downstream **project integration lane** (often fork `main`) is distinct
+from a Gas Town **epic integration branch**. The latter is temporary,
+epic-scoped, and lands through `gt mq integration land`; see
+[Integration Branches](docs/concepts/integration-branches.md#terminology-boundary).
+Documentation-only convergence does not create a tag or release.
 
 ## How to Release
 

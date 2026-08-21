@@ -20,6 +20,58 @@ func TestNew(t *testing.T) {
 	}
 }
 
+func TestTownRootCLAUDEmd_DocumentationAuthority(t *testing.T) {
+	content := TownRootCLAUDEmd()
+
+	for _, want := range []string{
+		"## Product Documentation Authority",
+		"docs/reference.md",
+		"docs/concepts/polecat-lifecycle.md",
+		"docs/concepts/integration-branches.md",
+		"docs/concepts/convoy.md",
+		"docs/guides/fork-rig-setup.md",
+		"RELEASING.md",
+		"`HANDOFF.md` is historical only",
+	} {
+		if !strings.Contains(content, want) {
+			t.Errorf("TownRootCLAUDEmd() missing canonical pointer %q", want)
+		}
+	}
+}
+
+func TestRepositoryAgentsDelegatesToProductDocs(t *testing.T) {
+	data, err := os.ReadFile(filepath.Join("..", "..", "AGENTS.md"))
+	if err != nil {
+		t.Fatalf("reading repository AGENTS.md: %v", err)
+	}
+	content := string(data)
+
+	for _, want := range []string{
+		"docs/concepts/polecat-lifecycle.md",
+		"docs/concepts/integration-branches.md",
+		"docs/concepts/convoy.md",
+		"docs/guides/fork-rig-setup.md",
+		"docs/reference.md",
+		"RELEASING.md",
+	} {
+		if !strings.Contains(content, want) {
+			t.Errorf("repository AGENTS.md missing canonical pointer %q", want)
+		}
+	}
+
+	for _, duplicate := range []string{
+		"bd ready",
+		"bd update",
+		"bd close",
+		"git pull --rebase",
+		"MANDATORY WORKFLOW",
+	} {
+		if strings.Contains(content, duplicate) {
+			t.Errorf("repository AGENTS.md duplicates lifecycle guidance %q", duplicate)
+		}
+	}
+}
+
 func TestRenderRole_Mayor(t *testing.T) {
 	tmpl, err := New()
 	if err != nil {
