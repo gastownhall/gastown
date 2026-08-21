@@ -559,13 +559,14 @@ func TestFindTestSockets_Integration(t *testing.T) {
 	socketName := fmt.Sprintf("gt-test-discovery-%d", os.Getpid())
 	sessionName := "probe-session"
 
-	// Start a tmux server on this socket with a session.
-	startCmd := exec.Command("tmux", "-L", socketName, "new-session", "-d", "-s", sessionName)
-	if err := startCmd.Run(); err != nil {
+	// Start a stable process on this explicit socket. An unspecified login
+	// shell may exit or run transient agent-like children under test load.
+	testTmux := tmux.NewTmuxWithSocket(socketName)
+	if err := testTmux.NewSessionWithCommand(sessionName, "", "sleep 60"); err != nil {
 		t.Fatalf("failed to create test tmux server: %v", err)
 	}
 	t.Cleanup(func() {
-		_ = exec.Command("tmux", "-L", socketName, "kill-server").Run()
+		_ = testTmux.KillSessionWithProcesses(sessionName)
 		socketPath := filepath.Join(tmux.SocketDir(), socketName)
 		_ = os.Remove(socketPath)
 	})
