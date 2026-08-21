@@ -48,11 +48,12 @@ const (
 )
 
 type agentBeadCandidate struct {
-	ID       string
-	Source   agentBeadSource
-	BeadsDir string
-	Status   string
-	Issue    *beads.Issue
+	ID           string
+	Source       agentBeadSource
+	BeadsDir     string
+	Status       string
+	Issue        *beads.Issue
+	IdentityRank int
 }
 
 type agentsResolveResult struct {
@@ -85,7 +86,8 @@ func runAgentsResolve(cmd *cobra.Command, _ []string) error {
 
 	var matches []agentBeadCandidate
 	for _, candidate := range candidates {
-		if agentBeadMatches(candidate.Issue, role, rig) {
+		if identityRank, ok := agentBeadMatchRank(candidate.Issue, role, rig); ok {
+			candidate.IdentityRank = identityRank
 			matches = append(matches, candidate)
 		}
 	}
@@ -193,25 +195,30 @@ func loadAgentBeadsFromDir(beadsDir string, issueSource, wispSource agentBeadSou
 }
 
 func agentBeadMatches(issue *beads.Issue, role, rig string) bool {
+	_, ok := agentBeadMatchRank(issue, role, rig)
+	return ok
+}
+
+func agentBeadMatchRank(issue *beads.Issue, role, rig string) (int, bool) {
 	if issue == nil {
-		return false
+		return 0, false
 	}
 
 	fields := beads.ParseAgentFields(issue.Description)
 	if fields.RoleType == role {
 		if rig == "" || fields.Rig == rig {
-			return true
+			return 0, true
 		}
 	}
 
 	idRig, idRole, _, ok := beads.ParseAgentBeadID(issue.ID)
 	if !ok || idRole != role {
-		return false
+		return 0, false
 	}
 	if rig == "" {
-		return idRig == ""
+		return 1, idRig == ""
 	}
-	return idRig == rig
+	return 1, idRig == rig
 }
 
 func pickBestAgentBead(candidates []agentBeadCandidate) (*agentBeadCandidate, error) {
@@ -232,13 +239,17 @@ func pickBestAgentBead(candidates []agentBeadCandidate) (*agentBeadCandidate, er
 		if leftRank != rightRank {
 			return leftRank < rightRank
 		}
+		if open[i].IdentityRank != open[j].IdentityRank {
+			return open[i].IdentityRank < open[j].IdentityRank
+		}
 		return open[i].ID < open[j].ID
 	})
 
-	bestRank := agentBeadSourceRank(open[0].Source)
+	bestSourceRank := agentBeadSourceRank(open[0].Source)
+	bestIdentityRank := open[0].IdentityRank
 	var sameRank []string
 	for _, candidate := range open {
-		if agentBeadSourceRank(candidate.Source) != bestRank {
+		if agentBeadSourceRank(candidate.Source) != bestSourceRank || candidate.IdentityRank != bestIdentityRank {
 			break
 		}
 		sameRank = append(sameRank, candidate.ID)

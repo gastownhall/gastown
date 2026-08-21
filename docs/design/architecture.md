@@ -46,6 +46,10 @@ created there by older releases. State and patrol-await commands write back to
 the ledger that supplied the winning identity rather than assuming the caller's
 current ledger.
 
+Within the same ledger and storage class, a record whose structured `role_type`
+and `rig` fields match outranks an ID-only compatibility match. Equal-confidence
+duplicates remain an error so ambiguous lifecycle state cannot be mutated.
+
 | Agent Type | Scope | Bead Location | Bead ID Format |
 |------------|-------|---------------|----------------|
 | Mayor | Town | `~/gt/.beads/` | `hq-mayor` |

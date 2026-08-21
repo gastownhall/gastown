@@ -217,6 +217,45 @@ func TestPickBestAgentBeadRejectsSameRankDuplicates(t *testing.T) {
 	}
 }
 
+func TestPickBestAgentBeadPrefersStructuredIdentityOverIDFallback(t *testing.T) {
+	candidates := []agentBeadCandidate{
+		{
+			ID:     "flext-cemk3",
+			Source: agentSourceRigIssues,
+			Status: "open",
+			Issue: &beads.Issue{
+				ID:          "flext-cemk3",
+				Description: "role_type: witness\nrig: flext",
+			},
+		},
+		{
+			ID:     "flext-witness",
+			Source: agentSourceRigIssues,
+			Status: "open",
+			Issue: &beads.Issue{
+				ID:          "flext-witness",
+				Description: `role_type: witness\nrig: flext`,
+			},
+		},
+	}
+
+	var matches []agentBeadCandidate
+	for _, candidate := range candidates {
+		if identityRank, ok := agentBeadMatchRank(candidate.Issue, "witness", "flext"); ok {
+			candidate.IdentityRank = identityRank
+			matches = append(matches, candidate)
+		}
+	}
+
+	got, err := pickBestAgentBead(matches)
+	if err != nil {
+		t.Fatalf("pickBestAgentBead returned error: %v", err)
+	}
+	if got == nil || got.ID != "flext-cemk3" {
+		t.Fatalf("pickBestAgentBead picked %v, want structured flext-cemk3 identity", got)
+	}
+}
+
 func TestFindAgentBeadCandidatesSelectsRequestedRigLedger(t *testing.T) {
 	townRoot, rigBeads := setupAgentLedgerTown(t, "ccs", "ccs")
 	currentBeads := filepath.Join(townRoot, "other", ".beads")
