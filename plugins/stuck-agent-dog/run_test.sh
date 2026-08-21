@@ -316,7 +316,10 @@ add_polecat_in_rig() {
 }
 
 run_script() {
-  bash "$SCRIPT" > "$TEST_STATE/output.log" 2>&1
+  # Keep host-wide non-interactive shell hooks from rewriting PATH after the
+  # test installs its fake gt/tmux/bd commands. In particular, an inherited
+  # BASH_ENV may prepend a real gt and silently bypass every test double.
+  BASH_ENV= bash "$SCRIPT" > "$TEST_STATE/output.log" 2>&1
 }
 
 test_healthy_runtime() {
