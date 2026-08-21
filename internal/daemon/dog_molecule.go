@@ -147,6 +147,15 @@ func (dm *dogMol) close() {
 // closeRemainingSteps queries all children of the root wisp and closes any that
 // are still open. This is the backstop that prevents step wisp leaks regardless
 // of whether individual callers remembered to close each step.
+//
+// Steps are force-closed. Molecule steps carry sequencing dependencies on their
+// predecessors, and `bd show --children` does not return them in dependency
+// order, so a plain close of a step whose predecessor is still open fails with
+// "blocked by open issues". That failure is deterministic — the retry in
+// closeWisp cannot clear it — so the step orphans as an OPEN wisp forever, which
+// is the dominant source of the patrol wisp leak (gt-92jh). Force is correct
+// here: this is end-of-lifecycle teardown of ephemeral observability wisps, and
+// gate satisfaction no longer carries meaning once the dog has finished.
 func (dm *dogMol) closeRemainingSteps() {
 	if dm.rootID == "" {
 		return
@@ -171,7 +180,7 @@ func (dm *dogMol) closeRemainingSteps() {
 		}
 		// Close any child that is still open/hooked/in_progress.
 		if child.Status == "open" || child.Status == "hooked" || child.Status == "in_progress" {
-			if err := dm.closeWisp(child.ID); err != nil {
+			if err := dm.closeWisp(child.ID, "--force"); err != nil {
 				dm.logger.Printf("dog_molecule: closeRemainingSteps: close %s failed after %d attempts: %v", child.ID, dogCloseMaxAttempts, err)
 			} else {
 				closed++

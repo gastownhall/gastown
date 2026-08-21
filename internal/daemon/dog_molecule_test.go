@@ -1,7 +1,12 @@
 package daemon
 
 import (
+	"bytes"
+	"log"
+	"os"
+	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 )
 
@@ -196,4 +201,75 @@ func TestDogMolGracefulDegradation(t *testing.T) {
 	dm.closeStep("scan")
 	dm.failStep("scan", "test failure")
 	dm.close()
+}
+
+// TestCloseRemainingStepsForceClosesBlockedSteps pins the fix for the patrol
+// wisp leak (gt-92jh). Molecule steps are sequenced, so bd refuses a plain
+// `close` on a step whose predecessor is still open, and `bd show --children`
+// does not hand them back in dependency order. Without --force the backstop
+// deterministically failed on those steps and orphaned them as OPEN wisps.
+func TestCloseRemainingStepsForceClosesBlockedSteps(t *testing.T) {
+	dir := t.TempDir()
+	stateDir := filepath.Join(dir, "state")
+	binDir := filepath.Join(dir, "bin")
+	for _, d := range []string{stateDir, binDir, filepath.Join(dir, ".beads")} {
+		if err := os.MkdirAll(d, 0o755); err != nil {
+			t.Fatalf("mkdir %s: %v", d, err)
+		}
+	}
+
+	// Fake bd that models bd's real dependency gating: step2 is blocked while
+	// step1 is open, step3 while step2 is open, and --force overrides. Children
+	// are returned out of dependency order, as bd does.
+	script := `#!/bin/sh
+STATE="` + stateDir + `"
+st() { if [ -f "$STATE/$1" ]; then echo closed; else echo open; fi; }
+case "$1" in
+  show)
+    printf '{"hq-wisp-root":[{"id":"step2","title":"Inspect","status":"%s"},{"id":"step3","title":"Report","status":"%s"},{"id":"step1","title":"Probe","status":"%s"}],"schema_version":1}\n' "$(st step2)" "$(st step3)" "$(st step1)"
+    ;;
+  close)
+    id="$2"
+    force=0
+    for a in "$@"; do
+      case "$a" in --force|-f) force=1 ;; esac
+    done
+    pred=""
+    case "$id" in
+      step2) pred=step1 ;;
+      step3) pred=step2 ;;
+    esac
+    if [ -n "$pred" ] && [ ! -f "$STATE/$pred" ] && [ "$force" -eq 0 ]; then
+      echo "cannot close $id: blocked by open issues [$pred] (use --force to override)" >&2
+      exit 1
+    fi
+    touch "$STATE/$id"
+    ;;
+  *) exit 0 ;;
+esac
+`
+	bdPath := filepath.Join(binDir, "bd")
+	if err := os.WriteFile(bdPath, []byte(script), 0o755); err != nil {
+		t.Fatalf("write fake bd: %v", err)
+	}
+
+	var logBuf bytes.Buffer
+	dm := &dogMol{
+		rootID:   "hq-wisp-root",
+		stepIDs:  make(map[string]string),
+		bdPath:   bdPath,
+		townRoot: dir,
+		logger:   log.New(&logBuf, "", 0),
+	}
+
+	dm.closeRemainingSteps()
+
+	for _, step := range []string{"step1", "step2", "step3"} {
+		if _, err := os.Stat(filepath.Join(stateDir, step)); err != nil {
+			t.Errorf("%s was not closed (leaked as an open wisp); log:\n%s", step, logBuf.String())
+		}
+	}
+	if strings.Contains(logBuf.String(), "failed") {
+		t.Errorf("closeRemainingSteps logged a failure; log:\n%s", logBuf.String())
+	}
 }
