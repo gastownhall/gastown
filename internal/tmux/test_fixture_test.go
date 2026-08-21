@@ -76,7 +76,7 @@ func isolatedTmuxServerEnvironment(shell string) []string {
 
 func newReadyTestSession(t *testing.T, tm *Tmux, session string) {
 	t.Helper()
-	const shell = `env PS1='gt-test$ ' ENV= BASH_ENV= /bin/sh -i`
+	const shell = `/bin/sh -i`
 	if err := tm.NewSessionWithCommand(session, "", shell); err != nil {
 		t.Fatalf("start controlled test shell: %v", err)
 	}
