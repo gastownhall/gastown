@@ -4798,6 +4798,7 @@ func TestFilterBeadsEnv_PreservesDoltPortVars(t *testing.T) {
 		"GT_DOLT_DATA=/tmp/dolt-data",
 		"GT_ROOT=/tmp/gt",
 		"HOME=/home/test",
+		"BASH_ENV=/home/test/.bash_env",
 		"PATH=/usr/bin",
 	}
 	got := filterBeadsEnv(environ)
@@ -4860,10 +4861,14 @@ func TestNewIsolatedWithPort(t *testing.T) {
 }
 
 func TestIsolatedWithPortOverridesInheritedDoltEnv(t *testing.T) {
+	t.Setenv("BASH_ENV", filepath.Join(t.TempDir(), "ambient.sh"))
+	t.Setenv("GT_DOLT_HOST", "live.example")
 	t.Setenv("GT_DOLT_PORT", "3307")
 	t.Setenv("GT_DOLT_DATA", filepath.Join(t.TempDir(), "wrong-data"))
+	t.Setenv("BEADS_DOLT_SERVER_HOST", "live.example")
 	t.Setenv("BEADS_DOLT_SERVER_PORT", "3307")
 	t.Setenv("BEADS_DOLT_PORT", "3307")
+	t.Setenv("BEADS_DOLT_SERVER_DATABASE", "hq")
 	t.Setenv("BEADS_DOLT_AUTO_START", "1")
 
 	b := NewIsolatedWithPort(t.TempDir(), 19999)
@@ -4886,11 +4891,17 @@ func TestIsolatedWithPortOverridesInheritedDoltEnv(t *testing.T) {
 		if got := countEnvPrefix(env.got, "BEADS_DOLT_AUTO_START="); got != 1 {
 			t.Fatalf("%s env BEADS_DOLT_AUTO_START count = %d, want 1", env.name, got)
 		}
-		if !containsEnv(env.got, "GT_DOLT_PORT=19999") || !containsEnv(env.got, "BEADS_DOLT_SERVER_PORT=19999") || !containsEnv(env.got, "BEADS_DOLT_PORT=19999") || !containsEnv(env.got, "BEADS_DOLT_AUTO_START=0") {
+		if !containsEnv(env.got, "GT_DOLT_HOST=127.0.0.1") || !containsEnv(env.got, "GT_DOLT_PORT=19999") || !containsEnv(env.got, "BEADS_DOLT_SERVER_HOST=127.0.0.1") || !containsEnv(env.got, "BEADS_DOLT_SERVER_PORT=19999") || !containsEnv(env.got, "BEADS_DOLT_PORT=19999") || !containsEnv(env.got, "BEADS_DOLT_AUTO_START=0") {
 			t.Fatalf("%s env missing isolated Dolt overrides", env.name)
 		}
 		if containsEnvPrefix(env.got, "GT_DOLT_DATA=") {
 			t.Fatalf("%s env should strip GT_DOLT_DATA", env.name)
+		}
+		if containsEnvPrefix(env.got, "BEADS_DOLT_SERVER_DATABASE=") {
+			t.Fatalf("%s env should strip BEADS_DOLT_SERVER_DATABASE", env.name)
+		}
+		if containsEnvPrefix(env.got, "BASH_ENV=") {
+			t.Fatalf("%s env should strip BASH_ENV", env.name)
 		}
 	}
 }
