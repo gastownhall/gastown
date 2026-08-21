@@ -578,6 +578,11 @@ func newFindTestSocketsFixture(t *testing.T, sessionName string) string {
 	t.Cleanup(func() {
 		if err := server.KillServer(); err != nil {
 			t.Errorf("clean up isolated tmux server %q: %v", socketName, err)
+			return
+		}
+		socketPath := filepath.Join(tmux.SocketDir(), socketName)
+		if err := os.Remove(socketPath); err != nil && !os.IsNotExist(err) {
+			t.Errorf("remove isolated tmux socket %q: %v", socketPath, err)
 		}
 	})
 
