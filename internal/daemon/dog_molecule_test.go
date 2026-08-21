@@ -211,7 +211,7 @@ func TestDogMolGracefulDegradation(t *testing.T) {
 // "sync" was left unknown. Exact title matching against the real formula
 // must map every step to its own ID, not a keyword collision.
 func TestFormulaStepIDsByTitleMolDogBackup(t *testing.T) {
-	got := formulaStepIDsByTitle("mol-dog-backup")
+	got := formulaStepIDsByTitle("mol-dog-backup", "")
 
 	want := map[string]string{
 		"sync databases to backup remotes":     "sync",
@@ -229,11 +229,44 @@ func TestFormulaStepIDsByTitleMolDogBackup(t *testing.T) {
 // unresolvable formula name (empty, or not embedded) must return nil so
 // discoverSteps falls back to the keyword heuristic instead of erroring.
 func TestFormulaStepIDsByTitleUnknownFormula(t *testing.T) {
-	if got := formulaStepIDsByTitle(""); got != nil {
+	if got := formulaStepIDsByTitle("", ""); got != nil {
 		t.Errorf("formulaStepIDsByTitle(\"\") = %v, want nil", got)
 	}
-	if got := formulaStepIDsByTitle("mol-does-not-exist"); got != nil {
+	if got := formulaStepIDsByTitle("mol-does-not-exist", ""); got != nil {
 		t.Errorf("formulaStepIDsByTitle(mol-does-not-exist) = %v, want nil", got)
+	}
+}
+
+// TestFormulaStepIDsByTitlePrefersTownOverride pins the rig/town/embedded
+// precedence: if a town-level formula override exists on disk at
+// <townRoot>/.beads/formulas/<name>.formula.toml, its step titles/IDs must
+// win over the compiled-in default. Without this, a customized (or merely
+// drifted) on-disk formula would pour children whose titles no longer match
+// the embedded copy's titles, silently falling back to the keyword-collision
+// heuristic this fix exists to eliminate.
+func TestFormulaStepIDsByTitlePrefersTownOverride(t *testing.T) {
+	townRoot := t.TempDir()
+	formulasDir := filepath.Join(townRoot, ".beads", "formulas")
+	if err := os.MkdirAll(formulasDir, 0o755); err != nil {
+		t.Fatalf("mkdir formulas dir: %v", err)
+	}
+	override := `formula = "mol-dog-backup"
+description = "overridden"
+
+[[steps]]
+id = "custom-sync"
+title = "Custom sync step title"
+`
+	if err := os.WriteFile(filepath.Join(formulasDir, "mol-dog-backup.formula.toml"), []byte(override), 0o644); err != nil {
+		t.Fatalf("write override formula: %v", err)
+	}
+
+	got := formulaStepIDsByTitle("mol-dog-backup", townRoot)
+	if gotID, ok := got["custom sync step title"]; !ok || gotID != "custom-sync" {
+		t.Errorf("formulaStepIDsByTitle with town override = %v, want title mapped to %q", got, "custom-sync")
+	}
+	if _, ok := got["sync databases to backup remotes"]; ok {
+		t.Errorf("formulaStepIDsByTitle should not contain embedded-default titles once a town override exists; got %v", got)
 	}
 }
 

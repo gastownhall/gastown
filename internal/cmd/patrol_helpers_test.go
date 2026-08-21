@@ -1329,3 +1329,105 @@ exit 0
 		t.Errorf("patrol root %s was not closed.\nClose calls:\n%s", rootID, closes)
 	}
 }
+
+// TestFindActivePatrolStaleCleanupForceClosesSequencedGrandchildren pins the
+// same fix as TestBurnPreviousPatrolWisps_ForceClosesSequencedSteps, one call
+// site over: findActivePatrol's stale-patrol cleanup loop previously called
+// the non-force closeDescendants before force-closing the root. checkHasOpenChildren
+// only inspects the root's *direct* children, so a patrol can be classified
+// stale (its direct child already closed, e.g. from a prior partial cleanup)
+// while a deeper grandchild pair under that child still carries an open
+// sequencing dependency. The non-force close of that pair fails deterministically
+// ("blocked by open issues"), and closing the root anyway would orphan the
+// grandchildren as parentless open wisps forever (gt-92jh) — exactly the bug
+// this PR fixes at the sibling burnPreviousPatrolWisps call site.
+func TestFindActivePatrolStaleCleanupForceClosesSequencedGrandchildren(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("shell script bd stub not supported on Windows")
+	}
+
+	townRoot := t.TempDir()
+	binDir := filepath.Join(townRoot, "bin")
+	if err := os.MkdirAll(binDir, 0755); err != nil {
+		t.Fatalf("mkdir bin: %v", err)
+	}
+	closesLog := filepath.Join(townRoot, "closes.log")
+
+	const (
+		molName  = "mol-test-patrol"
+		assignee = "testrig/witness"
+		rootID   = "hq-wisp-root"
+		childID  = "hq-wisp-child"
+		gcAID    = "hq-wisp-gca"
+		gcBID    = "hq-wisp-gcb"
+	)
+
+	// root's only direct child is already closed (checkHasOpenChildren sees no
+	// open direct children, so the patrol is classified stale), but that
+	// child's own children (gcA, gcB) are still open and sequenced: closing
+	// gcB without --force is rejected because gcA (its dependency) is open.
+	bdScript := fmt.Sprintf(`#!/bin/sh
+while [ "$1" = "--allow-stale" ]; do shift; done
+cmd="$1"; shift
+case "$cmd" in
+  list)
+    if echo "$*" | grep -q -- "--parent=%[2]s"; then
+      echo '[{"id":"%[3]s","title":"child","status":"closed"}]'
+    elif echo "$*" | grep -q -- "--parent=%[3]s"; then
+      echo '[{"id":"%[4]s","title":"gc a","status":"open"},{"id":"%[5]s","title":"gc b","status":"open"}]'
+    elif echo "$*" | grep -q -- "--parent="; then
+      echo '[]'
+    elif echo "$*" | grep -q -- "--status=hooked" && echo "$*" | grep -q -- "--assignee=%[6]s"; then
+      echo '[{"id":"%[2]s","title":"%[7]s (wisp)","status":"hooked"}]'
+    else
+      echo '[]'
+    fi
+    ;;
+  close)
+    if ! echo "$*" | grep -q -- "--force"; then
+      if echo "$*" | grep -q -- "%[5]s"; then
+        echo "cannot close %[5]s: blocked by open issues [%[4]s] (use --force to override)" >&2
+        exit 1
+      fi
+    fi
+    echo "$*" >> "%[1]s"
+    ;;
+esac
+exit 0
+`, closesLog, rootID, childID, gcAID, gcBID, assignee, molName)
+
+	if err := os.WriteFile(filepath.Join(binDir, "bd"), []byte(bdScript), 0755); err != nil {
+		t.Fatalf("write bd stub: %v", err)
+	}
+	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	t.Setenv("BEADS_DIR", "")
+
+	_, _, found, err := findActivePatrol(PatrolConfig{
+		PatrolMolName: molName,
+		BeadsDir:      townRoot,
+		Assignee:      assignee,
+		Beads:         beads.New(townRoot),
+	})
+	if err != nil {
+		t.Fatalf("findActivePatrol error: %v", err)
+	}
+	if found {
+		t.Fatal("expected stale patrol (closed direct child) to NOT be found as active")
+	}
+
+	closesBytes, err := os.ReadFile(closesLog)
+	if err != nil {
+		t.Fatalf("no close calls logged (nothing was cleaned up at all): %v", err)
+	}
+	closes := string(closesBytes)
+
+	// gcB must be closed — left open here, it orphans forever once the root
+	// is force-closed regardless (the bug findActivePatrol's stale-cleanup
+	// path had before this fix).
+	if !strings.Contains(closes, gcBID) {
+		t.Errorf("grandchild %s was not closed (leaked as a parentless orphan wisp).\nClose calls:\n%s", gcBID, closes)
+	}
+	if !strings.Contains(closes, rootID) {
+		t.Errorf("patrol root %s was not closed.\nClose calls:\n%s", rootID, closes)
+	}
+}

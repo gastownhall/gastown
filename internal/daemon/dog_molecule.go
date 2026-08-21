@@ -231,7 +231,7 @@ func (dm *dogMol) discoverSteps() {
 		return
 	}
 
-	stepIDsByTitle := formulaStepIDsByTitle(dm.formulaName)
+	stepIDsByTitle := formulaStepIDsByTitle(dm.formulaName, dm.townRoot)
 
 	for _, child := range children {
 		if child.ID == "" || child.Title == "" {
@@ -285,16 +285,19 @@ func (dm *dogMol) discoverSteps() {
 	}
 }
 
-// formulaStepIDsByTitle resolves formulaName to its embedded formula
-// definition and returns a map of lowercased, trimmed step title -> step ID.
+// formulaStepIDsByTitle resolves formulaName to its formula definition and
+// returns a map of lowercased, trimmed step title -> step ID. Resolution
+// follows the same rig/town/embedded precedence bd itself pours wisps from
+// (formula.ResolveFormulaContent) rather than the embedded default alone, so
+// a town-level formula override still matches the titles bd actually used.
 // Returns nil if formulaName is empty or the formula cannot be resolved or
 // parsed, signaling callers to fall back to heuristic matching.
-func formulaStepIDsByTitle(formulaName string) map[string]string {
+func formulaStepIDsByTitle(formulaName, townRoot string) map[string]string {
 	if formulaName == "" {
 		return nil
 	}
 
-	content, err := formula.GetEmbeddedFormulaContent(formulaName)
+	content, err := formula.ResolveFormulaContent(formulaName, townRoot, "")
 	if err != nil {
 		return nil
 	}
