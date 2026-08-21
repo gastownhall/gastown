@@ -584,7 +584,7 @@ func TestGetPaneCommand_MultiPane(t *testing.T) {
 
 	// Create a session running sleep (simulates an agent process in its first
 	// pane) with nondefault indexes to prevent hardcoded :0.0 targeting.
-	if err := tm.NewSessionWithCommand(sessionName, "", "sleep 300"); err != nil {
+	if err := tm.NewSessionWithCommand(sessionName, "", "exec sleep 300"); err != nil {
 		t.Fatalf("NewSessionWithCommand: %v", err)
 	}
 	defer func() { _ = tm.KillSession(sessionName) }()
