@@ -8,9 +8,11 @@ import (
 	"path/filepath"
 	"runtime"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 
+	"github.com/steveyegge/gastown/internal/beads"
 	"github.com/steveyegge/gastown/internal/config"
 	"github.com/steveyegge/gastown/internal/doltserver"
 	"github.com/steveyegge/gastown/internal/git"
@@ -20,12 +22,40 @@ func setupTestTown(t *testing.T) (string, *config.RigsConfig) {
 	t.Helper()
 	root := t.TempDir()
 
-	rigsConfig := &config.RigsConfig{
-		Version: 1,
-		Rigs:    make(map[string]config.RigEntry),
+	rigsConfig, err := prepareRigTestTown(root, rigTestDoltPort)
+	if err != nil {
+		t.Fatalf("prepare isolated test town: %v", err)
+	}
+	for key, value := range rigTestEnvironment(root, rigTestDoltPort) {
+		t.Setenv(key, value)
 	}
 
 	return root, rigsConfig
+}
+
+func TestSetupTestTownIsolatesRootAndDoltEndpoint(t *testing.T) {
+	root, _ := setupTestTown(t)
+
+	if got := os.Getenv("GT_TOWN_ROOT"); got != root {
+		t.Fatalf("GT_TOWN_ROOT = %q, want isolated root %q", got, root)
+	}
+	if got := os.Getenv("GT_ROOT"); got != root {
+		t.Fatalf("GT_ROOT = %q, want isolated root %q", got, root)
+	}
+	if root == rigTestTownRoot {
+		t.Fatalf("per-test root reused package root %q", root)
+	}
+
+	host, port, ok := config.ManagedDoltEndpoint(root)
+	if !ok {
+		t.Fatal("isolated town has no managed Dolt endpoint")
+	}
+	if host != "127.0.0.1" || strconv.Itoa(port) != rigTestDoltPort {
+		t.Fatalf("managed Dolt endpoint = %s:%d, want 127.0.0.1:%s", host, port, rigTestDoltPort)
+	}
+	if port == doltserver.DefaultPort {
+		t.Fatalf("isolated town uses production Dolt port %d", port)
+	}
 }
 
 func writeFakeBD(t *testing.T, script string, windowsScript string) string {
@@ -1810,58 +1840,106 @@ func createTestGitRepoForRig(t *testing.T, name string) string {
 	return repoDir
 }
 
-// fakeBDForAddRig puts a minimal no-op bd shim on PATH so that AddRig's
-// InitBeads and initAgentBeads calls succeed.
-func fakeBDForAddRig(t *testing.T) {
+func addTrackedBeadsConfig(t *testing.T, repoDir, prefix string, withSyncRemote bool) {
 	t.Helper()
-	script := `#!/bin/bash
-# no-op bd shim for AddRig tests
-cmd="$1"
-[[ "$cmd" == "--allow-stale" ]] && { shift; cmd="$1"; }
-shift
-case "$cmd" in
-  init|config|slot) exit 0 ;;
-  show) echo "[]" ;;
-  create)
-    id=""; title=""
-    for arg in "$@"; do
-      case "$arg" in --id=*) id="${arg#--id=}" ;; --title=*) title="${arg#--title=}" ;; esac
-    done
-    printf '{"id":"%s","title":"%s","description":"","issue_type":"agent"}' "$id" "$title"
-    ;;
-  *) exit 0 ;;
-esac
-`
-	windowsScript := "@echo off\r\nif \"%1\"==\"init\" exit /b 0\r\nif \"%1\"==\"config\" exit /b 0\r\nif \"%1\"==\"slot\" exit /b 0\r\nif \"%1\"==\"--allow-stale\" shift\r\nif \"%1\"==\"show\" echo [] & exit /b 0\r\nif \"%1\"==\"create\" echo {\"id\":\"x\",\"title\":\"x\"} & exit /b 0\r\nexit /b 0\r\n"
-	binDir := writeFakeBD(t, script, windowsScript)
-	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	beadsDir := filepath.Join(repoDir, ".beads")
+	if err := os.MkdirAll(beadsDir, 0o755); err != nil {
+		t.Fatalf("mkdir tracked .beads: %v", err)
+	}
+	configYAML := fmt.Sprintf("prefix: %s\nissue-prefix: %s\n", prefix, prefix)
+	if withSyncRemote {
+		configYAML += "sync.remote: \"git+https://github.com/steveyegge/gastown.git\"\n"
+	}
+	if err := os.WriteFile(filepath.Join(beadsDir, "config.yaml"), []byte(configYAML), 0o644); err != nil {
+		t.Fatalf("write tracked beads config: %v", err)
+	}
+	for _, args := range [][]string{
+		{"git", "add", ".beads/config.yaml"},
+		{"git", "commit", "-m", "Add tracked beads config"},
+	} {
+		cmd := exec.Command(args[0], args[1:]...)
+		cmd.Dir = repoDir
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("%v: %v\n%s", args, err, out)
+		}
+	}
+}
+
+func assertGitRepoClean(t *testing.T, repoDir string) {
+	t.Helper()
+	out, err := exec.Command("git", "-C", repoDir, "status", "--porcelain").CombinedOutput()
+	if err != nil {
+		t.Fatalf("git status: %v\n%s", err, out)
+	}
+	if len(out) != 0 {
+		t.Fatalf("source repository was mutated:\n%s", out)
+	}
+}
+
+func assertRigUsesIsolatedDolt(t *testing.T, root, rigName string) {
+	t.Helper()
+
+	rigPath := filepath.Join(root, rigName)
+	beadsDir := beads.ResolveBeadsDir(rigPath)
+	rel, err := filepath.Rel(rigPath, beadsDir)
+	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		t.Fatalf("resolved beads dir %q escaped isolated rig %q", beadsDir, rigPath)
+	}
+
+	data, err := os.ReadFile(filepath.Join(beadsDir, "metadata.json"))
+	if err != nil {
+		t.Fatalf("read isolated metadata: %v", err)
+	}
+	var metadata struct {
+		DoltDatabase   string `json:"dolt_database"`
+		DoltServerHost string `json:"dolt_server_host"`
+		DoltServerPort int    `json:"dolt_server_port"`
+	}
+	if err := json.Unmarshal(data, &metadata); err != nil {
+		t.Fatalf("parse isolated metadata: %v", err)
+	}
+	wantPort, err := strconv.Atoi(rigTestDoltPort)
+	if err != nil {
+		t.Fatalf("parse isolated Dolt port %q: %v", rigTestDoltPort, err)
+	}
+	if metadata.DoltDatabase != rigName {
+		t.Fatalf("dolt_database = %q, want %q", metadata.DoltDatabase, rigName)
+	}
+	if metadata.DoltServerHost != "127.0.0.1" || metadata.DoltServerPort != wantPort {
+		t.Fatalf("metadata endpoint = %s:%d, want 127.0.0.1:%d", metadata.DoltServerHost, metadata.DoltServerPort, wantPort)
+	}
+	if metadata.DoltServerPort == doltserver.DefaultPort {
+		t.Fatalf("rig metadata uses production Dolt port %d", metadata.DoltServerPort)
+	}
+	if !doltserver.NewWLCommons(root).DatabaseExists(rigName) {
+		t.Fatalf("database %q does not exist on isolated Dolt server", rigName)
+	}
 }
 
 func TestAddRig_UpstreamURL(t *testing.T) {
 	if runtime.GOOS == "windows" {
-		t.Skip("shell-based bd shim not reliable on Windows CI")
+		t.Skip("Docker-backed Dolt integration is not supported on Windows CI")
 	}
-
-	fakeBDForAddRig(t)
 
 	root, rigsConfig := setupTestTown(t)
 	forkURL := createTestGitRepoForRig(t, "fork")
 	upstreamURL := createTestGitRepoForRig(t, "upstream")
+	rigName := "forkrig_upstream"
 
 	manager := NewManager(root, rigsConfig, git.NewGit(root))
 
 	rig, err := manager.AddRig(AddRigOptions{
-		Name:          "forkrig",
-		GitURL:        forkURL,
-		UpstreamURL:   upstreamURL,
-		BeadsPrefix:   "fk",
-		SkipDoltCheck: true,
+		Name:        rigName,
+		GitURL:      forkURL,
+		UpstreamURL: upstreamURL,
+		BeadsPrefix: "fku",
 	})
 	if err != nil {
 		t.Fatalf("AddRig: %v", err)
 	}
 
-	rigPath := filepath.Join(root, "forkrig")
+	rigPath := filepath.Join(root, rigName)
+	assertRigUsesIsolatedDolt(t, root, rigName)
 
 	t.Run("bare repo upstream remote", func(t *testing.T) {
 		bareGit := git.NewGitWithDir(filepath.Join(rigPath, ".repo.git"), "")
@@ -1900,7 +1978,7 @@ func TestAddRig_UpstreamURL(t *testing.T) {
 	})
 
 	t.Run("town registry persists upstream_url", func(t *testing.T) {
-		entry, ok := rigsConfig.Rigs["forkrig"]
+		entry, ok := rigsConfig.Rigs[rigName]
 		if !ok {
 			t.Fatal("rig not found in town config")
 		}
@@ -1916,10 +1994,8 @@ func TestAddRig_UpstreamURL(t *testing.T) {
 // the bare repo's HEAD and origin tracking ref both point to the specified branch.
 func TestAddRig_BranchFlag(t *testing.T) {
 	if runtime.GOOS == "windows" {
-		t.Skip("shell-based bd shim not reliable on Windows CI")
+		t.Skip("Docker-backed Dolt integration is not supported on Windows CI")
 	}
-
-	fakeBDForAddRig(t)
 
 	// Create a remote with two branches: main (default) and develop.
 	repoDir := t.TempDir()
@@ -1963,19 +2039,20 @@ func TestAddRig_BranchFlag(t *testing.T) {
 
 	root, rigsConfig := setupTestTown(t)
 	manager := NewManager(root, rigsConfig, git.NewGit(root))
+	rigName := "testrig_branch"
 
 	_, err := manager.AddRig(AddRigOptions{
-		Name:          "testrig",
+		Name:          rigName,
 		GitURL:        repoDir,
-		BeadsPrefix:   "tr",
+		BeadsPrefix:   "trb",
 		DefaultBranch: "develop",
-		SkipDoltCheck: true,
 	})
 	if err != nil {
 		t.Fatalf("AddRig: %v", err)
 	}
 
-	rigPath := filepath.Join(root, "testrig")
+	rigPath := filepath.Join(root, rigName)
+	assertRigUsesIsolatedDolt(t, root, rigName)
 	bareRepoPath := filepath.Join(rigPath, ".repo.git")
 	bareGit := git.NewGitWithDir(bareRepoPath, "")
 
@@ -2116,160 +2193,73 @@ func TestBeadsConfigHasSyncRemote_MissingFile(t *testing.T) {
 
 func TestAddRig_TrackedBeadsWithSyncRemote_PassesReinitFlags(t *testing.T) {
 	if runtime.GOOS == "windows" {
-		t.Skip("shell-based bd shim not reliable on Windows CI")
-	}
-
-	// Fake bd that succeeds on all subcommands and logs bd init args.
-	cmdLog := filepath.Join(t.TempDir(), "bd-cmds.log")
-	script := `#!/usr/bin/env bash
-cmd="$1"
-[[ "$cmd" == "--allow-stale" ]] && { shift; cmd="$1"; }
-shift
-if [[ "$cmd" == "init" ]]; then
-  echo "init $*" >> "$BD_CMD_LOG"
-fi
-case "$cmd" in
-  init|config|migrate) exit 0 ;;
-  show) echo "[]" ;;
-  create)
-    id=""; title=""
-    for arg in "$@"; do
-      case "$arg" in --id=*) id="${arg#--id=}" ;; --title=*) title="${arg#--title=}" ;; esac
-    done
-    printf '{"id":"%s","title":"%s","description":"","issue_type":"agent"}' "$id" "$title"
-    ;;
-  *) exit 0 ;;
-esac
-`
-	binDir := writeFakeBD(t, script, "")
-	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
-	t.Setenv("BD_CMD_LOG", cmdLog)
-
-	// Create a git repo with .beads/config.yaml containing sync.remote.
-	repoDir := t.TempDir()
-	beadsDir := filepath.Join(repoDir, ".beads")
-	if err := os.MkdirAll(beadsDir, 0755); err != nil {
-		t.Fatalf("mkdir .beads: %v", err)
-	}
-	configYAML := "prefix: gt\nsync.remote: \"git+https://github.com/steveyegge/gastown.git\"\n"
-	if err := os.WriteFile(filepath.Join(beadsDir, "config.yaml"), []byte(configYAML), 0644); err != nil {
-		t.Fatalf("write config.yaml: %v", err)
-	}
-	for _, args := range [][]string{
-		{"git", "init", "--initial-branch=main", repoDir},
-		{"git", "-C", repoDir, "config", "user.email", "test@test.com"},
-		{"git", "-C", repoDir, "config", "user.name", "Test User"},
-		{"git", "-C", repoDir, "add", "."},
-		{"git", "-C", repoDir, "commit", "-m", "Initial commit with beads config"},
-	} {
-		cmd := exec.Command(args[0], args[1:]...)
-		if out, err := cmd.CombinedOutput(); err != nil {
-			t.Fatalf("%v: %v\n%s", args, err, out)
-		}
+		t.Skip("Docker-backed Dolt integration is not supported on Windows CI")
 	}
 
 	root, rigsConfig := setupTestTown(t)
+	rigName := "testrip_sync"
+	prefix := "tgs"
+	repoDir := createTestGitRepoForRig(t, "tracked-sync")
+	addTrackedBeadsConfig(t, repoDir, prefix, true)
 	manager := NewManager(root, rigsConfig, git.NewGit(root))
 
-	// AddRig may fail after the bd init step (e.g. Dolt not running); that's fine.
-	// We only care that bd init was called with the right flags.
-	_, _ = manager.AddRig(AddRigOptions{
-		Name:          "testrip",
-		GitURL:        repoDir,
-		BeadsPrefix:   "gt",
-		SkipDoltCheck: true,
-	})
+	args := buildTrackedBeadsInitArgs(prefix, rigName, mustAtoi(t, rigTestDoltPort), true)
+	for _, want := range []string{
+		"--reinit-local",
+		"--discard-remote",
+		"--destroy-token=DESTROY-" + prefix,
+	} {
+		if !slices.Contains(args, want) {
+			t.Fatalf("tracked beads init args %v missing %q", args, want)
+		}
+	}
 
-	logData, err := os.ReadFile(cmdLog)
-	if err != nil {
-		t.Fatalf("reading bd cmd log: %v", err)
+	if _, err := manager.AddRig(AddRigOptions{
+		Name:        rigName,
+		GitURL:      repoDir,
+		BeadsPrefix: prefix,
+	}); err != nil {
+		t.Fatalf("AddRig: %v", err)
 	}
-	cmds := string(logData)
-
-	if !strings.Contains(cmds, "--reinit-local") {
-		t.Errorf("bd init missing --reinit-local; full log:\n%s", cmds)
-	}
-	if !strings.Contains(cmds, "--discard-remote") {
-		t.Errorf("bd init missing --discard-remote; full log:\n%s", cmds)
-	}
-	if !strings.Contains(cmds, "--destroy-token=DESTROY-gt") {
-		t.Errorf("bd init missing --destroy-token=DESTROY-gt; full log:\n%s", cmds)
-	}
+	assertRigUsesIsolatedDolt(t, root, rigName)
+	assertGitRepoClean(t, repoDir)
 }
 
 func TestAddRig_TrackedBeadsWithoutSyncRemote_NoReinitFlags(t *testing.T) {
 	if runtime.GOOS == "windows" {
-		t.Skip("shell-based bd shim not reliable on Windows CI")
-	}
-
-	// Fake bd that logs bd init args.
-	cmdLog := filepath.Join(t.TempDir(), "bd-cmds.log")
-	script := `#!/usr/bin/env bash
-cmd="$1"
-[[ "$cmd" == "--allow-stale" ]] && { shift; cmd="$1"; }
-shift
-if [[ "$cmd" == "init" ]]; then
-  echo "init $*" >> "$BD_CMD_LOG"
-fi
-case "$cmd" in
-  init|config|migrate) exit 0 ;;
-  show) echo "[]" ;;
-  create)
-    id=""; title=""
-    for arg in "$@"; do
-      case "$arg" in --id=*) id="${arg#--id=}" ;; --title=*) title="${arg#--title=}" ;; esac
-    done
-    printf '{"id":"%s","title":"%s","description":"","issue_type":"agent"}' "$id" "$title"
-    ;;
-  *) exit 0 ;;
-esac
-`
-	binDir := writeFakeBD(t, script, "")
-	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
-	t.Setenv("BD_CMD_LOG", cmdLog)
-
-	// Create a git repo with .beads/config.yaml without sync.remote.
-	repoDir := t.TempDir()
-	beadsDir := filepath.Join(repoDir, ".beads")
-	if err := os.MkdirAll(beadsDir, 0755); err != nil {
-		t.Fatalf("mkdir .beads: %v", err)
-	}
-	configYAML := "prefix: gt\n"
-	if err := os.WriteFile(filepath.Join(beadsDir, "config.yaml"), []byte(configYAML), 0644); err != nil {
-		t.Fatalf("write config.yaml: %v", err)
-	}
-	for _, args := range [][]string{
-		{"git", "init", "--initial-branch=main", repoDir},
-		{"git", "-C", repoDir, "config", "user.email", "test@test.com"},
-		{"git", "-C", repoDir, "config", "user.name", "Test User"},
-		{"git", "-C", repoDir, "add", "."},
-		{"git", "-C", repoDir, "commit", "-m", "Initial commit"},
-	} {
-		cmd := exec.Command(args[0], args[1:]...)
-		if out, err := cmd.CombinedOutput(); err != nil {
-			t.Fatalf("%v: %v\n%s", args, err, out)
-		}
+		t.Skip("Docker-backed Dolt integration is not supported on Windows CI")
 	}
 
 	root, rigsConfig := setupTestTown(t)
+	rigName := "testrip_plain"
+	prefix := "tgp"
+	repoDir := createTestGitRepoForRig(t, "tracked-plain")
+	addTrackedBeadsConfig(t, repoDir, prefix, false)
 	manager := NewManager(root, rigsConfig, git.NewGit(root))
-	_, _ = manager.AddRig(AddRigOptions{
-		Name:          "testrip",
-		GitURL:        repoDir,
-		BeadsPrefix:   "gt",
-		SkipDoltCheck: true,
-	})
 
-	logData, err := os.ReadFile(cmdLog)
+	args := buildTrackedBeadsInitArgs(prefix, rigName, mustAtoi(t, rigTestDoltPort), false)
+	for _, unwanted := range []string{"--reinit-local", "--discard-remote", "--destroy-token=DESTROY-" + prefix} {
+		if slices.Contains(args, unwanted) {
+			t.Fatalf("tracked beads init args %v unexpectedly contain %q", args, unwanted)
+		}
+	}
+
+	if _, err := manager.AddRig(AddRigOptions{
+		Name:        rigName,
+		GitURL:      repoDir,
+		BeadsPrefix: prefix,
+	}); err != nil {
+		t.Fatalf("AddRig: %v", err)
+	}
+	assertRigUsesIsolatedDolt(t, root, rigName)
+	assertGitRepoClean(t, repoDir)
+}
+
+func mustAtoi(t *testing.T, value string) int {
+	t.Helper()
+	number, err := strconv.Atoi(value)
 	if err != nil {
-		// No bd init calls logged means the test is inconclusive; skip.
-		t.Skip("bd init was not logged (may have been skipped due to bdDatabaseExists check)")
+		t.Fatalf("parse integer %q: %v", value, err)
 	}
-	cmds := string(logData)
-	if strings.Contains(cmds, "--reinit-local") {
-		t.Errorf("bd init should NOT have --reinit-local without sync.remote; got:\n%s", cmds)
-	}
-	if strings.Contains(cmds, "--discard-remote") {
-		t.Errorf("bd init should NOT have --discard-remote without sync.remote; got:\n%s", cmds)
-	}
+	return number
 }

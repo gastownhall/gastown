@@ -614,28 +614,12 @@ func (m *Manager) AddRig(opts AddRigOptions) (*Rig, error) {
 		// database and set issue_prefix. Always ensure issue_prefix is set afterward.
 		sourceBdEnv := bdSubprocessEnv(sourceBeadsDir, opts.Name)
 		if !bdDatabaseExists(sourceBeadsDir) {
-			initArgs := []string{"init"}
-			if opts.BeadsPrefix != "" {
-				initArgs = append(initArgs, "--prefix", opts.BeadsPrefix)
-			}
-			if opts.Name != "" {
-				initArgs = append(initArgs, "--database", opts.Name)
-			}
-			initArgs = append(initArgs, "--server")
-			// Always pass --server-port so bd connects to gt's central Dolt
-			// server. Without this, bd auto-starts its own server on a random
-			// port, causing "database not found" errors. (GH #2405)
-			initArgs = append(initArgs, "--server-port", strconv.Itoa(bdInitServerPort(m.townRoot)))
-			// If the cloned repo's config.yaml has sync.remote, bd init blocks
-			// waiting for interactive confirmation (stdin is /dev/null here).
-			// Pass explicit flags to bypass the safety check. (GH #3873)
-			if beadsConfigHasSyncRemote(sourceBeadsConfig) {
-				initArgs = append(initArgs,
-					"--reinit-local",
-					"--discard-remote",
-					"--destroy-token=DESTROY-"+opts.BeadsPrefix,
-				)
-			}
+			initArgs := buildTrackedBeadsInitArgs(
+				opts.BeadsPrefix,
+				opts.Name,
+				bdInitServerPort(m.townRoot),
+				beadsConfigHasSyncRemote(sourceBeadsConfig),
+			)
 			cmd := exec.Command("bd", initArgs...)
 			cmd.Dir = mayorRigPath
 			cmd.Env = sourceBdEnv
@@ -1594,6 +1578,29 @@ func beadsConfigHasSyncRemote(configPath string) bool {
 		}
 	}
 	return false
+}
+
+// buildTrackedBeadsInitArgs constructs the canonical bd init invocation for a
+// cloned repository that tracks .beads/config.yaml. Keeping this construction
+// separate makes the interactive sync.remote safety flags directly testable
+// without replacing bd with a subprocess shim.
+func buildTrackedBeadsInitArgs(prefix, database string, serverPort int, discardRemote bool) []string {
+	args := []string{"init"}
+	if prefix != "" {
+		args = append(args, "--prefix", prefix)
+	}
+	if database != "" {
+		args = append(args, "--database", database)
+	}
+	args = append(args, "--server", "--server-port", strconv.Itoa(serverPort))
+	if discardRemote {
+		args = append(args,
+			"--reinit-local",
+			"--discard-remote",
+			"--destroy-token=DESTROY-"+prefix,
+		)
+	}
+	return args
 }
 
 // RemoveRig unregisters a rig (does not delete files).
