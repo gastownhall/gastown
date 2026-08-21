@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
+	"runtime"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -148,7 +150,11 @@ func TestNewTestTmuxIsolatesStateAndEnvironment(t *testing.T) {
 }
 
 func TestNewSessionWithCommandBypassesHoldingShell(t *testing.T) {
-	shellPath := t.TempDir() + "/holding-shell"
+	if runtime.GOOS == "windows" {
+		t.Skip("controlled POSIX shell is not supported by psmux")
+	}
+
+	shellPath := filepath.Join(t.TempDir(), "holding-shell")
 	shell := `#!/bin/sh
 if [ "$1" = "-c" ]; then
 	/bin/sh -c "$2" &
