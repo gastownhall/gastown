@@ -4798,6 +4798,7 @@ func TestFilterBeadsEnv_PreservesDoltPortVars(t *testing.T) {
 		"GT_DOLT_DATA=/tmp/dolt-data",
 		"GT_ROOT=/tmp/gt",
 		"HOME=/home/test",
+		"BASH_ENV=/home/test/.bash_env",
 		"PATH=/usr/bin",
 	}
 	got := filterBeadsEnv(environ)
@@ -4860,10 +4861,14 @@ func TestNewIsolatedWithPort(t *testing.T) {
 }
 
 func TestIsolatedWithPortOverridesInheritedDoltEnv(t *testing.T) {
+	t.Setenv("BASH_ENV", filepath.Join(t.TempDir(), "ambient.sh"))
+	t.Setenv("GT_DOLT_HOST", "unreachable.invalid")
 	t.Setenv("GT_DOLT_PORT", "3307")
 	t.Setenv("GT_DOLT_DATA", filepath.Join(t.TempDir(), "wrong-data"))
+	t.Setenv("BEADS_DOLT_SERVER_HOST", "unreachable.invalid")
 	t.Setenv("BEADS_DOLT_SERVER_PORT", "3307")
 	t.Setenv("BEADS_DOLT_PORT", "3307")
+	t.Setenv("BEADS_DOLT_SERVER_DATABASE", "hq")
 	t.Setenv("BEADS_DOLT_AUTO_START", "1")
 
 	b := NewIsolatedWithPort(t.TempDir(), 19999)
@@ -4874,8 +4879,14 @@ func TestIsolatedWithPortOverridesInheritedDoltEnv(t *testing.T) {
 		{name: "run", got: b.buildRunEnv()},
 		{name: "routing", got: b.buildRoutingEnv()},
 	} {
+		if got := countEnvPrefix(env.got, "GT_DOLT_HOST="); got != 1 {
+			t.Fatalf("%s env GT_DOLT_HOST count = %d, want 1", env.name, got)
+		}
 		if got := countEnvPrefix(env.got, "GT_DOLT_PORT="); got != 1 {
 			t.Fatalf("%s env GT_DOLT_PORT count = %d, want 1", env.name, got)
+		}
+		if got := countEnvPrefix(env.got, "BEADS_DOLT_SERVER_HOST="); got != 1 {
+			t.Fatalf("%s env BEADS_DOLT_SERVER_HOST count = %d, want 1", env.name, got)
 		}
 		if got := countEnvPrefix(env.got, "BEADS_DOLT_PORT="); got != 1 {
 			t.Fatalf("%s env BEADS_DOLT_PORT count = %d, want 1", env.name, got)
@@ -4886,11 +4897,17 @@ func TestIsolatedWithPortOverridesInheritedDoltEnv(t *testing.T) {
 		if got := countEnvPrefix(env.got, "BEADS_DOLT_AUTO_START="); got != 1 {
 			t.Fatalf("%s env BEADS_DOLT_AUTO_START count = %d, want 1", env.name, got)
 		}
-		if !containsEnv(env.got, "GT_DOLT_PORT=19999") || !containsEnv(env.got, "BEADS_DOLT_SERVER_PORT=19999") || !containsEnv(env.got, "BEADS_DOLT_PORT=19999") || !containsEnv(env.got, "BEADS_DOLT_AUTO_START=0") {
+		if !containsEnv(env.got, "GT_DOLT_HOST=127.0.0.1") || !containsEnv(env.got, "GT_DOLT_PORT=19999") || !containsEnv(env.got, "BEADS_DOLT_SERVER_HOST=127.0.0.1") || !containsEnv(env.got, "BEADS_DOLT_SERVER_PORT=19999") || !containsEnv(env.got, "BEADS_DOLT_PORT=19999") || !containsEnv(env.got, "BEADS_DOLT_AUTO_START=0") {
 			t.Fatalf("%s env missing isolated Dolt overrides", env.name)
 		}
 		if containsEnvPrefix(env.got, "GT_DOLT_DATA=") {
 			t.Fatalf("%s env should strip GT_DOLT_DATA", env.name)
+		}
+		if containsEnvPrefix(env.got, "BEADS_DOLT_SERVER_DATABASE=") {
+			t.Fatalf("%s env should strip BEADS_DOLT_SERVER_DATABASE", env.name)
+		}
+		if containsEnvPrefix(env.got, "BASH_ENV=") {
+			t.Fatalf("%s env should strip BASH_ENV", env.name)
 		}
 	}
 }
@@ -4955,10 +4972,20 @@ fi
 {
   printf 'args=%s\n' "$*"
   printf 'BEADS_DIR=%s\n' "$BEADS_DIR"
+  printf 'GT_DOLT_HOST=%s\n' "$GT_DOLT_HOST"
   printf 'GT_DOLT_PORT=%s\n' "$GT_DOLT_PORT"
+  printf 'GT_DOLT_DATA=%s\n' "${GT_DOLT_DATA:-}"
+  printf 'BEADS_DOLT_SERVER_HOST=%s\n' "$BEADS_DOLT_SERVER_HOST"
   printf 'BEADS_DOLT_SERVER_PORT=%s\n' "$BEADS_DOLT_SERVER_PORT"
   printf 'BEADS_DOLT_PORT=%s\n' "$BEADS_DOLT_PORT"
+  printf 'BEADS_DOLT_SERVER_DATABASE=%s\n' "${BEADS_DOLT_SERVER_DATABASE:-}"
+  printf 'BEADS_DOLT_DATA_DIR=%s\n' "${BEADS_DOLT_DATA_DIR:-}"
   printf 'BEADS_DOLT_AUTO_START=%s\n' "$BEADS_DOLT_AUTO_START"
+  if [ "${BASH_ENV+x}" = x ]; then
+    printf 'BASH_ENV_PRESENT=true\n'
+  else
+    printf 'BASH_ENV_PRESENT=false\n'
+  fi
 } > "$MOCK_BD_LOG"
 exit 0
 `
@@ -4967,6 +4994,15 @@ exit 0
 	}
 	t.Setenv("PATH", stubDir+string(os.PathListSeparator)+os.Getenv("PATH"))
 	t.Setenv("MOCK_BD_LOG", logPath)
+	t.Setenv("BASH_ENV", filepath.Join(stubDir, "ambient.sh"))
+	t.Setenv("GT_DOLT_HOST", "unreachable.invalid")
+	t.Setenv("GT_DOLT_PORT", "3307")
+	t.Setenv("GT_DOLT_DATA", filepath.Join(stubDir, "live-dolt-data"))
+	t.Setenv("BEADS_DOLT_SERVER_HOST", "unreachable.invalid")
+	t.Setenv("BEADS_DOLT_SERVER_PORT", "3307")
+	t.Setenv("BEADS_DOLT_PORT", "3307")
+	t.Setenv("BEADS_DOLT_SERVER_DATABASE", "hq")
+	t.Setenv("BEADS_DOLT_DATA_DIR", filepath.Join(stubDir, "live-beads-data"))
 
 	workDir := t.TempDir()
 	b := NewIsolatedWithPort(workDir, 19999)
@@ -4982,10 +5018,16 @@ exit 0
 	checks := []string{
 		"args=init --prefix covertest --quiet --server --server-port 19999",
 		"BEADS_DIR=" + filepath.Join(workDir, ".beads"),
+		"GT_DOLT_HOST=127.0.0.1",
 		"GT_DOLT_PORT=19999",
+		"GT_DOLT_DATA=\n",
+		"BEADS_DOLT_SERVER_HOST=127.0.0.1",
 		"BEADS_DOLT_SERVER_PORT=19999",
 		"BEADS_DOLT_PORT=19999",
+		"BEADS_DOLT_SERVER_DATABASE=\n",
+		"BEADS_DOLT_DATA_DIR=\n",
 		"BEADS_DOLT_AUTO_START=0",
+		"BASH_ENV_PRESENT=false",
 	}
 	for _, check := range checks {
 		if !strings.Contains(log, check) {
