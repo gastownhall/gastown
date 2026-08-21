@@ -227,6 +227,9 @@ func ensureCanonicalRefineryWorktree(bareGit *git.Git, barePath, refineryPath, b
 			if strings.TrimSpace(currentBranch) != branch {
 				return false, fmt.Errorf("refinery/rig is on branch %q; canonical integration branch is %q", currentBranch, branch)
 			}
+			if err := bareGit.InitWorktreeSubmodules(refineryPath); err != nil {
+				return false, fmt.Errorf("initializing canonical refinery submodules: %w", err)
+			}
 			if err := refineryGit.ConfigureHooksPath(); err != nil {
 				return false, fmt.Errorf("configuring refinery hooks: %w", err)
 			}

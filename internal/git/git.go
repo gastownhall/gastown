@@ -2299,7 +2299,7 @@ func (g *Git) WorktreeAdd(path, branch string) error {
 	); err != nil {
 		return err
 	}
-	return InitSubmodules(path, g.submoduleReferencePath())
+	return g.InitWorktreeSubmodules(path)
 }
 
 // WorktreeAddFromRef creates a new worktree at the given path with a new branch
@@ -2314,7 +2314,7 @@ func (g *Git) WorktreeAddFromRef(path, branch, startPoint string) error {
 	); err != nil {
 		return err
 	}
-	return InitSubmodules(path, g.submoduleReferencePath())
+	return g.InitWorktreeSubmodules(path)
 }
 
 // WorktreeAddDetached creates a new worktree at the given path with a detached HEAD.
@@ -2326,7 +2326,7 @@ func (g *Git) WorktreeAddDetached(path, ref string) error {
 	); err != nil {
 		return err
 	}
-	return InitSubmodules(path, g.submoduleReferencePath())
+	return g.InitWorktreeSubmodules(path)
 }
 
 // WorktreeAddExisting creates a new worktree at the given path for an existing branch.
@@ -2338,7 +2338,7 @@ func (g *Git) WorktreeAddExisting(path, branch string) error {
 	); err != nil {
 		return err
 	}
-	return InitSubmodules(path, g.submoduleReferencePath())
+	return g.InitWorktreeSubmodules(path)
 }
 
 // WorktreeAddExistingForce creates a new worktree even if the branch is already checked out elsewhere.
@@ -2347,6 +2347,13 @@ func (g *Git) WorktreeAddExistingForce(path, branch string) error {
 	if _, err := g.run("worktree", "add", "--force", path, branch); err != nil {
 		return err
 	}
+	return g.InitWorktreeSubmodules(path)
+}
+
+// InitWorktreeSubmodules initializes a worktree's pinned submodules using the
+// same local reference source as worktree creation. Callers use this on retry
+// so a partially initialized worktree cannot bypass a prior checkout failure.
+func (g *Git) InitWorktreeSubmodules(path string) error {
 	return InitSubmodules(path, g.submoduleReferencePath())
 }
 
