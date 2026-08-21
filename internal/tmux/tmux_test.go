@@ -566,17 +566,24 @@ func TestIsRuntimeRunning_ShellWithNodeChild(t *testing.T) {
 	})
 }
 
-// TestGetPaneCommand_MultiPane verifies that GetPaneCommand returns pane 0's
-// command even when a split pane exists and is active. This is the core fix
-// for gs-2v7: without explicit pane 0 targeting, health checks would see the
-// split pane's shell and falsely report the agent as dead.
+// TestGetPaneCommand_MultiPane verifies that the first-pane accessors keep
+// returning the agent pane when a split pane exists and is active. This is the
+// core fix for gs-2v7: without explicit first-pane targeting, health checks
+// would see the split pane's shell and falsely report the agent as dead.
 func TestGetPaneCommand_MultiPane(t *testing.T) {
 	tm := newTestTmux(t)
 	sessionName := "gt-test-multipane-" + t.Name()
 
 	_ = tm.KillSession(sessionName)
+	if _, err := tm.run("set-option", "-g", "base-index", "7"); err != nil {
+		t.Fatalf("set base-index: %v", err)
+	}
+	if _, err := tm.run("set-option", "-gw", "pane-base-index", "3"); err != nil {
+		t.Fatalf("set pane-base-index: %v", err)
+	}
 
-	// Create session running sleep (simulates an agent process in pane 0)
+	// Create a session running sleep (simulates an agent process in its first
+	// pane) with nondefault indexes to prevent hardcoded :0.0 targeting.
 	if err := tm.NewSessionWithCommand(sessionName, "", "sleep 300"); err != nil {
 		t.Fatalf("NewSessionWithCommand: %v", err)
 	}
@@ -587,7 +594,11 @@ func TestGetPaneCommand_MultiPane(t *testing.T) {
 	// before exercising pane selection after a split.
 	waitForPaneCommand(t, tm, sessionName, "sleep")
 
-	// Capture pane 0's PID and working directory before the split
+	// Capture the first pane's identity before the split.
+	paneBefore, err := tm.GetPaneID(sessionName)
+	if err != nil {
+		t.Fatalf("GetPaneID before split: %v", err)
+	}
 	pidBefore, err := tm.GetPanePID(sessionName)
 	if err != nil {
 		t.Fatalf("GetPanePID before split: %v", err)
@@ -597,21 +608,38 @@ func TestGetPaneCommand_MultiPane(t *testing.T) {
 		t.Fatalf("GetPaneWorkDir before split: %v", err)
 	}
 
-	// Split the window — creates a new pane running a shell, which becomes active
-	if _, err := tm.run("split-window", "-t", sessionName, "-d"); err != nil {
+	// Split the window, then explicitly activate the new shell pane. The -d flag
+	// keeps pane 0 active while tmux creates the split, so selecting the returned
+	// pane ID makes the multi-pane targeting scenario deterministic.
+	splitDir := t.TempDir()
+	splitPane, err := tm.run("split-window", "-t", sessionName, "-d", "-c", splitDir, "-P", "-F", "#{pane_id}")
+	if err != nil {
 		t.Fatalf("split-window: %v", err)
 	}
+	splitPane = strings.TrimSpace(splitPane)
+	if _, err := tm.run("select-pane", "-t", splitPane); err != nil {
+		t.Fatalf("select split pane: %v", err)
+	}
 
-	// GetPaneCommand should still return "sleep" (pane 0), not the shell
+	// GetPaneCommand should still return "sleep" from the first pane, not the
+	// active split pane's shell.
 	cmd, err := tm.GetPaneCommand(sessionName)
 	if err != nil {
 		t.Fatalf("GetPaneCommand after split: %v", err)
 	}
 	if cmd != "sleep" {
-		t.Errorf("after split, GetPaneCommand should return pane 0 command 'sleep', got %q", cmd)
+		t.Errorf("after split, GetPaneCommand should return first-pane command 'sleep', got %q", cmd)
 	}
 
-	// GetPanePID should return pane 0's PID, matching the pre-split value
+	pane, err := tm.GetPaneID(sessionName)
+	if err != nil {
+		t.Fatalf("GetPaneID after split: %v", err)
+	}
+	if pane != paneBefore {
+		t.Errorf("GetPaneID changed after split: before=%s, after=%s", paneBefore, pane)
+	}
+
+	// GetPanePID should return the first pane's PID, matching the pre-split value.
 	pid, err := tm.GetPanePID(sessionName)
 	if err != nil {
 		t.Fatalf("GetPanePID after split: %v", err)
@@ -620,7 +648,8 @@ func TestGetPaneCommand_MultiPane(t *testing.T) {
 		t.Errorf("GetPanePID changed after split: before=%s, after=%s", pidBefore, pid)
 	}
 
-	// GetPaneWorkDir should still return pane 0's working directory
+	// GetPaneWorkDir should still return the first pane's working directory,
+	// not the split pane's distinct temporary directory.
 	wd, err := tm.GetPaneWorkDir(sessionName)
 	if err != nil {
 		t.Fatalf("GetPaneWorkDir after split: %v", err)
