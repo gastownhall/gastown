@@ -88,6 +88,67 @@ func TestRenderRole_Polecat(t *testing.T) {
 	}
 }
 
+func TestRenderRole_CommandOwnership(t *testing.T) {
+	tmpl, err := New()
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+
+	data := RoleData{
+		RigName:       "myrig",
+		TownRoot:      "/test/town",
+		TownName:      "town",
+		WorkDir:       "/test/town/myrig/polecats/TestCat",
+		DefaultBranch: "main",
+		Polecat:       "TestCat",
+		DogName:       "boot",
+		MayorSession:  "gt-town-mayor",
+		DeaconSession: "gt-town-deacon",
+	}
+
+	for _, role := range []string{"mayor", "crew", "polecat", "witness", "refinery", "deacon", "dog", "boot"} {
+		t.Run(role, func(t *testing.T) {
+			data.Role = role
+			output, renderErr := tmpl.RenderRole(role, data)
+			if renderErr != nil {
+				t.Fatalf("RenderRole(%q) error = %v", role, renderErr)
+			}
+
+			for _, want := range []string{
+				"Use `bd` for issue CRUD in the ledger that owns the work",
+				"`bd create --repo <rig>",
+				"`bd show <id>`, `bd update <id>`, and `bd close <id>`",
+				"ID prefix routes each command",
+				"`gt sling <bead> <rig>` dispatches work",
+				"`gt convoy` tracks it",
+				"`gt done` submits completed polecat work to the merge queue",
+				"The Witness recovers stalled polecats",
+				"The Refinery verifies and integrates queued work",
+			} {
+				if !strings.Contains(output, want) {
+					t.Fatalf("rendered %s command contract missing %q:\n%s", role, want, output)
+				}
+			}
+		})
+	}
+}
+
+func TestCommandOwnership_ForkRigUsesPRWorkflow(t *testing.T) {
+	output := CommandOwnership(true)
+
+	if !strings.Contains(output, "fork-backed rig uses the assignment's GitHub PR/no-merge workflow") {
+		t.Fatalf("fork command contract missing PR/no-merge workflow:\n%s", output)
+	}
+	if strings.Contains(output, "`gt done` submits") {
+		t.Fatalf("fork command contract directs upstream work to the merge queue:\n%s", output)
+	}
+	for _, invented := range []string{"`gt create`", "`gt issue create`"} {
+		if strings.Contains(output, invented) {
+			t.Fatalf("command contract documents nonexistent command %s:\n%s", invented, output)
+		}
+	}
+}
+
 func TestRenderRole_PolecatForkRigUsesPRWorkflow(t *testing.T) {
 	tmpl, err := New()
 	if err != nil {
@@ -664,6 +725,9 @@ func TestCreatePolecatCLAUDEmd(t *testing.T) {
 	if strings.Contains(content, "{{name}}") {
 		t.Error("CLAUDE.md still contains {{name}} placeholder")
 	}
+	if strings.Contains(content, "{{command_contract}}") {
+		t.Error("CLAUDE.md still contains {{command_contract}} placeholder")
+	}
 
 	// Verify substituted values are present
 	if !strings.Contains(content, "greenplace") {
@@ -682,6 +746,16 @@ func TestCreatePolecatCLAUDEmd(t *testing.T) {
 	}
 	if !strings.Contains(content, "MANDATORY FINAL STEP") {
 		t.Error("CLAUDE.md missing completion protocol with MANDATORY FINAL STEP")
+	}
+	for _, want := range []string{
+		"Use `bd` for issue CRUD in the ledger that owns the work",
+		"`gt sling <bead> <rig>` dispatches work",
+		"The Witness recovers stalled polecats",
+		"The Refinery verifies and integrates queued work",
+	} {
+		if !strings.Contains(content, want) {
+			t.Errorf("CLAUDE.md command contract missing %q", want)
+		}
 	}
 }
 
