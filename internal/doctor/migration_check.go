@@ -10,9 +10,9 @@ import (
 	"strings"
 	"time"
 
+	"github.com/steveyegge/gastown/internal/atomicfile"
 	"github.com/steveyegge/gastown/internal/config"
 	"github.com/steveyegge/gastown/internal/doltserver"
-	"github.com/steveyegge/gastown/internal/atomicfile"
 )
 
 var verifyExpectedDatabasesAtConfig = doltserver.VerifyExpectedDatabasesAtConfig
@@ -483,7 +483,7 @@ func (c *DoltServerReachableCheck) getServerAddr(beadsDir string, townRoot strin
 		// precedence over GT_DOLT_PORT env var, which takes precedence over
 		// daemon.json, which falls back to DefaultPort (3307). This ensures
 		// the doctor probes the same port that the server actually uses.
-		port = doltserver.DefaultConfig(townRoot).Port
+		port = config.ResolveConfiguredDoltPort(townRoot)
 	}
 	if port == 0 {
 		port = doltserver.DefaultPort
