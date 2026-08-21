@@ -2,6 +2,8 @@
 
 > **Recovery**: Run `gt prime` after compaction, clear, or new session
 
+{{command_contract}}
+
 ## 🚨 THE IDLE POLECAT HERESY 🚨
 
 **After completing work, you MUST run `gt done`. No exceptions.**
