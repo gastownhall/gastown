@@ -46,5 +46,13 @@ backup/
 db.sqlite
 bd.db
 
-# Keep metadata.json and config.yaml tracked. Do not add negation patterns here;
-# they would override fork protection in .git/info/exclude.
+# NOTE: Do NOT add negation patterns here.
+# They would override fork protection in .git/info/exclude.
+# Config files (metadata.json, config.yaml) are tracked by git by default
+# since no pattern above ignores them.
+
+# Added by bd (missing required patterns)
+*.gate.lock*
+last_pull
+proxieddb/
+proxied_server_client_info.json
