@@ -181,12 +181,9 @@ git push origin polecat/<name>/<issue>@<suffix>
 # Branch and metadata remain available for refinery/review/cleanup
 ```
 
-When new work is slung:
-```bash
-# Create fresh branch from current main
-git checkout -b polecat/<name>/<new-issue>+<timestamp>
-# Start working
-```
+When new work is slung, `gt sling` prepares a fresh sandbox and branch from the
+resolved project or epic base. Agents do not create that branch or worktree
+manually.
 
 Completed sandboxes are not treated as reusable idle worktrees while branch,
 MR, or cleanup state remains attached.
@@ -244,14 +241,14 @@ The slot:
                               ▼
 ┌─────────────────────────────────────────────────────────────┐
 │                   Refinery: merge queue                     │
-│  → Rebase and merge to target branch                       │
-│    (main or integration branch — see below)                │
+│  → Verify and merge to the configured target               │
+│    (project lane or epic integration branch — see below)   │
 │  → Close the issue                                         │
 │  → If conflict: create task for available polecat          │
 │                                                             │
 │  Integration branch path:                                  │
 │  → MRs from epic children merge to integration/<epic>      │
-│  → When all children closed: land to main as one commit    │
+│  → When all children closed: land to recorded base         │
 └─────────────────────────────────────────────────────────────┘
 ```
 

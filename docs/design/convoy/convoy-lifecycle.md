@@ -22,7 +22,7 @@ flowchart TB
     dispatch --> working["Polecats execute<br/>tracked issues"]
 
     %% ---- Completion detection ----
-    working --> issue_close["Issue closes<br/>(gt done / bd close)"]
+    working --> issue_close["Issue closes<br/>(owning lifecycle)"]
 
     issue_close --> check{"All tracked<br/>issues closed?"}
 
@@ -192,11 +192,11 @@ current runtime model.
 4. **No recovery scan**: Missed close events had no daemon-owned safety net
 5. **Weak notification ownership**: The convoy requester was not always clear
 
-## Implemented Design: Active Convoy Convergence
+## Current Runtime: Active Convoy Convergence
 
 ### Principle: Event-Driven, Centrally Managed
 
-Convoy completion should be:
+Convoy completion is:
 1. **Event-driven**: Triggered by issue close, not polling
 2. **Centrally managed**: Single owner (daemon) avoids scattered side-effect hooks
 3. **Manually overridable**: Humans can force-close
@@ -209,7 +209,7 @@ When an issue closes, check if it's tracked by a convoy:
 flowchart TD
     close["Issue closes"] --> tracked{"Tracked by convoy?"}
     tracked -->|No| done1(["Done"])
-    tracked -->|Yes| check["Run gt convoy check"]
+    tracked -->|Yes| check["CheckConvoysForIssue"]
     check --> all{"All tracked<br/>issues closed?"}
     all -->|No| done2(["Done"])
     all -->|Yes| notify["Close convoy +<br/>send notifications"]
@@ -257,7 +257,7 @@ skipped — see `isSlingableBead()`.
 Both paths check `isRigParked` after resolving the rig name. Issues targeting
 parked rigs are logged and skipped rather than dispatched.
 
-### Manual Close Command
+### Current Manual Close Command
 
 `gt convoy close` is implemented, including `--force` for abandoned convoys.
 
@@ -279,7 +279,8 @@ Use cases:
 
 ### Convoy Owner/Requester
 
-Track who requested the convoy for targeted notifications:
+The implemented owner field records who requested the convoy for targeted
+notifications:
 
 ```bash
 gt convoy create "Feature X" gt-abc --owner mayor/ --notify overseer
@@ -324,12 +325,12 @@ gt convoy create "Sprint work" gt-abc --due="2026-01-15"
 
 Overdue convoys surface in `gt convoy stranded --overdue`.
 
-## Commands
+## Current Commands
 
 ### Current: `gt convoy close`
 
 ```bash
-gt convoy close <convoy-id> [--reason=<reason>] [--notify=<agent>]
+gt convoy close <convoy-id> [--force] [--reason=<reason>] [--notify=<agent>]
 ```
 
 - Verifies tracked issues are complete by default
@@ -344,7 +345,7 @@ gt convoy close <convoy-id> [--reason=<reason>] [--notify=<agent>]
 # Check all convoys (current behavior)
 gt convoy check
 
-# Check specific convoy (new)
+# Check specific convoy
 gt convoy check <convoy-id>
 
 # Dry-run mode
@@ -361,11 +362,10 @@ Explicit reopen for clarity (currently implicit via add).
 
 ## Implementation Status
 
-Core convoy manager is fully implemented and tested (see [spec.md](spec.md)
-stories S-01 through S-18, all DONE). Remaining future work:
-
-1. **P2: Owner field** - targeted notifications polish
-2. **P3: Timeout/SLA** - deadline tracking
+Core convoy manager and owner notifications are implemented and tested (see
+[spec.md](spec.md), stories S-01 through S-18). Future items are explicitly
+labelled above: a distinct abandonment state, an explicit `gt convoy reopen`
+command, and the optional timeout/SLA contract.
 
 ## Key Files
 

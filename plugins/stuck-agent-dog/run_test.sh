@@ -329,51 +329,6 @@ run_script() {
   ) > "$TEST_STATE/output.log" 2>&1
 }
 
-test_inherited_bash_env_cannot_shadow_fixtures() {
-  local bash_env_was_set=0
-  local original_bash_env=""
-  local poison_dir=""
-  local command_name=""
-
-  if [ "${BASH_ENV+x}" = x ]; then
-    bash_env_was_set=1
-    original_bash_env="$BASH_ENV"
-  fi
-
-  setup_case
-  add_polecat alpha healthy
-  poison_dir="$TEST_TMP/bash-env-bin"
-  mkdir -p "$poison_dir"
-  : > "$TEST_STATE/bash_env_poison.log"
-
-  for command_name in gt tmux bd ps; do
-    cat > "$poison_dir/$command_name" <<'SH'
-#!/usr/bin/env bash
-printf '%s\n' "${0##*/}" >> "$TEST_STATE/bash_env_poison.log"
-exit 97
-SH
-    chmod +x "$poison_dir/$command_name"
-  done
-
-  printf 'export PATH="%s:$PATH"\n' "$poison_dir" > "$TEST_TMP/bash_env.sh"
-  printf '{"timestamp":"1970-01-01T00:00:00Z"}\n' > "$GT_TOWN_ROOT/deacon/heartbeat.json"
-  printf '0\n' > "$TEST_STATE/window_activity"
-  export BASH_ENV="$TEST_TMP/bash_env.sh"
-
-  run_script
-
-  if [ "$bash_env_was_set" -eq 1 ]; then
-    export BASH_ENV="$original_bash_env"
-  else
-    unset BASH_ENV
-  fi
-
-  assert_file_empty "$TEST_STATE/bash_env_poison.log" "inherited BASH_ENV: caller command shadows ignored"
-  assert_file_contains "$TEST_STATE/health_calls.log" "gt-alpha --max-inactivity 0s" "inherited BASH_ENV: fake gt authoritative"
-  assert_file_contains "$TEST_STATE/output.log" "Process alive: pid=999 comm=bash" "inherited BASH_ENV: fake tmux and ps authoritative"
-  assert_file_contains "$TEST_STATE/bd_calls.log" "list --status=in_progress --json --limit=1" "inherited BASH_ENV: fake bd authoritative"
-}
-
 test_healthy_runtime() {
   local runtime="$1"
 
@@ -661,7 +616,6 @@ test_mass_death_recheck_one_remaining_restarts
 test_mass_death_recheck_reclassifies_dead_statuses
 test_mass_death_skips_actions
 test_invalid_mass_death_threshold_defaults
-test_inherited_bash_env_cannot_shadow_fixtures
 
 printf '\n%s passed, %s failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

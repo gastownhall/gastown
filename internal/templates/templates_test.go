@@ -63,11 +63,88 @@ func TestRepositoryAgentsDelegatesToProductDocs(t *testing.T) {
 		"bd ready",
 		"bd update",
 		"bd close",
+		"git rebase",
 		"git pull --rebase",
 		"MANDATORY WORKFLOW",
 	} {
 		if strings.Contains(content, duplicate) {
 			t.Errorf("repository AGENTS.md duplicates lifecycle guidance %q", duplicate)
+		}
+	}
+}
+
+func TestRepositoryReleaseDocsMatchForkWorkflow(t *testing.T) {
+	docs, err := os.ReadFile(filepath.Join("..", "..", "RELEASING.md"))
+	if err != nil {
+		t.Fatalf("reading repository RELEASING.md: %v", err)
+	}
+	workflow, err := os.ReadFile(filepath.Join("..", "..", ".github", "workflows", "release.yml"))
+	if err != nil {
+		t.Fatalf("reading fork release workflow: %v", err)
+	}
+
+	for _, want := range []string{
+		"marlon-costa-dc/gastown",
+		"## Downstream Fork Release Delta",
+		"vX.Y.Z-dcN",
+		"all six archives",
+		"It does not update Homebrew, npm, or upstream release metadata",
+	} {
+		if !strings.Contains(string(docs), want) {
+			t.Errorf("RELEASING.md missing current fork contract %q", want)
+		}
+	}
+	if !strings.Contains(string(workflow), "test \"${GITHUB_REPOSITORY}\" = 'marlon-costa-dc/gastown'") {
+		t.Error("release workflow no longer contains the documented fork repository gate")
+	}
+
+	for _, stale := range []string{
+		"The upstream automation deliberately does not publish fork tags",
+		"update-homebrew-formula",
+		"publish-npm",
+	} {
+		if strings.Contains(string(docs), stale) {
+			t.Errorf("RELEASING.md retains superseded release guidance %q", stale)
+		}
+	}
+}
+
+func TestGovernanceOwnersAvoidRebaseRunbooks(t *testing.T) {
+	paths := []string{
+		filepath.Join("..", "..", "AGENTS.md"),
+		filepath.Join("roles", "crew.md.tmpl"),
+		filepath.Join("roles", "refinery.md.tmpl"),
+		filepath.Join("townroot", "claude.md"),
+	}
+	for _, path := range paths {
+		data, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatalf("reading governance owner %s: %v", path, err)
+		}
+		content := string(data)
+		for _, extinct := range []string{"pull --rebase", "git rebase", "rebase-and-merge"} {
+			if strings.Contains(content, extinct) {
+				t.Errorf("governance owner %s contains extinct guidance %q", path, extinct)
+			}
+		}
+	}
+}
+
+func TestLifecycleDocsAvoidManualSandboxSetup(t *testing.T) {
+	paths := []string{
+		filepath.Join("..", "..", "docs", "concepts", "polecat-lifecycle.md"),
+		filepath.Join("..", "..", "docs", "design", "persistent-polecat-pool.md"),
+	}
+	for _, path := range paths {
+		data, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatalf("reading lifecycle owner %s: %v", path, err)
+		}
+		content := string(data)
+		for _, extinct := range []string{"git checkout -b polecat/", "git worktree add"} {
+			if strings.Contains(content, extinct) {
+				t.Errorf("lifecycle owner %s contains manual sandbox guidance %q", path, extinct)
+			}
 		}
 	}
 }
@@ -337,9 +414,8 @@ func TestRenderRole_Refinery_DefaultBranch(t *testing.T) {
 	}
 
 	// Check that the custom default branch is used in target-resolution guidance.
-	// The refinery template intentionally uses placeholders
-	// (<rebase-target>/<merge-target>) instead of literal branch commands, so this
-	// test verifies the rendered rule text + placeholders.
+	// The refinery template intentionally uses a <merge-target> placeholder
+	// instead of a literal branch, so this verifies the rendered rule and target.
 	fallback := fmt.Sprintf("fallback `%s`", data.DefaultBranch)
 	alwaysUse := fmt.Sprintf("always use `%s`", data.DefaultBranch)
 	if !strings.Contains(output, "Target Resolution Rule (single source):") {
@@ -350,9 +426,6 @@ func TestRenderRole_Refinery_DefaultBranch(t *testing.T) {
 	}
 	if !strings.Contains(output, alwaysUse) {
 		t.Errorf("output missing %q - DefaultBranch not being used in integration-disabled guidance", alwaysUse)
-	}
-	if !strings.Contains(output, "git rebase origin/<rebase-target>") {
-		t.Error("output missing placeholder rebase command")
 	}
 	if !strings.Contains(output, "git checkout <merge-target>") {
 		t.Error("output missing placeholder checkout command")
