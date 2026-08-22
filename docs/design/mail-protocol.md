@@ -100,7 +100,11 @@ Error: <error-message>
 
 **Route**: Refinery → Witness
 
-**Purpose**: Request polecat to rebase branch due to merge conflicts.
+**Purpose**: Historical request to rework a branch after merge conflicts.
+
+> **Historical:** Completed polecats are retired. Current Refinery conflict
+> handling reopens the source issue and notifies Witness for re-slinging; it
+> does not ask a completed polecat to rewrite and force-push its branch.
 
 **Subject format**: `REWORK_REQUEST <polecat-name>`
 
@@ -114,19 +118,14 @@ Target: <target-branch>
 Requested-At: <timestamp>
 Conflict-Files: <file1>, <file2>, ...
 
-Please rebase your changes onto <target-branch>:
-
-  git fetch origin
-  git rebase origin/<target-branch>
-  # Resolve any conflicts
-  git push -f
-
-The Refinery will retry the merge after rebase is complete.
+Reopen the source issue and preserve the submitted branch as conflict evidence.
+Witness may re-sling the work in a fresh Gas Town assignment.
 ```
 
-**Trigger**: Refinery sends when merge has conflicts with target branch.
+**Trigger**: Legacy Refinery behavior when merge had conflicts with the target.
 
-**Handler**: Witness notifies polecat with rebase instructions.
+**Handler**: Historical only. Current Witness handles `MERGE_FAILED` and
+re-slinging through the tracked lifecycle.
 
 ### RECOVERED_BEAD
 
@@ -303,25 +302,29 @@ Polecat                    Witness                    Refinery
 Polecat (rework needed)
 ```
 
-### Rebase Required Flow
+### Historical Rework Flow
+
+This diagram records the retired `REWORK_REQUEST` protocol. Current conflict
+handling emits `MERGE_FAILED`, reopens the source issue, and lets Witness
+re-sling a fresh assignment.
 
 ```
                            Witness                    Refinery
                               │                          │
                               │                    (conflict detected)
                               │                          │
-                              │ REWORK_REQUEST           │
+                              │ REWORK_REQUEST (legacy)  │
    ┌──────────────────────────│<─────────────────────────│
    │                          │                          │
-   │ (rebase instructions)    │                          │
+   │ (legacy rework request)  │                          │
    │<─────────────────────────│                          │
    │                          │                          │
 Polecat                       │                          │
    │                          │                          │
-   │ (rebases, gt done)       │                          │
+   │ (old assignment retried) │                          │
    │─────────────────────────>│ MERGE_READY              │
    │                          │─────────────────────────>│
-   │                          │                    (retry merge)
+   │                          │                    (legacy retry)
 ```
 
 ### Abandoned Work Recovery Flow
@@ -399,7 +402,7 @@ message?" If yes -> mail. If no -> nudge.
 |------|-------------|-------------|---------------|
 | **Polecat** | 0-1 per session | HELP/ESCALATE only (gt escalate preferred) | Everything else |
 | **Witness** | Protocol msgs only | MERGE_READY, RECOVERED_BEAD, RECOVERY_NEEDED, escalations to Mayor | Polecat health checks, status pings, nudge-and-observe |
-| **Refinery** | Protocol msgs only | MERGED, MERGE_FAILED, REWORK_REQUEST | Status updates to Witness |
+| **Refinery** | Protocol msgs only | MERGED, MERGE_FAILED | Status updates to Witness; `REWORK_REQUEST` is historical |
 | **Deacon** | Escalations only | Escalations to Mayor, HANDOFF to self | TIMER callbacks, HEALTH_CHECK, lifecycle pokes |
 | **Dogs** | Zero | Never (results go to event beads or logs) | Report completion to Deacon via nudge |
 | **Mayor** | Strategic only | Cross-rig coordination, HANDOFF to self | Instructions to Deacon/Witness |

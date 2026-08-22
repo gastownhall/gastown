@@ -113,6 +113,7 @@ func TestGovernanceOwnersAvoidRebaseRunbooks(t *testing.T) {
 	paths := []string{
 		filepath.Join("..", "..", "AGENTS.md"),
 		filepath.Join("roles", "crew.md.tmpl"),
+		filepath.Join("roles", "refinery.md.tmpl"),
 		filepath.Join("townroot", "claude.md"),
 	}
 	for _, path := range paths {
@@ -120,8 +121,30 @@ func TestGovernanceOwnersAvoidRebaseRunbooks(t *testing.T) {
 		if err != nil {
 			t.Fatalf("reading governance owner %s: %v", path, err)
 		}
-		if strings.Contains(string(data), "pull --rebase") {
-			t.Errorf("governance owner %s contains extinct rebase guidance", path)
+		content := string(data)
+		for _, extinct := range []string{"pull --rebase", "git rebase", "rebase-and-merge"} {
+			if strings.Contains(content, extinct) {
+				t.Errorf("governance owner %s contains extinct guidance %q", path, extinct)
+			}
+		}
+	}
+}
+
+func TestLifecycleDocsAvoidManualSandboxSetup(t *testing.T) {
+	paths := []string{
+		filepath.Join("..", "..", "docs", "concepts", "polecat-lifecycle.md"),
+		filepath.Join("..", "..", "docs", "design", "persistent-polecat-pool.md"),
+	}
+	for _, path := range paths {
+		data, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatalf("reading lifecycle owner %s: %v", path, err)
+		}
+		content := string(data)
+		for _, extinct := range []string{"git checkout -b polecat/", "git worktree add"} {
+			if strings.Contains(content, extinct) {
+				t.Errorf("lifecycle owner %s contains manual sandbox guidance %q", path, extinct)
+			}
 		}
 	}
 }
@@ -391,9 +414,8 @@ func TestRenderRole_Refinery_DefaultBranch(t *testing.T) {
 	}
 
 	// Check that the custom default branch is used in target-resolution guidance.
-	// The refinery template intentionally uses placeholders
-	// (<rebase-target>/<merge-target>) instead of literal branch commands, so this
-	// test verifies the rendered rule text + placeholders.
+	// The refinery template intentionally uses a <merge-target> placeholder
+	// instead of a literal branch, so this verifies the rendered rule and target.
 	fallback := fmt.Sprintf("fallback `%s`", data.DefaultBranch)
 	alwaysUse := fmt.Sprintf("always use `%s`", data.DefaultBranch)
 	if !strings.Contains(output, "Target Resolution Rule (single source):") {
@@ -404,9 +426,6 @@ func TestRenderRole_Refinery_DefaultBranch(t *testing.T) {
 	}
 	if !strings.Contains(output, alwaysUse) {
 		t.Errorf("output missing %q - DefaultBranch not being used in integration-disabled guidance", alwaysUse)
-	}
-	if !strings.Contains(output, "git rebase origin/<rebase-target>") {
-		t.Error("output missing placeholder rebase command")
 	}
 	if !strings.Contains(output, "git checkout <merge-target>") {
 		t.Error("output missing placeholder checkout command")
