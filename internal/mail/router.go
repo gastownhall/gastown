@@ -1731,6 +1731,17 @@ func (r *Router) notifyRecipient(msg *Message) error {
 			}
 			notified++
 		}
+
+		// Also push to WebSocket clients (dashboard) for remote/tmux-less environments.
+		// This is a best-effort delivery — the nudge queue and bead are the durable stores.
+		if WebsocketNotifier != nil {
+			WebsocketNotifier(msg)
+		}
+	}
+
+	// For the overseer (human), always attempt WebSocket push in addition to tmux.
+	if msg.To == "overseer" && WebsocketNotifier != nil {
+		WebsocketNotifier(msg)
 	}
 
 	if len(errs) > 0 {
