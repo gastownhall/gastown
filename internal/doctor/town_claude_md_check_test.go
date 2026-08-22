@@ -65,8 +65,8 @@ Run ` + "`gt prime`" + ` for full context after compaction, clear, or new sessio
 	if result.Status != StatusWarning {
 		t.Errorf("expected StatusWarning for missing sections, got %v", result.Status)
 	}
-	if len(check.missingSections) != 2 {
-		t.Errorf("expected 2 missing sections, got %d", len(check.missingSections))
+	if len(check.missingSections) != 3 {
+		t.Errorf("expected 3 missing sections, got %d", len(check.missingSections))
 	}
 }
 
@@ -94,8 +94,8 @@ Dolt is the data plane for beads.
 	if result.Status != StatusWarning {
 		t.Errorf("expected StatusWarning, got %v", result.Status)
 	}
-	if len(check.missingSections) != 1 {
-		t.Errorf("expected 1 missing section, got %d", len(check.missingSections))
+	if len(check.missingSections) != 2 {
+		t.Errorf("expected 2 missing sections, got %d", len(check.missingSections))
 	}
 	if check.missingSections[0].Name != "Communication hygiene" {
 		t.Errorf("expected 'Communication hygiene' missing, got %q", check.missingSections[0].Name)
@@ -129,6 +129,12 @@ func TestTownCLAUDEmdCheck_Fix_MissingFile(t *testing.T) {
 	}
 	if !strings.Contains(content, "### Communication hygiene") {
 		t.Error("created file missing Communication hygiene section")
+	}
+	if !strings.Contains(content, "## Product Documentation Authority") {
+		t.Error("created file missing Product Documentation Authority section")
+	}
+	if !strings.Contains(content, "`HANDOFF.md` is historical only") {
+		t.Error("created file does not mark HANDOFF.md historical")
 	}
 }
 
@@ -182,6 +188,12 @@ This is user-added content that should be preserved.
 	}
 	if !strings.Contains(content, "### Communication hygiene") {
 		t.Error("Communication hygiene section was not appended")
+	}
+	if !strings.Contains(content, "## Product Documentation Authority") {
+		t.Error("Product Documentation Authority section was not appended")
+	}
+	if !strings.Contains(content, "`HANDOFF.md` is historical only") {
+		t.Error("appended documentation section does not mark HANDOFF.md historical")
 	}
 }
 

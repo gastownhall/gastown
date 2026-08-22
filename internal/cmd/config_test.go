@@ -9,6 +9,7 @@ import (
 
 	"github.com/spf13/cobra"
 	"github.com/steveyegge/gastown/internal/config"
+	"github.com/steveyegge/gastown/internal/daemon"
 )
 
 // setupTestTown creates a minimal Gas Town workspace for testing.
@@ -722,6 +723,27 @@ func TestConfigDefaultAgentList(t *testing.T) {
 }
 
 func TestConfigSetGet(t *testing.T) {
+	t.Run("set and get dolt.external", func(t *testing.T) {
+		// Given
+		townRoot := setupTestTownForConfig(t)
+		originalWd, _ := os.Getwd()
+		defer os.Chdir(originalWd)
+		if err := os.Chdir(townRoot); err != nil {
+			t.Fatal(err)
+		}
+
+		// When
+		if err := runConfigSet(&cobra.Command{}, []string{"dolt.external", "true"}); err != nil {
+			t.Fatalf("runConfigSet: %v", err)
+		}
+
+		// Then
+		patrolConfig := daemon.LoadPatrolConfig(townRoot)
+		if patrolConfig == nil || patrolConfig.Env["GT_DOLT_EXTERNAL"] != "true" {
+			t.Fatal("dolt.external was not persisted in daemon configuration")
+		}
+	})
+
 	t.Run("set and get convoy.notify_on_complete", func(t *testing.T) {
 		townRoot := setupTestTownForConfig(t)
 		settingsPath := config.TownSettingsPath(townRoot)

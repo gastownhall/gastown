@@ -88,6 +88,7 @@ type DoltInfo struct {
 	PID           int    `json:"pid,omitempty"`
 	Port          int    `json:"port"`
 	Remote        bool   `json:"remote,omitempty"`
+	External      bool   `json:"external,omitempty"`
 	DataDir       string `json:"data_dir,omitempty"`
 	PortConflict  bool   `json:"port_conflict,omitempty"`  // Port taken by another town's Dolt
 	ConflictOwner string `json:"conflict_owner,omitempty"` // --data-dir of the process holding the port
@@ -811,8 +812,12 @@ func gatherStatus() (TownStatus, error) {
 
 	// Dolt status
 	doltCfg := doltserver.DefaultConfig(townRoot)
-	if doltCfg.IsRemote() {
-		status.Dolt = &DoltInfo{Remote: true, Port: doltCfg.Port}
+	if doltCfg.IsExternallyManaged() {
+		status.Dolt = &DoltInfo{
+			External: doltCfg.External,
+			Port:     doltCfg.Port,
+			Remote:   doltCfg.IsRemote(),
+		}
 	} else {
 		doltRunning, doltPid, _ := doltserver.IsRunning(townRoot)
 		port := doltCfg.Port
@@ -1040,7 +1045,9 @@ func outputStatusText(w io.Writer, status TownStatus) error {
 			}
 		}
 		if status.Dolt != nil {
-			if status.Dolt.Remote {
+			if status.Dolt.External {
+				parts = append(parts, fmt.Sprintf("dolt %s", style.Dim.Render(fmt.Sprintf("(external :%d)", status.Dolt.Port))))
+			} else if status.Dolt.Remote {
 				parts = append(parts, fmt.Sprintf("dolt %s", style.Dim.Render(fmt.Sprintf("(remote :%d)", status.Dolt.Port))))
 			} else if status.Dolt.Running {
 				dataDir := status.Dolt.DataDir

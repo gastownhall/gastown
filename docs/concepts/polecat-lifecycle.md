@@ -2,12 +2,29 @@
 
 > Understanding the three-layer architecture of polecat workers
 
+This is the canonical product lifecycle for polecats. Generated role context
+and provider instruction files summarize this page; they do not define a
+second completion protocol.
+
 ## Overview
 
 Polecats have three distinct lifecycle layers that operate independently. The
 key design principle: **clean completion retires the live polecat session**.
 The agent identity and merge evidence persist, but completed sessions do not
 return to the idle reuse pool.
+
+Gas Town supports two delivery paths:
+
+- **Standard rig:** `gt done` pushes the branch and submits an MR for Refinery
+  verification and integration.
+- **Fork-backed contribution rig:** the assignment's PR/no-merge workflow
+  pushes the feature branch to the fork and opens a PR against upstream. Local
+  Refinery/MQ submission is not used for upstream changes. See
+  [Fork-Based Rig Setup](../guides/fork-rig-setup.md).
+
+Both paths retire the completed session only after their durable handoff is
+recorded. The standard-rig diagrams below show the MQ path; the fork guide owns
+the fork-specific delta.
 
 ## Operating States
 
@@ -17,11 +34,11 @@ Polecats use these primary operating states:
 |-------|-------------|----------------|
 | **Working** | Actively doing assigned work | Normal operation after `gt sling` |
 | **Idle** | Available before assignment | Spawned or explicitly prepared for work |
-| **Done** | Work completed and session retired | After `gt done` completes successfully |
+| **Done** | Work completed and session retired | After the assignment's durable completion path succeeds |
 | **Stalled** | Session stopped mid-work | Interrupted, crashed, or timed out without being nudged |
 | **Zombie** | Completed work but failed to exit | `gt done` failed during cleanup |
 
-**State cycle (happy path):**
+**State cycle (standard-rig happy path):**
 
 ```
          ┌──────────┐
@@ -69,13 +86,17 @@ session that still has branch/MR or cleanup state attached.
 - **Simpler lifecycle** — Clean completion has one terminal session path
 - **Done means retired** — Session dies, cleanup/refinery owns remaining state
 
-### What About Pending Merges?
+### What About Pending Standard-Rig Merges?
 
 The Refinery owns the merge queue. Once `gt done` submits work:
 - The branch is pushed to origin
 - Work exists in the MQ, not in the polecat
 - If rebase fails, Refinery creates a conflict-resolution task
 - The completed polecat is not reused while pending MR or cleanup state remains
+
+For fork-backed upstream contributions, the pushed fork branch and upstream PR
+are the durable review evidence. A maintainer merges the PR; the polecat does
+not merge upstream or submit the same work to the local MQ.
 
 ## The Three Layers
 
@@ -185,7 +206,7 @@ The slot:
 - Appears in attribution (`gastown/polecats/Toast`)
 - Persists until explicit nuke
 
-## Correct Lifecycle
+## Standard-Rig Lifecycle
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
@@ -223,14 +244,14 @@ The slot:
                               ▼
 ┌─────────────────────────────────────────────────────────────┐
 │                   Refinery: merge queue                     │
-│  → Rebase and merge to target branch                       │
-│    (main or integration branch — see below)                │
+│  → Verify and merge to the configured target               │
+│    (project lane or epic integration branch — see below)   │
 │  → Close the issue                                         │
 │  → If conflict: create task for available polecat          │
 │                                                             │
 │  Integration branch path:                                  │
 │  → MRs from epic children merge to integration/<epic>      │
-│  → When all children closed: land to main as one commit    │
+│  → When all children closed: land to recorded base         │
 └─────────────────────────────────────────────────────────────┘
 ```
 
@@ -380,6 +401,8 @@ Key files:
 
 - [Overview](../overview.md) - Role taxonomy and architecture
 - [Molecules](molecules.md) - Molecule execution and polecat workflow
+- [Integration Branches](integration-branches.md) - Epic-scoped MR targets
+- [Fork-Based Rig Setup](../guides/fork-rig-setup.md) - Fork PR/no-merge delta
 - [Propulsion Principle](propulsion-principle.md) - Why work triggers immediate execution
 - [Polecat Lifecycle Patrol](../design/polecat-lifecycle-patrol.md) - Implementation details, cleanup stages, patrol coordination
 - [Persistent Polecat Pool](../design/persistent-polecat-pool.md) - Pool management design and shipping status

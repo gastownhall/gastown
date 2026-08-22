@@ -304,31 +304,32 @@ func (c *PatrolNotStuckCheck) Run(ctx *CheckContext) *CheckResult {
 // stuckWispsQuery selects in_progress issues for stuck-wisp detection via Dolt.
 const stuckWispsQuery = `SELECT id, title, status, updated_at FROM issues WHERE status = 'in_progress' ORDER BY updated_at ASC`
 
-// checkStuckWispsDolt queries the Dolt database for stuck wisps using bd sql.
-// Returns an error if the query fails (caller should fall back to JSONL).
-func (c *PatrolNotStuckCheck) checkStuckWispsDolt(rigPath string, rigName string) ([]string, error) {
-	cmd := exec.Command("bd", "sql", "--csv", stuckWispsQuery) //nolint:gosec // G204: query is a constant
-	cmd.Dir = rigPath
-	output, err := cmd.CombinedOutput()
-	if err != nil {
-		return nil, fmt.Errorf("bd sql: %w", err)
-	}
+// stuckTimestampLayouts are the timestamp layouts accepted when reading
+// `bd sql --csv` output. Dolt emits timestamps in Go's default
+// time.Time.String() rendering (e.g. "2026-08-03 16:25:21 +0000 UTC"), which
+// is neither the bare layout nor RFC3339. The bare and RFC3339 layouts are
+// kept as fallbacks for other backends.
+var stuckTimestampLayouts = []string{
+	"2006-01-02 15:04:05 -0700 MST",
+	"2006-01-02 15:04:05.999999999 -0700 MST",
+	"2006-01-02 15:04:05",
+	time.RFC3339,
+}
 
-	r := csv.NewReader(strings.NewReader(string(output)))
-	records, err := r.ReadAll()
-	if err != nil {
-		return nil, fmt.Errorf("csv parse: %w", err)
+// parseStuckTimestamp parses an updated_at value using the known layouts.
+func parseStuckTimestamp(value string) (time.Time, bool) {
+	for _, layout := range stuckTimestampLayouts {
+		if t, err := time.Parse(layout, value); err == nil {
+			return t, true
+		}
 	}
-	if len(records) < 2 {
-		return nil, nil // No results (header only or empty)
-	}
+	return time.Time{}, false
+}
 
+// parseStuckWisps extracts in_progress wisps older than the cutoff from the
+// CSV records returned by `bd sql --csv` (records[0] is the header).
+func parseStuckWisps(records [][]string, rigName string, cutoff time.Time) []string {
 	var stuck []string
-	// Use UTC for cutoff: Dolt stores timestamps in UTC, and time.Parse
-	// without timezone info returns UTC times. Using local time here caused
-	// false "future timestamp" alarms every evening PDT (gt-ty4).
-	cutoff := time.Now().UTC().Add(-c.stuckThreshold)
-
 	for _, rec := range records[1:] { // Skip CSV header
 		if len(rec) < 4 {
 			continue
@@ -337,22 +338,48 @@ func (c *PatrolNotStuckCheck) checkStuckWispsDolt(rigPath string, rigName string
 		title := strings.TrimSpace(rec[1])
 		updatedAt := strings.TrimSpace(rec[3])
 
-		t, err := time.Parse("2006-01-02 15:04:05", updatedAt)
-		if err != nil {
-			// Try RFC3339 as fallback
-			t, err = time.Parse(time.RFC3339, updatedAt)
-			if err != nil {
-				continue
-			}
+		t, ok := parseStuckTimestamp(updatedAt)
+		if !ok {
+			continue
 		}
-
-		if !t.IsZero() && t.Before(cutoff) {
+		if t.Before(cutoff) {
 			stuck = append(stuck, fmt.Sprintf("%s: %s (%s) - stale since %s UTC",
 				rigName, id, title, t.UTC().Format("2006-01-02 15:04")))
 		}
 	}
+	return stuck
+}
 
-	return stuck, nil
+// checkStuckWispsDolt queries the Dolt database for stuck wisps using bd sql.
+// Returns an error if the query fails (caller should fall back to JSONL).
+//
+// stdout and stderr are captured separately: bd may print warnings (for
+// example `.beads` permission hints) to stderr, and those must never be mixed
+// into the CSV stream read from stdout or bd sql --csv output cannot be parsed.
+func (c *PatrolNotStuckCheck) checkStuckWispsDolt(rigPath string, rigName string) ([]string, error) {
+	cmd := exec.Command("bd", "sql", "--csv", stuckWispsQuery) //nolint:gosec // G204: query is a constant
+	cmd.Dir = rigPath
+	var stdout, stderr strings.Builder
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		return nil, fmt.Errorf("bd sql: %w", err)
+	}
+
+	r := csv.NewReader(strings.NewReader(stdout.String()))
+	records, err := r.ReadAll()
+	if err != nil {
+		return nil, fmt.Errorf("csv parse: %w", err)
+	}
+	if len(records) < 2 {
+		return nil, nil // No results (header only or empty)
+	}
+
+	// Use UTC for cutoff: Dolt stores timestamps in UTC. Using local time here
+	// caused false "future timestamp" alarms every evening PDT (gt-ty4).
+	cutoff := time.Now().UTC().Add(-c.stuckThreshold)
+
+	return parseStuckWisps(records, rigName, cutoff), nil
 }
 
 // PatrolPluginsAccessibleCheck verifies plugin directories exist and are readable.
