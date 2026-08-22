@@ -121,8 +121,11 @@ func TestGovernanceOwnersAvoidRebaseRunbooks(t *testing.T) {
 		if err != nil {
 			t.Fatalf("reading governance owner %s: %v", path, err)
 		}
-		if strings.Contains(string(data), "pull --rebase") {
-			t.Errorf("governance owner %s contains extinct rebase guidance", path)
+		content := string(data)
+		for _, extinct := range []string{"pull --rebase", "git rebase", "rebase-and-merge"} {
+			if strings.Contains(content, extinct) {
+				t.Errorf("governance owner %s contains extinct guidance %q", path, extinct)
+			}
 		}
 	}
 }

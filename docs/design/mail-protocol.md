@@ -302,25 +302,29 @@ Polecat                    Witness                    Refinery
 Polecat (rework needed)
 ```
 
-### Rebase Required Flow
+### Historical Rework Flow
+
+This diagram records the retired `REWORK_REQUEST` protocol. Current conflict
+handling emits `MERGE_FAILED`, reopens the source issue, and lets Witness
+re-sling a fresh assignment.
 
 ```
                            Witness                    Refinery
                               │                          │
                               │                    (conflict detected)
                               │                          │
-                              │ REWORK_REQUEST           │
+                               │ REWORK_REQUEST (legacy)  │
    ┌──────────────────────────│<─────────────────────────│
    │                          │                          │
-   │ (rebase instructions)    │                          │
+   │ (legacy rework request)  │                          │
    │<─────────────────────────│                          │
    │                          │                          │
 Polecat                       │                          │
    │                          │                          │
-   │ (rebases, gt done)       │                          │
+   │ (old assignment retried) │                          │
    │─────────────────────────>│ MERGE_READY              │
    │                          │─────────────────────────>│
-   │                          │                    (retry merge)
+   │                          │                    (legacy retry)
 ```
 
 ### Abandoned Work Recovery Flow
@@ -398,7 +402,7 @@ message?" If yes -> mail. If no -> nudge.
 |------|-------------|-------------|---------------|
 | **Polecat** | 0-1 per session | HELP/ESCALATE only (gt escalate preferred) | Everything else |
 | **Witness** | Protocol msgs only | MERGE_READY, RECOVERED_BEAD, RECOVERY_NEEDED, escalations to Mayor | Polecat health checks, status pings, nudge-and-observe |
-| **Refinery** | Protocol msgs only | MERGED, MERGE_FAILED, REWORK_REQUEST | Status updates to Witness |
+| **Refinery** | Protocol msgs only | MERGED, MERGE_FAILED | Status updates to Witness; `REWORK_REQUEST` is historical |
 | **Deacon** | Escalations only | Escalations to Mayor, HANDOFF to self | TIMER callbacks, HEALTH_CHECK, lifecycle pokes |
 | **Dogs** | Zero | Never (results go to event beads or logs) | Report completion to Deacon via nudge |
 | **Mayor** | Strategic only | Cross-rig coordination, HANDOFF to self | Instructions to Deacon/Witness |
