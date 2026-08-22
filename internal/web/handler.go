@@ -14,7 +14,6 @@ import (
 	"time"
 
 	"github.com/steveyegge/gastown/internal/config"
-	"github.com/steveyegge/gastown/internal/mail"
 )
 
 //go:embed static
@@ -480,19 +479,6 @@ func NewDashboardMux(fetcher ConvoyFetcher, webCfg *config.WebTimeoutsConfig) (h
 		return nil, err
 	}
 	staticHandler := http.FileServer(http.FS(staticFS))
-
-	// Register the WebSocket notifier callback so the mail router can push
-	// notifications to connected dashboard clients in tmux-less environments.
-	mail.WebsocketNotifier = func(msg *mail.Message) {
-		GetHub().Notify(&NotificationMessage{
-			Type:     string(msg.Type),
-			From:     msg.From,
-			Subject:  msg.Subject,
-			Body:     msg.Body,
-			Priority: string(msg.Priority),
-			ThreadID: msg.ThreadID,
-		})
-	}
 
 	mux := http.NewServeMux()
 	mux.Handle("/api/", apiHandler)

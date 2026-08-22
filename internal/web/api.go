@@ -2100,6 +2100,7 @@ func (h *APIHandler) handleEstop(w http.ResponseWriter, r *http.Request) {
 	resp := EstopResponse{
 		Success: err == nil,
 		Output:  output,
+		Exempt:  []string{"overseer", "mayor", "deacon"},
 	}
 
 	if err != nil {
@@ -2112,9 +2113,10 @@ func (h *APIHandler) handleEstop(w http.ResponseWriter, r *http.Request) {
 
 // EstopResponse is the response for /api/estop.
 type EstopResponse struct {
-	Success bool   `json:"success"`
-	Output  string `json:"output"`
-	Error   string `json:"error,omitempty"`
+	Success bool     `json:"success"`
+	Output  string   `json:"output"`
+	Error   string   `json:"error,omitempty"`
+	Exempt  []string `json:"exempt"`
 }
 
 // SessionPreviewResponse is the response for /api/session/preview.

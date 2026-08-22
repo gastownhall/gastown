@@ -1,23 +1,27 @@
 package web
 
 import (
+	"bufio"
 	"encoding/json"
 	"net/http"
+	"os"
 	"sync"
 	"time"
 
 	"github.com/gorilla/websocket"
+	"github.com/steveyegge/gastown/internal/mail"
 )
 
 // NotificationMessage is the JSON payload pushed to WebSocket clients.
 type NotificationMessage struct {
-	Type      string `json:"type"`             // "nudge", "mail", "escalation"
-	From      string `json:"from"`             // sender identity
-	Subject   string `json:"subject"`          // subject line
-	Body      string `json:"body"`             // full message body
-	Priority  string `json:"priority"`         // urgency level
-	ThreadID  string `json:"threadId"`         // associated bead/thread ID
-	CreatedAt string `json:"createdAt"`        // ISO 8601 timestamp
+	Type      string `json:"type"`      // "nudge", "mail", "escalation"
+	From      string `json:"from"`      // sender identity
+	To        string `json:"to"`        // recipient address
+	Subject   string `json:"subject"`   // subject line
+	Body      string `json:"body"`      // full message body
+	Priority  string `json:"priority"`  // urgency level
+	ThreadID  string `json:"threadId"`  // associated bead/thread ID
+	CreatedAt string `json:"createdAt"` // ISO 8601 timestamp
 }
 
 // Hub maintains active WebSocket client connections for broadcast.
@@ -55,6 +59,62 @@ func GetHub() *Hub {
 		go defaultHub.Run()
 	})
 	return defaultHub
+}
+
+// StartSpoolDrainer relays notifications from the cross-process spool file
+// to WebSocket clients. CLI processes (gt mail send, gt escalate) append to
+// the spool; this goroutine — running in the dashboard process — drains it
+// and broadcasts. townRoot may be empty (draining disabled).
+func StartSpoolDrainer(townRoot string) {
+	if townRoot == "" {
+		return
+	}
+	go func() {
+		ticker := time.NewTicker(500 * time.Millisecond)
+		defer ticker.Stop()
+		for range ticker.C {
+			GetHub().DrainSpool(mail.SpoolPath(townRoot))
+		}
+	}()
+}
+
+// DrainSpool reads and truncates the notification spool, broadcasting each
+// entry to connected clients. Malformed lines are dropped silently.
+func (h *Hub) DrainSpool(spoolPath string) {
+	f, err := os.OpenFile(spoolPath, os.O_RDWR, 0o600)
+	if err != nil {
+		return // no spool or unreadable — nothing to drain
+	}
+	defer f.Close()
+
+	var msgs []*NotificationMessage
+	scanner := bufio.NewScanner(f)
+	for scanner.Scan() {
+		line := scanner.Bytes()
+		if len(line) == 0 {
+			continue
+		}
+		var msg NotificationMessage
+		if err := json.Unmarshal(line, &msg); err != nil {
+			continue
+		}
+		msgs = append(msgs, &msg)
+	}
+	if len(msgs) == 0 {
+		return
+	}
+
+	// Truncate the drained portion.
+	if err := f.Truncate(0); err != nil {
+		return
+	}
+	if _, err := f.Seek(0, 0); err != nil {
+		return
+	}
+
+	for _, m := range msgs {
+		h.Notify(m)
+	}
 }
 
 // NewHub creates a new Hub.

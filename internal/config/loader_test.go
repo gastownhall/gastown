@@ -5009,7 +5009,9 @@ func TestLoadOrCreateEscalationConfig_SMTPPassAllMethodsMissing(t *testing.T) {
 	dir := t.TempDir()
 
 	os.Unsetenv("GT_SMTP_PASS")
-	os.Unsetenv("XDG_CONFIG_HOME")
+	// Isolate from the real user XDG config (may contain ~/.config/gastown/smtp-pass).
+	os.Setenv("XDG_CONFIG_HOME", filepath.Join(dir, "empty-config"))
+	defer os.Unsetenv("XDG_CONFIG_HOME")
 
 	path := filepath.Join(dir, "settings", "escalation.json")
 	original := &EscalationConfig{
@@ -5072,8 +5074,9 @@ func TestLoadOrCreateEscalationConfig_SMTPPassXdgFileWithWrongPermissions(t *tes
 		t.Fatalf("LoadOrCreateEscalationConfig: %v", err)
 	}
 
-	if cfg.Contacts.SMTPPass != "pass" {
-		t.Errorf("SMTPPass = %q, want %q", cfg.Contacts.SMTPPass, "pass")
+	// Group/world-readable secret files are rejected for security.
+	if cfg.Contacts.SMTPPass != "" {
+		t.Errorf("SMTPPass = %q, want empty (0644 file must be rejected)", cfg.Contacts.SMTPPass)
 	}
 }
 

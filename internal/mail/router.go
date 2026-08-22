@@ -1732,16 +1732,34 @@ func (r *Router) notifyRecipient(msg *Message) error {
 			notified++
 		}
 
-		// Also push to WebSocket clients (dashboard) for remote/tmux-less environments.
-		// This is a best-effort delivery — the nudge queue and bead are the durable stores.
-		if WebsocketNotifier != nil {
-			WebsocketNotifier(msg)
+		// Also spool for dashboard WebSocket relay in remote/tmux-less
+		// environments. The spool is the cross-process bridge: CLI writers
+		// append, the dashboard process drains and pushes to WS clients.
+		if err := SpoolPush(r.townRoot, &PushNotification{
+			Type:     nudgeKindForMessage(msg),
+			From:     msg.From,
+			To:       msg.To,
+			Subject:  msg.Subject,
+			Body:     msg.Body,
+			Priority: string(msg.Priority),
+			ThreadID: msg.ThreadID,
+		}); err == nil {
+			notified++
 		}
 	}
 
-	// For the overseer (human), always attempt WebSocket push in addition to tmux.
-	if msg.To == "overseer" && WebsocketNotifier != nil {
-		WebsocketNotifier(msg)
+	// For the overseer (human), always spool in addition to tmux banner so
+	// remote dashboards see operator-directed messages.
+	if msg.To == "overseer" {
+		_ = SpoolPush(r.townRoot, &PushNotification{
+			Type:     nudgeKindForMessage(msg),
+			From:     msg.From,
+			To:       msg.To,
+			Subject:  msg.Subject,
+			Body:     msg.Body,
+			Priority: string(msg.Priority),
+			ThreadID: msg.ThreadID,
+		})
 	}
 
 	if len(errs) > 0 {

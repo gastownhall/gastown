@@ -2843,7 +2843,8 @@ func LoadEscalationConfig(path string) (*EscalationConfig, error) {
 
 // loadSMTPPassFromXdg reads the SMTP password from the XDG config directory.
 // Path: $XDG_CONFIG_HOME/gastown/smtp-pass  (default ~/.config/gastown/smtp-pass)
-// File permissions should be 0600 (owner-only read/write).
+// The file must have owner-only permissions (0600) — group/world-readable
+// secret files are rejected to prevent credential leakage.
 func loadSMTPPassFromXdg() string {
 	xdgConfig := os.Getenv("XDG_CONFIG_HOME")
 	if xdgConfig == "" {
@@ -2855,6 +2856,14 @@ func loadSMTPPassFromXdg() string {
 	}
 
 	passPath := filepath.Join(xdgConfig, "gastown", "smtp-pass")
+	info, err := os.Stat(passPath)
+	if err != nil {
+		return ""
+	}
+	if info.Mode().Perm()&0o077 != 0 {
+		fmt.Fprintf(os.Stderr, "warning: %s must have 0600 permissions; refusing to read SMTP password\n", passPath)
+		return ""
+	}
 	data, err := os.ReadFile(passPath)
 	if err != nil {
 		return ""
