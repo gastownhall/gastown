@@ -223,7 +223,15 @@ func runStart(cmd *cobra.Command, args []string) error {
 	// server and bd auto-spawns orphan embedded servers. (gt-t2zf)
 	var doltOK bool
 	cfg := doltserver.DefaultConfig(townRoot)
-	if _, err := os.Stat(cfg.DataDir); os.IsNotExist(err) {
+	if cfg.IsExternallyManaged() {
+		running, _, _ := doltserver.IsRunning(townRoot)
+		doltOK = running
+		if running {
+			fmt.Printf("  %s External Dolt server reachable at %s\n", style.Dim.Render("○"), cfg.HostPort())
+		} else {
+			fmt.Printf("  %s External Dolt server unavailable at %s\n", style.Dim.Render("○"), cfg.HostPort())
+		}
+	} else if _, err := os.Stat(cfg.DataDir); os.IsNotExist(err) {
 		// No Dolt data dir — nothing to start
 		fmt.Printf("  %s Dolt server skipped (no data dir)\n", style.Dim.Render("○"))
 	} else {

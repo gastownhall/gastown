@@ -313,6 +313,9 @@ func AgentEnv(cfg AgentEnvConfig) map[string]string {
 		if port := ResolveDoltPort(cfg.TownRoot); port > 0 {
 			setDoltPortEnv(env, strconv.Itoa(port))
 		}
+		if ResolveDoltExternal(cfg.TownRoot) {
+			env["GT_DOLT_EXTERNAL"] = "true"
+		}
 	}
 	if _, ok := env["GT_DOLT_PORT"]; !ok {
 		if v := os.Getenv("GT_DOLT_PORT"); v != "" {
@@ -448,6 +451,9 @@ func ResolveDoltPort(townRoot string) int {
 	if townRoot == "" {
 		return 0
 	}
+	if ResolveDoltExternal(townRoot) {
+		return resolveDoltPortFromDaemonJSON(townRoot)
+	}
 
 	if port := resolveDoltPortFromConfigYAML(townRoot); port > 0 {
 		return port
@@ -471,6 +477,12 @@ func ResolveDoltPort(townRoot string) int {
 //  3. mayor/daemon.json env.GT_DOLT_PORT
 //  4. 0 (caller should use its default)
 func ResolveConfiguredDoltPort(townRoot string) int {
+	if ResolveDoltExternal(townRoot) {
+		if port := resolveDoltPortFromEnv(); port > 0 {
+			return port
+		}
+		return resolveDoltPortFromDaemonJSON(townRoot)
+	}
 	if _, port, ok := ManagedDoltEndpoint(townRoot); ok {
 		return port
 	}
@@ -493,6 +505,12 @@ func ResolveConfiguredDoltPort(townRoot string) int {
 //  3. mayor/daemon.json env.GT_DOLT_HOST
 //  4. "" (caller should use its default)
 func ResolveConfiguredDoltHost(townRoot string) string {
+	if ResolveDoltExternal(townRoot) {
+		if host := strings.TrimSpace(os.Getenv("GT_DOLT_HOST")); host != "" {
+			return host
+		}
+		return resolveDoltHostFromDaemonJSON(townRoot)
+	}
 	if host, _, ok := ManagedDoltEndpoint(townRoot); ok {
 		return host
 	}
@@ -500,6 +518,20 @@ func ResolveConfiguredDoltHost(townRoot string) string {
 		return host
 	}
 	return resolveDoltHostFromDaemonJSON(townRoot)
+}
+
+// ResolveDoltExternal reports whether the configured Dolt endpoint is owned
+// outside Gas Town, even when it is bound to a loopback address.
+func ResolveDoltExternal(townRoot string) bool {
+	if value, ok := os.LookupEnv("GT_DOLT_EXTERNAL"); ok {
+		if strings.TrimSpace(value) != "" {
+			return parseDoltExternal(value)
+		}
+	}
+	if townRoot == "" {
+		return false
+	}
+	return resolveDoltExternalFromDaemonJSON(townRoot)
 }
 
 // ManagedDoltEndpoint reads the target town's managed Dolt config.yaml without
@@ -520,6 +552,16 @@ func ManagedDoltEndpoint(townRoot string) (host string, port int, ok bool) {
 // NormalizeConfiguredDoltEnv strips inherited Dolt endpoint env at target-town
 // boundaries and injects the target town's managed endpoint when present.
 func NormalizeConfiguredDoltEnv(base []string, townRoot string) []string {
+	if ResolveDoltExternal(townRoot) {
+		base = stripDoltEndpointEnv(base)
+		if host := ResolveDoltHost(townRoot); host != "" {
+			base = append(base, "GT_DOLT_HOST="+host)
+		}
+		if port := ResolveDoltPort(townRoot); port > 0 {
+			base = append(base, "GT_DOLT_PORT="+strconv.Itoa(port))
+		}
+		return append(base, "GT_DOLT_EXTERNAL=true")
+	}
 	host, port, ok := ManagedDoltEndpoint(townRoot)
 	if !ok {
 		return base
@@ -531,6 +573,9 @@ func NormalizeConfiguredDoltEnv(base []string, townRoot string) []string {
 	if port > 0 {
 		base = append(base, "GT_DOLT_PORT="+strconv.Itoa(port))
 	}
+	if ResolveDoltExternal(townRoot) {
+		base = append(base, "GT_DOLT_EXTERNAL=true")
+	}
 	return base
 }
 
@@ -538,7 +583,7 @@ func NormalizeConfiguredDoltEnv(base []string, townRoot string) []string {
 // process environment for target-town startup boundaries.
 func ApplyConfiguredDoltEnv(townRoot string) {
 	normalized := NormalizeConfiguredDoltEnv(os.Environ(), townRoot)
-	for _, key := range []string{"GT_DOLT_HOST", "GT_DOLT_PORT", "BEADS_DOLT_SERVER_HOST", "BEADS_DOLT_SERVER_PORT", "BEADS_DOLT_PORT"} {
+	for _, key := range []string{"GT_DOLT_EXTERNAL", "GT_DOLT_HOST", "GT_DOLT_PORT", "BEADS_DOLT_SERVER_HOST", "BEADS_DOLT_SERVER_PORT", "BEADS_DOLT_PORT"} {
 		_ = os.Unsetenv(key)
 	}
 	for _, entry := range normalized {
@@ -562,7 +607,7 @@ func stripDoltEndpointEnv(env []string) []string {
 }
 
 func isDoltEndpointEnvKey(key string) bool {
-	for _, want := range []string{"GT_DOLT_HOST", "GT_DOLT_PORT", "BEADS_DOLT_SERVER_HOST", "BEADS_DOLT_SERVER_PORT", "BEADS_DOLT_PORT"} {
+	for _, want := range []string{"GT_DOLT_EXTERNAL", "GT_DOLT_HOST", "GT_DOLT_PORT", "BEADS_DOLT_SERVER_HOST", "BEADS_DOLT_SERVER_PORT", "BEADS_DOLT_PORT"} {
 		if runtime.GOOS == "windows" {
 			if strings.EqualFold(key, want) {
 				return true
@@ -639,6 +684,9 @@ func ResolveDoltHost(townRoot string) string {
 	if townRoot == "" {
 		return ""
 	}
+	if ResolveDoltExternal(townRoot) {
+		return resolveDoltHostFromDaemonJSON(townRoot)
+	}
 	if host := resolveDoltHostFromConfigYAML(townRoot); host != "" {
 		return host
 	}
@@ -673,6 +721,30 @@ func resolveDoltHostFromDaemonJSON(townRoot string) string {
 		return ""
 	}
 	return strings.TrimSpace(daemonEnv.Env["GT_DOLT_HOST"])
+}
+
+func parseDoltExternal(value string) bool {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "true", "yes", "1", "on":
+		return true
+	default:
+		return false
+	}
+}
+
+func resolveDoltExternalFromDaemonJSON(townRoot string) bool {
+	daemonJSONPath := filepath.Join(townRoot, "mayor", "daemon.json")
+	data, err := os.ReadFile(daemonJSONPath)
+	if err != nil {
+		return false
+	}
+	var daemonEnv struct {
+		Env map[string]string `json:"env"`
+	}
+	if err := json.Unmarshal(data, &daemonEnv); err != nil {
+		return false
+	}
+	return parseDoltExternal(daemonEnv.Env["GT_DOLT_EXTERNAL"])
 }
 
 // parsePortFromConfigYAML extracts the listener port from a Dolt config.yaml
