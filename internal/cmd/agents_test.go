@@ -18,6 +18,15 @@ import (
 
 var findTestSocketsSequence atomic.Uint64
 
+func cleanupFindTestSocketsFixture(server *tmux.Tmux, socketPath string) (killErr, removeErr error) {
+	killErr = server.KillServer()
+	removeErr = os.Remove(socketPath)
+	if os.IsNotExist(removeErr) {
+		removeErr = nil
+	}
+	return killErr, removeErr
+}
+
 func TestAgentsCmd_DefaultRunE(t *testing.T) {
 	// After the fix, `gt agents` (no subcommand) should run the list function,
 	// not the interactive popup menu. Verify the actual function pointer.
@@ -575,14 +584,14 @@ func newFindTestSocketsFixture(t *testing.T, sessionName string) string {
 	}
 
 	server := tmux.NewTmuxWithSocket(socketName)
+	socketPath := filepath.Join(tmux.SocketDir(), socketName)
 	t.Cleanup(func() {
-		if err := server.KillServer(); err != nil {
-			t.Errorf("clean up isolated tmux server %q: %v", socketName, err)
-			return
+		killErr, removeErr := cleanupFindTestSocketsFixture(server, socketPath)
+		if killErr != nil {
+			t.Errorf("clean up isolated tmux server %q: %v", socketName, killErr)
 		}
-		socketPath := filepath.Join(tmux.SocketDir(), socketName)
-		if err := os.Remove(socketPath); err != nil && !os.IsNotExist(err) {
-			t.Errorf("remove isolated tmux socket %q: %v", socketPath, err)
+		if removeErr != nil {
+			t.Errorf("remove isolated tmux socket %q: %v", socketPath, removeErr)
 		}
 	})
 
@@ -599,6 +608,46 @@ func newFindTestSocketsFixture(t *testing.T, sessionName string) string {
 	}
 	t.Fatalf("tmux session %q on socket %q was not ready within %s: %v", sessionName, socketName, readyTimeout, lastErr)
 	return ""
+}
+
+func TestCleanupFindTestSocketsFixture_RemovesSocketAfterKillFailure(t *testing.T) {
+	t.Setenv("PATH", t.TempDir())
+	server := tmux.NewTmuxWithSocket("gt-test-cleanup-kill-failure")
+	socketPath := filepath.Join(t.TempDir(), "gt-test-cleanup-socket")
+	if err := os.WriteFile(socketPath, nil, 0o600); err != nil {
+		t.Fatalf("create cleanup test socket: %v", err)
+	}
+
+	killErr, removeErr := cleanupFindTestSocketsFixture(server, socketPath)
+	if killErr == nil {
+		t.Fatal("cleanup kill error = nil, want command lookup failure")
+	}
+	if removeErr != nil {
+		t.Fatalf("cleanup remove error = %v, want nil", removeErr)
+	}
+	if _, err := os.Stat(socketPath); !os.IsNotExist(err) {
+		t.Fatalf("cleanup socket still exists or stat failed unexpectedly: %v", err)
+	}
+}
+
+func TestCleanupFindTestSocketsFixture_ReportsBothFailures(t *testing.T) {
+	t.Setenv("PATH", t.TempDir())
+	server := tmux.NewTmuxWithSocket("gt-test-cleanup-both-failures")
+	socketPath := filepath.Join(t.TempDir(), "gt-test-cleanup-socket")
+	if err := os.Mkdir(socketPath, 0o700); err != nil {
+		t.Fatalf("create non-empty cleanup test directory: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(socketPath, "child"), nil, 0o600); err != nil {
+		t.Fatalf("create cleanup test child: %v", err)
+	}
+
+	killErr, removeErr := cleanupFindTestSocketsFixture(server, socketPath)
+	if killErr == nil {
+		t.Fatal("cleanup kill error = nil, want command lookup failure")
+	}
+	if removeErr == nil {
+		t.Fatal("cleanup remove error = nil, want non-empty directory failure")
+	}
 }
 
 // TestFindTestSockets_Integration verifies that findTestSockets discovers

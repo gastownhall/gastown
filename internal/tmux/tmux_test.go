@@ -284,8 +284,8 @@ func TestEnsureSessionFreshWithCommand_NoExisting(t *testing.T) {
 	_ = tm.KillSession(sessionName)
 	defer func() { _ = tm.KillSession(sessionName) }()
 
-	// EnsureSessionFreshWithCommand should create a new session with the command
-	// as the initial pane process (no shell involved).
+	// EnsureSessionFreshWithCommand should create a new session with the simple
+	// command as the initial pane process.
 	if err := tm.EnsureSessionFreshWithCommand(sessionName, "", "sleep 10"); err != nil {
 		t.Fatalf("EnsureSessionFreshWithCommand: %v", err)
 	}
@@ -299,14 +299,8 @@ func TestEnsureSessionFreshWithCommand_NoExisting(t *testing.T) {
 		t.Error("expected session to exist")
 	}
 
-	// Verify the command is running (not a shell)
-	cmd, err := tm.GetPaneCommand(sessionName)
-	if err != nil {
-		t.Fatalf("GetPaneCommand: %v", err)
-	}
-	if cmd != "sleep" {
-		t.Logf("pane command = %q (expected 'sleep')", cmd)
-	}
+	// Verify the command is running (not a shell).
+	waitForPaneCommand(t, tm, sessionName, "sleep")
 }
 
 func TestEnsureSessionFreshWithCommand_KillsZombie(t *testing.T) {
@@ -341,14 +335,8 @@ func TestEnsureSessionFreshWithCommand_KillsZombie(t *testing.T) {
 		t.Error("expected session to exist after replacing zombie")
 	}
 
-	// The command should be sleep, not a shell
-	cmd, err := tm.GetPaneCommand(sessionName)
-	if err != nil {
-		t.Fatalf("GetPaneCommand: %v", err)
-	}
-	if cmd != "sleep" {
-		t.Logf("pane command = %q (expected 'sleep' after zombie replacement)", cmd)
-	}
+	// The command should be sleep, not a shell.
+	waitForPaneCommand(t, tm, sessionName, "sleep")
 }
 
 func TestIsAgentRunning(t *testing.T) {
@@ -566,6 +554,51 @@ func TestIsRuntimeRunning_ShellWithNodeChild(t *testing.T) {
 	})
 }
 
+func TestParseFirstPaneValue(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name        string
+		output      string
+		want        string
+		wantErrText string
+	}{
+		{
+			name:   "trailing empty higher index",
+			output: "3\tsleep\n4",
+			want:   "sleep",
+		},
+		{
+			name:        "separatorless lowest index is empty",
+			output:      "4\tsh\n3",
+			wantErrText: "empty first-pane value",
+		},
+		{
+			name:        "malformed separatorless index",
+			output:      "3\tsleep\nnot-an-index",
+			wantErrText: "invalid pane index",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := parseFirstPaneValue("test-session", tt.output)
+			if tt.wantErrText != "" {
+				if err == nil || !strings.Contains(err.Error(), tt.wantErrText) {
+					t.Fatalf("parseFirstPaneValue(%q) error = %v, want containing %q", tt.output, err, tt.wantErrText)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("parseFirstPaneValue(%q): %v", tt.output, err)
+			}
+			if got != tt.want {
+				t.Fatalf("parseFirstPaneValue(%q) = %q, want %q", tt.output, got, tt.want)
+			}
+		})
+	}
+}
+
 // TestGetPaneCommand_MultiPane verifies that the first-pane accessors keep
 // returning the agent pane when a split pane exists and is active. This is the
 // core fix for gs-2v7: without explicit first-pane targeting, health checks
@@ -583,15 +616,16 @@ func TestGetPaneCommand_MultiPane(t *testing.T) {
 	}
 
 	// Create a session running sleep (simulates an agent process in its first
-	// pane) with nondefault indexes to prevent hardcoded :0.0 targeting.
-	if err := tm.NewSessionWithCommand(sessionName, "", "exec sleep 300"); err != nil {
-		t.Fatalf("NewSessionWithCommand: %v", err)
+	// pane) with nondefault indexes to prevent hardcoded :0.0 targeting. Create
+	// the fixture directly so this pane-selection test does not depend on the
+	// production two-step shell/respawn startup path under race instrumentation.
+	if _, err := tm.run("new-session", "-d", "-s", sessionName, "exec sleep 300"); err != nil {
+		t.Fatalf("create direct tmux session: %v", err)
 	}
 	defer func() { _ = tm.KillSession(sessionName) }()
 
-	// respawn-pane may return before the requested process replaces tmux's
-	// bootstrap shell on a loaded runner. Make that fixture precondition explicit
-	// before exercising pane selection after a split.
+	// Make the exact process fixture precondition explicit before exercising
+	// pane selection after a split.
 	waitForPaneCommand(t, tm, sessionName, "sleep")
 
 	// Capture the first pane's identity before the split.
@@ -656,6 +690,21 @@ func TestGetPaneCommand_MultiPane(t *testing.T) {
 	}
 	if wd != wdBefore {
 		t.Errorf("GetPaneWorkDir changed after split: before=%s, after=%s", wdBefore, wd)
+	}
+}
+
+func TestParseFirstPaneValue_TrailingEmptyPane(t *testing.T) {
+	for _, output := range []string{
+		"3\tsleep\n4\t\n",
+		"3\tsleep\n4\n",
+	} {
+		got, err := parseFirstPaneValue("test-session", output)
+		if err != nil {
+			t.Fatalf("parseFirstPaneValue(%q): %v", output, err)
+		}
+		if got != "sleep" {
+			t.Fatalf("parseFirstPaneValue(%q) = %q, want sleep", output, got)
+		}
 	}
 }
 
