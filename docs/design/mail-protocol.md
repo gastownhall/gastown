@@ -313,7 +313,7 @@ re-sling a fresh assignment.
                               │                          │
                               │                    (conflict detected)
                               │                          │
-                               │ REWORK_REQUEST (legacy)  │
+                              │ REWORK_REQUEST (legacy)  │
    ┌──────────────────────────│<─────────────────────────│
    │                          │                          │
    │ (legacy rework request)  │                          │
