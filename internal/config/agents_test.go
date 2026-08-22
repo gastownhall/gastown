@@ -1443,9 +1443,6 @@ func TestCodexRuntimeConfigHasPromptDetection(t *testing.T) {
 	if !strings.Contains(args, "--dangerously-bypass-approvals-and-sandbox") {
 		t.Errorf("RuntimeConfigFromPreset(codex).Args = %v, want bypass flag", rc.Args)
 	}
-	if !strings.Contains(args, "--skip-git-repo-check") {
-		t.Errorf("RuntimeConfigFromPreset(codex).Args = %v, want --skip-git-repo-check (GH#4670)", rc.Args)
-	}
 }
 
 func TestPiProviderDefaults(t *testing.T) {

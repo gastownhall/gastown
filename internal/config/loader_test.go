@@ -3781,9 +3781,6 @@ func TestFillRuntimeDefaultsCodexCustomArgsSuppressesUpdateCheck(t *testing.T) {
 	if strings.Count(args, "check_for_update_on_startup") != 1 {
 		t.Fatalf("codex update suppression duplicated: %v", rc.Args)
 	}
-	if !strings.Contains(args, "--skip-git-repo-check") {
-		t.Fatalf("codex custom args missing --skip-git-repo-check: %v", rc.Args)
-	}
 }
 
 func TestFillRuntimeDefaultsCodexDoesNotOverrideExplicitUpdateCheck(t *testing.T) {

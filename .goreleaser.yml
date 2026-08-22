@@ -4,11 +4,18 @@
 version: 2
 
 builds:
+  # gtf-zty: CGO_ENABLED=1 linked the release against the ICU that Dolt's
+  # indirect deps (dolthub/go-icu-regex, dolthub/gozstd) pull in, baking the
+  # build host's soname into the artifact. The published binary therefore
+  # demanded libicui18n.so.74 and could not start on any distro shipping a
+  # different ICU (Arch/CachyOS carry 69/76/78), which forced local builds.
+  # gastown has no `import "C"` of its own, so the pure-Go build is complete
+  # and portable - the same choice gt-freebsd-amd64 already makes below.
   - id: gt-linux-amd64
     main: ./cmd/gt
     binary: gt
     env:
-      - CGO_ENABLED=1
+      - CGO_ENABLED=0
     goos:
       - linux
     goarch:

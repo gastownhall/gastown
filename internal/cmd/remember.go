@@ -92,7 +92,11 @@ func runRemember(cmd *cobra.Command, args []string) error {
 	// Sanitize key: lowercase, hyphens instead of spaces, strip dots
 	key = sanitizeKey(key)
 
-	fullKey := memoryKeyPrefix + memType + "." + key
+	bdKey := key
+	if memType != "general" {
+		bdKey = memType + "." + key
+	}
+	fullKey := memoryKeyPrefix + bdKey
 
 	// Check if key already exists
 	existing, _ := bdKvGet(fullKey)
@@ -101,7 +105,7 @@ func runRemember(cmd *cobra.Command, args []string) error {
 		verb = "Updated"
 	}
 
-	if err := bdKvSet(fullKey, content); err != nil {
+	if err := bdRemember(content, bdKey); err != nil {
 		return fmt.Errorf("storing memory: %w", err)
 	}
 
@@ -212,6 +216,24 @@ func bdKvGet(key string) (string, error) {
 // bdKvClear calls bd kv clear <key>.
 func bdKvClear(key string) error {
 	cmd := exec.Command("bd", "kv", "clear", key)
+	cmd.Stderr = os.Stderr
+	return cmd.Run()
+}
+
+// bdRemember delegates to bd remember, which handles the reserved "memory."
+// prefix internally. The key passed here is the suffix after "memory."
+// (e.g., "feedback.my-key" or "my-key").
+func bdRemember(content, key string) error {
+	cmd := exec.Command("bd", "remember", content, "--key", key)
+	cmd.Stderr = os.Stderr
+	return cmd.Run()
+}
+
+// bdForget delegates to bd forget, which handles the reserved "memory."
+// prefix internally. The key passed here is the suffix after "memory."
+// (e.g., "feedback.my-key" or "my-key").
+func bdForget(key string) error {
+	cmd := exec.Command("bd", "forget", key)
 	cmd.Stderr = os.Stderr
 	return cmd.Run()
 }

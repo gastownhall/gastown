@@ -22,11 +22,4 @@ func TestGH4670_CodexStartupCommandIncludesGitRepoCheckBypass(t *testing.T) {
 	if !strings.Contains(cmd, "--dangerously-bypass-approvals-and-sandbox") {
 		t.Fatalf("expected yolo flag in startup command, got %q", cmd)
 	}
-
-	// Interactive `codex` (not `codex exec`) still refuses untrusted /
-	// non-git directories unless this flag is present. Fresh sandboxes
-	// happen to be valid trusted worktrees; pre-existing ones often are not.
-	if !strings.Contains(cmd, "--skip-git-repo-check") {
-		t.Fatalf("codex startup command missing --skip-git-repo-check (GH#4670): %q", cmd)
-	}
 }

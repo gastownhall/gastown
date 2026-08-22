@@ -1042,7 +1042,6 @@ func normalizeRuntimeConfig(rc *RuntimeConfig) *RuntimeConfig {
 
 const codexUpdateCheckKey = "check_for_update_on_startup"
 const codexUpdateCheckConfig = codexUpdateCheckKey + "=false"
-const codexSkipGitRepoCheckFlag = "--skip-git-repo-check"
 
 func ensureCodexAutomationArgs(command string, args []string) []string {
 	if !isCodexRuntime(command) {
@@ -1052,11 +1051,6 @@ func ensureCodexAutomationArgs(command string, args []string) []string {
 	if !hasCodexUpdateCheckConfig(result) {
 		prefixed := make([]string, 0, len(result)+2)
 		prefixed = append(prefixed, "-c", codexUpdateCheckConfig)
-		result = append(prefixed, result...)
-	}
-	if !hasCodexFlag(result, codexSkipGitRepoCheckFlag) {
-		prefixed := make([]string, 0, len(result)+1)
-		prefixed = append(prefixed, codexSkipGitRepoCheckFlag)
 		result = append(prefixed, result...)
 	}
 	return result
@@ -1069,15 +1063,6 @@ func isCodexRuntime(command string) bool {
 func hasCodexUpdateCheckConfig(args []string) bool {
 	for _, arg := range args {
 		if arg == codexUpdateCheckKey || strings.HasPrefix(arg, codexUpdateCheckKey+"=") {
-			return true
-		}
-	}
-	return false
-}
-
-func hasCodexFlag(args []string, flag string) bool {
-	for _, arg := range args {
-		if arg == flag {
 			return true
 		}
 	}
