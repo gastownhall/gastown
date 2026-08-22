@@ -142,6 +142,10 @@ func (h *APIHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.handleReady(w, r)
 	case path == "/events" && r.Method == http.MethodGet:
 		h.handleSSE(w, r)
+	case path == "/ws" && r.Method == http.MethodGet:
+		GetHub().ServeWS(w, r)
+	case path == "/estop" && r.Method == http.MethodPost:
+		h.handleEstop(w, r)
 	case path == "/session/preview" && r.Method == http.MethodGet:
 		h.handleSessionPreview(w, r)
 	default:
@@ -2084,6 +2088,35 @@ func (h *APIHandler) handleReady(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(resp)
+}
+
+// handleEstop triggers an emergency stop via gt estop.
+func (h *APIHandler) handleEstop(w http.ResponseWriter, r *http.Request) {
+	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
+	defer cancel()
+
+	output, err := h.runGtCommand(ctx, 25*time.Second, []string{"estop"})
+
+	resp := EstopResponse{
+		Success: err == nil,
+		Output:  output,
+		Exempt:  []string{"overseer", "mayor", "deacon"},
+	}
+
+	if err != nil {
+		resp.Error = err.Error()
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(resp)
+}
+
+// EstopResponse is the response for /api/estop.
+type EstopResponse struct {
+	Success bool     `json:"success"`
+	Output  string   `json:"output"`
+	Error   string   `json:"error,omitempty"`
+	Exempt  []string `json:"exempt"`
 }
 
 // SessionPreviewResponse is the response for /api/session/preview.

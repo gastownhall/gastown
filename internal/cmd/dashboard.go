@@ -90,6 +90,10 @@ func runDashboard(cmd *cobra.Command, args []string) error {
 			fmt.Fprintf(cmd.ErrOrStderr(), "warning: loading town settings: %v (using defaults)\n", loadErr)
 		}
 
+		// Drain the cross-process notification spool so CLI-originated mail
+		// and escalations reach WebSocket clients (tmux-less operation).
+		web.StartSpoolDrainer(townRoot)
+
 		handler, err = web.NewDashboardMux(fetcher, webCfg)
 		if err != nil {
 			return fmt.Errorf("creating dashboard handler: %w", err)

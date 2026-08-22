@@ -4,13 +4,16 @@
 version: 2
 
 builds:
-  # gtf-zty: CGO_ENABLED=1 linked the release against the ICU that Dolt's
-  # indirect deps (dolthub/go-icu-regex, dolthub/gozstd) pull in, baking the
-  # build host's soname into the artifact. The published binary therefore
-  # demanded libicui18n.so.74 and could not start on any distro shipping a
-  # different ICU (Arch/CachyOS carry 69/76/78), which forced local builds.
-  # gastown has no `import "C"` of its own, so the pure-Go build is complete
-  # and portable - the same choice gt-freebsd-amd64 already makes below.
+  # Why: CGO_ENABLED=1 linked libicui18n dynamically against the build runner's
+  # ICU (Ubuntu ships 74). Any host with a different ICU major - Arch ships 76 -
+  # could not execute the published binary at all:
+  #   "libicui18n.so.74: cannot open shared object file".
+  # A distributed binary must not inherit the builder's shared-library ABI.
+  # CGO_ENABLED=0 produces a static executable that runs on every glibc/musl
+  # host, which is what a release artifact consumed via mise must guarantee.
+  # The ICU dependency arrives through Dolt's indirect deps (dolthub/go-icu-regex,
+  # dolthub/gozstd); gastown declares no `import "C"` of its own, so the pure-Go
+  # build is complete - the same choice gt-freebsd-amd64 already makes below.
   - id: gt-linux-amd64
     main: ./cmd/gt
     binary: gt

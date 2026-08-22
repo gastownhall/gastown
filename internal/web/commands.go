@@ -61,7 +61,7 @@ var AllowedCommands = map[string]CommandMeta{
 
 	// Escalation actions
 	"escalate ack":      {Confirm: true, Desc: "Acknowledge escalation", Category: "Escalations", Args: "<escalation-id>", ArgType: "escalations"},
-	"escalate resolve":  {Confirm: true, Desc: "Resolve escalation", Category: "Escalations", Args: "<escalation-id>", ArgType: "escalations"},
+	"escalate close":    {Confirm: true, Desc: "Close escalation", Category: "Escalations", Args: "<escalation-id>", ArgType: "escalations"},
 	"escalate reassign": {Confirm: true, Desc: "Reassign escalation", Category: "Escalations", Args: "<escalation-id> <agent>", ArgType: "escalations"},
 
 	// Convoy actions
