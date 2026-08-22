@@ -1,6 +1,7 @@
 package beads
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -8,6 +9,8 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+
+	beadsdk "github.com/steveyegge/beads"
 )
 
 func installMockBDFixedShowOutput(t *testing.T, showOutput string) {
@@ -547,8 +550,56 @@ func TestCreateAgentBead_UsesTownRootForCrossRigRoutes(t *testing.T) {
 	if !strings.Contains(logOutput, "create --json --id=pt-imported-polecat-shiny") {
 		t.Fatalf("mock bd log missing create call:\n%s", logOutput)
 	}
+	if !strings.Contains(logOutput, "--type="+AgentIssueType) || !strings.Contains(logOutput, "--labels="+AgentLabel) {
+		t.Fatalf("create did not use canonical agent identity:\n%s", logOutput)
+	}
+	if strings.Contains(logOutput, "--type="+LegacyAgentIssueType) {
+		t.Fatalf("create used legacy agent type:\n%s", logOutput)
+	}
 	// Note: hook_bead slot is no longer set — bd slot removed in v0.62 (hq-l6mm5).
 	// Work bead status=hooked and assignee=<agent> is now the authoritative source.
+}
+
+func TestEnsureCanonicalAgentBeadPreservesRecord(t *testing.T) {
+	store := newMockStorage()
+	b := newTestBeads(store)
+
+	store.CreateIssue(context.Background(), &beadsdk.Issue{
+		Title:       "Witness",
+		Description: "role_type: witness\nrig: gastown\nagent_state: working",
+		IssueType:   beadsdk.TypeTask,
+		Priority:    1,
+		Assignee:    "gastown/witness",
+	}, "creator")
+	store.issues["test-1"].Status = beadsdk.StatusInProgress
+	store.labels["test-1"] = []string{AgentLabel, "idle:4", "safety_stop:hq-guard"}
+
+	before, err := b.Show("test-1")
+	if err != nil {
+		t.Fatalf("Show before migration: %v", err)
+	}
+	changed, err := b.EnsureCanonicalAgentBead(before)
+	if err != nil {
+		t.Fatalf("EnsureCanonicalAgentBead: %v", err)
+	}
+	if !changed {
+		t.Fatal("expected legacy record to be migrated")
+	}
+
+	after, err := b.Show("test-1")
+	if err != nil {
+		t.Fatalf("Show after migration: %v", err)
+	}
+	if !IsCanonicalAgentBead(after) {
+		t.Fatalf("migrated record is not canonical: %#v", after)
+	}
+	if after.Title != before.Title || after.Description != before.Description || after.Status != before.Status ||
+		after.Priority != before.Priority || after.Assignee != before.Assignee {
+		t.Fatalf("migration changed record fields: before=%#v after=%#v", before, after)
+	}
+	if strings.Join(after.Labels, ",") != strings.Join(before.Labels, ",") {
+		t.Fatalf("migration changed labels: before=%v after=%v", before.Labels, after.Labels)
+	}
 }
 
 func TestCreateAgentBead_ParsesMockCreateOutput(t *testing.T) {

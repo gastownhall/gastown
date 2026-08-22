@@ -52,3 +52,42 @@ func resolveAgentTrackingBeadsDir() (string, error) {
 	}
 	return beadsDir, nil
 }
+
+// resolveAgentTrackingBeadsDirForID locates an agent identity across its
+// registered rig ledger and the town ledger, preferring the rig record. State
+// and await commands use the returned source so a resolver result remains
+// writable regardless of which ledger currently owns the identity.
+func resolveAgentTrackingBeadsDirForID(agentBead string) (string, error) {
+	currentBeadsDir, err := resolveAgentTrackingBeadsDir()
+	if err != nil {
+		return "", err
+	}
+	cwd, err := os.Getwd()
+	if err != nil {
+		return "", err
+	}
+
+	rigName := ""
+	if parsedRig, _, _, ok := beads.ParseAgentBeadID(agentBead); ok {
+		rigName = parsedRig
+	}
+	candidates, err := findAgentBeadCandidates(cwd, currentBeadsDir, rigName)
+	if err != nil {
+		return "", err
+	}
+
+	matches := make([]agentBeadCandidate, 0, 1)
+	for _, candidate := range candidates {
+		if candidate.ID == agentBead {
+			matches = append(matches, candidate)
+		}
+	}
+	match, err := pickBestAgentBead(matches)
+	if err != nil {
+		return "", err
+	}
+	if match == nil {
+		return "", fmt.Errorf("agent bead not found in rig or town ledgers: %s", agentBead)
+	}
+	return match.BeadsDir, nil
+}

@@ -34,6 +34,22 @@ Project chain for implementation work:
 Agent beads track lifecycle state for each agent. Storage location depends on
 the agent's scope.
 
+Every durable agent identity uses `issue_type=agent` together with the
+`gt:agent` label. The only supported migration form is the former
+`issue_type=task` plus `gt:agent` representation; `gt doctor --fix` updates that
+record in place so its lifecycle fields, labels, and history remain attached to
+the same identity.
+
+For rig-scoped roles, resolution checks the registered rig ledger first and the
+town ledger second. The town lookup is a compatibility boundary for identities
+created there by older releases. State and patrol-await commands write back to
+the ledger that supplied the winning identity rather than assuming the caller's
+current ledger.
+
+Within the same ledger and storage class, a record whose structured `role_type`
+and `rig` fields match outranks an ID-only compatibility match. Equal-confidence
+duplicates remain an error so ambiguous lifecycle state cannot be mutated.
+
 | Agent Type | Scope | Bead Location | Bead ID Format |
 |------------|-------|---------------|----------------|
 | Mayor | Town | `~/gt/.beads/` | `hq-mayor` |

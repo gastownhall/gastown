@@ -84,7 +84,7 @@ func TestSetCycleBindings_RefreshesStalePattern(t *testing.T) {
 
 	// Verify the binding was updated with the current pattern
 	currentPattern := sessionPrefixPattern()
-	output, err := tm.run("list-keys", "-T", "prefix", "n")
+	output, err := tm.rawKeyBinding("prefix", "n")
 	if err != nil {
 		t.Fatalf("listing keys: %v", err)
 	}

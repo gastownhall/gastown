@@ -2356,6 +2356,8 @@ func TestIsDoltRetryableError_CatalogRace(t *testing.T) {
 }
 
 func TestWaitForCatalog_NoServer(t *testing.T) {
+	t.Setenv("GT_DOLT_PORT", "")
+
 	// When no Dolt server is reachable, waitForCatalog should fail.
 	// Use port 13399 (unlikely to be in use) to ensure no server responds.
 	townRoot := t.TempDir()
@@ -2912,6 +2914,8 @@ func TestFindBrokenWorkspaces_SqliteNotBroken(t *testing.T) {
 }
 
 func TestFindBrokenWorkspaces_MultipleRigs(t *testing.T) {
+	t.Setenv("GT_DOLT_PORT", "")
+
 	townRoot := t.TempDir()
 
 	// Isolate from real Dolt server on default port

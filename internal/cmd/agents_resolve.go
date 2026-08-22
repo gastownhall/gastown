@@ -48,11 +48,12 @@ const (
 )
 
 type agentBeadCandidate struct {
-	ID       string
-	Source   agentBeadSource
-	BeadsDir string
-	Status   string
-	Issue    *beads.Issue
+	ID           string
+	Source       agentBeadSource
+	BeadsDir     string
+	Status       string
+	Issue        *beads.Issue
+	IdentityRank int
 }
 
 type agentsResolveResult struct {
@@ -78,14 +79,15 @@ func runAgentsResolve(cmd *cobra.Command, _ []string) error {
 		return err
 	}
 
-	candidates, err := findAgentBeadCandidates(cwd, currentBeadsDir)
+	candidates, err := findAgentBeadCandidates(cwd, currentBeadsDir, rig)
 	if err != nil {
 		return err
 	}
 
 	var matches []agentBeadCandidate
 	for _, candidate := range candidates {
-		if agentBeadMatches(candidate.Issue, role, rig) {
+		if identityRank, ok := agentBeadMatchRank(candidate.Issue, role, rig); ok {
+			candidate.IdentityRank = identityRank
 			matches = append(matches, candidate)
 		}
 	}
@@ -108,10 +110,6 @@ func runAgentsResolve(cmd *cobra.Command, _ []string) error {
 		}
 		return fmt.Errorf("%s", message)
 	}
-	if rig != "" && agentBeadSourceIsTown(match.Source) && !agentsResolveJSON {
-		return fmt.Errorf("agent bead %s was found only in %s; patrol await/state commands require a rig-local agent bead", match.ID, match.Source)
-	}
-
 	if agentsResolveJSON {
 		return json.NewEncoder(cmd.OutOrStdout()).Encode(agentsResolveResult{
 			ID:       match.ID,
@@ -125,21 +123,31 @@ func runAgentsResolve(cmd *cobra.Command, _ []string) error {
 	return nil
 }
 
-func findAgentBeadCandidates(cwd, currentBeadsDir string) ([]agentBeadCandidate, error) {
+func findAgentBeadCandidates(cwd, currentBeadsDir, requestedRig string) ([]agentBeadCandidate, error) {
 	var candidates []agentBeadCandidate
+	townRoot := beads.FindTownRoot(cwd)
 
-	rigCandidates, err := loadAgentBeadsFromDir(currentBeadsDir, agentSourceRigIssues, agentSourceRigWisps)
+	// --rig selects the registered rig's ledger, not merely a filter over the
+	// caller's current ledger. This lets town-level patrol launchers resolve a
+	// Witness or Refinery identity stored in any registered rig.
+	rigBeadsDir := currentBeadsDir
+	if requestedRig != "" && townRoot != "" {
+		if resolved, ok := beads.ResolveRepoAliasBeadsDir(townRoot, requestedRig); ok {
+			rigBeadsDir = resolved
+		}
+	}
+
+	rigCandidates, err := loadAgentBeadsFromDir(rigBeadsDir, agentSourceRigIssues, agentSourceRigWisps)
 	if err != nil {
 		return nil, err
 	}
 	candidates = append(candidates, rigCandidates...)
 
-	townRoot := beads.FindTownRoot(cwd)
 	if townRoot == "" {
 		return candidates, nil
 	}
 	townBeadsDir := beads.ResolveBeadsDir(beads.GetTownBeadsPath(townRoot))
-	if townBeadsDir == "" || filepath.Clean(townBeadsDir) == filepath.Clean(currentBeadsDir) {
+	if townBeadsDir == "" || filepath.Clean(townBeadsDir) == filepath.Clean(rigBeadsDir) {
 		return candidates, nil
 	}
 
@@ -155,7 +163,7 @@ func loadAgentBeadsFromDir(beadsDir string, issueSource, wispSource agentBeadSou
 	db := beads.NewWithBeadsDir(filepath.Dir(beadsDir), beadsDir)
 	var candidates []agentBeadCandidate
 
-	issues, err := listAgentIssues(db)
+	issues, err := db.ListAgentBeadsFromIssues()
 	if err != nil {
 		return nil, fmt.Errorf("listing agent issues in %s: %w", beadsDir, err)
 	}
@@ -169,57 +177,48 @@ func loadAgentBeadsFromDir(beadsDir string, issueSource, wispSource agentBeadSou
 		})
 	}
 
-	if wisps, err := db.List(beads.ListOptions{Ephemeral: true, Label: "gt:agent", Status: "all"}); err == nil {
-		for _, wisp := range wisps {
-			candidates = append(candidates, agentBeadCandidate{
-				ID:       wisp.ID,
-				Source:   wispSource,
-				BeadsDir: beadsDir,
-				Status:   wisp.Status,
-				Issue:    wisp,
-			})
-		}
+	wisps, err := db.ListAgentBeadsFromWisps()
+	if err != nil {
+		return nil, fmt.Errorf("listing agent wisps in %s: %w", beadsDir, err)
+	}
+	for _, wisp := range wisps {
+		candidates = append(candidates, agentBeadCandidate{
+			ID:       wisp.ID,
+			Source:   wispSource,
+			BeadsDir: beadsDir,
+			Status:   wisp.Status,
+			Issue:    wisp,
+		})
 	}
 
 	return candidates, nil
 }
 
-func listAgentIssues(db *beads.Beads) ([]*beads.Issue, error) {
-	out, err := db.Run("list", "--label=gt:agent", "--include-infra", "--status=all", "--json", "--flat", "--no-pager", "--limit=0")
-	if err != nil {
-		return nil, err
-	}
-	if len(out) == 0 || !json.Valid(out) {
-		return nil, nil
-	}
-
-	var issues []*beads.Issue
-	if err := json.Unmarshal(out, &issues); err != nil {
-		return nil, fmt.Errorf("parsing bd list output: %w", err)
-	}
-	return issues, nil
+func agentBeadMatches(issue *beads.Issue, role, rig string) bool {
+	_, ok := agentBeadMatchRank(issue, role, rig)
+	return ok
 }
 
-func agentBeadMatches(issue *beads.Issue, role, rig string) bool {
+func agentBeadMatchRank(issue *beads.Issue, role, rig string) (int, bool) {
 	if issue == nil {
-		return false
+		return 0, false
 	}
 
 	fields := beads.ParseAgentFields(issue.Description)
 	if fields.RoleType == role {
 		if rig == "" || fields.Rig == rig {
-			return true
+			return 0, true
 		}
 	}
 
 	idRig, idRole, _, ok := beads.ParseAgentBeadID(issue.ID)
 	if !ok || idRole != role {
-		return false
+		return 0, false
 	}
 	if rig == "" {
-		return idRig == ""
+		return 1, idRig == ""
 	}
-	return idRig == rig
+	return 1, idRig == rig
 }
 
 func pickBestAgentBead(candidates []agentBeadCandidate) (*agentBeadCandidate, error) {
@@ -240,13 +239,17 @@ func pickBestAgentBead(candidates []agentBeadCandidate) (*agentBeadCandidate, er
 		if leftRank != rightRank {
 			return leftRank < rightRank
 		}
+		if open[i].IdentityRank != open[j].IdentityRank {
+			return open[i].IdentityRank < open[j].IdentityRank
+		}
 		return open[i].ID < open[j].ID
 	})
 
-	bestRank := agentBeadSourceRank(open[0].Source)
+	bestSourceRank := agentBeadSourceRank(open[0].Source)
+	bestIdentityRank := open[0].IdentityRank
 	var sameRank []string
 	for _, candidate := range open {
-		if agentBeadSourceRank(candidate.Source) != bestRank {
+		if agentBeadSourceRank(candidate.Source) != bestSourceRank || candidate.IdentityRank != bestIdentityRank {
 			break
 		}
 		sameRank = append(sameRank, candidate.ID)
@@ -271,8 +274,4 @@ func agentBeadSourceRank(source agentBeadSource) int {
 	default:
 		return 99
 	}
-}
-
-func agentBeadSourceIsTown(source agentBeadSource) bool {
-	return source == agentSourceTownWisps || source == agentSourceTownIssues
 }

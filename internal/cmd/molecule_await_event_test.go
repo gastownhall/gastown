@@ -582,9 +582,26 @@ func runAwaitEventBackoffTest(t *testing.T, labels []string, timeout, contextChe
 	if err != nil {
 		t.Fatalf("marshal labels: %v", err)
 	}
+	listJSON, err := json.Marshal([]map[string]any{{
+		"id":         "gt-agent",
+		"issue_type": "agent",
+		"status":     "open",
+		"labels":     labels,
+	}})
+	if err != nil {
+		t.Fatalf("marshal agent: %v", err)
+	}
 	script := fmt.Sprintf(`#!/bin/sh
 printf '%%s\n' "$*" >> %q
 case "$1" in
+list)
+cat <<'JSON'
+%s
+JSON
+;;
+mol)
+printf '{"wisps":[]}\n'
+;;
 show)
 cat <<'JSON'
 %s
@@ -597,7 +614,7 @@ exit 0
 exit 0
 ;;
 esac
-`, logPath, string(showJSON))
+`, logPath, string(listJSON), string(showJSON))
 	if err := os.WriteFile(filepath.Join(binDir, "bd"), []byte(script), 0755); err != nil {
 		t.Fatalf("write bd stub: %v", err)
 	}

@@ -93,6 +93,12 @@ func TestRunAgentStateUsesCwdRigBeadsDirWhenBeadsDirPointsTown(t *testing.T) {
 	bdScript := `#!/bin/sh
 printf 'cmd=%s BEADS_DIR=%s DB=%s READONLY=%s AUTO=%s\n' "$1" "${BEADS_DIR-}" "${BEADS_DOLT_SERVER_DATABASE-}" "${BD_READONLY-}" "${BD_DOLT_AUTO_COMMIT-}" >> "$BD_LOG"
 case "$1" in
+  list)
+    printf '[{"id":"gt-gastown-refinery","issue_type":"agent","status":"open","labels":["gt:agent","idle:2"],"description":"role_type: refinery\\nrig: gastown"}]\n'
+    ;;
+  mol)
+    printf '{"wisps":[]}\n'
+    ;;
   show)
     printf '[{"labels":["gt:agent","idle:2"]}]\n'
     ;;
@@ -172,5 +178,64 @@ esac
 				t.Fatalf("bd mutation was not mutation pinned: %s\nfull log:\n%s", line, log)
 			}
 		}
+	}
+}
+
+func TestRunAgentStatePersistsTwoCyclesInTownFallbackLedger(t *testing.T) {
+	townRoot, rigBeads := setupAgentLedgerTown(t, "ccs", "ccs")
+	townBeads := filepath.Join(townRoot, ".beads")
+	currentWorkDir := filepath.Join(townRoot, "other", "refinery", "rig")
+	currentBeads := filepath.Join(currentWorkDir, ".beads")
+	if err := os.MkdirAll(currentBeads, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	logPath := installAgentLedgerBD(t)
+	t.Setenv("TEST_RIG_BEADS", rigBeads)
+	t.Setenv("TEST_TOWN_BEADS", townBeads)
+	t.Setenv("TEST_RIG_LIST", `[]`)
+	townRecord := `[{"id":"ccs-witness","issue_type":"agent","labels":["gt:agent","idle:0"],"status":"open","description":"role_type: witness\nrig: ccs"}]`
+	t.Setenv("TEST_TOWN_LIST", townRecord)
+	t.Setenv("TEST_TOWN_SHOW", townRecord)
+
+	oldWd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = os.Chdir(oldWd) }()
+	if err := os.Chdir(currentWorkDir); err != nil {
+		t.Fatal(err)
+	}
+
+	oldSet, oldIncr, oldDel, oldJSON := agentStateSet, agentStateIncr, agentStateDel, agentStateJSON
+	t.Cleanup(func() {
+		agentStateSet, agentStateIncr, agentStateDel, agentStateJSON = oldSet, oldIncr, oldDel, oldJSON
+	})
+	agentStateIncr, agentStateDel, agentStateJSON = "", nil, false
+	for _, cycle := range []string{"1", "2"} {
+		agentStateSet = []string{"idle=" + cycle}
+		if err := runAgentState(nil, []string{"ccs-witness"}); err != nil {
+			t.Fatalf("runAgentState cycle %s: %v", cycle, err)
+		}
+	}
+
+	data, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	updates := 0
+	for _, line := range strings.Split(string(data), "\n") {
+		if !strings.Contains(line, "cmd=update") {
+			continue
+		}
+		updates++
+		if !strings.Contains(line, "BEADS_DIR="+townBeads) {
+			t.Fatalf("state update escaped town source ledger: %s", line)
+		}
+	}
+	if updates != 2 {
+		t.Fatalf("town state updates = %d, want 2; log:\n%s", updates, data)
+	}
+	if strings.Contains(string(data), "cmd=create") {
+		t.Fatalf("state persistence created a patrol/identity wisp:\n%s", data)
 	}
 }

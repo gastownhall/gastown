@@ -316,7 +316,9 @@ add_polecat_in_rig() {
 }
 
 run_script() {
-  bash "$SCRIPT" > "$TEST_STATE/output.log" 2>&1
+	# Keep non-interactive shell startup hooks from rewriting PATH ahead of the
+	# fixture bin directory and silently invoking the live gt/tmux/bd commands.
+	env -u BASH_ENV bash "$SCRIPT" > "$TEST_STATE/output.log" 2>&1
 }
 
 test_healthy_runtime() {
