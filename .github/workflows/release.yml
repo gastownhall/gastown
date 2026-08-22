@@ -64,11 +64,12 @@ jobs:
       - uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6
         with:
           go-version: '1.26'
-      - name: Install ICU4C
-        run: sudo apt-get update && sudo apt-get install -y libicu-dev
+      # Why: see .goreleaser.yml - a CGO build linked libicui18n against the
+      # runner's ICU major, so the published artifact failed to start on hosts
+      # with any other ICU. Static linking is required for a distributed binary.
       - name: Build, smoke and package Linux ARM64
         env:
-          CGO_ENABLED: '1'
+          CGO_ENABLED: '0'
           GOARCH: arm64
           GOOS: linux
         run: |

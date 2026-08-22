@@ -4,11 +4,18 @@
 version: 2
 
 builds:
+  # Why: CGO_ENABLED=1 linked libicui18n dynamically against the build runner's
+  # ICU (Ubuntu ships 74). Any host with a different ICU major - Arch ships 76 -
+  # could not execute the published binary at all:
+  #   "libicui18n.so.74: cannot open shared object file".
+  # A distributed binary must not inherit the builder's shared-library ABI.
+  # CGO_ENABLED=0 produces a static executable that runs on every glibc/musl
+  # host, which is what a release artifact consumed via mise must guarantee.
   - id: gt-linux-amd64
     main: ./cmd/gt
     binary: gt
     env:
-      - CGO_ENABLED=1
+      - CGO_ENABLED=0
     goos:
       - linux
     goarch:
