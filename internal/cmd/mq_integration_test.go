@@ -7,11 +7,43 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 
 	"github.com/steveyegge/gastown/internal/beads"
 )
+
+func TestMqIntegrationHelpUsesConfiguredBaseBranchTerminology(t *testing.T) {
+	mainWord := regexp.MustCompile(`\bmain\b`)
+	for name, text := range map[string]string{
+		"integration": mqIntegrationCmd.Long,
+		"create":      mqIntegrationCreateCmd.Long,
+		"land short":  mqIntegrationLandCmd.Short,
+		"land":        mqIntegrationLandCmd.Long,
+		"status":      mqIntegrationStatusCmd.Long,
+	} {
+		if mainWord.MatchString(text) {
+			t.Errorf("%s help hardcodes main instead of configured base terminology:\n%s", name, text)
+		}
+	}
+
+	baseFlag := mqIntegrationCreateCmd.Flags().Lookup("base-branch")
+	if baseFlag == nil {
+		t.Fatal("integration create command has no --base-branch flag")
+	}
+	if !strings.Contains(baseFlag.Usage, "rig default branch") {
+		t.Errorf("--base-branch help does not name the rig default branch: %q", baseFlag.Usage)
+	}
+
+	epicFlag := mqSubmitCmd.Flags().Lookup("epic")
+	if epicFlag == nil {
+		t.Fatal("mq submit command has no --epic flag")
+	}
+	if !strings.Contains(epicFlag.Usage, "rig default branch") {
+		t.Errorf("--epic help does not name the rig default branch: %q", epicFlag.Usage)
+	}
+}
 
 // TestLandConflictError_ErrorsAs verifies that callers (notably the refinery
 // formula's consolidation-failure-handler) can detect a consolidation merge

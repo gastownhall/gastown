@@ -2239,23 +2239,52 @@ func (t *Tmux) DismissStartupDialogsBlind(session string) error {
 	return nil
 }
 
-// GetPaneCommand returns the current command running in a pane.
-// Returns "bash", "zsh", "claude", "node", etc.
-func (t *Tmux) GetPaneCommand(session string) (string, error) {
-	// Use display-message targeting the first window explicitly (:^) to avoid
-	// returning the active pane's command when a non-agent window is focused.
-	// Agent processes always run in the first window; without explicit targeting,
-	// a user-created window or split pane (running a shell) could cause health
-	// checks to falsely report the agent as dead.
-	out, err := t.run("display-message", "-t", session+":^", "-p", "#{pane_current_command}")
+// firstPaneValue returns a format value from the lowest-index pane in a
+// session's first window. Querying the first window with :^ avoids assuming a
+// window base index, while selecting the lowest pane index avoids following the
+// active pane after a user creates or selects a split.
+func (t *Tmux) firstPaneValue(session, format string) (string, error) {
+	out, err := t.run("list-panes", "-t", session+":^", "-F", "#{pane_index}\t"+format)
 	if err != nil {
 		return "", err
 	}
-	result := strings.TrimSpace(out)
-	if result == "" {
-		return "", fmt.Errorf("empty command for session %s (session may not exist)", session)
+	out = strings.TrimSpace(out)
+	if out == "" {
+		return "", fmt.Errorf("no panes found in first window of session %s", session)
+	}
+
+	var (
+		firstIndex int
+		firstValue string
+		found      bool
+	)
+	for _, line := range strings.Split(out, "\n") {
+		indexText, value, ok := strings.Cut(line, "\t")
+		if !ok {
+			return "", fmt.Errorf("invalid pane data for session %s: %q", session, line)
+		}
+		index, err := strconv.Atoi(indexText)
+		if err != nil {
+			return "", fmt.Errorf("invalid pane index for session %s: %w", session, err)
+		}
+		if !found || index < firstIndex {
+			firstIndex = index
+			firstValue = value
+			found = true
+		}
+	}
+
+	result := strings.TrimSpace(firstValue)
+	if !found || result == "" {
+		return "", fmt.Errorf("empty first-pane value for session %s (session may not exist)", session)
 	}
 	return result, nil
+}
+
+// GetPaneCommand returns the current command running in the first pane of a
+// session's first window. Returns "bash", "zsh", "claude", "node", etc.
+func (t *Tmux) GetPaneCommand(session string) (string, error) {
+	return t.firstPaneValue(session, "#{pane_current_command}")
 }
 
 // FindAgentPane finds the pane running an agent process within a session.
@@ -2328,47 +2357,27 @@ func (t *Tmux) findAgentPaneByScan(session string) (string, error) {
 	return "", nil
 }
 
-// GetPaneID returns the pane identifier for a session's first pane.
-// Returns a pane ID like "%0" that can be used with RespawnPane.
-// Targets pane 0 explicitly to be consistent with GetPaneCommand,
-// GetPanePID, and GetPaneWorkDir.
+// GetPaneID returns the identifier of the lowest-index pane in a session's
+// first window. Returns a pane ID like "%0" that can be used with RespawnPane.
 func (t *Tmux) GetPaneID(session string) (string, error) {
-	out, err := t.run("display-message", "-t", session+":0.0", "-p", "#{pane_id}")
-	if err != nil {
-		return "", err
-	}
-	result := strings.TrimSpace(out)
-	if result == "" {
-		return "", fmt.Errorf("no panes found in session %s", session)
-	}
-	return result, nil
+	return t.firstPaneValue(session, "#{pane_id}")
 }
 
 // GetPaneWorkDir returns the current working directory of a pane.
-// Targets pane 0 explicitly to avoid returning the active pane's
-// working directory in multi-pane sessions.
+// Targets the lowest-index pane in the first window to avoid returning the
+// active split pane's working directory.
 func (t *Tmux) GetPaneWorkDir(session string) (string, error) {
-	out, err := t.run("display-message", "-t", session+":0.0", "-p", "#{pane_current_path}")
-	if err != nil {
-		return "", err
-	}
-	result := strings.TrimSpace(out)
-	if result == "" {
-		return "", fmt.Errorf("empty working directory for session %s (session may not exist)", session)
-	}
-	return result, nil
+	return t.firstPaneValue(session, "#{pane_current_path}")
 }
 
 // GetPanePID returns the PID of the pane's main process.
-// When target is a session name, explicitly targets the first window (:^) to avoid
-// returning the active pane's PID when a non-agent window is focused. When target is
-// a pane ID (e.g., "%5"), uses it directly.
+// When target is a session name, targets the lowest-index pane in the first
+// window. When target is a pane ID (e.g., "%5"), uses it directly.
 func (t *Tmux) GetPanePID(target string) (string, error) {
-	tmuxTarget := target
 	if !strings.HasPrefix(target, "%") {
-		tmuxTarget = target + ":^"
+		return t.firstPaneValue(target, "#{pane_pid}")
 	}
-	out, err := t.run("display-message", "-t", tmuxTarget, "-p", "#{pane_pid}")
+	out, err := t.run("display-message", "-t", target, "-p", "#{pane_pid}")
 	if err != nil {
 		return "", err
 	}

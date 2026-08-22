@@ -244,14 +244,14 @@ The slot:
                               ▼
 ┌─────────────────────────────────────────────────────────────┐
 │                   Refinery: merge queue                     │
-│  → Rebase and merge to target branch                       │
-│    (main or integration branch — see below)                │
+│  → Verify and merge to the configured target               │
+│    (project lane or epic integration branch — see below)   │
 │  → Close the issue                                         │
 │  → If conflict: create task for available polecat          │
 │                                                             │
 │  Integration branch path:                                  │
 │  → MRs from epic children merge to integration/<epic>      │
-│  → When all children closed: land to main as one commit    │
+│  → When all children closed: land to recorded base         │
 └─────────────────────────────────────────────────────────────┘
 ```
 
