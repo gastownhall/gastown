@@ -171,7 +171,7 @@ var mqPostMergeSkipBranchDelete bool
 var mqPostMergeCmd = &cobra.Command{
 	Use:   "post-merge <rig> <mr-id>",
 	Short: "Run post-merge cleanup (close MR, delete branch)",
-Long: `Perform post-merge cleanup after a successful merge.
+	Long: `Perform post-merge cleanup after a successful merge.
 
 This command consolidates post-merge steps into a single atomic operation:
 	 1. Verify the target branch contains the submitted source head

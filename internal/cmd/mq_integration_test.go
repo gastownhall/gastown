@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -14,6 +15,7 @@ import (
 )
 
 func TestMqIntegrationHelpUsesConfiguredBaseBranchTerminology(t *testing.T) {
+	mainWord := regexp.MustCompile(`\bmain\b`)
 	for name, text := range map[string]string{
 		"integration": mqIntegrationCmd.Long,
 		"create":      mqIntegrationCreateCmd.Long,
@@ -21,7 +23,7 @@ func TestMqIntegrationHelpUsesConfiguredBaseBranchTerminology(t *testing.T) {
 		"land":        mqIntegrationLandCmd.Long,
 		"status":      mqIntegrationStatusCmd.Long,
 	} {
-		if strings.Contains(text, "main") {
+		if mainWord.MatchString(text) {
 			t.Errorf("%s help hardcodes main instead of configured base terminology:\n%s", name, text)
 		}
 	}

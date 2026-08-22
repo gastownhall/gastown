@@ -609,7 +609,7 @@ func TestGetPaneCommand_MultiPane(t *testing.T) {
 	}
 
 	// Split the window, then explicitly activate the new shell pane. The -d flag
-	// keeps pane 0 active while tmux creates the split, so selecting the returned
+	// keeps the first pane active while tmux creates the split, so selecting the returned
 	// pane ID makes the multi-pane targeting scenario deterministic.
 	splitDir := t.TempDir()
 	splitPane, err := tm.run("split-window", "-t", sessionName, "-d", "-c", splitDir, "-P", "-F", "#{pane_id}")

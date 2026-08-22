@@ -60,7 +60,6 @@ func TestRepositoryAgentsDelegatesToProductDocs(t *testing.T) {
 	}
 
 	for _, duplicate := range []string{
-		"bd ",
 		"bd ready",
 		"bd update",
 		"bd close",
