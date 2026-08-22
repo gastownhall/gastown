@@ -101,18 +101,18 @@ jobs:
         with:
           go-version: '1.26'
           cache: false
-      - uses: msys2/setup-msys2@cafece8e6baf9247cf9b1bf95097b0b983cc558d # v2.31.0
-        with:
-          path-type: inherit
-          msystem: UCRT64
-          pacboy: icu:p toolchain:p pkg-config:p
+      # Why: see .goreleaser.yml - a CGO build binds the runner's ICU into the
+      # artifact. The Windows job did the same through msys2's icu package, so
+      # the published gt.exe carried a UCRT64 ICU dependency the user's machine
+      # has no reason to provide. CGO_ENABLED=0 removes the msys2 toolchain from
+      # the release path entirely.
       - name: Build Windows AMD64
-        shell: msys2 {0}
+        shell: bash
         run: |
           set -euo pipefail
           version="${GITHUB_REF_NAME#v}"
           ldflags="-s -w -X github.com/steveyegge/gastown/internal/cmd.Version=${version} -X github.com/steveyegge/gastown/internal/cmd.Build=$(git rev-parse --short HEAD) -X github.com/steveyegge/gastown/internal/cmd.Commit=$(git rev-parse HEAD) -X github.com/steveyegge/gastown/internal/cmd.Branch=$(git branch --show-current)"
-          CGO_ENABLED=1 GOOS=windows GOARCH=amd64 go build -buildmode=exe -ldflags "${ldflags}" -o gt.exe ./cmd/gt
+          CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -buildmode=exe -ldflags "${ldflags}" -o gt.exe ./cmd/gt
           ./gt.exe version
       - name: Package Windows AMD64
         shell: pwsh
@@ -150,19 +150,18 @@ jobs:
       - uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6
         with:
           go-version: '1.26'
-      - name: Install ICU4C
-        run: brew install icu4c
+      # Why: see .goreleaser.yml - brew's icu4c is keg-only and versioned, so a
+      # CGO build pinned the runner's ICU major into the artifact and the
+      # published binary broke on any Mac without that exact keg. A pure-Go
+      # build needs no ICU at all, so the brew step is gone with it.
       - name: Build, smoke and package macOS
         env:
-          CGO_ENABLED: '1'
+          CGO_ENABLED: '0'
           GOARCH: ${{ matrix.arch }}
           GOOS: darwin
         run: |
           set -euo pipefail
           version="${GITHUB_REF_NAME#v}"
-          icu_prefix="$(brew --prefix icu4c)"
-          export CGO_CPPFLAGS="-I${icu_prefix}/include"
-          export CGO_LDFLAGS="-L${icu_prefix}/lib"
           ldflags="-s -w -X github.com/steveyegge/gastown/internal/cmd.Version=${version} -X github.com/steveyegge/gastown/internal/cmd.Build=$(git rev-parse --short HEAD) -X github.com/steveyegge/gastown/internal/cmd.Commit=$(git rev-parse HEAD) -X github.com/steveyegge/gastown/internal/cmd.Branch=$(git branch --show-current)"
           go build -ldflags "${ldflags}" -o gt ./cmd/gt
           codesign -s - -f gt
