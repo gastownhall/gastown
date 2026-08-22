@@ -100,7 +100,11 @@ Error: <error-message>
 
 **Route**: Refinery → Witness
 
-**Purpose**: Request polecat to rebase branch due to merge conflicts.
+**Purpose**: Historical request to rework a branch after merge conflicts.
+
+> **Historical:** Completed polecats are retired. Current Refinery conflict
+> handling reopens the source issue and notifies Witness for re-slinging; it
+> does not ask a completed polecat to rewrite and force-push its branch.
 
 **Subject format**: `REWORK_REQUEST <polecat-name>`
 
@@ -114,19 +118,14 @@ Target: <target-branch>
 Requested-At: <timestamp>
 Conflict-Files: <file1>, <file2>, ...
 
-Please rebase your changes onto <target-branch>:
-
-  git fetch origin
-  git rebase origin/<target-branch>
-  # Resolve any conflicts
-  git push -f
-
-The Refinery will retry the merge after rebase is complete.
+Reopen the source issue and preserve the submitted branch as conflict evidence.
+Witness may re-sling the work in a fresh Gas Town assignment.
 ```
 
-**Trigger**: Refinery sends when merge has conflicts with target branch.
+**Trigger**: Legacy Refinery behavior when merge had conflicts with the target.
 
-**Handler**: Witness notifies polecat with rebase instructions.
+**Handler**: Historical only. Current Witness handles `MERGE_FAILED` and
+re-slinging through the tracked lifecycle.
 
 ### RECOVERED_BEAD
 

@@ -97,14 +97,10 @@ git push origin polecat/furiosa/<issue>@<suffix>
 # Refinery/review and cleanup own the remaining branch/worktree state
 ```
 
-When new work is slung:
-```bash
-# Create fresh branch from current main
-git checkout -b polecat/furiosa/<new-issue>+<timestamp>
-# Start working
-```
-
-No worktree add/remove. Just branch operations on an existing worktree.
+When new work is slung, Gas Town prepares the assignment sandbox and branch
+from the resolved base. The agent does not run branch or worktree setup
+commands. The persistent slot model changes identity allocation, not ownership
+of sandbox preparation.
 
 ### Refinery Integration
 

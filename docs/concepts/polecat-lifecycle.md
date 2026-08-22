@@ -181,12 +181,9 @@ git push origin polecat/<name>/<issue>@<suffix>
 # Branch and metadata remain available for refinery/review/cleanup
 ```
 
-When new work is slung:
-```bash
-# Create fresh branch from current main
-git checkout -b polecat/<name>/<new-issue>+<timestamp>
-# Start working
-```
+When new work is slung, `gt sling` prepares a fresh sandbox and branch from the
+resolved project or epic base. Agents do not create that branch or worktree
+manually.
 
 Completed sandboxes are not treated as reusable idle worktrees while branch,
 MR, or cleanup state remains attached.
