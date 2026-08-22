@@ -1,1 +1,50 @@
-*
+# Dolt database and embedded runtime state
+dolt/
+embeddeddolt/
+
+# Runtime files
+bd.sock
+bd.sock.startlock
+sync-state.json
+last-touched
+.exclusive-lock
+daemon.*
+interactions.jsonl
+push-state.json
+*.lock
+.beads-credential-key
+.local_version
+redirect
+.sync.lock
+export-state/
+export-state.json
+
+# Ephemeral store
+ephemeral.sqlite3
+ephemeral.sqlite3-journal
+ephemeral.sqlite3-wal
+ephemeral.sqlite3-shm
+
+# Dolt server management
+dolt-server.pid
+dolt-server.log
+dolt-server.lock
+dolt-server.port
+dolt-server.activity
+
+# Recovery and machine-local data
+*.corrupt.backup/
+backup/
+.env
+
+# Legacy database files
+*.db
+*.db?*
+*.db-journal
+*.db-wal
+*.db-shm
+db.sqlite
+bd.db
+
+# Keep metadata.json and config.yaml tracked. Do not add negation patterns here;
+# they would override fork protection in .git/info/exclude.
