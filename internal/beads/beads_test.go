@@ -3036,6 +3036,30 @@ func TestResolveBeadsDir(t *testing.T) {
 		}
 	})
 
+	t.Run("no local beads directory falls back to ancestor (gtf-g1p)", func(t *testing.T) {
+		// Reproduces gtf-g1p: gt sling resolves formulaWorkDir from a target's
+		// tmux pane cwd, which may be a subdirectory with no .beads of its own
+		// (e.g. townRoot/deacon). A direct `bd` call from that cwd walks up and
+		// finds townRoot/.beads; ResolveBeadsDir must resolve to the same
+		// directory so the gt->bd subprocess pins BEADS_DIR to a real database
+		// instead of a nonexistent path.
+		townRoot := filepath.Join(tmpDir, "ancestor-town")
+		townBeadsDir := filepath.Join(townRoot, ".beads")
+		if err := os.MkdirAll(townBeadsDir, 0755); err != nil {
+			t.Fatal(err)
+		}
+		workDir := filepath.Join(townRoot, "deacon")
+		if err := os.MkdirAll(workDir, 0755); err != nil {
+			t.Fatal(err)
+		}
+
+		got := ResolveBeadsDir(workDir)
+		want := townBeadsDir
+		if got != want {
+			t.Errorf("ResolveBeadsDir() = %q, want %q (should walk up to ancestor .beads, matching a direct bd call)", got, want)
+		}
+	})
+
 	t.Run("empty redirect file", func(t *testing.T) {
 		// Redirect file exists but is empty - should fall back to local
 		workDir := filepath.Join(tmpDir, "empty-redirect")
