@@ -298,6 +298,33 @@ func TestIsDoneCommand(t *testing.T) {
 	}
 }
 
+// Regression: `gt dog done` is a different command from the top-level
+// `gt done` and must not inherit the polecat-only worktree guard. Matching
+// any ancestor named "done" made every dog unable to mark itself done, so
+// dogs stayed pinned in "working" forever and the Deacon ran out of
+// dispatchable workers.
+func TestIsDoneCommandIgnoresNestedDoneSubcommands(t *testing.T) {
+	root := &cobra.Command{Use: "gt"}
+
+	topLevelDone := &cobra.Command{Use: "done"}
+	root.AddCommand(topLevelDone)
+
+	dog := &cobra.Command{Use: "dog"}
+	dogDone := &cobra.Command{Use: "done"}
+	dog.AddCommand(dogDone)
+	root.AddCommand(dog)
+
+	if !isDoneCommand(topLevelDone) {
+		t.Fatal("gt done should be detected as the done command")
+	}
+	if isDoneCommand(dogDone) {
+		t.Fatal("gt dog done must NOT be treated as the polecat done command")
+	}
+	if isDoneCommand(dog) {
+		t.Fatal("gt dog should not be detected as the done command")
+	}
+}
+
 func TestPersistentPreRunDoneRejectsBeforeRegistryFallback(t *testing.T) {
 	townRoot, _ := setupDoneGuardWorktree(t, "nested", "shiny")
 	initDoneGuardGitRepo(t, townRoot)
