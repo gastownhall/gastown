@@ -123,6 +123,24 @@ func TestDecideWorkstateCanonicalFields(t *testing.T) {
 			in:   WorkstateInput{State: StateStalled, CleanupStatus: CleanupClean, ActiveWorkBlocker: "assigned_work=gt-open status=open", ActiveWorkCountsTowardCapacity: true},
 			want: WorkstateDisposition{Verdict: WorkstateVerdictNeedsRecovery, Reason: "not-idle", NeedsRecovery: true, CountsTowardCapacity: true, Blockers: []string{"assigned_work=gt-open status=open"}},
 		},
+		{
+			// gtf-kom: a caller that never wires ActiveWorkBlocker must still get a
+			// named predicate instead of the unfalsifiable "unknown recovery
+			// predicate" refusal that deadlocked town-wide recovery.
+			name: "stalled without wired blocker names the state instead of refusing blindly",
+			in:   WorkstateInput{State: StateStalled, CleanupStatus: CleanupClean},
+			want: WorkstateDisposition{Verdict: WorkstateVerdictNeedsRecovery, Reason: "not-idle", NeedsRecovery: true, CountsTowardCapacity: true, Blockers: []string{"state=stalled"}},
+		},
+		{
+			name: "review-needed without wired blocker names the state",
+			in:   WorkstateInput{State: StateReviewNeeded, CleanupStatus: CleanupClean},
+			want: WorkstateDisposition{Verdict: WorkstateVerdictNeedsRecovery, Reason: "not-idle", NeedsRecovery: true, CountsTowardCapacity: true, Blockers: []string{"state=review-needed"}},
+		},
+		{
+			name: "missing state without wired blocker still names a predicate",
+			in:   WorkstateInput{State: "", CleanupStatus: CleanupClean},
+			want: WorkstateDisposition{Verdict: WorkstateVerdictNeedsRecovery, Reason: "not-idle", NeedsRecovery: true, CountsTowardCapacity: true, Blockers: []string{"state=<missing>"}},
+		},
 	}
 
 	for _, tt := range tests {
@@ -142,5 +160,28 @@ func TestDecideWorkstateCanonicalFields(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// TestDecideWorkstateNeedsRecoveryAlwaysNamesABlocker guards the gtf-kom
+// invariant structurally: no matter which State a caller passes and no
+// matter whether the caller wired ActiveWorkBlocker, a NEEDS_RECOVERY
+// verdict must always carry at least one named predicate. An empty
+// Blockers slice here prints as "unknown recovery predicate," which is
+// unfalsifiable and unactionable — it deadlocked polecat recovery
+// town-wide because neither the Witness nor the Mayor could act on it.
+func TestDecideWorkstateNeedsRecoveryAlwaysNamesABlocker(t *testing.T) {
+	states := []State{
+		StateWorking, StateIdle, StateDone, StateReviewNeeded,
+		StateStuck, StateStalled, StateZombie, State("future-unknown-state"), State(""),
+	}
+	for _, state := range states {
+		for _, activeWorkBlocker := range []string{"", "assigned_work=gt-1 status=open"} {
+			in := WorkstateInput{State: state, CleanupStatus: CleanupClean, ActiveWorkBlocker: activeWorkBlocker}
+			got := DecideWorkstate(in)
+			if got.Verdict == WorkstateVerdictNeedsRecovery && len(got.Blockers) == 0 {
+				t.Fatalf("DecideWorkstate(State=%q, ActiveWorkBlocker=%q) = NEEDS_RECOVERY with empty Blockers — unfalsifiable refusal (gtf-kom)", state, activeWorkBlocker)
+			}
+		}
 	}
 }

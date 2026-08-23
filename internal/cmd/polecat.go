@@ -1115,6 +1115,25 @@ func runPolecatCheckRecovery(cmd *cobra.Command, args []string) error {
 		if hookBlocker != "" {
 			input.HookBead = hookBead
 		}
+		// gtf-kom: check-recovery built WorkstateInput without ever setting
+		// ActiveWorkBlocker (unlike the inventory listing path), so a
+		// stalled/review-needed/stuck polecat fell through DecideWorkstate's
+		// not-idle branch with no named predicate. Wire the same evidence
+		// inventory uses so the verdict is actionable, not just non-empty.
+		if p.State != polecat.StateIdle && p.State != polecat.StateDone && p.State != polecat.StateWorking {
+			var assignedIssue *beads.Issue
+			if status.Issue != "" {
+				assignedIssue, _ = bd.Show(status.Issue)
+			}
+			activeWorkEvidence := assessPolecatAssignedIssueWork(assignedIssue)
+			if !activeWorkEvidence.BlocksCleanup {
+				activeWorkEvidence = assessPolecatAgentStateWork(beads.AgentState(strings.TrimSpace(fields.AgentState)))
+			}
+			if activeWorkEvidence.Blocker != "" {
+				input.ActiveWorkBlocker = activeWorkEvidence.Blocker
+				input.ActiveWorkCountsTowardCapacity = activeWorkEvidence.CountsTowardCapacity
+			}
+		}
 		input.PushFailed = fields.PushFailed
 		input.MRFailed = fields.MRFailed
 		assignee := fmt.Sprintf("%s/polecats/%s", rigName, polecatName)
@@ -1452,12 +1471,19 @@ func recoveryGitStateBlocker(worktreePath string, gitState *GitState, gitErr err
 }
 
 func recoveryActionsForBlockers(blockers []string) []string {
+	if len(blockers) == 0 {
+		return nil
+	}
 	for _, blocker := range blockers {
 		if strings.HasPrefix(blocker, "git_state=has_stash") {
 			return []string{"preserve branch-owned stash entries to auditable recovery refs before cleanup, then rerun check-recovery"}
 		}
 	}
-	return nil
+	// gtf-kom: every named blocker must pair with a recovery action so
+	// NEEDS_RECOVERY is never an unfalsifiable refusal — fall back to a
+	// generic investigate-then-recheck action when no predicate-specific
+	// action applies.
+	return []string{"investigate the named predicate(s) above, resolve or confirm no work is at risk, then rerun check-recovery"}
 }
 
 func activeMRBlocker(bd issueShower, mrID, sourceHint string, requireGitSafe, gitSafe bool) string {

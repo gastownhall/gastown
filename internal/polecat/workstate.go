@@ -85,6 +85,17 @@ func DecideWorkstate(in WorkstateInput) WorkstateDisposition {
 		}
 		if in.ActiveWorkBlocker != "" {
 			d.Blockers = append(d.Blockers, in.ActiveWorkBlocker)
+		} else if needsRecovery {
+			// A NEEDS_RECOVERY verdict must always name a predicate (gtf-kom):
+			// an empty Blockers slice here printed as "unknown recovery
+			// predicate", which Witness/Mayor could not act on and which
+			// deadlocked recovery town-wide. Name the state itself when the
+			// caller didn't wire a richer ActiveWorkBlocker.
+			blocker := "state=" + string(in.State)
+			if in.State == "" {
+				blocker = "state=<missing>"
+			}
+			d.Blockers = append(d.Blockers, blocker)
 		}
 		return d
 	}
