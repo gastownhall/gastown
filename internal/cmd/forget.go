@@ -45,7 +45,7 @@ func runForget(cmd *cobra.Command, args []string) error {
 			if err != nil || existing == "" {
 				return fmt.Errorf("memory %q not found", key)
 			}
-			if err := bdKvClear(fullKey); err != nil {
+			if err := bdForget(memType + "." + shortKey); err != nil {
 				return fmt.Errorf("removing memory: %w", err)
 			}
 			fmt.Printf("%s Forgot memory: %s\n", style.Success.Render("✓"), style.Bold.Render(key))
@@ -58,7 +58,7 @@ func runForget(cmd *cobra.Command, args []string) error {
 		fullKey := memoryKeyPrefix + t + "." + key
 		existing, _ := bdKvGet(fullKey)
 		if existing != "" {
-			if err := bdKvClear(fullKey); err != nil {
+			if err := bdForget(t + "." + key); err != nil {
 				return fmt.Errorf("removing memory: %w", err)
 			}
 			displayKey := key
@@ -77,7 +77,7 @@ func runForget(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("memory %q not found", key)
 	}
 
-	if err := bdKvClear(fullKey); err != nil {
+	if err := bdForget(key); err != nil {
 		return fmt.Errorf("removing memory: %w", err)
 	}
 

@@ -43,6 +43,7 @@ translates its variables to bd's equivalents when spawning agents.
 |---------------|------------|---------|
 | `GT_DOLT_HOST` | `BEADS_DOLT_SERVER_HOST` | Server host (bd defaults to `127.0.0.1` if unset) |
 | `GT_DOLT_PORT` | `BEADS_DOLT_PORT` | Server port (default: `3307`) |
+| `GT_DOLT_EXTERNAL` | — (gt-only ownership flag) | Marks the endpoint as externally managed, even on loopback |
 
 **Remote Dolt servers**: If Dolt runs on a different machine (e.g., over
 Tailscale), set `GT_DOLT_HOST` in the environment. gt propagates this as
@@ -52,6 +53,23 @@ connects to localhost and fails.
 
 Per-workspace override: set `dolt.host` in a rig's `.beads/config.yaml`.
 This takes priority over the env var for that specific workspace.
+
+**Externally managed local servers**: When the Dolt server is owned by
+another process on this machine (e.g., Beads' shared server on `:3308`),
+set `gt config set dolt.external true`. This writes `GT_DOLT_EXTERNAL=true`
+to `mayor/daemon.json` and changes ownership semantics everywhere:
+
+- `gt dolt start`/`stop`, `gt up`/`start`/`down`, and the daemon's Dolt
+  manager never start, stop, restart, or kill the shared server;
+- `gt doctor` probes the declared endpoint instead of rewriting
+  `.beads/metadata.json` to the local managed port;
+- endpoint resolution (host/port) prefers `daemon.json` over the local
+  `.dolt-data/config.yaml`, which may describe a stale local server;
+- `GT_DOLT_EXTERNAL` is propagated to spawned agents alongside the port.
+
+Lifecycle commands that require Town-owned storage (`gt dolt migrate`,
+`recover`, `rollback`, `flatten`, `rebase`, `sync`, `pull`, `maintain`)
+refuse to run against an externally managed endpoint.
 
 ## Commands
 

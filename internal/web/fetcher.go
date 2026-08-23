@@ -14,10 +14,13 @@ import (
 	"sync"
 	"time"
 
+	"golang.org/x/sync/errgroup"
+
 	"github.com/steveyegge/gastown/internal/activity"
 	"github.com/steveyegge/gastown/internal/beads"
 	"github.com/steveyegge/gastown/internal/config"
 	"github.com/steveyegge/gastown/internal/constants"
+	"github.com/steveyegge/gastown/internal/dog"
 	"github.com/steveyegge/gastown/internal/session"
 	"github.com/steveyegge/gastown/internal/tmux"
 	"github.com/steveyegge/gastown/internal/workspace"
@@ -75,8 +78,9 @@ func (f *LiveConvoyFetcher) runBdCmd(beadsDir string, args ...string) (*bytes.Bu
 	}
 	cmd := exec.CommandContext(ctx, bin, args...)
 	cmd.Dir = beadsDir
-	var stdout bytes.Buffer
+	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
 
 	err := cmd.Run()
 	if err != nil {
@@ -86,6 +90,11 @@ func (f *LiveConvoyFetcher) runBdCmd(beadsDir string, args ...string) (*bytes.Bu
 		// If we got some output, return it anyway (bd may exit non-zero with warnings)
 		if stdout.Len() > 0 {
 			return &stdout, nil
+		}
+		// Surface bd's own diagnostic. Swallowing stderr reduced every failure
+		// to "exit status 1", which is undiagnosable from the dashboard log.
+		if msg := strings.TrimSpace(stderr.String()); msg != "" {
+			return nil, fmt.Errorf("%w: %s", err, msg)
 		}
 		return nil, err
 	}
@@ -219,8 +228,8 @@ func NewLiveConvoyFetcher() (*LiveConvoyFetcher, error) {
 		townBeads:               filepath.Join(townRoot, ".beads"),
 		registry:                registry,
 		tmuxSocket:              tmux.GetDefaultSocket(),
-		cmdTimeout:              config.ParseDurationOrDefault(webCfg.CmdTimeout, 15*time.Second),
-		ghCmdTimeout:            config.ParseDurationOrDefault(webCfg.GhCmdTimeout, 10*time.Second),
+		cmdTimeout:              config.ParseDurationOrDefault(webCfg.CmdTimeout, 6*time.Second),
+		ghCmdTimeout:            config.ParseDurationOrDefault(webCfg.GhCmdTimeout, 5*time.Second),
 		tmuxCmdTimeout:          config.ParseDurationOrDefault(webCfg.TmuxCmdTimeout, 2*time.Second),
 		staleThreshold:          config.ParseDurationOrDefault(workerCfg.StaleThreshold, 5*time.Minute),
 		stuckThreshold:          config.ParseDurationOrDefault(workerCfg.StuckThreshold, constants.GUPPViolationTimeout),
@@ -652,7 +661,10 @@ func calculateWorkStatus(completed, total int, activityColor string) string {
 	}
 }
 
-// FetchMergeQueue fetches open PRs from registered rigs.
+// FetchMergeQueue fetches open PRs from registered rigs, one goroutine per
+// rig via errgroup. Serial `gh pr list` calls dominated dashboard render
+// time (~9.9s across 10 rigs); parallelizing brings this down to roughly
+// the slowest single rig's fetch time.
 func (f *LiveConvoyFetcher) FetchMergeQueue() ([]MergeQueueRow, error) {
 	// Load registered rigs from config
 	rigsConfigPath := filepath.Join(f.townRoot, "mayor", "rigs.json")
@@ -661,20 +673,38 @@ func (f *LiveConvoyFetcher) FetchMergeQueue() ([]MergeQueueRow, error) {
 		return nil, fmt.Errorf("loading rigs config: %w", err)
 	}
 
+	rigResults := make([][]MergeQueueRow, len(rigsConfig.Rigs))
+	rigNames := make([]string, 0, len(rigsConfig.Rigs))
+	for rigName := range rigsConfig.Rigs {
+		rigNames = append(rigNames, rigName)
+	}
+	// Deterministic ordering keeps output stable across ticks so
+	// computeDashboardHash sees identical output for identical state.
+	sort.Strings(rigNames)
+
+	g := new(errgroup.Group)
+	for i, rigName := range rigNames {
+		i, rigName := i, rigName
+		entry := rigsConfig.Rigs[rigName]
+		g.Go(func() error {
+			repoPath := gitURLToRepoPath(entry.GitURL)
+			if repoPath == "" {
+				return nil
+			}
+			prs, err := f.fetchPRsForRepo(repoPath, rigName)
+			if err != nil {
+				// Non-fatal: continue with other repos
+				return nil
+			}
+			rigResults[i] = prs
+			return nil
+		})
+	}
+	// errgroup.Group.Go never returns a non-nil error above, so Wait cannot fail.
+	_ = g.Wait()
+
 	var result []MergeQueueRow
-
-	for rigName, entry := range rigsConfig.Rigs {
-		// Convert git URL to owner/repo format for gh CLI
-		repoPath := gitURLToRepoPath(entry.GitURL)
-		if repoPath == "" {
-			continue
-		}
-
-		prs, err := f.fetchPRsForRepo(repoPath, rigName)
-		if err != nil {
-			// Non-fatal: continue with other repos
-			continue
-		}
+	for _, prs := range rigResults {
 		result = append(result, prs...)
 	}
 
@@ -1251,53 +1281,42 @@ func (f *LiveConvoyFetcher) FetchRigs() ([]RigRow, error) {
 	return rows, nil
 }
 
-// FetchDogs returns all dogs in the kennel with their state.
+// FetchDogs returns all dogs in the kennel with their state, plus any kennel
+// entry that occupies a name without being a usable dog. Reading the kennel
+// through the dog manager is what keeps the dashboard's notion of "dog",
+// "debris" and "protected occupant" identical to the one gt dog enforces.
 func (f *LiveConvoyFetcher) FetchDogs() ([]DogRow, error) {
-	kennelPath := filepath.Join(f.townRoot, "deacon", "dogs")
-
-	entries, err := os.ReadDir(kennelPath)
+	rigsConfig, err := config.LoadRigsConfig(filepath.Join(f.townRoot, "mayor", "rigs.json"))
 	if err != nil {
-		if os.IsNotExist(err) {
-			return nil, nil // No kennel yet
-		}
-		return nil, fmt.Errorf("reading kennel: %w", err)
+		return nil, fmt.Errorf("loading rigs config: %w", err)
+	}
+	mgr := dog.NewManager(f.townRoot, rigsConfig)
+
+	dogs, err := mgr.List()
+	if err != nil {
+		return nil, fmt.Errorf("listing dogs: %w", err)
 	}
 
 	var rows []DogRow
-	for _, entry := range entries {
-		if !entry.IsDir() {
-			continue
-		}
-		name := entry.Name()
-		if strings.HasPrefix(name, ".") {
-			continue
-		}
-
-		// Read dog state file
-		stateFile := filepath.Join(kennelPath, name, ".dog.json")
-		data, err := os.ReadFile(stateFile)
-		if err != nil {
-			continue // Not a valid dog
-		}
-
-		var state struct {
-			Name       string            `json:"name"`
-			State      string            `json:"state"`
-			LastActive time.Time         `json:"last_active"`
-			Work       string            `json:"work,omitempty"`
-			Worktrees  map[string]string `json:"worktrees,omitempty"`
-		}
-		if err := json.Unmarshal(data, &state); err != nil {
-			continue
-		}
-
+	for _, d := range dogs {
 		rows = append(rows, DogRow{
-			Name:       state.Name,
-			State:      state.State,
-			Work:       state.Work,
-			LastActive: formatTimestamp(state.LastActive),
-			RigCount:   len(state.Worktrees),
+			Name:       d.Name,
+			State:      string(d.State),
+			Work:       d.Work,
+			LastActive: formatTimestamp(d.LastActive),
+			RigCount:   len(d.Worktrees),
 		})
+	}
+
+	// Residue from a failed spawn holds a name hostage while List reports
+	// nothing. Hiding it makes a corrupt kennel look merely empty, which is
+	// exactly the state no operator could diagnose.
+	debris, err := mgr.ListDebris()
+	if err != nil {
+		return nil, fmt.Errorf("listing kennel debris: %w", err)
+	}
+	for _, name := range debris {
+		rows = append(rows, DogRow{Name: name, State: DogStateDebris})
 	}
 
 	// Sort by name

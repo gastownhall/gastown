@@ -402,8 +402,8 @@ func runDoltStart(cmd *cobra.Command, args []string) error {
 	}
 
 	config := doltserver.DefaultConfig(townRoot)
-	if config.IsRemote() {
-		return fmt.Errorf("Dolt server is remote (%s) — start/stop managed externally", config.HostPort())
+	if config.IsExternallyManaged() {
+		return fmt.Errorf("Dolt server is externally managed (%s)", config.HostPort())
 	}
 
 	// Check for databases before starting — user-facing guard for manual starts.
@@ -454,8 +454,8 @@ func runDoltKillImposters(cmd *cobra.Command, args []string) error {
 	}
 
 	config := doltserver.DefaultConfig(townRoot)
-	if config.IsRemote() {
-		return fmt.Errorf("Dolt server is remote — imposter detection requires local server")
+	if config.IsExternallyManaged() {
+		return fmt.Errorf("Dolt server is externally managed — imposter detection requires a Town-owned server")
 	}
 
 	conflictPID, conflictDataDir := doltserver.CheckPortConflict(townRoot)
@@ -488,8 +488,8 @@ func runDoltStop(cmd *cobra.Command, args []string) error {
 	}
 
 	config := doltserver.DefaultConfig(townRoot)
-	if config.IsRemote() {
-		return fmt.Errorf("Dolt server is remote (%s) — start/stop managed externally", config.HostPort())
+	if config.IsExternallyManaged() {
+		return fmt.Errorf("Dolt server is externally managed (%s)", config.HostPort())
 	}
 
 	_, pid, _ := doltserver.IsRunning(townRoot)
@@ -509,8 +509,8 @@ func runDoltRestart(cmd *cobra.Command, args []string) error {
 	}
 
 	config := doltserver.DefaultConfig(townRoot)
-	if config.IsRemote() {
-		return fmt.Errorf("Dolt server is remote (%s) — start/stop managed externally", config.HostPort())
+	if config.IsExternallyManaged() {
+		return fmt.Errorf("Dolt server is externally managed (%s)", config.HostPort())
 	}
 
 	// Step 1: Stop tracked server (if running)
@@ -584,7 +584,7 @@ func runDoltStatus(cmd *cobra.Command, args []string) error {
 
 	config := doltserver.DefaultConfig(townRoot)
 
-	if config.IsRemote() {
+	if config.IsExternallyManaged() {
 		if running {
 			fmt.Printf("%s Dolt server is %s (remote: %s)\n",
 				style.Bold.Render("●"),
@@ -1275,8 +1275,8 @@ func runDoltMigrate(cmd *cobra.Command, args []string) error {
 	}
 
 	config := doltserver.DefaultConfig(townRoot)
-	if config.IsRemote() {
-		return fmt.Errorf("Dolt server is remote (%s) — migration requires local server access", config.HostPort())
+	if config.IsExternallyManaged() {
+		return fmt.Errorf("Dolt server is externally managed (%s) — migration requires a Town-owned server", config.HostPort())
 	}
 
 	// Check if daemon is running - must stop first to avoid race conditions.
@@ -1427,8 +1427,8 @@ func runDoltRecover(cmd *cobra.Command, args []string) error {
 	}
 
 	config := doltserver.DefaultConfig(townRoot)
-	if config.IsRemote() {
-		return fmt.Errorf("Dolt server is remote (%s) — recovery requires local server access", config.HostPort())
+	if config.IsExternallyManaged() {
+		return fmt.Errorf("Dolt server is externally managed (%s) — recovery requires a Town-owned server", config.HostPort())
 	}
 
 	running, _, _ := doltserver.IsRunning(townRoot)
@@ -1461,8 +1461,8 @@ func runDoltRollback(cmd *cobra.Command, args []string) error {
 	}
 
 	config := doltserver.DefaultConfig(townRoot)
-	if config.IsRemote() {
-		return fmt.Errorf("Dolt server is remote (%s) — rollback requires local server access", config.HostPort())
+	if config.IsExternallyManaged() {
+		return fmt.Errorf("Dolt server is externally managed (%s) — rollback requires a Town-owned server", config.HostPort())
 	}
 
 	// Find available backups
@@ -1643,8 +1643,8 @@ func runDoltSync(cmd *cobra.Command, args []string) error {
 	}
 
 	config := doltserver.DefaultConfig(townRoot)
-	if config.IsRemote() {
-		return fmt.Errorf("Dolt server is remote (%s) — sync requires local server access", config.HostPort())
+	if config.IsExternallyManaged() {
+		return fmt.Errorf("Dolt server is externally managed (%s) — sync requires a Town-owned server", config.HostPort())
 	}
 
 	// Validate --db flag if set
@@ -1766,8 +1766,8 @@ func runDoltPull(cmd *cobra.Command, args []string) error {
 	}
 
 	config := doltserver.DefaultConfig(townRoot)
-	if config.IsRemote() {
-		return fmt.Errorf("Dolt server is remote (%s) — pull requires local server access", config.HostPort())
+	if config.IsExternallyManaged() {
+		return fmt.Errorf("Dolt server is externally managed (%s) — pull requires a Town-owned server", config.HostPort())
 	}
 
 	// Validate --db flag if set

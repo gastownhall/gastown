@@ -4,9 +4,6 @@ on:
   push:
     tags:
       - 'v*'
-  # Manual dispatch is only for rerunning a release from a v* tag. Publishing
-  # jobs below are tag-gated and skip branch refs.
-  workflow_dispatch:
 
 concurrency:
   group: release-${{ github.ref }}
@@ -15,245 +12,245 @@ concurrency:
 permissions: {}
 
 jobs:
-  goreleaser:
-    if: ${{ github.repository == 'gastownhall/gastown' && startsWith(github.ref, 'refs/tags/v') }}
+  portable:
+    if: ${{ startsWith(github.ref, 'refs/tags/v') }}
     runs-on: ubuntu-latest
     permissions:
-      contents: write
+      contents: read
     steps:
-      - name: Checkout
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
         with:
           fetch-depth: 0
-
-      - name: Set up Go
-        uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6
+      - uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6
         with:
           go-version: '1.26'
-
-      - name: Install cross-compilation toolchains
+      - name: Verify release input
         run: |
-          sudo apt-get update
-          sudo apt-get install -y gcc-mingw-w64-x86-64 gcc-aarch64-linux-gnu
-
-      - name: Reject replace directives in go.mod
-        run: |
+          set -euo pipefail
           if grep -qE '^replace\s' go.mod; then
-            echo "ERROR: go.mod contains replace directives — aborting release."
-            echo "Replace directives break 'go install ...@latest'."
-            echo "See: https://github.com/gastownhall/gastown/issues/2230"
-            grep -n '^replace' go.mod
+            echo 'ERROR: go.mod contains replace directives.' >&2
             exit 1
           fi
-
-      - name: Verify tag matches Version constant
-        run: make check-version-tag
-
-      - name: Run GoReleaser
+          make check-version-tag
+      - name: Build Linux AMD64 and FreeBSD AMD64 archives
         uses: goreleaser/goreleaser-action@1a80836c5c9d9e5755a25cb59ec6f45a3b5f41a8 # v7
         with:
           distribution: goreleaser
           version: '~> v2'
-          args: >
-            release --clean
-            ${{ github.repository != 'gastownhall/gastown' && '--skip=publish --skip=announce' || '' }}
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          args: release --clean --skip=publish --skip=announce
+      - name: Smoke Linux AMD64 binary
+        run: |
+          set -euo pipefail
+          binary="$(find dist -type f -path '*linux_amd64*/gt' -print -quit)"
+          test -n "${binary}"
+          "${binary}" version
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: portable-archives
+          path: |
+            dist/gastown_*_linux_amd64.tar.gz
+            dist/gastown_*_freebsd_amd64.tar.gz
+          if-no-files-found: error
 
-  attest-release:
-    if: ${{ github.repository == 'gastownhall/gastown' && startsWith(github.ref, 'refs/tags/v') }}
-    needs: goreleaser
+  linux-arm64:
+    if: ${{ startsWith(github.ref, 'refs/tags/v') }}
+    runs-on: ubuntu-24.04-arm
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6
+        with:
+          go-version: '1.26'
+      # Why: see .goreleaser.yml - a CGO build linked libicui18n against the
+      # runner's ICU major, so the published artifact failed to start on hosts
+      # with any other ICU. Static linking is required for a distributed binary.
+      - name: Build, smoke and package Linux ARM64
+        env:
+          CGO_ENABLED: '0'
+          GOARCH: arm64
+          GOOS: linux
+        run: |
+          set -euo pipefail
+          version="${GITHUB_REF_NAME#v}"
+          ldflags="-s -w -X github.com/steveyegge/gastown/internal/cmd.Version=${version} -X github.com/steveyegge/gastown/internal/cmd.Build=$(git rev-parse --short HEAD) -X github.com/steveyegge/gastown/internal/cmd.Commit=$(git rev-parse HEAD) -X github.com/steveyegge/gastown/internal/cmd.Branch=$(git branch --show-current)"
+          go build -ldflags "${ldflags}" -o gt ./cmd/gt
+          ./gt version
+          staging="gastown_${version}_linux_arm64"
+          mkdir -p "${staging}"
+          cp gt LICENSE README.md "${staging}/"
+          tar -czf "${staging}.tar.gz" -C "${staging}" .
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: linux-arm64-archive
+          path: gastown_*_linux_arm64.tar.gz
+          if-no-files-found: error
+
+  windows-amd64:
+    if: ${{ startsWith(github.ref, 'refs/tags/v') }}
+    runs-on: windows-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6
+        with:
+          go-version: '1.26'
+          cache: false
+      # Why: see .goreleaser.yml - a CGO build binds the runner's ICU into the
+      # artifact. The Windows job did the same through msys2's icu package, so
+      # the published gt.exe carried a UCRT64 ICU dependency the user's machine
+      # has no reason to provide. CGO_ENABLED=0 removes the msys2 toolchain from
+      # the release path entirely.
+      - name: Build Windows AMD64
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="${GITHUB_REF_NAME#v}"
+          ldflags="-s -w -X github.com/steveyegge/gastown/internal/cmd.Version=${version} -X github.com/steveyegge/gastown/internal/cmd.Build=$(git rev-parse --short HEAD) -X github.com/steveyegge/gastown/internal/cmd.Commit=$(git rev-parse HEAD) -X github.com/steveyegge/gastown/internal/cmd.Branch=$(git branch --show-current)"
+          CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -buildmode=exe -ldflags "${ldflags}" -o gt.exe ./cmd/gt
+          ./gt.exe version
+      - name: Package Windows AMD64
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $version = $env:GITHUB_REF_NAME.Substring(1)
+          $staging = "gastown_${version}_windows_amd64"
+          New-Item -ItemType Directory -Path $staging | Out-Null
+          Copy-Item gt.exe "$staging/gt.exe"
+          Copy-Item LICENSE, README.md $staging
+          Compress-Archive -Path "$staging/*" -DestinationPath "${staging}.zip"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: windows-amd64-archive
+          path: gastown_*_windows_amd64.zip
+          if-no-files-found: error
+
+  macos:
+    if: ${{ startsWith(github.ref, 'refs/tags/v') }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-14
+            arch: arm64
+          - runner: macos-15-intel
+            arch: amd64
+    runs-on: ${{ matrix.runner }}
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6
+        with:
+          go-version: '1.26'
+      # Why: see .goreleaser.yml - brew's icu4c is keg-only and versioned, so a
+      # CGO build pinned the runner's ICU major into the artifact and the
+      # published binary broke on any Mac without that exact keg. A pure-Go
+      # build needs no ICU at all, so the brew step is gone with it.
+      - name: Build, smoke and package macOS
+        env:
+          CGO_ENABLED: '0'
+          GOARCH: ${{ matrix.arch }}
+          GOOS: darwin
+        run: |
+          set -euo pipefail
+          version="${GITHUB_REF_NAME#v}"
+          ldflags="-s -w -X github.com/steveyegge/gastown/internal/cmd.Version=${version} -X github.com/steveyegge/gastown/internal/cmd.Build=$(git rev-parse --short HEAD) -X github.com/steveyegge/gastown/internal/cmd.Commit=$(git rev-parse HEAD) -X github.com/steveyegge/gastown/internal/cmd.Branch=$(git branch --show-current)"
+          go build -ldflags "${ldflags}" -o gt ./cmd/gt
+          codesign -s - -f gt
+          ./gt version
+          staging="gastown_${version}_darwin_${GOARCH}"
+          mkdir -p "${staging}"
+          cp gt LICENSE README.md "${staging}/"
+          tar -czf "${staging}.tar.gz" -C "${staging}" .
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: macos-${{ matrix.arch }}-archive
+          path: gastown_*_darwin_${{ matrix.arch }}.tar.gz
+          if-no-files-found: error
+
+  publish:
+    if: ${{ startsWith(github.ref, 'refs/tags/v') }}
+    needs: [portable, linux-arm64, windows-amd64, macos]
     runs-on: ubuntu-latest
     permissions:
       attestations: write
       contents: write
       id-token: write
     steps:
-      - name: Checkout
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
-
-      - name: Resolve release asset paths
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        with:
+          fetch-depth: 0
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Verify complete immutable asset set
         id: assets
         run: |
+          set -euo pipefail
           version="${GITHUB_REF_NAME#v}"
-          mkdir -p dist
-          echo "checksums=dist/gastown_${version}_checksums.txt" >> "$GITHUB_OUTPUT"
-          echo "sbom=dist/gastown-${GITHUB_REF_NAME}.spdx.json" >> "$GITHUB_OUTPUT"
-
-      - name: Download release checksums
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          version="${GITHUB_REF_NAME#v}"
-          gh release download "${GITHUB_REF_NAME}" --pattern "gastown_${version}_checksums.txt" --dir dist
-
+          expected=(
+            "gastown_${version}_linux_amd64.tar.gz"
+            "gastown_${version}_linux_arm64.tar.gz"
+            "gastown_${version}_freebsd_amd64.tar.gz"
+            "gastown_${version}_windows_amd64.zip"
+            "gastown_${version}_darwin_arm64.tar.gz"
+            "gastown_${version}_darwin_amd64.tar.gz"
+          )
+          for asset in "${expected[@]}"; do
+            test -s "dist/${asset}" || { echo "Missing release asset: ${asset}" >&2; exit 1; }
+          done
+          test "$(find dist -maxdepth 1 -type f \( -name '*.tar.gz' -o -name '*.zip' \) | wc -l)" -eq "${#expected[@]}"
+          checksums="dist/gastown_${version}_checksums.txt"
+          (cd dist && sha256sum "${expected[@]}") > "${checksums}"
+          echo "checksums=${checksums}" >> "${GITHUB_OUTPUT}"
       - name: Generate release SBOM
         uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0
         with:
           path: .
           format: spdx-json
-          output-file: ${{ steps.assets.outputs.sbom }}
+          output-file: dist/gastown-${{ github.ref_name }}.spdx.json
           upload-artifact: false
           upload-release-assets: false
-
-      - name: Upload release SBOM
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: gh release upload "${GITHUB_REF_NAME}" "${{ steps.assets.outputs.sbom }}" --clobber
-
-      - name: Attest release artifacts
+      - name: Attest release archives
         uses: actions/attest@59d89421af93a897026c735860bf21b6eb4f7b26 # v4
         with:
-          subject-checksums: ${{ steps.assets.outputs.checksums }}
-
+          subject-path: |
+            dist/*.tar.gz
+            dist/*.zip
+            dist/*_checksums.txt
       - name: Attest release SBOM
         uses: actions/attest@59d89421af93a897026c735860bf21b6eb4f7b26 # v4
         with:
           subject-checksums: ${{ steps.assets.outputs.checksums }}
-          sbom-path: ${{ steps.assets.outputs.sbom }}
-
-  update-homebrew-formula:
-    runs-on: ubuntu-latest
-    needs: [goreleaser, attest-release]
-    if: ${{ github.repository == 'gastownhall/gastown' && startsWith(github.ref, 'refs/tags/v') }}
-    permissions:
-      contents: read
-    env:
-      HAS_HOMEBREW_APP: ${{ secrets.HOMEBREW_TAP_APP_ID != '' && secrets.HOMEBREW_TAP_APP_PRIVATE_KEY != '' }}
-      HAS_HOMEBREW_PAT: ${{ secrets.HOMEBREW_TAP_TOKEN != '' }}
-    steps:
-      - name: Checkout
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
-
-      - name: Extract version from tag
-        id: version
-        run: echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
-
-      - name: Mint Homebrew tap token
-        id: homebrew-token
-        if: ${{ env.HAS_HOMEBREW_APP == 'true' }}
-        uses: actions/create-github-app-token@1b10c78c7865c340bc4f6099eb2f838309f1e8c3 # v3
-        with:
-          app-id: ${{ secrets.HOMEBREW_TAP_APP_ID }}
-          private-key: ${{ secrets.HOMEBREW_TAP_APP_PRIVATE_KEY }}
-          owner: gastownhall
-          repositories: homebrew-gastown
-          permission-contents: write
-
-      - name: Generate and push Homebrew formula
-        if: ${{ env.HAS_HOMEBREW_APP == 'true' || env.HAS_HOMEBREW_PAT == 'true' }}
+          sbom-path: dist/gastown-${{ github.ref_name }}.spdx.json
+      - name: Publish complete fork release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          HOMEBREW_TAP_TOKEN: ${{ steps.homebrew-token.outputs.token || secrets.HOMEBREW_TAP_TOKEN }}
         run: |
-          version="${{ steps.version.outputs.version }}"
-          tag="v${version}"
-          base_url="https://github.com/gastownhall/gastown/releases/download/${tag}"
-
-          gh release download "${tag}" --pattern "gastown_${version}_checksums.txt" --dir /tmp
-          checksums_file="/tmp/gastown_${version}_checksums.txt"
-
-          get_sha256() {
-            local sha
-            sha=$(grep "$1" "$checksums_file" | awk '{print $1}')
-            if [ -z "$sha" ]; then
-              echo "ERROR: missing checksum for $1" >&2
+          set -euo pipefail
+          test "${GITHUB_REPOSITORY}" = 'marlon-costa-dc/gastown'
+          if gh release view "${GITHUB_REF_NAME}" >/dev/null 2>&1; then
+            is_draft="$(gh release view "${GITHUB_REF_NAME}" --json isDraft --jq .isDraft)"
+            if [ "${is_draft}" != true ]; then
+              echo "Published release ${GITHUB_REF_NAME} already exists; refusing to mutate it." >&2
               exit 1
             fi
-            echo "$sha"
-          }
-
-          darwin_arm64_sha=$(get_sha256 "gastown_${version}_darwin_arm64.tar.gz")
-          darwin_amd64_sha=$(get_sha256 "gastown_${version}_darwin_amd64.tar.gz")
-          linux_amd64_sha=$(get_sha256 "gastown_${version}_linux_amd64.tar.gz")
-          linux_arm64_sha=$(get_sha256 "gastown_${version}_linux_arm64.tar.gz")
-
-          cat > /tmp/gastown.rb <<FORMULA
-          # typed: false
-          # frozen_string_literal: true
-
-          class Gastown < Formula
-            desc "Multi-agent workspace manager"
-            homepage "https://github.com/gastownhall/gastown"
-            version "${version}"
-            license "MIT"
-
-            on_macos do
-              if Hardware::CPU.arm?
-                url "${base_url}/gastown_${version}_darwin_arm64.tar.gz"
-                sha256 "${darwin_arm64_sha}"
-              else
-                url "${base_url}/gastown_${version}_darwin_amd64.tar.gz"
-                sha256 "${darwin_amd64_sha}"
-              end
-            end
-
-            on_linux do
-              if Hardware::CPU.arm?
-                url "${base_url}/gastown_${version}_linux_arm64.tar.gz"
-                sha256 "${linux_arm64_sha}"
-              else
-                url "${base_url}/gastown_${version}_linux_amd64.tar.gz"
-                sha256 "${linux_amd64_sha}"
-              end
-            end
-
-            depends_on "beads"
-            depends_on "dolt"
-            depends_on "git"
-            depends_on "tmux"
-
-            def install
-              bin.install "gt"
-            end
-
-            test do
-              assert_match version.to_s, shell_output("#{bin}/gt version")
-            end
-          end
-          FORMULA
-          sed -i 's/^          //' /tmp/gastown.rb
-
-          cd /tmp
-          git clone "https://x-access-token:${HOMEBREW_TAP_TOKEN}@github.com/gastownhall/homebrew-gastown.git"
-          mkdir -p homebrew-gastown/Formula
-          cp gastown.rb homebrew-gastown/Formula/gastown.rb
-          cd homebrew-gastown
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add Formula/gastown.rb
-          git commit -m "gastown ${version}" || echo "No changes to commit"
-          git push
-
-      - name: Skip Homebrew formula update
-        if: ${{ env.HAS_HOMEBREW_APP != 'true' && env.HAS_HOMEBREW_PAT != 'true' }}
-        run: echo "No Homebrew tap credential configured; skipping tap update."
-
-  publish-npm:
-    runs-on: ubuntu-latest
-    needs: goreleaser
-    if: ${{ github.repository == 'gastownhall/gastown' && startsWith(github.ref, 'refs/tags/v') }}
-    # npm publish is best-effort — don't fail the release if npm is down or
-    # the @gastown org isn't set up yet. GoReleaser + Homebrew are the primary
-    # distribution channels.
-    continue-on-error: true
-    permissions:
-      contents: read
-      id-token: write  # OIDC token for npm trusted publishing (no NPM_TOKEN needed)
-    steps:
-      - name: Checkout
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
-
-      - name: Set up Node.js
-        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
-        with:
-          node-version: '24'
-          registry-url: 'https://registry.npmjs.org'
-
-      - name: Update npm for provenance support
-        run: npm install -g npm@latest --min-release-age=7
-
-      - name: Publish to npm
-        run: |
-          cd npm-package
-          npm publish --access public --provenance
+          else
+            gh release create "${GITHUB_REF_NAME}" \
+              --draft \
+              --prerelease \
+              --verify-tag \
+              --title "Gas Town ${GITHUB_REF_NAME}" \
+              --notes "Attested Gas Town fork build. Install only from the assets attached to this release."
+          fi
+          gh release upload "${GITHUB_REF_NAME}" dist/* --clobber
+          gh release edit "${GITHUB_REF_NAME}" --draft=false --prerelease

@@ -204,6 +204,12 @@ func (h *ConvoyHandler) fetchAndRender(r *http.Request, expandPanel string) []by
 		issues      []IssueRow
 		activity    []ActivityRow
 		wg          sync.WaitGroup
+		// mu guards every result variable above. On timeout we stop waiting
+		// for slow fetchers and snapshot whatever is in under mu.Lock();
+		// their goroutines keep running and still write under mu, so reads
+		// and writes never race even though the request no longer blocks
+		// on them (gtf-hf1).
+		mu sync.Mutex
 	)
 
 	// Run all fetches in parallel with error logging
@@ -211,115 +217,143 @@ func (h *ConvoyHandler) fetchAndRender(r *http.Request, expandPanel string) []by
 
 	go func() {
 		defer wg.Done()
-		var err error
-		convoys, err = h.fetcher.FetchConvoys()
+		result, err := h.fetcher.FetchConvoys()
 		if err != nil {
 			log.Printf("dashboard: FetchConvoys failed: %v", err)
 		}
+		mu.Lock()
+		convoys = result
+		mu.Unlock()
 	}()
 	go func() {
 		defer wg.Done()
-		var err error
-		mergeQueue, err = h.fetcher.FetchMergeQueue()
+		result, err := h.fetcher.FetchMergeQueue()
 		if err != nil {
 			log.Printf("dashboard: FetchMergeQueue failed: %v", err)
 		}
+		mu.Lock()
+		mergeQueue = result
+		mu.Unlock()
 	}()
 	go func() {
 		defer wg.Done()
-		var err error
-		workers, err = h.fetcher.FetchWorkers()
+		result, err := h.fetcher.FetchWorkers()
 		if err != nil {
 			log.Printf("dashboard: FetchWorkers failed: %v", err)
 		}
+		mu.Lock()
+		workers = result
+		mu.Unlock()
 	}()
 	go func() {
 		defer wg.Done()
-		var err error
-		mail, err = h.fetcher.FetchMail()
+		result, err := h.fetcher.FetchMail()
 		if err != nil {
 			log.Printf("dashboard: FetchMail failed: %v", err)
 		}
+		mu.Lock()
+		mail = result
+		mu.Unlock()
 	}()
 	go func() {
 		defer wg.Done()
-		var err error
-		rigs, err = h.fetcher.FetchRigs()
+		result, err := h.fetcher.FetchRigs()
 		if err != nil {
 			log.Printf("dashboard: FetchRigs failed: %v", err)
 		}
+		mu.Lock()
+		rigs = result
+		mu.Unlock()
 	}()
 	go func() {
 		defer wg.Done()
-		var err error
-		dogs, err = h.fetcher.FetchDogs()
+		result, err := h.fetcher.FetchDogs()
 		if err != nil {
 			log.Printf("dashboard: FetchDogs failed: %v", err)
 		}
+		mu.Lock()
+		dogs = result
+		mu.Unlock()
 	}()
 	go func() {
 		defer wg.Done()
-		var err error
-		escalations, err = h.fetcher.FetchEscalations()
+		result, err := h.fetcher.FetchEscalations()
 		if err != nil {
 			log.Printf("dashboard: FetchEscalations failed: %v", err)
 		}
+		mu.Lock()
+		escalations = result
+		mu.Unlock()
 	}()
 	go func() {
 		defer wg.Done()
-		var err error
-		health, err = h.fetcher.FetchHealth()
+		result, err := h.fetcher.FetchHealth()
 		if err != nil {
 			log.Printf("dashboard: FetchHealth failed: %v", err)
 		}
+		mu.Lock()
+		health = result
+		mu.Unlock()
 	}()
 	go func() {
 		defer wg.Done()
-		var err error
-		queues, err = h.fetcher.FetchQueues()
+		result, err := h.fetcher.FetchQueues()
 		if err != nil {
 			log.Printf("dashboard: FetchQueues failed: %v", err)
 		}
+		mu.Lock()
+		queues = result
+		mu.Unlock()
 	}()
 	go func() {
 		defer wg.Done()
-		var err error
-		sessions, err = h.fetcher.FetchSessions()
+		result, err := h.fetcher.FetchSessions()
 		if err != nil {
 			log.Printf("dashboard: FetchSessions failed: %v", err)
 		}
+		mu.Lock()
+		sessions = result
+		mu.Unlock()
 	}()
 	go func() {
 		defer wg.Done()
-		var err error
-		hooks, err = h.fetcher.FetchHooks()
+		result, err := h.fetcher.FetchHooks()
 		if err != nil {
 			log.Printf("dashboard: FetchHooks failed: %v", err)
 		}
+		mu.Lock()
+		hooks = result
+		mu.Unlock()
 	}()
 	go func() {
 		defer wg.Done()
-		var err error
-		mayor, err = h.fetcher.FetchMayor()
+		result, err := h.fetcher.FetchMayor()
 		if err != nil {
 			log.Printf("dashboard: FetchMayor failed: %v", err)
 		}
+		mu.Lock()
+		mayor = result
+		mu.Unlock()
 	}()
 	go func() {
 		defer wg.Done()
-		var err error
-		issues, err = h.fetcher.FetchIssues()
+		result, err := h.fetcher.FetchIssues()
 		if err != nil {
 			log.Printf("dashboard: FetchIssues failed: %v", err)
 		}
+		mu.Lock()
+		issues = result
+		mu.Unlock()
 	}()
 	go func() {
 		defer wg.Done()
-		var err error
-		activity, err = h.fetcher.FetchActivity()
+		result, err := h.fetcher.FetchActivity()
 		if err != nil {
 			log.Printf("dashboard: FetchActivity failed: %v", err)
 		}
+		mu.Lock()
+		activity = result
+		mu.Unlock()
 	}()
 
 	// Wait for fetches or timeout
@@ -333,30 +367,51 @@ func (h *ConvoyHandler) fetchAndRender(r *http.Request, expandPanel string) []by
 	case <-done:
 		// All fetches completed
 	case <-ctx.Done():
-		log.Printf("dashboard: fetch timeout after %v", h.fetchTimeout)
-		// Goroutines may still be writing to shared result variables.
-		// Wait for them to finish to avoid a data race on read below.
-		<-done
+		log.Printf("dashboard: fetch timeout after %v, rendering partial results", h.fetchTimeout)
+		// Do not block on <-done: that would make the external deadline
+		// meaningless (render time = slowest fetcher, not h.fetchTimeout).
+		// Snapshot whatever completed under mu below and render partial
+		// data; slow fetchers keep running in the background and still
+		// write their results under mu once they finish.
 	}
 
+	// Snapshot all shared results under mu before reading them, since a
+	// timed-out fetch above may still be writing concurrently.
+	mu.Lock()
+	convoysSnap := convoys
+	mergeQueueSnap := mergeQueue
+	workersSnap := workers
+	mailSnap := mail
+	rigsSnap := rigs
+	dogsSnap := dogs
+	escalationsSnap := escalations
+	healthSnap := health
+	queuesSnap := queues
+	sessionsSnap := sessions
+	hooksSnap := hooks
+	mayorSnap := mayor
+	issuesSnap := issues
+	activitySnap := activity
+	mu.Unlock()
+
 	// Compute summary from already-fetched data
-	summary := computeSummary(workers, hooks, issues, convoys, escalations, activity)
+	summary := computeSummary(workersSnap, hooksSnap, issuesSnap, convoysSnap, escalationsSnap, activitySnap)
 
 	data := ConvoyData{
-		Convoys:     convoys,
-		MergeQueue:  mergeQueue,
-		Workers:     workers,
-		Mail:        mail,
-		Rigs:        rigs,
-		Dogs:        dogs,
-		Escalations: escalations,
-		Health:      health,
-		Queues:      queues,
-		Sessions:    sessions,
-		Hooks:       hooks,
-		Mayor:       mayor,
-		Issues:      enrichIssuesWithAssignees(issues, hooks),
-		Activity:    activity,
+		Convoys:     convoysSnap,
+		MergeQueue:  mergeQueueSnap,
+		Workers:     workersSnap,
+		Mail:        mailSnap,
+		Rigs:        rigsSnap,
+		Dogs:        dogsSnap,
+		Escalations: escalationsSnap,
+		Health:      healthSnap,
+		Queues:      queuesSnap,
+		Sessions:    sessionsSnap,
+		Hooks:       hooksSnap,
+		Mayor:       mayorSnap,
+		Issues:      enrichIssuesWithAssignees(issuesSnap, hooksSnap),
+		Activity:    activitySnap,
 		Summary:     summary,
 		Expand:      expandPanel,
 		CSRFToken:   h.csrfToken,

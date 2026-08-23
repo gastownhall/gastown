@@ -217,7 +217,11 @@ case "${1:-}" in
     printf '999\n'
     ;;
   display-message)
-    date +%s
+    if [ -f "$TEST_STATE/window_activity" ]; then
+      cat "$TEST_STATE/window_activity"
+    else
+      date +%s
+    fi
     ;;
   capture-pane)
     printf 'active opencode research in progress\n'
@@ -233,6 +237,8 @@ SH
   cat > "$bin_dir/bd" <<'SH'
 #!/usr/bin/env bash
 set -euo pipefail
+
+printf '%s\n' "$*" >> "$TEST_STATE/bd_calls.log"
 
 case "${1:-}" in
   show)
@@ -287,6 +293,7 @@ setup_case() {
   : > "$TEST_STATE/escalate.log"
   : > "$TEST_STATE/health_calls.log"
   : > "$TEST_STATE/hook_calls.log"
+  : > "$TEST_STATE/bd_calls.log"
   : > "$TEST_STATE/bd.log"
   touch "$TEST_STATE/sessions/hq-deacon"
 
@@ -316,7 +323,10 @@ add_polecat_in_rig() {
 }
 
 run_script() {
-  bash "$SCRIPT" > "$TEST_STATE/output.log" 2>&1
+  (
+    unset BASH_ENV
+    bash "$SCRIPT"
+  ) > "$TEST_STATE/output.log" 2>&1
 }
 
 test_healthy_runtime() {

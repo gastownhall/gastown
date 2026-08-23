@@ -81,7 +81,7 @@ func runMaintain(cmd *cobra.Command, args []string) error {
 	}
 
 	config := doltserver.DefaultConfig(townRoot)
-	if config.IsRemote() {
+	if config.IsExternallyManaged() {
 		return fmt.Errorf("maintain requires local Dolt server (remote: %s)", config.HostPort())
 	}
 

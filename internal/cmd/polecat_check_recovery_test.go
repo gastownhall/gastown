@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -199,6 +200,45 @@ func TestApplyMQCheck(t *testing.T) {
 			}
 			if status.NeedsRecovery != tt.wantNeedsRecov {
 				t.Errorf("NeedsRecovery = %v, want %v", status.NeedsRecovery, tt.wantNeedsRecov)
+			}
+		})
+	}
+}
+
+func TestSafetyReasonsForDispositionUsesCanonicalWorkstate(t *testing.T) {
+	tests := []struct {
+		name string
+		d    polecat.WorkstateDisposition
+		want []string
+	}{
+		{
+			name: "safe disposition permits cleanup",
+			d:    polecat.WorkstateDisposition{Verdict: polecat.WorkstateVerdictSafeToNuke, SafeToNuke: true},
+		},
+		{
+			name: "canonical blockers are preserved",
+			d: polecat.WorkstateDisposition{
+				Verdict:  polecat.WorkstateVerdictNeedsRecovery,
+				Reason:   "cleanup-unknown",
+				Blockers: []string{"cleanup_status=<missing>", "has work on hook (dcdoc-work)"},
+			},
+			want: []string{"cleanup_status=<missing>", "has work on hook (dcdoc-work)"},
+		},
+		{
+			name: "working state always has an explicit blocker",
+			d: polecat.WorkstateDisposition{
+				Verdict: polecat.WorkstateVerdictWorking,
+				Reason:  "not-idle",
+			},
+			want: []string{"workstate=WORKING reason=not-idle"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := safetyReasonsForDisposition(tt.d)
+			if !slices.Equal(got, tt.want) {
+				t.Fatalf("safetyReasonsForDisposition() = %v, want %v", got, tt.want)
 			}
 		})
 	}
