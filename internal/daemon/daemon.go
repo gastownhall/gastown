@@ -1480,6 +1480,12 @@ func (d *Daemon) ensureDeaconRunning() {
 	}
 
 	mgr := deacon.NewManager(d.config.TownRoot)
+	// Reuse the daemon's tmux client instead of letting the manager build its
+	// own. deacon.NewManager calls tmux.NewTmux(), which falls back to the real
+	// town socket; that let the test suite spawn and kill live sessions.
+	if d.tmux != nil {
+		mgr.SetTmux(d.tmux)
+	}
 
 	if err := mgr.Start(""); err != nil {
 		if err == deacon.ErrAlreadyRunning {
@@ -1852,6 +1858,9 @@ func (d *Daemon) ensureRefineryRunning(rigName string) {
 			Path: filepath.Join(d.config.TownRoot, rigName),
 		}
 		mgr := refinery.NewManager(r)
+		if d.tmux != nil {
+			mgr.SetTmux(d.tmux)
+		}
 		if running, _ := mgr.IsRunning(); !running {
 			d.logger.Printf("No pending refinery events and no session running for %s, skipping spawn", rigName)
 			return
@@ -1866,6 +1875,11 @@ func (d *Daemon) ensureRefineryRunning(rigName string) {
 		Path: filepath.Join(d.config.TownRoot, rigName),
 	}
 	mgr := refinery.NewManager(r)
+	// Reuse the daemon's tmux client so the refinery cannot fall back to the
+	// real town socket via tmux.NewTmux().
+	if d.tmux != nil {
+		mgr.SetTmux(d.tmux)
+	}
 
 	// NOTE: Hung session detection removed for refineries (serial killer bug).
 	// Idle refineries legitimately produce no tmux output while waiting for MRs.
