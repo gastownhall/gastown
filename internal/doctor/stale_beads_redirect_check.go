@@ -54,6 +54,10 @@ func NewStaleBeadsRedirectCheck() *StaleBeadsRedirectCheck {
 // staleFilePatterns are runtime files that should NOT exist alongside a redirect.
 // These are gitignored runtime files that would conflict with redirected data.
 // Note: config.yaml is NOT included because it may be tracked in git.
+//
+// beads.redirectLocalPatterns() is the repair side of this report and must cover
+// every pattern listed here; adding one here without adding it there leaves worktrees
+// provisioned dirty (gtf-v8i).
 var staleFilePatterns = []string{
 	// Dolt databases
 	"*.db",

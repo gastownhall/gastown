@@ -110,10 +110,43 @@ func resolveBeadsDirWithDepth(beadsDir string, maxDepth int) string {
 	return resolveBeadsDirWithDepth(resolved, maxDepth-1)
 }
 
+// redirectLocalPatterns returns the .beads/ entries that belong to the local beads
+// runtime rather than to the repository. In a redirected worktree the real database
+// lives at the redirect target, so a copy left behind here is stale at best and binds
+// bd to the wrong database at worst.
+//
+// doctor.staleFilePatterns reports the same condition on an already-provisioned
+// worktree; this list is what setup repairs, so it must cover everything the doctor
+// reports. The two diverging is what let interactions.jsonl survive here while the
+// doctor already called it stale (gtf-v8i).
+func redirectLocalPatterns() []string {
+	return []string{
+		// Identity — binds bd to the wrong database when left next to a redirect.
+		"metadata.json", "config.yaml",
+		// Legacy JSONL exports — superseded by the Dolt database at the redirect target.
+		"interactions.jsonl", "issues.jsonl",
+		// Legacy SQLite databases — bd binds to these instead of following the redirect.
+		"*.db", "*.db-*", "*.db?*",
+		// Daemon runtime
+		"daemon.lock", "daemon.log", "daemon.pid", "bd.sock",
+		// Sync state
+		"sync-state.json", "last-touched",
+		// Version tracking
+		".local_version",
+		// Redirect file (we're about to recreate it)
+		"redirect",
+		// Runtime directories
+		"mq",
+	}
+}
+
 // cleanBeadsRuntimeFiles removes redirect-local runtime and identity files from a
 // .beads directory while preserving tracked docs/formula surfaces (formulas/,
-// README.md, .gitignore). Identity files next to a redirect can make bd bind to
-// the wrong database, so tracked identity files are hidden before removal.
+// README.md, .gitignore). Some repos still track entries from this set (legacy
+// exports, identity files), so every removal goes through removeRedirectLocalPath,
+// which hides the path from git first. Without that, a freshly created worktree
+// starts life with a phantom deletion and the recovery predicate reads it as
+// uncommitted work (gtf-v8i).
 // This is safe to call even if the directory doesn't exist.
 func cleanBeadsRuntimeFiles(beadsDir string) error {
 	info, err := os.Lstat(beadsDir)
@@ -126,28 +159,9 @@ func cleanBeadsRuntimeFiles(beadsDir string) error {
 	}
 
 	worktreePath := filepath.Dir(beadsDir)
-	for _, name := range []string{"metadata.json", "config.yaml"} {
-		if err := removeWorktreeIdentityFile(worktreePath, filepath.Join(beadsDir, name)); err != nil {
-			return err
-		}
-	}
-
-	// Runtime files/patterns that are gitignored and safe to remove
-	runtimePatterns := []string{
-		// Daemon runtime
-		"daemon.lock", "daemon.log", "daemon.pid", "bd.sock",
-		// Sync state
-		"last-touched",
-		// Version tracking
-		".local_version",
-		// Redirect file (we're about to recreate it)
-		"redirect",
-		// Runtime directories
-		"mq",
-	}
 
 	var firstErr error
-	for _, pattern := range runtimePatterns {
+	for _, pattern := range redirectLocalPatterns() {
 		matches, err := filepath.Glob(filepath.Join(beadsDir, pattern))
 		if err != nil {
 			if firstErr == nil {
@@ -156,7 +170,7 @@ func cleanBeadsRuntimeFiles(beadsDir string) error {
 			continue
 		}
 		for _, match := range matches {
-			if err := os.RemoveAll(match); err != nil && firstErr == nil {
+			if err := removeRedirectLocalPath(worktreePath, match); err != nil && firstErr == nil {
 				firstErr = err
 			}
 		}
@@ -165,7 +179,10 @@ func cleanBeadsRuntimeFiles(beadsDir string) error {
 	return firstErr
 }
 
-func removeWorktreeIdentityFile(worktreePath, path string) error {
+// removeRedirectLocalPath removes a redirect-local path from a worktree. Tracked
+// paths are marked skip-worktree first so the removal does not register as a
+// deletion in git status.
+func removeRedirectLocalPath(worktreePath, path string) error {
 	if _, err := os.Lstat(path); os.IsNotExist(err) {
 		return nil
 	} else if err != nil {
@@ -177,39 +194,55 @@ func removeWorktreeIdentityFile(worktreePath, path string) error {
 		return fmt.Errorf("computing git path for %s: %w", path, err)
 	}
 	if rel == "." || rel == "" || filepath.IsAbs(rel) || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
-		return fmt.Errorf("refusing to clean identity file outside worktree: %s", path)
+		return fmt.Errorf("refusing to clean redirect-local path outside worktree: %s", path)
 	}
 	rel = filepath.ToSlash(rel)
 
-	tracked, err := gitPathTracked(worktreePath, rel)
+	tracked, err := gitTrackedPaths(worktreePath, rel)
 	if err != nil {
 		return err
 	}
-	if tracked {
-		if err := markGitPathSkipWorktree(worktreePath, rel); err != nil {
+	if len(tracked) > 0 {
+		if err := markGitPathsSkipWorktree(worktreePath, tracked); err != nil {
 			return err
 		}
 	}
 
-	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+	if err := os.RemoveAll(path); err != nil {
 		return fmt.Errorf("removing %s: %w", path, err)
 	}
 	return nil
 }
 
-func gitPathTracked(worktreePath, relPath string) (bool, error) {
-	cmd := exec.Command("git", "-C", worktreePath, "ls-files", "--stage", "--", relPath) //nolint:gosec // argv is fixed; relPath is passed after --.
+// gitTrackedPaths returns the tracked paths under relPath. relPath may name a file
+// or a directory; git update-index needs exact file paths, not directories.
+//
+// Fails closed: a git error other than "this is not a repository" is returned so the
+// caller leaves the path in place rather than removing something it could not classify.
+func gitTrackedPaths(worktreePath, relPath string) ([]string, error) {
+	cmd := exec.Command("git", "-C", worktreePath, "ls-files", "-z", "--", relPath) //nolint:gosec // argv is fixed; relPath is passed after --.
 	out, err := cmd.CombinedOutput()
 	if err != nil {
-		return false, fmt.Errorf("git ls-files %s: %w%s", relPath, err, gitOutputSuffix(out))
+		if strings.Contains(string(out), "not a git repository") {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("git ls-files %s: %w%s", relPath, err, gitOutputSuffix(out))
 	}
-	return len(bytes.TrimSpace(out)) > 0, nil
+
+	var paths []string
+	for _, field := range bytes.Split(out, []byte{0}) {
+		if p := string(bytes.TrimSpace(field)); p != "" {
+			paths = append(paths, p)
+		}
+	}
+	return paths, nil
 }
 
-func markGitPathSkipWorktree(worktreePath, relPath string) error {
-	cmd := exec.Command("git", "-C", worktreePath, "update-index", "--skip-worktree", "--", relPath) //nolint:gosec // argv is fixed; relPath is passed after --.
+func markGitPathsSkipWorktree(worktreePath string, relPaths []string) error {
+	args := append([]string{"-C", worktreePath, "update-index", "--skip-worktree", "--"}, relPaths...)
+	cmd := exec.Command("git", args...) //nolint:gosec // argv is fixed; relPaths come from git ls-files and are passed after --.
 	if out, err := cmd.CombinedOutput(); err != nil {
-		return fmt.Errorf("git update-index --skip-worktree %s: %w%s", relPath, err, gitOutputSuffix(out))
+		return fmt.Errorf("git update-index --skip-worktree %v: %w%s", relPaths, err, gitOutputSuffix(out))
 	}
 	return nil
 }
