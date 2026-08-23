@@ -50,8 +50,8 @@ func isDockerAvailable() bool {
 // with the previous one torn down as that binary exited. The port is not only
 // passed by env — bd init persists it into .beads/dolt-server.port and
 // metadata.json, and beads/config_sql.go prefers that stored value over the
-// environment. A beads dir created under one binary therefore kept dialling a
-// container that no longer existed. Honouring an external endpoint lets the
+// environment. A beads dir created under one binary therefore kept dialing a
+// container that no longer existed. Honoring an external endpoint lets the
 // job pin ONE server for its whole lifetime so the persisted port stays valid.
 func externalDoltEndpoint() (host, port string) {
 	if strings.TrimSpace(os.Getenv("GT_TEST_EXTERNAL_DOLT")) == "" {
