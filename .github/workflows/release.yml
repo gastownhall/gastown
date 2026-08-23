@@ -32,6 +32,11 @@ jobs:
             exit 1
           fi
           make check-version-tag
+          # A tag must point at a commit that fork main already contains.
+          # dc14 and dc15 were tagged off unmerged lanes; dc14's gtf-k2k fix was
+          # then reachable from a tag and from no branch. See bead gtf-8wo.
+          git fetch --no-tags origin +refs/heads/main:refs/remotes/origin/main
+          make check-release-integrated
       - name: Build Linux AMD64 and FreeBSD AMD64 archives
         uses: goreleaser/goreleaser-action@1a80836c5c9d9e5755a25cb59ec6f45a3b5f41a8 # v7
         with:

@@ -202,13 +202,21 @@ tests in the package share a single container.
 ## Releasing
 
 Releases are cut from tags of the form `vX.Y.Z`. See [RELEASING.md](RELEASING.md)
-for the full workflow. One guardrail to know about:
+for the full workflow. Two guardrails to know about:
 
 - `make check-version-tag` verifies the `Version` constant in
   `internal/cmd/version.go` matches the tag at HEAD. The release workflow runs
   this before GoReleaser and fails the release on mismatch. Prevents recurrence
   of [#3459](https://github.com/steveyegge/gastown/issues/3459). Run it locally
   after bumping if you want to catch drift before pushing the tag.
+- `make check-release-integrated` verifies HEAD is an ancestor of the fork's
+  `main` branch, so a tag can only point at work that `main` already contains.
+  Two published tags were cut from lanes that never merged, stranding a fix
+  where no branch could reach it. Tags are immutable, so the check refuses the
+  tag rather than trying to repair it afterwards.
+
+Both are no-ops until HEAD carries an exact `v*` tag, so they are safe to run
+at any time.
 
 ## Questions?
 
