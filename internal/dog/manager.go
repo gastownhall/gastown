@@ -33,6 +33,11 @@ type Manager struct {
 	townRoot   string
 	kennelPath string // ~/gt/deacon/dogs/
 	rigsConfig *config.RigsConfig
+	// isRigBlocked reports whether a rig is parked or docked and must not be
+	// touched. Injected because internal/dog cannot import internal/cmd, which
+	// owns IsRigParkedOrDocked. Mirrors daemon.NewConvoyManager's isRigParked
+	// seam. Nil means no rig is ever blocked.
+	isRigBlocked func(rig string) (bool, string)
 }
 
 // NewManager creates a new dog manager.
@@ -42,6 +47,22 @@ func NewManager(townRoot string, rigsConfig *config.RigsConfig) *Manager {
 		kennelPath: filepath.Join(townRoot, "deacon", "dogs"),
 		rigsConfig: rigsConfig,
 	}
+}
+
+// WithRigBlockedCheck injects the parked/docked predicate. Every other
+// multi-rig dispatch path already gates on it; dogs create worktrees across
+// every rig, so an unreachable parked rig would otherwise abort the spawn.
+func (m *Manager) WithRigBlockedCheck(fn func(rig string) (bool, string)) *Manager {
+	m.isRigBlocked = fn
+	return m
+}
+
+// rigBlocked reports whether a rig must be skipped, with the reason.
+func (m *Manager) rigBlocked(rig string) (bool, string) {
+	if m.isRigBlocked == nil {
+		return false, ""
+	}
+	return m.isRigBlocked(rig)
 }
 
 // lockDog acquires an exclusive file lock for a specific dog's state operations.
@@ -195,6 +216,11 @@ func (m *Manager) Add(name string) (dogResult *Dog, err error) {
 	worktrees := make(map[string]string)
 	var skipped []string
 	for rigName := range m.rigsConfig.Rigs {
+		if blocked, reason := m.rigBlocked(rigName); blocked {
+			skipped = append(skipped, rigName)
+			style.PrintWarning("skipping rig %s for dog %s: %s", rigName, name, reason)
+			continue
+		}
 		worktreePath, err := m.createRigWorktree(dogPath, name, rigName)
 		if err != nil {
 			skipped = append(skipped, rigName)
@@ -625,6 +651,10 @@ func (m *Manager) Refresh(name string) error {
 
 	// Refresh each rig atomically: remove old, create new, persist state.
 	for rigName := range m.rigsConfig.Rigs {
+		if blocked, reason := m.rigBlocked(rigName); blocked {
+			style.PrintWarning("skipping rig %s for dog %s: %s", rigName, name, reason)
+			continue
+		}
 		rigPath := filepath.Join(m.townRoot, rigName)
 		oldWorktreePath := state.Worktrees[rigName]
 
@@ -747,6 +777,9 @@ func (m *Manager) CleanupStaleBranches() (int, error) {
 	totalDeleted := 0
 
 	for rigName := range m.rigsConfig.Rigs {
+		if blocked, _ := m.rigBlocked(rigName); blocked {
+			continue
+		}
 		rigPath := filepath.Join(m.townRoot, rigName)
 		repoGit, err := m.findRepoBase(rigPath)
 		if err != nil {

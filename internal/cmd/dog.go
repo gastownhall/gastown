@@ -318,7 +318,10 @@ func getDogManager() (*dog.Manager, error) {
 		return nil, fmt.Errorf("loading rigs config: %w", err)
 	}
 
-	return dog.NewManager(townRoot, rigsConfig), nil
+	return dog.NewManager(townRoot, rigsConfig).
+		WithRigBlockedCheck(func(rigName string) (bool, string) {
+			return IsRigParkedOrDocked(townRoot, rigName)
+		}), nil
 }
 
 func runDogAdd(cmd *cobra.Command, args []string) error {
@@ -1055,7 +1058,10 @@ func runDogDispatch(cmd *cobra.Command, args []string) error {
 	}
 
 	// Get dog manager (reuse rigsConfig from above)
-	mgr := dog.NewManager(townRoot, rigsConfig)
+	mgr := dog.NewManager(townRoot, rigsConfig).
+		WithRigBlockedCheck(func(rigName string) (bool, string) {
+			return IsRigParkedOrDocked(townRoot, rigName)
+		})
 
 	// Find target dog
 	var targetDog *dog.Dog
