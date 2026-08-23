@@ -413,6 +413,9 @@ func applyDoltServerConfigEnv(config *DoltServerConfig) {
 		os.Setenv("GT_DOLT_HOST", config.Host)
 		os.Setenv("BEADS_DOLT_SERVER_HOST", config.Host)
 	}
+	if config.External {
+		os.Setenv("GT_DOLT_EXTERNAL", "true")
+	}
 }
 
 func applyConfiguredDoltHostEnv(townRoot string, logf func(format string, v ...interface{})) {

@@ -29,21 +29,23 @@ jobs:
           key: gomod-windows-${{ hashFiles('go.sum') }}
           restore-keys: gomod-windows-
 
-      - name: Install ICU4C (MSYS2)
+      - name: Install CGO toolchain (MSYS2)
         uses: msys2/setup-msys2@cafece8e6baf9247cf9b1bf95097b0b983cc558d # v2.31.0
         with:
           path-type: inherit
           msystem: UCRT64
-          pacboy: icu:p toolchain:p pkg-config:p
+          pacboy: toolchain:p pkg-config:p
 
       - name: Build binary
         shell: msys2 {0}
-        run: go build -v ./cmd/gt
+        run: |
+          go build -tags gms_pure_go -v -o gt.exe ./cmd/gt
+          ./scripts/verify-cgo.sh gt.exe
 
       - name: Build all packages
         shell: msys2 {0}
-        run: go build ./...
+        run: go build -tags gms_pure_go ./...
 
       - name: Vet
         shell: msys2 {0}
-        run: go vet ./...
+        run: go vet -tags gms_pure_go ./...

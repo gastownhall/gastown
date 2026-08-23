@@ -73,9 +73,6 @@ jobs:
           go-version: '1.26'
           cache: true
 
-      - name: Install ICU4C development headers
-        run: sudo apt-get install -y libicu-dev
-
       - name: Configure Git
         run: |
           git config --global user.name "CI Bot"
@@ -92,12 +89,14 @@ jobs:
         run: go install gotest.tools/gotestsum@latest
 
       - name: Build
-        run: go build -v ./cmd/gt
+        run: |
+          CGO_ENABLED=1 go build -tags gms_pure_go -v -o gt ./cmd/gt
+          ./scripts/verify-cgo.sh gt
 
       - name: Test with Coverage
         run: |
           set -o pipefail
-          gotestsum --format testname --junitfile junit.xml -- -race -short -timeout=10m -coverprofile=coverage.out ./... 2>&1 | tee test-output.txt
+          gotestsum --format testname --junitfile junit.xml -- -tags=gms_pure_go -race -short -timeout=10m -coverprofile=coverage.out ./... 2>&1 | tee test-output.txt
 
       - name: Test Report
         if: always()
@@ -136,14 +135,15 @@ jobs:
           go-version: '1.26'
           cache: true
 
-      - name: Install ICU4C development headers
-        run: sudo apt-get install -y libicu-dev
-
       - name: golangci-lint
         uses: golangci/golangci-lint-action@1e7e51e771db61008b38414a730f564565cf7c20 # v9
         with:
           version: v2.11.4
-          args: --timeout=5m
+          args: --build-tags=gms_pure_go --timeout=5m
+          # Config schema verification fetches a remote JSON schema and made
+          # lint availability depend on golangci-lint.run. The pinned linter
+          # still parses and enforces the complete local config during run.
+          verify: false
 
   integration:
     name: Integration Tests
@@ -156,9 +156,6 @@ jobs:
         with:
           go-version: '1.26'
           cache: true
-
-      - name: Install ICU4C development headers
-        run: sudo apt-get install -y libicu-dev
 
       - name: Configure Git
         run: |
@@ -188,25 +185,25 @@ jobs:
           status=0
 
           gotestsum --format testname --junitfile junit-integration.xml -- \
-            -tags=integration -timeout=15m -v ./internal/cmd/... || status=1
+            -tags='gms_pure_go integration' -timeout=15m -v ./internal/cmd/... || status=1
 
           gotestsum --format testname --junitfile junit-scheduler-1.xml -- \
-            -tags='integration scheduler_integration' -timeout=15m -v \
+            -tags='gms_pure_go integration scheduler_integration' -timeout=15m -v \
             -run '^(TestScheduler(CircuitBreakerExclusion|AutoConvoyCreation|BlockedStatusReporting|SlingDryRun|SlingContextIdempotency|SlingContextWorkBeadPristine))$' \
             ./internal/cmd || status=1
 
           gotestsum --format testname --junitfile junit-scheduler-2.xml -- \
-            -tags='integration scheduler_integration' -timeout=15m -v \
+            -tags='gms_pure_go integration scheduler_integration' -timeout=15m -v \
             -run '^(TestScheduler(MultiRigDispatch|MultiRigEpicAutoResolve|ConvoyFlagRejection|EpicFlagRejection|EpicDetection|MixedBatchRejection|MultiRigConvoyAutoResolve))$' \
             ./internal/cmd || status=1
 
           gotestsum --format testname --junitfile junit-scheduler-3.xml -- \
-            -tags='integration scheduler_integration' -timeout=15m -v \
+            -tags='gms_pure_go integration scheduler_integration' -timeout=15m -v \
             -run '^(TestScheduler(DisabledMode|DirectModeNoQueue|DeferredTaskWithoutRig|DeferredNonRigRejection|DeferredAcceptsDogTarget|DirectEpicDispatch|BatchEpicRejection))$' \
             ./internal/cmd || status=1
 
           gotestsum --format testname --junitfile junit-scheduler-4.xml -- \
-            -tags='integration scheduler_integration' -timeout=15m -v \
+            -tags='gms_pure_go integration scheduler_integration' -timeout=15m -v \
             -run '^(TestScheduler(InvalidJSONContextCleanup|ActualDispatchRoutesPollutedEnvToTargetRig|FormulaDispatchRoutesPollutedEnvToTargetRig|DispatchFailureRecordedInContextSourceDB|DirectConvoyDispatch)|TestScheduleBead_(RefusesClosed|RefusesTombstone|ClosedForceDoesNotBypass))$' \
             ./internal/cmd || status=1
 

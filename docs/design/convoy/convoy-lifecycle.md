@@ -162,35 +162,37 @@ gt sling gt-task-1 gt-task-2 gt-task-3 gastown --no-convoy
 
 ---
 
-## Problem Statement
+## Historical Problem Statement
 
-Convoys are passive trackers. They group work but don't drive it. The completion
-loop has a structural gap:
+Before `ConvoyManager` shipped, convoys were passive trackers. They grouped work
+but did not drive it, leaving a structural gap in the completion loop:
 
 ```
 Create → Assign → Execute → Issues close → ??? → Convoy closes
 ```
 
-The `???` is "Deacon patrol runs `gt convoy check`" - a poll-based single point of
-failure. When Deacon is down, convoys don't close. Work completes but the loop
-never lands.
+The `???` was “Deacon patrol runs `gt convoy check`,” a poll-based single point
+of failure. When Deacon was down, convoys did not close. This section records
+the problem that motivated the implemented daemon manager; it is not the
+current runtime model.
 
-## Current State
+## Historical State Before `ConvoyManager`
 
-### What Works
+### What Worked
 - Convoy creation and issue tracking
 - `gt convoy status` shows progress
 - `gt convoy stranded` finds unassigned work
 - `gt convoy check` auto-closes completed convoys
 
-### What Breaks
-1. **Poll-based completion**: Only Deacon runs `gt convoy check`
-2. **No event-driven trigger**: Issue close doesn't propagate to convoy
-3. **Manual close is inconsistent across docs**: `gt convoy close --force` exists, but some docs still describe it as missing
-4. **Single observer**: No redundant completion detection
-5. **Weak notification**: Convoy owner not always clear
+### What Was Missing
+1. **Poll-based completion**: Only Deacon ran `gt convoy check`
+2. **No event-driven trigger**: Issue close did not propagate to a convoy
+3. **Inconsistent manual-close docs**: Some docs described the implemented
+   `gt convoy close --force` command as missing
+4. **No recovery scan**: Missed close events had no daemon-owned safety net
+5. **Weak notification ownership**: The convoy requester was not always clear
 
-## Design: Active Convoy Convergence
+## Implemented Design: Active Convoy Convergence
 
 ### Principle: Event-Driven, Centrally Managed
 
@@ -264,7 +266,7 @@ parked rigs are logged and skipped rather than dispatched.
 gt convoy close hq-cv-abc
 
 # Force-close an abandoned convoy
-gt convoy close hq-cv-xyz --reason="work done differently"
+gt convoy close hq-cv-xyz --force --reason="work done differently"
 
 # Close with explicit notification
 gt convoy close hq-cv-abc --notify mayor/
@@ -304,7 +306,7 @@ OPEN ──(all issues close)──► CLOSED
 
 Adding issues to closed convoy reopens automatically.
 
-**New state for abandonment:**
+**Proposed abandonment state (not implemented):**
 
 ```
 OPEN ──► CLOSED (completed)
@@ -336,7 +338,7 @@ gt convoy close <convoy-id> [--reason=<reason>] [--notify=<agent>]
 - Sends notification to owner and subscribers
 - Idempotent - closing closed convoy is no-op
 
-### Enhanced: `gt convoy check`
+### Current: `gt convoy check`
 
 ```bash
 # Check all convoys (current behavior)

@@ -7,7 +7,7 @@ Thanks for your interest in contributing! Gas Town is experimental software, and
 1. Fork the repository
 2. Clone your fork
 3. Install prerequisites (see README.md)
-4. Build and test: `go build -o gt ./cmd/gt && go test ./...`
+4. Build and test: `go build -tags gms_pure_go -o gt ./cmd/gt && go test -tags gms_pure_go ./...`
 
 ## Setting up a rig to contribute to Gas Town
 
@@ -34,8 +34,7 @@ What each flag does at the git-remote level:
 - `--push-url` sets `origin`'s **push** URL to your fork, so all pushes land
   on `https://github.com/<you>/gastown` and never on the canonical repo.
 - `--upstream-url` adds a separate named `upstream` remote pointing at the
-  canonical repo, so rebases against `upstream/main` work without juggling
-  URLs.
+  canonical repo for history comparison and upstream PR bases.
 
 > **Current limitation — the refinery is not yet fork-aware.** Until the
 > behavioral half of
@@ -50,6 +49,10 @@ If you set up a rig **without** these flags and your fork's `main` has
 already been polluted, see
 [docs/guides/fork-rig-setup.md](docs/guides/fork-rig-setup.md) for
 verification and recovery steps.
+
+That guide also distinguishes a contribution-only fork from a maintained
+downstream fork. Downstream release responsibilities are documented in
+[RELEASING.md](RELEASING.md#downstream-fork-release-delta).
 
 ## Development Workflow
 

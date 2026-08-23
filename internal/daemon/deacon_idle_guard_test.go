@@ -53,6 +53,18 @@ if [[ "$cmd" == "has-session" ]]; then
   exit 0
 fi
 
+# A restart creates a new Deacon session and waits for its pane to leave the
+# shell. Model an already-running agent so the unit test exercises the restart
+# branch without waiting on a real process for ClaudeStartTimeout.
+if [[ "$cmd" == "display-message" ]]; then
+  case "$*" in
+    *pane_current_command*) echo "codex" ;;
+    *pane_id*) echo "%1" ;;
+    *pane_pid*) echo "$$" ;;
+  esac
+  exit 0
+fi
+
 exit 0
 `
 	path := filepath.Join(dir, "tmux")
@@ -74,6 +86,7 @@ func TestCheckDeaconHeartbeat_IdleGuard(t *testing.T) {
 		stores           map[string]beadsdk.Storage
 		wantNudgeLog     bool
 		wantIdleGuardLog bool
+		wantRestartLog   bool
 		desc             string
 	}{
 		{
@@ -121,14 +134,15 @@ func TestCheckDeaconHeartbeat_IdleGuard(t *testing.T) {
 			desc:             "Nudge must fire conservatively when work state is unknown",
 		},
 		{
-			name:         "very stale: heartbeat >= 20 min — escalation path, no nudge",
+			name:         "very stale: heartbeat >= 20 min — restart path, no nudge",
 			heartbeatAge: 21 * time.Minute,
 			stores: map[string]beadsdk.Storage{
 				"hq": &searchStorage{results: map[string][]*beadsdk.Issue{}},
 			},
 			wantNudgeLog:     false,
 			wantIdleGuardLog: false,
-			desc:             "Very stale heartbeat takes escalation path, not nudge path; idle guard not reached",
+			wantRestartLog:   true,
+			desc:             "Very stale heartbeat takes the restart path, not the nudge path; idle guard is not reached",
 		},
 	}
 
@@ -166,6 +180,12 @@ func TestCheckDeaconHeartbeat_IdleGuard(t *testing.T) {
 			if hasNudgeLog != tc.wantNudgeLog {
 				t.Errorf("%s\nnudge log present=%v, want=%v\nlog:\n%s",
 					tc.desc, hasNudgeLog, tc.wantNudgeLog, logOutput)
+			}
+
+			hasRestartLog := strings.Contains(logOutput, "killing stuck Deacon")
+			if hasRestartLog != tc.wantRestartLog {
+				t.Errorf("%s\nrestart log present=%v, want=%v\nlog:\n%s",
+					tc.desc, hasRestartLog, tc.wantRestartLog, logOutput)
 			}
 		})
 	}

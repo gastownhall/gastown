@@ -125,23 +125,20 @@ func TestDetectStaleWorkingDogs_ClearsStaleWorkers(t *testing.T) {
 func TestDetectStaleWorkingDogs_KillsSessionBeforeClearing(t *testing.T) {
 	requireTmux(t)
 
-	oldSocket := tmux.GetDefaultSocket()
 	socketName := fmt.Sprintf("gt-test-dog-stale-%d", time.Now().UnixNano())
-	tmux.SetDefaultSocket(socketName)
-	t.Cleanup(func() { tmux.SetDefaultSocket(oldSocket) })
 
 	townRoot := t.TempDir()
 	d := testHandlerDaemon(t, townRoot)
 
 	rigsConfig := &config.RigsConfig{Version: 1, Rigs: map[string]config.RigEntry{}}
 	mgr := dog.NewManager(townRoot, rigsConfig)
-	tm := tmux.NewTmux()
+	tm := tmux.NewTmuxWithSocket(socketName)
 	sm := dog.NewSessionManager(tm, townRoot, mgr)
 
 	testSetupWorkingDogState(t, townRoot, "stale", constants.MolConvoyFeed, time.Now().Add(-3*time.Hour))
 
 	sessionName := sm.SessionName("stale")
-	if err := tm.NewSession(sessionName, ""); err != nil {
+	if err := tm.NewSessionWithCommand(sessionName, "", "sleep 60"); err != nil {
 		t.Fatalf("NewSession(%q): %v", sessionName, err)
 	}
 	t.Cleanup(func() { _ = tm.KillSession(sessionName) })
@@ -531,28 +528,23 @@ func TestCleanupStuckDogs_ClearsDeadSessionWorker(t *testing.T) {
 func TestCleanupStuckDogs_ClearsAgentDeadWorker(t *testing.T) {
 	requireTmux(t)
 
-	oldSocket := tmux.GetDefaultSocket()
 	socketName := fmt.Sprintf("gt-test-dog-cleanup-%d", time.Now().UnixNano())
-	tmux.SetDefaultSocket(socketName)
-	t.Cleanup(func() { tmux.SetDefaultSocket(oldSocket) })
 
 	townRoot := t.TempDir()
 	d := testHandlerDaemon(t, townRoot)
 
 	rigsConfig := &config.RigsConfig{Version: 1, Rigs: map[string]config.RigEntry{}}
 	mgr := dog.NewManager(townRoot, rigsConfig)
-	tm := tmux.NewTmux()
+	tm := tmux.NewTmuxWithSocket(socketName)
 	sm := dog.NewSessionManager(tm, townRoot, mgr)
 
 	testSetupWorkingDogState(t, townRoot, "alpha", constants.MolDogReaper, time.Now())
 
 	sessionName := sm.SessionName("alpha")
-	if err := tm.NewSession(sessionName, ""); err != nil {
+	if err := tm.NewSessionWithCommand(sessionName, "", "sleep 60"); err != nil {
 		t.Fatalf("NewSession(%q): %v", sessionName, err)
 	}
 	t.Cleanup(func() { _ = tm.KillSession(sessionName) })
-	time.Sleep(200 * time.Millisecond)
-
 	d.cleanupStuckDogs(mgr, sm)
 
 	dg, err := mgr.Get("alpha")

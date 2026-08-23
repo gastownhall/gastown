@@ -88,7 +88,6 @@ func (d *Daemon) cleanupStuckDogs(mgr *dog.Manager, sm *dog.SessionManager) {
 		return
 	}
 
-	t := tmux.NewTmux()
 	for _, dg := range dogs {
 		if dg.State != dog.StateWorking {
 			continue
@@ -107,13 +106,13 @@ func (d *Daemon) cleanupStuckDogs(mgr *dog.Manager, sm *dog.SessionManager) {
 			continue
 		}
 
-		status := t.CheckSessionHealth(sessionID, 0)
+		status := sm.CheckSessionHealth(dg.Name, 0)
 		if status != tmux.AgentDead {
 			continue
 		}
 
 		d.logger.Printf("Handler: dog %s (%s) is working but agent is dead, killing session and clearing work", dg.Name, sessionID)
-		if err := t.KillSessionWithProcesses(sessionID); err != nil {
+		if err := sm.KillSessionWithProcesses(dg.Name); err != nil {
 			d.logger.Printf("Handler: failed to kill agent-dead session for dog %s (%s): %v", dg.Name, sessionID, err)
 			continue
 		}
@@ -145,7 +144,6 @@ func (d *Daemon) detectStaleWorkingDogs(mgr *dog.Manager, sm *dog.SessionManager
 
 	threshold := daemonCfg.StaleWorkingTimeoutD()
 	now := time.Now()
-	t := tmux.NewTmux()
 	for _, dg := range dogs {
 		if dg.State != dog.StateWorking {
 			continue
@@ -167,7 +165,7 @@ func (d *Daemon) detectStaleWorkingDogs(mgr *dog.Manager, sm *dog.SessionManager
 		if running {
 			// Kill the tmux session before clearing state so a failed kill does not
 			// return the dog to the idle pool with stale work still running.
-			if err := t.KillSessionWithProcesses(sm.SessionName(dg.Name)); err != nil {
+			if err := sm.KillSessionWithProcesses(dg.Name); err != nil {
 				d.logger.Printf("Handler: failed to stop session for stale dog %s: %v", dg.Name, err)
 				continue
 			}

@@ -427,7 +427,7 @@ func ensureMayorInfra(townRoot string) error {
 
 	// Dolt (fatal on failure — Mayor requires database access)
 	doltCfg := doltserver.DefaultConfig(townRoot)
-	if !doltCfg.IsRemote() {
+	if !doltCfg.IsExternallyManaged() {
 		if _, err := os.Stat(doltCfg.DataDir); err == nil {
 			doltRunning, _, _ := doltserver.IsRunning(townRoot)
 			if !doltRunning {

@@ -188,6 +188,19 @@ func (m *SessionManager) IsRunning(dogName string) (bool, error) {
 	return m.tmux.HasSession(sessionID)
 }
 
+// CheckSessionHealth reports the health of a dog's session using the same
+// tmux socket owned by this manager.
+func (m *SessionManager) CheckSessionHealth(dogName string, maxInactivity time.Duration) tmux.ZombieStatus {
+	return m.tmux.CheckSessionHealth(m.SessionName(dogName), maxInactivity)
+}
+
+// KillSessionWithProcesses terminates a dog's session and its descendants
+// without mutating persistent dog state. Callers that coordinate state with a
+// compare-and-swap use this before clearing the matching work assignment.
+func (m *SessionManager) KillSessionWithProcesses(dogName string) error {
+	return m.tmux.KillSessionWithProcesses(m.SessionName(dogName))
+}
+
 // Status returns detailed status for a dog session.
 func (m *SessionManager) Status(dogName string) (*SessionInfo, error) {
 	sessionID := m.SessionName(dogName)

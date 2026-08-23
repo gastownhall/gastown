@@ -44,6 +44,7 @@ func TestMain(m *testing.M) {
 		socketPath := filepath.Join(tmux.SocketDir(), tmuxSocket)
 		_ = os.Remove(socketPath)
 	}
+	closeDaemonTestStorePool()
 	testutil.TerminateDoltContainer()
 	os.Exit(code)
 }

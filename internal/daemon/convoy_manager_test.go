@@ -16,27 +16,14 @@ import (
 	beadsdk "github.com/steveyegge/beads"
 )
 
-// setupTestStore opens a real beads database for integration tests.
-// Skips if unavailable. Caller must run cleanup when done.
+// setupTestStore acquires a clean, real beads database for integration tests.
+// The package fixture migrates a bounded pool once and resets each store to its
+// committed baseline between tests. This preserves real SDK/Dolt behavior
+// without paying the full schema-migration cost for every test.
 func setupTestStore(t *testing.T) (beadsdk.Storage, func()) {
 	t.Helper()
 	t.Setenv("BEADS_TEST_MODE", "1")
-	dir := t.TempDir()
-	beadsDir := filepath.Join(dir, ".beads")
-	doltPath := filepath.Join(beadsDir, "dolt")
-	if err := os.MkdirAll(doltPath, 0755); err != nil {
-		t.Skipf("cannot create test dir: %v", err)
-	}
-	ctx := context.Background()
-	store, err := beadsdk.Open(ctx, doltPath)
-	if err != nil {
-		t.Skipf("beads store unavailable: %v", err)
-	}
-	if err := store.SetConfig(ctx, "issue_prefix", "test"); err != nil {
-		_ = store.Close()
-		t.Skipf("SetConfig: %v", err)
-	}
-	return store, func() { _ = store.Close() }
+	return acquireDaemonTestStore(t)
 }
 
 // scanTestOpts configures the mockGtForScanTest helper.
