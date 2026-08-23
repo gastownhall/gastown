@@ -138,10 +138,16 @@ func NewTownSettings() *TownSettings {
 }
 
 // WebTimeoutsConfig configures command execution timeouts for the web dashboard.
+//
+// Per-command timeouts (CmdTimeout, GhCmdTimeout, TmuxCmdTimeout) must each be
+// smaller than FetchTimeout, the external render budget. A per-command timeout
+// larger than the external budget is a no-op: the external deadline always
+// fires first, so the "internal" ceiling never actually bounds anything
+// (gtf-hf1 / gastownhall/gastown#4661).
 type WebTimeoutsConfig struct {
-	// CmdTimeout is the timeout for bd (beads) commands. Default: "15s".
+	// CmdTimeout is the timeout for bd (beads) commands. Default: "6s".
 	CmdTimeout string `json:"cmd_timeout,omitempty"`
-	// GhCmdTimeout is the timeout for GitHub API commands. Default: "10s".
+	// GhCmdTimeout is the timeout for GitHub API commands. Default: "5s".
 	GhCmdTimeout string `json:"gh_cmd_timeout,omitempty"`
 	// TmuxCmdTimeout is the timeout for tmux queries. Default: "2s".
 	TmuxCmdTimeout string `json:"tmux_cmd_timeout,omitempty"`
@@ -156,8 +162,8 @@ type WebTimeoutsConfig struct {
 // DefaultWebTimeoutsConfig returns a WebTimeoutsConfig with sensible defaults.
 func DefaultWebTimeoutsConfig() *WebTimeoutsConfig {
 	return &WebTimeoutsConfig{
-		CmdTimeout:        "15s",
-		GhCmdTimeout:      "10s",
+		CmdTimeout:        "6s",
+		GhCmdTimeout:      "5s",
 		TmuxCmdTimeout:    "2s",
 		FetchTimeout:      "8s",
 		DefaultRunTimeout: "30s",

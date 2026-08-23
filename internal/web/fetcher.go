@@ -14,6 +14,8 @@ import (
 	"sync"
 	"time"
 
+	"golang.org/x/sync/errgroup"
+
 	"github.com/steveyegge/gastown/internal/activity"
 	"github.com/steveyegge/gastown/internal/beads"
 	"github.com/steveyegge/gastown/internal/config"
@@ -219,8 +221,8 @@ func NewLiveConvoyFetcher() (*LiveConvoyFetcher, error) {
 		townBeads:               filepath.Join(townRoot, ".beads"),
 		registry:                registry,
 		tmuxSocket:              tmux.GetDefaultSocket(),
-		cmdTimeout:              config.ParseDurationOrDefault(webCfg.CmdTimeout, 15*time.Second),
-		ghCmdTimeout:            config.ParseDurationOrDefault(webCfg.GhCmdTimeout, 10*time.Second),
+		cmdTimeout:              config.ParseDurationOrDefault(webCfg.CmdTimeout, 6*time.Second),
+		ghCmdTimeout:            config.ParseDurationOrDefault(webCfg.GhCmdTimeout, 5*time.Second),
 		tmuxCmdTimeout:          config.ParseDurationOrDefault(webCfg.TmuxCmdTimeout, 2*time.Second),
 		staleThreshold:          config.ParseDurationOrDefault(workerCfg.StaleThreshold, 5*time.Minute),
 		stuckThreshold:          config.ParseDurationOrDefault(workerCfg.StuckThreshold, constants.GUPPViolationTimeout),
@@ -652,7 +654,10 @@ func calculateWorkStatus(completed, total int, activityColor string) string {
 	}
 }
 
-// FetchMergeQueue fetches open PRs from registered rigs.
+// FetchMergeQueue fetches open PRs from registered rigs, one goroutine per
+// rig via errgroup. Serial `gh pr list` calls dominated dashboard render
+// time (~9.9s across 10 rigs); parallelizing brings this down to roughly
+// the slowest single rig's fetch time.
 func (f *LiveConvoyFetcher) FetchMergeQueue() ([]MergeQueueRow, error) {
 	// Load registered rigs from config
 	rigsConfigPath := filepath.Join(f.townRoot, "mayor", "rigs.json")
@@ -661,20 +666,38 @@ func (f *LiveConvoyFetcher) FetchMergeQueue() ([]MergeQueueRow, error) {
 		return nil, fmt.Errorf("loading rigs config: %w", err)
 	}
 
+	rigResults := make([][]MergeQueueRow, len(rigsConfig.Rigs))
+	rigNames := make([]string, 0, len(rigsConfig.Rigs))
+	for rigName := range rigsConfig.Rigs {
+		rigNames = append(rigNames, rigName)
+	}
+	// Deterministic ordering keeps output stable across ticks so
+	// computeDashboardHash sees identical output for identical state.
+	sort.Strings(rigNames)
+
+	g := new(errgroup.Group)
+	for i, rigName := range rigNames {
+		i, rigName := i, rigName
+		entry := rigsConfig.Rigs[rigName]
+		g.Go(func() error {
+			repoPath := gitURLToRepoPath(entry.GitURL)
+			if repoPath == "" {
+				return nil
+			}
+			prs, err := f.fetchPRsForRepo(repoPath, rigName)
+			if err != nil {
+				// Non-fatal: continue with other repos
+				return nil
+			}
+			rigResults[i] = prs
+			return nil
+		})
+	}
+	// errgroup.Group.Go never returns a non-nil error above, so Wait cannot fail.
+	_ = g.Wait()
+
 	var result []MergeQueueRow
-
-	for rigName, entry := range rigsConfig.Rigs {
-		// Convert git URL to owner/repo format for gh CLI
-		repoPath := gitURLToRepoPath(entry.GitURL)
-		if repoPath == "" {
-			continue
-		}
-
-		prs, err := f.fetchPRsForRepo(repoPath, rigName)
-		if err != nil {
-			// Non-fatal: continue with other repos
-			continue
-		}
+	for _, prs := range rigResults {
 		result = append(result, prs...)
 	}
 
