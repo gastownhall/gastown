@@ -781,6 +781,7 @@
                                 <td><span class="polecat-name">{{.Name}}</span></td>
                                 <td>
                                     {{if eq .State "idle"}}<span class="badge badge-green">Idle</span>
+                                    {{else if eq .State "debris"}}<span class="badge badge-red" title="Kennel entry with no .dog.json — residue from a failed spawn. Recover with: gt dog remove &lt;name&gt;">Debris</span>
                                     {{else}}<span class="badge badge-yellow">Working</span>{{end}}
                                 </td>
                                 <td class="status-hint">{{.Work}}</td>

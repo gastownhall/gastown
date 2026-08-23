@@ -37,6 +37,7 @@ type DogState struct {
 	Work          string            `json:"work,omitempty"`            // Current work assignment
 	WorkStartedAt time.Time         `json:"work_started_at,omitempty"` // When work was assigned
 	Worktrees     map[string]string `json:"worktrees,omitempty"`       // Rig -> path (for verification)
+	SkippedRigs   []string          `json:"skipped_rigs,omitempty"`    // Rigs that were unreachable during Add
 	CreatedAt     time.Time         `json:"created_at"`
 	UpdatedAt     time.Time         `json:"updated_at"`
 }
