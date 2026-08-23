@@ -809,6 +809,13 @@ func (m *Manager) addWithOptionsLocked(name string, opts AddOptions, polecatDir 
 		worktreeCreated = true
 	}
 
+	// Move any submodules off detached HEAD onto the same lane branch as the
+	// parent worktree, so submodule commits have a ref to land on (gtf-2sq).
+	if err := git.CheckoutSubmodulesOnBranch(clonePath, branchName); err != nil {
+		cleanupOnError()
+		return nil, fmt.Errorf("positioning submodules on branch %s: %w", branchName, err)
+	}
+
 	// Provision CLAUDE.md with gt done instructions (same as AddWithOptions path).
 	lockedRigName := filepath.Base(m.rig.Path)
 	if _, err := templates.CreatePolecatCLAUDEmd(clonePath, lockedRigName, name); err != nil {
@@ -1011,6 +1018,13 @@ func (m *Manager) AddWithOptions(name string, opts AddOptions) (_ *Polecat, retE
 			return nil, fmt.Errorf("creating worktree from %s: %w", startPoint, err)
 		}
 		worktreeCreated = true
+	}
+
+	// Move any submodules off detached HEAD onto the same lane branch as the
+	// parent worktree, so submodule commits have a ref to land on (gtf-2sq).
+	if err := git.CheckoutSubmodulesOnBranch(clonePath, branchName); err != nil {
+		cleanupOnError()
+		return nil, fmt.Errorf("positioning submodules on branch %s: %w", branchName, err)
 	}
 
 	// Provision CLAUDE.md with gt done instructions and lifecycle context.
@@ -1633,6 +1647,14 @@ func (m *Manager) RepairWorktreeWithOptions(name string, force bool, opts AddOpt
 		if err := repoGit.WorktreeAddFromRef(tmpClonePath, branchName, startPoint); err != nil {
 			return nil, fmt.Errorf("creating fresh worktree from %s: %w", startPoint, err)
 		}
+	}
+
+	// Move any submodules off detached HEAD onto the same lane branch as the
+	// parent worktree, so submodule commits have a ref to land on (gtf-2sq).
+	if err := git.CheckoutSubmodulesOnBranch(tmpClonePath, branchName); err != nil {
+		_ = repoGit.WorktreeRemove(tmpClonePath, true)
+		_ = os.RemoveAll(tmpClonePath)
+		return nil, fmt.Errorf("positioning submodules on branch %s: %w", branchName, err)
 	}
 
 	// New worktree created successfully — now safe to remove old worktree and reset bead.
