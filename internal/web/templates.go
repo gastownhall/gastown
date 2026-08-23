@@ -44,10 +44,14 @@ type RigRow struct {
 	HasRefinery  bool
 }
 
+// DogStateDebris marks a kennel entry that occupies a name without being a
+// valid dog (a directory without .dog.json, left behind by a failed Add).
+const DogStateDebris = "debris"
+
 // DogRow represents a Deacon helper worker.
 type DogRow struct {
 	Name       string // Dog name (e.g., "alpha")
-	State      string // idle, working
+	State      string // idle, working, debris
 	Work       string // Current work assignment
 	LastActive string // Formatted age (e.g., "5m ago")
 	RigCount   int    // Number of worktrees

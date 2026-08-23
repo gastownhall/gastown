@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -317,7 +318,10 @@ func getDogManager() (*dog.Manager, error) {
 		return nil, fmt.Errorf("loading rigs config: %w", err)
 	}
 
-	return dog.NewManager(townRoot, rigsConfig), nil
+	return dog.NewManager(townRoot, rigsConfig).
+		WithRigBlockedCheck(func(rigName string) (bool, string) {
+			return IsRigParkedOrDocked(townRoot, rigName)
+		}), nil
 }
 
 func runDogAdd(cmd *cobra.Command, args []string) error {
@@ -397,19 +401,23 @@ func runDogRemove(cmd *cobra.Command, args []string) error {
 	removed := 0
 
 	for _, name := range names {
+		// Get() only recognizes a valid dog (.dog.json present). A name given
+		// explicitly may instead be debris from a failed Add — a directory
+		// with no state file, which is exactly what burns a kennel name.
+		// Remove() targets any kennel entry via dirExists(), so fall through
+		// to it instead of skipping; it still refuses a genuinely absent name
+		// and protected occupants like the Boot watchdog.
 		d, err := mgr.Get(name)
-		if err != nil {
-			style.PrintWarning("dog %s not found, skipping", name)
-			continue
-		}
-
-		// Check if working
-		if d.State == dog.StateWorking && !dogForce {
+		if err == nil && d.State == dog.StateWorking && !dogForce {
 			removeErrors = append(removeErrors, fmt.Sprintf("%s: is working (use --force to remove anyway)", name))
 			continue
 		}
 
 		if err := mgr.Remove(name); err != nil {
+			if errors.Is(err, dog.ErrDogNotFound) {
+				style.PrintWarning("dog %s not found, skipping", name)
+				continue
+			}
 			removeErrors = append(removeErrors, fmt.Sprintf("%s: %v", name, err))
 			continue
 		}
@@ -1050,7 +1058,10 @@ func runDogDispatch(cmd *cobra.Command, args []string) error {
 	}
 
 	// Get dog manager (reuse rigsConfig from above)
-	mgr := dog.NewManager(townRoot, rigsConfig)
+	mgr := dog.NewManager(townRoot, rigsConfig).
+		WithRigBlockedCheck(func(rigName string) (bool, string) {
+			return IsRigParkedOrDocked(townRoot, rigName)
+		})
 
 	// Find target dog
 	var targetDog *dog.Dog

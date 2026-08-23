@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
@@ -32,6 +33,11 @@ type Manager struct {
 	townRoot   string
 	kennelPath string // ~/gt/deacon/dogs/
 	rigsConfig *config.RigsConfig
+	// isRigBlocked reports whether a rig is parked or docked and must not be
+	// touched. Injected because internal/dog cannot import internal/cmd, which
+	// owns IsRigParkedOrDocked. Mirrors daemon.NewConvoyManager's isRigParked
+	// seam. Nil means no rig is ever blocked.
+	isRigBlocked func(rig string) (bool, string)
 }
 
 // NewManager creates a new dog manager.
@@ -41,6 +47,22 @@ func NewManager(townRoot string, rigsConfig *config.RigsConfig) *Manager {
 		kennelPath: filepath.Join(townRoot, "deacon", "dogs"),
 		rigsConfig: rigsConfig,
 	}
+}
+
+// WithRigBlockedCheck injects the parked/docked predicate. Every other
+// multi-rig dispatch path already gates on it; dogs create worktrees across
+// every rig, so an unreachable parked rig would otherwise abort the spawn.
+func (m *Manager) WithRigBlockedCheck(fn func(rig string) (bool, string)) *Manager {
+	m.isRigBlocked = fn
+	return m
+}
+
+// rigBlocked reports whether a rig must be skipped, with the reason.
+func (m *Manager) rigBlocked(rig string) (bool, string) {
+	if m.isRigBlocked == nil {
+		return false, ""
+	}
+	return m.isRigBlocked(rig)
 }
 
 // lockDog acquires an exclusive file lock for a specific dog's state operations.
@@ -79,7 +101,19 @@ func (m *Manager) dogDir(name string) string {
 }
 
 // exists checks if a dog exists.
+//
+// A dog is identified by its state file, not by mere directory presence. A
+// directory without .dog.json is debris from a failed Add and must not be
+// mistaken for a real dog, otherwise the name is permanently unusable while
+// List reports an empty kennel.
 func (m *Manager) exists(name string) bool {
+	_, err := os.Stat(m.stateFilePath(name))
+	return err == nil
+}
+
+// dirExists reports whether any kennel entry occupies the name, valid or not.
+// Removal must reach debris that exists() intentionally ignores.
+func (m *Manager) dirExists(name string) bool {
 	_, err := os.Stat(m.dogDir(name))
 	return err == nil
 }
@@ -89,15 +123,58 @@ func (m *Manager) stateFilePath(name string) string {
 	return filepath.Join(m.dogDir(name), ".dog.json")
 }
 
+// nonDogKennelMarkers are state files that identify a kennel occupant which is
+// deliberately not a dog. The Boot watchdog lives in the kennel and owns
+// .boot-status.json; classifying it as debris would invite its destruction.
+var nonDogKennelMarkers = []string{".boot-status.json"}
+
+// isNonDogKennelEntry reports whether a kennel entry is a known non-dog
+// occupant that must never be treated as removable residue.
+func (m *Manager) isNonDogKennelEntry(name string) bool {
+	for _, marker := range nonDogKennelMarkers {
+		if _, err := os.Stat(filepath.Join(m.dogDir(name), marker)); err == nil {
+			return true
+		}
+	}
+	return false
+}
+
+// discoverWorktrees reconstructs the rig -> worktree map from disk for a kennel
+// entry whose state file is missing. Each direct subdirectory of a dog is a rig
+// worktree, so debris left by a partially applied Add remains removable.
+func (m *Manager) discoverWorktrees(name string) map[string]string {
+	dogPath := m.dogDir(name)
+	entries, err := os.ReadDir(dogPath)
+	if err != nil {
+		return nil
+	}
+
+	worktrees := make(map[string]string)
+	for _, entry := range entries {
+		if !entry.IsDir() || strings.HasPrefix(entry.Name(), ".") {
+			continue
+		}
+		worktrees[entry.Name()] = filepath.Join(dogPath, entry.Name())
+	}
+	return worktrees
+}
+
 // Add creates a new dog in the kennel with worktrees into each rig.
 // Each dog gets a worktree per rig (e.g., dogs/alpha/gastown/, dogs/alpha/beads/).
 // Worktrees are created from each rig's bare repo (.repo.git) or mayor/rig.
-func (m *Manager) Add(name string) (*Dog, error) {
+func (m *Manager) Add(name string) (dogResult *Dog, err error) {
 	if err := validateDogName(name); err != nil {
 		return nil, err
 	}
 	if m.exists(name) {
 		return nil, ErrDogExists
+	}
+	// A directory without .dog.json is debris from an earlier failed Add.
+	// Clear it so the name stays usable instead of being burned forever.
+	if m.dirExists(name) {
+		if err := m.Remove(name); err != nil {
+			return nil, fmt.Errorf("clearing incomplete dog %s: %w", name, err)
+		}
 	}
 
 	// Verify we have rigs to create worktrees into
@@ -117,34 +194,55 @@ func (m *Manager) Add(name string) (*Dog, error) {
 		return nil, fmt.Errorf("creating dog dir: %w", err)
 	}
 
-	// Track cleanup on failure
-	cleanup := func() { _ = os.RemoveAll(dogPath) }
+	// Track cleanup on failure. Registered git worktrees survive a bare
+	// os.RemoveAll, so roll back through Remove, which unregisters them first.
+	// A rollback that cannot prove it removed the artifact must say so in the
+	// returned error: silently leaving residue is what burns the name and
+	// empties the kennel.
 	success := false
 	defer func() {
-		if !success {
-			cleanup()
+		if success {
+			return
+		}
+		if rbErr := m.Remove(name); rbErr != nil {
+			err = fmt.Errorf("%w (rollback failed, kennel entry %s left as debris: %v)", err, name, rbErr)
 		}
 	}()
 
-	// Create worktrees into each rig
+	// Create worktrees into each rig. A dog is a cross-rig worker, so one
+	// unreachable rig must not abort the whole kennel entry: build the dog from
+	// the rigs that work and report the ones that were skipped. Only a dog with
+	// no usable rig at all is a failure.
 	worktrees := make(map[string]string)
+	var skipped []string
 	for rigName := range m.rigsConfig.Rigs {
+		if blocked, reason := m.rigBlocked(rigName); blocked {
+			skipped = append(skipped, rigName)
+			style.PrintWarning("skipping rig %s for dog %s: %s", rigName, name, reason)
+			continue
+		}
 		worktreePath, err := m.createRigWorktree(dogPath, name, rigName)
 		if err != nil {
-			return nil, fmt.Errorf("creating worktree for rig %s: %w", rigName, err)
+			skipped = append(skipped, rigName)
+			style.PrintWarning("skipping rig %s for dog %s: %v", rigName, name, err)
+			continue
 		}
 		worktrees[rigName] = worktreePath
+	}
+	if len(worktrees) == 0 {
+		return nil, fmt.Errorf("no usable rig for dog %s (all %d rig(s) failed)", name, len(skipped))
 	}
 
 	// Create initial state file
 	now := time.Now()
 	state := &DogState{
-		Name:       name,
-		State:      StateIdle,
-		LastActive: now,
-		Worktrees:  worktrees,
-		CreatedAt:  now,
-		UpdatedAt:  now,
+		Name:        name,
+		State:       StateIdle,
+		LastActive:  now,
+		Worktrees:   worktrees,
+		SkippedRigs: skipped,
+		CreatedAt:   now,
+		UpdatedAt:   now,
 	}
 
 	if err := m.saveState(name, state); err != nil {
@@ -217,8 +315,15 @@ func (m *Manager) Remove(name string) error {
 	if err := validateDogName(name); err != nil {
 		return err
 	}
-	if !m.exists(name) {
+	// Removal targets any kennel entry, including debris left by a failed Add
+	// that never wrote .dog.json. Gating on exists() here would strand that
+	// debris forever and permanently burn the name.
+	if !m.dirExists(name) {
 		return ErrDogNotFound
+	}
+	// Never destroy a known non-dog kennel occupant (e.g. the Boot watchdog).
+	if m.isNonDogKennelEntry(name) {
+		return fmt.Errorf("%s is not a dog (protected kennel occupant)", name)
 	}
 
 	dogPath := m.dogDir(name)
@@ -230,8 +335,16 @@ func (m *Manager) Remove(name string) error {
 		state = &DogState{Worktrees: make(map[string]string)}
 	}
 
+	// Debris from a failed Add has worktrees on disk but no state recording
+	// them. Recover them from the directory itself, otherwise os.RemoveAll
+	// below silently fails on registered git worktrees and the entry survives.
+	worktrees := state.Worktrees
+	if len(worktrees) == 0 {
+		worktrees = m.discoverWorktrees(name)
+	}
+
 	// Remove worktrees from each rig
-	for rigName, worktreePath := range state.Worktrees {
+	for rigName, worktreePath := range worktrees {
 		rigPath := filepath.Join(m.townRoot, rigName)
 		repoGit, err := m.findRepoBase(rigPath)
 		if err != nil {
@@ -255,6 +368,12 @@ func (m *Manager) Remove(name string) error {
 		return fmt.Errorf("removing dog dir: %w", err)
 	}
 
+	// A rollback that cannot prove it removed the artifact must fail loudly.
+	// Silent survival is what burns the name and empties the kennel.
+	if _, err := os.Stat(dogPath); err == nil {
+		return fmt.Errorf("dog dir %s still present after removal", dogPath)
+	}
+
 	return nil
 }
 
@@ -276,12 +395,40 @@ func (m *Manager) List() ([]*Dog, error) {
 
 		dog, err := m.Get(entry.Name())
 		if err != nil {
-			continue // Skip invalid dogs
+			continue // Skip invalid dogs; ListDebris reports them
 		}
 		dogs = append(dogs, dog)
 	}
 
 	return dogs, nil
+}
+
+// ListDebris returns kennel entries that occupy a name but are not valid dogs,
+// i.e. directories without .dog.json left behind by a failed Add. Reporting
+// them is what turns a silently empty kennel into a diagnosable one.
+func (m *Manager) ListDebris() ([]string, error) {
+	entries, err := os.ReadDir(m.kennelPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("reading kennel: %w", err)
+	}
+
+	var debris []string
+	for _, entry := range entries {
+		if !entry.IsDir() || strings.HasPrefix(entry.Name(), ".") {
+			continue
+		}
+		if m.isNonDogKennelEntry(entry.Name()) {
+			continue
+		}
+		if _, err := m.Get(entry.Name()); err != nil {
+			debris = append(debris, entry.Name())
+		}
+	}
+	sort.Strings(debris)
+	return debris, nil
 }
 
 // Get returns a specific dog by name.
@@ -504,6 +651,10 @@ func (m *Manager) Refresh(name string) error {
 
 	// Refresh each rig atomically: remove old, create new, persist state.
 	for rigName := range m.rigsConfig.Rigs {
+		if blocked, reason := m.rigBlocked(rigName); blocked {
+			style.PrintWarning("skipping rig %s for dog %s: %s", rigName, name, reason)
+			continue
+		}
 		rigPath := filepath.Join(m.townRoot, rigName)
 		oldWorktreePath := state.Worktrees[rigName]
 
@@ -626,6 +777,9 @@ func (m *Manager) CleanupStaleBranches() (int, error) {
 	totalDeleted := 0
 
 	for rigName := range m.rigsConfig.Rigs {
+		if blocked, _ := m.rigBlocked(rigName); blocked {
+			continue
+		}
 		rigPath := filepath.Join(m.townRoot, rigName)
 		repoGit, err := m.findRepoBase(rigPath)
 		if err != nil {
