@@ -61,51 +61,82 @@ func CopyFile(src, dst string) error {
 // needed. Regular files go through CopyFile, so they are cloned where the
 // filesystem allows it. Symlinks are recreated as symlinks rather than
 // dereferenced; sockets, devices and FIFOs are skipped.
+//
+// Symlinks inside the tree are never followed, so a link pointing outside src
+// is reproduced as a link and cannot redirect a write beyond dst.
 func CopyDir(src, dst string) error {
-	srcInfo, err := os.Stat(src)
+	srcInfo, err := os.Lstat(src)
 	if err != nil {
 		return fmt.Errorf("stat %s: %w", src, err)
 	}
 	if !srcInfo.IsDir() {
 		return fmt.Errorf("copying %s: not a directory", src)
 	}
+	return copyTree(src, dst, srcInfo.Mode().Perm())
+}
 
-	return filepath.WalkDir(src, func(path string, d fs.DirEntry, err error) error {
+// copyTree copies one directory level and recurses. It walks with os.ReadDir
+// rather than filepath.WalkDir so that every path it acts on is built from an
+// entry it has just read and type-checked, instead of one handed back by a
+// callback after the walker has already stat'ed it.
+func copyTree(src, dst string, perm fs.FileMode) error {
+	if err := os.MkdirAll(dst, perm); err != nil {
+		return fmt.Errorf("creating %s: %w", dst, err)
+	}
+
+	entries, err := os.ReadDir(src)
+	if err != nil {
+		return fmt.Errorf("reading %s: %w", src, err)
+	}
+
+	for _, entry := range entries {
+		srcPath := filepath.Join(src, entry.Name())
+		dstPath := filepath.Join(dst, entry.Name())
+
+		// Lstat, not Stat: a symlink must be reported as a symlink so it is
+		// recreated rather than followed.
+		info, err := os.Lstat(srcPath)
 		if err != nil {
-			return err
+			return fmt.Errorf("stat %s: %w", srcPath, err)
 		}
-		rel, err := filepath.Rel(src, path)
-		if err != nil {
-			return err
-		}
-		target := filepath.Join(dst, rel)
 
 		switch {
-		case d.IsDir():
-			info, err := d.Info()
-			if err != nil {
+		case info.IsDir():
+			if err := copyTree(srcPath, dstPath, info.Mode().Perm()); err != nil {
 				return err
 			}
-			return os.MkdirAll(target, info.Mode().Perm())
 
-		case d.Type()&fs.ModeSymlink != 0:
-			link, err := os.Readlink(path)
-			if err != nil {
-				return fmt.Errorf("reading link %s: %w", path, err)
+		case info.Mode()&fs.ModeSymlink != 0:
+			if err := copySymlink(srcPath, dstPath); err != nil {
+				return err
 			}
-			// A stale destination would make Symlink fail with EEXIST.
-			if err := os.Remove(target); err != nil && !os.IsNotExist(err) {
-				return fmt.Errorf("replacing %s: %w", target, err)
-			}
-			return os.Symlink(link, target)
 
-		case d.Type().IsRegular():
-			return CopyFile(path, target)
+		case info.Mode().IsRegular():
+			if err := CopyFile(srcPath, dstPath); err != nil {
+				return err
+			}
 
 		default:
 			// Sockets, devices and named pipes carry no content worth
 			// reproducing in a copy of a data directory.
-			return nil
 		}
-	})
+	}
+
+	return nil
+}
+
+// copySymlink recreates src's link target at dst without dereferencing it.
+func copySymlink(src, dst string) error {
+	link, err := os.Readlink(src)
+	if err != nil {
+		return fmt.Errorf("reading link %s: %w", src, err)
+	}
+	// A stale destination would make Symlink fail with EEXIST.
+	if err := os.Remove(dst); err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("replacing %s: %w", dst, err)
+	}
+	if err := os.Symlink(link, dst); err != nil {
+		return fmt.Errorf("linking %s: %w", dst, err)
+	}
+	return nil
 }
