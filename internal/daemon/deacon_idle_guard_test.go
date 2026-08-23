@@ -53,6 +53,20 @@ if [[ "$cmd" == "has-session" ]]; then
   exit 0
 fi
 
+# Report a pane already running the agent.
+#
+# Without this, list-panes printed nothing, parseFirstPaneValue returned
+# "no panes found", and WaitForCommand (called by deacon.Manager.Start on the
+# very-stale escalation path) polled for the full ClaudeStartTimeout of 180s.
+# That single unanswered query was what timed the whole package out. Emitting a
+# non-shell pane command makes WaitForCommand return immediately, which is the
+# correct emulation: the escalation branch is what this test asserts, not a
+# real agent launch.
+if [[ "$cmd" == "list-panes" ]]; then
+  printf "0\tclaude\n"
+  exit 0
+fi
+
 exit 0
 `
 	path := filepath.Join(dir, "tmux")

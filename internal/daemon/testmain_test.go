@@ -31,19 +31,35 @@ func TestMain(m *testing.M) {
 	// polecat_health_test.go uses fake tmux stubs but still constructs Tmux
 	// instances. Routing all of these to an isolated socket prevents
 	// interference with the user's tmux and other packages' tests.
-	var tmuxSocket string
-	if _, err := exec.LookPath("tmux"); err == nil {
-		tmuxSocket = fmt.Sprintf("gt-test-daemon-%d", os.Getpid())
-		tmux.SetDefaultSocket(tmuxSocket)
+	//
+	// This isolation is FAIL-CLOSED and unconditional. It used to be gated on
+	// exec.LookPath("tmux"), which was unsafe: tmux.NewTmux() falls back to
+	// $GT_TOWN_SOCKET when no default socket is set, so any un-isolated run
+	// operated on the operator's live town and KillSessionWithProcesses took
+	// down real refinery and witness sessions. A test process that cannot
+	// isolate its tmux socket must not run at all.
+	tmuxSocket := fmt.Sprintf("gt-test-daemon-%d", os.Getpid())
+	tmux.SetDefaultSocket(tmuxSocket)
+	if got := tmux.GetDefaultSocket(); got != tmuxSocket {
+		fmt.Fprintf(os.Stderr,
+			"daemon TestMain: refusing to run un-isolated: tmux socket is %q, want %q\n", got, tmuxSocket)
+		os.Exit(1)
+	}
+	// Neutralise the town-socket fallback for this process. Even if some code
+	// path resolves an empty default socket, it must not reach the real town.
+	if err := os.Unsetenv("GT_TOWN_SOCKET"); err != nil {
+		fmt.Fprintf(os.Stderr, "daemon TestMain: cannot clear GT_TOWN_SOCKET: %v\n", err)
+		os.Exit(1)
 	}
 
 	code := m.Run()
 
-	if tmuxSocket != "" {
+	// Only ever tear down our own isolated socket, never the default server.
+	if _, err := exec.LookPath("tmux"); err == nil {
 		_ = exec.Command("tmux", "-L", tmuxSocket, "kill-server").Run()
-		socketPath := filepath.Join(tmux.SocketDir(), tmuxSocket)
-		_ = os.Remove(socketPath)
 	}
+	socketPath := filepath.Join(tmux.SocketDir(), tmuxSocket)
+	_ = os.Remove(socketPath)
 	testutil.TerminateDoltContainer()
 	os.Exit(code)
 }
