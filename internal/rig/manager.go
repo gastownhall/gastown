@@ -1031,6 +1031,10 @@ func (m *Manager) verifyRigIdentity(rigPath, rigName string) error {
 
 // saveRigConfig writes the rig configuration to config.json.
 func (m *Manager) saveRigConfig(rigPath string, cfg *RigConfig) error {
+	return saveRigConfigFile(rigPath, cfg)
+}
+
+func saveRigConfigFile(rigPath string, cfg *RigConfig) error {
 	configPath := filepath.Join(rigPath, "config.json")
 	data, err := json.MarshalIndent(cfg, "", "  ")
 	if err != nil {
@@ -1701,92 +1705,53 @@ func (m *Manager) RegisterRig(opts RegisterRigOptions) (*RegisterRigResult, erro
 	}
 
 	// Determine push URL: explicit option > existing config > auto-detect from remotes.
-	// Only explicit option and config.json with non-empty push_url are "authoritative"
-	// (trusted for clearing decisions). Auto-detection runs when no authoritative source
-	// provides a push URL — this covers both fresh adopts and legacy configs that predate
-	// the push_url feature. Auto-detection may fail silently (returns empty on git errors)
-	// and must not trigger stale URL clearing.
+	// Detection happens before canonical bootstrap so legacy Mayor clones can provide
+	// the value without being modified.
 	pushURL := ""
-	pushURLAuthoritative := false // whether the source can be trusted for clearing decisions
 	if opts.PushURL != "" {
 		pushURL = opts.PushURL
-		pushURLAuthoritative = true
 	} else if existingConfig != nil && existingConfig.PushURL != "" {
-		// Config.json has an explicit push URL — use it as authoritative
 		pushURL = existingConfig.PushURL
-		pushURLAuthoritative = true
 	} else {
-		// No authoritative push URL source: either no config.json (fresh adopt) or
-		// legacy config without push_url field. Auto-detect from existing git remotes.
 		pushURL = m.detectPushURL(rigPath)
-		// Not authoritative — only use for positive detection, never for clearing
 	}
 
-	// Apply push URL to existing repos (mirrors AddRig behavior).
-	bareRepoPath := filepath.Join(rigPath, ".repo.git")
-	mayorRigPath := filepath.Join(rigPath, "mayor", "rig")
-	if pushURL != "" {
-		if _, err := os.Stat(bareRepoPath); err == nil {
-			bareGit := git.NewGitWithDir(bareRepoPath, "")
-			if cfgErr := bareGit.ConfigurePushURL("origin", pushURL); cfgErr != nil {
-				return nil, fmt.Errorf("configuring push URL on bare repo: %w", cfgErr)
-			}
-		}
-		if _, err := os.Stat(mayorRigPath); err == nil {
-			mayorGit := git.NewGit(mayorRigPath)
-			if cfgErr := mayorGit.ConfigurePushURL("origin", pushURL); cfgErr != nil {
-				return nil, fmt.Errorf("configuring mayor push URL: %w", cfgErr)
-			}
-		}
-	} else if pushURLAuthoritative {
-		// Clear stale push URLs only when an authoritative source says "no push URL".
-		// Auto-detection returning empty could be a git error — don't clear in that case.
-		// Note: currently unreachable — authoritative sources always set non-empty pushURL.
-		// Retained for future --no-push-url flag support.
-		if _, err := os.Stat(bareRepoPath); err == nil {
-			bareGit := git.NewGitWithDir(bareRepoPath, "")
-			if clrErr := bareGit.ClearPushURL("origin"); clrErr != nil {
-				return nil, fmt.Errorf("clearing stale push URL on bare repo: %w", clrErr)
-			}
-		}
-		if _, err := os.Stat(mayorRigPath); err == nil {
-			mayorGit := git.NewGit(mayorRigPath)
-			if clrErr := mayorGit.ClearPushURL("origin"); clrErr != nil {
-				return nil, fmt.Errorf("clearing stale mayor push URL: %w", clrErr)
-			}
-		}
+	upstreamURL := opts.UpstreamURL
+	if upstreamURL == "" && existingConfig != nil {
+		upstreamURL = existingConfig.UpstreamURL
 	}
 
-	// Sync push URL to config.json so doctor check sees it
-	if existingConfig != nil && existingConfig.PushURL != pushURL {
-		existingConfig.PushURL = pushURL
-		if saveErr := m.saveRigConfig(rigPath, existingConfig); saveErr != nil {
-			// Non-fatal: town.json has the value, but doctor may flag a mismatch
-			fmt.Fprintf(os.Stderr, "Warning: could not update config.json with push URL: %v\n", saveErr)
-		}
+	effectiveConfig := &RigConfig{}
+	if existingConfig != nil {
+		copied := *existingConfig
+		effectiveConfig = &copied
+	}
+	effectiveConfig.Type = "rig"
+	effectiveConfig.Version = CurrentRigConfigVersion
+	effectiveConfig.Name = opts.Name
+	effectiveConfig.GitURL = result.GitURL
+	effectiveConfig.PushURL = pushURL
+	effectiveConfig.UpstreamURL = upstreamURL
+	if effectiveConfig.CreatedAt.IsZero() {
+		effectiveConfig.CreatedAt = time.Now()
+	}
+	effectiveConfig.Beads = &BeadsConfig{Prefix: result.BeadsPrefix}
+	if err := m.saveRigConfig(rigPath, effectiveConfig); err != nil {
+		return nil, fmt.Errorf("saving adopted rig config: %w", err)
 	}
 
-	// Configure upstream remote if provided (for fork workflows)
-	if opts.UpstreamURL != "" {
-		if _, err := os.Stat(bareRepoPath); err == nil {
-			bareGit := git.NewGitWithDir(bareRepoPath, "")
-			if upErr := bareGit.AddUpstreamRemote(opts.UpstreamURL); upErr != nil {
-				return nil, fmt.Errorf("configuring upstream remote on bare repo: %w", upErr)
-			}
-		}
-		if _, err := os.Stat(mayorRigPath); err == nil {
-			mayorGit := git.NewGit(mayorRigPath)
-			if upErr := mayorGit.AddUpstreamRemote(opts.UpstreamURL); upErr != nil {
-				return nil, fmt.Errorf("configuring mayor upstream remote: %w", upErr)
-			}
-		}
+	topology, err := EnsureCanonicalRepoTopology(rigPath)
+	if err != nil {
+		return nil, fmt.Errorf("bootstrapping canonical repository topology: %w", err)
 	}
+	result.DefaultBranch = topology.DefaultBranch
 
 	// Register in town config
 	m.config.Rigs[opts.Name] = config.RigEntry{
 		GitURL:      result.GitURL,
 		PushURL:     pushURL,
-		UpstreamURL: opts.UpstreamURL,
+		UpstreamURL: upstreamURL,
+		LocalRepo:   effectiveConfig.LocalRepo,
 		AddedAt:     time.Now(),
 		BeadsConfig: &config.BeadsConfig{
 			Prefix: result.BeadsPrefix,

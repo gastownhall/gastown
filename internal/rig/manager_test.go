@@ -1549,10 +1549,10 @@ func TestRegisterRig_DetectsAndPersistsCustomPushURL(t *testing.T) {
 		t.Fatalf("mkdir rig path: %v", err)
 	}
 
-	upstreamURL := filepath.Join(root, "upstream.git")
+	upstreamURL := createTestGitRepoForRig(t, "upstream")
 	forkURL := filepath.Join(root, "fork.git")
 
-	for _, args := range [][]string{{"git", "init", "--bare", upstreamURL}, {"git", "init", "--bare", forkURL}} {
+	for _, args := range [][]string{{"git", "init", "--bare", forkURL}} {
 		cmd := exec.Command(args[0], args[1:]...)
 		if out, err := cmd.CombinedOutput(); err != nil {
 			t.Fatalf("%v failed: %v\n%s", args, err, string(out))
@@ -1600,11 +1600,7 @@ func TestRegisterRig_DetectPushURLEmptyWhenPushEqualsFetch(t *testing.T) {
 		t.Fatalf("mkdir rig path: %v", err)
 	}
 
-	url := filepath.Join(root, "upstream-same.git")
-	cmd := exec.Command("git", "init", "--bare", url)
-	if out, err := cmd.CombinedOutput(); err != nil {
-		t.Fatalf("init bare repo failed: %v\n%s", err, string(out))
-	}
+	url := createTestGitRepoForRig(t, "upstream-same")
 
 	cmds := [][]string{
 		{"git", "init", "--initial-branch=main"},
@@ -1639,11 +1635,7 @@ func TestDetectGitURL_MayorRigFallback(t *testing.T) {
 	rigPath := filepath.Join(root, rigName)
 
 	// Create mayor/rig as a clone (but do NOT create a git repo at rigPath itself)
-	upstreamURL := filepath.Join(root, "detect-upstream.git")
-	cmd := exec.Command("git", "init", "--bare", upstreamURL)
-	if out, err := cmd.CombinedOutput(); err != nil {
-		t.Fatalf("init bare repo failed: %v\n%s", err, string(out))
-	}
+	upstreamURL := createTestGitRepoForRig(t, "detect-upstream")
 	mayorRigPath := filepath.Join(rigPath, "mayor", "rig")
 	if err := os.MkdirAll(filepath.Dir(mayorRigPath), 0755); err != nil {
 		t.Fatalf("mkdir mayor dir: %v", err)
@@ -1674,9 +1666,9 @@ func TestRegisterRig_LegacyConfigPreservesExistingPushURL(t *testing.T) {
 	rigName := "legacyrig"
 	rigPath := filepath.Join(root, rigName)
 
-	upstreamURL := filepath.Join(root, "upstream-legacy.git")
+	upstreamURL := createTestGitRepoForRig(t, "upstream-legacy")
 	forkURL := filepath.Join(root, "fork-legacy.git")
-	for _, u := range []string{upstreamURL, forkURL} {
+	for _, u := range []string{forkURL} {
 		cmd := exec.Command("git", "init", "--bare", u)
 		if out, err := cmd.CombinedOutput(); err != nil {
 			t.Fatalf("init bare repo %s failed: %v\n%s", u, err, string(out))

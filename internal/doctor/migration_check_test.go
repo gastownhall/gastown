@@ -188,6 +188,9 @@ func TestGetServerAddr_NoMetadata(t *testing.T) {
 }
 
 func TestGetServerAddr_UsesConfigYAMLPort(t *testing.T) {
+	// This case exercises durable config resolution, so isolate it from the
+	// active Gas Town session's explicit operator override.
+	t.Setenv("GT_DOLT_PORT", "")
 	check := NewDoltServerReachableCheck()
 	townRoot := t.TempDir()
 

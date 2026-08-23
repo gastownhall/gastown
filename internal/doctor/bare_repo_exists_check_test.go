@@ -49,7 +49,7 @@ func TestBareRepoExistsCheck_BareRepoExists(t *testing.T) {
 	}
 }
 
-func TestBareRepoExistsCheck_NoBareRepoNoWorktrees(t *testing.T) {
+func TestBareRepoExistsCheck_NoBareRepoNoLinkedWorktrees(t *testing.T) {
 	tmpDir := t.TempDir()
 	rigName := "testrig"
 	rigDir := filepath.Join(tmpDir, rigName)
@@ -64,8 +64,11 @@ func TestBareRepoExistsCheck_NoBareRepoNoWorktrees(t *testing.T) {
 	ctx := &CheckContext{TownRoot: tmpDir, RigName: rigName}
 
 	result := check.Run(ctx)
-	if result.Status != StatusOK {
-		t.Errorf("expected StatusOK when no worktrees depend on .repo.git, got %v", result.Status)
+	if result.Status != StatusError {
+		t.Errorf("expected StatusError when canonical .repo.git is missing, got %v", result.Status)
+	}
+	if !strings.Contains(result.Message, "Canonical shared bare repo is missing") {
+		t.Errorf("expected canonical missing-repo message, got %q", result.Message)
 	}
 }
 
@@ -92,8 +95,8 @@ func TestBareRepoExistsCheck_MissingBareRepo(t *testing.T) {
 	if result.Status != StatusError {
 		t.Errorf("expected StatusError when .repo.git is missing, got %v", result.Status)
 	}
-	if !strings.Contains(result.Message, "missing .repo.git") {
-		t.Errorf("expected message about missing .repo.git, got %q", result.Message)
+	if !strings.Contains(result.Message, "Canonical shared bare repo is missing") {
+		t.Errorf("expected canonical missing-repo message, got %q", result.Message)
 	}
 	if len(result.Details) < 2 {
 		t.Errorf("expected at least 2 details (bare repo path + worktree), got %d", len(result.Details))
@@ -134,8 +137,9 @@ func TestBareRepoExistsCheck_MultipleWorktreesMissing(t *testing.T) {
 	if result.Status != StatusError {
 		t.Errorf("expected StatusError, got %v", result.Status)
 	}
-	if !strings.Contains(result.Message, "2 worktree") {
-		t.Errorf("expected message about 2 worktrees, got %q", result.Message)
+	details := strings.Join(result.Details, "\n")
+	if !strings.Contains(details, "refinery/rig") || !strings.Contains(details, filepath.Join("polecats", "worker1", rigName)) {
+		t.Errorf("expected both broken worktrees in details, got %q", details)
 	}
 }
 
@@ -165,7 +169,7 @@ func TestBareRepoExistsCheck_RelativeGitdir(t *testing.T) {
 	}
 }
 
-func TestBareRepoExistsCheck_NonRepoGitWorktree(t *testing.T) {
+func TestBareRepoExistsCheck_NonRepoGitWorktreeStillRequiresCanonicalBareRepo(t *testing.T) {
 	tmpDir := t.TempDir()
 	rigName := "testrig"
 	rigDir := filepath.Join(tmpDir, rigName)
@@ -184,10 +188,10 @@ func TestBareRepoExistsCheck_NonRepoGitWorktree(t *testing.T) {
 	check := NewBareRepoExistsCheck()
 	ctx := &CheckContext{TownRoot: tmpDir, RigName: rigName}
 
-	// Worktree doesn't reference .repo.git, so this should pass
+	// A foreign worktree reference does not make the missing canonical repo valid.
 	result := check.Run(ctx)
-	if result.Status != StatusOK {
-		t.Errorf("expected StatusOK when worktrees don't reference .repo.git, got %v", result.Status)
+	if result.Status != StatusError {
+		t.Errorf("expected StatusError when canonical .repo.git is missing, got %v", result.Status)
 	}
 }
 

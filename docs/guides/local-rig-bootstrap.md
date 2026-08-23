@@ -1,10 +1,14 @@
 # Local Rig Bootstrap
 
-For a NightRider-style local setup, prefer a clean bootstrap over `gt rig add --adopt`.
+For a NightRider-style local setup, use a clean bootstrap when no Gas Town rig
+layout exists yet. Use `gt rig add --adopt` when the directory already contains
+Mayor or polecat work that must remain in place.
 
-`--adopt` is meant for registering an already-assembled rig directory. It trusts the
-existing shape, which makes it a poor fit for manually assembled local rigs where
-`.repo.git`, worktrees, and metadata may already be inconsistent.
+Adoption restores the canonical shared `.repo.git` and dedicated `refinery/rig`
+worktree when they are missing. It reads the rig's configured repository and
+default branch, and it does not rewrite or re-parent existing Mayor and polecat
+worktrees. A conflicting noncanonical refinery directory is reported as an error
+instead of being replaced or used as a fallback.
 
 Use the bootstrap script instead:
 
@@ -35,5 +39,7 @@ What this does:
 
 When to still use `--adopt`:
 
-- You already have a real Gas Town rig directory that was created elsewhere and you
-  only need to register it in a town.
+- You already have a Gas Town rig directory that was created elsewhere and only need
+  to register it in a town.
+- The rig has active Mayor or polecat work, but `.repo.git` or `refinery/rig` is
+  missing and must be restored without touching that work.

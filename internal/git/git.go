@@ -94,6 +94,29 @@ func (g *Git) IsRepo() bool {
 	return err == nil
 }
 
+// ValidateBareRepository verifies that g points at a structurally usable bare
+// repository. Checking HEAD explicitly catches partially deleted repositories
+// that still contain objects or worktree metadata but are no longer operable.
+func (g *Git) ValidateBareRepository() error {
+	if g.gitDir == "" {
+		return fmt.Errorf("no git directory configured for bare repository validation")
+	}
+	if _, err := os.Stat(filepath.Join(g.gitDir, "HEAD")); err != nil {
+		return fmt.Errorf("HEAD missing: %w", err)
+	}
+	if _, err := g.run("rev-parse", "--git-dir"); err != nil {
+		return fmt.Errorf("git rev-parse --git-dir failed: %w", err)
+	}
+	out, err := g.run("rev-parse", "--is-bare-repository")
+	if err != nil {
+		return fmt.Errorf("git rev-parse --is-bare-repository failed: %w", err)
+	}
+	if strings.TrimSpace(out) != "true" {
+		return fmt.Errorf("repository is not bare")
+	}
+	return nil
+}
+
 // run executes a git command and returns stdout.
 func (g *Git) run(args ...string) (string, error) {
 	if err := g.guardUnsafeTownRootMutation(args); err != nil {
@@ -930,6 +953,16 @@ func (g *Git) FetchBranchShallow(remote, branch string) error {
 	return err
 }
 
+// FetchBranchTracking refreshes one remote-tracking branch without widening
+// the configured refspec to every remote branch. On an existing shallow clone,
+// omitting --depth lets git fetch the connecting commits back to its current
+// shallow boundary so a legitimate fast-forward can be verified locally.
+func (g *Git) FetchBranchTracking(remote, branch string) error {
+	refspec := branch + ":refs/remotes/" + remote + "/" + branch
+	_, err := g.run("fetch", remote, refspec)
+	return err
+}
+
 // Pull pulls from the remote branch.
 func (g *Git) Pull(remote, branch string) error {
 	_, err := g.run("pull", remote, branch)
@@ -1471,6 +1504,12 @@ func (g *Git) ConfigGet(key string) (string, error) {
 	return out, nil
 }
 
+// ConfigSet sets a repository-local git configuration value.
+func (g *Git) ConfigSet(key, value string) error {
+	_, err := g.run("config", key, value)
+	return err
+}
+
 // Merge merges the given branch into the current branch.
 func (g *Git) Merge(branch string) error {
 	_, err := g.run("merge", branch)
@@ -1984,6 +2023,45 @@ func (g *Git) BranchExists(name string) (bool, error) {
 	return true, nil
 }
 
+// AdvanceBranchIfBehind fast-forwards a local branch to target when target is
+// newer, leaves an already-ahead branch unchanged, and rejects divergence.
+// It updates only the ref, so callers must use it only when the branch is not
+// checked out in a live worktree.
+func (g *Git) AdvanceBranchIfBehind(name, target string) error {
+	branchRef := "refs/heads/" + name
+	currentSHA, err := g.Rev(branchRef)
+	if err != nil {
+		return fmt.Errorf("reading branch %s: %w", name, err)
+	}
+	targetSHA, err := g.Rev(target)
+	if err != nil {
+		return fmt.Errorf("reading target %s: %w", target, err)
+	}
+	if currentSHA == targetSHA {
+		return nil
+	}
+
+	behind, err := g.IsAncestor(currentSHA, targetSHA)
+	if err != nil {
+		return fmt.Errorf("checking whether %s can fast-forward to %s: %w", name, target, err)
+	}
+	if behind {
+		if _, err := g.run("update-ref", branchRef, targetSHA, currentSHA); err != nil {
+			return fmt.Errorf("fast-forwarding branch %s to %s: %w", name, target, err)
+		}
+		return nil
+	}
+
+	ahead, err := g.IsAncestor(targetSHA, currentSHA)
+	if err != nil {
+		return fmt.Errorf("checking whether %s is ahead of %s: %w", name, target, err)
+	}
+	if ahead {
+		return nil
+	}
+	return fmt.Errorf("branch %s has diverged from %s", name, target)
+}
+
 // RefExists checks if a ref exists (works for any ref including origin/<branch>).
 // Uses show-ref for fully-qualified refs, falls back to rev-parse for short refs.
 func (g *Git) RefExists(ref string) (bool, error) {
@@ -2270,7 +2348,7 @@ func (g *Git) WorktreeAdd(path, branch string) error {
 	); err != nil {
 		return err
 	}
-	return InitSubmodules(path, g.submoduleReferencePath())
+	return g.InitWorktreeSubmodules(path)
 }
 
 // WorktreeAddFromRef creates a new worktree at the given path with a new branch
@@ -2285,7 +2363,7 @@ func (g *Git) WorktreeAddFromRef(path, branch, startPoint string) error {
 	); err != nil {
 		return err
 	}
-	return InitSubmodules(path, g.submoduleReferencePath())
+	return g.InitWorktreeSubmodules(path)
 }
 
 // WorktreeAddDetached creates a new worktree at the given path with a detached HEAD.
@@ -2297,7 +2375,7 @@ func (g *Git) WorktreeAddDetached(path, ref string) error {
 	); err != nil {
 		return err
 	}
-	return InitSubmodules(path, g.submoduleReferencePath())
+	return g.InitWorktreeSubmodules(path)
 }
 
 // WorktreeAddExisting creates a new worktree at the given path for an existing branch.
@@ -2309,7 +2387,7 @@ func (g *Git) WorktreeAddExisting(path, branch string) error {
 	); err != nil {
 		return err
 	}
-	return InitSubmodules(path, g.submoduleReferencePath())
+	return g.InitWorktreeSubmodules(path)
 }
 
 // WorktreeAddExistingForce creates a new worktree even if the branch is already checked out elsewhere.
@@ -2318,6 +2396,13 @@ func (g *Git) WorktreeAddExistingForce(path, branch string) error {
 	if _, err := g.run("worktree", "add", "--force", path, branch); err != nil {
 		return err
 	}
+	return g.InitWorktreeSubmodules(path)
+}
+
+// InitWorktreeSubmodules initializes a worktree's pinned submodules using the
+// same local reference source as worktree creation. Callers use this on retry
+// so a partially initialized worktree cannot bypass a prior checkout failure.
+func (g *Git) InitWorktreeSubmodules(path string) error {
 	return InitSubmodules(path, g.submoduleReferencePath())
 }
 
