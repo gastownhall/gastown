@@ -202,7 +202,7 @@ func (c *Client) readPump() {
 		c.hub.unregister <- c
 		_ = c.conn.Close()
 	}()
-	c.conn.SetReadDeadline(time.Now().Add(60 * time.Minute))
+	_ = c.conn.SetReadDeadline(time.Now().Add(60 * time.Minute)) // deadline is best-effort; ReadMessage handles errors
 	c.conn.SetReadLimit(1024)
 	for {
 		if _, _, err := c.conn.ReadMessage(); err != nil {
