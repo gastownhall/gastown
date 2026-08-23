@@ -45,7 +45,12 @@ func bdMutationRoutingEnv(townRoot string) []string {
 
 func bdReadOnlyPinnedEnv(beadsDir string) []string {
 	base := os.Environ()
-	if townRoot := beads.FindTownRoot(filepath.Dir(beads.ResolveBeadsDir(beadsDir))); townRoot != "" {
+	// beadsDir is already resolved by the caller. Re-running ResolveBeadsDir
+	// here would re-apply its ancestor walk (gtf-g1p) and, for a rig whose
+	// .beads does not exist on disk, silently retarget the pin at the TOWN
+	// database — defeating the caller's scoped resolution. This lookup only
+	// needs the town root, so walk up from the given path as-is.
+	if townRoot := beads.FindTownRoot(filepath.Dir(beadsDir)); townRoot != "" {
 		base = agentconfig.NormalizeConfiguredDoltEnv(base, townRoot)
 	}
 	return beads.BuildReadOnlyPinnedBDEnv(base, beadsDir)

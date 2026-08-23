@@ -2844,12 +2844,21 @@ func (d *Daemon) isBeadClosed(beadID string) bool {
 func (d *Daemon) hasAssignedOpenWork(rigName, assignee string) bool {
 	rigDir := beads.GetRigDirForName(d.config.TownRoot, rigName)
 
+	// Resolve the rig's own beads dir, following any redirect, but WITHOUT the
+	// ancestor walk. beads.ResolveBeadsDir intentionally walks up to the nearest
+	// existing ancestor .beads when the direct path is absent (gtf-g1p), which is
+	// right for "where would a plain bd call land" but wrong here: this lookup is
+	// rig-scoped, and walking up silently pins BEADS_DIR to the TOWN database.
+	// The daemon would then ask the town DB about a polecat's work, find nothing,
+	// and the idle reaper would kill a working polecat.
+	rigBeadsDir := beads.ResolveBeadsDirNoAncestor(rigDir)
+
 	for _, status := range []string{"hooked", "in_progress", "open"} {
 		args := beads.InjectFlatForListJSON([]string{"list", "--assignee=" + assignee, "--status=" + status, "--json"})
 		cmd := exec.Command(d.bdPath, args...) //nolint:gosec // G204: args are constructed internally
 		cmd.Dir = d.config.TownRoot
-		if rigDir != "" {
-			cmd.Env = bdReadOnlyPinnedEnv(beads.ResolveBeadsDir(rigDir))
+		if rigBeadsDir != "" {
+			cmd.Env = bdReadOnlyPinnedEnv(rigBeadsDir)
 		} else {
 			cmd.Env = bdReadOnlyRoutingEnv(d.config.TownRoot)
 		}

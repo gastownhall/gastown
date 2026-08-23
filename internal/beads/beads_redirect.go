@@ -44,6 +44,26 @@ func ResolveBeadsDir(workDir string) string {
 	return beadsDir
 }
 
+// ResolveBeadsDirNoAncestor resolves workDir's own .beads directory, following
+// any redirect chain, WITHOUT falling back to an ancestor when the result does
+// not exist on disk.
+//
+// Use this instead of ResolveBeadsDir whenever the caller means one specific
+// scope — a named rig, say — rather than "whichever database a bd call from
+// here would reach". ResolveBeadsDir's ancestor walk exists so a pinned
+// BEADS_DIR matches bd's own findDatabaseInTree fallback (gtf-g1p); for a
+// scoped lookup that same walk silently retargets the query at the town
+// database, which is a wrong answer rather than a missing one.
+//
+// Returns "" when workDir is empty, so callers can distinguish "no scope" from
+// a resolved path.
+func ResolveBeadsDirNoAncestor(workDir string) string {
+	if strings.TrimSpace(workDir) == "" {
+		return ""
+	}
+	return resolveBeadsDirLocal(workDir)
+}
+
 // resolveBeadsDirLocal resolves workDir's own .beads directory, following any
 // redirect chain, without walking up to ancestor directories.
 func resolveBeadsDirLocal(workDir string) string {
