@@ -17,7 +17,6 @@ import (
 	"github.com/steveyegge/gastown/internal/beads"
 	"github.com/steveyegge/gastown/internal/config"
 	"github.com/steveyegge/gastown/internal/constants"
-	"github.com/steveyegge/gastown/internal/git"
 	"github.com/steveyegge/gastown/internal/nudge"
 	"github.com/steveyegge/gastown/internal/rig"
 	"github.com/steveyegge/gastown/internal/runtime"
@@ -196,30 +195,12 @@ func (m *Manager) start(foreground bool, agentOverride string, allowForkRig bool
 	// Background mode: spawn a Claude agent in a tmux session
 	// The Claude agent handles MR processing using git commands and beads
 
-	// Working directory is the refinery worktree (shares .git with mayor/polecats).
-	// If the worktree is missing (pruned, deleted, or corrupted), auto-repair it
-	// from the shared bare repo (.repo.git) instead of falling back to mayor/rig.
-	// Falling back to mayor/rig causes the refinery to operate in the mayor's
-	// clone, which can interfere with mayor operations and confuse agents.
-	//
-	// Rigs using a standard .git clone (e.g. beads) never have a .repo.git bare
-	// repo, so the repair path is not applicable for them. Fall back to mayor/rig
-	// silently in that case — the fallback is correct and the warning would be noise.
-	refineryRigDir := filepath.Join(m.rig.Path, "refinery", "rig")
-	if _, err := os.Stat(refineryRigDir); os.IsNotExist(err) {
-		bareRepoPath := filepath.Join(m.rig.Path, ".repo.git")
-		_, bareErr := os.Stat(bareRepoPath)
-		standardGitPath := filepath.Join(m.rig.Path, ".git")
-		_, standardGitErr := os.Stat(standardGitPath)
-		if os.IsNotExist(bareErr) && standardGitErr == nil {
-			// Rig uses standard .git layout — worktree repair is not applicable.
-			// Fall back to mayor/rig silently; the fallback works correctly here.
-			refineryRigDir = filepath.Join(m.rig.Path, "mayor", "rig")
-		} else if repairErr := m.repairRefineryWorktree(refineryRigDir); repairErr != nil {
-			// Repair failed — fall back to mayor/rig as last resort.
-			_, _ = fmt.Fprintf(m.output, "⚠ Could not repair refinery worktree: %v (falling back to mayor/rig)\n", repairErr)
-			refineryRigDir = filepath.Join(m.rig.Path, "mayor", "rig")
-		}
+	// The refinery always runs from the canonical dedicated worktree. Startup
+	// repairs missing topology through the rig owner and fails if that repair is
+	// impossible; it must never borrow Mayor's clone as a parallel fallback.
+	refineryRigDir, err := m.ensureCanonicalWorktree()
+	if err != nil {
+		return fmt.Errorf("ensuring canonical refinery worktree: %w", err)
 	}
 
 	// Ensure runtime settings exist in the shared refinery parent directory.
@@ -365,41 +346,18 @@ func (m *Manager) blockForkRigStart(t *tmux.Tmux) error {
 	return err
 }
 
-// repairRefineryWorktree recreates a missing refinery/rig worktree from the
-// shared bare repo (.repo.git). The refinery worktree is created during
-// `gt rig add` but can be lost if `git worktree prune` runs, the directory
-// is deleted, or the .git file becomes corrupted. This self-heals on startup
-// instead of requiring manual intervention.
-func (m *Manager) repairRefineryWorktree(refineryRigDir string) error {
-	bareRepoPath := filepath.Join(m.rig.Path, ".repo.git")
-	if _, err := os.Stat(bareRepoPath); os.IsNotExist(err) {
-		return fmt.Errorf("bare repo not found at %s", bareRepoPath)
+func (m *Manager) ensureCanonicalWorktree() (string, error) {
+	result, err := rig.EnsureCanonicalRepoTopology(m.rig.Path)
+	if err != nil {
+		return "", err
 	}
-
-	// Ensure parent directory exists
-	if err := os.MkdirAll(filepath.Dir(refineryRigDir), 0755); err != nil {
-		return fmt.Errorf("creating refinery dir: %w", err)
+	if result.BareRepoCreated {
+		_, _ = fmt.Fprintf(m.output, "✓ Restored shared bare repository at %s\n", result.BareRepoPath)
 	}
-
-	// Prune stale worktree entries so git doesn't reject the add
-	bareGit := git.NewGitWithDir(bareRepoPath, "")
-	_ = bareGit.WorktreePrune()
-
-	// Create worktree on the rig's default branch
-	defaultBranch := m.rig.DefaultBranch()
-	if err := bareGit.WorktreeAddExisting(refineryRigDir, defaultBranch); err != nil {
-		return fmt.Errorf("git worktree add: %w", err)
+	if result.RefineryWorktreeCreated {
+		_, _ = fmt.Fprintf(m.output, "✓ Restored refinery worktree at %s\n", result.RefineryWorktreePath)
 	}
-
-	// Configure hooks path (matches rig add behavior)
-	refineryGit := git.NewGit(refineryRigDir)
-	if err := refineryGit.ConfigureHooksPath(); err != nil {
-		// Non-fatal: worktree is usable without hooks
-		_, _ = fmt.Fprintf(m.output, "⚠ Could not configure hooks for repaired worktree: %v\n", err)
-	}
-
-	_, _ = fmt.Fprintf(m.output, "✓ Auto-repaired missing refinery worktree at %s\n", refineryRigDir)
-	return nil
+	return result.RefineryWorktreePath, nil
 }
 
 // Stop stops the refinery.

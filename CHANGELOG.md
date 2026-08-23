@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Adopted rig git topology** — `gt rig add --adopt`, `gt doctor --fix`, and
+  Refinery startup now share one canonical recovery path for a missing
+  `.repo.git` and `refinery/rig`. Recovery preserves existing Mayor and polecat
+  worktrees, restores the configured integration branch and origin refspec, and
+  fails explicitly instead of running Refinery from `mayor/rig`.
+
 ## [1.2.1] - 2026-06-06
 
 ### Fixed
