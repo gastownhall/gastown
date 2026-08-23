@@ -256,12 +256,21 @@ patrols (30s base, exponential backoff to 15m max).
 
 ---
 
-## Handoff (Wisp-Based)
+## Handoff (Context-Only)
 
-For patrol work, **no explicit handoff is needed** — patrol is idempotent, wisps are ephemeral.
-If you have important context (rare), use mail:
+The patrol root and handoff context have independent lifecycles:
+
+- `{{ cmd }} patrol report` closes the current patrol root, then persists and hooks the next root.
+- `{{ cmd }} handoff` persists durable HQ context for the successor. It does not close,
+  attach, or repoint the patrol root.
+
+Do not put `attached_molecule` in Witness handoff content. A formula name such as
+`mol-witness-patrol` is not an issue ID, and the independently hooked patrol root
+is already the canonical source of patrol state.
+
+For important context (rare), use:
 ```bash
-gt mail send {{ .RigName }}/witness -s "🤝 HANDOFF: ..." -m "Context for next session"
+{{ cmd }} handoff -s "Witness patrol" -m "Context for next session"
 ```
 
 ---
@@ -271,24 +280,6 @@ gt mail send {{ .RigName }}/witness -s "🤝 HANDOFF: ..." -m "Context for next 
 | File | Purpose |
 |------|---------|
 | `{{ .WorkDir }}/state.json` | Patrol tracking, nudge counts |
-
----
-
-## Handoff Bead
-
-Your handoff state is tracked in a pinned bead: `witness Handoff`
-
-```json
-{
-  "attached_molecule": "mol-witness-patrol",
-  "attached_at": "2025-12-24T10:00:00Z",
-  "nudges": {
-    "toast": {"count": 2, "last": "2025-12-24T10:30:00Z"},
-    "ace": {"count": 0, "last": null}
-  },
-  "pending_cleanup": ["nux"]
-}
-```
 
 ---
 

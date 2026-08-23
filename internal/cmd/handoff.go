@@ -1589,12 +1589,17 @@ func collectGitState() string {
 	return "## Workspace State\n" + strings.Join(lines, "\n")
 }
 
-// cleanupMoleculeOnHandoff closes any in-progress molecule steps before session
-// handoff, preventing orphaned wisps from accumulating. (gt-e26g)
+// cleanupMoleculeOnHandoff closes any legacy handoff-attached molecule steps
+// before session handoff, preventing orphaned wisps from accumulating. (gt-e26g)
 //
-// Without this, patrol agents (witness, refinery, deacon) that handoff mid-cycle
-// leave unfinished molecule steps open forever. The next session pours a new
+// Without this, patrol agents (refinery, deacon) that handoff mid-cycle leave
+// unfinished molecule steps open forever. The next session pours a new
 // molecule, so the old steps are never completed.
+//
+// Witness patrol roots are not handoff attachments: they are independently
+// hooked and rotate only through gt patrol report. Witness handoff mail is
+// durable context only, so this cleanup must never close or repoint a
+// Witness patrol root. (gtf-cem)
 //
 // All errors are non-fatal — handoff must succeed even if cleanup fails.
 func cleanupMoleculeOnHandoff() {
@@ -1611,6 +1616,9 @@ func cleanupMoleculeOnHandoff() {
 	// Detect agent identity
 	roleInfo, err := GetRoleWithContext(cwd, townRoot)
 	if err != nil {
+		return
+	}
+	if roleInfo.Role == RoleWitness {
 		return
 	}
 	roleCtx := RoleContext{

@@ -1,9 +1,11 @@
 package cmd
 
 import (
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -696,6 +698,74 @@ func TestHandoffPolecatEnvCheck(t *testing.T) {
 				t.Errorf("gt stub ran = %v, want %v; log: %s", stubRan, tt.wantBlock, gtLogBytes)
 			}
 		})
+	}
+}
+
+// TestCleanupMoleculeOnHandoff_WitnessLeavesPatrolLifecycleAlone guards the
+// gtf-cem regression: cleanupMoleculeOnHandoff used to treat a Witness's
+// pinned handoff bead like any other agent's, closing descendants of and
+// detaching whatever attached_molecule it found there. The rendered witness
+// template showed "mol-witness-patrol" (a formula name, not an issue ID) as
+// an example attached_molecule value, and the independently hooked patrol
+// root must never be touched by handoff cleanup. Witness handoff is
+// context-only, so this must return before mutating any bead.
+func TestCleanupMoleculeOnHandoff_WitnessLeavesPatrolLifecycleAlone(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("shell script bd stub not supported on Windows")
+	}
+
+	townRoot := t.TempDir()
+	witnessDir := filepath.Join(townRoot, "testrig", "witness")
+	for _, dir := range []string{filepath.Join(townRoot, "mayor"), witnessDir, filepath.Join(townRoot, ".beads", "locks")} {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatalf("mkdir %s: %v", dir, err)
+		}
+	}
+
+	binDir := t.TempDir()
+	bdLog := filepath.Join(t.TempDir(), "bd.log")
+	bdScript := fmt.Sprintf(`#!/bin/sh
+echo "$@" >> "%s"
+while [ "$1" = "--allow-stale" ]; do shift; done
+cmd="$1"; shift
+case "$cmd" in
+  list)
+    echo '[{"id":"gt-handoff-1","title":"witness Handoff","status":"pinned","description":"attached_molecule: mol-witness-patrol"}]'
+    ;;
+  show)
+    echo '[{"id":"gt-handoff-1","title":"witness Handoff","status":"pinned","description":"attached_molecule: mol-witness-patrol"}]'
+    ;;
+esac
+exit 0
+`, bdLog)
+	if err := os.WriteFile(filepath.Join(binDir, "bd"), []byte(bdScript), 0o755); err != nil {
+		t.Fatalf("write bd stub: %v", err)
+	}
+
+	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	t.Setenv(EnvGTRole, "testrig/witness")
+	t.Setenv("GT_RIG", "testrig")
+	t.Setenv("GT_POLECAT", "")
+	t.Setenv("GT_CREW", "")
+	t.Setenv("BEADS_DIR", "")
+
+	origCwd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("getwd: %v", err)
+	}
+	t.Cleanup(func() { _ = os.Chdir(origCwd) })
+	if err := os.Chdir(witnessDir); err != nil {
+		t.Fatalf("chdir: %v", err)
+	}
+
+	cleanupMoleculeOnHandoff()
+
+	data, err := os.ReadFile(bdLog)
+	if err != nil && !os.IsNotExist(err) {
+		t.Fatalf("read bd log: %v", err)
+	}
+	if len(data) != 0 {
+		t.Fatalf("Witness handoff cleanup invoked bd (touched patrol/attachment state) instead of returning early:\n%s", data)
 	}
 }
 
