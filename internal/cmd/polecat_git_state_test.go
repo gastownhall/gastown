@@ -153,6 +153,74 @@ func TestGetGitStateIgnoresOpenCodeRuntimeArtifacts(t *testing.T) {
 	}
 }
 
+// gtf-vmw regression: bd writes beads/interactions.jsonl (or .beads/interactions.jsonl)
+// as telemetry on every invocation. A polecat whose only uncommitted file is
+// this ledger must be reported clean, not NEEDS_RECOVERY — the tool's own
+// tracking of itself must never count as user work at risk.
+func TestGetGitStateIgnoresBeadsInteractionsJsonl(t *testing.T) {
+	repo := setupGitStateRemoteRepo(t)
+	runGitCmd(t, repo, "switch", "-c", "polecat/beads-telemetry")
+
+	if err := os.MkdirAll(filepath.Join(repo, "beads"), 0755); err != nil {
+		t.Fatalf("mkdir beads: %v", err)
+	}
+	writeTestFile(t, filepath.Join(repo, "beads", "interactions.jsonl"), `{"op":"show"}`+"\n")
+
+	state, err := getGitState(repo)
+	if err != nil {
+		t.Fatalf("getGitState: %v", err)
+	}
+	if !state.Clean {
+		t.Fatalf("beads/interactions.jsonl alone must not dirty recovery state: %+v", state)
+	}
+	if len(state.UncommittedFiles) != 0 {
+		t.Fatalf("UncommittedFiles = %v, want none for bd telemetry ledger", state.UncommittedFiles)
+	}
+
+	writeTestFile(t, filepath.Join(repo, "real.go"), "package real\n")
+	state, err = getGitState(repo)
+	if err != nil {
+		t.Fatalf("getGitState with real file: %v", err)
+	}
+	if state.Clean {
+		t.Fatal("real source dirt alongside bd telemetry should still block recovery")
+	}
+	if len(state.UncommittedFiles) != 1 || state.UncommittedFiles[0] != "real.go" {
+		t.Fatalf("UncommittedFiles = %v, want only real.go", state.UncommittedFiles)
+	}
+}
+
+// gtf-vmw regression: a branch's declared target/custody ref (e.g. a merged
+// integration branch's base_branch) can go stale while the branch's actual
+// content already reached the rig's real default branch through another
+// path. has_unpushed must recognize content already ancestor of the default
+// branch as preserved, not just ancestor of the (possibly stale) target.
+func TestGetGitStateTreatsContentAlreadyOnDefaultBranchAsClean(t *testing.T) {
+	repo := setupGitStateRemoteRepo(t)
+
+	runGitCmd(t, repo, "switch", "main")
+	writeTestFile(t, filepath.Join(repo, "landed.txt"), "landed\n")
+	runGitCmd(t, repo, "add", "landed.txt")
+	runGitCmd(t, repo, "commit", "-m", "landed on main")
+	runGitCmd(t, repo, "push", "origin", "main")
+
+	// This branch carries the exact commit already on main, but tracks a
+	// stale integration branch that never received it.
+	runGitCmd(t, repo, "switch", "-c", "polecat/landed", "main")
+	runGitCmd(t, repo, "branch", "--set-upstream-to=origin/integration/test")
+
+	state, err := getGitState(repo)
+	if err != nil {
+		t.Fatalf("getGitState: %v", err)
+	}
+	if !state.Clean {
+		t.Fatalf("content already ancestor of default branch must not be reported as unpushed: %+v", state)
+	}
+	if state.UnpushedCommits != 0 {
+		t.Fatalf("UnpushedCommits = %d, want 0", state.UnpushedCommits)
+	}
+}
+
 func setupGitStateRemoteRepo(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()

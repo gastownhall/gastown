@@ -2222,6 +2222,20 @@ func TestIsGasTownRuntimePath(t *testing.T) {
 		{".beads/db.json", true},
 		{".beads\\db.json", true},
 		{".beads/.runtime/state.json", true},
+		// gtf-vmw: bd's own telemetry ledger, written on every bd invocation,
+		// must not count as uncommitted developer work regardless of whether
+		// the containing directory is the canonical ".beads" or a legacy/
+		// misconfigured "beads" (no leading dot).
+		{"beads/interactions.jsonl", true},
+		{"beads/redirect", true},
+		{"beads/metadata.json", true},
+		{"beads/last-touched", true},
+		{"beads/sync_base.jsonl", true},
+		{".beads/daemon-20260823.log.gz", true},
+		// A bare "beads" directory is NOT excluded wholesale — only its known
+		// bd-runtime filenames are. Unrecognized files inside it are real work.
+		{"beads/README.md", false},
+		{"beads/pkg/source.go", false},
 		{".logs/agent.log", true},
 		{"__pycache__/", true},
 		{"__pycache__/foo.cpython-312.pyc", true},

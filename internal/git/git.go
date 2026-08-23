@@ -2814,11 +2814,16 @@ func (g *Git) branchPreservationStatus(localBranch, remote string, targets []str
 		}
 	}
 
-	if !hasEvidence {
-		for _, ref := range []string{remote + "/" + g.RemoteDefaultBranch(), remote + "/main", remote + "/master"} {
-			if resolved, ok := g.resolveComparisonRef(ref, remote); ok {
-				candidates = append(candidates, resolved)
-			}
+	// Always check the rig's actual default branch too, even when an explicit
+	// target/custody ref exists. A stale or superseded target (e.g. a merged
+	// integration branch whose base_branch is no longer HEAD's real
+	// destination) must not report unpushed/at-risk work when the content has
+	// already reached the default branch by another path (gtf-vmw). This is
+	// purely additive: it only adds another chance to prove preservation, and
+	// never removes evidence gathered above.
+	for _, ref := range []string{remote + "/" + g.RemoteDefaultBranch(), remote + "/main", remote + "/master"} {
+		if resolved, ok := g.resolveComparisonRef(ref, remote); ok {
+			candidates = append(candidates, resolved)
 		}
 	}
 
@@ -3041,6 +3046,22 @@ func isBeadsPath(path string) bool {
 	return strings.Contains(path, ".beads/") || strings.Contains(path, ".beads\\")
 }
 
+// gtBeadsRuntimeFilenames are files the bd/beads tool itself writes as
+// telemetry, sync state, or redirect plumbing — never developer-authored
+// content. Sourced from this repo's own .gitignore entries for .beads/
+// (gtf-vmw). Unlike ".beads" itself (excluded wholesale below because it is
+// a reserved, tool-owned directory name), a bare "beads" directory is not
+// safe to exclude wholesale — some repos legitimately use "beads" as a
+// source directory name — so matches are scoped to these known basenames.
+var gtBeadsRuntimeFilenames = map[string]bool{
+	"redirect":           true,
+	"interactions.jsonl": true,
+	"metadata.json":      true,
+	"last-touched":       true,
+	".sync.lock":         true,
+	"sync_base.jsonl":    true,
+}
+
 // runtimeArtifactRoot returns the path that should be reset when a runtime artifact
 // is staged. Directory artifacts return the directory root so large trees like
 // nested node_modules are unstaged with one pathspec instead of thousands.
@@ -3062,6 +3083,12 @@ func runtimeArtifactRoot(path string) (string, bool) {
 	base := filepath.Base(bare)
 	lower := strings.ToLower(base)
 	if base == "CLAUDE.local.md" || base == ".DS_Store" || strings.HasSuffix(lower, ".db") || strings.HasSuffix(lower, ".pyc") || strings.HasSuffix(lower, ".pyo") {
+		return bare, true
+	}
+	if strings.HasPrefix(base, "daemon-") && strings.HasSuffix(base, ".log.gz") {
+		return bare, true
+	}
+	if len(parts) >= 2 && parts[len(parts)-2] == "beads" && gtBeadsRuntimeFilenames[base] {
 		return bare, true
 	}
 

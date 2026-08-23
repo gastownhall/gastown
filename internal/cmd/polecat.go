@@ -1218,6 +1218,11 @@ func runPolecatCheckRecovery(cmd *cobra.Command, args []string) error {
 					fmt.Printf("    - %s\n", action)
 				}
 			}
+		} else if status.Reason != "" {
+			// gtf-vmw: name the predicate instead of "unknown" so Witnesses don't
+			// have to open an escalation to discover what workstate.DecideWorkstate
+			// already recorded in status.Reason (e.g. "not-idle").
+			fmt.Printf("  %s Cleanup refused by predicate reason=%s.\n", style.Warning.Render("⚠"), status.Reason)
 		} else {
 			fmt.Printf("  %s Cleanup refused by an unknown recovery predicate.\n", style.Warning.Render("⚠"))
 		}
