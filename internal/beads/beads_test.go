@@ -4218,6 +4218,111 @@ func TestSetupRedirect(t *testing.T) {
 		}
 	})
 
+	// gtf-v8i: a repo that still tracks bd's local runtime exports used to hand every
+	// fresh worktree a pending deletion, which check-recovery reads as uncommitted work
+	// and turns into a NEEDS_RECOVERY polecat that never received its bead.
+	t.Run("fresh worktree is born clean when bd runtime files are tracked", func(t *testing.T) {
+		townRoot := t.TempDir()
+		rigRoot := filepath.Join(townRoot, "testrig")
+		rigBeads := filepath.Join(rigRoot, ".beads")
+		polecatPath := filepath.Join(rigRoot, "polecats", "guzzle")
+		polecatBeads := filepath.Join(polecatPath, ".beads")
+
+		if err := os.MkdirAll(rigBeads, 0755); err != nil {
+			t.Fatalf("mkdir rig beads: %v", err)
+		}
+		if err := os.MkdirAll(polecatBeads, 0755); err != nil {
+			t.Fatalf("mkdir polecat beads: %v", err)
+		}
+		initGitRepo(t, polecatPath)
+
+		// Tracked bd runtime state, exactly as cosmos carries it.
+		tracked := []string{"interactions.jsonl", "issues.jsonl", "metadata.json", "config.yaml"}
+		for _, file := range tracked {
+			if err := os.WriteFile(filepath.Join(polecatBeads, file), []byte("{}\n"), 0644); err != nil {
+				t.Fatalf("write %s: %v", file, err)
+			}
+		}
+		// bd's own .gitignore, which is what keeps the recreated redirect out of status.
+		if err := os.WriteFile(filepath.Join(polecatBeads, ".gitignore"), []byte("redirect\n"), 0644); err != nil {
+			t.Fatalf("write .beads/.gitignore: %v", err)
+		}
+		// Tracked beads content that must survive untouched.
+		if err := os.MkdirAll(filepath.Join(polecatBeads, "formulas"), 0755); err != nil {
+			t.Fatalf("mkdir formulas: %v", err)
+		}
+		if err := os.WriteFile(filepath.Join(polecatBeads, "formulas", "gsd.formula.toml"), []byte("name = 'gsd'\n"), 0644); err != nil {
+			t.Fatalf("write formula: %v", err)
+		}
+		runGit(t, polecatPath, "add", ".beads")
+		runGit(t, polecatPath, "commit", "-m", "track beads runtime state")
+
+		if err := SetupRedirect(townRoot, polecatPath); err != nil {
+			t.Fatalf("SetupRedirect failed: %v", err)
+		}
+
+		if status := runGit(t, polecatPath, "status", "--porcelain"); status != "" {
+			t.Fatalf("fresh worktree is not clean after redirect setup:\n%s", status)
+		}
+
+		flags := runGit(t, polecatPath, "ls-files", "-v", "--", ".beads")
+		for _, file := range tracked {
+			if !strings.Contains(flags, "S .beads/"+file) {
+				t.Fatalf(".beads/%s should be skip-worktree; flags:\n%s", file, flags)
+			}
+		}
+		if !strings.Contains(flags, "H .beads/formulas/gsd.formula.toml") {
+			t.Fatalf("tracked formula must stay visible to git; flags:\n%s", flags)
+		}
+		if _, err := os.Stat(filepath.Join(polecatBeads, "formulas", "gsd.formula.toml")); err != nil {
+			t.Fatalf("tracked formula should be preserved on disk: %v", err)
+		}
+	})
+
+	// The polecat's own bd removes its runtime exports on boot, after gt has finished
+	// provisioning. Setup must have already hidden them from git by then.
+	t.Run("later removal of tracked bd runtime files stays invisible to git", func(t *testing.T) {
+		townRoot := t.TempDir()
+		rigRoot := filepath.Join(townRoot, "testrig")
+		rigBeads := filepath.Join(rigRoot, ".beads")
+		polecatPath := filepath.Join(rigRoot, "polecats", "guzzle")
+		polecatBeads := filepath.Join(polecatPath, ".beads")
+
+		if err := os.MkdirAll(rigBeads, 0755); err != nil {
+			t.Fatalf("mkdir rig beads: %v", err)
+		}
+		if err := os.MkdirAll(polecatBeads, 0755); err != nil {
+			t.Fatalf("mkdir polecat beads: %v", err)
+		}
+		initGitRepo(t, polecatPath)
+
+		interactions := filepath.Join(polecatBeads, "interactions.jsonl")
+		if err := os.WriteFile(interactions, []byte("{}\n"), 0644); err != nil {
+			t.Fatalf("write interactions.jsonl: %v", err)
+		}
+		if err := os.WriteFile(filepath.Join(polecatBeads, ".gitignore"), []byte("redirect\n"), 0644); err != nil {
+			t.Fatalf("write .beads/.gitignore: %v", err)
+		}
+		runGit(t, polecatPath, "add", ".beads/interactions.jsonl", ".beads/.gitignore")
+		runGit(t, polecatPath, "commit", "-m", "track interactions log")
+
+		if err := SetupRedirect(townRoot, polecatPath); err != nil {
+			t.Fatalf("SetupRedirect failed: %v", err)
+		}
+
+		// bd regenerates then drops the file during its own boot.
+		if err := os.WriteFile(interactions, []byte("{\"id\":\"regenerated\"}\n"), 0644); err != nil {
+			t.Fatalf("regenerate interactions.jsonl: %v", err)
+		}
+		if err := os.Remove(interactions); err != nil {
+			t.Fatalf("remove interactions.jsonl: %v", err)
+		}
+
+		if status := runGit(t, polecatPath, "status", "--porcelain"); status != "" {
+			t.Fatalf("bd runtime churn dirtied the worktree:\n%s", status)
+		}
+	})
+
 	t.Run("fails closed when git ls-files fails", func(t *testing.T) {
 		installFakeGit(t, `#!/bin/sh
 if [ "$3" = "ls-files" ]; then
@@ -4256,7 +4361,7 @@ exit 2
 	t.Run("fails closed when git update-index fails", func(t *testing.T) {
 		installFakeGit(t, `#!/bin/sh
 if [ "$3" = "ls-files" ]; then
-  printf '100644 abcdef 0\t%s\n' "$6"
+  printf '%s' "$6"
   exit 0
 fi
 if [ "$3" = "update-index" ]; then
