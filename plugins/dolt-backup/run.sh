@@ -74,9 +74,13 @@ else
       [[ -z "$path" ]] && continue
       metadata_file="${GT_TOWN_ROOT}/${path}/.beads/metadata.json"
       if [[ -f "$metadata_file" ]]; then
-        db=$(grep -o '"dolt_database"[[:space:]]*:[[:space:]]*"[^"]*"' "$metadata_file" 2>/dev/null | head -1 | sed 's/.*:.*"\([^"]*\)".*/\1/')
+        # `|| true` on each grep: under `set -o pipefail`, a no-match grep
+        # exit code aborts the script (set -e) before the "database"
+        # fallback below can run, silently dropping any rig whose
+        # metadata.json lacks a "dolt_database" key.
+        db=$(grep -o '"dolt_database"[[:space:]]*:[[:space:]]*"[^"]*"' "$metadata_file" 2>/dev/null | head -1 | sed 's/.*:.*"\([^"]*\)".*/\1/' || true)
         if [[ -z "$db" ]]; then
-          db=$(grep -o '"database"[[:space:]]*:[[:space:]]*"[^"]*"' "$metadata_file" 2>/dev/null | head -1 | sed 's/.*:.*"\([^"]*\)".*/\1/')
+          db=$(grep -o '"database"[[:space:]]*:[[:space:]]*"[^"]*"' "$metadata_file" 2>/dev/null | head -1 | sed 's/.*:.*"\([^"]*\)".*/\1/' || true)
         fi
         if [[ -n "$db" && -d "$DOLT_DATA_DIR/$db/.dolt" ]]; then
           PROD_DBS+=("$db")
