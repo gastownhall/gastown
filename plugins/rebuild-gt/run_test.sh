@@ -19,4 +19,9 @@ if grep -Fq -- '--rig gastown' "$docs"; then
   exit 1
 fi
 
+if grep -Fq -- '--rig gastown' "$script"; then
+  printf 'legacy gastown tracking rig remains in runtime script\n' >&2
+  exit 1
+fi
+
 printf 'rebuild-gt source rig contract: ok\n'

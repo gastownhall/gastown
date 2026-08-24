@@ -303,6 +303,7 @@ func (c *PatrolNotStuckCheck) Run(ctx *CheckContext) *CheckResult {
 
 // stuckWispsQuery selects only patrol wisps for stuck-wisp detection via Dolt.
 const stuckWispsQuery = `SELECT id, title, status, updated_at FROM wisps WHERE status = 'in_progress' AND wisp_type = 'patrol' ORDER BY updated_at ASC`
+const wispsTableExistsQuery = `SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = DATABASE() AND table_name = 'wisps'`
 
 // stuckTimestampLayouts are the timestamp layouts accepted when reading
 // `bd sql --csv` output. Dolt emits timestamps in Go's default
@@ -357,13 +358,29 @@ func parseStuckWisps(records [][]string, rigName string, cutoff time.Time) []str
 // example `.beads` permission hints) to stderr, and those must never be mixed
 // into the CSV stream read from stdout or bd sql --csv output cannot be parsed.
 func (c *PatrolNotStuckCheck) checkStuckWispsDolt(rigPath string, rigName string) ([]string, error) {
+	tableCheck := exec.Command("bd", "sql", "--csv", wispsTableExistsQuery) //nolint:gosec // G204: query is a constant
+	tableCheck.Dir = rigPath
+	var tableOut, tableErr strings.Builder
+	tableCheck.Stdout = &tableOut
+	tableCheck.Stderr = &tableErr
+	if err := tableCheck.Run(); err != nil {
+		return nil, fmt.Errorf("bd sql wisps schema check: %w: %s", err, strings.TrimSpace(tableErr.String()))
+	}
+	tableRecords, err := csv.NewReader(strings.NewReader(tableOut.String())).ReadAll()
+	if err != nil {
+		return nil, fmt.Errorf("wisps schema csv parse: %w", err)
+	}
+	if len(tableRecords) < 2 || len(tableRecords[1]) == 0 || strings.TrimSpace(tableRecords[1][0]) != "1" {
+		return nil, nil
+	}
+
 	cmd := exec.Command("bd", "sql", "--csv", stuckWispsQuery) //nolint:gosec // G204: query is a constant
 	cmd.Dir = rigPath
 	var stdout, stderr strings.Builder
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
 	if err := cmd.Run(); err != nil {
-		return nil, fmt.Errorf("bd sql: %w", err)
+		return nil, fmt.Errorf("bd sql: %w: %s", err, strings.TrimSpace(stderr.String()))
 	}
 
 	r := csv.NewReader(strings.NewReader(stdout.String()))

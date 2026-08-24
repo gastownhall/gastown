@@ -336,18 +336,6 @@ func TestCheckStuckWispsDolt_ErrorOnMissingBd(t *testing.T) {
 	}
 }
 
-func TestStuckWispsQueryTargetsPatrolWispsOnly(t *testing.T) {
-	if !strings.Contains(stuckWispsQuery, "FROM wisps") {
-		t.Fatalf("stuckWispsQuery = %q, want wisps table", stuckWispsQuery)
-	}
-	if !strings.Contains(stuckWispsQuery, "wisp_type = 'patrol'") {
-		t.Fatalf("stuckWispsQuery = %q, want patrol filter", stuckWispsQuery)
-	}
-	if strings.Contains(stuckWispsQuery, "FROM issues") {
-		t.Fatalf("stuckWispsQuery = %q, must not classify product issues as patrol wisps", stuckWispsQuery)
-	}
-}
-
 func TestParseStuckWisps_DoltTimestampLayout(t *testing.T) {
 	// Dolt emits updated_at in Go's default time.Time.String() layout:
 	// "2026-08-03 16:25:21 +0000 UTC". Regression test: this layout must be

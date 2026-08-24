@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
-	"runtime"
 	"testing"
 	"time"
 )
@@ -408,10 +407,7 @@ func TestPressureThresholds_Defaults(t *testing.T) {
 	if got := dt.PressureMemThresholdGBV(); got != DefaultPressureMemThresholdGB {
 		t.Errorf("PressureMemThresholdGB: got %v, want %v", got, DefaultPressureMemThresholdGB)
 	}
-	wantSessions := runtime.NumCPU() * 2
-	if wantSessions < 4 {
-		wantSessions = 4
-	}
+	wantSessions := defaultPressureMaxSessions()
 	if got := dt.PressureMaxSessionsV(); got != wantSessions {
 		t.Errorf("PressureMaxSessions: got %v, want %v", got, wantSessions)
 	}
@@ -470,10 +466,7 @@ func TestPressureThresholds_NilReceiver(t *testing.T) {
 	if dt.PressureMemThresholdGBV() != DefaultPressureMemThresholdGB {
 		t.Error("nil DaemonThresholds should return default mem threshold")
 	}
-	wantSessions := runtime.NumCPU() * 2
-	if wantSessions < 4 {
-		wantSessions = 4
-	}
+	wantSessions := defaultPressureMaxSessions()
 	if dt.PressureMaxSessionsV() != wantSessions {
 		t.Error("nil DaemonThresholds should return default max sessions")
 	}
