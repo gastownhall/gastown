@@ -301,8 +301,8 @@ func (c *PatrolNotStuckCheck) Run(ctx *CheckContext) *CheckResult {
 	}
 }
 
-// stuckWispsQuery selects in_progress issues for stuck-wisp detection via Dolt.
-const stuckWispsQuery = `SELECT id, title, status, updated_at FROM issues WHERE status = 'in_progress' ORDER BY updated_at ASC`
+// stuckWispsQuery selects only patrol wisps for stuck-wisp detection via Dolt.
+const stuckWispsQuery = `SELECT id, title, status, updated_at FROM wisps WHERE status = 'in_progress' AND wisp_type = 'patrol' ORDER BY updated_at ASC`
 
 // stuckTimestampLayouts are the timestamp layouts accepted when reading
 // `bd sql --csv` output. Dolt emits timestamps in Go's default
