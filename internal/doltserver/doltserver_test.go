@@ -459,19 +459,15 @@ func TestReapOrphanedDeletedDoltServersKillsProcessWithDeletedCWD(t *testing.T) 
 		t.Fatalf("removing data dir out from under the running server: %v", err)
 	}
 
-	deadline := time.Now().Add(5 * time.Second)
-	for time.Now().Before(deadline) && !strings.HasSuffix(getProcessCWD(pid), " (deleted)") {
-		time.Sleep(100 * time.Millisecond)
+	// /proc/PID/cwd is a live kernel view: deletion is reflected the instant
+	// RemoveAll returns, with no polling needed. Check once and call the
+	// reaper immediately — under load the real dolt binary can eventually
+	// notice its own missing directory and exit on its own, so minimizing
+	// this window keeps the test proving the reaper does the killing rather
+	// than racing dolt's own fault handling.
+	if cwd := getProcessCWD(pid); !strings.HasSuffix(cwd, " (deleted)") {
+		t.Fatalf("PID %d CWD did not show as deleted immediately after RemoveAll (got %q); test setup did not reproduce the leak signature", pid, cwd)
 	}
-	if !strings.HasSuffix(getProcessCWD(pid), " (deleted)") {
-		t.Fatalf("PID %d CWD never showed as deleted (got %q); test setup did not reproduce the leak signature", pid, getProcessCWD(pid))
-	}
-
-	// The real dolt binary can occasionally exit on its own shortly after its
-	// data dir vanishes (e.g. a background write hitting the deleted path)
-	// rather than surviving indefinitely like the reported leak did. Require
-	// the reaper to have done the killing only when the process was still
-	// alive going into the call; either way, it must be gone after.
 	wasAlive := processIsAlive(pid)
 
 	stopped, err := ReapOrphanedDeletedDoltServers()
