@@ -188,6 +188,13 @@ func TestGetServerAddr_NoMetadata(t *testing.T) {
 }
 
 func TestGetServerAddr_UsesConfigYAMLPort(t *testing.T) {
+	// GT_DOLT_PORT is ambient in every Gas Town session (explicit operator
+	// intent, highest precedence in ResolveDoltPort) and normally matches
+	// the production authority 127.0.0.1:3307. Clear it so this test's
+	// synthetic config.yaml in an isolated townRoot is actually exercised
+	// instead of being shadowed by the caller's real session port.
+	t.Setenv("GT_DOLT_PORT", "")
+
 	check := NewDoltServerReachableCheck()
 	townRoot := t.TempDir()
 
