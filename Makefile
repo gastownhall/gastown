@@ -226,6 +226,7 @@ test: test-makefile
 
 test-makefile:
 	bash scripts/check-install-path_test.sh
+	bash plugins/rebuild-gt/run_test.sh
 	bash -n plugins/stuck-agent-dog/run.sh
 	bash -n plugins/stuck-agent-dog/run_test.sh
 	bash plugins/stuck-agent-dog/run_test.sh
