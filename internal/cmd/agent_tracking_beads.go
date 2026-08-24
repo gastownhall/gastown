@@ -33,17 +33,33 @@ func findCwdBeadsWorkDir() (string, error) {
 	return "", fmt.Errorf("no .beads directory found")
 }
 
-// resolveAgentTrackingBeadsDir resolves the bead database used for agent state.
-// Agent tracking follows the agent's current rig, so cwd-local redirects must
-// win over an inherited town-level BEADS_DIR. The env-first resolver remains a
-// fallback for contexts that do not have a cwd-local .beads directory.
+// resolveAgentTrackingBeadsDir resolves the database used for agent identity
+// state. Agent beads are town-owned even though their IDs use the owning rig's
+// prefix, so allowing normal prefix routing (or pinning the cwd-local rig DB)
+// sends a rig agent lookup to the work-issue database and returns not found.
+//
+// Prefer the town database discovered from CWD. The local/env resolver remains
+// a fallback for standalone or partially initialized workspaces where no town
+// marker is available yet.
 func resolveAgentTrackingBeadsDir() (string, error) {
-	workDir, err := findCwdBeadsWorkDir()
-	if err != nil {
-		workDir, err = findLocalBeadsDir()
+	cwd, err := os.Getwd()
+	if err == nil {
+		if townRoot := beads.FindTownRoot(cwd); townRoot != "" {
+			if beadsDir := beads.ResolveBeadsDir(beads.GetTownBeadsPath(townRoot)); beadsDir != "" {
+				return beadsDir, nil
+			}
+		}
 	}
-	if err != nil {
-		return "", err
+
+	workDir, localErr := findCwdBeadsWorkDir()
+	if localErr != nil {
+		workDir, localErr = findLocalBeadsDir()
+	}
+	if localErr != nil {
+		if err != nil {
+			return "", err
+		}
+		return "", localErr
 	}
 
 	beadsDir := beads.ResolveBeadsDir(workDir)

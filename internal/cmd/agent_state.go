@@ -275,7 +275,8 @@ func getAllAgentLabels(agentBead, beadsDir string) ([]string, error) {
 
 	if err := cmd.Run(); err != nil {
 		errMsg := strings.TrimSpace(stderr.String())
-		if strings.Contains(errMsg, "not found") {
+		lowerErr := strings.ToLower(errMsg)
+		if strings.Contains(lowerErr, "not found") || strings.Contains(lowerErr, "no issue found") || strings.Contains(lowerErr, "no issues found") {
 			return nil, fmt.Errorf("agent bead not found: %s", agentBead)
 		}
 		if errMsg != "" {

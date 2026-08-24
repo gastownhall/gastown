@@ -24,9 +24,10 @@ var agentsResolveCmd = &cobra.Command{
 	Short: "Resolve the active agent bead for a role",
 	Long: `Resolve the active agent bead for a role.
 
-The resolver searches the current rig database and the town database across
-both durable issues and ephemeral wisps. It prefers the current rig's wisp
-record, then rig issue, town wisp, and town issue. Closed beads are ignored.`,
+Agent identity beads are town-owned even when their IDs carry a rig prefix.
+The resolver searches the town database across durable issues and ephemeral
+wisps, falling back to a local database only outside a Gas Town workspace.
+Closed beads are ignored.`,
 	RunE: runAgentsResolve,
 }
 
@@ -108,10 +109,6 @@ func runAgentsResolve(cmd *cobra.Command, _ []string) error {
 		}
 		return fmt.Errorf("%s", message)
 	}
-	if rig != "" && agentBeadSourceIsTown(match.Source) && !agentsResolveJSON {
-		return fmt.Errorf("agent bead %s was found only in %s; patrol await/state commands require a rig-local agent bead", match.ID, match.Source)
-	}
-
 	if agentsResolveJSON {
 		return json.NewEncoder(cmd.OutOrStdout()).Encode(agentsResolveResult{
 			ID:       match.ID,
@@ -126,29 +123,11 @@ func runAgentsResolve(cmd *cobra.Command, _ []string) error {
 }
 
 func findAgentBeadCandidates(cwd, currentBeadsDir string) ([]agentBeadCandidate, error) {
-	var candidates []agentBeadCandidate
-
-	rigCandidates, err := loadAgentBeadsFromDir(currentBeadsDir, agentSourceRigIssues, agentSourceRigWisps)
-	if err != nil {
-		return nil, err
+	issueSource, wispSource := agentSourceTownIssues, agentSourceTownWisps
+	if beads.FindTownRoot(cwd) == "" {
+		issueSource, wispSource = agentSourceRigIssues, agentSourceRigWisps
 	}
-	candidates = append(candidates, rigCandidates...)
-
-	townRoot := beads.FindTownRoot(cwd)
-	if townRoot == "" {
-		return candidates, nil
-	}
-	townBeadsDir := beads.ResolveBeadsDir(beads.GetTownBeadsPath(townRoot))
-	if townBeadsDir == "" || filepath.Clean(townBeadsDir) == filepath.Clean(currentBeadsDir) {
-		return candidates, nil
-	}
-
-	townCandidates, err := loadAgentBeadsFromDir(townBeadsDir, agentSourceTownIssues, agentSourceTownWisps)
-	if err != nil {
-		return nil, err
-	}
-	candidates = append(candidates, townCandidates...)
-	return candidates, nil
+	return loadAgentBeadsFromDir(currentBeadsDir, issueSource, wispSource)
 }
 
 func loadAgentBeadsFromDir(beadsDir string, issueSource, wispSource agentBeadSource) ([]agentBeadCandidate, error) {
@@ -260,19 +239,15 @@ func pickBestAgentBead(candidates []agentBeadCandidate) (*agentBeadCandidate, er
 
 func agentBeadSourceRank(source agentBeadSource) int {
 	switch source {
-	case agentSourceRigWisps:
-		return 0
-	case agentSourceRigIssues:
-		return 1
 	case agentSourceTownWisps:
-		return 2
+		return 0
 	case agentSourceTownIssues:
+		return 1
+	case agentSourceRigWisps:
+		return 2
+	case agentSourceRigIssues:
 		return 3
 	default:
 		return 99
 	}
-}
-
-func agentBeadSourceIsTown(source agentBeadSource) bool {
-	return source == agentSourceTownWisps || source == agentSourceTownIssues
 }
