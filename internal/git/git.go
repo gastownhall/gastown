@@ -789,6 +789,38 @@ func resolveGitDir(repoPath string) (string, error) {
 	return "", fmt.Errorf("%s is not a git repository", repoPath)
 }
 
+// repoScopedGitArgs returns the leading git arguments that bind a command to
+// repoPath and to nothing else.
+//
+// `git -C <path>` does not do this. When <path> is not itself a repository, git
+// falls back to discovery, walks up the directory tree, and operates on the
+// nearest ancestor that is one. Under a Gas Town root — which is frequently a
+// repository containing every rig as a subdirectory — that ancestor is the town
+// itself, so a command aimed at a rig that does not exist yet silently reads or
+// writes the town's repository instead. That is the mechanism behind the
+// incident b73ee919 misdiagnosed: sparse-checkout patterns landed in the town's
+// own .git and appeared to delete it.
+//
+// Passing --git-dir explicitly disables discovery outright, which is a stronger
+// guarantee than GIT_CEILING_DIRECTORIES: there is no walk to bound. --work-tree
+// accompanies it because commands that touch the index or working files
+// (sparse-checkout, checkout, read-tree) need both, and a bare --git-dir would
+// leave them guessing.
+//
+// A path that is not a repository yields an error rather than a fallback: a
+// caller that cannot be scoped must fail, never retarget.
+func repoScopedGitArgs(repoPath string) ([]string, error) {
+	gitDir, err := resolveGitDir(repoPath)
+	if err != nil {
+		return nil, err
+	}
+	// A bare repository has no working tree to bind.
+	if gitDir == filepath.Clean(repoPath) {
+		return []string{"--git-dir", gitDir}, nil
+	}
+	return []string{"--git-dir", gitDir, "--work-tree", filepath.Clean(repoPath)}, nil
+}
+
 // ConfigureHooksPath sets core.hooksPath for the repo/worktree if .githooks exists.
 func (g *Git) ConfigureHooksPath() error {
 	return configureHooksPath(g.workDir)
@@ -2386,7 +2418,11 @@ func isValidSubmoduleReference(repoPath string) bool {
 		return false
 	}
 	// Check if shallow — git rev-parse --is-shallow-repository
-	cmd := exec.Command("git", "-C", repoPath, "rev-parse", "--is-shallow-repository")
+	args, err := repoScopedGitArgs(repoPath)
+	if err != nil {
+		return false
+	}
+	cmd := exec.Command("git", append(args, "rev-parse", "--is-shallow-repository")...)
 	util.SetDetachedProcessGroup(cmd)
 	out, err := cmd.Output()
 	if err != nil {
@@ -2397,8 +2433,15 @@ func isValidSubmoduleReference(repoPath string) bool {
 
 // IsSparseCheckoutConfigured checks if sparse checkout is enabled for a given repo/worktree.
 // This is used by doctor to detect legacy sparse checkout configurations that should be removed.
+//
+// Reports false for a path that is not a repository, rather than answering from
+// whichever repository happens to sit above it (see repoScopedGitArgs).
 func IsSparseCheckoutConfigured(repoPath string) bool {
-	cmd := exec.Command("git", "-C", repoPath, "config", "core.sparseCheckout")
+	args, err := repoScopedGitArgs(repoPath)
+	if err != nil {
+		return false
+	}
+	cmd := exec.Command("git", append(args, "config", "core.sparseCheckout")...)
 	util.SetDetachedProcessGroup(cmd)
 	output, err := cmd.Output()
 	return err == nil && strings.TrimSpace(string(output)) == "true"
@@ -2411,8 +2454,13 @@ func RemoveSparseCheckout(repoPath string) error {
 		return err
 	}
 
+	args, err := repoScopedGitArgs(repoPath)
+	if err != nil {
+		return fmt.Errorf("disabling sparse checkout: %w", err)
+	}
+
 	// Use git sparse-checkout disable which properly restores hidden files
-	cmd := exec.Command("git", "-C", repoPath, "sparse-checkout", "disable")
+	cmd := exec.Command("git", append(args, "sparse-checkout", "disable")...)
 	util.SetDetachedProcessGroup(cmd)
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
@@ -3362,8 +3410,14 @@ func hasTrackedGitmodules(repoPath string) bool {
 	if _, err := os.Stat(gitmodules); os.IsNotExist(err) {
 		return false
 	}
-	// Verify .gitmodules is actually tracked in the index.
-	cmd := exec.Command("git", "-C", repoPath, "ls-files", "--error-unmatch", ".gitmodules")
+	// Verify .gitmodules is actually tracked in the index. Scoped so a path
+	// that is not a repository answers false instead of consulting whichever
+	// repository sits above it.
+	args, err := repoScopedGitArgs(repoPath)
+	if err != nil {
+		return false
+	}
+	cmd := exec.Command("git", append(args, "ls-files", "--error-unmatch", ".gitmodules")...)
 	return cmd.Run() == nil
 }
 
@@ -3374,8 +3428,13 @@ func InitSparseCheckout(repoPath string, paths []string) error {
 		return err
 	}
 
+	scope, err := repoScopedGitArgs(repoPath)
+	if err != nil {
+		return fmt.Errorf("initializing sparse checkout: %w", err)
+	}
+
 	// Initialize sparse checkout in cone mode
-	cmd := exec.Command("git", "-C", repoPath, "sparse-checkout", "init", "--cone")
+	cmd := exec.Command("git", append(scope, "sparse-checkout", "init", "--cone")...)
 	util.SetDetachedProcessGroup(cmd)
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
@@ -3383,8 +3442,7 @@ func InitSparseCheckout(repoPath string, paths []string) error {
 		return fmt.Errorf("initializing sparse checkout: %s", strings.TrimSpace(stderr.String()))
 	}
 	if len(paths) > 0 {
-		args := append([]string{"-C", repoPath, "sparse-checkout", "set"}, paths...)
-		cmd = exec.Command("git", args...)
+		cmd = exec.Command("git", append(append(scope, "sparse-checkout", "set"), paths...)...)
 		util.SetDetachedProcessGroup(cmd)
 		cmd.Stderr = &stderr
 		if err := cmd.Run(); err != nil {
