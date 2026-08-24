@@ -422,11 +422,26 @@ func spawnRealDoltSQLServer(t *testing.T, dataDir string) (int, *syncBuffer) {
 		t.Fatalf("starting real dolt sql-server: %v", err)
 	}
 	pid := cmd.Process.Pid
+	// Reap in the background as soon as the child exits, mirroring the real
+	// leak scenario: by the time a leaked server is killed, its original
+	// immediate parent (a short-lived `gt install` subprocess) has already
+	// exited and init/systemd is reaping it. Without this, this long-lived
+	// test process stays the reaper of record and the child sits as a zombie
+	// after being killed — kill(pid, 0) reports zombies as alive forever, so
+	// processIsAlive would never observe the death this test is proving.
+	waitDone := make(chan struct{})
+	go func() {
+		_ = cmd.Wait()
+		close(waitDone)
+	}()
 	t.Cleanup(func() {
 		if processIsAlive(pid) {
 			_ = cmd.Process.Kill()
 		}
-		_, _ = cmd.Process.Wait()
+		select {
+		case <-waitDone:
+		case <-time.After(5 * time.Second):
+		}
 	})
 
 	deadline := time.Now().Add(15 * time.Second)
@@ -486,22 +501,20 @@ func TestReapOrphanedDeletedDoltServersKillsProcessWithDeletedCWD(t *testing.T) 
 	}
 
 	// /proc/PID/cwd is a live kernel view: deletion is reflected the instant
-	// RemoveAll returns, with no polling needed. Check once and call the
-	// reaper immediately — under load the real dolt binary can eventually
-	// notice its own missing directory and exit on its own, so minimizing
-	// this window keeps the test proving the reaper does the killing rather
-	// than racing dolt's own fault handling.
+	// RemoveAll returns, with no polling needed.
 	if cwd := getProcessCWD(pid); !strings.HasSuffix(cwd, " (deleted)") {
 		t.Fatalf("PID %d CWD did not show as deleted immediately after RemoveAll (got %q); test setup did not reproduce the leak signature", pid, cwd)
 	}
-	wasAlive := processIsAlive(pid)
+	if !processIsAlive(pid) {
+		t.Fatalf("PID %d exited on its own right after its data dir was removed; test setup did not reproduce a live leaked server, output:\n%s", pid, out.String())
+	}
 
 	stopped, err := ReapOrphanedDeletedDoltServers()
 	if err != nil {
 		t.Fatalf("ReapOrphanedDeletedDoltServers: %v", err)
 	}
-	if wasAlive && stopped < 1 {
-		t.Fatalf("PID %d was alive with a deleted CWD but ReapOrphanedDeletedDoltServers stopped = %d, want at least 1; output:\n%s", pid, stopped, out.String())
+	if stopped != 1 {
+		t.Fatalf("stopped = %d, want 1; output:\n%s", stopped, out.String())
 	}
 	if processIsAlive(pid) {
 		t.Fatalf("dolt sql-server PID %d with deleted CWD survived ReapOrphanedDeletedDoltServers", pid)
