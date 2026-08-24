@@ -378,6 +378,12 @@ type DaemonThresholds struct {
 	// PressureMaxSessions is the maximum number of concurrent agent tmux
 	// sessions before new non-infrastructure spawns are deferred. Disabled by default (0 = unlimited).
 	PressureMaxSessions *int `json:"pressure_max_sessions,omitempty"`
+
+	// PressureSwapUsedPercent is the used-swap percentage (0-100) above which
+	// new non-infrastructure spawns are deferred. Only effective when the host
+	// reports SwapTotal > 0. Disabled by default (0).
+	// Recommended starting value: 80.
+	PressureSwapUsedPercent *float64 `json:"pressure_swap_used_percent,omitempty"`
 }
 
 // DeaconThresholds configures deacon health-check and dispatch thresholds.

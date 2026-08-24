@@ -15,6 +15,7 @@ import (
 	"github.com/steveyegge/gastown/internal/events"
 	"github.com/steveyegge/gastown/internal/git"
 	"github.com/steveyegge/gastown/internal/polecat"
+	"github.com/steveyegge/gastown/internal/pressure"
 	"github.com/steveyegge/gastown/internal/rig"
 	"github.com/steveyegge/gastown/internal/style"
 	"github.com/steveyegge/gastown/internal/tmux"
@@ -395,6 +396,20 @@ func (s *SpawnedPolecatInfo) StartSession() (string, error) {
 	townRoot, err := workspace.FindFromCwdOrError()
 	if err != nil {
 		return "", fmt.Errorf("not in a Gas Town workspace: %w", err)
+	}
+
+	// Host-pressure gate (gtf-5x2): refuse a spawn when the host is under
+	// resource or session-ceiling pressure. We DEFER (return a sentinel
+	// *pressure.DeferredError) rather than kill anything — the sling caller
+	// enqueues the work for later retry. This is the single choke point all
+	// spawn storms flow through (direct sling + daemon dispatch).
+	if err := pressure.CheckHostSpawn(townRoot); err != nil {
+		var derr *pressure.DeferredError
+		if errors.As(err, &derr) {
+			style.PrintWarning("spawn deferred: %s", derr.DeferralReason)
+			return "", err
+		}
+		return "", fmt.Errorf("pressure check: %w", err)
 	}
 
 	// Load rig config
