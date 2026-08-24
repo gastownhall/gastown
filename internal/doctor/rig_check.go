@@ -2055,6 +2055,7 @@ func RigChecks() []Check {
 		NewHooksPathConfiguredCheck(),
 		NewBareRepoExistsCheck(),
 		NewBareRepoRefspecCheck(),
+		NewBareRepoAlternatesCheck(),
 		NewDefaultBranchExistsCheck(),
 		NewWitnessExistsCheck(),
 		NewRefineryExistsCheck(),

@@ -62,7 +62,7 @@ func TestBareRepoAlternatesCheck_LiveAlternateOK(t *testing.T) {
 	if err := os.MkdirAll(rigDir, 0755); err != nil {
 		t.Fatal(err)
 	}
-	runGit(t, "", "clone", "--bare", "--reference-if-able", externalRepo, externalRepo, bareRepo)
+	runGit(t, "", "clone", "--bare", "--reference-if-able", externalRepo, fileURL(externalRepo), bareRepo)
 	assertHasAlternates(t, bareRepo)
 
 	check := NewBareRepoAlternatesCheck()
@@ -90,8 +90,8 @@ func TestBareRepoAlternatesCheck_ReachableAfterRefetch(t *testing.T) {
 	if err := os.MkdirAll(rigDir, 0755); err != nil {
 		t.Fatal(err)
 	}
-	runGit(t, "", "clone", "--bare", "--reference-if-able", externalRepo, originRepo, bareRepo)
-	runGit(t, bareRepo, "remote", "set-url", "origin", originRepo)
+	runGit(t, "", "clone", "--bare", "--reference-if-able", externalRepo, fileURL(originRepo), bareRepo)
+	runGit(t, bareRepo, "remote", "set-url", "origin", fileURL(originRepo))
 	assertHasAlternates(t, bareRepo)
 
 	// Simulate the external checkout being deleted from under the rig.
@@ -138,9 +138,9 @@ func TestBareRepoAlternatesCheck_UnreachableRefusesFix(t *testing.T) {
 	if err := os.MkdirAll(rigDir, 0755); err != nil {
 		t.Fatal(err)
 	}
-	runGit(t, "", "clone", "--bare", "--reference-if-able", externalRepo, externalRepo, bareRepo)
+	runGit(t, "", "clone", "--bare", "--reference-if-able", externalRepo, fileURL(externalRepo), bareRepo)
 	// No reachable origin — nothing to refetch from.
-	runGit(t, bareRepo, "remote", "set-url", "origin", filepath.Join(tmpDir, "does-not-exist.git"))
+	runGit(t, bareRepo, "remote", "set-url", "origin", fileURL(filepath.Join(tmpDir, "does-not-exist.git")))
 	assertHasAlternates(t, bareRepo)
 
 	origAlternates, err := os.ReadFile(alternatesFilePath(bareRepo))
@@ -189,6 +189,13 @@ func seedRepo(t *testing.T, tmpDir, name, content string) string {
 	runGit(t, seed, "commit", "-m", "seed commit")
 	runGit(t, seed, "push", "origin", "HEAD:refs/heads/main")
 	return bareRepo
+}
+
+// fileURL forces git to treat a local path as a remote (disabling the
+// same-filesystem hardlink optimization) so a clone's --reference-if-able
+// dedup is actually exercised, matching how a real GitHub-hosted clone behaves.
+func fileURL(path string) string {
+	return "file://" + path
 }
 
 // assertHasAlternates fails the test if bareRepo has no objects/info/alternates file.
