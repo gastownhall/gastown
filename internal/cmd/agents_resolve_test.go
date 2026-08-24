@@ -1,11 +1,68 @@
 package cmd
 
 import (
+	"os"
+	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
 	"github.com/steveyegge/gastown/internal/beads"
 )
+
+func TestFindAgentBeadCandidatesResolvesSameTownIdentityFromTownAndRigCwd(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("uses a POSIX shell fake bd")
+	}
+
+	townRoot, _ := filepath.EvalSymlinks(t.TempDir())
+	townBeadsDir := filepath.Join(townRoot, ".beads")
+	rigDir := filepath.Join(townRoot, "gastown", "refinery", "rig")
+	for _, dir := range []string{filepath.Join(townRoot, "mayor"), townBeadsDir, rigDir} {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatalf("mkdir %s: %v", dir, err)
+		}
+	}
+	if err := os.WriteFile(filepath.Join(townRoot, "mayor", "town.json"), []byte(`{"name":"test"}`), 0o644); err != nil {
+		t.Fatalf("write town marker: %v", err)
+	}
+
+	binDir := t.TempDir()
+	script := `#!/bin/sh
+cmd=""
+for arg in "$@"; do case "$arg" in --*) ;; *) cmd="$arg"; break ;; esac; done
+case "$cmd" in
+  version) printf 'bd version 1.2.2\n' ;;
+  list) printf '%s\n' '[{"id":"gt-gastown-refinery","status":"open","labels":["gt:agent"],"description":"role_type: refinery\nrig: gastown"}]' ;;
+  query) printf '%s\n' '[]' ;;
+  *) exit 1 ;;
+esac
+`
+	if err := os.WriteFile(filepath.Join(binDir, "bd"), []byte(script), 0o755); err != nil {
+		t.Fatalf("write fake bd: %v", err)
+	}
+	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	for _, cwd := range []string{townRoot, rigDir} {
+		candidates, err := findAgentBeadCandidates(cwd, townBeadsDir)
+		if err != nil {
+			t.Fatalf("find candidates from %s: %v", cwd, err)
+		}
+		var matches []agentBeadCandidate
+		for _, candidate := range candidates {
+			if agentBeadMatches(candidate.Issue, "refinery", "gastown") {
+				matches = append(matches, candidate)
+			}
+		}
+		got, err := pickBestAgentBead(matches)
+		if err != nil {
+			t.Fatalf("pick candidate from %s: %v", cwd, err)
+		}
+		if got == nil || got.ID != "gt-gastown-refinery" || got.Source != agentSourceTownIssues {
+			t.Fatalf("candidate from %s = %#v, want canonical town identity", cwd, got)
+		}
+	}
+}
 
 func TestAgentBeadMatchesDescriptionAndIDFallback(t *testing.T) {
 	tests := []struct {
@@ -87,8 +144,8 @@ func TestPickBestAgentBead(t *testing.T) {
 	if err != nil {
 		t.Fatalf("pickBestAgentBead returned error: %v", err)
 	}
-	if got == nil || got.ID != "rig-wisp" {
-		t.Fatalf("pickBestAgentBead picked %v, want rig-wisp", got)
+	if got == nil || got.ID != "town-wisp" {
+		t.Fatalf("pickBestAgentBead picked %v, want town-wisp", got)
 	}
 }
 

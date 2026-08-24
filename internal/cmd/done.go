@@ -2117,6 +2117,7 @@ func setDoneIntentLabel(bd *beads.Beads, agentBeadID, exitType string) {
 	if agentBeadID == "" {
 		return
 	}
+	bd = bd.ForAgentBead()
 	label := fmt.Sprintf("done-intent:%s:%d", exitType, time.Now().Unix())
 	if err := bd.Update(agentBeadID, beads.UpdateOptions{
 		AddLabels: []string{label},
@@ -2133,6 +2134,7 @@ func clearDoneIntentLabel(bd *beads.Beads, agentBeadID string) {
 	if agentBeadID == "" {
 		return
 	}
+	bd = bd.ForAgentBead()
 	issue, err := bd.Show(agentBeadID)
 	if err != nil {
 		return // Agent bead gone, nothing to clear
@@ -2173,6 +2175,7 @@ func writeDoneCheckpoint(bd *beads.Beads, agentBeadID string, cp DoneCheckpoint,
 	if agentBeadID == "" {
 		return
 	}
+	bd = bd.ForAgentBead()
 	label := fmt.Sprintf("done-cp:%s:%s:%d", cp, value, time.Now().Unix())
 	if err := bd.Update(agentBeadID, beads.UpdateOptions{
 		AddLabels: []string{label},
@@ -2188,6 +2191,7 @@ func readDoneCheckpoints(bd *beads.Beads, agentBeadID string) map[DoneCheckpoint
 	if agentBeadID == "" {
 		return checkpoints
 	}
+	bd = bd.ForAgentBead()
 	issue, err := bd.Show(agentBeadID)
 	if err != nil {
 		return checkpoints
@@ -2212,6 +2216,7 @@ func clearDoneCheckpoints(bd *beads.Beads, agentBeadID string) {
 	if agentBeadID == "" {
 		return
 	}
+	bd = bd.ForAgentBead()
 	issue, err := bd.Show(agentBeadID)
 	if err != nil {
 		return
