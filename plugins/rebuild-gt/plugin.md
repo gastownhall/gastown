@@ -8,7 +8,7 @@ type = "cooldown"
 duration = "1h"
 
 [tracking]
-labels = ["plugin:rebuild-gt", "rig:gastown", "category:maintenance"]
+labels = ["plugin:rebuild-gt", "category:maintenance"]
 digest = true
 
 [execution]
@@ -30,6 +30,12 @@ it, and the loop repeated every 1-2 minutes.
 
 The Deacon evaluates this before dispatch. If gate closed, skip.
 
+## Configuration
+
+`GT_SOURCE_RIG` names the registered rig that carries the gt source checkout
+(source lives at `<rig>/mayor/rig`). Defaults to `gastown_fork`, the
+registered downstream fork rig; override for other topologies.
+
 ## Detection
 
 Check binary staleness:
@@ -47,7 +53,7 @@ Parse the JSON output and check these fields:
 
 If `safe_to_rebuild` is false, record a skip wisp:
 ```bash
-gt plugin record-run --plugin rebuild-gt --result skipped --rig gastown \
+gt plugin record-run --plugin rebuild-gt --result skipped --rig "$SOURCE_RIG" \
   --title "Plugin: rebuild-gt [skipped]" \
   --description "Skipped: not safe to rebuild (forward=$FORWARD, main=$ON_MAIN)" >/dev/null 2>&1 || true
 ```
@@ -57,7 +63,7 @@ gt plugin record-run --plugin rebuild-gt --result skipped --rig gastown \
 Before building, verify the source repo is clean and on main:
 
 ```bash
-cd ~/gt/gastown/mayor/rig
+cd ~/gt/${GT_SOURCE_RIG:-gastown_fork}/mayor/rig
 git status --porcelain  # Must be clean
 git branch --show-current  # Must be "main"
 ```
@@ -69,7 +75,7 @@ If either check fails, skip the rebuild and record a wisp.
 Rebuild from source (the mayor/rig directory is the canonical source):
 
 ```bash
-cd ~/gt/gastown/mayor/rig && make build && make safe-install
+cd ~/gt/${GT_SOURCE_RIG:-gastown_fork}/mayor/rig && make build && make safe-install
 ```
 
 **IMPORTANT**: Use `make safe-install` (not `make install`) to avoid restarting
@@ -80,14 +86,14 @@ NOT restart the daemon — sessions will pick up the new binary on their next cy
 
 On success:
 ```bash
-gt plugin record-run --plugin rebuild-gt --result success --rig gastown \
+gt plugin record-run --plugin rebuild-gt --result success --rig "$SOURCE_RIG" \
   --title "Plugin: rebuild-gt [success]" \
   --description "Rebuilt gt: $OLD → $NEW ($N commits)" >/dev/null 2>&1 || true
 ```
 
 On failure:
 ```bash
-gt plugin record-run --plugin rebuild-gt --result failure --rig gastown \
+gt plugin record-run --plugin rebuild-gt --result failure --rig "$SOURCE_RIG" \
   --title "Plugin: rebuild-gt [failure]" \
   --description "Build failed: $ERROR" >/dev/null 2>&1 || true
 
