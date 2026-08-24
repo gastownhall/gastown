@@ -1453,6 +1453,86 @@ func ReapOwnedTestServers(townRoot string) (int, error) {
 	return stopped, nil
 }
 
+// ReapOrphanedDeletedDoltServers terminates dolt sql-server processes whose
+// working directory has already been deleted out from under them — the
+// signature a test harness leaves when it removes its temp town dir without
+// waiting for the detached server child to exit (gtf-4cj). It is intentionally
+// independent of any single townRoot: by the time a process's CWD is deleted,
+// the townRoot that spawned it is gone too, so ownership can only be proven by
+// the deleted CWD itself having lived under the OS temp dir. A production Dolt
+// server's CWD is never a deleted directory, so this never risks production.
+func ReapOrphanedDeletedDoltServers() (int, error) {
+	absTemp, err := filepath.Abs(os.TempDir())
+	if err != nil {
+		return 0, fmt.Errorf("resolving temp dir: %w", err)
+	}
+
+	stopped := 0
+	for _, pid := range findDoltSQLServerPIDs(processList()) {
+		if pid <= 0 || pid == os.Getpid() || !processIsAlive(pid) {
+			continue
+		}
+		deletedPath, wasDeleted := strings.CutSuffix(getProcessCWD(pid), " (deleted)")
+		if !wasDeleted {
+			continue
+		}
+		absDeleted, err := filepath.Abs(deletedPath)
+		if err != nil {
+			continue
+		}
+		rel, err := filepath.Rel(absTemp, absDeleted)
+		if err != nil || rel == "." || strings.HasPrefix(rel, "..") || filepath.IsAbs(rel) {
+			continue // deleted CWD lived outside the temp dir: never touch it
+		}
+		proc, err := os.FindProcess(pid)
+		if err != nil {
+			continue
+		}
+		if err := gracefulTerminate(proc); err != nil {
+			return stopped, fmt.Errorf("terminating orphaned Dolt PID %d (deleted cwd %s): %w", pid, deletedPath, err)
+		}
+		for i := 0; i < 20; i++ {
+			time.Sleep(100 * time.Millisecond)
+			if !processIsAlive(pid) {
+				stopped++
+				break
+			}
+		}
+		if processIsAlive(pid) {
+			_ = proc.Kill()
+			time.Sleep(100 * time.Millisecond)
+			stopped++
+		}
+	}
+
+	return stopped, nil
+}
+
+// findDoltSQLServerPIDs returns PIDs of every dolt sql-server process visible
+// in a `ps -eo pid,args` listing, with no ownership filtering — callers must
+// apply their own ownership proof before acting on a PID.
+func findDoltSQLServerPIDs(psOutput string) []int {
+	var pids []int
+	for _, line := range strings.Split(psOutput, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" || !strings.Contains(line, "sql-server") || !strings.Contains(line, "dolt") {
+			continue
+		}
+		fields := strings.Fields(line)
+		if len(fields) < 3 {
+			continue
+		}
+		pid, err := strconv.Atoi(fields[0])
+		if err != nil || pid <= 0 {
+			continue
+		}
+		if isDoltSQLServerArgs(fields[1:]) {
+			pids = append(pids, pid)
+		}
+	}
+	return pids
+}
+
 func ownedDoltTestServerCandidates(townRoot string, config *Config) []int {
 	seen := map[int]bool{}
 	var pids []int

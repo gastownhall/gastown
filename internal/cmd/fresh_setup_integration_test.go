@@ -16,6 +16,7 @@ import (
 	"testing"
 
 	"github.com/steveyegge/gastown/internal/beads"
+	"github.com/steveyegge/gastown/internal/testutil"
 )
 
 var freshSetupIntegrationCounter atomic.Int32
@@ -40,14 +41,15 @@ func TestFreshInstallRigPolecatHookIntegration(t *testing.T) {
 	env := freshSetupIntegrationEnv(tmpDir, doltPortString)
 	configureGitIdentityForEnv(t, env)
 
+	// gt install spawns a real, detached dolt sql-server child (its own process
+	// group, immune to signals sent to this test process). Register the owned-PID
+	// reaper before starting it so success, t.Fatal, and panic paths all reap it —
+	// a best-effort `gt dolt stop` with a swallowed error left these orphaned
+	// (gtf-4cj).
+	testutil.ReapOwnedDoltOnCleanup(t, hqPath)
+
 	gtBinary := buildGT(t)
 	runFreshSetupCmd(t, "", env, gtBinary, "install", hqPath, "--name", "test-town", "--git", "--dolt-port", doltPortString)
-	t.Cleanup(func() {
-		cmd := exec.Command(gtBinary, "dolt", "stop")
-		cmd.Dir = hqPath
-		cmd.Env = env
-		_ = cmd.Run()
-	})
 
 	assertTownBeadsPrefix(t, hqPath)
 
