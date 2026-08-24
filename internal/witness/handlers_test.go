@@ -15,6 +15,7 @@ import (
 	"github.com/steveyegge/gastown/internal/beads"
 	"github.com/steveyegge/gastown/internal/config"
 	"github.com/steveyegge/gastown/internal/polecat"
+	"github.com/steveyegge/gastown/internal/pressure"
 	"github.com/steveyegge/gastown/internal/tmux"
 )
 
@@ -2803,7 +2804,13 @@ func TestHandleZombieRestart_RestartsWhenBranchNotMerged(t *testing.T) {
 	verifyBranchAlreadyMerged = func(workDir, rigName, polecatName string) (bool, error) {
 		return false, nil
 	}
-	t.Cleanup(func() { verifyBranchAlreadyMerged = oldVerify })
+	// Force the pressure gate to permit (deterministic; independent of live host).
+	oldPressureGate := pressureGate
+	pressureGate = func(string) error { return nil }
+	t.Cleanup(func() {
+		verifyBranchAlreadyMerged = oldVerify
+		pressureGate = oldPressureGate
+	})
 
 	bd, _ := mockBd(
 		func(args []string) (string, error) { return "[]", nil },
@@ -2816,5 +2823,46 @@ func TestHandleZombieRestart_RestartsWhenBranchNotMerged(t *testing.T) {
 	// Should NOT take the archive path.
 	if strings.Contains(z.Action, "work-already-merged") {
 		t.Errorf("action = %q, should not archive when work is not merged", z.Action)
+	}
+}
+
+// TestHandleZombieRestart_DefersRestartUnderPressure pins the gtf-9s pressure
+// backpressure on the witness restart path: when the host is pressured, the
+// restart is DEFERRED (no spawn, no nuke) and a restart_deferred feed event is
+// emitted. The worktree and hooked bead are left intact for the next patrol.
+func TestHandleZombieRestart_DefersRestartUnderPressure(t *testing.T) {
+	oldVerify := verifyBranchAlreadyMerged
+	verifyBranchAlreadyMerged = func(workDir, rigName, polecatName string) (bool, error) {
+		return false, nil // not merged -> proceeds to restart path
+	}
+	oldPressure := pressureGate
+	oldRestart := restartPolecatCall
+	restartCalled := false
+	restartPolecatCall = func(workDir, rigName, polecatName string) error {
+		restartCalled = true
+		return nil
+	}
+	pressureGate = func(string) error {
+		return pressure.Defer(pressure.ReasonMemory, "host pinned") // deterministic deferral
+	}
+	t.Cleanup(func() {
+		verifyBranchAlreadyMerged = oldVerify
+		pressureGate = oldPressure
+		restartPolecatCall = oldRestart
+	})
+
+	bd, _ := mockBd(
+		func(args []string) (string, error) { return "[]", nil },
+		func(args []string) error { return nil },
+	)
+
+	z := &ZombieResult{PolecatName: "scavenger", HookBead: "ma-poc.4"}
+	handleZombieRestart(bd, t.TempDir(), "testrig", "scavenger", "ma-poc.4", "clean", z)
+
+	if restartCalled {
+		t.Error("must NOT restart under pressure; worktree preserved for next patrol")
+	}
+	if !strings.Contains(z.Action, "restart-deferred-pressure") {
+		t.Errorf("action = %q, want restart-deferred-pressure", z.Action)
 	}
 }
