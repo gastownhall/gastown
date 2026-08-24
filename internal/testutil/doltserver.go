@@ -5,6 +5,7 @@ package testutil
 import (
 	"context"
 	"fmt"
+	"net"
 	"os"
 	"os/exec"
 	"strings"
@@ -38,6 +39,56 @@ func isDockerAvailable() bool {
 		dockerAvail = exec.Command("docker", "info").Run() == nil
 	})
 	return dockerAvail
+}
+
+// externalDoltEndpoint returns the host:port of an externally managed Dolt
+// server when the caller has pinned one, or "" when this process should start
+// its own container.
+//
+// Why (gtf-s7p): a CI job that runs several test binaries in sequence used to
+// get one ephemeral container PER BINARY, each on a different mapped port,
+// with the previous one torn down as that binary exited. The port is not only
+// passed by env — bd init persists it into .beads/dolt-server.port and
+// metadata.json, and beads/config_sql.go prefers that stored value over the
+// environment. A beads dir created under one binary therefore kept dialing a
+// container that no longer existed. Honoring an external endpoint lets the
+// job pin ONE server for its whole lifetime so the persisted port stays valid.
+func externalDoltEndpoint() (host, port string) {
+	if strings.TrimSpace(os.Getenv("GT_TEST_EXTERNAL_DOLT")) == "" {
+		return "", ""
+	}
+	port = strings.TrimSpace(os.Getenv("GT_DOLT_PORT"))
+	if port == "" {
+		port = strings.TrimSpace(os.Getenv("BEADS_DOLT_PORT"))
+	}
+	if port == "" {
+		return "", ""
+	}
+	host = strings.TrimSpace(os.Getenv("GT_DOLT_HOST"))
+	if host == "" {
+		host = "127.0.0.1"
+	}
+	return host, port
+}
+
+// adoptExternalDolt wires the shared-container globals to an operator-provided
+// endpoint. Returns false when no external endpoint is pinned.
+func adoptExternalDolt() bool {
+	host, port := externalDoltEndpoint()
+	if port == "" {
+		return false
+	}
+	// Fail closed: an external endpoint that does not answer is a
+	// misconfiguration, not something to silently paper over by starting a
+	// second server the persisted port would not match.
+	conn, err := net.DialTimeout("tcp", net.JoinHostPort(host, port), 10*time.Second)
+	if err != nil {
+		doltCtrErr = fmt.Errorf("external Dolt server pinned at %s:%s is unreachable: %w", host, port, err)
+		return true
+	}
+	_ = conn.Close()
+	doltCtrPort = port
+	return true
 }
 
 // isReaperRemovingErr returns true if the error is a transient "removing"
@@ -97,6 +148,12 @@ func runDoltContainerWithRetry(ctx context.Context) (*dolt.DoltContainer, error)
 // startSharedDoltContainer starts the shared Dolt container and sets
 // GT_DOLT_PORT and BEADS_DOLT_PORT process-wide.
 func startSharedDoltContainer() {
+	// Reuse an externally managed server when one is pinned, so every test
+	// binary in a job shares one stable port (gtf-s7p).
+	if adoptExternalDolt() {
+		return
+	}
+
 	ctx := context.Background()
 	ctr, err := runDoltContainerWithRetry(ctx)
 	if err != nil {
@@ -157,6 +214,12 @@ func StartIsolatedDoltContainer(t *testing.T) string {
 // TestMain functions. Call TerminateDoltContainer() after m.Run() to clean up.
 // Sets both GT_DOLT_PORT and BEADS_DOLT_PORT process-wide.
 func EnsureDoltContainerForTestMain() error {
+	// An externally pinned server needs no Docker in this process.
+	if host, port := externalDoltEndpoint(); port != "" {
+		_ = host
+		doltCtrOnce.Do(startSharedDoltContainer)
+		return doltCtrErr
+	}
 	if !isDockerAvailable() {
 		return fmt.Errorf("Docker not available")
 	}
@@ -169,7 +232,10 @@ func EnsureDoltContainerForTestMain() error {
 // test if Docker is not available.
 func RequireDoltContainer(t *testing.T) {
 	t.Helper()
-	if !isDockerAvailable() {
+	// An externally pinned server needs no Docker in this process. Skipping
+	// here would silently drop coverage in a job that deliberately provided a
+	// server, so only consult Docker when we would have to start our own.
+	if _, port := externalDoltEndpoint(); port == "" && !isDockerAvailable() {
 		t.Skip("Docker not available, skipping test")
 	}
 
