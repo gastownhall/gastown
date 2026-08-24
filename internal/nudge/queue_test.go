@@ -1,6 +1,7 @@
 package nudge
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -652,19 +653,18 @@ func TestRemoveKindByThread(t *testing.T) {
 	}
 }
 
-// TestDeferredNudgeDeliveredAfterDelay uses a very short DeliverAfter to confirm
-// that the same nudge is skipped on first Drain and delivered on a second Drain
-// after the deadline elapses.
+// TestDeferredNudgeDeliveredAfterDelay confirms that the same nudge is skipped
+// before its deadline and delivered after its persisted deadline has elapsed.
 func TestDeferredNudgeDeliveredAfterDelay(t *testing.T) {
 	townRoot := t.TempDir()
 	session := "gt-test-deferred-sequence"
 
-	shortDelay := QueuedNudge{
+	deferred := QueuedNudge{
 		Sender:       "system",
 		Message:      "reply via mail",
-		DeliverAfter: time.Now().Add(50 * time.Millisecond),
+		DeliverAfter: time.Now().Add(time.Hour),
 	}
-	if err := Enqueue(townRoot, session, shortDelay); err != nil {
+	if err := Enqueue(townRoot, session, deferred); err != nil {
 		t.Fatalf("Enqueue: %v", err)
 	}
 
@@ -677,8 +677,33 @@ func TestDeferredNudgeDeliveredAfterDelay(t *testing.T) {
 		t.Fatalf("first Drain: got %d nudges, want 0 (deferred not ready)", len(nudges))
 	}
 
-	// Wait for deadline.
-	time.Sleep(60 * time.Millisecond)
+	// Move the persisted deadline into the past without depending on scheduler
+	// timing. Under a loaded full-suite runner, a tiny real-time delay can elapse
+	// before the first Drain and invert the assertion this test is meant to make.
+	entries, err := os.ReadDir(queueDir(townRoot, session))
+	if err != nil {
+		t.Fatalf("ReadDir: %v", err)
+	}
+	if len(entries) != 1 {
+		t.Fatalf("queue entries = %d, want 1", len(entries))
+	}
+	path := filepath.Join(queueDir(townRoot, session), entries[0].Name())
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("ReadFile: %v", err)
+	}
+	var persisted QueuedNudge
+	if err := json.Unmarshal(data, &persisted); err != nil {
+		t.Fatalf("Unmarshal: %v", err)
+	}
+	persisted.DeliverAfter = time.Now().Add(-time.Second)
+	data, err = json.MarshalIndent(persisted, "", "  ")
+	if err != nil {
+		t.Fatalf("MarshalIndent: %v", err)
+	}
+	if err := os.WriteFile(path, data, 0644); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
 
 	// Second Drain: ready now.
 	nudges, err = Drain(townRoot, session)

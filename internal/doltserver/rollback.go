@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+
+	"github.com/steveyegge/gastown/internal/fsutil"
 )
 
 // Backup represents a discovered migration backup directory.
@@ -197,59 +199,14 @@ func replaceDir(dst, src string) error {
 		return fmt.Errorf("creating parent directory: %w", err)
 	}
 
-	// Copy recursively using cp -a to preserve permissions and timestamps
-	if err := copyDir(dst, src); err != nil {
+	// Restores land next to the live database, so this is normally a
+	// same-filesystem copy and fsutil clones the extents instead of
+	// duplicating them. A Dolt database directory is large enough for that to
+	// matter; the previous implementation also read every file fully into
+	// memory before writing it back out.
+	if err := fsutil.CopyDir(src, dst); err != nil {
 		return fmt.Errorf("copying %s to %s: %w", src, dst, err)
 	}
 
 	return nil
-}
-
-// copyDir recursively copies a directory tree.
-func copyDir(dst, src string) error {
-	srcInfo, err := os.Stat(src)
-	if err != nil {
-		return err
-	}
-
-	if err := os.MkdirAll(dst, srcInfo.Mode()); err != nil {
-		return err
-	}
-
-	entries, err := os.ReadDir(src)
-	if err != nil {
-		return err
-	}
-
-	for _, entry := range entries {
-		srcPath := filepath.Join(src, entry.Name())
-		dstPath := filepath.Join(dst, entry.Name())
-
-		if entry.IsDir() {
-			if err := copyDir(dstPath, srcPath); err != nil {
-				return err
-			}
-		} else {
-			if err := copyFile(dstPath, srcPath); err != nil {
-				return err
-			}
-		}
-	}
-
-	return nil
-}
-
-// copyFile copies a single file preserving permissions.
-func copyFile(dst, src string) error {
-	data, err := os.ReadFile(src)
-	if err != nil {
-		return err
-	}
-
-	srcInfo, err := os.Stat(src)
-	if err != nil {
-		return err
-	}
-
-	return os.WriteFile(dst, data, srcInfo.Mode())
 }

@@ -313,7 +313,18 @@ func canonicalBeadsDir(beadsDir string) string {
 	if beadsDir == "" {
 		return ""
 	}
-	return ResolveBeadsDir(beadsDir)
+	// Follow redirects, but never walk up to an ancestor.
+	//
+	// Callers reach here having already chosen a scope — GetRigDirForName for a
+	// named rig, for instance — and BuildPinnedBDEnv then pins BEADS_DIR to this
+	// result. ResolveBeadsDir's ancestor fallback (gtf-g1p) exists so a pin
+	// matches where a bare `bd` invocation would land; applying it to an
+	// already-chosen scope silently retargets the pin at the TOWN database when
+	// the rig's .beads is not on disk yet. That made the daemon ask the town DB
+	// about a polecat's work, get nothing back, and let the idle reaper kill a
+	// working polecat. A missing scope must stay missing here, not become a
+	// different, wrong database.
+	return resolveBeadsDirLocal(beadsDir)
 }
 
 // StripEnvKey removes all entries for key. Environment keys are case-insensitive

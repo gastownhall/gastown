@@ -510,7 +510,14 @@ func ResolveBeadsDirForID(currentBeadsDir, beadID string) string {
 			// Derive town root from the routes directory we actually used.
 			townRoot := filepath.Dir(routesBeadsDir)
 			rigDir := filepath.Join(townRoot, r.Path)
-			return ResolveBeadsDir(rigDir)
+			// Why: local-only resolution, not ResolveBeadsDir's ancestor walk
+			// (gtf-g1p). This is a structural "which rig owns this ID" routing
+			// decision, not a subprocess BEADS_DIR pin — falling back to an
+			// ancestor (e.g. town-level .beads) here silently merges a rig
+			// whose .beads doesn't exist yet into the wrong query group
+			// (gtf-oht.1 dc13 regression found via
+			// TestListBlockedWorkBeadIDStatesPartialFailureFailsClosedPerGroup).
+			return resolveBeadsDirLocal(rigDir)
 		}
 	}
 

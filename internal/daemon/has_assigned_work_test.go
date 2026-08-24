@@ -28,6 +28,17 @@ func TestHasAssignedOpenWork_UsesPinnedBeadsDirInsteadOfRigOrRepoFlag(t *testing
 	binDir := t.TempDir()
 	logPath := filepath.Join(binDir, "bd.log")
 	expectedBeadsDir := filepath.Join(townRoot, "gastown", "mayor", "rig", ".beads")
+
+	// The rig's .beads must exist on disk, not just in routes.jsonl.
+	// ResolveBeadsDir mirrors bd's own findDatabaseInTree: when the directly
+	// resolved .beads is absent it walks up to the nearest ancestor that has
+	// one (gtf-g1p), so pinning BEADS_DIR never short-circuits a lookup that a
+	// plain bd call would have satisfied. Without this directory the pin
+	// resolves to the town's .beads and the test would assert the opposite of
+	// the routing behaviour it is named for.
+	if err := os.MkdirAll(expectedBeadsDir, 0o755); err != nil {
+		t.Fatalf("mkdir rig beads: %v", err)
+	}
 	script := `#!/bin/sh
 for arg in "$@"; do
   case "$arg" in

@@ -278,14 +278,19 @@ func runEscalateList(cmd *cobra.Command, args []string) error {
 
 	var issues []*beads.Issue
 	if escalateListAll {
-		// List all (open and closed)
-		out, err := bd.Run("list", "--label=gt:escalation", "--status=all", "--json")
+		// List all (open and closed). --include-infra surfaces the ephemeral
+		// wisp-backed escalations that bd list hides by default (hq-vcv).
+		out, err := bd.Run("list", "--label=gt:escalation", "--status=all", "--include-infra", "--json")
 		if err != nil {
 			return fmt.Errorf("listing escalations: %w", err)
 		}
 		if err := json.Unmarshal(out, &issues); err != nil {
 			return fmt.Errorf("parsing escalations: %w", err)
 		}
+		// Filter mail-delivery mirrors (gt:message) so --all lists escalations,
+		// not delivery copies. Without this the same escalation shows twice:
+		// its wisp (canonical record) and its mail mirror.
+		issues = beads.FilterEscalationRecords(issues)
 	} else {
 		issues, err = bd.ListEscalations()
 		if err != nil {

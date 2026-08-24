@@ -144,6 +144,10 @@ jobs:
         with:
           version: v2.11.4
           args: --timeout=5m
+          # Config schema verification fetches a remote JSON schema and made
+          # lint availability depend on golangci-lint.run. The pinned linter
+          # still parses and enforces the complete local config during run.
+          verify: false
 
   integration:
     name: Integration Tests
@@ -172,6 +176,41 @@ jobs:
       - name: Pre-pull Dolt Docker image
         run: docker pull dolthub/dolt-sql-server:2.0.7
 
+      # One Dolt endpoint for the WHOLE job (gtf-s7p).
+      #
+      # The step below runs five separate gotestsum invocations. Each is its
+      # own test binary, so each used to run its own TestMain, its own
+      # sync.Once, and therefore its own ephemeral container on a DIFFERENT
+      # mapped port — with the previous container torn down as that binary
+      # exited.
+      #
+      # That is fatal because the port is persisted, not just passed: bd init
+      # writes .beads/dolt-server.port and metadata.json.dolt_server_port, and
+      # beads/config_sql.go prefers that stored value over GT_DOLT_PORT. A
+      # beads dir created under one shard therefore kept dialling a container
+      # that no longer existed, producing
+      # "Dolt server unreachable at 127.0.0.1:<port>: connection refused".
+      #
+      # Pinning one container on a FIXED host port for the entire job makes the
+      # persisted value and the live endpoint agree for every shard.
+      - name: Start shared Dolt server
+        run: |
+          set -euo pipefail
+          docker run -d --name gt-ci-dolt \
+            -p 3307:3306 \
+            -e DOLT_ROOT_HOST=% \
+            dolthub/dolt-sql-server:2.0.7
+          for i in $(seq 1 60); do
+            if docker exec gt-ci-dolt dolt sql -q 'select 1' >/dev/null 2>&1; then
+              echo "Dolt ready after ${i}s"
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "Dolt did not become ready in 60s" >&2
+          docker logs gt-ci-dolt >&2
+          exit 1
+
       - name: Set up beads (bd)
         uses: ./.github/actions/setup-bd
 
@@ -184,6 +223,14 @@ jobs:
           cp gt "$(go env GOPATH)/bin/"
 
       - name: Integration Tests
+        env:
+          # Point every shard at the single job-scoped server above. With these
+          # set, testutil reuses this endpoint instead of starting a per-binary
+          # container, so the port stays stable across all five invocations.
+          GT_DOLT_HOST: 127.0.0.1
+          GT_DOLT_PORT: "3307"
+          BEADS_DOLT_PORT: "3307"
+          GT_TEST_EXTERNAL_DOLT: "1"
         run: |
           status=0
 
