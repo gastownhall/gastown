@@ -41,7 +41,7 @@ registered downstream fork rig; override for other topologies.
 Check binary staleness:
 
 ```bash
-gt stale --json
+cd ~/gt/${GT_SOURCE_RIG:-gastown_fork}/mayor/rig && gt stale --json
 ```
 
 Parse the JSON output and check these fields:

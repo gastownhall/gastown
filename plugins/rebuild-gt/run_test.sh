@@ -8,6 +8,7 @@ docs=${plugin_dir}/plugin.md
 
 grep -Fq 'SOURCE_RIG="${GT_SOURCE_RIG:-gastown_fork}"' "$script"
 grep -Fq 'RIG_ROOT="${TOWN_ROOT}/${SOURCE_RIG}/mayor/rig"' "$script"
+grep -Fq 'STALE_JSON=$(cd "$RIG_ROOT" && gt stale --json' "$script"
 
 if grep -Fq 'TOWN_ROOT}/gastown/mayor/rig' "$script"; then
   printf 'legacy gastown source path remains\n' >&2

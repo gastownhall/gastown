@@ -19,7 +19,7 @@ log() { echo "[rebuild-gt] $*"; }
 # --- Detection ---------------------------------------------------------------
 
 log "Checking binary staleness..."
-STALE_JSON=$(gt stale --json 2>/dev/null) || {
+STALE_JSON=$(cd "$RIG_ROOT" && gt stale --json 2>/dev/null) || {
   log "gt stale --json failed, skipping"
   exit 0
 }
