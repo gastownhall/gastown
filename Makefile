@@ -59,11 +59,15 @@ ifndef SKIP_UPDATE_CHECK
 	LOCAL=$$(git rev-parse HEAD 2>/dev/null); \
 	REMOTE=$$(git rev-parse "$$UPSTREAM" 2>/dev/null); \
 	if [ -n "$$REMOTE" ] && [ "$$LOCAL" != "$$REMOTE" ]; then \
-		echo "ERROR: Local branch is not up to date with $$UPSTREAM"; \
-		echo "  Local:  $$(git rev-parse --short HEAD)"; \
-		echo "  Remote: $$(git rev-parse --short $$UPSTREAM)"; \
-		echo "Run 'git pull' first, or use SKIP_UPDATE_CHECK=1 to override"; \
-		exit 1; \
+		if git merge-base --is-ancestor "$$REMOTE" "$$LOCAL" 2>/dev/null; then \
+			echo "Local branch is ahead of $$UPSTREAM (descendant) - OK for fork-backed source"; \
+		else \
+			echo "ERROR: Local branch is not up to date with $$UPSTREAM"; \
+			echo "  Local:  $$(git rev-parse --short HEAD)"; \
+			echo "  Remote: $$(git rev-parse --short $$UPSTREAM)"; \
+			echo "Run 'git pull' first, or use SKIP_UPDATE_CHECK=1 to override"; \
+			exit 1; \
+		fi; \
 	fi
 endif
 
@@ -184,6 +188,7 @@ test: test-makefile
 
 test-makefile:
 	bash scripts/check-install-path_test.sh
+	bash scripts/check-up-to-date_test.sh
 	bash -n plugins/stuck-agent-dog/run.sh
 	bash -n plugins/stuck-agent-dog/run_test.sh
 	bash plugins/stuck-agent-dog/run_test.sh
