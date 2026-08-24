@@ -293,7 +293,10 @@ func hasRedirectWithStaleFiles(beadsDir string) bool {
 		if err != nil {
 			continue
 		}
-		if len(matches) > 0 {
+		for _, match := range matches {
+			if filepath.Base(match) == "metadata.json" && shouldPreserveRedirectMetadata(beadsDir) {
+				continue
+			}
 			return true
 		}
 	}

@@ -39,6 +39,69 @@ func TestStaleBeadsRedirectCheck_NoStaleFiles(t *testing.T) {
 	}
 }
 
+func TestStaleBeadsRedirectCheck_AllowsRoutingOnlyProjections(t *testing.T) {
+	townRoot := t.TempDir()
+	rigDir := filepath.Join(townRoot, "myrig")
+	canonicalBeads := filepath.Join(rigDir, "mayor", "rig", ".beads")
+	redirectBeads := filepath.Join(rigDir, ".beads")
+	if err := os.MkdirAll(canonicalBeads, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(redirectBeads, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(rigDir, ".git"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(canonicalBeads, "metadata.json"), []byte(`{"dolt_database":"myrig"}`), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(redirectBeads, "redirect"), []byte("mayor/rig/.beads\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(redirectBeads, "config.yaml"), []byte("dolt:\n  database: myrig\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(redirectBeads, "metadata.json"), []byte(`{"dolt_database":"myrig"}`), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	result := NewStaleBeadsRedirectCheck().Run(&CheckContext{TownRoot: townRoot})
+	if result.Status != StatusOK {
+		t.Fatalf("expected routing-only projections to be accepted, got %v: %s", result.Status, result.Message)
+	}
+}
+
+func TestStaleBeadsRedirectCheck_FlagsRoutingMetadataDrift(t *testing.T) {
+	townRoot := t.TempDir()
+	rigDir := filepath.Join(townRoot, "myrig")
+	canonicalBeads := filepath.Join(rigDir, "mayor", "rig", ".beads")
+	redirectBeads := filepath.Join(rigDir, ".beads")
+	if err := os.MkdirAll(canonicalBeads, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(redirectBeads, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(rigDir, ".git"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(canonicalBeads, "metadata.json"), []byte(`{"dolt_database":"myrig"}`), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(redirectBeads, "redirect"), []byte("mayor/rig/.beads\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(redirectBeads, "metadata.json"), []byte(`{"dolt_database":"other"}`), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	result := NewStaleBeadsRedirectCheck().Run(&CheckContext{TownRoot: townRoot})
+	if result.Status != StatusWarning {
+		t.Fatalf("expected divergent routing metadata to be stale, got %v: %s", result.Status, result.Message)
+	}
+}
+
 func TestStaleBeadsRedirectCheck_WithStaleFiles(t *testing.T) {
 	// Create temp town with stale .beads files
 	townRoot := t.TempDir()
