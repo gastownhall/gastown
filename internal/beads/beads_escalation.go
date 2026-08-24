@@ -357,10 +357,21 @@ func (b *Beads) ListEscalationsBySeverity(severity string) ([]*Issue, error) {
 	return filterEscalationRecords(issues), nil
 }
 
+// filterEscalationRecords is the single owner of "is this bd issue a real
+// escalation record" for every ListEscalations* read path. gt:message marks
+// delivery mechanism (this record was created by the mail router), not
+// record kind: every escalation sent through `gt escalate` is delivered as
+// mail to its routing targets, so mail-delivered escalations carry BOTH
+// gt:escalation and gt:message. Excluding on gt:message therefore dropped
+// every mail-routed escalation instead of some other, non-escalation record
+// kind. The only records that ever carry the gt:escalation label are the
+// escalation root bead (CreateEscalationBead) and its per-recipient mail
+// delivery copies (Router.buildLabels, msg.Type == TypeEscalation) - both
+// are legitimate escalations and must be returned.
 func filterEscalationRecords(issues []*Issue) []*Issue {
 	filtered := issues[:0]
 	for _, issue := range issues {
-		if HasLabel(issue, "gt:message") {
+		if !HasLabel(issue, "gt:escalation") {
 			continue
 		}
 		filtered = append(filtered, issue)

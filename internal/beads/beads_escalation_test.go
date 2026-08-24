@@ -325,15 +325,26 @@ func TestEscalationFieldsRoundTrip(t *testing.T) {
 	}
 }
 
-func TestFilterEscalationRecordsSkipsMailMessages(t *testing.T) {
+// gt:message marks delivery mechanism, not record kind: escalations sent via
+// `gt escalate` are always delivered as mail to their routing targets, so
+// mail-delivered escalations carry BOTH gt:escalation and gt:message.
+// filterEscalationRecords must return both the root record and its mail
+// delivery copies - regression test for gtf-05l, where excluding on
+// gt:message silently dropped every mail-routed escalation.
+func TestFilterEscalationRecordsIncludesMailDeliveredEscalations(t *testing.T) {
 	issues := []*Issue{
 		{ID: "hq-root", Labels: []string{"gt:escalation"}},
 		{ID: "hq-mail", Labels: []string{"gt:escalation", "gt:message"}},
+		{ID: "hq-unrelated", Labels: []string{"gt:message"}},
 	}
 
 	got := filterEscalationRecords(issues)
-	if len(got) != 1 || got[0].ID != "hq-root" {
-		t.Fatalf("filterEscalationRecords() = %#v, want only root escalation", got)
+	if len(got) != 2 {
+		t.Fatalf("filterEscalationRecords() = %#v, want hq-root and hq-mail", got)
+	}
+	gotIDs := map[string]bool{got[0].ID: true, got[1].ID: true}
+	if !gotIDs["hq-root"] || !gotIDs["hq-mail"] {
+		t.Fatalf("filterEscalationRecords() = %#v, want hq-root and hq-mail returned, hq-unrelated excluded", got)
 	}
 }
 
