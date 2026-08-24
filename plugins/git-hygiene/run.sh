@@ -112,7 +112,7 @@ while IFS= read -r REPO_PATH; do
       continue
     fi
     log "    Deleting orphan: $BRANCH"
-    git -C "$REPO_PATH" branch -D "$BRANCH" 2>/dev/null && LOCAL_ORPHAN=$((LOCAL_ORPHAN + 1))
+    git -C "$REPO_PATH" branch -d "$BRANCH" 2>/dev/null && LOCAL_ORPHAN=$((LOCAL_ORPHAN + 1))
   done <<< "$ALL_BRANCHES"
   TOTAL_LOCAL_ORPHAN=$((TOTAL_LOCAL_ORPHAN + LOCAL_ORPHAN))
 
@@ -147,14 +147,8 @@ while IFS= read -r REPO_PATH; do
   fi
   TOTAL_REMOTE=$((TOTAL_REMOTE + REMOTE_DELETED))
 
-  # Step 5: Clear stale stashes
-  log "  Clearing stashes..."
-  STASH_COUNT=$(git -C "$REPO_PATH" stash list 2>/dev/null | wc -l | tr -d ' ')
-  if [ "$STASH_COUNT" -gt 0 ]; then
-    log "    Clearing $STASH_COUNT stash(es)"
-    git -C "$REPO_PATH" stash clear 2>/dev/null
-    TOTAL_STASHES=$((TOTAL_STASHES + STASH_COUNT))
-  fi
+  # Step 5: Skipped — stash clear removed (too destructive, risks losing agent WIP)
+  STASH_COUNT=0
 
   # Step 6: Garbage collect
   log "  Running git gc..."

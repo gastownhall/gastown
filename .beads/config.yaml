@@ -40,14 +40,14 @@ external_projects:
     beads: ../../../beads/mayor/rig
 # Custom issue types for Gas Town (fallback when database is unavailable)
 types.custom: agent,role,rig,convoy,slot,queue,event,message,molecule,gate,merge-request
-prefix: gtf
-issue-prefix: gtf
+prefix: gt
+issue-prefix: gt
 dolt.idle-timeout: "0"
 # Molecules are internal GT scaffolding (patrol instances etc.) and must never
 # reach the GitHub issue tracker. Disabling auto-export prevents silent
 # regressions when the bd binary is upgraded. (gt-b48)
 export.auto: "false"
-sync.remote: "git+https://github.com/steveyegge/gastown.git"
+sync.remote: "git+https://github.com/marlon-costa-dc/gastown.git"
 repos:
     primary: "."
     additional:
