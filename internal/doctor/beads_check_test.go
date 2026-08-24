@@ -448,6 +448,86 @@ func TestDatabasePrefixCheck_DetectsMismatchForOwnDB(t *testing.T) {
 	}
 }
 
+func TestDatabasePrefixCheck_DetectsTownRootPrefixContamination(t *testing.T) {
+	// Regression test for gtf-k2k: commit 3e341231 overwrote the TOWN root's
+	// .beads/config.yaml issue-prefix from "hq" to "dcdoc" while routes.jsonl
+	// (and the Dolt database itself) still declared "hq" as the town root's
+	// owner. The check used to skip the town root route unconditionally, so
+	// this exact contamination went undetected until it broke gt sling.
+
+	tmpDir := t.TempDir()
+
+	townBeads := filepath.Join(tmpDir, ".beads")
+	if err := os.MkdirAll(townBeads, 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	routesContent := `{"prefix":"hq-","path":"."}
+{"prefix":"gt-","path":"gastown/mayor/rig"}`
+	if err := os.WriteFile(filepath.Join(townBeads, "routes.jsonl"), []byte(routesContent), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	mock := &mockDBPrefixGetter{
+		prefixes: map[string]string{
+			tmpDir: "dcdoc", // contaminated prefix, as observed live in gtf-k2k
+		},
+	}
+
+	check := NewDatabasePrefixCheck()
+	check.prefixGetter = mock
+	ctx := &CheckContext{TownRoot: tmpDir}
+
+	result := check.Run(ctx)
+
+	if result.Status != StatusWarning {
+		t.Fatalf("expected StatusWarning for town root prefix contamination, got %v: %s", result.Status, result.Message)
+	}
+	if len(check.mismatches) != 1 {
+		t.Fatalf("expected 1 mismatch for town root, got %d: %+v", len(check.mismatches), check.mismatches)
+	}
+	m := check.mismatches[0]
+	if m.rigPath != "." || m.routesPrefix != "hq" || m.dbPrefix != "dcdoc" {
+		t.Errorf("unexpected mismatch data: %+v", m)
+	}
+}
+
+func TestDatabasePrefixCheck_TownRootMatchesIsClean(t *testing.T) {
+	// Sanity counterpart to TestDatabasePrefixCheck_DetectsTownRootPrefixContamination:
+	// when the town root's database prefix agrees with routes.jsonl, checking
+	// the town root route must not introduce a false positive.
+
+	tmpDir := t.TempDir()
+
+	townBeads := filepath.Join(tmpDir, ".beads")
+	if err := os.MkdirAll(townBeads, 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := os.WriteFile(filepath.Join(townBeads, "routes.jsonl"), []byte(`{"prefix":"hq-","path":"."}`), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	mock := &mockDBPrefixGetter{
+		prefixes: map[string]string{
+			tmpDir: "hq",
+		},
+	}
+
+	check := NewDatabasePrefixCheck()
+	check.prefixGetter = mock
+	ctx := &CheckContext{TownRoot: tmpDir}
+
+	result := check.Run(ctx)
+
+	if result.Status != StatusOK {
+		t.Fatalf("expected StatusOK for matching town root prefix, got %v: %s", result.Status, result.Message)
+	}
+	if len(check.mismatches) != 0 {
+		t.Errorf("expected 0 mismatches, got %d: %+v", len(check.mismatches), check.mismatches)
+	}
+}
+
 func TestDatabasePrefixCheck_UsesMetadataDatabaseEnv(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("fake bd stub is shell-specific")

@@ -416,10 +416,7 @@ func (c *DatabasePrefixCheck) Run(ctx *CheckContext) *CheckResult {
 	var problems []string
 
 	for _, route := range routes {
-		// Skip town root route
-		if route.Path == "." || route.Path == "" {
-			continue
-		}
+		isTownRootRoute := route.Path == "." || route.Path == ""
 
 		rigPath := filepath.Join(ctx.TownRoot, route.Path)
 		rigBeadsDir := beads.ResolveBeadsDir(rigPath)
@@ -433,9 +430,18 @@ func (c *DatabasePrefixCheck) Run(ctx *CheckContext) *CheckResult {
 		// These rigs share the town DB; the prefix is owned by the town root
 		// route, not by this rig. "Fixing" them would overwrite the shared
 		// database's issue_prefix with the rig's route prefix.
-		absRigBeadsDir, _ := filepath.Abs(rigBeadsDir)
-		if absRigBeadsDir == townBeadsDir {
-			continue
+		//
+		// The town root route itself is NOT exempted from this check (gtf-k2k):
+		// it IS the shared database, and its own routes.jsonl entry is the sole
+		// declaration of who owns it. A rig rename that overwrites the town
+		// root's .beads/config.yaml issue-prefix (as happened in commit
+		// 3e341231, hq -> dcdoc) must be caught here instead of silently
+		// skipped, or the town root can drift from its declared prefix forever.
+		if !isTownRootRoute {
+			absRigBeadsDir, _ := filepath.Abs(rigBeadsDir)
+			if absRigBeadsDir == townBeadsDir {
+				continue
+			}
 		}
 
 		dbPrefix, err := getter.GetDBPrefix(rigPath)
