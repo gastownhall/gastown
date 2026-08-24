@@ -43,7 +43,14 @@ func initBeadsDBForServer(t *testing.T, dir, prefix, homeDir string) {
 	t.Helper()
 	initSchedulerGitRepo(t, dir, homeDir)
 
-	args := []string{"init", "--quiet", "--non-interactive", "--skip-hooks", "--skip-agents", "--prefix", prefix}
+	// --reinit-local: every test owns a freshly created temp workspace, but the
+	// Dolt server behind it is shared across tests in the package. bd's
+	// data-safety guard sees that server already holding databases and aborts
+	// with "This workspace is already initialized" — for the second and every
+	// later init in a run. There is no local data to protect here: the .beads
+	// directory was created moments ago under t.TempDir(). The flag bypasses
+	// only the LOCAL guard and does not authorize remote divergence.
+	args := []string{"init", "--quiet", "--non-interactive", "--skip-hooks", "--skip-agents", "--reinit-local", "--prefix", prefix}
 	// Forward GT_DOLT_PORT so bd connects to the ephemeral test server
 	// instead of defaulting to port 3307.
 	// bd v1.0.0+ defaults to embedded mode; --server is required to use an
