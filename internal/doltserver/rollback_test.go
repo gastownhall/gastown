@@ -275,39 +275,6 @@ func TestRestoreFromBackup_CreatesMissingParentDirs(t *testing.T) {
 	}
 }
 
-func TestCopyDir(t *testing.T) {
-	src := t.TempDir()
-	dst := filepath.Join(t.TempDir(), "dst")
-
-	// Create a directory tree
-	if err := os.MkdirAll(filepath.Join(src, "sub"), 0755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(src, "file.txt"), []byte("hello"), 0644); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(src, "sub", "nested.txt"), []byte("world"), 0644); err != nil {
-		t.Fatal(err)
-	}
-
-	if err := copyDir(dst, src); err != nil {
-		t.Fatalf("copyDir failed: %v", err)
-	}
-
-	// Verify copied contents
-	data, err := os.ReadFile(filepath.Join(dst, "file.txt"))
-	if err != nil {
-		t.Fatalf("reading copied file: %v", err)
-	}
-	if string(data) != "hello" {
-		t.Errorf("file.txt = %q, want hello", string(data))
-	}
-
-	data, err = os.ReadFile(filepath.Join(dst, "sub", "nested.txt"))
-	if err != nil {
-		t.Fatalf("reading copied nested file: %v", err)
-	}
-	if string(data) != "world" {
-		t.Errorf("nested.txt = %q, want world", string(data))
-	}
-}
+// Directory-copy behaviour now lives with its implementation in
+// internal/fsutil (see TestCopyDirReproducesTree and siblings). The
+// end-to-end restore paths above exercise it through RestoreFromBackup.

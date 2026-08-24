@@ -53,12 +53,24 @@ fork version in a dedicated release lane and review it through a fork PR.
    ```bash
    git tag -a vX.Y.Z-dcN -m "Release vX.Y.Z-dcN"
    make check-version-tag
+   make check-release-integrated
    git push origin refs/tags/vX.Y.Z-dcN
    ```
 
-`make check-version-tag` is intentionally a no-op before HEAD has an exact
-`v*` tag, so its decisive release check belongs after local tag creation and
-before the tag push.
+Both checks are intentionally no-ops before HEAD has an exact `v*` tag, so
+their decisive release check belongs after local tag creation and before the
+tag push. The release workflow runs them again on the pushed tag.
+
+`check-release-integrated` enforces step 3 mechanically: it refuses to tag a
+commit that fork `main` does not already contain. That rule previously existed
+only as prose here and was violated twice — `v1.2.1-dc14` and `v1.2.1-dc15`
+were both tagged off lanes that never merged. `dc14` carried the `gtf-k2k`
+doctor guard, which became reachable from a tag and from no branch, and was
+missing from every release that followed until it was recovered. Tags are
+immutable, so refusing to create a bad one is the only available defence.
+
+It resolves `origin/main` by default; pass `REMOTE_MAIN=<remote>/<branch>` when
+the fork is on a differently named remote.
 
 ## What the Fork Workflow Publishes
 

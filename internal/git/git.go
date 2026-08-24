@@ -42,25 +42,6 @@ func (e *GitError) Unwrap() error {
 	return e.Err
 }
 
-// moveDir moves a directory from src to dest. It first tries os.Rename for
-// efficiency, but falls back to copy+delete if src and dest are on different
-// filesystems (which causes EXDEV error on rename).
-func moveDir(src, dest string) error {
-	// Try rename first - works if same filesystem
-	if err := os.Rename(src, dest); err == nil {
-		return nil
-	}
-
-	// Rename failed, use platform-specific copy for cross-filesystem moves
-	if err := copyDirPreserving(src, dest); err != nil {
-		return fmt.Errorf("copying directory: %w", err)
-	}
-	if err := os.RemoveAll(src); err != nil {
-		return fmt.Errorf("removing source after copy: %w", err)
-	}
-	return nil
-}
-
 // Git wraps git operations for a working directory.
 type Git struct {
 	workDir string
@@ -604,8 +585,22 @@ type cloneOptions struct {
 	filter       string // Pass --filter=<spec> to git clone (e.g. "blob:none", "tree:0")
 }
 
-// cloneInternal runs `git clone` in an isolated temp directory, moves the result
-// to dest, and applies post-clone configuration (hooks or refspec).
+// cloneInternal runs `git clone` directly into dest and applies post-clone
+// configuration (hooks or refspec).
+//
+// The clone is isolated from any git repository at the process cwd by running
+// with cmd.Dir set to the destination's parent and GIT_CEILING_DIRECTORIES set
+// to that same parent, which stops git's repository discovery from walking
+// above the destination. dest is already absolute, so discovery plays no part
+// in resolving it.
+//
+// The clone writes straight to its final location rather than staging in a
+// temp directory. git clone is already atomic with respect to its destination:
+// it removes a destination it created if the clone fails, and it refuses to
+// touch a pre-existing non-empty destination. Staging in os.MkdirTemp("")
+// duplicated that guarantee at the cost of a full second copy whenever the
+// system temp directory sits on a different filesystem than the town root,
+// which is the common case.
 func (g *Git) cloneInternal(url, dest string, opts cloneOptions) error {
 	dest = gitPathAbs(dest, "")
 	if protectedTownRuntimePath(dest) {
@@ -617,15 +612,6 @@ func (g *Git) cloneInternal(url, dest string, opts cloneOptions) error {
 	if err := os.MkdirAll(destParent, 0755); err != nil {
 		return fmt.Errorf("creating destination parent: %w", err)
 	}
-	// Run clone from a temporary directory to completely isolate from any
-	// git repo at the process cwd. Then move the result to the destination.
-	tmpDir, err := os.MkdirTemp("", "gt-clone-*")
-	if err != nil {
-		return fmt.Errorf("creating temp dir: %w", err)
-	}
-	defer func() { _ = os.RemoveAll(tmpDir) }()
-
-	tmpDest := filepath.Join(tmpDir, filepath.Base(dest))
 
 	// Build clone args
 	var args []string
@@ -652,22 +638,17 @@ func (g *Git) cloneInternal(url, dest string, opts cloneOptions) error {
 	if opts.reference != "" {
 		args = append(args, "--reference-if-able", opts.reference)
 	}
-	args = append(args, url, tmpDest)
+	args = append(args, url, dest)
 
 	cmd := exec.Command("git", args...)
 	util.SetDetachedProcessGroup(cmd)
-	cmd.Dir = tmpDir
-	cmd.Env = append(os.Environ(), "GIT_CEILING_DIRECTORIES="+tmpDir)
+	cmd.Dir = destParent
+	cmd.Env = append(os.Environ(), "GIT_CEILING_DIRECTORIES="+destParent)
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
 	if err := cmd.Run(); err != nil {
 		return g.wrapError(err, stdout.String(), stderr.String(), args)
-	}
-
-	// Move to final destination (handles cross-filesystem moves)
-	if err := moveDir(tmpDest, dest); err != nil {
-		return fmt.Errorf("moving clone to destination: %w", err)
 	}
 
 	// Post-clone configuration
@@ -755,6 +736,12 @@ func (g *Git) CloneBranchPartial(url, dest, branch, filter string) error {
 // configureHooksPath sets core.hooksPath to use the repo's .githooks directory
 // if it exists. This ensures Gas Town agents use the pre-push hook that blocks
 // pushes to non-main branches (internal PRs are not allowed).
+//
+// The write targets an explicit --git-dir rather than `git -C repoPath`. With
+// -C, git falls back to repository discovery whenever repoPath is not itself a
+// repository, walks up the tree, and writes the setting into the nearest
+// ancestor repository instead — for a rig path beneath the town root, that is
+// the town's own repository. An explicit --git-dir disables discovery outright.
 func configureHooksPath(repoPath string) error {
 	hooksDir := filepath.Join(repoPath, ".githooks")
 	if _, err := os.Stat(hooksDir); os.IsNotExist(err) {
@@ -762,7 +749,12 @@ func configureHooksPath(repoPath string) error {
 		return nil
 	}
 
-	cmd := exec.Command("git", "-C", repoPath, "config", "core.hooksPath", ".githooks")
+	gitDir, err := resolveGitDir(repoPath)
+	if err != nil {
+		return fmt.Errorf("configuring hooks path: %w", err)
+	}
+
+	cmd := exec.Command("git", "--git-dir", gitDir, "config", "core.hooksPath", ".githooks")
 	util.SetDetachedProcessGroup(cmd)
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
@@ -770,6 +762,31 @@ func configureHooksPath(repoPath string) error {
 		return fmt.Errorf("configuring hooks path: %s", strings.TrimSpace(stderr.String()))
 	}
 	return nil
+}
+
+// resolveGitDir maps a repository working directory to the git directory to
+// pass as --git-dir, without invoking repository discovery.
+//
+// It accepts the three shapes Gas Town works with: a normal checkout whose
+// .git is a directory, a linked worktree whose .git is a gitfile (git resolves
+// the gitdir: pointer itself, so the path is handed over as-is), and a bare
+// repository, where the path is already the git directory. It deliberately
+// does not walk upwards: a path that is none of these is an error, never a
+// silent write into an ancestor repository.
+func resolveGitDir(repoPath string) (string, error) {
+	dotGit := filepath.Join(repoPath, ".git")
+	if info, err := os.Stat(dotGit); err == nil {
+		// Directory: normal checkout. File: linked worktree gitfile, which git
+		// dereferences when given as --git-dir.
+		_ = info
+		return filepath.Clean(dotGit), nil
+	}
+	// No .git entry: either a bare repository or not a repository at all.
+	// HEAD is present in every bare repository.
+	if _, err := os.Stat(filepath.Join(repoPath, "HEAD")); err == nil {
+		return filepath.Clean(repoPath), nil
+	}
+	return "", fmt.Errorf("%s is not a git repository", repoPath)
 }
 
 // ConfigureHooksPath sets core.hooksPath for the repo/worktree if .githooks exists.
