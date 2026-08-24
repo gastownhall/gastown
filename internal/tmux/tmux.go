@@ -35,8 +35,14 @@ var sessionNudgeLocks sync.Map // map[string]chan struct{}
 // blocking all future nudges to that session.
 const nudgeLockTimeout = 30 * time.Second
 
-// validSessionNameRe validates session names to prevent shell injection
-var validSessionNameRe = regexp.MustCompile(`^[a-zA-Z0-9_-]+$`)
+var (
+	// validSessionNameRe validates session names to prevent shell injection.
+	validSessionNameRe = regexp.MustCompile(`^[a-zA-Z0-9_-]+$`)
+	// directCommandRe matches commands whose words need no shell parsing.
+	// Anything with quoting, expansion, redirection, or control operators stays
+	// a single tmux shell-command so its existing shell semantics are preserved.
+	directCommandRe = regexp.MustCompile(`^[a-zA-Z0-9_./:@%+,=-]+(?:[ \t]+[a-zA-Z0-9_./:@%+,=-]+)*$`)
+)
 
 // Common errors
 var (
@@ -110,6 +116,44 @@ func validateCommandBinary(command string) error {
 		return fmt.Errorf("command binary not found: %s", binary)
 	}
 	return nil
+}
+
+// tmuxCommandArguments returns the command form to append to new-session or
+// respawn-pane. tmux runs one shell-command argument through the configured
+// shell, but executes multiple arguments directly. Use the direct form only
+// when every word is shell-independent; this avoids shell-specific process
+// identity for commands such as "sleep 300" without changing the behavior of
+// quoted or compound commands.
+func tmuxCommandArguments(command string) []string {
+	if strings.ContainsAny(command, "\r\n") {
+		return []string{command}
+	}
+
+	trimmed := strings.TrimSpace(command)
+	if trimmed == "" || !directCommandRe.MatchString(trimmed) {
+		return []string{command}
+	}
+
+	words := strings.Fields(trimmed)
+	if words[0] == "exec" {
+		words = words[1:]
+		if len(words) == 0 {
+			return []string{command}
+		}
+	}
+	if strings.Contains(words[0], "=") {
+		return []string{command}
+	}
+	if _, err := exec.LookPath(words[0]); err != nil {
+		return []string{command}
+	}
+	// tmux treats a lone argument as a shell-command. Prefix a one-word
+	// command with env so tmux receives multiple arguments and env replaces
+	// itself with the requested process.
+	if len(words) == 1 {
+		return []string{"env", words[0]}
+	}
+	return words
 }
 
 // defaultSocket is the tmux socket name (-L flag) for multi-instance isolation.
@@ -224,6 +268,13 @@ func (t *Tmux) run(args ...string) (string, error) {
 	return t.runContext(context.Background(), args...)
 }
 
+// runRaw executes a tmux command without trimming stdout. Most callers want
+// run(), but structured output parsers must preserve trailing delimiters when a
+// final field is empty.
+func (t *Tmux) runRaw(args ...string) (string, error) {
+	return t.runContextRaw(context.Background(), args...)
+}
+
 func (t *Tmux) commandContext(ctx context.Context, args ...string) *exec.Cmd {
 	allArgs := []string{"-u"}
 	if t.socketName != "" {
@@ -236,6 +287,14 @@ func (t *Tmux) commandContext(ctx context.Context, args ...string) *exec.Cmd {
 }
 
 func (t *Tmux) runContext(ctx context.Context, args ...string) (string, error) {
+	out, err := t.runContextRaw(ctx, args...)
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(out), nil
+}
+
+func (t *Tmux) runContextRaw(ctx context.Context, args ...string) (string, error) {
 	cmd := t.commandContext(ctx, args...)
 	if _, ok := ctx.Deadline(); ok {
 		cmd.WaitDelay = 100 * time.Millisecond
@@ -249,7 +308,7 @@ func (t *Tmux) runContext(ctx context.Context, args ...string) (string, error) {
 		return "", t.wrapError(err, stderr.String(), args)
 	}
 
-	return strings.TrimSpace(stdout.String()), nil
+	return stdout.String(), nil
 }
 
 // wrapError wraps tmux errors with context.
@@ -314,8 +373,9 @@ func (t *Tmux) NewSession(name, workDir string) error {
 
 // NewSessionWithCommand creates a new detached tmux session that immediately runs a command.
 // Unlike NewSession + SendKeys, this avoids race conditions where the shell isn't ready
-// or the command arrives before the shell prompt. The command runs directly as the
-// initial process of the pane.
+// or the command arrives before the shell prompt. Shell-independent command words run
+// directly as the initial pane process; commands requiring shell parsing retain their
+// shell-command semantics.
 //
 // Validates workDir (if non-empty) exists and is a directory. After creation, performs
 // a brief health check to catch immediate command failures (binary not found, syntax
@@ -379,7 +439,7 @@ func (t *Tmux) NewSessionWithCommand(name, workDir, command string) error {
 		if workDir != "" {
 			respawnArgs = append(respawnArgs, "-c", workDir)
 		}
-		respawnArgs = append(respawnArgs, command)
+		respawnArgs = append(respawnArgs, tmuxCommandArguments(command)...)
 		if _, err := t.run(respawnArgs...); err != nil {
 			_ = t.KillSession(name)
 			return fmt.Errorf("failed to start command in session %q: %w", name, err)
@@ -441,7 +501,7 @@ func (t *Tmux) NewSessionWithCommandAndEnv(name, workDir, command string, env ma
 		if workDir != "" {
 			respawnArgs = append(respawnArgs, "-c", workDir)
 		}
-		respawnArgs = append(respawnArgs, command)
+		respawnArgs = append(respawnArgs, tmuxCommandArguments(command)...)
 		if _, err := t.run(respawnArgs...); err != nil {
 			_ = t.KillSession(name)
 			return fmt.Errorf("failed to start command in session %q: %w", name, err)
@@ -486,8 +546,10 @@ func (t *Tmux) checkSessionAfterCreate(name, command string) error {
 		return err
 	}
 
-	// Pane is alive — restore default (no need to keep dead sessions around)
-	_, _ = t.run("set-option", "-t", name, "remain-on-exit", "off")
+	// Keep remain-on-exit on. Agents such as Codex can pass this 250ms window
+	// and then exit (git-repo-check, trust-dialog quit). Turning remain-on-exit
+	// off here destroys the pane before callers can capture the failure —
+	// GH#4670 "session died during startup (agent command may have failed)".
 	return nil
 }
 
@@ -541,10 +603,10 @@ func (t *Tmux) EnsureSessionFresh(name, workDir string) error {
 }
 
 // EnsureSessionFreshWithCommand is like EnsureSessionFresh but creates the
-// session with a command as the pane's initial process via NewSessionWithCommand.
+// session with a command via NewSessionWithCommand.
 // This eliminates the race condition in the EnsureSessionFresh + SendKeys pattern
 // where the shell may not be ready to receive keystrokes, resulting in empty
-// windows. The command runs as the pane's initial process — no shell involved.
+// windows. Shell-independent commands run as the pane's initial process.
 //
 // If an existing session has a healthy agent, returns ErrSessionRunning.
 func (t *Tmux) EnsureSessionFreshWithCommand(name, workDir, command string) error {
@@ -2047,6 +2109,15 @@ func containsBlockingStartupDialog(content string) (string, bool) {
 	if promptAppearsAfterStartupBlocker(content) {
 		return "", false
 	}
+	// Live Codex trust TUIs include a › selector that looks like the ready
+	// prompt. It is blocking only when no later ready prompt proves the dialog
+	// belongs to stale scrollback (GH#4670).
+	if containsWorkspaceTrustDialog(content) && isLiveCodexTrustDialog(content) {
+		return "workspace trust prompt", true
+	}
+	if containsCodexGitRepoCheckError(content) {
+		return "codex git repo check", true
+	}
 	if containsCodexUpdateDialog(content) {
 		return "codex update prompt", true
 	}
@@ -2057,6 +2128,15 @@ func containsBlockingStartupDialog(content string) (string, bool) {
 		return "bypass permissions prompt", true
 	}
 	return "", false
+}
+
+func isLiveCodexTrustDialog(content string) bool {
+	return strings.Contains(content, "Yes, continue") || strings.Contains(content, "No, quit")
+}
+
+func containsCodexGitRepoCheckError(content string) bool {
+	return strings.Contains(content, "Not inside a trusted directory") &&
+		strings.Contains(content, "--skip-git-repo-check")
 }
 
 func promptAppearsAfterStartupBlocker(content string) bool {
@@ -2076,6 +2156,10 @@ func lastStartupBlockerLine(content string) int {
 		"trust this folder",
 		"Quick safety check",
 		"Do you trust the contents of this directory?",
+		"Yes, continue",
+		"No, quit",
+		"Not inside a trusted directory",
+		"--skip-git-repo-check",
 		"Bypass Permissions mode",
 	}
 	last := -1
@@ -2215,23 +2299,64 @@ func (t *Tmux) DismissStartupDialogsBlind(session string) error {
 	return nil
 }
 
-// GetPaneCommand returns the current command running in a pane.
-// Returns "bash", "zsh", "claude", "node", etc.
-func (t *Tmux) GetPaneCommand(session string) (string, error) {
-	// Use display-message targeting the first window explicitly (:^) to avoid
-	// returning the active pane's command when a non-agent window is focused.
-	// Agent processes always run in the first window; without explicit targeting,
-	// a user-created window or split pane (running a shell) could cause health
-	// checks to falsely report the agent as dead.
-	out, err := t.run("display-message", "-t", session+":^", "-p", "#{pane_current_command}")
+// firstPaneValue returns a format value from the lowest-index pane in a
+// session's first window. Querying the first window with :^ avoids assuming a
+// window base index, while selecting the lowest pane index avoids following the
+// active pane after a user creates or selects a split.
+func (t *Tmux) firstPaneValue(session, format string) (string, error) {
+	out, err := t.runRaw("list-panes", "-t", session+":^", "-F", "#{pane_index}\t"+format)
 	if err != nil {
 		return "", err
 	}
-	result := strings.TrimSpace(out)
-	if result == "" {
-		return "", fmt.Errorf("empty command for session %s (session may not exist)", session)
+	return parseFirstPaneValue(session, out)
+}
+
+func parseFirstPaneValue(session, out string) (string, error) {
+	// Remove record terminators only. Trimming all whitespace would destroy the
+	// trailing tab that represents an empty value in the final pane record.
+	out = strings.TrimRight(out, "\r\n")
+	if out == "" {
+		return "", fmt.Errorf("no panes found in first window of session %s", session)
+	}
+
+	var (
+		firstIndex int
+		firstValue string
+		found      bool
+	)
+	for _, line := range strings.Split(out, "\n") {
+		line = strings.TrimSuffix(line, "\r")
+		indexText, value, ok := strings.Cut(line, "\t")
+		if !ok {
+			// A structured tmux record whose final value is empty may arrive as
+			// just the index if an older runner trimmed its trailing delimiter.
+			// Preserve that record as an empty value instead of rejecting all
+			// otherwise valid panes in the window.
+			indexText = line
+			value = ""
+		}
+		index, err := strconv.Atoi(indexText)
+		if err != nil {
+			return "", fmt.Errorf("invalid pane index for session %s: %w", session, err)
+		}
+		if !found || index < firstIndex {
+			firstIndex = index
+			firstValue = value
+			found = true
+		}
+	}
+
+	result := strings.TrimSpace(firstValue)
+	if !found || result == "" {
+		return "", fmt.Errorf("empty first-pane value for session %s (session may not exist)", session)
 	}
 	return result, nil
+}
+
+// GetPaneCommand returns the current command running in the first pane of a
+// session's first window. Returns "bash", "zsh", "claude", "node", etc.
+func (t *Tmux) GetPaneCommand(session string) (string, error) {
+	return t.firstPaneValue(session, "#{pane_current_command}")
 }
 
 // FindAgentPane finds the pane running an agent process within a session.
@@ -2304,47 +2429,27 @@ func (t *Tmux) findAgentPaneByScan(session string) (string, error) {
 	return "", nil
 }
 
-// GetPaneID returns the pane identifier for a session's first pane.
-// Returns a pane ID like "%0" that can be used with RespawnPane.
-// Targets pane 0 explicitly to be consistent with GetPaneCommand,
-// GetPanePID, and GetPaneWorkDir.
+// GetPaneID returns the identifier of the lowest-index pane in a session's
+// first window. Returns a pane ID like "%0" that can be used with RespawnPane.
 func (t *Tmux) GetPaneID(session string) (string, error) {
-	out, err := t.run("display-message", "-t", session+":0.0", "-p", "#{pane_id}")
-	if err != nil {
-		return "", err
-	}
-	result := strings.TrimSpace(out)
-	if result == "" {
-		return "", fmt.Errorf("no panes found in session %s", session)
-	}
-	return result, nil
+	return t.firstPaneValue(session, "#{pane_id}")
 }
 
 // GetPaneWorkDir returns the current working directory of a pane.
-// Targets pane 0 explicitly to avoid returning the active pane's
-// working directory in multi-pane sessions.
+// Targets the lowest-index pane in the first window to avoid returning the
+// active split pane's working directory.
 func (t *Tmux) GetPaneWorkDir(session string) (string, error) {
-	out, err := t.run("display-message", "-t", session+":0.0", "-p", "#{pane_current_path}")
-	if err != nil {
-		return "", err
-	}
-	result := strings.TrimSpace(out)
-	if result == "" {
-		return "", fmt.Errorf("empty working directory for session %s (session may not exist)", session)
-	}
-	return result, nil
+	return t.firstPaneValue(session, "#{pane_current_path}")
 }
 
 // GetPanePID returns the PID of the pane's main process.
-// When target is a session name, explicitly targets the first window (:^) to avoid
-// returning the active pane's PID when a non-agent window is focused. When target is
-// a pane ID (e.g., "%5"), uses it directly.
+// When target is a session name, targets the lowest-index pane in the first
+// window. When target is a pane ID (e.g., "%5"), uses it directly.
 func (t *Tmux) GetPanePID(target string) (string, error) {
-	tmuxTarget := target
 	if !strings.HasPrefix(target, "%") {
-		tmuxTarget = target + ":^"
+		return t.firstPaneValue(target, "#{pane_pid}")
 	}
-	out, err := t.run("display-message", "-t", tmuxTarget, "-p", "#{pane_pid}")
+	out, err := t.run("display-message", "-t", target, "-p", "#{pane_pid}")
 	if err != nil {
 		return "", err
 	}
@@ -3899,7 +4004,7 @@ func (t *Tmux) SetTownCycleBindings(session string) error {
 //  2. Unguarded form (set by EnsureBindingsOnSocket): direct run-shell
 //     invoking "gt agents menu" or "gt feed --window".
 func (t *Tmux) isGTBinding(table, key string) bool {
-	output, err := t.run("list-keys", "-T", table, key)
+	output, err := t.keyBindingOutput(table, key)
 	if err != nil || output == "" {
 		return false
 	}
@@ -3917,7 +4022,7 @@ func (t *Tmux) isGTBinding(table, key string) bool {
 // --client for multi-client support. Older GT bindings without --client cause
 // switch-client to target the wrong client when multiple clients are attached.
 func (t *Tmux) isGTBindingWithClient(table, key string) bool {
-	output, err := t.run("list-keys", "-T", table, key)
+	output, err := t.keyBindingOutput(table, key)
 	if err != nil || output == "" {
 		return false
 	}
@@ -3929,7 +4034,7 @@ func (t *Tmux) isGTBindingWithClient(table, key string) bool {
 // current prefix pattern. Returns false if the binding is stale (e.g., after
 // gt rig add introduces a new prefix not yet in the grep pattern).
 func (t *Tmux) isGTBindingCurrent(table, key, currentPattern string) bool {
-	output, err := t.run("list-keys", "-T", table, key)
+	output, err := t.keyBindingOutput(table, key)
 	if err != nil || output == "" {
 		return false
 	}
@@ -3956,7 +4061,7 @@ func (t *Tmux) getKeyBinding(table, key string) string {
 	//   bind-key [-r] -T <table> <key> <command...>
 	// If tmux changes this format, parsing fails safely (returns ""),
 	// which causes the caller to use its default fallback.
-	output, err := t.run("list-keys", "-T", table, key)
+	output, err := t.keyBindingOutput(table, key)
 	if err != nil || output == "" {
 		return ""
 	}
@@ -4002,6 +4107,22 @@ func (t *Tmux) getKeyBinding(table, key string) string {
 	}
 
 	return cmd
+}
+
+func (t *Tmux) keyBindingOutput(table, key string) (string, error) {
+	output, err := t.run("list-keys", "-T", table)
+	if err != nil {
+		return "", err
+	}
+	for _, line := range strings.Split(output, "\n") {
+		fields := strings.Fields(line)
+		for index, field := range fields {
+			if field == "-T" && index+2 < len(fields) && fields[index+1] == table && fields[index+2] == key {
+				return line, nil
+			}
+		}
+	}
+	return "", nil
 }
 
 // safePrefixRe matches the character set guaranteed by beadsPrefixRegexp in

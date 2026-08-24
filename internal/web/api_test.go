@@ -1457,3 +1457,80 @@ func TestPaneCurrentCommandIsAgent(t *testing.T) {
 		}
 	}
 }
+
+func TestAPIHandler_Estop_Success(t *testing.T) {
+	tmpDir := t.TempDir()
+	gtBin := filepath.Join(tmpDir, "gt")
+	gtScript := `#!/usr/bin/env sh
+echo "E-stop activated"
+`
+	if err := os.WriteFile(gtBin, []byte(gtScript), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	handler := &APIHandler{
+		gtPath:            gtBin,
+		workDir:           tmpDir,
+		defaultRunTimeout: 5 * time.Second,
+		maxRunTimeout:     10 * time.Second,
+		cmdSem:            make(chan struct{}, maxConcurrentCommands),
+		csrfToken:         "test-token",
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/api/estop", nil)
+	req.Header.Set("X-Dashboard-Token", "test-token")
+	w := httptest.NewRecorder()
+
+	handler.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("POST /api/estop status = %d, want %d", w.Code, http.StatusOK)
+	}
+
+	var resp EstopResponse
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatalf("Failed to decode response: %v", err)
+	}
+
+	if !resp.Success {
+		t.Error("Expected success=true, got false")
+	}
+	if resp.Output == "" {
+		t.Error("Expected non-empty output")
+	}
+}
+
+func TestAPIHandler_Estop_CommandFailure(t *testing.T) {
+	tmpDir := t.TempDir()
+	gtBin := filepath.Join(tmpDir, "gt")
+	if err := os.WriteFile(gtBin, []byte("#!/usr/bin/env sh\nexit 1\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	handler := &APIHandler{
+		gtPath:            gtBin,
+		workDir:           tmpDir,
+		defaultRunTimeout: 5 * time.Second,
+		maxRunTimeout:     10 * time.Second,
+		cmdSem:            make(chan struct{}, maxConcurrentCommands),
+		csrfToken:         "test-token",
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/api/estop", nil)
+	req.Header.Set("X-Dashboard-Token", "test-token")
+	w := httptest.NewRecorder()
+
+	handler.ServeHTTP(w, req)
+
+	var resp EstopResponse
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatalf("Failed to decode response: %v", err)
+	}
+
+	if resp.Success {
+		t.Error("Expected success=false, got true")
+	}
+	if resp.Error == "" {
+		t.Error("Expected non-empty error message")
+	}
+}

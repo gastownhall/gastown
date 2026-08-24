@@ -179,7 +179,8 @@ This command consolidates post-merge steps into a single atomic operation:
 	 3. Close the source issue
 	 4. Delete the remote polecat branch at the submitted head (unless --skip-branch-delete)
 
-Designed for use by the refinery formula after a successful merge to main.
+Designed for use by the refinery formula after a successful merge to the MR's
+target branch.
 The branch name is read from the MR bead, so no manual branch argument is needed.
 
 Examples:
@@ -235,12 +236,12 @@ var mqIntegrationCmd = &cobra.Command{
 	Long: `Manage integration branches for batch work on epics.
 
 Integration branches allow multiple MRs for an epic to target a shared
-branch instead of main. After all epic work is complete, the integration
-branch is landed to main as a single atomic unit.
+branch instead of the rig's default branch. After all epic work is complete,
+the integration branch is landed to its recorded base as a single atomic unit.
 
 Commands:
   create  Create an integration branch for an epic
-  land    Merge integration branch to main
+  land    Merge integration branch to its recorded base
   status  Show integration branch status`,
 }
 
@@ -249,8 +250,8 @@ var mqIntegrationCreateCmd = &cobra.Command{
 	Short: "Create an integration branch for an epic",
 	Long: `Create an integration branch for batch work on an epic.
 
-Creates a branch from main and pushes it to origin. Future MRs for this
-epic's children can target this branch.
+Creates a branch from the rig's configured default branch (or --base-branch)
+and pushes it to origin. Future MRs for this epic's children can target it.
 
 Branch naming:
   Default: integration/<sanitized-title> (e.g., integration/add-user-auth)
@@ -268,7 +269,7 @@ epic ID is appended automatically (e.g., integration/add-auth-123).
 
 Actions:
   1. Verify epic exists
-  2. Create branch from main (using template or --branch)
+  2. Create branch from the configured or explicit base
   3. Push to origin
   4. Store actual branch name in epic metadata
 
@@ -284,17 +285,17 @@ Examples:
 
 var mqIntegrationLandCmd = &cobra.Command{
 	Use:   "land <epic-id>",
-	Short: "Merge integration branch to main",
-	Long: `Merge an epic's integration branch to main.
+	Short: "Merge integration branch to its recorded base",
+	Long: `Merge an epic's integration branch to its recorded base.
 
-Lands all work for an epic by merging its integration branch to main
-as a single atomic merge commit.
+Lands all work for an epic by merging its integration branch to the base
+recorded when the branch was created, as a single atomic merge commit.
 
 Actions:
   1. Verify all MRs targeting integration/<epic> are merged
   2. Verify integration branch exists
-  3. Merge integration/<epic> to main (--no-ff)
-  4. Run tests on main
+  3. Merge integration/<epic> to its recorded base (--no-ff)
+  4. Run tests on the merged base
   5. Push to origin
   6. Delete integration branch
   7. Update epic status
@@ -319,7 +320,7 @@ var mqIntegrationStatusCmd = &cobra.Command{
 
 Shows:
   - Integration branch name and creation date
-  - Number of commits ahead of main
+  - Number of commits ahead of the recorded base
   - Merged MRs (closed, targeting integration branch)
   - Pending MRs (open, targeting integration branch)
 
@@ -333,7 +334,7 @@ func init() {
 	// Submit flags
 	mqSubmitCmd.Flags().StringVar(&mqSubmitBranch, "branch", "", "Source branch (default: current branch)")
 	mqSubmitCmd.Flags().StringVar(&mqSubmitIssue, "issue", "", "Source issue ID (default: parse from branch name)")
-	mqSubmitCmd.Flags().StringVar(&mqSubmitEpic, "epic", "", "Target epic's integration branch instead of main")
+	mqSubmitCmd.Flags().StringVar(&mqSubmitEpic, "epic", "", "Target epic's integration branch instead of the rig default branch")
 	mqSubmitCmd.Flags().IntVarP(&mqSubmitPriority, "priority", "p", -1, "Override priority (0-4, default: inherit from issue)")
 	mqSubmitCmd.Flags().BoolVar(&mqSubmitNoCleanup, "no-cleanup", false, "Don't auto-cleanup after submit (for polecats)")
 	mqSubmitCmd.Flags().BoolVar(&mqSubmitSkipDeps, "skip-deps", false, "Skip molecule step dependency check")
@@ -371,7 +372,7 @@ func init() {
 
 	// Integration branch subcommands
 	mqIntegrationCreateCmd.Flags().StringVar(&mqIntegrationCreateBranch, "branch", "", "Override branch name template (supports {title}, {epic}, {prefix}, {user})")
-	mqIntegrationCreateCmd.Flags().StringVar(&mqIntegrationCreateBaseBranch, "base-branch", "", "Create integration branch from this branch instead of main")
+	mqIntegrationCreateCmd.Flags().StringVar(&mqIntegrationCreateBaseBranch, "base-branch", "", "Create integration branch from this branch instead of the rig default branch")
 	mqIntegrationCreateCmd.Flags().BoolVar(&mqIntegrationCreateForce, "force", false, "Recreate integration branch even if one already exists")
 	mqIntegrationCmd.AddCommand(mqIntegrationCreateCmd)
 

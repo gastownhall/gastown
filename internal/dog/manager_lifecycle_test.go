@@ -156,10 +156,19 @@ func TestManager_stateFilePath(t *testing.T) {
 func TestManager_exists(t *testing.T) {
 	m, tmpDir := testManager(t)
 
-	// Create a dog directory manually
-	dogPath := filepath.Join(tmpDir, "deacon", "dogs", "existing-dog")
-	if err := os.MkdirAll(dogPath, 0755); err != nil {
+	// A real dog is identified by its state file, not mere directory presence.
+	existingPath := filepath.Join(tmpDir, "deacon", "dogs", "existing-dog")
+	if err := os.MkdirAll(existingPath, 0755); err != nil {
 		t.Fatalf("Failed to create dog dir: %v", err)
+	}
+	if err := m.saveState("existing-dog", &DogState{Name: "existing-dog", State: StateIdle}); err != nil {
+		t.Fatalf("Failed to save state: %v", err)
+	}
+
+	// A directory without .dog.json is debris from a failed Add, not a dog.
+	debrisPath := filepath.Join(tmpDir, "deacon", "dogs", "debris-dog")
+	if err := os.MkdirAll(debrisPath, 0755); err != nil {
+		t.Fatalf("Failed to create debris dir: %v", err)
 	}
 
 	tests := []struct {
@@ -168,9 +177,10 @@ func TestManager_exists(t *testing.T) {
 		want    bool
 	}{
 		{"existing dog", "existing-dog", true},
+		{"directory without state file", "debris-dog", false},
 		{"non-existing dog", "ghost-dog", false},
-		// Note: empty name returns true because dogDir("") == kennelPath which exists
-		// This is an edge case that callers should avoid
+		// Note: empty name returns false because dogDir("") == kennelPath, which
+		// has no .dog.json of its own.
 	}
 
 	for _, tt := range tests {

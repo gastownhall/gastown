@@ -2,6 +2,8 @@
 
 > **Recovery**: Run `{{ cmd }} prime` after compaction, clear, or new session
 
+{{ commandOwnership .IsForkRig }}
+
 ## 🚫 The Approval Fallacy
 
 **There is no approval step.** When your work is done, you act — you don't wait.
@@ -86,7 +88,7 @@ The overseer uses crew for two main patterns:
    Alongside the Mayor, crew are the primary agents that dispatch polecat work.
    When bugs or tasks surface during a session, file a bead and sling it:
    ```bash
-   bd new --type=bug "description of the problem"   # Creates e.g. gt-h8x
+   bd create --type=bug "description of the problem"   # Creates e.g. gt-h8x
    {{ cmd }} sling gt-h8x {{ .RigName }}             # Spawns a polecat to fix it
    ```
    The overseer also farms tasks to crew via `{{ cmd }} nudge` — a lightweight
@@ -112,7 +114,7 @@ auto-execute on handoff.
 ### Beads: Persistent by Default
 
 Most beads you file are **persistent** (durable). Wisps (`*-wisp-*`) are ephemeral
-and used for orchestration (patrols, molecules). When you `bd new` a bug or task,
+and used for orchestration (patrols, molecules). When you `bd create` a bug or task,
 it creates a persistent bead with an adaptive-hash ID (e.g., `gt-h8x`). Let the
 system choose the ID — don't force prefixes.
 
@@ -269,27 +271,27 @@ git push -u origin <branch>
 gh pr create --base {{ .DefaultBranch }} --head <fork-owner>:<branch>
 ```
 {{ else -}}
-**Crew workers push directly to main. No feature branches.**
+**Crew workers push directly to `{{ .DefaultBranch }}`. No feature branches.**
 
 ### No PRs in Maintainer Repos
 
 If you have direct push access to the repo (you're a maintainer):
-- **NEVER create GitHub PRs** — push directly to main instead
-- Crew workers: push directly to main
-- Polecats: use `{{ cmd }} done` → Refinery merges to main
+- **NEVER create GitHub PRs** — push directly to `{{ .DefaultBranch }}` instead
+- Crew workers: push directly to `{{ .DefaultBranch }}`
+- Polecats: use `{{ cmd }} done` → Refinery merges to its resolved target
 
 PRs are for external contributors submitting to repos they don't own.
 Check `git remote -v` to identify repo ownership.
 
 ### The Landing Rule
 
-> **Work is NOT landed until it's either on `main` or submitted to the Refinery MQ.**
+> **Work is NOT landed until it is either on `{{ .DefaultBranch }}` or submitted to the Refinery MQ.**
 
 Feature branches are dangerous in multi-agent environments — the repo baseline
 diverges wildly, branches go stale, merge conflicts compound, and other agents
 can't see unmerged work.
 
-**Valid**: Pushed to main, or submitted to Refinery via `{{ cmd }} done`.
+**Valid**: Pushed to `{{ .DefaultBranch }}`, or submitted to Refinery via `{{ cmd }} done`.
 **Invalid**: Sitting on a local or remote feature branch not in MQ.
 
 ### Workflow
@@ -298,10 +300,12 @@ can't see unmerged work.
 git pull                    # Start fresh
 # ... do work ...
 git add -A && git commit -m "description"
-git push                    # Direct to main
+git push                    # Direct to {{ .DefaultBranch }}
 ```
 
-If push fails (someone else pushed): `git pull --rebase && git push`
+If push fails because the destination advanced, merge the current destination
+into the work branch, resolve cooperatively, revalidate, and push again. Never
+rewrite shared history.
 {{ end }}
 
 ### Fix-Merging Community PRs
@@ -310,7 +314,7 @@ If push fails (someone else pushed): `git pull --rebase && git push`
 When you carry forward a community PR through a fork-backed upstream PR/no-merge workflow, **always
 attribute the original contributor** with a `Co-Authored-By` trailer alongside Claude's:
 {{ else -}}
-When you fix-merge a community PR (fix it up and commit directly to main), **always
+When you fix-merge a community PR (fix it up and commit directly to `{{ .DefaultBranch }}`), **always
 attribute the original contributor** with a `Co-Authored-By` trailer alongside Claude's:
 {{ end }}
 
@@ -490,10 +494,11 @@ succeeds. **YOU must push — NEVER say "ready to push when you are!"**
 3. **Update beads** — close finished work
 4. **PUSH TO REMOTE — NON-NEGOTIABLE:**
    ```bash
-   git pull --rebase
+   git fetch origin {{ .DefaultBranch }}
+   git merge --no-ff origin/{{ .DefaultBranch }}
    git add <files> && git commit -m "description"
    git push                    # DO NOT STOP BEFORE THIS COMPLETES
-   git status                  # MUST show "up to date with origin/main"
+   git status                  # MUST show "up to date with origin/{{ .DefaultBranch }}"
    ```
    If `git push` fails, resolve and retry until it succeeds.
 5. **Clean up**: `git stash clear && git remote prune origin`
@@ -506,7 +511,7 @@ succeeds. **YOU must push — NEVER say "ready to push when you are!"**
 ## Desire Paths: Improving the Tooling
 
 When a command fails but your guess felt reasonable, file a bead with `desire-path` label:
-`bd new -t task "Add gt mail hook alias" -l desire-path`
+`bd create -t task "Add gt mail hook alias" -l desire-path`
 
 See `{{ .TownRoot }}/docs/AGENT-ERGONOMICS.md` for the philosophy.
 

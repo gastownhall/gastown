@@ -1,190 +1,123 @@
 # Releasing Gas Town
 
-## Distribution Channels
+## Authority Boundary
 
-| Channel | Mechanism | Automatic? |
-|---------|-----------|------------|
-| **GitHub Release** | GoReleaser via Actions on tag push | Yes |
-| **Homebrew tap** (`gastownhall/gastown`) | Actions writes an asset-based formula after archives upload | Yes |
-| **Homebrew core** (if listed) | Homebrew bot detects new release | Yes (24-48h delay) |
-| **npm** (`@gastown/gt`) | Actions workflow, OIDC trusted publishing | Yes (when org is set up) |
+This checkout is the maintained `marlon-costa-dc/gastown` downstream fork. Its
+checked-in [release workflow](.github/workflows/release.yml) publishes
+fork-owned prereleases; it is not the `gastownhall/gastown` release workflow.
+The canonical upstream process lives in the
+[upstream RELEASING.md](https://github.com/gastownhall/gastown/blob/main/RELEASING.md).
+Do not copy either process into the other repository.
 
-## How to Release
+A release requires an explicit release assignment and approval. Documentation,
+test, and integration work do not create a tag or release.
 
-### Option A: Automated (recommended)
+## Downstream Fork Release Delta
 
-Use the release formula, which handles all steps:
+The downstream **project integration lane** is fork `main`. It is distinct from
+a temporary Gas Town **epic integration branch**, which lands into its recorded
+base through `gt mq integration land`; see
+[Integration Branches](docs/concepts/integration-branches.md#terminology-boundary).
 
-```bash
-gt mol wisp create gastown-release --var version=X.Y.Z
-```
+Every downstream release records and verifies:
 
-### Option B: Bump script
+- the upstream tag or commit used as its base;
+- the reviewed fork-only commit delta on fork `main`;
+- the downstream version and consumer pins;
+- the release repository, provenance owner, and install target;
+- fresh build, test, and installed-binary evidence from the tagged integration
+  commit.
 
-```bash
-cd gastown/mayor/rig
-./scripts/bump-version.sh X.Y.Z --commit --tag --push --install
-```
+Fork versions use `X.Y.Z-dcN`, with an annotated `vX.Y.Z-dcN` tag. The tag text
+without its leading `v` must exactly match `Version` in
+`internal/cmd/version.go`; `make check-version-tag` enforces that equality.
 
-### Option C: Manual
+The upstream `scripts/bump-version.sh` accepts only `MAJOR.MINOR.PATCH`, updates
+upstream package channels, and is not the owner for a `-dcN` release. The
+upstream release formula is not the downstream release path either. Prepare the
+fork version in a dedicated release lane and review it through a fork PR.
 
-1. Update CHANGELOG.md `[Unreleased]` section
-2. Update `internal/cmd/info.go` `versionChanges` slice
-3. Run `./scripts/bump-version.sh X.Y.Z` (updates version.go, package.json, CHANGELOG header)
-4. Commit, tag, push:
+## Prepare and Tag
 
-```bash
-git add -A
-git commit -m "chore: Bump version to X.Y.Z"
-git tag -a vX.Y.Z -m "Release vX.Y.Z"
-git push origin main
-git push origin vX.Y.Z
-```
+1. Start from current fork `main` in the release lane. Record the upstream base,
+   fork delta, target version, and affected consumer pins on the release bead.
+2. Update `internal/cmd/version.go` to the new `X.Y.Z-dcN` version and update any
+   downstream consumer pins named by the release bead.
+3. Run the repository gates and review the release diff. Merge the release PR
+   into fork `main`; never tag an unintegrated lane commit.
+4. Confirm the proposed tag and release do not already exist. Published releases
+   and tags are immutable.
+5. With the reviewed fork-main merge commit checked out, create the annotated
+   tag, run the tag/version check, and only then push the tag:
 
-5. Rebuild locally:
+   ```bash
+   git tag -a vX.Y.Z-dcN -m "Release vX.Y.Z-dcN"
+   make check-version-tag
+   make check-release-integrated
+   git push origin refs/tags/vX.Y.Z-dcN
+   ```
 
-```bash
-make install        # builds, codesigns, installs to ~/.local/bin
-gt daemon stop && gt daemon start
-```
+Both checks are intentionally no-ops before HEAD has an exact `v*` tag, so
+their decisive release check belongs after local tag creation and before the
+tag push. The release workflow runs them again on the pushed tag.
 
-## What Happens After Tag Push
+`check-release-integrated` enforces step 3 mechanically: it refuses to tag a
+commit that fork `main` does not already contain. That rule previously existed
+only as prose here and was violated twice — `v1.2.1-dc14` and `v1.2.1-dc15`
+were both tagged off lanes that never merged. `dc14` carried the `gtf-k2k`
+doctor guard, which became reachable from a tag and from no branch, and was
+missing from every release that followed until it was recovered. Tags are
+immutable, so refusing to create a bad one is the only available defence.
 
-The `release.yml` workflow triggers automatically:
+It resolves `origin/main` by default; pass `REMOTE_MAIN=<remote>/<branch>` when
+the fork is on a differently named remote.
 
-1. **Verify tag matches Version constant** — runs `make check-version-tag` and
-   aborts the release if the pushed tag (`vX.Y.Z`) doesn't match the `Version`
-   constant in `internal/cmd/version.go`. Prevents recurrence of
-   [#3459](https://github.com/gastownhall/gastown/issues/3459) where v0.13.0
-   shipped reporting 0.12.1.
-2. **goreleaser** job builds binaries for all platforms and creates the GitHub Release
-3. **update-homebrew-formula** job writes an asset-based formula to `gastownhall/homebrew-gastown` when tap credentials are configured
-4. **publish-npm** job publishes to npm (best-effort, `continue-on-error: true`)
+## What the Fork Workflow Publishes
 
-Manual dispatch is only for rerunning a release from a `v*` tag. Publishing jobs are guarded to skip branch refs.
+A pushed `v*` tag starts four build jobs and one publish job:
 
-### Running the tag/version check locally
+- GoReleaser builds Linux AMD64 and FreeBSD AMD64 archives without publishing;
+- native runners build Linux ARM64, Windows AMD64, macOS ARM64, and macOS AMD64;
+- Linux, Windows, and macOS binaries are smoke-tested before packaging; the
+  FreeBSD archive is cross-built and checked as part of the complete asset set;
+- the publish job requires all six archives, writes SHA-256 checksums, produces
+  an SPDX JSON SBOM, and creates GitHub artifact attestations;
+- the release is assembled as a draft and becomes a public prerelease only
+  after the complete asset set uploads successfully.
 
-```bash
-make check-version-tag
-```
+The publish step hard-gates `GITHUB_REPOSITORY` to
+`marlon-costa-dc/gastown`. It publishes only to that fork's GitHub Releases.
+It does not update Homebrew, npm, or upstream release metadata, and the workflow
+has no manual-dispatch branch path.
 
-The target is a no-op on untagged HEADs, so it's safe to run on any checkout.
-It only fails when HEAD is tagged `vX.Y.Z` and the `Version` constant doesn't
-match. Run it after `scripts/bump-version.sh` and before pushing the tag if you
-want to catch drift before CI does.
+If a draft exists after a failed run, rerunning that tagged workflow may resume
+the draft and replace its incomplete assets. If a published release already
+exists, the workflow fails instead of mutating it. Fixes after publication use
+a new reviewed commit and a new `-dcN` version; never move or replace the old
+tag.
 
-## Homebrew tap (`gastownhall/gastown`)
+## Verify the Published Prerelease
 
-The release workflow automatically overwrites `Formula/gastown.rb` in the `gastownhall/homebrew-gastown` repo on every tag push. It prefers the GitHub App credentials `HOMEBREW_TAP_APP_ID` and `HOMEBREW_TAP_APP_PRIVATE_KEY`, and falls back to `HOMEBREW_TAP_TOKEN` if present.
-
-The tap formula installs prebuilt release assets:
-
-```bash
-brew install gastownhall/gastown/gastown
-```
-
-The normal user-facing Homebrew path remains homebrew-core:
-
-```bash
-brew install gastown
-```
-
-## Homebrew core
-
-If Gastown is listed in **homebrew-core**, the formula lives at:
-`https://github.com/Homebrew/homebrew-core/blob/HEAD/Formula/g/gastown.rb`
-
-### How it updates
-
-Homebrew's `BrewTestBot` automatically detects new GitHub releases and opens
-a PR to homebrew-core. Gastown is on the autobump list — the bot checks
-**every ~3 hours**.
-
-### If the bot doesn't pick it up
-
-Gastown is on the autobump list, so `brew bump-formula-pr` will refuse to
-submit a manual PR. If the bot hasn't updated after 6+ hours, check
-https://github.com/Homebrew/homebrew-core/pulls?q=gastown for stuck PRs.
-
-### Verifying
+Release evidence includes the successful tag workflow, the non-draft
+prerelease, its complete assets, checksums, attestations, and an exercised
+downloaded binary. For example:
 
 ```bash
-brew update
-brew info gastown    # Check version
-brew upgrade gastown # Upgrade if installed
+gh run list --repo marlon-costa-dc/gastown --workflow Release --branch vX.Y.Z-dcN --limit 1
+gh release view vX.Y.Z-dcN --repo marlon-costa-dc/gastown
+gh release download vX.Y.Z-dcN --repo marlon-costa-dc/gastown --dir dist
+(cd dist && sha256sum -c gastown_*_checksums.txt)
 ```
 
-## npm (`@gastown/gt`)
+Verify downloaded archives against the published checksum file, then run the
+binary for the target platform and confirm it reports `X.Y.Z-dcN`. Record the
+commands, exit codes, decisive output, artifact URLs, and consumer-pin update on
+the release bead.
 
-### How it works
+## Upstream Releases
 
-The workflow uses **OIDC trusted publishing** (npm provenance). No NPM_TOKEN
-secret is needed — the `id-token: write` permission on the job generates a
-short-lived OIDC token that npm trusts because the GitHub repo is linked to
-the npm package.
-
-### Prerequisites
-
-The `@gastown` npm organization must exist and be linked to this repo:
-
-1. Go to https://www.npmjs.com and create (or join) the `@gastown` org
-2. Under org settings, enable "Require 2FA" and configure trusted publishing
-3. Link `gastownhall/gastown` as a trusted publisher for `@gastown/gt`
-
-### Current status (as of 2026-03-06)
-
-The `@gastown` npm org was secured by a community member (Ivan Casco Valero,
-ivan@ivancasco.com) to prevent scope squatting. Ownership transfer is pending.
-Until the org is transferred, npm publish will fail gracefully without blocking
-the release (`continue-on-error: true` in the workflow).
-
-### Verifying
-
-```bash
-npm view @gastown/gt version
-npm install -g @gastown/gt
-gt version
-```
-
-## Files Updated During Release
-
-| File | What changes |
-|------|-------------|
-| `CHANGELOG.md` | New version section with date |
-| `internal/cmd/info.go` | `versionChanges` entry for `gt info --whats-new` |
-| `internal/cmd/version.go` | `Version` constant |
-| `npm-package/package.json` | `version` field |
-| `flake.nix` | version + vendorHash (only if `nix` is in PATH) |
-| `gastownhall/homebrew-gastown/Formula/gastown.rb` | asset URLs + `sha256` updated by release workflow |
-
-## Troubleshooting
-
-### GoReleaser fails with "replace directives"
-
-The workflow rejects `go.mod` files with `replace` directives (they break
-`go install`). Remove the replace directive and commit before tagging.
-
-### npm publish returns 404
-
-The `@gastown` npm org doesn't exist or you don't have publish access.
-See the npm section above. The release still succeeds — npm is best-effort.
-
-### Homebrew shows old version after a release
-
-For the `gastownhall/gastown` tap, check the `update-homebrew-formula` job and
-the tap's `Formula/gastown.rb` commit history. For homebrew-core, check
-https://github.com/Homebrew/homebrew-core/pulls?q=gastown for stuck BrewTestBot
-PRs. Manual `brew bump-formula-pr` is blocked for autobump formulae.
-
-### `make install` shows `-dirty` suffix
-
-The `.beads/` directory has unstaged changes. This is cosmetic — the version
-number is correct. The `-dirty` comes from `git describe` seeing any unstaged
-modifications.
-
-### Version in version.go is still old after bump script
-
-The bump script reads the current version from version.go and replaces it.
-If version.go was manually edited to a different version, the script's sed
-pattern won't match. Fix version.go manually and re-run.
+Upstream distribution channels, version preparation, Homebrew, npm, and
+troubleshooting are owned by
+[gastownhall/gastown's release documentation](https://github.com/gastownhall/gastown/blob/main/RELEASING.md).
+Use that runbook only from an upstream release checkout with upstream release
+authority.

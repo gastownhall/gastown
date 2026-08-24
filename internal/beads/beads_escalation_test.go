@@ -331,9 +331,9 @@ func TestFilterEscalationRecordsSkipsMailMessages(t *testing.T) {
 		{ID: "hq-mail", Labels: []string{"gt:escalation", "gt:message"}},
 	}
 
-	got := filterEscalationRecords(issues)
+	got := FilterEscalationRecords(issues)
 	if len(got) != 1 || got[0].ID != "hq-root" {
-		t.Fatalf("filterEscalationRecords() = %#v, want only root escalation", got)
+		t.Fatalf("FilterEscalationRecords() = %#v, want only root escalation", got)
 	}
 }
 

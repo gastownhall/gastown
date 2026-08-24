@@ -2,6 +2,7 @@ package config
 
 import (
 	"path/filepath"
+	"runtime"
 	"time"
 )
 
@@ -35,46 +36,54 @@ const (
 
 // Daemon defaults.
 const (
-	DefaultMassDeathWindow                 = 30 * time.Second
-	DefaultMassDeathThreshold              = 3
-	DefaultDogIdleSessionTimeout           = 1 * time.Hour
-	DefaultPolecatIdleSessionTimeout       = 15 * time.Minute
-	DefaultDogIdleRemoveTimeout            = 4 * time.Hour
-	DefaultStaleWorkingTimeout             = 2 * time.Hour
-	DefaultMaxDogPoolSize                  = 4
-	DefaultMaxLifecycleMessageAge          = 6 * time.Hour
-	DefaultSyncFailureEscalationThreshold  = 3
-	DefaultDoctorMolCooldown               = 5 * time.Minute
-	DefaultRecoveryHeartbeatInterval       = 3 * time.Minute
-	DefaultBootSpawnCooldown               = 2 * time.Minute
-	DefaultBootIdleSuppression             = 15 * time.Minute
-	DefaultDeaconGracePeriod               = 5 * time.Minute
+	DefaultMassDeathWindow                = 30 * time.Second
+	DefaultMassDeathThreshold             = 3
+	DefaultDogIdleSessionTimeout          = 1 * time.Hour
+	DefaultPolecatIdleSessionTimeout      = 15 * time.Minute
+	DefaultDogIdleRemoveTimeout           = 4 * time.Hour
+	DefaultStaleWorkingTimeout            = 2 * time.Hour
+	DefaultMaxDogPoolSize                 = 4
+	DefaultMaxLifecycleMessageAge         = 6 * time.Hour
+	DefaultSyncFailureEscalationThreshold = 3
+	DefaultDoctorMolCooldown              = 5 * time.Minute
+	DefaultRecoveryHeartbeatInterval      = 3 * time.Minute
+	DefaultBootSpawnCooldown              = 2 * time.Minute
+	DefaultBootIdleSuppression            = 15 * time.Minute
+	DefaultDeaconGracePeriod              = 5 * time.Minute
 
-	// Pressure check defaults — fully opt-in. All zero = disabled.
-	// Configure in settings/config.json under operational.daemon to enable.
-	// Example: {"pressure_cpu_threshold": 3.0, "pressure_mem_threshold_gb": 0.5}
-	DefaultPressureCPUThreshold   = 0.0
-	DefaultPressureMemThresholdGB = 0.0
-	DefaultPressureMaxSessions    = 0
+	// Pressure check defaults.
+	// Memory + swap + session-ceiling are ON by default so a host can never be
+	// OOM-killed by runaway spawns (gtf-5x2: 14 simultaneous polecats SIGKILLing
+	// each other). CPU load-per-core stays opt-in (noisy on shared hosts).
+	// Operators relax a single tier by setting it to 0 in settings/config.json
+	// under operational.daemon — never all gates.
+	DefaultPressureCPUThreshold    = 0.0
+	DefaultPressureMemThresholdGB  = 0.5
+	DefaultPressureSwapUsedPercent = 80.0
+	// DefaultPressureMaxSessions is the compiled fallback; when the config
+	// leaves pressure_max_sessions unset (nil) or explicitly 0 (disabled), the
+	// effective ceiling is computed by PressureMaxSessionsV as NumCPU*2 with a
+	// floor of 4. Explicit 0 always disables the session tier.
+	DefaultPressureMaxSessions = 0
 )
 
 // Deacon defaults.
 const (
-	DefaultDeaconPingTimeout               = 30 * time.Second
-	DefaultDeaconConsecutiveFailures       = 3
-	DefaultDeaconCooldown                  = 5 * time.Minute
-	DefaultDeaconHeartbeatStaleThreshold   = 5 * time.Minute
-	DefaultDeaconHeartbeatVeryStale        = 20 * time.Minute
-	DefaultMaxRedispatches                 = 3
-	DefaultRedispatchCooldown              = 5 * time.Minute
-	DefaultMaxFeedsPerCycle                = 3
-	DefaultFeedCooldown                    = 10 * time.Minute
+	DefaultDeaconPingTimeout             = 30 * time.Second
+	DefaultDeaconConsecutiveFailures     = 3
+	DefaultDeaconCooldown                = 5 * time.Minute
+	DefaultDeaconHeartbeatStaleThreshold = 5 * time.Minute
+	DefaultDeaconHeartbeatVeryStale      = 20 * time.Minute
+	DefaultMaxRedispatches               = 3
+	DefaultRedispatchCooldown            = 5 * time.Minute
+	DefaultMaxFeedsPerCycle              = 3
+	DefaultFeedCooldown                  = 10 * time.Minute
 )
 
 // Polecat defaults.
 const (
-	DefaultPolecatHeartbeatStale = 3 * time.Minute
-	DefaultPolecatDoltMaxRetries = 10
+	DefaultPolecatHeartbeatStale  = 3 * time.Minute
+	DefaultPolecatDoltMaxRetries  = 10
 	DefaultPolecatDoltBaseBackoff = 500 * time.Millisecond
 	DefaultPolecatDoltBackoffMax  = 30 * time.Second
 	DefaultPolecatPendingMaxAge   = 5 * time.Minute
@@ -110,9 +119,9 @@ const (
 	DefaultWitnessStartupStallThreshold  = 90 * time.Second
 	DefaultWitnessStartupActivityGrace   = 60 * time.Second
 	DefaultWitnessMaxBeadRespawns        = 3
-	DefaultWitnessDoneIntentStuckTimeout    = 60 * time.Second
-	DefaultWitnessDoneIntentRecentGrace     = 30 * time.Second
-	DefaultWitnessHeartbeatStartupGrace     = 5 * time.Minute
+	DefaultWitnessDoneIntentStuckTimeout = 60 * time.Second
+	DefaultWitnessDoneIntentRecentGrace  = 30 * time.Second
+	DefaultWitnessHeartbeatStartupGrace  = 5 * time.Minute
 )
 
 // LoadOperationalConfig loads operational config from a town root.
@@ -419,12 +428,36 @@ func (d *DaemonThresholds) PressureMemThresholdGBV() float64 {
 	return DefaultPressureMemThresholdGB
 }
 
-// PressureMaxSessionsV returns the configured or default max concurrent sessions (0 = unlimited).
+// PressureMaxSessionsV returns the effective max concurrent sessions ceiling.
+// When unset (nil) the ceiling is computed as NumCPU*2 (floor of 4), so the
+// host can never be oversubscribed with polecats by default. An explicit 0
+// disables the session tier (unlimited). 0 via a nil pointer also yields the
+// computed ceiling.
 func (d *DaemonThresholds) PressureMaxSessionsV() int {
 	if d != nil && d.PressureMaxSessions != nil {
+		if *d.PressureMaxSessions == 0 {
+			return 0
+		}
 		return *d.PressureMaxSessions
 	}
-	return DefaultPressureMaxSessions
+	return defaultPressureMaxSessions()
+}
+
+func defaultPressureMaxSessions() int {
+	ceil := runtime.NumCPU() * 2
+	if ceil < 4 {
+		return 4
+	}
+	return ceil
+}
+
+// PressureSwapUsedPercentV returns the configured or default swap-used percentage
+// (0-100) above which spawns are deferred. 0 disables the swap tier.
+func (d *DaemonThresholds) PressureSwapUsedPercentV() float64 {
+	if d != nil && d.PressureSwapUsedPercent != nil {
+		return *d.PressureSwapUsedPercent
+	}
+	return DefaultPressureSwapUsedPercent
 }
 
 // --- Deacon accessors ---

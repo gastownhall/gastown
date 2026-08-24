@@ -74,6 +74,9 @@ const (
 	TypeSchedulerDispatch       = "scheduler_dispatch"        // Bead dispatched from scheduler
 	TypeSchedulerDispatchFailed = "scheduler_dispatch_failed" // Bead dispatch failed (requeued)
 	TypeSchedulerCloseRetry     = "scheduler_close_retry"     // Context close needed last-resort attempt
+
+	// Witness restart events (gtf-9s): restart backpressure under host pressure.
+	TypeRestartDeferred = "restart_deferred" // A crashed polecat was NOT re-spawned because the host was under pressure; will retry next patrol cycle.
 )
 
 // EventsFile is the name of the raw events log.

@@ -4,10 +4,11 @@ import (
 	"bufio"
 	"crypto/sha256"
 	"fmt"
-	"io"
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/steveyegge/gastown/internal/fsutil"
 )
 
 // SyncResult records the outcome of a plugin sync operation.
@@ -142,7 +143,10 @@ func copyDir(src, dst string) error {
 		if d.IsDir() {
 			return os.MkdirAll(tmpPath, 0755)
 		}
-		return copyFile(path, tmpPath)
+		// The staging directory shares a parent with the destination, so this
+		// is a same-filesystem copy and fsutil clones rather than duplicates
+		// where the filesystem supports it.
+		return fsutil.CopyFile(path, tmpPath)
 	}); err != nil {
 		return err
 	}
@@ -152,28 +156,6 @@ func copyDir(src, dst string) error {
 		return fmt.Errorf("removing old destination: %w", err)
 	}
 	return os.Rename(tmpDir, dst)
-}
-
-func copyFile(src, dst string) error {
-	srcFile, err := os.Open(src) //nolint:gosec // G304: path is from trusted plugin directory
-	if err != nil {
-		return err
-	}
-	defer srcFile.Close()
-
-	srcInfo, err := srcFile.Stat()
-	if err != nil {
-		return err
-	}
-
-	dstFile, err := os.OpenFile(dst, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, srcInfo.Mode()) //nolint:gosec // G304: path is from trusted plugin directory
-	if err != nil {
-		return err
-	}
-	defer dstFile.Close()
-
-	_, err = io.Copy(dstFile, srcFile)
-	return err
 }
 
 // FindGastownSource locates the gastown source repo's plugins directory.

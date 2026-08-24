@@ -3,9 +3,7 @@
 When you run a rig against a repository you **don't own**, the rig has to
 fetch canonical history from upstream but push all work to your fork.
 `gt rig add` supports this directly through `--push-url` and
-`--upstream-url`. Without them, the default `gt rig add <name> <fork-url>`
-produces a rig whose refinery merges polecat work into your fork's `main`,
-diverging it from upstream.
+`--upstream-url`.
 
 ## When you need fork mode
 
@@ -40,7 +38,7 @@ What each flag does:
 |---|---|
 | positional `<git-url>` | `origin`'s **fetch** URL — where canonical history is pulled from |
 | `--push-url` | `origin`'s **push** URL — where all pushes go (your fork) |
-| `--upstream-url` | Adds a separate named `upstream` remote for rebases against `upstream/main` |
+| `--upstream-url` | Adds a separate named `upstream` remote for canonical history, comparisons, and PR bases |
 
 These remotes are configured on **both** the bare canonical clone
 (`<rig>/refinery/rig`) and the mayor's working clone (`<rig>/mayor/rig`).
@@ -67,7 +65,22 @@ The key invariant: **`origin`'s fetch URL is upstream, `origin`'s push URL
 is your fork.** If `origin (push)` points at the canonical repo, the flags
 did not take effect — re-add the rig.
 
-## Current limitation: the refinery is not yet fork-aware
+## Contribution Fork vs Downstream Fork
+
+The same remote topology supports two policies:
+
+| Mode | Fork `main` | Completion target | Release owner |
+|------|-------------|-------------------|---------------|
+| Contribution-only fork | Mirrors upstream | Feature branch → upstream PR | Upstream project |
+| Maintained downstream fork | Project integration lane carrying an explicit delta | Project-owned review/integration into fork `main` | Downstream project |
+
+The downstream project integration lane is not a Gas Town epic integration
+branch. Epic branches are created and landed by `gt mq integration`; see
+[Integration Branches](../concepts/integration-branches.md#terminology-boundary).
+Downstream release responsibilities are documented in
+[RELEASING.md](../../RELEASING.md#downstream-fork-release-delta).
+
+## Current Limitation: Upstream PRs
 
 Even a correctly-configured fork rig will, today, have its refinery attempt
 to **merge polecat branches into the fork's `main`** rather than open a PR
@@ -83,6 +96,10 @@ Until then, for strict PR-only behavior:
 - Do **not** start the refinery. Park the rig with `gt rig park <rig>`.
 - Use the polecat → feature branch → manual PR path. Push the branch to
   your fork and open the PR by hand.
+
+For a maintained downstream fork, Refinery integration into fork `main` may be
+the intended project workflow. That does not create or merge an upstream PR,
+and it does not publish a release.
 
 ## Recovery: a polluted fork `main`
 

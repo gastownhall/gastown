@@ -142,6 +142,10 @@ func (h *APIHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.handleReady(w, r)
 	case path == "/events" && r.Method == http.MethodGet:
 		h.handleSSE(w, r)
+	case path == "/ws" && r.Method == http.MethodGet:
+		GetHub().ServeWS(w, r)
+	case path == "/estop" && r.Method == http.MethodPost:
+		h.handleEstop(w, r)
 	case path == "/session/preview" && r.Method == http.MethodGet:
 		h.handleSessionPreview(w, r)
 	default:
@@ -1923,7 +1927,7 @@ func (h *APIHandler) detectCrewState(ctx context.Context, sessionName, hook stri
 func (h *APIHandler) isClaudeRunningInSession(ctx context.Context, sessionName string) bool {
 	// Target pane 0 explicitly (:0.0) to avoid false positives from
 	// user-created split panes running shells or other commands.
-	cmd := exec.CommandContext(ctx, "tmux", "display-message", "-t", sessionName+":0.0", "-p", "#{pane_current_command}")
+	cmd := tmux.BuildCommandContext(ctx, "display-message", "-t", sessionName+":0.0", "-p", "#{pane_current_command}")
 	var stdout bytes.Buffer
 	cmd.Stdout = &stdout
 	if err := cmd.Run(); err != nil {
@@ -1953,7 +1957,7 @@ func paneCurrentCommandIsAgent(output string) bool {
 
 // hasQuestionInPane checks the last output for question indicators.
 func (h *APIHandler) hasQuestionInPane(ctx context.Context, sessionName string) bool {
-	cmd := exec.CommandContext(ctx, "tmux", "capture-pane", "-t", sessionName, "-p", "-J")
+	cmd := tmux.BuildCommandContext(ctx, "capture-pane", "-t", sessionName, "-p", "-J")
 	var stdout bytes.Buffer
 	cmd.Stdout = &stdout
 	if err := cmd.Run(); err != nil {
@@ -2086,6 +2090,35 @@ func (h *APIHandler) handleReady(w http.ResponseWriter, r *http.Request) {
 	_ = json.NewEncoder(w).Encode(resp)
 }
 
+// handleEstop triggers an emergency stop via gt estop.
+func (h *APIHandler) handleEstop(w http.ResponseWriter, r *http.Request) {
+	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
+	defer cancel()
+
+	output, err := h.runGtCommand(ctx, 25*time.Second, []string{"estop"})
+
+	resp := EstopResponse{
+		Success: err == nil,
+		Output:  output,
+		Exempt:  []string{"overseer", "mayor", "deacon"},
+	}
+
+	if err != nil {
+		resp.Error = err.Error()
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(resp)
+}
+
+// EstopResponse is the response for /api/estop.
+type EstopResponse struct {
+	Success bool     `json:"success"`
+	Output  string   `json:"output"`
+	Error   string   `json:"error,omitempty"`
+	Exempt  []string `json:"exempt"`
+}
+
 // SessionPreviewResponse is the response for /api/session/preview.
 type SessionPreviewResponse struct {
 	Session   string `json:"session"`
@@ -2118,7 +2151,7 @@ func (h *APIHandler) handleSessionPreview(w http.ResponseWriter, r *http.Request
 	ctx, cancel := context.WithTimeout(r.Context(), 3*time.Second)
 	defer cancel()
 
-	cmd := exec.CommandContext(ctx, "tmux", "capture-pane", "-t", sessionName, "-p", "-J", "-S", "-30")
+	cmd := tmux.BuildCommandContext(ctx, "capture-pane", "-t", sessionName, "-p", "-J", "-S", "-30")
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
@@ -2200,7 +2233,9 @@ func (h *APIHandler) handleSSE(w http.ResponseWriter, r *http.Request) {
 	flusher.Flush()
 
 	var lastHash string
-	ticker := time.NewTicker(2 * time.Second)
+	// 10s matches #1805. A 2s ticker was restored accidentally by #1810 and
+	// re-created the process storm (#2618, #3396): 3 gt subprocesses per tick.
+	ticker := time.NewTicker(10 * time.Second)
 	defer ticker.Stop()
 
 	// Send keepalive comment every 15 seconds to prevent connection timeouts
@@ -2231,49 +2266,43 @@ func (h *APIHandler) computeDashboardHash(ctx context.Context) string {
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 
-	var mu sync.Mutex
-	var parts []string
-
-	var wg sync.WaitGroup
+	// Fixed slots so identical command output hashes identically regardless of
+	// goroutine completion order. Append-order hashing emitted a new
+	// dashboard-update on every tick, which HTMX treats as a full page refetch.
+	var (
+		statusPart string
+		hooksPart  string
+		mailPart   string
+		wg         sync.WaitGroup
+	)
 	wg.Add(3)
 
-	// Check worker/polecat state
 	go func() {
 		defer wg.Done()
 		if out, err := h.runGtCommand(ctx, 3*time.Second, []string{"status", "--json"}); err == nil {
-			mu.Lock()
-			parts = append(parts, "status:"+out)
-			mu.Unlock()
+			statusPart = "status:" + out
 		}
 	}()
-
-	// Check hooks state
 	go func() {
 		defer wg.Done()
 		if out, err := h.runGtCommand(ctx, 3*time.Second, []string{"hooks", "list"}); err == nil {
-			mu.Lock()
-			parts = append(parts, "hooks:"+out)
-			mu.Unlock()
+			hooksPart = "hooks:" + out
 		}
 	}()
-
-	// Check mail count
 	go func() {
 		defer wg.Done()
 		if out, err := h.runGtCommand(ctx, 3*time.Second, []string{"mail", "inbox"}); err == nil {
-			mu.Lock()
-			parts = append(parts, "mail:"+out)
-			mu.Unlock()
+			mailPart = "mail:" + out
 		}
 	}()
 
 	wg.Wait()
 
-	if len(parts) == 0 {
+	if statusPart == "" && hooksPart == "" && mailPart == "" {
 		return ""
 	}
 
-	h256 := sha256.Sum256([]byte(strings.Join(parts, "|")))
+	h256 := sha256.Sum256([]byte(statusPart + "|" + hooksPart + "|" + mailPart))
 	return fmt.Sprintf("%x", h256[:8])
 }
 
