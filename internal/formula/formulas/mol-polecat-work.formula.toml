@@ -117,7 +117,9 @@ gt mail send <rig>/witness -s "HELP: Unclear requirements" -m "Issue: {{issue}}
 Question: <what you need clarified>"
 ```
 
-**Exit criteria:** You understand the work and can begin implementation."""
+## Acceptance Criteria
+
+- You understand the work and can begin implementation."""
 
 [[steps]]
 id = "branch-setup"
@@ -206,7 +208,11 @@ If setup_command is set, run it to install dependencies:
 This ensures dependencies are installed before you start work.
 Empty setup_command means "not configured" — skip this step.
 
-**Exit criteria:** You're on a clean feature branch whose name embeds {{issue}}, rebased on latest {{base_branch}}, dependencies installed."""
+## Acceptance Criteria
+
+- You're on a clean feature branch whose name embeds {{issue}}
+- Branch is rebased on latest {{base_branch}}
+- Dependencies installed"""
 
 [[steps]]
 id = "implement"
@@ -288,9 +294,12 @@ Problem: <what's blocking you>
 Tried: <what you've attempted>"
 ```
 
-**Exit criteria (HARD GATE):** Implementation complete AND code committed to git.
+## Acceptance Criteria (HARD GATE)
+
+Implementation complete AND code committed to git.
 - Code tasks: `git status` shows clean working tree, `git log origin/{{base_branch}}..HEAD` shows at least 1 commit
 - Report tasks: all findings persisted to bead via --notes or --design
+
 Do NOT proceed to the next step with uncommitted changes."""
 
 [[steps]]
@@ -346,7 +355,10 @@ If the bead is `review_only: true`, also verify a fresh assignee-authored
 If findings/evidence are persisted, proceed to review. Report-only tasks with
 findings persisted can skip commit verification.
 
-**Exit criteria:** Working tree clean AND either (a) at least 1 commit ahead of origin/{{base_branch}}, or (b) report-only task with findings persisted to bead."""
+## Acceptance Criteria
+
+- Working tree clean
+- AND either (a) at least 1 commit ahead of origin/{{base_branch}}, or (b) report-only task with findings persisted to bead"""
 
 [[steps]]
 id = "self-review"
@@ -392,8 +404,10 @@ git diff --stat origin/{{base_branch}}...HEAD
 
 If you accidentally modified unrelated files, remove those changes.
 
-**Exit criteria:** Changes are clean, reviewed (Grade B or better if using /review),
-and ready for build check."""
+## Acceptance Criteria
+
+- Changes are clean, reviewed (Grade B or better if using /review)
+- Ready for build check"""
 
 [[steps]]
 id = "build-check"
@@ -448,7 +462,11 @@ If lint_command is set:
 {{lint_command}}
 ```
 
-**Exit criteria:** Code compiles. Obvious regressions caught. Ready to submit."""
+## Acceptance Criteria
+
+- Code compiles
+- Obvious regressions caught
+- Ready to submit"""
 
 [[steps]]
 id = "pre-verify"
@@ -508,7 +526,10 @@ that you ran the full gate suite on a rebased branch, enabling fast-path merge.
 project, you may skip this step and use `gt done` without --pre-verified.
 The refinery will run gates normally (slower but still correct).
 
-**Exit criteria:** Branch rebased onto latest origin/{{base_branch}}, all configured gates pass."""
+## Acceptance Criteria
+
+- Branch rebased onto latest origin/{{base_branch}}
+- All configured gates pass"""
 
 [[steps]]
 id = "submit-and-exit"
@@ -563,7 +584,11 @@ You should see output like:
 
 You are NOT involved in any of that. You're gone. Done means gone.
 
-**Exit criteria:** Work submitted, sandbox nuked, session exited."""
+## Acceptance Criteria
+
+- Work submitted
+- Sandbox nuked
+- Session exited"""
 
 [vars]
 [vars.issue]
