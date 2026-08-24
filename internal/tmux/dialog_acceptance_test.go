@@ -11,14 +11,11 @@ func TestAcceptWorkspaceTrustDialog_NoDialog(t *testing.T) {
 	tm := newTestTmux(t)
 	sessionName := "gt-test-trust-nodlg-" + t.Name()
 
-	_ = tm.KillSession(sessionName)
-	if err := tm.NewSession(sessionName, ""); err != nil {
-		t.Fatalf("NewSession: %v", err)
-	}
+	newReadyTestSession(t, tm, sessionName)
 	defer func() { _ = tm.KillSession(sessionName) }()
 
-	// Session starts with a shell prompt containing ">", "$", or "%"
-	// The polling loop should exit early when it sees the prompt.
+	// The controlled shell is ready before timing begins, so the polling loop
+	// should exit on its owned prompt rather than ambient shell startup.
 	start := time.Now()
 	err := tm.AcceptWorkspaceTrustDialog(sessionName)
 	elapsed := time.Since(start)
@@ -39,18 +36,14 @@ func TestAcceptWorkspaceTrustDialog_DetectsDialog(t *testing.T) {
 	tm := newTestTmux(t)
 	sessionName := "gt-test-trust-dlg-" + t.Name()
 
-	_ = tm.KillSession(sessionName)
-	if err := tm.NewSession(sessionName, ""); err != nil {
-		t.Fatalf("NewSession: %v", err)
-	}
+	newReadyTestSession(t, tm, sessionName)
 	defer func() { _ = tm.KillSession(sessionName) }()
 
 	// Simulate the trust dialog by echoing its text into the pane
 	if err := tm.SendKeys(sessionName, "echo 'Quick safety check - do you trust this folder?'"); err != nil {
 		t.Fatalf("SendKeys: %v", err)
 	}
-	// Give the echo a moment to execute
-	time.Sleep(300 * time.Millisecond)
+	waitForPaneText(t, tm, sessionName, "Quick safety check")
 
 	err := tm.AcceptWorkspaceTrustDialog(sessionName)
 	if err != nil {
@@ -67,16 +60,13 @@ func TestAcceptWorkspaceTrustDialog_DetectsCodexDialog(t *testing.T) {
 	tm := newTestTmux(t)
 	sessionName := "gt-test-trust-codex-" + t.Name()
 
-	_ = tm.KillSession(sessionName)
-	if err := tm.NewSession(sessionName, ""); err != nil {
-		t.Fatalf("NewSession: %v", err)
-	}
+	newReadyTestSession(t, tm, sessionName)
 	defer func() { _ = tm.KillSession(sessionName) }()
 
 	if err := tm.SendKeys(sessionName, "echo '> You are in /tmp/demo'; echo 'Do you trust the contents of this directory?'"); err != nil {
 		t.Fatalf("SendKeys: %v", err)
 	}
-	time.Sleep(300 * time.Millisecond)
+	waitForPaneText(t, tm, sessionName, "Do you trust the contents of this directory?")
 
 	if err := tm.AcceptWorkspaceTrustDialog(sessionName); err != nil {
 		t.Fatalf("AcceptWorkspaceTrustDialog: %v", err)
@@ -89,10 +79,7 @@ func TestAcceptBypassPermissionsWarning_NoDialog(t *testing.T) {
 	tm := newTestTmux(t)
 	sessionName := "gt-test-bypass-nodlg-" + t.Name()
 
-	_ = tm.KillSession(sessionName)
-	if err := tm.NewSession(sessionName, ""); err != nil {
-		t.Fatalf("NewSession: %v", err)
-	}
+	newReadyTestSession(t, tm, sessionName)
 	defer func() { _ = tm.KillSession(sessionName) }()
 
 	start := time.Now()
@@ -114,17 +101,14 @@ func TestAcceptBypassPermissionsWarning_DetectsDialog(t *testing.T) {
 	tm := newTestTmux(t)
 	sessionName := "gt-test-bypass-dlg-" + t.Name()
 
-	_ = tm.KillSession(sessionName)
-	if err := tm.NewSession(sessionName, ""); err != nil {
-		t.Fatalf("NewSession: %v", err)
-	}
+	newReadyTestSession(t, tm, sessionName)
 	defer func() { _ = tm.KillSession(sessionName) }()
 
 	// Simulate the bypass permissions dialog
 	if err := tm.SendKeys(sessionName, "echo 'Bypass Permissions mode is enabled'"); err != nil {
 		t.Fatalf("SendKeys: %v", err)
 	}
-	time.Sleep(300 * time.Millisecond)
+	waitForPaneText(t, tm, sessionName, "Bypass Permissions mode")
 
 	err := tm.AcceptBypassPermissionsWarning(sessionName)
 	if err != nil {
@@ -138,10 +122,7 @@ func TestAcceptStartupDialogs_NoDialogs(t *testing.T) {
 	tm := newTestTmux(t)
 	sessionName := "gt-test-startup-nodlg-" + t.Name()
 
-	_ = tm.KillSession(sessionName)
-	if err := tm.NewSession(sessionName, ""); err != nil {
-		t.Fatalf("NewSession: %v", err)
-	}
+	newReadyTestSession(t, tm, sessionName)
 	defer func() { _ = tm.KillSession(sessionName) }()
 
 	start := time.Now()
@@ -242,8 +223,37 @@ Skip until next version`,
 			wantName:    "codex update prompt",
 		},
 		{
-			name:        "codex trust modal",
-			content:     "> You are in /tmp/demo\nDo you trust the contents of this directory?",
+			name:        "codex git repo check error",
+			content:     "Not inside a trusted directory and --skip-git-repo-check was not specified.",
+			wantBlocked: true,
+			wantName:    "codex git repo check",
+		},
+		{
+			// Real Codex TUI from openai/codex#14547. The selector line uses
+			// the same › glyph as Codex's ready prompt. A false-negative here
+			// lets gt session start treat a live trust modal as "ready" and
+			// nudge it, which quits Codex ("No, quit") — GH#4670.
+			name: "codex trust modal with selector",
+			content: `> You are in /tmp/old-polecat
+
+Do you trust the contents of this directory? Working with untrusted
+contents comes with higher risk of prompt injection.
+
+› 1. Yes, continue
+  2. No, quit`,
+			wantBlocked: true,
+			wantName:    "workspace trust prompt",
+		},
+		{
+			// CapturePane sometimes lands the cursor on its own › line after
+			// the question. promptAppearsAfterStartupBlocker currently treats
+			// that as "stale dialog, agent is ready".
+			name: "codex trust modal with lone selector after question",
+			content: `> You are in /tmp/old-polecat
+Do you trust the contents of this directory?
+›
+1. Yes, continue
+2. No, quit`,
 			wantBlocked: true,
 			wantName:    "workspace trust prompt",
 		},
@@ -312,10 +322,7 @@ func TestDismissStartupDialogsBlind_SendsKeys(t *testing.T) {
 	tm := newTestTmux(t)
 	sessionName := "gt-test-blind-dismiss-" + t.Name()
 
-	_ = tm.KillSession(sessionName)
-	if err := tm.NewSession(sessionName, ""); err != nil {
-		t.Fatalf("NewSession: %v", err)
-	}
+	newReadyTestSession(t, tm, sessionName)
 	defer func() { _ = tm.KillSession(sessionName) }()
 
 	// Should complete quickly — no polling, no CapturePane

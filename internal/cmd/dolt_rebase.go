@@ -78,13 +78,16 @@ func runDoltRebase(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return fmt.Errorf("not in a Gas Town workspace: %w", err)
 	}
+	config := doltserver.DefaultConfig(townRoot)
+	if config.IsExternallyManaged() {
+		return fmt.Errorf("Dolt server is externally managed (%s) — rebase requires a Town-owned server", config.HostPort())
+	}
 
 	running, _, err := doltserver.IsRunning(townRoot)
 	if err != nil || !running {
 		return fmt.Errorf("Dolt server is not running — start with 'gt dolt start'")
 	}
 
-	config := doltserver.DefaultConfig(townRoot)
 	// wa-d6f: socket-first DSN (TCP fallback) — eliminates TIME_WAIT churn.
 	dsn := buildDoltDSNFromConfig(config, dbName, dsnOpts{
 		ParseTime:    true,
@@ -365,6 +368,7 @@ func rebaseCleanup(db *sql.DB, baseBranch, workBranch string) {
 }
 
 // rebaseAbortAndCleanup aborts an in-progress rebase then cleans up branches.
+//
 //nolint:unparam // baseBranch always "compact-base" — API kept flexible for future callers
 func rebaseAbortAndCleanup(db *sql.DB, baseBranch, workBranch string) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -376,6 +380,7 @@ func rebaseAbortAndCleanup(db *sql.DB, baseBranch, workBranch string) {
 }
 
 // rebaseCleanupAll cleans up both branches after a failed rebase.
+//
 //nolint:unparam // baseBranch always "compact-base" — API kept flexible for future callers
 func rebaseCleanupAll(db *sql.DB, baseBranch, workBranch string) {
 	rebaseCleanup(db, baseBranch, workBranch)

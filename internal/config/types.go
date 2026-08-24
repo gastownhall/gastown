@@ -138,10 +138,16 @@ func NewTownSettings() *TownSettings {
 }
 
 // WebTimeoutsConfig configures command execution timeouts for the web dashboard.
+//
+// Per-command timeouts (CmdTimeout, GhCmdTimeout, TmuxCmdTimeout) must each be
+// smaller than FetchTimeout, the external render budget. A per-command timeout
+// larger than the external budget is a no-op: the external deadline always
+// fires first, so the "internal" ceiling never actually bounds anything
+// (gtf-hf1 / gastownhall/gastown#4661).
 type WebTimeoutsConfig struct {
-	// CmdTimeout is the timeout for bd (beads) commands. Default: "15s".
+	// CmdTimeout is the timeout for bd (beads) commands. Default: "6s".
 	CmdTimeout string `json:"cmd_timeout,omitempty"`
-	// GhCmdTimeout is the timeout for GitHub API commands. Default: "10s".
+	// GhCmdTimeout is the timeout for GitHub API commands. Default: "5s".
 	GhCmdTimeout string `json:"gh_cmd_timeout,omitempty"`
 	// TmuxCmdTimeout is the timeout for tmux queries. Default: "2s".
 	TmuxCmdTimeout string `json:"tmux_cmd_timeout,omitempty"`
@@ -156,8 +162,8 @@ type WebTimeoutsConfig struct {
 // DefaultWebTimeoutsConfig returns a WebTimeoutsConfig with sensible defaults.
 func DefaultWebTimeoutsConfig() *WebTimeoutsConfig {
 	return &WebTimeoutsConfig{
-		CmdTimeout:        "15s",
-		GhCmdTimeout:      "10s",
+		CmdTimeout:        "6s",
+		GhCmdTimeout:      "5s",
 		TmuxCmdTimeout:    "2s",
 		FetchTimeout:      "8s",
 		DefaultRunTimeout: "30s",
@@ -372,6 +378,12 @@ type DaemonThresholds struct {
 	// PressureMaxSessions is the maximum number of concurrent agent tmux
 	// sessions before new non-infrastructure spawns are deferred. Disabled by default (0 = unlimited).
 	PressureMaxSessions *int `json:"pressure_max_sessions,omitempty"`
+
+	// PressureSwapUsedPercent is the used-swap percentage (0-100) above which
+	// new non-infrastructure spawns are deferred. Only effective when the host
+	// reports SwapTotal > 0. Disabled by default (0).
+	// Recommended starting value: 80.
+	PressureSwapUsedPercent *float64 `json:"pressure_swap_used_percent,omitempty"`
 }
 
 // DeaconThresholds configures deacon health-check and dispatch thresholds.
@@ -1044,12 +1056,15 @@ const codexUpdateCheckKey = "check_for_update_on_startup"
 const codexUpdateCheckConfig = codexUpdateCheckKey + "=false"
 
 func ensureCodexAutomationArgs(command string, args []string) []string {
-	if !isCodexRuntime(command) || hasCodexUpdateCheckConfig(args) {
+	if !isCodexRuntime(command) {
 		return args
 	}
-	result := make([]string, 0, len(args)+2)
-	result = append(result, "-c", codexUpdateCheckConfig)
-	result = append(result, args...)
+	result := args
+	if !hasCodexUpdateCheckConfig(result) {
+		prefixed := make([]string, 0, len(result)+2)
+		prefixed = append(prefixed, "-c", codexUpdateCheckConfig)
+		result = append(prefixed, result...)
+	}
 	return result
 }
 

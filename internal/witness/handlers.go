@@ -19,10 +19,12 @@ import (
 	"github.com/steveyegge/gastown/internal/channelevents"
 	"github.com/steveyegge/gastown/internal/config"
 	"github.com/steveyegge/gastown/internal/constants"
+	"github.com/steveyegge/gastown/internal/events"
 	"github.com/steveyegge/gastown/internal/git"
 	"github.com/steveyegge/gastown/internal/mail"
 	"github.com/steveyegge/gastown/internal/mayor"
 	"github.com/steveyegge/gastown/internal/polecat"
+	"github.com/steveyegge/gastown/internal/pressure"
 	"github.com/steveyegge/gastown/internal/rig"
 	"github.com/steveyegge/gastown/internal/session"
 	"github.com/steveyegge/gastown/internal/tmux"
@@ -34,6 +36,15 @@ import (
 // after which a live agent session is considered hung. Derived from
 // constants.HungSessionThreshold (single source of truth).
 var HungSessionThresholdMinutes = int(constants.HungSessionThreshold.Minutes())
+
+// Seams for testability: the witness reuses the canonical pressure gate and the
+// canonical restart primitive. Tests override these to stay deterministic and
+// never depend on live host load (the host may be saturated when the gate
+// matters most). Production code paths are untouched.
+var (
+	pressureGate        = pressure.CheckHostSpawn
+	restartPolecatCall  = RestartPolecatSession
+)
 
 // initRegistryFromWorkDir initializes the session prefix and agent registries
 // from a work directory. This ensures session.PrefixFor(rigName) returns the
@@ -2192,12 +2203,43 @@ func handleZombieRestart(bd *BdCli, workDir, rigName, polecatName, hookBead, cle
 		}
 	}
 
-	if skipRestart {
-		return
-	}
+ 	if skipRestart {
+ 		return
+ 	}
 
-	// Restart regardless of cleanup state — the worktree is preserved.
-	if err := RestartPolecatSession(workDir, rigName, polecatName); err != nil {
+ 	// gtf-9s: Pressure-gate the restart. Under the host saturation that caused
+ 	// the crash in the first place, blindly re-spawning every killed polecat
+ 	// re-saturates the host and triggers another mass death (thundering herd).
+ 	// Reuse the canonical spawn gate: if the host is pressured, DEFER the
+ 	// restart (do not nuke, do not spawn) and leave the worktree/branch +
+ 	// hooked bead intact for the next patrol cycle. The same single gate used
+ 	// by gt sling applies here, so policy cannot drift.
+ 	townRootForPressure := workDirToTownRoot(workDir)
+ 	var derr *pressure.DeferredError
+ 	if perr := pressureGate(townRootForPressure); errors.As(perr, &derr) {
+ 		zombie.Action = fmt.Sprintf("restart-deferred-pressure (%s)", derr.Reason)
+ 		_ = events.LogFeed(events.TypeRestartDeferred, "witness", map[string]interface{}{
+ 			"polecat":      polecatName,
+ 			"rig":          rigName,
+ 			"reason":       derr.Reason,
+ 			"detail":       derr.DeferralReason,
+ 			"next_patrol":  "retry when host pressure clears",
+ 		})
+ 		return
+ 	} else if perr != nil {
+ 		// Non-deferral pressure error — treat as defer (safer than spawning).
+ 		zombie.Action = fmt.Sprintf("restart-deferred-pressure (unknown: %v)", perr)
+ 		_ = events.LogFeed(events.TypeRestartDeferred, "witness", map[string]interface{}{
+ 			"polecat": polecatName,
+ 			"rig":     rigName,
+ 			"reason":  "pressure-check-error",
+ 			"detail":  perr.Error(),
+ 		})
+ 		return
+ 	}
+
+ 	// Restart regardless of cleanup state — the worktree is preserved.
+ 	if err := restartPolecatCall(workDir, rigName, polecatName); err != nil {
 		if zombie.Error == nil {
 			zombie.Error = fmt.Errorf("restart: %w", err)
 		} else {

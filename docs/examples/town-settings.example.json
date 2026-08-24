@@ -77,8 +77,8 @@
     "agent_email_domain": "gastown.local",
 
     "web_timeouts": {
-        "cmd_timeout": "15s",
-        "gh_cmd_timeout": "10s",
+        "cmd_timeout": "6s",
+        "gh_cmd_timeout": "5s",
         "tmux_cmd_timeout": "2s",
         "fetch_timeout": "8s",
         "default_run_timeout": "30s",

@@ -4762,6 +4762,321 @@ func TestLoadOrCreateEscalationConfig(t *testing.T) {
 	})
 }
 
+func TestLoadOrCreateEscalationConfig_SMTPPassEnvFallback(t *testing.T) {
+	t.Run("GT_SMTP_PASS env var populates SMTPPass when not in file", func(t *testing.T) {
+		dir := t.TempDir()
+		path := filepath.Join(dir, "settings", "escalation.json")
+
+		original := &EscalationConfig{
+			Type:    "escalation",
+			Version: 1,
+			Contacts: EscalationContacts{
+				HumanEmail: "marlonsc@gmail.com",
+				SMTPHost:   "smtp.gmail.com",
+				SMTPPort:   "587",
+				SMTPFrom:   "gastown@localhost",
+				SMTPUser:   "marlonsc@gmail.com",
+			},
+			Routes: map[string][]string{
+				SeverityLow: {"bead"},
+			},
+		}
+		if err := SaveEscalationConfig(path, original); err != nil {
+			t.Fatalf("SaveEscalationConfig: %v", err)
+		}
+
+		t.Setenv("GT_SMTP_PASS", "super-secret-app-password")
+
+		cfg, err := LoadOrCreateEscalationConfig(path)
+		if err != nil {
+			t.Fatalf("LoadOrCreateEscalationConfig: %v", err)
+		}
+
+		if cfg.Contacts.SMTPPass != "super-secret-app-password" {
+			t.Errorf("SMTPPass = %q, want %q", cfg.Contacts.SMTPPass, "super-secret-app-password")
+		}
+	})
+
+	t.Run("GT_SMTP_PASS env var does not override value in file", func(t *testing.T) {
+		dir := t.TempDir()
+		path := filepath.Join(dir, "settings", "escalation.json")
+
+		original := &EscalationConfig{
+			Type:    "escalation",
+			Version: 1,
+			Contacts: EscalationContacts{
+				HumanEmail: "marlonsc@gmail.com",
+				SMTPPass:   "file-password",
+			},
+			Routes: map[string][]string{
+				SeverityLow: {"bead"},
+			},
+		}
+		if err := SaveEscalationConfig(path, original); err != nil {
+			t.Fatalf("SaveEscalationConfig: %v", err)
+		}
+
+		t.Setenv("GT_SMTP_PASS", "env-password")
+
+		cfg, err := LoadOrCreateEscalationConfig(path)
+		if err != nil {
+			t.Fatalf("LoadOrCreateEscalationConfig: %v", err)
+		}
+
+		if cfg.Contacts.SMTPPass != "file-password" {
+			t.Errorf("SMTPPass = %q, want %q (file value should take precedence)", cfg.Contacts.SMTPPass, "file-password")
+		}
+	})
+}
+
+func TestLoadOrCreateEscalationConfig_SMTPPassXdgFallback(t *testing.T) {
+	t.Run("Xdg config file populates SMTPPass when no env or json", func(t *testing.T) {
+		dir := t.TempDir()
+
+		xdgConfig := filepath.Join(dir, "config")
+		passPath := filepath.Join(xdgConfig, "gastown", "smtp-pass")
+		if err := os.MkdirAll(filepath.Dir(passPath), 0700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(passPath, []byte("file-app-pass\n"), 0600); err != nil {
+			t.Fatal(err)
+		}
+
+		os.Setenv("XDG_CONFIG_HOME", xdgConfig)
+		defer os.Unsetenv("XDG_CONFIG_HOME")
+		os.Unsetenv("GT_SMTP_PASS")
+
+		path := filepath.Join(dir, "settings", "escalation.json")
+		original := &EscalationConfig{
+			Type:    "escalation",
+			Version: 1,
+			Contacts: EscalationContacts{
+				HumanEmail: "marlonsc@gmail.com",
+				SMTPHost:   "smtp.gmail.com",
+				SMTPPort:   "587",
+				SMTPFrom:   "gastown@localhost",
+				SMTPUser:   "marlonsc@gmail.com",
+			},
+			Routes: map[string][]string{
+				SeverityLow: {"bead"},
+			},
+		}
+		if err := SaveEscalationConfig(path, original); err != nil {
+			t.Fatalf("SaveEscalationConfig: %v", err)
+		}
+
+		cfg, err := LoadOrCreateEscalationConfig(path)
+		if err != nil {
+			t.Fatalf("LoadOrCreateEscalationConfig: %v", err)
+		}
+
+		if cfg.Contacts.SMTPPass != "file-app-pass" {
+			t.Errorf("SMTPPass = %q, want %q", cfg.Contacts.SMTPPass, "file-app-pass")
+		}
+	})
+
+	t.Run("GT_SMTP_PASS env var takes precedence over Xdg file", func(t *testing.T) {
+		dir := t.TempDir()
+
+		xdgConfig := filepath.Join(dir, "config")
+		passPath := filepath.Join(xdgConfig, "gastown", "smtp-pass")
+		if err := os.MkdirAll(filepath.Dir(passPath), 0700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(passPath, []byte("file-app-pass"), 0600); err != nil {
+			t.Fatal(err)
+		}
+
+		os.Setenv("XDG_CONFIG_HOME", xdgConfig)
+		defer os.Unsetenv("XDG_CONFIG_HOME")
+		os.Setenv("GT_SMTP_PASS", "env-app-pass")
+		defer os.Unsetenv("GT_SMTP_PASS")
+
+		path := filepath.Join(dir, "settings", "escalation.json")
+		original := &EscalationConfig{
+			Type:    "escalation",
+			Version: 1,
+			Contacts: EscalationContacts{
+				HumanEmail: "marlonsc@gmail.com",
+			},
+			Routes: map[string][]string{
+				SeverityLow: {"bead"},
+			},
+		}
+		if err := SaveEscalationConfig(path, original); err != nil {
+			t.Fatalf("SaveEscalationConfig: %v", err)
+		}
+
+		cfg, err := LoadOrCreateEscalationConfig(path)
+		if err != nil {
+			t.Fatalf("LoadOrCreateEscalationConfig: %v", err)
+		}
+
+		if cfg.Contacts.SMTPPass != "env-app-pass" {
+			t.Errorf("SMTPPass = %q, want %q (env should take precedence)", cfg.Contacts.SMTPPass, "env-app-pass")
+		}
+	})
+
+	t.Run("JSON smtp_pass takes precedence over Xdg file", func(t *testing.T) {
+		dir := t.TempDir()
+
+		xdgConfig := filepath.Join(dir, "config")
+		passPath := filepath.Join(xdgConfig, "gastown", "smtp-pass")
+		if err := os.MkdirAll(filepath.Dir(passPath), 0700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(passPath, []byte("file-app-pass"), 0600); err != nil {
+			t.Fatal(err)
+		}
+
+		os.Setenv("XDG_CONFIG_HOME", xdgConfig)
+		defer os.Unsetenv("XDG_CONFIG_HOME")
+		os.Unsetenv("GT_SMTP_PASS")
+
+		path := filepath.Join(dir, "settings", "escalation.json")
+		original := &EscalationConfig{
+			Type:    "escalation",
+			Version: 1,
+			Contacts: EscalationContacts{
+				SMTPPass: "json-pass",
+			},
+			Routes: map[string][]string{
+				SeverityLow: {"bead"},
+			},
+		}
+		if err := SaveEscalationConfig(path, original); err != nil {
+			t.Fatalf("SaveEscalationConfig: %v", err)
+		}
+
+		cfg, err := LoadOrCreateEscalationConfig(path)
+		if err != nil {
+			t.Fatalf("LoadOrCreateEscalationConfig: %v", err)
+		}
+
+		if cfg.Contacts.SMTPPass != "json-pass" {
+			t.Errorf("SMTPPass = %q, want %q (json should take precedence)", cfg.Contacts.SMTPPass, "json-pass")
+		}
+	})
+}
+
+func TestLoadOrCreateEscalationConfig_SMTPPassEnvDoesNotOverrideXdg(t *testing.T) {
+	t.Run("JSON empty, env empty, Xdg file present", func(t *testing.T) {
+		dir := t.TempDir()
+
+		xdgConfig := filepath.Join(dir, "config")
+		passPath := filepath.Join(xdgConfig, "gastown", "smtp-pass")
+		if err := os.MkdirAll(filepath.Dir(passPath), 0700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(passPath, []byte("xdg-only-pass"), 0600); err != nil {
+			t.Fatal(err)
+		}
+
+		os.Setenv("XDG_CONFIG_HOME", xdgConfig)
+		defer os.Unsetenv("XDG_CONFIG_HOME")
+		os.Unsetenv("GT_SMTP_PASS")
+
+		path := filepath.Join(dir, "settings", "escalation.json")
+		original := &EscalationConfig{
+			Type:    "escalation",
+			Version: 1,
+			Contacts: EscalationContacts{
+				HumanEmail: "marlonsc@gmail.com",
+			},
+			Routes: map[string][]string{
+				SeverityLow: {"bead"},
+			},
+		}
+		if err := SaveEscalationConfig(path, original); err != nil {
+			t.Fatalf("SaveEscalationConfig: %v", err)
+		}
+
+		cfg, err := LoadOrCreateEscalationConfig(path)
+		if err != nil {
+			t.Fatalf("LoadOrCreateEscalationConfig: %v", err)
+		}
+
+		if cfg.Contacts.SMTPPass != "xdg-only-pass" {
+			t.Errorf("SMTPPass = %q, want %q", cfg.Contacts.SMTPPass, "xdg-only-pass")
+		}
+	})
+}
+
+func TestLoadOrCreateEscalationConfig_SMTPPassAllMethodsMissing(t *testing.T) {
+	dir := t.TempDir()
+
+	os.Unsetenv("GT_SMTP_PASS")
+	// Isolate from the real user XDG config (may contain ~/.config/gastown/smtp-pass).
+	os.Setenv("XDG_CONFIG_HOME", filepath.Join(dir, "empty-config"))
+	defer os.Unsetenv("XDG_CONFIG_HOME")
+
+	path := filepath.Join(dir, "settings", "escalation.json")
+	original := &EscalationConfig{
+		Type:    "escalation",
+		Version: 1,
+		Contacts: EscalationContacts{
+			HumanEmail: "marlonsc@gmail.com",
+		},
+		Routes: map[string][]string{
+			SeverityLow: {"bead"},
+		},
+	}
+	if err := SaveEscalationConfig(path, original); err != nil {
+		t.Fatalf("SaveEscalationConfig: %v", err)
+	}
+
+	cfg, err := LoadOrCreateEscalationConfig(path)
+	if err != nil {
+		t.Fatalf("LoadOrCreateEscalationConfig: %v", err)
+	}
+
+	if cfg.Contacts.SMTPPass != "" {
+		t.Errorf("SMTPPass = %q, want empty string", cfg.Contacts.SMTPPass)
+	}
+}
+
+func TestLoadOrCreateEscalationConfig_SMTPPassXdgFileWithWrongPermissions(t *testing.T) {
+	dir := t.TempDir()
+
+	xdgConfig := filepath.Join(dir, "config")
+	passPath := filepath.Join(xdgConfig, "gastown", "smtp-pass")
+	if err := os.MkdirAll(filepath.Dir(passPath), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(passPath, []byte("pass\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	os.Setenv("XDG_CONFIG_HOME", xdgConfig)
+	defer os.Unsetenv("XDG_CONFIG_HOME")
+	os.Unsetenv("GT_SMTP_PASS")
+
+	path := filepath.Join(dir, "settings", "escalation.json")
+	original := &EscalationConfig{
+		Type:    "escalation",
+		Version: 1,
+		Contacts: EscalationContacts{
+			HumanEmail: "marlonsc@gmail.com",
+		},
+		Routes: map[string][]string{
+			SeverityLow: {"bead"},
+		},
+	}
+	if err := SaveEscalationConfig(path, original); err != nil {
+		t.Fatalf("SaveEscalationConfig: %v", err)
+	}
+
+	cfg, err := LoadOrCreateEscalationConfig(path)
+	if err != nil {
+		t.Fatalf("LoadOrCreateEscalationConfig: %v", err)
+	}
+
+	// Group/world-readable secret files are rejected for security.
+	if cfg.Contacts.SMTPPass != "" {
+		t.Errorf("SMTPPass = %q, want empty (0644 file must be rejected)", cfg.Contacts.SMTPPass)
+	}
+}
+
 func TestEscalationConfigPath(t *testing.T) {
 	t.Parallel()
 

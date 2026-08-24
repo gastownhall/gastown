@@ -25,7 +25,48 @@ import (
 // Circular redirect detection: If the resolved path equals the original beads directory,
 // this indicates an errant redirect file that should be removed. The function logs a
 // warning and returns the original beads directory.
+//
+// If workDir has no .beads directory at all (no redirect, nothing on disk), a plain
+// `bd` call from workDir would still succeed by walking up ancestor directories
+// looking for one that does (bd's own findDatabaseInTree). Callers that pin
+// BEADS_DIR to this function's result must resolve to that same ancestor, or they
+// short-circuit bd's fallback and fail where a direct bd call would succeed
+// (gtf-g1p). So when the direct resolution doesn't exist on disk, this also walks
+// up workDir's ancestors before giving up.
 func ResolveBeadsDir(workDir string) string {
+	beadsDir := resolveBeadsDirLocal(workDir)
+	if info, err := os.Stat(beadsDir); err == nil && info.IsDir() {
+		return beadsDir
+	}
+	if ancestor := findAncestorBeadsDir(workDir); ancestor != "" {
+		return ancestor
+	}
+	return beadsDir
+}
+
+// ResolveBeadsDirNoAncestor resolves workDir's own .beads directory, following
+// any redirect chain, WITHOUT falling back to an ancestor when the result does
+// not exist on disk.
+//
+// Use this instead of ResolveBeadsDir whenever the caller means one specific
+// scope — a named rig, say — rather than "whichever database a bd call from
+// here would reach". ResolveBeadsDir's ancestor walk exists so a pinned
+// BEADS_DIR matches bd's own findDatabaseInTree fallback (gtf-g1p); for a
+// scoped lookup that same walk silently retargets the query at the town
+// database, which is a wrong answer rather than a missing one.
+//
+// Returns "" when workDir is empty, so callers can distinguish "no scope" from
+// a resolved path.
+func ResolveBeadsDirNoAncestor(workDir string) string {
+	if strings.TrimSpace(workDir) == "" {
+		return ""
+	}
+	return resolveBeadsDirLocal(workDir)
+}
+
+// resolveBeadsDirLocal resolves workDir's own .beads directory, following any
+// redirect chain, without walking up to ancestor directories.
+func resolveBeadsDirLocal(workDir string) string {
 	if filepath.Base(workDir) == ".beads" {
 		workDir = filepath.Dir(workDir)
 	}
@@ -69,6 +110,25 @@ func ResolveBeadsDir(workDir string) string {
 	// This is intentional for the rig-level redirect architecture.
 	// Limit depth to prevent infinite loops from misconfigured redirects.
 	return resolveBeadsDirWithDepth(resolved, 3)
+}
+
+// findAncestorBeadsDir walks up from workDir's parent looking for a directory
+// whose .beads/ (or its redirect target) exists on disk, mirroring the ancestor
+// search a direct `bd` call performs when BEADS_DIR is unset. Returns "" if no
+// ancestor has one, all the way up to the filesystem root.
+func findAncestorBeadsDir(workDir string) string {
+	dir := filepath.Dir(filepath.Clean(workDir))
+	for {
+		candidate := resolveBeadsDirLocal(dir)
+		if info, err := os.Stat(candidate); err == nil && info.IsDir() {
+			return candidate
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			return ""
+		}
+		dir = parent
+	}
 }
 
 // resolveBeadsDirWithDepth follows redirect chains with a depth limit.

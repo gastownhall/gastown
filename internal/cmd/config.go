@@ -625,6 +625,8 @@ Supported keys:
   dolt.port                   Dolt SQL server port (default: 3307). Set this when
                               another Gas Town instance is using the same port.
                               Writes GT_DOLT_PORT to mayor/daemon.json env section.
+	  dolt.external               Mark the configured Dolt server as externally managed.
+	                              This preserves a loopback shared server without lifecycle control.
   scheduler.max_polecats      Dispatch mode: -1 = direct (default), N > 0 = deferred
   scheduler.batch_size        Beads per heartbeat (default: 1)
   scheduler.spawn_delay       Delay between spawns (default: 0s)
@@ -808,11 +810,30 @@ func runConfigSet(cmd *cobra.Command, args []string) error {
 		fmt.Printf("  %s\n", style.Dim.Render("Restart the daemon for the change to take effect: gt daemon restart"))
 		return nil
 
+	case "dolt.external":
+		external, err := parseBool(value)
+		if err != nil {
+			return fmt.Errorf("invalid value for %s: %w (expected true/false)", key, err)
+		}
+		patrolCfg := daemon.LoadPatrolConfig(townRoot)
+		if patrolCfg == nil {
+			patrolCfg = &daemon.DaemonPatrolConfig{Type: "daemon-patrol-config", Version: 1}
+		}
+		if patrolCfg.Env == nil {
+			patrolCfg.Env = make(map[string]string)
+		}
+		patrolCfg.Env["GT_DOLT_EXTERNAL"] = strconv.FormatBool(external)
+		if err := daemon.SavePatrolConfig(townRoot, patrolCfg); err != nil {
+			return fmt.Errorf("saving daemon.json: %w", err)
+		}
+		fmt.Printf("Set GT_DOLT_EXTERNAL = %t in mayor/daemon.json\n", external)
+		return nil
+
 	default:
 		if strings.HasPrefix(key, "lifecycle.") {
 			return setLifecycleConfig(townRoot, key, value)
 		}
-		return fmt.Errorf("unknown config key: %q\n\nSupported keys:\n  convoy.notify_on_complete\n  cli_theme\n  default_agent\n  dolt.port\n  scheduler.max_polecats\n  scheduler.batch_size\n  scheduler.spawn_delay\n  polecat.target_clean_policy\n  maintenance.window\n  maintenance.interval\n  maintenance.threshold\n  lifecycle.reaper.*\n  lifecycle.compactor.*\n  lifecycle.doctor.*\n  lifecycle.backup.*", key)
+		return fmt.Errorf("unknown config key: %q\n\nSupported keys:\n  convoy.notify_on_complete\n  cli_theme\n  default_agent\n  dolt.port\n  dolt.external\n  scheduler.max_polecats\n  scheduler.batch_size\n  scheduler.spawn_delay\n  polecat.target_clean_policy\n  maintenance.window\n  maintenance.interval\n  maintenance.threshold\n  lifecycle.reaper.*\n  lifecycle.compactor.*\n  lifecycle.doctor.*\n  lifecycle.backup.*", key)
 	}
 
 	if err := config.SaveTownSettings(settingsPath, townSettings); err != nil {
@@ -900,11 +921,19 @@ func runConfigGet(cmd *cobra.Command, args []string) error {
 		fmt.Println("3307") // DefaultPort
 		return nil
 
+	case "dolt.external":
+		if config.ResolveDoltExternal(townRoot) {
+			fmt.Println("true")
+			return nil
+		}
+		fmt.Println("false")
+		return nil
+
 	default:
 		if strings.HasPrefix(key, "lifecycle.") {
 			return getLifecycleConfig(townRoot, key)
 		}
-		return fmt.Errorf("unknown config key: %q\n\nSupported keys:\n  convoy.notify_on_complete\n  cli_theme\n  default_agent\n  dolt.port\n  scheduler.max_polecats\n  scheduler.batch_size\n  scheduler.spawn_delay\n  polecat.target_clean_policy\n  maintenance.window\n  maintenance.interval\n  maintenance.threshold\n  lifecycle.reaper.*\n  lifecycle.compactor.*\n  lifecycle.doctor.*\n  lifecycle.backup.*", key)
+		return fmt.Errorf("unknown config key: %q\n\nSupported keys:\n  convoy.notify_on_complete\n  cli_theme\n  default_agent\n  dolt.port\n  dolt.external\n  scheduler.max_polecats\n  scheduler.batch_size\n  scheduler.spawn_delay\n  polecat.target_clean_policy\n  maintenance.window\n  maintenance.interval\n  maintenance.threshold\n  lifecycle.reaper.*\n  lifecycle.compactor.*\n  lifecycle.doctor.*\n  lifecycle.backup.*", key)
 	}
 
 	fmt.Println(value)

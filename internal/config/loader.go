@@ -2824,7 +2824,51 @@ func LoadEscalationConfig(path string) (*EscalationConfig, error) {
 		return nil, err
 	}
 
+	// Fall back to GT_SMTP_PASS environment variable for SMTP password
+	// if not configured in the JSON file. This keeps secrets out of config.
+	if config.Contacts.SMTPPass == "" {
+		config.Contacts.SMTPPass = os.Getenv("GT_SMTP_PASS")
+	}
+
+	// Fall back to XDG config file (~/.config/gastown/smtp-pass) for SMTP password.
+	// This is a machine-local store for per-user secrets, not version-controlled.
+	if config.Contacts.SMTPPass == "" {
+		if p := loadSMTPPassFromXdg(); p != "" {
+			config.Contacts.SMTPPass = p
+		}
+	}
+
 	return &config, nil
+}
+
+// loadSMTPPassFromXdg reads the SMTP password from the XDG config directory.
+// Path: $XDG_CONFIG_HOME/gastown/smtp-pass  (default ~/.config/gastown/smtp-pass)
+// The file must have owner-only permissions (0600) — group/world-readable
+// secret files are rejected to prevent credential leakage.
+func loadSMTPPassFromXdg() string {
+	xdgConfig := os.Getenv("XDG_CONFIG_HOME")
+	if xdgConfig == "" {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return ""
+		}
+		xdgConfig = filepath.Join(home, ".config")
+	}
+
+	passPath := filepath.Join(xdgConfig, "gastown", "smtp-pass")
+	info, err := os.Stat(passPath)
+	if err != nil {
+		return ""
+	}
+	if info.Mode().Perm()&0o077 != 0 {
+		fmt.Fprintf(os.Stderr, "warning: %s must have 0600 permissions; refusing to read SMTP password\n", passPath)
+		return ""
+	}
+	data, err := os.ReadFile(passPath)
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(data))
 }
 
 // LoadOrCreateEscalationConfig loads the escalation config, creating a default if not found.

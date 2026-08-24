@@ -1,6 +1,7 @@
 package tmux
 
 import (
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -8,6 +9,34 @@ import (
 
 // Tests for the two-step session creation (new-session + respawn-pane) and
 // checkSessionAfterCreate health check introduced to eliminate blank windows.
+
+func TestTmuxCommandArguments(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name    string
+		command string
+		want    []string
+	}{
+		{name: "single word", command: "sleep", want: []string{"env", "sleep"}},
+		{name: "simple command", command: "sleep 300", want: []string{"sleep", "300"}},
+		{name: "explicit exec", command: "exec sleep", want: []string{"env", "sleep"}},
+		{name: "simple flags", command: "env GT_TEST=1 sleep 300", want: []string{"env", "GT_TEST=1", "sleep", "300"}},
+		{name: "quoted argument", command: `printf '%s\n' value`, want: []string{`printf '%s\n' value`}},
+		{name: "compound command", command: "sleep 300 & sleep 300", want: []string{"sleep 300 & sleep 300"}},
+		{name: "expansion", command: "echo $HOME", want: []string{"echo $HOME"}},
+		{name: "assignment prefix", command: "GT_TEST=1 sleep 300", want: []string{"GT_TEST=1 sleep 300"}},
+		{name: "newline", command: "echo one\necho two", want: []string{"echo one\necho two"}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := tmuxCommandArguments(tt.command); !reflect.DeepEqual(got, tt.want) {
+				t.Fatalf("tmuxCommandArguments(%q) = %#v, want %#v", tt.command, got, tt.want)
+			}
+		})
+	}
+}
 
 // TestNewSessionWithCommand_BadBinary verifies that NewSessionWithCommand returns
 // an error when the command binary doesn't exist, instead of leaving a dead session.
