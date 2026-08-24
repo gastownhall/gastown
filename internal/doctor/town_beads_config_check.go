@@ -75,7 +75,7 @@ func (c *TownBeadsConfigCheck) Run(ctx *CheckContext) *CheckResult {
 			Name:     c.Name(),
 			Status:   StatusWarning,
 			Message:  "Town beads config.yaml must disable export.auto",
-			Details:  []string{"Fix will set export.auto: \"false\" to prevent non-actionable bd auto-export git-add warnings in server-mode runtime beads dirs."},
+			Details:  []string{"Fix will ensure export.auto: \"false\" (and normalize required defaults like prefix/issue-prefix and dolt.idle-timeout) to prevent non-actionable bd auto-export git-add warnings in server-mode runtime beads dirs."},
 			FixHint:  "Run 'gt doctor --fix' to repair config.yaml",
 			Category: c.CheckCategory,
 		}
