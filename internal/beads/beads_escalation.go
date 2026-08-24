@@ -300,8 +300,15 @@ func (b *Beads) GetEscalationBead(id string) (*Issue, *EscalationFields, error) 
 }
 
 // ListEscalations returns all open escalation beads.
+//
+// Escalations are created as ephemeral wisps (gtf-1cz: adb7fb32), so the
+// issues table only holds their mail-delivery mirrors, which carry gt:message
+// and are dropped by filterEscalationRecords. The durable, authoritative
+// record is the wisp, and bd list hides ephemeral wisps unless --include-infra
+// is passed. Without it, every escalation is invisible and "No escalations
+// found" is printed despite open escalons existing (hq-vcv).
 func (b *Beads) ListEscalations() ([]*Issue, error) {
-	out, err := b.run("list", "--label=gt:escalation", "--status=open", "--json")
+	out, err := b.run("list", "--label=gt:escalation", "--status=open", "--include-infra", "--json")
 	if err != nil {
 		return nil, err
 	}
@@ -311,10 +318,16 @@ func (b *Beads) ListEscalations() ([]*Issue, error) {
 		return nil, fmt.Errorf("parsing bd list output: %w", err)
 	}
 
-	return filterEscalationRecords(issues), nil
+	return FilterEscalationRecords(issues), nil
 }
 
 // ListEscalationsByFingerprint returns open escalation beads matching a stable fingerprint label.
+//
+// The fingerprint label lives on the ephemeral escalation wisp, not on the mail
+// mirror, so --include-infra is required to query wisps (see ListEscalations).
+// Without it, duplicate-suppression at creation time always returns no match and
+// storms of repeated escalations escape (the stale-threshold/reescalation
+// backstop depends on this same path).
 func (b *Beads) ListEscalationsByFingerprint(fingerprintLabel string) ([]*Issue, error) {
 	if fingerprintLabel == "" {
 		return nil, nil
@@ -323,6 +336,7 @@ func (b *Beads) ListEscalationsByFingerprint(fingerprintLabel string) ([]*Issue,
 		"--label=gt:escalation",
 		"--label="+fingerprintLabel,
 		"--status=open",
+		"--include-infra",
 		"--json",
 	)
 	if err != nil {
@@ -334,15 +348,19 @@ func (b *Beads) ListEscalationsByFingerprint(fingerprintLabel string) ([]*Issue,
 		return nil, fmt.Errorf("parsing bd list output: %w", err)
 	}
 
-	return filterEscalationRecords(issues), nil
+	return FilterEscalationRecords(issues), nil
 }
 
 // ListEscalationsBySeverity returns open escalation beads filtered by severity.
+//
+// --include-infra is required so wisp-backed escalations surface (see
+// ListEscalations). Severity labels are applied to the wisp at creation.
 func (b *Beads) ListEscalationsBySeverity(severity string) ([]*Issue, error) {
 	out, err := b.run("list",
 		"--label=gt:escalation",
 		"--label=severity:"+severity,
 		"--status=open",
+		"--include-infra",
 		"--json",
 	)
 	if err != nil {
@@ -354,10 +372,10 @@ func (b *Beads) ListEscalationsBySeverity(severity string) ([]*Issue, error) {
 		return nil, fmt.Errorf("parsing bd list output: %w", err)
 	}
 
-	return filterEscalationRecords(issues), nil
+	return FilterEscalationRecords(issues), nil
 }
 
-func filterEscalationRecords(issues []*Issue) []*Issue {
+func FilterEscalationRecords(issues []*Issue) []*Issue {
 	filtered := issues[:0]
 	for _, issue := range issues {
 		if HasLabel(issue, "gt:message") {
