@@ -76,6 +76,7 @@ Rig checks (with --rig flag):
   - rig-is-git-repo          Verify rig is a valid git repository
   - git-exclude-configured   Check .git/info/exclude has Gas Town dirs (fixable)
   - bare-repo-exists         Verify .repo.git exists when worktrees depend on it (fixable)
+  - bare-repo-alternates     Verify .repo.git objects don't depend on a removed external alternates path (fixable)
   - witness-exists           Verify witness/ structure exists (fixable)
   - refinery-exists          Verify refinery/ structure exists (fixable)
   - mayor-clone-exists       Verify mayor/rig/ clone exists (fixable)
