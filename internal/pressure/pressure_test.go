@@ -1,8 +1,31 @@
 package pressure
 
 import (
+	"errors"
+	"os"
+	"path/filepath"
 	"testing"
 )
+
+// townRoot walks up from cwd looking for a Gas Town town root marker
+// (mayor/rigs.json). Self-contained: pressure must not depend on internal/
+// workspace to stay cycle-free and testable.
+func townRoot() string {
+	dir, err := os.Getwd()
+	if err != nil {
+		return ""
+	}
+	for {
+		if _, err := os.Stat(filepath.Join(dir, "mayor", "rigs.json")); err == nil {
+			return dir
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			return ""
+		}
+		dir = parent
+	}
+}
 
 func TestIsAgentSession(t *testing.T) {
 	tests := []struct {
@@ -130,5 +153,32 @@ func TestCheckHost_LiveHostDefersImpossibleThreshold(t *testing.T) {
 	_, ok := Check(Threshold{MemAvailableGB: 1e9})
 	if ok {
 		t.Fatal("expected live host to fail an impossible memory floor; the gate must defer, not allow an unchecked spawn")
+	}
+}
+
+// TestCheckHostSpawn_RealTownConfigIsSafe proves the spawn gate end-to-end
+// against the RESOLVED production town config (config load + threshold + LIVE
+// host sample) WITHOUT spawning anything — critical: this test must never
+// worsen host saturation by launching polecats. It asserts the gate honors the
+// current load either by deferring (DeferredError) or by returning nil when the
+// host is healthy. Both outcomes are valid; a panic or a non-deferred failure
+// to read config is a regression.
+func TestCheckHostSpawn_RealTownConfigIsSafe(t *testing.T) {
+	root := townRoot()
+	if root == "" {
+		t.Skipf("no Gas Town town root from this test cwd (not a real incident)")
+	}
+	err := CheckHostSpawn(root)
+	var derr *DeferredError
+	switch {
+	case err == nil:
+		// healthy host: gate allows. Acceptable.
+	case errors.As(err, &derr):
+		// pressured host: gate defers with a stable, non-empty reason. Acceptable.
+		if derr.Reason == "" {
+			t.Fatalf("deferred spawn must carry a stable reason; got empty")
+		}
+	default:
+		t.Fatalf("CheckHostSpawn must only return nil or *DeferredError; got %T: %v", err, err)
 	}
 }
