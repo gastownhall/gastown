@@ -376,12 +376,37 @@ func TestReapOwnedTestServersHelperProcess(t *testing.T) {
 	os.Exit(0)
 }
 
+// syncBuffer is a concurrency-safe io.Writer + String(), needed because
+// os/exec copies a live child's stdout/stderr into the writer from its own
+// goroutine while the test concurrently reads it for diagnostics.
+type syncBuffer struct {
+	mu  sync.Mutex
+	buf bytes.Buffer
+}
+
+func (b *syncBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.Write(p)
+}
+
+func (b *syncBuffer) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.String()
+}
+
 // spawnRealDoltSQLServer starts a real, detached `dolt sql-server` process
-// rooted at dataDir and waits until `ps` reports it as a genuine dolt
-// sql-server process. It never registers its own teardown beyond a
-// best-effort kill — the whole point of the tests that call this is to prove
-// some other reaper (not the test itself) terminates it.
-func spawnRealDoltSQLServer(t *testing.T, dataDir string) int {
+// rooted at dataDir and waits until it has logged that it is actually
+// serving connections — not merely that the process exists — before
+// returning. Tests that immediately yank dataDir out from under a
+// still-bootstrapping server (creating its superuser, binding its socket)
+// hit dolt's own internal races rather than the gtf-4cj leak scenario, which
+// is a server that has been fully up and serving for a while. It never
+// registers its own teardown beyond a best-effort kill — the whole point of
+// the tests that call this is to prove some other reaper (not the test
+// itself) terminates it.
+func spawnRealDoltSQLServer(t *testing.T, dataDir string) (int, *syncBuffer) {
 	t.Helper()
 	if _, err := exec.LookPath("dolt"); err != nil {
 		t.Skip("dolt not installed, skipping real dolt sql-server test")
@@ -390,31 +415,32 @@ func spawnRealDoltSQLServer(t *testing.T, dataDir string) int {
 	port := FindFreePort(30000)
 	cmd := exec.Command("dolt", "sql-server", "--port", strconv.Itoa(port), "--data-dir", dataDir)
 	cmd.Dir = dataDir
+	out := &syncBuffer{}
+	cmd.Stdout = out
+	cmd.Stderr = out
 	if err := cmd.Start(); err != nil {
 		t.Fatalf("starting real dolt sql-server: %v", err)
 	}
 	pid := cmd.Process.Pid
-	// Reap the OS-level exit status ourselves once it dies so it never lingers
-	// as a zombie; this does not keep it alive past whatever kills it.
-	go func() { _, _ = cmd.Process.Wait() }()
 	t.Cleanup(func() {
 		if processIsAlive(pid) {
 			_ = cmd.Process.Kill()
 		}
+		_, _ = cmd.Process.Wait()
 	})
 
-	deadline := time.Now().Add(10 * time.Second)
+	deadline := time.Now().Add(15 * time.Second)
 	for time.Now().Before(deadline) {
 		if !processIsAlive(pid) {
-			t.Fatalf("dolt sql-server (PID %d) exited before becoming ready", pid)
+			t.Fatalf("dolt sql-server (PID %d) exited before becoming ready, output:\n%s", pid, out.String())
 		}
-		if isDoltSQLServerProcess(pid) {
-			return pid
+		if strings.Contains(out.String(), "Accepting connections") {
+			return pid, out
 		}
 		time.Sleep(100 * time.Millisecond)
 	}
-	t.Fatalf("dolt sql-server (PID %d) never became visible as a dolt sql-server process", pid)
-	return 0
+	t.Fatalf("dolt sql-server (PID %d) never logged readiness, output:\n%s", pid, out.String())
+	return 0, out
 }
 
 // TestReapOwnedTestServersKillsRealDoltServer proves teardown does not merely
@@ -429,7 +455,7 @@ func TestReapOwnedTestServersKillsRealDoltServer(t *testing.T) {
 		t.Fatalf("creating data dir: %v", err)
 	}
 
-	pid := spawnRealDoltSQLServer(t, config.DataDir)
+	pid, _ := spawnRealDoltSQLServer(t, config.DataDir)
 
 	stopped, err := ReapOwnedTestServers(townRoot)
 	if err != nil {
@@ -453,7 +479,7 @@ func TestReapOwnedTestServersKillsRealDoltServer(t *testing.T) {
 func TestReapOrphanedDeletedDoltServersKillsProcessWithDeletedCWD(t *testing.T) {
 	dataDir := t.TempDir()
 
-	pid := spawnRealDoltSQLServer(t, dataDir)
+	pid, out := spawnRealDoltSQLServer(t, dataDir)
 
 	if err := os.RemoveAll(dataDir); err != nil {
 		t.Fatalf("removing data dir out from under the running server: %v", err)
@@ -475,7 +501,7 @@ func TestReapOrphanedDeletedDoltServersKillsProcessWithDeletedCWD(t *testing.T) 
 		t.Fatalf("ReapOrphanedDeletedDoltServers: %v", err)
 	}
 	if wasAlive && stopped < 1 {
-		t.Fatalf("PID %d was alive with a deleted CWD but ReapOrphanedDeletedDoltServers stopped = %d, want at least 1", pid, stopped)
+		t.Fatalf("PID %d was alive with a deleted CWD but ReapOrphanedDeletedDoltServers stopped = %d, want at least 1; output:\n%s", pid, stopped, out.String())
 	}
 	if processIsAlive(pid) {
 		t.Fatalf("dolt sql-server PID %d with deleted CWD survived ReapOrphanedDeletedDoltServers", pid)
