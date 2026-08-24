@@ -1585,6 +1585,81 @@ func TestInitSubmodules_WithSubmodules(t *testing.T) {
 	}
 }
 
+func TestCheckoutSubmodulesOnBranch_NoSubmodules(t *testing.T) {
+	dir := initTestRepo(t)
+	// Should be a no-op, not an error
+	if err := CheckoutSubmodulesOnBranch(dir, "polecat/foo/bar+1"); err != nil {
+		t.Fatalf("CheckoutSubmodulesOnBranch on repo without submodules: %v", err)
+	}
+}
+
+// TestCheckoutSubmodulesOnBranch_ReplacesDetachedHEAD covers gtf-2sq: after
+// `git submodule update --init` (what InitSubmodules runs), a fresh worktree's
+// submodule sits on a detached HEAD with no branch for a polecat to commit
+// submodule work onto. CheckoutSubmodulesOnBranch must move it onto a named
+// branch, matching the parent worktree's lane branch, without losing content.
+func TestCheckoutSubmodulesOnBranch_ReplacesDetachedHEAD(t *testing.T) {
+	parent, _ := initTestRepoWithSubmodule(t)
+
+	// Simulate a fresh worktree clone the way WorktreeAddFromRef does: clone,
+	// then InitSubmodules, which leaves the submodule on detached HEAD.
+	tmp := t.TempDir()
+	cloneDest := filepath.Join(tmp, "clone")
+	cmd := exec.Command("git", "-c", "protocol.file.allow=always", "clone", parent, cloneDest)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("clone: %v\n%s", err, out)
+	}
+	t.Setenv("GIT_CONFIG_COUNT", "1")
+	t.Setenv("GIT_CONFIG_KEY_0", "protocol.file.allow")
+	t.Setenv("GIT_CONFIG_VALUE_0", "always")
+
+	if err := InitSubmodules(cloneDest); err != nil {
+		t.Fatalf("InitSubmodules: %v", err)
+	}
+
+	subPath := filepath.Join(cloneDest, "libs", "sub")
+	branchCmd := exec.Command("git", "-C", subPath, "branch", "--show-current")
+	out, err := branchCmd.Output()
+	if err != nil {
+		t.Fatalf("git branch --show-current: %v", err)
+	}
+	if strings.TrimSpace(string(out)) != "" {
+		t.Fatalf("expected submodule on detached HEAD before fix, got branch %q", strings.TrimSpace(string(out)))
+	}
+
+	const laneBranch = "polecat/angharad/gtf-2sq+abc123"
+	if err := CheckoutSubmodulesOnBranch(cloneDest, laneBranch); err != nil {
+		t.Fatalf("CheckoutSubmodulesOnBranch: %v", err)
+	}
+
+	branchCmd = exec.Command("git", "-C", subPath, "branch", "--show-current")
+	out, err = branchCmd.Output()
+	if err != nil {
+		t.Fatalf("git branch --show-current after fix: %v", err)
+	}
+	if got := strings.TrimSpace(string(out)); got != laneBranch {
+		t.Fatalf("expected submodule on branch %q, got %q (still detached or wrong branch)", laneBranch, got)
+	}
+
+	// Content must still be present — checkout -f must not blow away the tree.
+	if _, err := os.Stat(filepath.Join(subPath, "lib.go")); err != nil {
+		t.Fatalf("expected submodule content to survive checkout: %v", err)
+	}
+
+	// A polecat commit inside the submodule must land on the named branch,
+	// not vanish into a detached-HEAD state with no ref pointing at it.
+	if err := os.WriteFile(filepath.Join(subPath, "new.go"), []byte("package lib\n"), 0644); err != nil {
+		t.Fatalf("write new sub file: %v", err)
+	}
+	runGit(t, subPath, "add", ".")
+	runGit(t, subPath, "-c", "user.email=test@test.com", "-c", "user.name=Test User", "commit", "-m", "submodule work")
+
+	logCmd := exec.Command("git", "-C", subPath, "log", "-1", "--format=%H", laneBranch)
+	if out, err := logCmd.Output(); err != nil || strings.TrimSpace(string(out)) == "" {
+		t.Fatalf("expected commit reachable from branch %s: err=%v out=%s", laneBranch, err, out)
+	}
+}
+
 func TestSubmoduleChanges(t *testing.T) {
 	parent, subRemote := initTestRepoWithSubmodule(t)
 

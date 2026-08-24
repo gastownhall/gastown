@@ -3335,6 +3335,82 @@ func InitSubmodules(repoPath string, referencePath ...string) error {
 	return nil
 }
 
+// CheckoutSubmodulesOnBranch checks out every initialized submodule (recursively)
+// onto a local branch named branchName, replacing the detached HEAD state that
+// `git submodule update --init` leaves behind. Without a named branch, submodule
+// commits a polecat makes have no ref to land on: they're at risk of being lost
+// (nothing but the reflog holds them) and the parent worktree's WIP auto-checkpoint
+// never sees them, since it only commits at the superproject level (gtf-2sq).
+// Uses checkout -f to also materialize working-tree content that a shared
+// --reference clone sometimes leaves un-checked-out.
+// No-op if the repo has no tracked .gitmodules.
+func CheckoutSubmodulesOnBranch(repoPath, branchName string) error {
+	if !hasTrackedGitmodules(repoPath) {
+		return nil
+	}
+	if err := EnsureSafeMutationWorkDir(repoPath); err != nil {
+		return err
+	}
+
+	paths, err := submodulePaths(repoPath)
+	if err != nil {
+		return fmt.Errorf("listing submodule paths in %s: %w", repoPath, err)
+	}
+
+	for _, p := range paths {
+		subPath := filepath.Join(repoPath, p)
+		if _, statErr := os.Stat(filepath.Join(subPath, ".git")); statErr != nil {
+			// Not initialized — InitSubmodules should have handled this already,
+			// but don't fail spawn over a submodule that legitimately has no
+			// content for this ref (e.g. added on a different branch).
+			continue
+		}
+
+		cmd := exec.Command("git", "-C", subPath, "checkout", "-f", "-B", branchName)
+		util.SetDetachedProcessGroup(cmd)
+		var stderr bytes.Buffer
+		cmd.Stderr = &stderr
+		if runErr := cmd.Run(); runErr != nil {
+			return fmt.Errorf("checking out submodule %s onto branch %s: %s", p, branchName, strings.TrimSpace(stderr.String()))
+		}
+
+		// Recurse: this submodule may itself have submodules, already
+		// initialized by --recursive in InitSubmodules.
+		if recErr := CheckoutSubmodulesOnBranch(subPath, branchName); recErr != nil {
+			return recErr
+		}
+	}
+	return nil
+}
+
+// submodulePaths returns the top-level submodule paths declared in .gitmodules,
+// relative to repoPath. Returns nil (not an error) if there are no entries.
+func submodulePaths(repoPath string) ([]string, error) {
+	gitmodules := filepath.Join(repoPath, ".gitmodules")
+	cmd := exec.Command("git", "config", "-f", gitmodules, "--get-regexp", `^submodule\..*\.path$`)
+	util.SetDetachedProcessGroup(cmd)
+	out, err := cmd.Output()
+	if err != nil {
+		// Exit code 1 means no matching entries — not an error condition.
+		if exitErr, ok := err.(*exec.ExitError); ok && exitErr.ExitCode() == 1 {
+			return nil, nil
+		}
+		return nil, err
+	}
+
+	var paths []string
+	for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+		if line == "" {
+			continue
+		}
+		parts := strings.SplitN(line, " ", 2)
+		if len(parts) == 2 {
+			paths = append(paths, strings.TrimSpace(parts[1]))
+		}
+	}
+	return paths, nil
+}
+
 // hasTrackedGitmodules checks whether .gitmodules exists on disk AND is tracked
 // by git. After a submodule-to-monorepo migration, .gitmodules may linger as an
 // untracked file (e.g., in a stale mayor/rig clone or bare repo worktree) even
