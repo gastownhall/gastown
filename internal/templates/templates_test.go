@@ -123,6 +123,52 @@ func TestRenderRole_PolecatForkRigUsesPRWorkflow(t *testing.T) {
 	}
 }
 
+// TestRenderRole_WitnessHandoffIsContextOnly guards the gtf-cem regression:
+// Witness patrol repeatedly created pinned handoff beads pointing
+// attached_molecule at "mol-witness-patrol" (a formula name, not an issue
+// ID) because the rendered template showed that literal JSON as an example.
+// hook-attachment-valid then flagged the bead every patrol cycle.
+func TestRenderRole_WitnessHandoffIsContextOnly(t *testing.T) {
+	tmpl, err := New()
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+
+	output, err := tmpl.RenderRole("witness", RoleData{
+		Role:          "witness",
+		RigName:       "myrig",
+		TownRoot:      "/test/town",
+		TownName:      "town",
+		WorkDir:       "/test/town/myrig/witness",
+		DefaultBranch: "main",
+		MayorSession:  "gt-town-mayor",
+		DeaconSession: "gt-town-deacon",
+	})
+	if err != nil {
+		t.Fatalf("RenderRole() error = %v", err)
+	}
+
+	for _, want := range []string{
+		"## Handoff (Context-Only)",
+		"patrol report` closes the current patrol root",
+		"handoff` persists durable HQ context",
+		"Do not put `attached_molecule` in Witness handoff content",
+	} {
+		if !strings.Contains(output, want) {
+			t.Fatalf("Witness output missing %q:\n%s", want, output)
+		}
+	}
+	for _, forbidden := range []string{
+		"## Handoff Bead",
+		`"attached_molecule": "mol-witness-patrol"`,
+		`"attached_at": "2025-12-24T10:00:00Z"`,
+	} {
+		if strings.Contains(output, forbidden) {
+			t.Fatalf("Witness output contains stale handoff attachment guidance %q:\n%s", forbidden, output)
+		}
+	}
+}
+
 func TestRenderRole_CrewForkRigUsesPRWorkflow(t *testing.T) {
 	tmpl, err := New()
 	if err != nil {
