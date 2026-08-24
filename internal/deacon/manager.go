@@ -59,6 +59,14 @@ func NewManager(townRoot string) *Manager {
 	}
 }
 
+// SetTmux pins the manager to a specific tmux implementation. Callers that
+// have already isolated their tmux socket (tests, and the daemon, which owns
+// its own client) must use this so a deacon start/stop can never reach the
+// operator's real sessions via the $GT_TOWN_SOCKET fallback in tmux.NewTmux.
+func (m *Manager) SetTmux(t tmuxOps) {
+	m.tmux = t
+}
+
 // SessionName returns the tmux session name for the deacon.
 // This is a package-level function for convenience.
 func SessionName() string {

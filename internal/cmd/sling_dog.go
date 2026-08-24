@@ -96,7 +96,10 @@ func DispatchToDog(dogName string, opts DogDispatchOptions) (*DogDispatchInfo, e
 		return nil, fmt.Errorf("loading rigs config: %w", err)
 	}
 
-	mgr := dog.NewManager(townRoot, rigsConfig)
+	mgr := dog.NewManager(townRoot, rigsConfig).
+		WithRigBlockedCheck(func(rigName string) (bool, string) {
+			return IsRigParkedOrDocked(townRoot, rigName)
+		})
 
 	var targetDog *dog.Dog
 	var spawned bool

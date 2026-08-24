@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -16,6 +17,7 @@ import (
 	"github.com/steveyegge/gastown/internal/lock"
 	"github.com/steveyegge/gastown/internal/mail"
 	"github.com/steveyegge/gastown/internal/nudge"
+	"github.com/steveyegge/gastown/internal/pressure"
 	"github.com/steveyegge/gastown/internal/style"
 	"github.com/steveyegge/gastown/internal/telemetry"
 	"github.com/steveyegge/gastown/internal/witness"
@@ -1101,12 +1103,27 @@ func runSling(cmd *cobra.Command, args []string) (retErr error) {
 	if freshlySpawned {
 		pane, err := newPolecatInfo.StartSession()
 		if err != nil {
-			// Rollback: session failed, clean up zombie artifacts (worktree, hooked bead).
-			// Without rollback, next sling attempt fails with "bead already hooked" (gt-jn40ft).
-			rollbackSpawnedPolecat("Session failed")
-			return fmt.Errorf("starting polecat session: %w", err)
+			// Host-pressure gate (gtf-5x2): a deferred spawn is NOT a failure.
+			// The bead is already hooked, so on return we leave it attached and
+			// let the daemon watchdog spawn the polecat once host pressure
+			// clears. We must NOT rollbackSpawnedPolecat here — rolling back
+			// detaches the work and discards the spawn, which is the exact
+			// defect we are fixing (work would be lost instead of deferred).
+			var derr *pressure.DeferredError
+			if errors.As(err, &derr) {
+				style.PrintWarning("Spawn deferred: %s", derr.DeferralReason)
+				fmt.Printf("%s Work stays attached to hook; the daemon watchdog will retry the spawn when host pressure clears\n", style.Dim.Render("·"))
+				freshlySpawned = false
+				targetPane = ""
+			} else {
+				// Rollback: session failed, clean up zombie artifacts (worktree, hooked bead).
+				// Without rollback, next sling attempt fails with "bead already hooked" (gt-jn40ft).
+				rollbackSpawnedPolecat("Session failed")
+				return fmt.Errorf("starting polecat session: %w", err)
+			}
+		} else {
+			targetPane = pane
 		}
-		targetPane = pane
 	}
 
 	// Try to inject the "start now" prompt (graceful if no tmux)

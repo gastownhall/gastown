@@ -61,8 +61,8 @@ func TestDefaultWebTimeoutsConfig(t *testing.T) {
 		fallback time.Duration
 		want     time.Duration
 	}{
-		{"CmdTimeout", cfg.CmdTimeout, 0, 15 * time.Second},
-		{"GhCmdTimeout", cfg.GhCmdTimeout, 0, 10 * time.Second},
+		{"CmdTimeout", cfg.CmdTimeout, 0, 6 * time.Second},
+		{"GhCmdTimeout", cfg.GhCmdTimeout, 0, 5 * time.Second},
 		{"TmuxCmdTimeout", cfg.TmuxCmdTimeout, 0, 2 * time.Second},
 		{"FetchTimeout", cfg.FetchTimeout, 0, 8 * time.Second},
 		{"DefaultRunTimeout", cfg.DefaultRunTimeout, 0, 30 * time.Second},
@@ -598,8 +598,8 @@ func TestParseDurationOrDefault_AllWebTimeoutDefaults(t *testing.T) {
 		dflt     string
 		fallback time.Duration
 	}{
-		{"CmdTimeout", empty.CmdTimeout, defaults.CmdTimeout, 15 * time.Second},
-		{"GhCmdTimeout", empty.GhCmdTimeout, defaults.GhCmdTimeout, 10 * time.Second},
+		{"CmdTimeout", empty.CmdTimeout, defaults.CmdTimeout, 6 * time.Second},
+		{"GhCmdTimeout", empty.GhCmdTimeout, defaults.GhCmdTimeout, 5 * time.Second},
 		{"TmuxCmdTimeout", empty.TmuxCmdTimeout, defaults.TmuxCmdTimeout, 2 * time.Second},
 		{"FetchTimeout", empty.FetchTimeout, defaults.FetchTimeout, 8 * time.Second},
 		{"DefaultRunTimeout", empty.DefaultRunTimeout, defaults.DefaultRunTimeout, 30 * time.Second},

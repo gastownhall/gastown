@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -81,7 +82,7 @@ func runMaintain(cmd *cobra.Command, args []string) error {
 	}
 
 	config := doltserver.DefaultConfig(townRoot)
-	if config.IsRemote() {
+	if config.IsExternallyManaged() {
 		return fmt.Errorf("maintain requires local Dolt server (remote: %s)", config.HostPort())
 	}
 
@@ -326,6 +327,14 @@ func maintainFlattenDB(config *doltserver.Config, dbName string) error {
 		return fmt.Errorf("pre-flight row counts: %w", err)
 	}
 
+	// Divergence guard (hq-2uwn): flattening rewrites the commit graph, so any
+	// remote commit not present locally would be orphaned and the remote could
+	// never fast-forward again. Mirror the guard compactor-dog has: fetch the
+	// remote, then require remote HEAD to be an ancestor of local HEAD.
+	if err := maintainAssertNotDiverged(ctx, db, dbName); err != nil {
+		return fmt.Errorf("divergence guard: %w", err)
+	}
+
 	// Find root commit.
 	var rootHash string
 	if err := db.QueryRowContext(ctx,
@@ -365,6 +374,69 @@ func maintainFlattenDB(config *doltserver.Config, dbName string) error {
 		}
 	}
 
+	return nil
+}
+
+// maintainAssertNotDiverged verifies that no remote commit is absent from the
+// local history before a destructive history rewrite (hq-2uwn). It fetches the
+// first configured remote, then requires the remote's main HEAD to be an
+// ancestor of the local HEAD. On fetch failure it fails closed: a stale or
+// unreachable remote must never green-light a flatten.
+func maintainAssertNotDiverged(ctx context.Context, db *sql.DB, dbName string) error {
+	var remoteName string
+	if err := db.QueryRowContext(ctx,
+		fmt.Sprintf("SELECT name FROM `%s`.dolt_remotes LIMIT 1", dbName),
+	).Scan(&remoteName); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil // no remote: nothing to diverge from
+		}
+		return fmt.Errorf("read remotes: %w", err)
+	}
+
+	if _, err := db.ExecContext(ctx, fmt.Sprintf("CALL `%s`.DOLT_FETCH('%s')", dbName, remoteName)); err != nil {
+		return fmt.Errorf("fetch %s (failing closed): %w", remoteName, err)
+	}
+
+	var remoteHead string
+	if err := db.QueryRowContext(ctx,
+		fmt.Sprintf("SELECT commit_hash FROM `%s`.dolt_remote_branches WHERE name = '%s/main'", dbName, remoteName),
+	).Scan(&remoteHead); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil // remote has no main branch yet: nothing to lose
+		}
+		return fmt.Errorf("read remote head: %w", err)
+	}
+
+	var localHead string
+	if err := db.QueryRowContext(ctx,
+		fmt.Sprintf("SELECT commit_hash FROM `%s`.dolt_log ORDER BY date DESC LIMIT 1", dbName),
+	).Scan(&localHead); err != nil {
+		return fmt.Errorf("read local head: %w", err)
+	}
+
+	if remoteHead == localHead {
+		return nil
+	}
+
+	// Ancestor check: remote HEAD must exist somewhere in local history.
+	var inLocal int
+	if err := db.QueryRowContext(ctx,
+		fmt.Sprintf("SELECT COUNT(*) FROM `%s`.dolt_log", dbName),
+	).Scan(&inLocal); err != nil {
+		return fmt.Errorf("count local log: %w", err)
+	}
+	var remoteInLocal int
+	if err := db.QueryRowContext(ctx,
+		fmt.Sprintf("SELECT COUNT(*) FROM `%s`.dolt_log WHERE commit_hash = '%s'", dbName, remoteHead),
+	).Scan(&remoteInLocal); err != nil {
+		return fmt.Errorf("check ancestry: %w", err)
+	}
+	if remoteInLocal == 0 {
+		return fmt.Errorf(
+			"remote %s/main (%s) has commits not in local history — skipping flatten to avoid orphaning the remote (local head %s); reconcile first (see hq-2uwn)",
+			remoteName, shortHash(remoteHead), shortHash(localHead),
+		)
+	}
 	return nil
 }
 

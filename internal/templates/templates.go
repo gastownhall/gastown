@@ -34,9 +34,34 @@ func CmdName() string {
 	return cmdName
 }
 
+// CommandOwnership returns the canonical split between Beads issue CRUD and
+// Gas Town execution lifecycle commands. Every generated agent context uses
+// this text so role-specific instructions cannot drift onto invented commands.
+func CommandOwnership(isForkRig bool) string {
+	c := CmdName()
+	var b strings.Builder
+
+	fmt.Fprintf(&b, "## Command ownership: `bd` and `%s`\n\n", c)
+	b.WriteString("Use `bd` for issue CRUD in the ledger that owns the work:\n\n")
+	b.WriteString("- `bd create` creates issues. Create in the owning rig, or use `bd create --repo <rig> \"...\"` to target another registered rig.\n")
+	b.WriteString("- `bd show <id>`, `bd update <id>`, and `bd close <id>` read or change existing issues. The ID prefix routes each command through the town's `.beads/routes.jsonl`.\n")
+	fmt.Fprintf(&b, "- Issue creation stays on `bd`; `%s` has no issue-creation command.\n\n", c)
+	fmt.Fprintf(&b, "Use `%s` for execution and lifecycle:\n\n", c)
+	fmt.Fprintf(&b, "- `%s sling <bead> <rig>` dispatches work, and `%s convoy` tracks it.\n", c, c)
+	if isForkRig {
+		b.WriteString("- This fork-backed rig uses the assignment's GitHub PR/no-merge workflow for upstream changes; do not send them to the local merge queue.\n")
+	} else {
+		fmt.Fprintf(&b, "- `%s done` submits completed polecat work to the merge queue. Fork-backed assignments use their GitHub PR/no-merge workflow instead.\n", c)
+	}
+	b.WriteString("- The Witness recovers stalled polecats. The Refinery verifies and integrates queued work.\n")
+
+	return b.String()
+}
+
 // templateFuncs provides custom functions for templates.
 var templateFuncs = template.FuncMap{
-	"cmd": CmdName, // {{ cmd }} returns the CLI command name
+	"cmd":              CmdName,          // {{ cmd }} returns the CLI command name
+	"commandOwnership": CommandOwnership, // {{ commandOwnership .IsForkRig }} emits the CLI contract
 }
 
 //go:embed roles/*.md.tmpl messages/*.md.tmpl
@@ -240,6 +265,7 @@ func CreatePolecatCLAUDEmd(worktreePath, rigName, polecatName string) (bool, err
 
 	// Render the polecat template with rig/name substitutions
 	content := polecatCLAUDEmd
+	content = strings.ReplaceAll(content, "{{command_contract}}", CommandOwnership(false))
 	content = strings.ReplaceAll(content, "{{rig}}", rigName)
 	content = strings.ReplaceAll(content, "{{name}}", polecatName)
 

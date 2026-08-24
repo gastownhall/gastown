@@ -1,19 +1,36 @@
 # Integration Branches
 
-> Group epic work on a shared branch, land to main as a unit.
+> Group epic work on a shared branch, land to its recorded base as a unit.
 
 Integration branches provide end-to-end support for epic-scoped work across
 the Gas Town pipeline. When you create an integration branch for an epic, it
 becomes the automatic target for every stage: polecats spawn their worktrees
 from the integration branch (so they start with sibling work already present),
-the Refinery merges completed MRs into the integration branch instead of main,
-and when all epic children are closed, the Refinery can land the integration
-branch back to its base branch (main by default, or whatever was specified
-with `--base-branch` at creation) as a single merge commit.
+the Refinery merges completed MRs into the integration branch instead of the
+rig's `default_branch`, and when all epic children are closed, the Refinery can
+land the integration branch back to its recorded base branch as a single merge
+commit. Unless `--base-branch` overrides it at creation, that base is the rig's
+configured `default_branch`.
 
 Landing can happen on command or automatically via patrol. The result is that
 an entire epic flows through the system as a coherent unit, from first sling
 to final land, without any manual branch targeting.
+
+## Terminology Boundary
+
+A **project integration lane** and an **epic integration branch** are different
+things:
+
+- A project integration lane is the project-governance branch where an overall
+  increment is assembled and validated. Its name comes from project policy; in
+  this maintained downstream fork it is fork `main`.
+- An epic integration branch is a Gas Town-managed, epic-scoped branch created
+  by `gt mq integration create`. Child MRs accumulate there until
+  `gt mq integration land` merges it into its recorded base.
+
+The project lane is not created, detected, or landed by the epic integration
+commands. In product docs, “integration branch” means only the epic-scoped Gas
+Town object described on this page.
 
 ## Workflow
 
@@ -44,9 +61,9 @@ to final land, without any manual branch targeting.
    integration branch, so it starts with any sibling work that has already
    landed there. When a polecat finishes, it submits a merge request.
 
-6. **Refinery merges to the integration branch.** Instead of merging to main,
-   the Refinery merges each MR into the integration branch and marks the child
-   task as complete.
+6. **Refinery merges to the integration branch.** Instead of merging to the
+   rig's default branch, the Refinery merges each MR into the integration branch
+   and marks the child task as complete.
 
 7. **Track progress via the convoy.** The convoy status updates each time the
    Refinery completes a task.
@@ -68,9 +85,8 @@ to final land, without any manual branch targeting.
    ```bash
    gt mq integration land gt-auth-epic
    ```
-   This merges the integration branch back to its base branch (main by
-   default) as a single merge commit, deletes the branch, and closes the
-   epic.
+   This merges the integration branch back to its recorded base branch as a
+   single merge commit, deletes the branch, and closes the epic.
 
 ## Concept
 
@@ -79,9 +95,9 @@ to final land, without any manual branch targeting.
 Without integration branches, epic work lands piecemeal:
 
 ```
-Child A ──► MR ──► main     (lands Tuesday)
-Child B ──► MR ──► main     (lands Wednesday, breaks A's work)
-Child C ──► MR ──► main     (lands Thursday, depends on A+B together)
+Child A ──► MR ──► default branch     (lands Tuesday)
+Child B ──► MR ──► default branch     (lands Wednesday, breaks A's work)
+Child C ──► MR ──► default branch     (lands Thursday, depends on A+B together)
 ```
 
 Each child merges independently. If Child C depends on A and B being coherent
@@ -110,7 +126,7 @@ Integration branches batch epic work on a shared branch, then land atomically:
                                │
                                ▼ gt mq integration land
                           base branch
-                    (main or --base-branch)
+              (default_branch or --base-branch)
                      (single merge commit)
 ```
 
@@ -121,11 +137,11 @@ each other's work. When everything is ready, one command lands it all.
 
 | Aspect | Without | With Integration Branch |
 |--------|---------|------------------------|
-| MR target | main | integration/{epic} |
+| MR target | Rig `default_branch` | `integration/{title}` by default |
 | Land timing | Each MR lands independently | All MRs land together |
 | Cross-child deps | Risky—depends on merge order | Safe—children share a branch |
 | Rollback | Revert individual commits | Revert one merge commit |
-| CI on main | Runs per-MR | Runs once on combined work |
+| CI on base | Runs per-MR | Runs once on combined work |
 
 ## Lifecycle
 
@@ -168,7 +184,7 @@ When polecats run `gt done` or `gt mq submit`, auto-detection kicks in:
 gt done
   → Detects parent epic gt-auth-epic
   → Finds integration/gt-auth-epic branch
-  → Submits MR targeting integration/gt-auth-epic (not main)
+  → Submits MR targeting integration/gt-auth-epic (not the default branch)
 ```
 
 The Refinery processes these MRs and merges them to the integration branch.
@@ -193,7 +209,7 @@ Integration branches work without manual targeting. Three systems auto-detect th
 
 | System | What It Does | Config Gate |
 |--------|-------------|-------------|
-| `gt done` / `gt mq submit` | Targets MR at integration branch instead of main | `integration_branch_refinery_enabled` |
+| `gt done` / `gt mq submit` | Targets MR at integration branch instead of the rig default | `integration_branch_refinery_enabled` |
 | Polecat spawn | Sources worktree from integration branch | `integration_branch_polecat_enabled` |
 | Refinery patrol | Checks if integration branches are ready to land | `integration_branch_auto_land` |
 
@@ -209,11 +225,11 @@ When `gt done` or `gt mq submit` runs:
 | 4 | For each epic: read `integration_branch:` from metadata | Get stored branch name |
 | 5 | Fallback: generate name from template | e.g., `integration/{title}` |
 | 6 | Check if branch exists (local, then remote) | Verify it's real |
-| 7 | If found, target MR at that branch | Instead of main |
+| 7 | If found, target MR at that branch | Instead of the rig default branch |
 
 The `--epic` flag on `gt mq submit` bypasses auto-detection and resolves
 the target branch using the configured template (defaulting to
-`integration/{epic}`).
+`integration/{title}`).
 
 ## Branch Naming
 
@@ -313,7 +329,7 @@ gt mq integration status <epic-id> [flags]
 **Output includes:**
 
 - Branch name and creation date
-- Commits ahead of main
+- Commits ahead of the recorded base branch
 - Merged MRs (closed, targeting integration branch)
 - Pending MRs (open, targeting integration branch)
 - Child issue progress (closed / total)
@@ -322,7 +338,7 @@ gt mq integration status <epic-id> [flags]
 
 **Ready-to-land criteria** (all must be true):
 
-1. Integration branch has commits ahead of main
+1. Integration branch has commits ahead of its recorded base branch
 2. Epic has children
 3. All children are closed
 4. No pending MRs (all submitted work is merged)
@@ -564,9 +580,9 @@ automatically — no per-branch configuration is needed.
 
 **Wrong:** Sling children, then create the integration branch later.
 
-Children slung before the integration branch exists will target main. Their MRs
-won't flow to the integration branch. Create the integration branch *first*,
-before slinging any child work.
+Children slung before the integration branch exists will target the rig's
+`default_branch`. Their MRs won't flow to the integration branch. Create the
+integration branch *first*, before slinging any child work.
 
 ### Manually Targeting the Integration Branch
 
@@ -587,4 +603,5 @@ If you need to land early, close or remove the incomplete children first.
 ## See Also
 
 - [Polecat Lifecycle](polecat-lifecycle.md) — How polecats submit to the merge queue
+- [Fork-Based Rig Setup](../guides/fork-rig-setup.md) — Contribution and downstream fork branch roles
 - [Reference](../reference.md) — Full CLI reference including MQ commands

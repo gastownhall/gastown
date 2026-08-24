@@ -1,4 +1,4 @@
-.PHONY: build desktop-build desktop-run install safe-install check-forward-only check-version-tag check-install-path clean test test-makefile test-e2e-container check-up-to-date
+.PHONY: build desktop-build desktop-run install safe-install check-forward-only check-version-tag check-release-integrated check-install-path clean test test-makefile test-e2e-container check-up-to-date
 
 BINARY := gt
 BINARY_DESKTOP := gt-desktop
@@ -176,6 +176,48 @@ check-version-tag:
 	fi; \
 	echo "check-version-tag: OK (tag $$TAG matches Version=$$CODE_VERSION)"
 
+# check-release-integrated: Verify HEAD is an ancestor of the fork's main branch
+# before it can be tagged. No-op when HEAD is untagged, so it is safe to run on
+# every build but only fails release tag checkouts.
+#
+# RELEASING.md states "Merge the release PR into fork main; never tag an
+# unintegrated lane commit." That rule was stated only in prose and was violated
+# twice: v1.2.1-dc14 and v1.2.1-dc15 were both tagged off lanes that never
+# merged. dc14 carried commit 5e286ace (the gtf-k2k doctor guard), which was
+# then reachable from a tag and from no branch, and was absent from every
+# release that followed. Published tags are immutable, so the only defence is
+# refusing to create a bad one.
+#
+# REMOTE_MAIN can be overridden when the fork is not on the 'origin' remote.
+REMOTE_MAIN ?= origin/main
+check-release-integrated:
+	@TAG=$$(git describe --tags --exact-match HEAD 2>/dev/null || true); \
+	if [ -z "$$TAG" ]; then \
+		echo "check-release-integrated: HEAD is not a release tag, skipping"; \
+		exit 0; \
+	fi; \
+	case "$$TAG" in \
+		v[0-9]*) ;; \
+		*) echo "check-release-integrated: tag '$$TAG' is not a vX.Y.Z release tag, skipping"; exit 0 ;; \
+	esac; \
+	if ! git rev-parse --verify --quiet "$(REMOTE_MAIN)" >/dev/null; then \
+		echo "ERROR: cannot resolve $(REMOTE_MAIN); fetch it first or set REMOTE_MAIN=<remote>/<branch>"; \
+		exit 1; \
+	fi; \
+	if ! git merge-base --is-ancestor HEAD "$(REMOTE_MAIN)"; then \
+		echo "ERROR: HEAD is not integrated into $(REMOTE_MAIN); refusing to tag"; \
+		echo "  tag being created:  $$TAG"; \
+		echo "  HEAD:               $$(git rev-parse --short HEAD)"; \
+		echo "  $(REMOTE_MAIN):     $$(git rev-parse --short $(REMOTE_MAIN))"; \
+		echo "  commits on HEAD not in $(REMOTE_MAIN): $$(git rev-list --count $(REMOTE_MAIN)..HEAD)"; \
+		echo ""; \
+		echo "Tagging here would publish work that no branch contains, and tags are immutable."; \
+		echo "Merge the release PR into fork main first, then tag the merge commit."; \
+		echo "See RELEASING.md and bead gtf-8wo (dc14/dc15 were tagged this way)."; \
+		exit 1; \
+	fi; \
+	echo "check-release-integrated: OK ($$TAG is an ancestor of $(REMOTE_MAIN))"
+
 clean:
 	rm -f $(BUILD_DIR)/$(BINARY)
 
@@ -184,6 +226,7 @@ test: test-makefile
 
 test-makefile:
 	bash scripts/check-install-path_test.sh
+	bash plugins/rebuild-gt/run_test.sh
 	bash -n plugins/stuck-agent-dog/run.sh
 	bash -n plugins/stuck-agent-dog/run_test.sh
 	bash plugins/stuck-agent-dog/run_test.sh

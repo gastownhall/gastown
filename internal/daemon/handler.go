@@ -37,6 +37,17 @@ var (
 	maxDogPoolSize = config.DefaultMaxDogPoolSize
 )
 
+// rigBlockedForDogs reports whether a rig is parked or docked, so dog worktree
+// creation skips it. Dogs span every rig, so an unreachable parked rig would
+// otherwise degrade the whole kennel.
+func (d *Daemon) rigBlockedForDogs(rigName string) (bool, string) {
+	ok, reason := d.isRigOperational(rigName)
+	if ok {
+		return false, ""
+	}
+	return true, reason
+}
+
 // handleDogs manages Dog lifecycle: cleanup stuck dogs, reap idle dogs, then dispatch plugins.
 // This is the main entry point called from heartbeat.
 func (d *Daemon) handleDogs() {
@@ -48,7 +59,8 @@ func (d *Daemon) handleDogs() {
 
 	opCfg := d.loadOperationalConfig().GetDaemonConfig()
 
-	mgr := dog.NewManager(d.config.TownRoot, rigsConfig)
+	mgr := dog.NewManager(d.config.TownRoot, rigsConfig).
+		WithRigBlockedCheck(d.rigBlockedForDogs)
 	t := tmux.NewTmux()
 	sm := dog.NewSessionManager(t, d.config.TownRoot, mgr)
 
@@ -69,7 +81,8 @@ func (d *Daemon) handleDogsCleanupOnly() {
 
 	opCfg := d.loadOperationalConfig().GetDaemonConfig()
 
-	mgr := dog.NewManager(d.config.TownRoot, rigsConfig)
+	mgr := dog.NewManager(d.config.TownRoot, rigsConfig).
+		WithRigBlockedCheck(d.rigBlockedForDogs)
 	t := tmux.NewTmux()
 	sm := dog.NewSessionManager(t, d.config.TownRoot, mgr)
 

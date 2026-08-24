@@ -56,27 +56,39 @@ log() {
 
 # --- Step 1: Discover databases -----------------------------------------------
 
-# Use explicit list if provided, otherwise auto-discover by scanning
-# DOLT_DATA_DIR for directories that contain a .dolt subdirectory,
-# excluding system and test databases.
+# Use explicit list if provided, otherwise discover from the canonical rig
+# registry (routes.jsonl + per-rig metadata.json dolt_database field). The
+# previous filesystem walk at DOLT_DATA_DIR picked up orphaned/test-fixture
+# databases (beads, forkrig, gt, testrig, testrip) because the exclusion
+# filter only caught testdb_/beads_t/beads_pt/doctest_ — see hq-l3k2.8
+# root cause #3. Registry-based discovery only returns registered databases.
 if [[ -n "$EXPLICIT_DBS" ]]; then
   IFS=',' read -ra PROD_DBS <<< "$EXPLICIT_DBS"
 else
   PROD_DBS=()
-  while IFS= read -r line; do
-    PROD_DBS+=("$line")
-  done < <(
-    for d in "$DOLT_DATA_DIR"/*/; do
-      name="$(basename "$d")"
-      [[ -d "$d/.dolt" ]] || continue
-      [[ "$name" =~ ^(testdb_|beads_t|beads_pt|doctest_) ]] && continue
-      echo "$name"
-    done | sort
-  )
+  RIGS_FILE="${GT_TOWN_ROOT}/.beads/routes.jsonl"
+  if [[ -f "$RIGS_FILE" ]]; then
+    while IFS= read -r line; do
+      path="${line#*\"path\":\"}"
+      path="${path%%\"*}"
+      [[ -z "$path" ]] && continue
+      metadata_file="${GT_TOWN_ROOT}/${path}/.beads/metadata.json"
+      if [[ -f "$metadata_file" ]]; then
+        db=$(grep -o '"dolt_database"[[:space:]]*:[[:space:]]*"[^"]*"' "$metadata_file" 2>/dev/null | head -1 | sed 's/.*:.*"\([^"]*\)".*/\1/')
+        if [[ -z "$db" ]]; then
+          db=$(grep -o '"database"[[:space:]]*:[[:space:]]*"[^"]*"' "$metadata_file" 2>/dev/null | head -1 | sed 's/.*:.*"\([^"]*\)".*/\1/')
+        fi
+        if [[ -n "$db" && -d "$DOLT_DATA_DIR/$db/.dolt" ]]; then
+          PROD_DBS+=("$db")
+        fi
+      fi
+    done < "$RIGS_FILE"
+  fi
   if [[ ${#PROD_DBS[@]} -eq 0 ]]; then
-    log "ERROR: No databases found in $DOLT_DATA_DIR"
+    log "ERROR: No databases found via rig registry at $RIGS_FILE"
     exit 1
   fi
+  PROD_DBS=($(printf '%s\n' "${PROD_DBS[@]}" | sort -u))
 fi
 
 log "Databases to backup (${#PROD_DBS[@]}): ${PROD_DBS[*]}"
