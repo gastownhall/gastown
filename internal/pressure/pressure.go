@@ -32,23 +32,30 @@ type Threshold struct {
 
 // Result is the raw host sample plus the outcome of the last tier that tripped.
 type Result struct {
-	OK               bool    // false if the spawn must be deferred
-	Reason           string  // stable machine reason (see ReasonCPU, etc.)
-	DeferralReason   string  // human-readable why this spawn was deferred
-	LoadAvg1         float64 // 1-minute load average
-	LoadPerCore      float64 // LoadAvg1 / NumCPU
-	MemAvailableGB   float64 // available RAM in GiB
-	SwapTotalGB      float64
-	SwapFreeGB       float64
-	SwapUsedPercent  float64 // 0..100
-	ActiveSessions   int
-	NumCPU           int
+	OK              bool    // false if the spawn must be deferred
+	Reason          string  // stable machine reason (see ReasonCPU, etc.)
+	DeferralReason  string  // human-readable why this spawn was deferred
+	LoadAvg1        float64 // 1-minute load average
+	LoadPerCore     float64 // LoadAvg1 / NumCPU
+	MemAvailableGB  float64 // available RAM in GiB
+	SwapTotalGB     float64
+	SwapFreeGB      float64
+	SwapUsedPercent float64 // 0..100
+	ActiveSessions  int
+	NumCPU          int
 }
 
 // Check evaluates the host against t. It returns (result, ok) where ok is true
 // when no tier tripped. osOnly is false in production; tests inject samples.
 func Check(t Threshold) (Result, bool) {
-	return check(t, sampleHost)
+	return CheckAt(t, "")
+}
+
+// CheckAt evaluates host pressure using the registered rig prefixes from
+// townRoot when counting Gas Town sessions. An empty root retains the legacy
+// hq-/rig- recognition used by standalone callers and tests.
+func CheckAt(t Threshold, townRoot string) (Result, bool) {
+	return check(t, func() Result { return sampleHost(townRoot) })
 }
 
 // CheckHostSpawn is the spawn-gate entry point called from session.StartSession.
@@ -56,7 +63,7 @@ func Check(t Threshold) (Result, bool) {
 // spawn was deferred (caller should enqueue/requeue rather than fail hard).
 func CheckHostSpawn(townRoot string) error {
 	t := ThresholdFromConfig(townRoot)
-	r, ok := Check(t)
+	r, ok := CheckAt(t, townRoot)
 	if ok {
 		return nil
 	}

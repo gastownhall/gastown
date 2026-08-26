@@ -242,6 +242,9 @@ func (m *Manager) Start(foreground bool, agentOverride string, envOverrides []st
 	// Create session with command and env vars via -e flags so the initial
 	// shell (and Claude's subprocesses) inherit them from the start.
 	// See: https://github.com/anthropics/gastown/issues/280 (race condition fix)
+	if err := pressureGate(townRoot); err != nil {
+		return err
+	}
 	if err := t.NewSessionWithCommandAndEnv(sessionID, witnessDir, command, envVars); err != nil {
 		return fmt.Errorf("creating tmux session: %w", err)
 	}

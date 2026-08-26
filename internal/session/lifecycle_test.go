@@ -1,10 +1,33 @@
 package session
 
 import (
+	"errors"
 	"testing"
 
 	"github.com/steveyegge/gastown/internal/config"
 )
+
+func TestStartSession_DefersBeforeResolvingRuntimeOrCreatingTmuxSession(t *testing.T) {
+	want := errors.New("host pressure")
+	original := pressureGate
+	pressureGate = func(root string) error {
+		if root != "/town" {
+			t.Fatalf("pressure gate root = %q, want /town", root)
+		}
+		return want
+	}
+	t.Cleanup(func() { pressureGate = original })
+
+	_, err := StartSession(nil, SessionConfig{
+		SessionID: "gt-test",
+		WorkDir:   t.TempDir(),
+		Role:      "polecat",
+		TownRoot:  "/town",
+	})
+	if !errors.Is(err, want) {
+		t.Fatalf("StartSession error = %v, want pressure deferral", err)
+	}
+}
 
 func TestStartSession_RequiresSessionID(t *testing.T) {
 	_, err := StartSession(nil, SessionConfig{
