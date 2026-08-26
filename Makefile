@@ -1,4 +1,7 @@
-.PHONY: build desktop-build desktop-run install safe-install check-forward-only check-version-tag check-release-integrated check-install-path clean test test-makefile test-e2e-container check-up-to-date
+.PHONY: build desktop-build desktop-run install safe-install check-forward-only check-version-tag check-release-integrated check-install-path clean test test-makefile test-e2e-container check-up-to-date temp
+
+temp:
+	@./scripts/audit-temp-workspaces.sh
 
 BINARY := gt
 BINARY_DESKTOP := gt-desktop

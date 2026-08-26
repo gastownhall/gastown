@@ -30,6 +30,7 @@ func TestTownRootCLAUDEmd_DocumentationAuthority(t *testing.T) {
 		"docs/concepts/integration-branches.md",
 		"docs/concepts/convoy.md",
 		"docs/guides/fork-rig-setup.md",
+		"docs/concepts/workspace-lifecycle.md",
 		"RELEASING.md",
 		"`HANDOFF.md` is historical only",
 	} {
@@ -51,6 +52,7 @@ func TestRepositoryAgentsDelegatesToProductDocs(t *testing.T) {
 		"docs/concepts/integration-branches.md",
 		"docs/concepts/convoy.md",
 		"docs/guides/fork-rig-setup.md",
+		"docs/concepts/workspace-lifecycle.md",
 		"docs/reference.md",
 		"RELEASING.md",
 	} {
@@ -70,6 +72,25 @@ func TestRepositoryAgentsDelegatesToProductDocs(t *testing.T) {
 		if strings.Contains(content, duplicate) {
 			t.Errorf("repository AGENTS.md duplicates lifecycle guidance %q", duplicate)
 		}
+	}
+}
+
+func TestMayorRoleKeepsIntegrationCheckoutClean(t *testing.T) {
+	tmpl, err := New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	output, err := tmpl.RenderRole("mayor", RoleData{TownRoot: "/town"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"/town/<rig>/mayor/rig/` checkout clean", "crew add <name> --rig <rig> --branch"} {
+		if !strings.Contains(output, want) {
+			t.Errorf("mayor role missing %q", want)
+		}
+	}
+	if strings.Contains(output, "**ALL git/code operations**") {
+		t.Error("mayor role still directs code work into mayor/rig")
 	}
 }
 

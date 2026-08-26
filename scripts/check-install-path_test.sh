@@ -14,7 +14,7 @@ cleanup() {
   if [[ -n "$SCRATCH_DIR" && -d "$SCRATCH_DIR" ]]; then
     find "$SCRATCH_DIR" -depth -delete
   fi
-	SCRATCH_DIR=""
+  SCRATCH_DIR=""
 }
 trap cleanup EXIT
 
