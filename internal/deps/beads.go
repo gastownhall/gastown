@@ -4,9 +4,7 @@ package deps
 import (
 	"context"
 	"fmt"
-	"os"
 	"os/exec"
-	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
@@ -77,7 +75,7 @@ func CheckBeads() (BeadsStatus, string) {
 // EnsureBeads checks for bd and installs it if missing or outdated.
 // Returns nil if bd is available and compatible.
 // If autoInstall is true, will attempt to install bd when missing.
-func EnsureBeads(autoInstall bool) error {
+func EnsureBeads(_ bool) error {
 	status, version := CheckBeads()
 
 	switch status {
@@ -100,32 +98,6 @@ func EnsureBeads(autoInstall bool) error {
 	}
 
 	return nil
-}
-
-// installBeads runs go install to install the latest beads.
-// GOBIN is set to ~/.local/bin so the binary lands in the canonical
-// location rather than the default $GOPATH/bin (~/go/bin/).
-func installBeads() error {
-	return fmt.Errorf("automatic go install is disabled for the downstream beads fork; %s", BeadsInstallHint)
-}
-
-// appendGOBIN returns env with GOBIN set to ~/.local/bin so that
-// `go install` places binaries in the canonical location instead of
-// the default $GOPATH/bin (which creates a stale shadow copy).
-func appendGOBIN(env []string) []string {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return env // fall back to default
-	}
-	gobin := filepath.Join(home, ".local", "bin")
-	// Replace existing GOBIN if present, otherwise append.
-	for i, e := range env {
-		if strings.HasPrefix(e, "GOBIN=") {
-			env[i] = "GOBIN=" + gobin
-			return env
-		}
-	}
-	return append(env, "GOBIN="+gobin)
 }
 
 // parseBeadsVersion extracts version from "bd version X.Y.Z ..." output.
