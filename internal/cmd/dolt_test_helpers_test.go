@@ -16,15 +16,10 @@ import (
 	"github.com/steveyegge/gastown/internal/testutil"
 )
 
-// requireDoltServer delegates to testutil.RequireDoltContainer.
+// requireDoltServer delegates to testutil.RequireManagedDoltEndpoint.
 func requireDoltServer(t *testing.T) {
 	t.Helper()
-	testutil.RequireDoltContainer(t)
-}
-
-// cleanupDoltServer delegates to testutil.TerminateDoltContainer.
-func cleanupDoltServer() {
-	testutil.TerminateDoltContainer()
+	testutil.RequireManagedDoltEndpoint(t)
 }
 
 // configureTestGitIdentity sets git global config in an isolated HOME directory
@@ -95,7 +90,7 @@ func cleanStaleBeadsDatabases(t *testing.T) {
 //  1. SHOW DATABASES → DROP any visible beads_* databases
 //  2. DROP known phantom database names from beads_db_init_test.go
 func dropStaleBeadsDatabases() error {
-	dsn := "root:@tcp(127.0.0.1:" + testutil.DoltContainerPort() + ")/"
+	dsn := "root:@tcp(127.0.0.1:" + testutil.ManagedDoltPort() + ")/"
 	db, err := sql.Open("mysql", dsn)
 	if err != nil {
 		return fmt.Errorf("connecting to dolt server: %w", err)

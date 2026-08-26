@@ -110,9 +110,9 @@ func setupHookTestTown(t *testing.T) (townRoot, polecatDir, rigPrefix string) {
 // initBeadsDB initializes the beads database by running bd init on the test server.
 func initBeadsDB(t *testing.T, dir string) {
 	t.Helper()
-	testutil.RequireDoltContainer(t)
+	testutil.RequireManagedDoltEndpoint(t)
 
-	cmd := exec.Command("bd", "init", "--server", "--server-port", testutil.DoltContainerPort())
+	cmd := exec.Command("bd", "init", "--server", "--server-port", testutil.ManagedDoltPort())
 	cmd.Dir = dir
 	if output, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("bd init failed: %v\n%s", err, output)

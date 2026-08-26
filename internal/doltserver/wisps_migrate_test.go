@@ -64,7 +64,7 @@ func setupBdWorkDir(t *testing.T, port int) string {
 // TestMigrateWisps_TableCreation verifies that the wisps table and auxiliary
 // tables are created when they don't exist.
 func TestMigrateWisps_TableCreation(t *testing.T) {
-	portStr := testutil.StartIsolatedDoltContainer(t)
+	portStr := testutil.RequireManagedDoltEndpoint(t)
 	if _, err := exec.LookPath("bd"); err != nil {
 		t.Skip("bd not found in PATH — skipping integration test")
 	}
@@ -102,7 +102,7 @@ func TestMigrateWisps_TableCreation(t *testing.T) {
 
 // TestBdSQLCount verifies the count helper works.
 func TestBdSQLCount(t *testing.T) {
-	portStr := testutil.StartIsolatedDoltContainer(t)
+	portStr := testutil.RequireManagedDoltEndpoint(t)
 	if _, err := exec.LookPath("bd"); err != nil {
 		t.Skip("bd not found in PATH — skipping integration test")
 	}

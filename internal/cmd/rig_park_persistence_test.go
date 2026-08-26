@@ -37,7 +37,7 @@ func setupRigBeadsDB(t *testing.T, rigPath, prefix string) *beads.Beads {
 	t.Helper()
 	requireBdCLI(t)
 
-	portString := testutil.StartIsolatedDoltContainer(t)
+	portString := testutil.RequireManagedDoltEndpoint(t)
 	port, err := strconv.Atoi(portString)
 	if err != nil {
 		t.Fatalf("parse isolated Dolt port %q: %v", portString, err)
