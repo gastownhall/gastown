@@ -6,22 +6,25 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 MAKE_BIN="$(command -v "${MAKE:-make}")"
 SYSTEM_PATH="/usr/bin:/bin"
-TMPDIR=""
+SCRATCH_DIR=""
 PASS=0
 FAIL=0
 
 cleanup() {
-  if [[ -n "$TMPDIR" && -d "$TMPDIR" ]]; then
-    rm -rf "$TMPDIR"
+  if [[ -n "$SCRATCH_DIR" && -d "$SCRATCH_DIR" ]]; then
+    find "$SCRATCH_DIR" -depth -delete
   fi
+	SCRATCH_DIR=""
 }
 trap cleanup EXIT
 
 setup_bins() {
-  TMPDIR="$(mktemp -d)"
-  INSTALL_DIR="$TMPDIR/home/.local/bin"
-  BREW_DIR="$TMPDIR/usr/local/bin"
-  OTHER_DIR="$TMPDIR/usr/bin"
+  local scratch_base="${TMPDIR:-${XDG_CACHE_HOME:-$HOME/.cache}/gastown/test-tmp}"
+  mkdir -p "$scratch_base"
+  SCRATCH_DIR="$(mktemp -d "$scratch_base/gt-check-install-path.XXXXXX")"
+  INSTALL_DIR="$SCRATCH_DIR/home/.local/bin"
+  BREW_DIR="$SCRATCH_DIR/usr/local/bin"
+  OTHER_DIR="$SCRATCH_DIR/usr/bin"
   mkdir -p "$INSTALL_DIR" "$BREW_DIR" "$OTHER_DIR"
   printf '#!/usr/bin/env sh\nexit 0\n' > "$INSTALL_DIR/gt"
   printf '#!/usr/bin/env sh\nexit 0\n' > "$BREW_DIR/gt"
