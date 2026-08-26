@@ -516,11 +516,11 @@ func installTestEnv(t *testing.T, homeDir string, includeDolt bool) []string {
 	binDir := t.TempDir()
 	bdName := "bd"
 	mode := os.FileMode(0755)
-	content := "#!/bin/sh\nif [ \"$1\" = \"version\" ]; then\n  echo 'bd version 999.0.0'\n  exit 0\nfi\necho 'fake bd only supports version' >&2\nexit 1\n"
+	content := "#!/bin/sh\nif [ \"$1\" = \"version\" ]; then\n  echo 'bd version 999.0.0-dc1'\n  exit 0\nfi\necho 'fake bd only supports version' >&2\nexit 1\n"
 	if runtime.GOOS == "windows" {
 		bdName = "bd.bat"
 		mode = 0644
-		content = "@echo off\r\nif \"%1\"==\"version\" (\r\n  echo bd version 999.0.0\r\n  exit /b 0\r\n)\r\necho fake bd only supports version 1>&2\r\nexit /b 1\r\n"
+		content = "@echo off\r\nif \"%1\"==\"version\" (\r\n  echo bd version 999.0.0-dc1\r\n  exit /b 0\r\n)\r\necho fake bd only supports version 1>&2\r\nexit /b 1\r\n"
 	}
 	if err := os.WriteFile(filepath.Join(binDir, bdName), []byte(content), mode); err != nil {
 		t.Fatalf("write fake bd: %v", err)

@@ -115,7 +115,7 @@ func TestBeadsBinaryCheck_BdNotInPath(t *testing.T) {
 	if result.FixHint == "" {
 		t.Error("expected a fix hint with install instructions")
 	}
-	if !strings.Contains(result.FixHint, "beads/cmd/bd") {
+	if !strings.Contains(result.FixHint, "marlon-costa-dc/beads") {
 		t.Errorf("fix hint should reference beads install path, got %q", result.FixHint)
 	}
 }
@@ -123,8 +123,8 @@ func TestBeadsBinaryCheck_BdNotInPath(t *testing.T) {
 func TestBeadsBinaryCheck_BdTooOld(t *testing.T) {
 	fakeDir := t.TempDir()
 	writeFakeBd(t, fakeDir,
-		"#!/bin/sh\necho 'bd version 0.44.0'\n",
-		"@echo off\r\necho bd version 0.44.0\r\n",
+		"#!/bin/sh\necho 'bd version 1.2.2-dc2'\n",
+		"@echo off\r\necho bd version 1.2.2-dc2\r\n",
 	)
 
 	t.Setenv("PATH", fakeDir)
