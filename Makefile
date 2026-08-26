@@ -225,7 +225,7 @@ clean:
 	rm -f $(BUILD_DIR)/$(BINARY)
 
 test: test-makefile
-	go test ./...
+	./scripts/go-test.sh ./...
 
 test-makefile:
 	bash scripts/check-install-path_test.sh

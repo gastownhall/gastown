@@ -52,6 +52,7 @@ import (
 	"github.com/steveyegge/gastown/internal/beads"
 	configpkg "github.com/steveyegge/gastown/internal/config"
 	"github.com/steveyegge/gastown/internal/constants"
+	"github.com/steveyegge/gastown/internal/pathboundary"
 	"github.com/steveyegge/gastown/internal/style"
 )
 
@@ -1430,7 +1431,9 @@ func ReapOwnedTestServers(townRoot string) (int, error) {
 		return 0, fmt.Errorf("resolving temp dir: %w", err)
 	}
 	rel, err := filepath.Rel(absTemp, absRoot)
-	if err != nil || rel == "." || strings.HasPrefix(rel, "..") || filepath.IsAbs(rel) {
+	insideTemp := err == nil && rel != "." && !strings.HasPrefix(rel, "..") && !filepath.IsAbs(rel)
+	insideHarness := pathboundary.TestCeiling(absRoot) != ""
+	if !insideTemp && !insideHarness {
 		return 0, fmt.Errorf("refusing to reap Dolt outside temp dir: %s", absRoot)
 	}
 
@@ -2885,6 +2888,9 @@ func findLocalDoltDB(beadsDir string) string {
 // FindMigratableDatabases finds existing dolt databases that can be migrated.
 func FindMigratableDatabases(townRoot string) []Migration {
 	var migrations []Migration
+	if strings.TrimSpace(townRoot) == "" {
+		return migrations
+	}
 	config := DefaultConfig(townRoot)
 
 	// Check town-level beads database -> .dolt-data/hq

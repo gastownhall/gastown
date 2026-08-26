@@ -9,6 +9,8 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+
+	"github.com/steveyegge/gastown/internal/pathboundary"
 )
 
 // ResolveBeadsDir returns the actual beads directory, following any redirect.
@@ -118,13 +120,14 @@ func resolveBeadsDirLocal(workDir string) string {
 // ancestor has one, all the way up to the filesystem root.
 func findAncestorBeadsDir(workDir string) string {
 	dir := filepath.Dir(filepath.Clean(workDir))
+	ceiling := pathboundary.TestCeiling(workDir)
 	for {
 		candidate := resolveBeadsDirLocal(dir)
 		if info, err := os.Stat(candidate); err == nil && info.IsDir() {
 			return candidate
 		}
 		parent := filepath.Dir(dir)
-		if parent == dir {
+		if parent == dir || (ceiling != "" && dir == ceiling) {
 			return ""
 		}
 		dir = parent

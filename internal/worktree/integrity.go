@@ -6,6 +6,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/steveyegge/gastown/internal/pathboundary"
 )
 
 // ErrIntegrityViolation classifies corrupted worktree metadata. Command paths
@@ -105,6 +107,9 @@ func findGitMarker(path, townRoot string) (string, bool, error) {
 		if err != nil {
 			return "", false, fmt.Errorf("%w: resolve town root %s: %v", ErrIntegrityViolation, townRoot, err)
 		}
+	}
+	if stop == "" {
+		stop = pathboundary.TestCeiling(path)
 	}
 
 	for {

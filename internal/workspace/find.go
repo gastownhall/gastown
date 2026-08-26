@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 
 	"github.com/steveyegge/gastown/internal/config"
+	"github.com/steveyegge/gastown/internal/pathboundary"
 )
 
 // ErrNotFound indicates no workspace was found.
@@ -39,6 +40,7 @@ func Find(startDir string) (string, error) {
 	var primaryMatch, secondaryMatch string
 
 	current := absDir
+	ceiling := pathboundary.TestCeiling(absDir)
 	for {
 		// Always keep updating primaryMatch and secondaryMatch to find the outermost
 		// directory with the respective markers. This handles nested workspace
@@ -53,7 +55,7 @@ func Find(startDir string) (string, error) {
 		}
 
 		parent := filepath.Dir(current)
-		if parent == current {
+		if parent == current || (ceiling != "" && current == ceiling) {
 			if primaryMatch != "" {
 				return primaryMatch, nil
 			}
