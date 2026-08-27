@@ -68,6 +68,7 @@ logs/
 settings/
 .events.jsonl
 .events.jsonl.lock
+embeddeddolt/.lock
 .sqlhistory
 .fork-integration.json
 
