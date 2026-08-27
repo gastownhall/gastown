@@ -140,7 +140,7 @@ func runEscalate(cmd *cobra.Command, args []string) error {
 			From:     agentID,
 			To:       target,
 			Subject:  fmt.Sprintf("[%s] %s", strings.ToUpper(severity), description),
-			Body:     formatEscalationMailBody(issue.ID, severity, escalateReason, agentID, escalateRelatedBead),
+			Body:     formatEscalationMailBody(issue.ID, description, fields),
 			Type:     mail.TypeEscalation,
 			ThreadID: issue.ID,
 		}
@@ -865,19 +865,38 @@ func writeEscalationLog(townRoot, beadID, severity, description string) error {
 	return err
 }
 
-func formatEscalationMailBody(beadID, severity, reason, from, related string) string {
+// formatEscalationMailBody renders the body of the escalation mail bead.
+//
+// The mail bead is a permanent, Dolt-versioned record, so it must be readable
+// on its own without resolving beadID against another table (hq-81i). Every
+// field the escalation carries is snapshotted inline here rather than left
+// behind a "gt escalate show <id>" pointer.
+func formatEscalationMailBody(beadID, title string, fields *beads.EscalationFields) string {
+	if fields == nil {
+		fields = &beads.EscalationFields{}
+	}
+
 	var lines []string
 	lines = append(lines, fmt.Sprintf("Escalation ID: %s", beadID))
-	lines = append(lines, fmt.Sprintf("Severity: %s", severity))
-	lines = append(lines, fmt.Sprintf("From: %s", from))
-	if reason != "" {
+	lines = append(lines, fmt.Sprintf("Severity: %s", fields.Severity))
+	lines = append(lines, fmt.Sprintf("From: %s", fields.EscalatedBy))
+	if title != "" {
+		lines = append(lines, fmt.Sprintf("Escalation: %s", title))
+	}
+	if fields.Source != "" {
+		lines = append(lines, fmt.Sprintf("Source: %s", fields.Source))
+	}
+	if fields.EscalatedAt != "" {
+		lines = append(lines, fmt.Sprintf("Escalated at: %s", fields.EscalatedAt))
+	}
+	if fields.Reason != "" {
 		lines = append(lines, "")
 		lines = append(lines, "Reason:")
-		lines = append(lines, reason)
+		lines = append(lines, fields.Reason)
 	}
-	if related != "" {
+	if fields.RelatedBead != "" {
 		lines = append(lines, "")
-		lines = append(lines, fmt.Sprintf("Related: %s", related))
+		lines = append(lines, fmt.Sprintf("Related: %s", fields.RelatedBead))
 	}
 	lines = append(lines, "")
 	lines = append(lines, "---")

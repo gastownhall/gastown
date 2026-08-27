@@ -360,6 +360,63 @@ func TestBumpSeverity(t *testing.T) {
 	}
 }
 
+// TestCreateEscalationBead_IsPersistent verifies that escalation beads are
+// created in the versioned issues table, never as ephemeral wisps.
+//
+// Regression test for hq-81i: the wisps table is in dolt_ignore, so wisp rows
+// carry no Dolt history and their deletion produces no diff and no commit. An
+// escalation is an audit record — severity decision, ack, resolution — and its
+// ID is embedded as a live handle ("gt escalate ack <id>") in the permanent
+// escalation mail bead. Creating it ephemeral let the reaper delete the thread
+// root out from under a versioned row still pointing at it.
+func TestCreateEscalationBead_IsPersistent(t *testing.T) {
+	stubDir := t.TempDir()
+	argsPath := filepath.Join(stubDir, "args.txt")
+
+	stubScript := `#!/bin/sh
+for a in "$@"; do
+  printf '%s\n' "$a" >> "` + argsPath + `"
+done
+cat > /dev/null
+echo '{"id":"dc-test1","title":"x","status":"open","priority":2,"type":"task","labels":["gt:escalation"]}'
+exit 0
+`
+	stubPath := filepath.Join(stubDir, "bd")
+	if err := os.WriteFile(stubPath, []byte(stubScript), 0755); err != nil {
+		t.Fatalf("write bd stub: %v", err)
+	}
+	t.Setenv("PATH", stubDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	ResetBdAllowStaleCacheForTest()
+
+	b := New(t.TempDir())
+	fields := &EscalationFields{
+		Severity:    "critical",
+		Reason:      "Dolt server unreachable",
+		EscalatedBy: "test/agent",
+		EscalatedAt: "2026-08-27T05:00:00Z",
+	}
+
+	if _, err := b.CreateEscalationBead("Dolt server unreachable", fields); err != nil {
+		t.Fatalf("CreateEscalationBead: %v", err)
+	}
+
+	argsData, err := os.ReadFile(argsPath)
+	if err != nil {
+		t.Fatalf("read stub args: %v", err)
+	}
+	for _, line := range strings.Split(string(argsData), "\n") {
+		switch {
+		case line == "--ephemeral":
+			t.Error("escalation beads must not be created --ephemeral: wisps are unversioned (hq-81i)")
+		case strings.HasPrefix(line, "--wisp-type="):
+			t.Errorf("escalation beads are not wisps; unexpected %q", line)
+		}
+	}
+	if !strings.Contains(string(argsData), "--labels=gt:escalation") {
+		t.Errorf("expected gt:escalation label in bd args, got:\n%s", argsData)
+	}
+}
+
 // TestCreateEscalationBead_PassesDescriptionViaStdin verifies that
 // CreateEscalationBead passes the multi-line description through bd's stdin
 // (--body-file=-) rather than embedding newlines in --description=...
