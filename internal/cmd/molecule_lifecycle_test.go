@@ -1058,3 +1058,73 @@ exit /b 0
 			"Beads closed: %v", closeLines)
 	}
 }
+
+// A role with no pinned handoff bead has nothing attached, so burn and squash
+// are no-ops. They used to return "no handoff bead found for %s", which meant a
+// patrol agent could not close its cycle: burn failed, squash failed, and the
+// error looked like a broken workspace rather than an empty one.
+func TestBurnAndSquashNoOpWithoutHandoffBead(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("shell script bd stub not supported on Windows")
+	}
+
+	for _, tc := range []struct {
+		name string
+		run  func(*cobra.Command, []string) error
+	}{
+		{"burn", runMoleculeBurn},
+		{"squash", runMoleculeSquash},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			townRoot := t.TempDir()
+			if err := os.MkdirAll(filepath.Join(townRoot, "mayor"), 0755); err != nil {
+				t.Fatalf("mkdir mayor: %v", err)
+			}
+			if err := os.MkdirAll(filepath.Join(townRoot, ".beads", "locks"), 0755); err != nil {
+				t.Fatalf("mkdir .beads/locks: %v", err)
+			}
+
+			binDir := filepath.Join(townRoot, "bin")
+			if err := os.MkdirAll(binDir, 0755); err != nil {
+				t.Fatalf("mkdir bin: %v", err)
+			}
+
+			// No pinned beads exist — FindHandoffBead returns nil, not an error.
+			bdScript := `#!/bin/sh
+while [ "$1" = "--allow-stale" ]; do shift; done
+echo '[]'
+exit 0
+`
+			if err := os.WriteFile(filepath.Join(binDir, "bd"), []byte(bdScript), 0755); err != nil {
+				t.Fatalf("write bd stub: %v", err)
+			}
+
+			t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+			t.Setenv(EnvGTRole, "witness")
+			t.Setenv("GT_POLECAT", "")
+			t.Setenv("GT_CREW", "")
+			t.Setenv("GT_RIG", "")
+			t.Setenv("TMUX_PANE", "")
+			t.Setenv("BEADS_DIR", "")
+
+			cwd, err := os.Getwd()
+			if err != nil {
+				t.Fatalf("getwd: %v", err)
+			}
+			t.Cleanup(func() { _ = os.Chdir(cwd) })
+			if err := os.Chdir(townRoot); err != nil {
+				t.Fatalf("chdir: %v", err)
+			}
+
+			prevJSON := moleculeJSON
+			t.Cleanup(func() { moleculeJSON = prevJSON })
+			moleculeJSON = false
+
+			cmd := &cobra.Command{Use: tc.name}
+			cmd.SetContext(context.Background())
+			if err := tc.run(cmd, []string{"witness"}); err != nil {
+				t.Fatalf("%s with no handoff bead returned error, want no-op: %v", tc.name, err)
+			}
+		})
+	}
+}
