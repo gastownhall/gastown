@@ -103,9 +103,10 @@ func TestPatrolCycleEntry(t *testing.T) {
 
 func TestParseStepResults(t *testing.T) {
 	tests := []struct {
-		name     string
-		input    string
-		expected map[string]string
+		name          string
+		input         string
+		expected      map[string]string
+		wantMalformed []string
 	}{
 		{
 			name:     "empty input",
@@ -151,18 +152,45 @@ func TestParseStepResults(t *testing.T) {
 				"heartbeat": "OK",
 			},
 		},
+		{
+			name:  "entry without a status is malformed",
+			input: "heartbeat:OK,inbox-check",
+			expected: map[string]string{
+				"heartbeat": "OK",
+			},
+			wantMalformed: []string{"inbox-check"},
+		},
+		{
+			name:  "repeated id keeps last status and one order slot",
+			input: "heartbeat:OK,heartbeat:SKIP",
+			expected: map[string]string{
+				"heartbeat": "SKIP",
+			},
+		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			got := parseStepResults(tt.input)
-			if len(got) != len(tt.expected) {
-				t.Errorf("parseStepResults(%q) returned %d entries, want %d", tt.input, len(got), len(tt.expected))
+			if len(got.status) != len(tt.expected) {
+				t.Errorf("parseStepResults(%q) returned %d entries, want %d", tt.input, len(got.status), len(tt.expected))
 				return
 			}
 			for k, v := range tt.expected {
-				if got[k] != v {
-					t.Errorf("parseStepResults(%q)[%q] = %q, want %q", tt.input, k, got[k], v)
+				if got.status[k] != v {
+					t.Errorf("parseStepResults(%q).status[%q] = %q, want %q", tt.input, k, got.status[k], v)
+				}
+			}
+			if len(got.order) != len(tt.expected) {
+				t.Errorf("parseStepResults(%q).order = %v, want %d ids", tt.input, got.order, len(tt.expected))
+			}
+			if len(got.malformed) != len(tt.wantMalformed) {
+				t.Errorf("parseStepResults(%q).malformed = %v, want %v", tt.input, got.malformed, tt.wantMalformed)
+				return
+			}
+			for i, want := range tt.wantMalformed {
+				if got.malformed[i] != want {
+					t.Errorf("parseStepResults(%q).malformed[%d] = %q, want %q", tt.input, i, got.malformed[i], want)
 				}
 			}
 		})
@@ -177,6 +205,8 @@ func TestBuildStepAudit(t *testing.T) {
 		wantPrefix  string // check prefix of output
 		wantSuffix  string // check suffix of output
 		wantContain string // check output contains this
+		wantErr     bool   // expect an error instead of an audit line
+		wantErrHas  []string
 	}{
 		{
 			name:        "deacon patrol with no steps reported",
@@ -208,6 +238,32 @@ func TestBuildStepAudit(t *testing.T) {
 			wantContain: "inbox-check SKIP",
 		},
 		{
+			// hq-6jz: these four aliases were the real incident. Silently
+			// dropping them recorded 18 executed steps as SKIP.
+			name:        "unknown step aliases are rejected, not downgraded to SKIP",
+			formulaName: "mol-deacon-patrol",
+			stepsFlag:   "heartbeat:OK,orphan-cleanup:OK,test-pollution:OK,zombie-detect:OK,dog-pool:OK",
+			wantErr:     true,
+			wantErrHas: []string{
+				"orphan-cleanup", "test-pollution", "zombie-detect", "dog-pool",
+				"orphan-process-cleanup", "test-pollution-cleanup", "zombie-scan", "dog-pool-maintenance",
+			},
+		},
+		{
+			name:        "known ids alongside an unknown one still fail",
+			formulaName: "mol-deacon-patrol",
+			stepsFlag:   "heartbeat:OK,not-a-step:OK,inbox-check:OK",
+			wantErr:     true,
+			wantErrHas:  []string{"not-a-step"},
+		},
+		{
+			name:        "entry missing a status is rejected",
+			formulaName: "mol-deacon-patrol",
+			stepsFlag:   "heartbeat:OK,inbox-check",
+			wantErr:     true,
+			wantErrHas:  []string{"inbox-check"},
+		},
+		{
 			name:        "nonexistent formula with no steps",
 			formulaName: "mol-nonexistent",
 			stepsFlag:   "",
@@ -223,7 +279,24 @@ func TestBuildStepAudit(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := buildStepAudit(tt.formulaName, tt.stepsFlag)
+			got, err := buildStepAudit(tt.formulaName, tt.stepsFlag)
+			if tt.wantErr {
+				if err == nil {
+					t.Fatalf("buildStepAudit() = %q, want error", got)
+				}
+				for _, want := range tt.wantErrHas {
+					if !strings.Contains(err.Error(), want) {
+						t.Errorf("buildStepAudit() error = %q, want to contain %q", err, want)
+					}
+				}
+				if got != "" {
+					t.Errorf("buildStepAudit() = %q, want empty audit alongside error", got)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("buildStepAudit() error = %v, want nil", err)
+			}
 			if tt.wantPrefix != "" && !strings.HasPrefix(got, tt.wantPrefix) {
 				t.Errorf("buildStepAudit() = %q, want prefix %q", got, tt.wantPrefix)
 			}

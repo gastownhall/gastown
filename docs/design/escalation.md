@@ -78,6 +78,30 @@ Config file: `~/gt/settings/escalation.json`
 
 Escalation beads use `type: escalation` with structured labels for tracking.
 
+### Durability
+
+Escalation beads are **persistent**, never wisps (hq-81i).
+
+The `wisps` table and everything matching `wisp_%` are in `dolt_ignore`, so wisp
+rows are unversioned: no commit on write, no diff row on delete, no record of
+who reaped what. An escalation is the canonical audit record — it carries a
+severity decision, an ack, and a resolution — and its ID is handed out as a live
+handle (`gt escalate ack <id>`) inside the escalation mail bead, which *is*
+versioned. Storing the thread root as a wisp let the reaper delete it out from
+under a permanent row still pointing at it, leaving that row's own instructions
+inoperable.
+
+Two consequences worth knowing:
+
+- `gt compact` does not TTL-expire escalations. Closed escalations stay in the
+  issues table as history rather than being reaped.
+- The escalation mail body snapshots the escalation's fields inline, so the
+  versioned mail bead stays readable even if the ID it names cannot be resolved.
+
+Escalations created before this rule landed are still in the `wisps` table.
+`gt doctor` flags them as `stranded-durable-wisps` and `gt doctor --fix`
+promotes them in place, preserving their IDs.
+
 ### Label Schema
 
 | Label | Values | Purpose |

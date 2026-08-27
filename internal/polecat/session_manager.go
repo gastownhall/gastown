@@ -386,6 +386,17 @@ func (m *SessionManager) Start(polecat string, opts SessionStartOptions) error {
 		runtimeConfig = config.ResolveRoleAgentConfig("polecat", townRoot, m.rig.Path)
 	}
 
+	// Credential preflight. A dead OAuth token does not make Claude Code exit —
+	// it drops into the interactive onboarding flow and parks there. The tmux
+	// session exists and the process runs, so every liveness check passes while
+	// the polecat never reaches a prompt and never heartbeats (hq-ac0). Refuse
+	// to spawn instead of creating a silent zombie.
+	if warning, err := config.PreflightAgentAuth(runtimeConfig, opts.RuntimeConfigDir); err != nil {
+		return fmt.Errorf("credential preflight for polecat %s: %w", polecat, err)
+	} else if warning != "" {
+		style.PrintWarning("%s", warning)
+	}
+
 	// Ensure runtime settings exist in the shared polecats parent directory.
 	// Settings are passed to Claude Code via --settings flag.
 	polecatSettingsDir := config.RoleSettingsDir("polecat", m.rig.Path)
@@ -460,7 +471,10 @@ func (m *SessionManager) Start(polecat string, opts SessionStartOptions) error {
 	envVars["GT_TOWN_ROOT"] = townRoot
 	envVars["GT_RUN"] = runID
 	envVars["POLECAT_SLOT"] = fmt.Sprintf("%d", m.polecatSlot(polecat))
-	envVars["GT_PROCESS_NAMES"] = strings.Join(config.ResolveProcessNames(runtimeConfig.ResolvedAgent, runtimeConfig.Command, runtimeConfig.Args...), ",")
+	// Resolve from the populated RuntimeConfig so a wrapper command (a launcher
+	// script that execs the real agent binary) does not become the only name
+	// liveness checks look for — no live process carries it after the exec (hq-io5).
+	envVars["GT_PROCESS_NAMES"] = strings.Join(config.RuntimeProcessNames(runtimeConfig), ",")
 	if polecatGitBranch != "" {
 		envVars["GT_BRANCH"] = polecatGitBranch
 	}

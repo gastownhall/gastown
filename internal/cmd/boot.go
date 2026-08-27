@@ -323,9 +323,95 @@ func runDegradedTriage(b *boot.Boot) (action, target string, err error) {
 		return "error", "deacon-missing", fmt.Errorf("cannot find town root to start deacon")
 	}
 
+	// Deacon session exists, but "exists" is not "booted". A Claude Code agent
+	// launched with a stale OAuth token does not error out — it falls back to
+	// the interactive onboarding flow (theme picker, then login-method select)
+	// and parks there forever. Every liveness check passes: the tmux session is
+	// there, the process is running, nothing is written to stderr. The agent
+	// simply never reaches a prompt, so it processes no heartbeats and runs no
+	// patrol. Nudging cannot help — there is no prompt to nudge.
+	//
+	// This is mechanical, not a reasoning call: specific strings on the pane
+	// mean the session never booted, and the only cure is a restart.
+	if isOnboardingStuck(tm, deaconSession) {
+		fmt.Println("Deacon parked on Claude Code onboarding (never booted) - restarting Deacon")
+		if townRoot == "" {
+			return "error", "deacon-onboarding-stuck", fmt.Errorf("cannot find town root to restart deacon")
+		}
+		mgr := deacon.NewManager(townRoot)
+		if err := mgr.Stop(); err != nil && err != deacon.ErrNotRunning {
+			return "error", "deacon-restart-failed", fmt.Errorf("stopping onboarding-stuck deacon: %w", err)
+		}
+		if err := mgr.Start(""); err != nil && err != deacon.ErrAlreadyRunning {
+			return "error", "deacon-restart-failed", fmt.Errorf("restarting onboarding-stuck deacon: %w", err)
+		}
+		return "restart", "deacon-onboarding-stuck", nil
+	}
+
 	// Deacon session exists — in degraded mode, that's all we can check
 	// mechanically. The Boot agent handles deeper health assessment.
 	return "nothing", "", nil
+}
+
+// onboardingPaneLines is how much of the Deacon pane to inspect for onboarding
+// UI. The wizard repaints the whole screen, so a single screenful is plenty;
+// reading further back only invites false positives from old scrollback.
+const onboardingPaneLines = 50
+
+// onboardingMarkers are strings that appear only in Claude Code's first-run
+// wizard, never in a booted session. Any one of them is conclusive.
+var onboardingMarkers = []string{
+	"Select login method:",
+	"Choose the text style",
+}
+
+// onboardingPairMarkers must all be present to count. "Welcome to Claude Code"
+// alone is not evidence — a healthy session prints it in its startup banner
+// too. Paired with the wizard's own prompt, it is.
+var onboardingPairMarkers = []string{
+	"Welcome to Claude Code",
+	"Let's get started",
+}
+
+// isOnboardingStuck reports whether the agent in session is parked on Claude
+// Code's first-run onboarding wizard instead of a prompt.
+//
+// A capture failure is not evidence of onboarding, so it returns false and
+// lets triage fall through to its normal decision: a broken capture must not
+// be able to trigger a restart.
+func isOnboardingStuck(tm *tmux.Tmux, session string) bool {
+	pane, err := tm.CapturePane(session, onboardingPaneLines)
+	if err != nil {
+		fmt.Printf("Warning: capturing pane for %s: %v\n", session, err)
+		return false
+	}
+	return paneShowsOnboarding(pane)
+}
+
+// paneShowsOnboarding is the pure decision behind isOnboardingStuck.
+func paneShowsOnboarding(pane string) bool {
+	pane = normalizeQuotes(pane)
+
+	for _, marker := range onboardingMarkers {
+		if strings.Contains(pane, normalizeQuotes(marker)) {
+			return true
+		}
+	}
+
+	for _, marker := range onboardingPairMarkers {
+		if !strings.Contains(pane, normalizeQuotes(marker)) {
+			return false
+		}
+	}
+	return true
+}
+
+// quoteNormalizer folds the typographic apostrophes a TUI renders down to the
+// ASCII one our markers are written with, so "Let\u2019s get started" still matches.
+var quoteNormalizer = strings.NewReplacer("\u2018", "'", "\u2019", "'")
+
+func normalizeQuotes(s string) string {
+	return quoteNormalizer.Replace(s)
 }
 
 // executeWarrants scans the warrants directory and executes any pending warrants.

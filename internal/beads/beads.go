@@ -664,6 +664,14 @@ func (b *Beads) getResolvedBeadsDir() string {
 	return ResolveBeadsDir(b.workDir)
 }
 
+// ResolvedBeadsDir returns the beads directory this wrapper operates on, with
+// redirects followed. Callers that need to reason about *where* a wrapper points
+// — rather than issue a command through it — use this; pairing it with
+// ForAgentBead yields the town database that holds agent beads.
+func (b *Beads) ResolvedBeadsDir() string {
+	return b.getResolvedBeadsDir()
+}
+
 // targetBeadsDirForCreate returns the database a create operation should use.
 // Rig is authoritative for MR/conflict-task creates; otherwise parent-prefixed
 // children should land beside their parent so bd can resolve the relationship.

@@ -28,6 +28,8 @@ type DAGNode struct {
 type DAGInfo struct {
 	RootID       string              `json:"root_id"`
 	RootTitle    string              `json:"root_title"`
+	RootOnly     bool                `json:"root_only,omitempty"` // Steps come from the attached formula; no per-step state exists.
+	Formula      string              `json:"formula,omitempty"`   // Attached formula name, set when RootOnly.
 	TotalNodes   int                 `json:"total_nodes"`
 	Tiers        int                 `json:"tiers"`
 	CriticalPath []string            `json:"critical_path,omitempty"`
@@ -92,14 +94,22 @@ func runMoleculeDag(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("listing children: %w", err)
 	}
 
+	var dag *DAGInfo
 	if len(children) == 0 {
-		return fmt.Errorf("no steps found for %s (not a molecule root?)", rootID)
-	}
-
-	// Build the DAG
-	dag, err := buildDAG(b, root, children)
-	if err != nil {
-		return fmt.Errorf("building DAG: %w", err)
+		// Root-only wisp: derive the DAG from the attached formula's steps.
+		steps, formulaName, err := rootOnlySteps(root)
+		if err != nil {
+			return fmt.Errorf("%s: %s", rootID, formulaLoadWarning(formulaName, err))
+		}
+		if formulaName == "" {
+			return noStepsError(rootID)
+		}
+		dag = buildFormulaDAG(root, steps, formulaName)
+	} else {
+		dag, err = buildDAG(b, root, children)
+		if err != nil {
+			return fmt.Errorf("building DAG: %w", err)
+		}
 	}
 
 	// JSON output
@@ -311,6 +321,9 @@ func findCriticalPath(dag *DAGInfo) []string {
 func outputDAGTree(dag *DAGInfo) error {
 	fmt.Printf("\n%s %s\n", style.Bold.Render("🌳 DAG:"), dag.RootTitle)
 	fmt.Printf("   Root: %s\n", dag.RootID)
+	if dag.RootOnly {
+		fmt.Printf("   Formula: %s (steps read inline)\n", dag.Formula)
+	}
 	fmt.Printf("   Nodes: %d | Tiers: %d\n", dag.TotalNodes, dag.Tiers)
 
 	if len(dag.CriticalPath) > 0 {
@@ -329,10 +342,38 @@ func outputDAGTree(dag *DAGInfo) error {
 
 	// Legend
 	fmt.Println()
-	fmt.Printf("   %s done  %s in_progress  %s ready  %s blocked\n",
-		style.Bold.Render("✓"), style.Bold.Render("⧖"), style.Bold.Render("○"), style.Dim.Render("◌"))
+	dagLegend(dag)
 
 	return nil
+}
+
+// dagStatusIcon renders a DAG node's status as a single glyph. "inline" nodes
+// come from a root-only wisp's formula and carry no tracked state, so they get
+// a neutral mark rather than the "blocked" one.
+func dagStatusIcon(status string) string {
+	switch status {
+	case "closed":
+		return style.Bold.Render("✓")
+	case "in_progress":
+		return style.Bold.Render("⧖")
+	case "ready":
+		return style.Bold.Render("○")
+	case dagStatusInline:
+		return style.Dim.Render("·")
+	default:
+		return style.Dim.Render("◌")
+	}
+}
+
+// dagLegend prints the status glyph key for a DAG rendering.
+func dagLegend(dag *DAGInfo) {
+	if dag.RootOnly {
+		fmt.Printf("   %s step declared by the formula (read inline: per-step state is not tracked)\n",
+			style.Dim.Render("·"))
+		return
+	}
+	fmt.Printf("   %s done  %s in_progress  %s ready  %s blocked\n",
+		style.Bold.Render("✓"), style.Bold.Render("⧖"), style.Bold.Render("○"), style.Dim.Render("◌"))
 }
 
 // printNode recursively prints a node and its dependents.
@@ -353,19 +394,6 @@ func printNode(dag *DAGInfo, id, prefix string, isLast bool, visited map[string]
 		connector = "└─"
 	}
 
-	// Status icon
-	var icon string
-	switch node.Status {
-	case "closed":
-		icon = style.Bold.Render("✓")
-	case "in_progress":
-		icon = style.Bold.Render("⧖")
-	case "ready":
-		icon = style.Bold.Render("○")
-	default:
-		icon = style.Dim.Render("◌")
-	}
-
 	// Parallel marker
 	parallelMark := ""
 	if node.Parallel {
@@ -373,7 +401,7 @@ func printNode(dag *DAGInfo, id, prefix string, isLast bool, visited map[string]
 	}
 
 	// Print node
-	fmt.Printf("%s%s %s %s%s\n", prefix, connector, icon, node.ID, parallelMark)
+	fmt.Printf("%s%s %s %s%s\n", prefix, connector, dagStatusIcon(node.Status), node.ID, parallelMark)
 
 	// Child prefix
 	childPrefix := prefix
@@ -394,6 +422,9 @@ func printNode(dag *DAGInfo, id, prefix string, isLast bool, visited map[string]
 func outputDAGTiers(dag *DAGInfo) error {
 	fmt.Printf("\n%s %s\n", style.Bold.Render("📊 DAG Tiers:"), dag.RootTitle)
 	fmt.Printf("   Root: %s\n", dag.RootID)
+	if dag.RootOnly {
+		fmt.Printf("   Formula: %s (steps read inline)\n", dag.Formula)
+	}
 	fmt.Printf("   Nodes: %d | Tiers: %d\n", dag.TotalNodes, dag.Tiers)
 	fmt.Println()
 
@@ -412,18 +443,7 @@ func outputDAGTiers(dag *DAGInfo) error {
 				continue
 			}
 
-			// Status icon
-			var icon string
-			switch node.Status {
-			case "closed":
-				icon = style.Bold.Render("✓")
-			case "in_progress":
-				icon = style.Bold.Render("⧖")
-			case "ready":
-				icon = style.Bold.Render("○")
-			default:
-				icon = style.Dim.Render("◌")
-			}
+			icon := dagStatusIcon(node.Status)
 
 			// Parallel marker
 			parallelMark := ""
@@ -449,8 +469,7 @@ func outputDAGTiers(dag *DAGInfo) error {
 
 	// Legend
 	fmt.Println()
-	fmt.Printf("   %s done  %s in_progress  %s ready  %s blocked\n",
-		style.Bold.Render("✓"), style.Bold.Render("⧖"), style.Bold.Render("○"), style.Dim.Render("◌"))
+	dagLegend(dag)
 
 	return nil
 }

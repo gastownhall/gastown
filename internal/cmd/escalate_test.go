@@ -268,65 +268,86 @@ func TestFormatRelativeTime(t *testing.T) {
 
 func TestFormatEscalationMailBody(t *testing.T) {
 	tests := []struct {
-		name     string
-		beadID   string
-		severity string
-		reason   string
-		from     string
-		related  string
-		wantIn   []string
-		notIn    []string
+		name   string
+		beadID string
+		title  string
+		fields *beads.EscalationFields
+		wantIn []string
+		notIn  []string
 	}{
 		{
-			name:     "basic escalation",
-			beadID:   "hq-abc123",
-			severity: "high",
-			reason:   "Build failing",
-			from:     "gastown/witness",
-			related:  "",
+			name:   "basic escalation",
+			beadID: "hq-abc123",
+			title:  "Build is red on main",
+			fields: &beads.EscalationFields{
+				Severity:    "high",
+				Reason:      "Build failing",
+				EscalatedBy: "gastown/witness",
+			},
 			wantIn: []string{
 				"Escalation ID: hq-abc123",
 				"Severity: high",
 				"From: gastown/witness",
+				"Escalation: Build is red on main",
 				"Reason:",
 				"Build failing",
 				"gt escalate ack hq-abc123",
 				"gt escalate close hq-abc123",
 			},
-			notIn: []string{"Related:"},
+			notIn: []string{"Related:", "Source:"},
 		},
 		{
-			name:     "with related bead",
-			beadID:   "hq-xyz789",
-			severity: "critical",
-			reason:   "Agent stuck",
-			from:     "gastown/deacon",
-			related:  "gt-stuck42",
+			name:   "with related bead and source",
+			beadID: "hq-xyz789",
+			title:  "Agent stuck",
+			fields: &beads.EscalationFields{
+				Severity:    "critical",
+				Reason:      "Agent stuck",
+				EscalatedBy: "gastown/deacon",
+				RelatedBead: "gt-stuck42",
+				Source:      "patrol:deacon",
+				EscalatedAt: "2026-08-27T04:20:50Z",
+			},
 			wantIn: []string{
 				"Escalation ID: hq-xyz789",
 				"Severity: critical",
 				"Related: gt-stuck42",
+				"Source: patrol:deacon",
+				"Escalated at: 2026-08-27T04:20:50Z",
 			},
 		},
 		{
-			name:     "no reason",
-			beadID:   "hq-nnn",
-			severity: "low",
-			reason:   "",
-			from:     "system",
-			related:  "",
+			name:   "no reason still carries the escalation text",
+			beadID: "hq-nnn",
+			title:  "Dolt server unreachable",
+			fields: &beads.EscalationFields{
+				Severity:    "low",
+				EscalatedBy: "system",
+			},
 			wantIn: []string{
 				"Escalation ID: hq-nnn",
 				"Severity: low",
 				"From: system",
+				"Escalation: Dolt server unreachable",
 			},
 			notIn: []string{"Reason:"},
+		},
+		{
+			name:   "nil fields does not panic",
+			beadID: "hq-nil",
+			title:  "Something broke",
+			fields: nil,
+			wantIn: []string{
+				"Escalation ID: hq-nil",
+				"Escalation: Something broke",
+				"gt escalate ack hq-nil",
+			},
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := formatEscalationMailBody(tt.beadID, tt.severity, tt.reason, tt.from, tt.related)
+			got := formatEscalationMailBody(tt.beadID, tt.title, tt.fields)
 			for _, s := range tt.wantIn {
 				if !strings.Contains(got, s) {
 					t.Errorf("missing %q in output:\n%s", s, got)
@@ -584,11 +605,17 @@ func TestRunEscalateValidation(t *testing.T) {
 }
 
 func TestFormatEscalationMailBodyNeutralSubjectStillCarriesStructuredBody(t *testing.T) {
-	body := formatEscalationMailBody("hq-abc123", "high", "Database drift", "deacon/", "gt-xyz")
+	body := formatEscalationMailBody("hq-abc123", "Database drift detected", &beads.EscalationFields{
+		Severity:    "high",
+		Reason:      "Database drift",
+		EscalatedBy: "deacon/",
+		RelatedBead: "gt-xyz",
+	})
 	for _, want := range []string{
 		"Escalation ID: hq-abc123",
 		"Severity: high",
 		"From: deacon/",
+		"Escalation: Database drift detected",
 		"Related: gt-xyz",
 	} {
 		if !strings.Contains(body, want) {

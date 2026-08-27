@@ -131,6 +131,10 @@ Without arguments, wakes one idle dog (if available).
 This updates the dog's last-active timestamp and can trigger
 session creation for the dog's worktrees.
 
+If the dog still holds hooked work but has no live session (stranded, e.g.
+after a town halt dropped the deferred session spawn), call starts the session
+so the work actually runs.
+
 Examples:
   gt dog call alpha
   gt dog call --all
@@ -227,16 +231,18 @@ Examples:
 
 var dogHealthCheckCmd = &cobra.Command{
 	Use:   "health-check [name]",
-	Short: "Check dog health (zombies, hung, orphans)",
+	Short: "Check dog health (zombies, hung, orphans, stranded)",
 	Long: `Check dog health and detect problems.
 
 Detects:
   - Zombies: state=working but tmux session or agent process is dead
   - Hung: agent alive but no tmux activity for too long
   - Orphans: dog idle but tmux session still exists
+  - Stranded: dog idle with no session but still holds hooked work
 
 With --auto-clear, zombies are automatically returned to idle state.
-Hung dogs are reported only (Deacon decides per ZFC principle).
+Hung and stranded dogs are reported only (Deacon decides per ZFC principle);
+recover a stranded dog with 'gt dog call <name>'.
 
 Exit codes:
   0 = all healthy
@@ -542,7 +548,7 @@ func runDogCall(cmd *cobra.Command, args []string) error {
 		woken := 0
 		for _, d := range dogs {
 			if d.State == dog.StateIdle {
-				if err := mgr.SetState(d.Name, dog.StateIdle); err != nil {
+				if err := wakeDog(mgr, d.Name); err != nil {
 					style.PrintWarning("failed to wake %s: %v", d.Name, err)
 					continue
 				}
@@ -572,11 +578,9 @@ func runDogCall(cmd *cobra.Command, args []string) error {
 			return nil
 		}
 
-		if err := mgr.SetState(name, dog.StateIdle); err != nil {
-			return fmt.Errorf("waking dog %s: %w", name, err)
+		if err := wakeDog(mgr, name); err != nil {
+			return err
 		}
-
-		fmt.Printf("✓ Called %s - ready for work\n", name)
 		return nil
 	}
 
@@ -591,11 +595,80 @@ func runDogCall(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 
-	if err := mgr.SetState(d.Name, dog.StateIdle); err != nil {
-		return fmt.Errorf("waking dog %s: %w", d.Name, err)
+	return wakeDog(mgr, d.Name)
+}
+
+// wakeDog returns a dog to idle and, if it still holds hooked work, actually
+// starts its session so the work runs.
+//
+// Reporting "ready for work" while hooked work sits unexecuted is what strands
+// dog dispatches across a town restart: the session spawn is deferred and
+// non-durable, so a halt between hooking the wisp and spawning the session
+// drops the spawn forever. `gt dog call` is the documented recovery command,
+// so it must reconcile hook state against session state (hq-xgq).
+func wakeDog(mgr *dog.Manager, name string) error {
+	if err := mgr.SetState(name, dog.StateIdle); err != nil {
+		return fmt.Errorf("waking dog %s: %w", name, err)
 	}
 
-	fmt.Printf("✓ Called %s - ready for work\n", d.Name)
+	work, err := hookedWorkForDog(name)
+	if err != nil {
+		// Beads is unavailable — the dog is awake, we just cannot tell whether
+		// it holds work. Say so rather than claiming it is ready.
+		style.PrintWarning("could not check hooked work for %s: %v", name, err)
+		fmt.Printf("✓ Called %s - ready for work\n", name)
+		return nil
+	}
+	if work == nil {
+		fmt.Printf("✓ Called %s - ready for work\n", name)
+		return nil
+	}
+
+	if err := resumeDogWork(mgr, name, work); err != nil {
+		return fmt.Errorf("resuming hooked work %s on dog %s: %w", work.ID, name, err)
+	}
+
+	fmt.Printf("✓ Called %s - resumed hooked work %s (session started)\n", name, work.ID)
+	return nil
+}
+
+// hookedWorkForDog looks up what is still on a dog's hook.
+func hookedWorkForDog(name string) (*dog.HookedWork, error) {
+	townRoot, err := workspace.FindFromCwd()
+	if err != nil {
+		return nil, fmt.Errorf("finding town root: %w", err)
+	}
+	return dog.NewBeadsHookedWorkFinder(townRoot).HookedWork(name)
+}
+
+// resumeDogWork claims the hooked work and starts the dog's session.
+// If the session fails to start, the claim is rolled back so the dog does not
+// sit in state=working with no session (which reads as a zombie).
+func resumeDogWork(mgr *dog.Manager, name string, work *dog.HookedWork) error {
+	townRoot, err := workspace.FindFromCwd()
+	if err != nil {
+		return fmt.Errorf("finding town root: %w", err)
+	}
+
+	sm := dog.NewSessionManager(tmux.NewTmux(), townRoot, mgr)
+	if running, err := sm.IsRunning(name); err != nil {
+		return fmt.Errorf("checking session: %w", err)
+	} else if running {
+		return nil // Session already live; nothing stranded.
+	}
+
+	assigned, err := mgr.AssignWorkIfIdle(name, work.ID)
+	if err != nil {
+		return fmt.Errorf("assigning hooked work: %w", err)
+	}
+
+	if _, err := sm.EnsureRunning(name, dog.SessionStartOptions{WorkDesc: work.ID}); err != nil {
+		if _, clearErr := mgr.ClearWorkIfMatches(name, work.ID, assigned.WorkStartedAt); clearErr != nil {
+			return fmt.Errorf("starting session: %w (rollback also failed: %v)", err, clearErr)
+		}
+		return fmt.Errorf("starting session: %w", err)
+	}
+
 	return nil
 }
 
@@ -944,6 +1017,11 @@ func runDogHealthCheck(cmd *cobra.Command, args []string) error {
 
 	tm := tmux.NewTmux()
 	hc := dog.NewHealthChecker(mgr, tm)
+	// Stranded detection needs the town beads DB to see what is still hooked.
+	// Best-effort: without a town root the other checks still run.
+	if townRoot, err := workspace.FindFromCwd(); err == nil && townRoot != "" {
+		hc = hc.WithHookedWorkFinder(dog.NewBeadsHookedWorkFinder(townRoot))
+	}
 
 	var results []dog.DogHealthResult
 
@@ -999,6 +1077,9 @@ func runDogHealthCheck(cmd *cobra.Command, args []string) error {
 			fmt.Println(line)
 			if r.Recommendation != "" && r.NeedsAttention {
 				fmt.Printf("    → %s\n", r.Recommendation)
+			}
+			if r.CheckError != "" {
+				fmt.Printf("    ! %s\n", r.CheckError)
 			}
 		}
 

@@ -84,6 +84,20 @@ func (c *WispGCCheck) Run(ctx *CheckContext) *CheckResult {
 	}
 }
 
+// wispListEntry is one wisp as reported by `bd mol wisp list --json`.
+type wispListEntry struct {
+	ID        string `json:"id"`
+	Status    string `json:"status"`
+	UpdatedAt string `json:"updated_at"`
+}
+
+// wispList is the envelope `bd mol wisp list --json` prints. The wisps live
+// under a "wisps" key — decoding the payload as a bare array silently yields
+// zero wisps (hq-675).
+type wispList struct {
+	Wisps []wispListEntry `json:"wisps"`
+}
+
 // countAbandonedWisps counts wisps older than the threshold in a rig.
 // Queries the wisps table via bd mol wisp list (Dolt server is required).
 func (c *WispGCCheck) countAbandonedWisps(rigPath string) int {
@@ -97,21 +111,25 @@ func (c *WispGCCheck) countAbandonedWisps(rigPath string) int {
 		return 0
 	}
 
-	var wisps []struct {
-		ID        string `json:"id"`
-		Status    string `json:"status"`
-		Ephemeral bool   `json:"ephemeral"`
-		UpdatedAt string `json:"updated_at"`
-	}
-	if err := json.Unmarshal(output, &wisps); err != nil {
+	// Use UTC for cutoff: Dolt stores timestamps in UTC (gt-ty4).
+	return countAbandonedWisps(output, time.Now().UTC().Add(-c.threshold))
+}
+
+// countAbandonedWisps counts the wisps in a `bd mol wisp list --json` payload
+// that have not been touched since cutoff and are not live work.
+//
+// A HOOKED wisp is an agent's active molecule, never abandoned — a patrol whose
+// steps take longer than the threshold is still running (hq-675). Counting it
+// here would report live work as garbage and invite someone to collect it.
+func countAbandonedWisps(payload []byte, cutoff time.Time) int {
+	var list wispList
+	if err := json.Unmarshal(payload, &list); err != nil {
 		return 0
 	}
 
-	// Use UTC for cutoff: Dolt stores timestamps in UTC (gt-ty4).
-	cutoff := time.Now().UTC().Add(-c.threshold)
 	count := 0
-	for _, w := range wisps {
-		if w.Status == "closed" {
+	for _, w := range list.Wisps {
+		if w.Status == "closed" || w.Status == "hooked" {
 			continue
 		}
 		updatedAt, err := time.Parse(time.RFC3339, w.UpdatedAt)
@@ -133,7 +151,12 @@ func (c *WispGCCheck) Fix(ctx *CheckContext) error {
 	for rigName := range c.abandonedRigs {
 		rigPath := filepath.Join(ctx.TownRoot, rigName)
 
-		// Run bd mol wisp gc
+		// Preview only — deliberately no --force (hq-675).
+		//
+		// `bd mol wisp gc` defaults to age-based collection, which has no
+		// ownership scope and does not exclude HOOKED wisps. Forcing it here
+		// would delete every agent's live molecule across every rig in town.
+		// Report the candidates and leave deletion to the reaper.
 		cmd := exec.Command("bd", "mol", "wisp", "gc")
 		cmd.Dir = rigPath
 		if output, err := cmd.CombinedOutput(); err != nil {

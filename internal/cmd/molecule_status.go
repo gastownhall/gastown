@@ -109,6 +109,9 @@ type MoleculeProgressInfo struct {
 	RootID       string   `json:"root_id"`
 	RootTitle    string   `json:"root_title"`
 	MoleculeID   string   `json:"molecule_id,omitempty"`
+	RootOnly     bool     `json:"root_only,omitempty"` // Steps live in the attached formula, not in child rows.
+	Formula      string   `json:"formula,omitempty"`   // Attached formula name, set when RootOnly.
+	Steps        []string `json:"steps,omitempty"`     // Declared checklist, set when RootOnly (no per-step state exists).
 	TotalSteps   int      `json:"total_steps"`
 	DoneSteps    int      `json:"done_steps"`
 	InProgress   int      `json:"in_progress_steps"`
@@ -176,7 +179,22 @@ func runMoleculeProgress(cmd *cobra.Command, args []string) error {
 	}
 
 	if len(children) == 0 {
-		return fmt.Errorf("no steps found for %s (not a molecule root?)", rootID)
+		// Root-only wisp: the steps are in the attached formula, not in child rows.
+		steps, formulaName, err := rootOnlySteps(root)
+		if err != nil {
+			return fmt.Errorf("%s: %s", rootID, formulaLoadWarning(formulaName, err))
+		}
+		if formulaName == "" {
+			return noStepsError(rootID)
+		}
+		rootProgress := rootOnlyProgress(root, steps, formulaName)
+		if moleculeJSON {
+			enc := json.NewEncoder(os.Stdout)
+			enc.SetIndent("", "  ")
+			return enc.Encode(rootProgress)
+		}
+		outputRootOnlyProgress(rootProgress, steps)
+		return nil
 	}
 
 	// Build progress info
@@ -273,7 +291,7 @@ func runMoleculeProgress(cmd *cobra.Command, args []string) error {
 	}
 
 	// Human-readable output
-	fmt.Printf("\n%s %s\n\n", style.Bold.Render("🧬 Molecule Progress:"), root.Title)
+	fmt.Printf("\n%s %s\n\n", moleculeProgressHeading(), root.Title)
 	fmt.Printf("  Root: %s\n", rootID)
 	if progress.MoleculeID != "" {
 		fmt.Printf("  Molecule: %s\n", progress.MoleculeID)

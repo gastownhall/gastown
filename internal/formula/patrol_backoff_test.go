@@ -171,37 +171,59 @@ func TestPatrolFormulasHaveWispGC(t *testing.T) {
 	}
 }
 
-// TestDeaconPatrolDoesNotRunAgeBasedWispGC verifies that the Deacon patrol
-// does not reap open step wisps from its own active patrol molecule.
+// TestPatrolFormulasDoNotRunAgeBasedWispGC verifies that no patrol formula
+// runs unscoped age-based wisp GC from inside its own patrol molecule.
 //
-// Regression test for hq-3pp.
-func TestDeaconPatrolDoesNotRunAgeBasedWispGC(t *testing.T) {
-	content, err := formulasFS.ReadFile("formulas/mol-deacon-patrol.formula.toml")
-	if err != nil {
-		t.Fatalf("reading deacon patrol formula: %v", err)
+// `bd mol wisp gc --age` has no ownership scope and does not exclude HOOKED
+// wisps, so running it mid-patrol deletes live work town-wide: the patrol's
+// own open step wisps (which makes the cycle appear complete early) and other
+// agents' active molecules. Closed-only cleanup is safe; age-based cleanup of
+// open wisps belongs to the reaper, outside active patrol molecules.
+//
+// Regression test for hq-675 (and hq-3pp, the Deacon-only instance).
+func TestPatrolFormulasDoNotRunAgeBasedWispGC(t *testing.T) {
+	patrolFormulas := []string{
+		"mol-witness-patrol.formula.toml",
+		"mol-deacon-patrol.formula.toml",
+		"mol-refinery-patrol.formula.toml",
 	}
 
-	f, err := Parse(content)
-	if err != nil {
-		t.Fatalf("parsing deacon patrol formula: %v", err)
-	}
+	for _, name := range patrolFormulas {
+		t.Run(name, func(t *testing.T) {
+			content, err := formulasFS.ReadFile("formulas/" + name)
+			if err != nil {
+				t.Fatalf("reading %s: %v", name, err)
+			}
 
-	var inboxDesc string
-	for _, step := range f.Steps {
-		if step.ID == "inbox-check" {
-			inboxDesc = step.Description
-			break
-		}
-	}
-	if inboxDesc == "" {
-		t.Fatal("deacon patrol formula: inbox-check step not found or has empty description")
-	}
+			f, err := Parse(content)
+			if err != nil {
+				t.Fatalf("parsing %s: %v", name, err)
+			}
 
-	if !strings.Contains(inboxDesc, "bd mol wisp gc --closed --force") {
-		t.Fatal("deacon inbox-check must keep closed-wisp cleanup")
-	}
-	if strings.Contains(inboxDesc, "bd mol wisp gc --age") {
-		t.Fatal("deacon inbox-check must not run age-based wisp GC inside the active patrol")
+			var inboxDesc string
+			for _, step := range f.Steps {
+				if step.ID == "inbox-check" {
+					inboxDesc = step.Description
+					break
+				}
+			}
+			if inboxDesc == "" {
+				t.Fatalf("%s: inbox-check step not found or has empty description", name)
+			}
+
+			if !strings.Contains(inboxDesc, "bd mol wisp gc --closed --force") {
+				t.Errorf("%s inbox-check must keep closed-wisp cleanup", name)
+			}
+			for _, line := range strings.Split(inboxDesc, "\n") {
+				// Prose that names the forbidden command (the warning note) is
+				// fine; an executable invocation of it is not.
+				if strings.HasPrefix(strings.TrimSpace(line), "bd mol wisp gc --age") {
+					t.Errorf("%s inbox-check must not run age-based wisp GC inside the active patrol\n"+
+						"See hq-675: the GC is unscoped and deletes live HOOKED wisps town-wide.",
+						name)
+				}
+			}
+		})
 	}
 }
 
