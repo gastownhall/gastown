@@ -21,9 +21,9 @@ var polecatManagerIntegrationCounter atomic.Int32
 
 func initBeadsDBWithPrefix(t *testing.T, dir, prefix string) {
 	t.Helper()
-	testutil.RequireDoltContainer(t)
+	testutil.RequireManagedDoltEndpoint(t)
 
-	args := []string{"init", "--quiet", "--prefix", prefix, "--server-port", testutil.DoltContainerPort()}
+	args := []string{"init", "--quiet", "--prefix", prefix, "--server-port", testutil.ManagedDoltPort()}
 	cmd := exec.Command("bd", args...)
 	cmd.Dir = dir
 	if output, err := cmd.CombinedOutput(); err != nil {
@@ -61,7 +61,7 @@ func TestManagerGetPrefersHookedBeadOverStaleAgentHook(t *testing.T) {
 	if _, err := exec.LookPath("bd"); err != nil {
 		t.Skip("bd not installed, skipping integration test")
 	}
-	testutil.RequireDoltContainer(t)
+	testutil.RequireManagedDoltEndpoint(t)
 
 	n := polecatManagerIntegrationCounter.Add(1)
 	prefix := fmt.Sprintf("pm%d", n)
@@ -157,7 +157,7 @@ func TestManagerTreatsLiveSessionWithoutWorkAsReviewNeeded(t *testing.T) {
 		t.Skip("bd not installed, skipping integration test")
 	}
 	requireTmuxIntegration(t)
-	testutil.RequireDoltContainer(t)
+	testutil.RequireManagedDoltEndpoint(t)
 
 	n := polecatManagerIntegrationCounter.Add(1)
 	prefix := fmt.Sprintf("pm%d", n)

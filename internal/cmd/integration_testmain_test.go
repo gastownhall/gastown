@@ -22,7 +22,7 @@ func TestMain(m *testing.M) {
 	// By routing to an isolated container (via GT_DOLT_PORT), those databases
 	// are destroyed when the container is terminated at cleanup —
 	// preventing orphan accumulation in the shared production Dolt data dir.
-	if err := testutil.EnsureDoltContainerForTestMain(); err != nil {
+	if err := testutil.EnsureManagedDoltEndpointForTestMain(); err != nil {
 		fmt.Fprintf(os.Stderr, "integration TestMain: dolt setup: %v\n", err)
 		os.Exit(1)
 	}
@@ -30,6 +30,5 @@ func TestMain(m *testing.M) {
 	code := m.Run()
 
 	// Clean up the shared Dolt container.
-	testutil.TerminateDoltContainer()
 	os.Exit(code)
 }

@@ -3,27 +3,27 @@
 package testutil
 
 import (
-	"errors"
 	"testing"
 )
 
-func TestIsDockerUnavailableErr(t *testing.T) {
-	tests := []struct {
-		name string
-		err  error
-		want bool
-	}{
-		{name: "nil", err: nil, want: false},
-		{name: "rootless", err: errors.New("testcontainers docker unavailable: rootless Docker not found"), want: true},
-		{name: "daemon", err: errors.New("Cannot connect to the Docker daemon at unix:///var/run/docker.sock"), want: true},
-		{name: "ordinary", err: errors.New("pulling image failed"), want: false},
-	}
+func TestConfiguredDoltEndpointRequiresConfiguredPort(t *testing.T) {
+	t.Setenv("GT_DOLT_HOST", "127.0.0.2")
+	t.Setenv("GT_DOLT_PORT", "")
+	t.Setenv("BEADS_DOLT_PORT", "")
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			if got := isDockerUnavailableErr(tt.err); got != tt.want {
-				t.Fatalf("isDockerUnavailableErr(%v) = %v, want %v", tt.err, got, tt.want)
-			}
-		})
+	host, port := configuredDoltEndpoint()
+	if host != "127.0.0.2" || port != "" {
+		t.Fatalf("configuredDoltEndpoint() = %q:%q, want host with no invented port", host, port)
+	}
+}
+
+func TestConfiguredDoltEndpointUsesManagedEnvironment(t *testing.T) {
+	t.Setenv("GT_DOLT_HOST", "127.0.0.3")
+	t.Setenv("GT_DOLT_PORT", "4319")
+	t.Setenv("BEADS_DOLT_PORT", "9876")
+
+	host, port := configuredDoltEndpoint()
+	if host != "127.0.0.3" || port != "4319" {
+		t.Fatalf("configuredDoltEndpoint() = %q:%q, want configured GT endpoint", host, port)
 	}
 }

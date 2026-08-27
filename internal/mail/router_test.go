@@ -1195,8 +1195,8 @@ func TestValidateRecipient(t *testing.T) {
 
 	// Start an ephemeral Dolt container to prevent bd init from creating
 	// databases on the production server (port 3307).
-	testutil.RequireDoltContainer(t)
-	doltPort, _ := strconv.Atoi(testutil.DoltContainerPort())
+	testutil.RequireManagedDoltEndpoint(t)
+	doltPort, _ := strconv.Atoi(testutil.ManagedDoltPort())
 
 	// Create isolated beads environment for testing
 	tmpDir := t.TempDir()
