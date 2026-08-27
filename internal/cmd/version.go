@@ -14,7 +14,7 @@ import (
 
 // Version information - set at build time via ldflags
 var (
-	Version = "1.2.2-dc27"
+	Version = "1.2.3-dc1"
 	// Build can be set via ldflags at compile time
 	Build = "dev"
 	// Commit and Branch - the git revision the binary was built from (optional ldflag)
