@@ -11,6 +11,7 @@ import (
 	"github.com/steveyegge/gastown/internal/cli"
 	"github.com/steveyegge/gastown/internal/config"
 	"github.com/steveyegge/gastown/internal/hooks"
+	"github.com/steveyegge/gastown/internal/pathboundary"
 	"github.com/steveyegge/gastown/internal/templates/commands"
 	"github.com/steveyegge/gastown/internal/tmux"
 	"github.com/steveyegge/gastown/internal/workspace"
@@ -148,12 +149,13 @@ func samePath(a, b string) bool {
 // gitRootOf walks up from dir to find the nearest ancestor directory containing
 // a .git entry (file or directory). Returns empty string if none found.
 func gitRootOf(dir string) string {
+	ceiling := pathboundary.TestCeiling(dir)
 	for d := dir; ; d = filepath.Dir(d) {
 		if _, err := os.Stat(filepath.Join(d, ".git")); err == nil {
 			return d
 		}
 		parent := filepath.Dir(d)
-		if parent == d {
+		if parent == d || (ceiling != "" && d == ceiling) {
 			return ""
 		}
 	}

@@ -11,6 +11,7 @@ lifecycle details in the product documentation:
 - [Epic integration branches](docs/concepts/integration-branches.md)
 - [Convoys](docs/concepts/convoy.md)
 - [Fork-backed rigs](docs/guides/fork-rig-setup.md)
+- [Workspace lifecycle](docs/concepts/workspace-lifecycle.md)
 - [CLI and configuration reference](docs/reference.md)
 - [Release process](RELEASING.md)
 

@@ -28,6 +28,7 @@ func townRoot() string {
 }
 
 func TestIsAgentSession(t *testing.T) {
+	prefixes := map[string]struct{}{"ag": {}, "bd": {}, "gtf": {}}
 	tests := []struct {
 		name string
 		want bool
@@ -39,11 +40,15 @@ func TestIsAgentSession(t *testing.T) {
 		{"hq-deacon", true},
 		{"hq-boot", true},
 		{"rig-dog-fido", true},
+		{"ag-witness", true},
+		{"bd-refinery", true},
+		{"gtf-polecat-toast", true},
+		{"unknown-witness", false},
 		{"my-personal-session", false},
 		{"", false},
 	}
 	for _, tt := range tests {
-		if got := isAgentSession(tt.name); got != tt.want {
+		if got := isAgentSession(tt.name, prefixes); got != tt.want {
 			t.Errorf("isAgentSession(%q) = %v, want %v", tt.name, got, tt.want)
 		}
 	}

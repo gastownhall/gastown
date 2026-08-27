@@ -18,6 +18,7 @@ runbooks into provider instruction files:
 - `docs/concepts/integration-branches.md` — epic integration branches
 - `docs/concepts/convoy.md` — convoy behavior
 - `docs/guides/fork-rig-setup.md` — fork contribution and downstream modes
+- `docs/concepts/workspace-lifecycle.md` — canonical clone, lane, and temporary-storage placement
 - `RELEASING.md` — upstream releases and the downstream-fork delta
 
 This generated `CLAUDE.md` and its town-root `AGENTS.md` symlink are navigation
@@ -41,10 +42,12 @@ diagnostics:
 
 ```bash
 # 1. Capture process metadata and recent logs without signaling Dolt
-{{cmd}} dolt dump 2>&1 | tee /tmp/dolt-hang-$(date +%s).log
+diagnostic_dir="${GT_ROOT:-$PWD}/logs/diagnostics"
+mkdir -p "$diagnostic_dir"
+{{cmd}} dolt dump 2>&1 | tee "$diagnostic_dir/dolt-hang-$(date +%s).log"
 
 # 2. Capture server status while it's still (mis)behaving
-{{cmd}} dolt status 2>&1 | tee /tmp/dolt-status-$(date +%s).log
+{{cmd}} dolt status 2>&1 | tee "$diagnostic_dir/dolt-status-$(date +%s).log"
 
 # 3. THEN escalate with the evidence
 {{cmd}} escalate -s HIGH "Dolt: <describe symptom>"

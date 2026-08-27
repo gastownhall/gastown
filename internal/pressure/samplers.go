@@ -2,7 +2,9 @@ package pressure
 
 import (
 	"runtime"
+	"strings"
 
+	"github.com/steveyegge/gastown/internal/config"
 	"github.com/steveyegge/gastown/internal/tmux"
 )
 
@@ -18,7 +20,7 @@ func numCPU() int {
 // isAgentSession reports whether a tmux session name corresponds to a Gas Town
 // agent session (mayor, rig polecat/dog/refinery, hq agents). These names are
 // the canonical naming convention from gt prime / rig dispatch.
-func isAgentSession(name string) bool {
+func isAgentSession(name string, prefixes map[string]struct{}) bool {
 	switch {
 	case name == "hq-mayor", name == "hq-deacon", name == "hq-boot", name == "hq-witness":
 		return true
@@ -28,14 +30,25 @@ func isAgentSession(name string) bool {
 	case len(name) > 4 && name[:4] == "hq-":
 		return true
 	default:
-		return false
+		prefix, _, ok := strings.Cut(name, "-")
+		if !ok {
+			return false
+		}
+		_, registered := prefixes[prefix]
+		return registered
 	}
 }
 
 // countAgentSessions enumerates live tmux sessions that are Gas Town agent
 // sessions. Uses the canonical tmux package (the owner of session enumeration),
 // not a re-implementation.
-func countAgentSessions() int {
+func countAgentSessions(townRoot string) int {
+	prefixes := make(map[string]struct{})
+	if townRoot != "" {
+		for _, prefix := range config.AllRigPrefixes(townRoot) {
+			prefixes[strings.TrimSuffix(prefix, "-")] = struct{}{}
+		}
+	}
 	t := tmux.NewTmux()
 	sessions, err := t.ListSessions()
 	if err != nil {
@@ -43,7 +56,7 @@ func countAgentSessions() int {
 	}
 	n := 0
 	for _, s := range sessions {
-		if isAgentSession(s) {
+		if isAgentSession(s, prefixes) {
 			n++
 		}
 	}
@@ -53,7 +66,7 @@ func countAgentSessions() int {
 // sampleHost is the default sampler: reads CPU/memory/swap from the platform
 // implementation and counts live agent sessions. Tests inject a fake via
 // check(t, sampleFn).
-func sampleHost() Result {
+func sampleHost(townRoot string) Result {
 	return Result{
 		LoadAvg1:        hostLoadAvg(),
 		LoadPerCore:     loadPerCore(hostLoadAvg()),
@@ -61,7 +74,7 @@ func sampleHost() Result {
 		SwapTotalGB:     hostSwapTotalGB(),
 		SwapFreeGB:      hostSwapFreeGB(),
 		SwapUsedPercent: swapUsedPercent(hostSwapTotalGB(), hostSwapFreeGB()),
-		ActiveSessions:  countAgentSessions(),
+		ActiveSessions:  countAgentSessions(townRoot),
 		NumCPU:          numCPU(),
 	}
 }

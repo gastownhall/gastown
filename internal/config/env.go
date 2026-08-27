@@ -443,7 +443,7 @@ func sanitizeOTELAttrValue(s string, maxLen int) string {
 //  1. GT_DOLT_PORT environment variable (explicit operator intent)
 //  2. .dolt-data/config.yaml listener.port
 //  3. mayor/daemon.json env.GT_DOLT_PORT
-//  4. 0 (caller should skip injection — DefaultPort 3307 remains the default)
+//  4. 3307 for a managed Gas Town workspace
 func ResolveDoltPort(townRoot string) int {
 	if port := resolveDoltPortFromEnv(); port > 0 {
 		return port
@@ -463,7 +463,11 @@ func ResolveDoltPort(townRoot string) int {
 		return port
 	}
 
-	return 0
+	// A Gas Town workspace must never delegate endpoint selection back to bd.
+	// During bootstrap or config repair the managed config may not exist yet;
+	// pin the town default so a direct bd invocation cannot auto-discover or
+	// start a separate server on its own default port.
+	return 3307
 }
 
 // ResolveConfiguredDoltPort determines the durable configured Dolt port for

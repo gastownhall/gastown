@@ -358,8 +358,10 @@ Understanding this hierarchy is essential for proper configuration.
 | **Crew** | `~/gt/<rig>/crew/<name>/rig/` | Persistent human workspace clone |
 | **Polecat** | `~/gt/<rig>/polecats/<name>/rig/` | Polecat worktree (ephemeral sandbox) |
 
-Note: The per-rig `<rig>/mayor/rig/` directory is NOT a working directory—it's
-a git clone that holds the canonical `.beads/` database for that rig.
+Note: The per-rig `<rig>/mayor/rig/` directory is not a development workspace.
+It is the clean integration/control checkout and holds the canonical `.beads/`
+configuration for that rig. Put persistent changes in a managed `crew/<name>`
+lane. See [Workspace Lifecycle and Storage Law](concepts/workspace-lifecycle.md).
 
 ### Settings File Locations
 

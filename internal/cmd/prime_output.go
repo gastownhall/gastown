@@ -87,8 +87,22 @@ func outputPrimeContext(ctx RoleContext) (string, error) {
 		return "", fmt.Errorf("rendering template: %w", err)
 	}
 
+	output += workspacePlacementLaw(ctx)
 	fmt.Print(output)
 	return output, nil
+}
+
+func workspacePlacementLaw(ctx RoleContext) string {
+	townRoot := ctx.TownRoot
+	if townRoot == "" {
+		townRoot = "<town-root>"
+	}
+	return fmt.Sprintf("\n\n## Workspace Placement Law\n\n"+
+		"- Never place a durable clone, worktree, virtual environment, database copy, or multi-gigabyte build tree in system `/tmp`.\n"+
+		"- Projects managed by this town must be registered rigs. Persistent work belongs in `%[1]s/<rig>/crew/<name>`; tracked ephemeral work belongs in `%[1]s/<rig>/polecats/<name>`.\n"+
+		"- `<rig>/mayor/rig` is an integration/control checkout and must remain clean. If it is dirty, preserve its changes in a crew branch and restore the checkout before continuing.\n"+
+		"- Outside Gas Town, use a persistent workspace root on a capacity-managed volume. Put bounded scratch in an ignored project-local directory and set `TMPDIR`/`GOTMPDIR` explicitly.\n"+
+		"- Before handoff, run the project cleanup plus `make temp` in the Gas Town source checkout.\n", townRoot)
 }
 
 func roleRigContext(ctx RoleContext) (defaultBranch string, isForkRig bool, upstreamURL string) {
@@ -195,6 +209,7 @@ func outputPrimeContextFallback(ctx RoleContext) {
 
 	_, isForkRig, _ := roleRigContext(ctx)
 	fmt.Print(templates.CommandOwnership(isForkRig))
+	fmt.Print(workspacePlacementLaw(ctx))
 }
 
 func outputMayorContext(ctx RoleContext) {

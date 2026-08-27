@@ -13,10 +13,16 @@ import (
 	"github.com/steveyegge/gastown/internal/config"
 	"github.com/steveyegge/gastown/internal/constants"
 	"github.com/steveyegge/gastown/internal/git"
+	"github.com/steveyegge/gastown/internal/pressure"
 	"github.com/steveyegge/gastown/internal/runtime"
 	"github.com/steveyegge/gastown/internal/telemetry"
 	"github.com/steveyegge/gastown/internal/tmux"
 )
+
+// pressureGate is a seam for deterministic session lifecycle tests. Every
+// production StartSession call passes through the canonical host-pressure gate
+// before resolving runtime configuration or creating a tmux session.
+var pressureGate = pressure.CheckHostSpawn
 
 // SessionConfig describes how to create and start a tmux session.
 // This unifies the common startup pattern that was previously duplicated
@@ -156,6 +162,9 @@ func StartSession(t *tmux.Tmux, cfg SessionConfig) (_ *StartResult, retErr error
 	}
 	if cfg.Role == "" {
 		return nil, fmt.Errorf("Role is required")
+	}
+	if err := pressureGate(cfg.TownRoot); err != nil {
+		return nil, err
 	}
 
 	// 1. Resolve runtime config.

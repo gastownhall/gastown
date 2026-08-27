@@ -15,6 +15,6 @@ type Result = pressure.Result
 // choke point (session.StartSession) calls pressure.CheckHostSpawn directly.
 func (d *Daemon) checkPressure(_ string) Result {
 	t := pressure.ThresholdFromDaemon(d.loadOperationalConfig().GetDaemonConfig())
-	r, _ := pressure.Check(t)
+	r, _ := pressure.CheckAt(t, d.config.TownRoot)
 	return r
 }
