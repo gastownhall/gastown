@@ -61,7 +61,10 @@ func runMoleculeBurn(cmd *cobra.Command, args []string) (retErr error) {
 		return fmt.Errorf("not in a beads workspace: %w", err)
 	}
 
-	b := beads.New(workDir)
+	// Handoff beads live in the town database but carry rig prefixes, so prefix
+	// routing sends lookups to the rig database where they do not exist.
+	// ForAgentBead re-roots at the town beads dir and disables routing.
+	b := beads.New(workDir).ForAgentBead()
 
 	// Find agent's pinned bead (handoff bead)
 	role := extractRoleFromIdentity(target)
@@ -70,8 +73,13 @@ func runMoleculeBurn(cmd *cobra.Command, args []string) (retErr error) {
 	if err != nil {
 		return fmt.Errorf("finding handoff bead: %w", err)
 	}
+
+	// A role with no handoff bead has nothing attached — the same outcome as an
+	// unattached pin. Burning is a no-op either way, so don't fail the caller.
 	if handoff == nil {
-		return fmt.Errorf("no handoff bead found for %s (looked for %q with pinned status)", target, beads.HandoffBeadTitle(role))
+		fmt.Printf("%s No molecule attached to %s - nothing to burn\n",
+			style.Dim.Render("ℹ"), target)
+		return nil
 	}
 
 	// Check for attached molecule
@@ -195,7 +203,10 @@ func runMoleculeSquash(cmd *cobra.Command, args []string) (retErr error) {
 		return fmt.Errorf("not in a beads workspace: %w", err)
 	}
 
-	b := beads.New(workDir)
+	// Handoff beads live in the town database but carry rig prefixes, so prefix
+	// routing sends lookups to the rig database where they do not exist.
+	// ForAgentBead re-roots at the town beads dir and disables routing.
+	b := beads.New(workDir).ForAgentBead()
 
 	// Find agent's pinned bead (handoff bead)
 	role := extractRoleFromIdentity(target)
@@ -204,8 +215,13 @@ func runMoleculeSquash(cmd *cobra.Command, args []string) (retErr error) {
 	if err != nil {
 		return fmt.Errorf("finding handoff bead: %w", err)
 	}
+
+	// A role with no handoff bead has nothing attached — the same outcome as an
+	// unattached pin. Squashing is a no-op either way, so don't fail the caller.
 	if handoff == nil {
-		return fmt.Errorf("no handoff bead found for %s (looked for %q with pinned status)", target, beads.HandoffBeadTitle(role))
+		fmt.Printf("%s No molecule attached to %s - nothing to squash\n",
+			style.Dim.Render("ℹ"), target)
+		return nil
 	}
 
 	// Check for attached molecule

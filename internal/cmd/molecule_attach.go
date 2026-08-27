@@ -19,7 +19,12 @@ func runMoleculeAttach(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("not in a beads workspace: %w", err)
 	}
 
-	b := beads.New(workDir)
+	// Pinned beads — handoff beads and agent beads alike — live in the town
+	// database, but they carry rig prefixes, so prefix routing sends every
+	// lookup to the rig database where they do not exist. ForAgentBead re-roots
+	// at the town beads dir and disables routing; without it, attach fails with
+	// "fetching pinned bead: issue not found" from any rig context.
+	b := beads.New(workDir).ForAgentBead()
 
 	if len(args) == 2 {
 		// Explicit: gt mol attach <pinned-bead-id> <molecule-id>
@@ -61,12 +66,13 @@ func runMoleculeAttach(cmd *cobra.Command, args []string) error {
 
 		role := extractRoleFromIdentity(target)
 
-		handoff, err := b.FindHandoffBead(role)
+		// Create the handoff bead if this role doesn't have one yet. Attaching is
+		// the point at which a role first needs its pin, and nothing else in the
+		// codebase creates it — requiring it to pre-exist meant attach could never
+		// succeed for a role that had not somehow acquired one already.
+		handoff, err := b.GetOrCreateHandoffBead(role)
 		if err != nil {
 			return fmt.Errorf("finding handoff bead: %w", err)
-		}
-		if handoff == nil {
-			return fmt.Errorf("no handoff bead found for %s (looked for %q with pinned status)", target, beads.HandoffBeadTitle(role))
 		}
 		pinnedBeadID = handoff.ID
 	}
