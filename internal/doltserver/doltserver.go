@@ -149,15 +149,19 @@ const (
 	// Controls how long Dolt waits for a client to send a query on an idle connection.
 	// Prevents CLOSE_WAIT accumulation from abandoned connections: when a client times out
 	// and closes its end, Dolt will detect the dead connection within this window.
-	// 5 minutes matches the compactor GC timeout (compactorGCTimeout) so GC ops complete
-	// before the connection is considered stale.
-	DefaultReadTimeoutMs = 5 * 60 * 1000 // 5 minutes in milliseconds
+	// Keep this long enough for schema migrations and repository maintenance. Idle
+	// sessions are reclaimed separately by wait_timeout, so shortening this value
+	// does not provide the intended connection-leak protection and instead cancels
+	// legitimate long-running statements.
+	DefaultReadTimeoutMs = 8 * 60 * 60 * 1000 // 8 hours in milliseconds
 
 	// DefaultWriteTimeoutMs is the server-side timeout for writing a response back to a client.
 	// When a client closes its TCP connection while a query is running (e.g. compactor GC),
 	// Dolt detects the dead connection within this timeout rather than holding CLOSE_WAIT
-	// for Dolt's default 8 hours. Set to match compactor GC timeout.
-	DefaultWriteTimeoutMs = 5 * 60 * 1000 // 5 minutes in milliseconds
+	// for Dolt's default 8 hours. Schema migrations can legitimately take longer
+	// than the compactor's five-minute GC timeout, so retain Dolt's eight-hour
+	// operational window. Idle sessions are bounded independently by wait_timeout.
+	DefaultWriteTimeoutMs = 8 * 60 * 60 * 1000 // 8 hours in milliseconds
 
 	// DefaultWaitTimeoutSec is how long Dolt keeps an idle session alive before
 	// closing it. Dolt's MySQL-compat default is 28800s (8 hours). Under Gas
