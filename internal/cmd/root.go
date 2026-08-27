@@ -189,11 +189,19 @@ func isRoleCommand(cmd *cobra.Command) bool {
 	return false
 }
 
+// isDoneCommand reports whether cmd is the top-level `gt done` (or one of its
+// subcommands), which is polecat-only and gets the worktree ownership guard.
+//
+// Other commands are also named "done" — `gt dog done`, `gt wl done`,
+// `gt molecule step done`. Those are not `gt done` and must not be guarded, so
+// a "done" node only counts when its parent is the root command.
 func isDoneCommand(cmd *cobra.Command) bool {
 	for c := cmd; c != nil; c = c.Parent() {
-		if c.Name() == "done" {
-			return true
+		if c.Name() != "done" {
+			continue
 		}
+		parent := c.Parent()
+		return parent != nil && parent.Parent() == nil
 	}
 	return false
 }
