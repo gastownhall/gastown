@@ -21,7 +21,7 @@ runs:
         GH_REPO: ${{ inputs.repository }}
         GH_TOKEN: ${{ github.token }}
       run: |
-        version="$(gh api "repos/${GH_REPO}/releases" --jq '[.[] | select(.draft == false and .prerelease == true)][0].tag_name')"
+        version="$(gh api "repos/${GH_REPO}/releases/latest" --jq '.tag_name')"
         test -n "$version"
         echo "version=$version" >> "$GITHUB_OUTPUT"
 
