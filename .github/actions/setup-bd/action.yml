@@ -6,6 +6,10 @@ inputs:
     description: Prefix for the actions/cache key.
     required: false
     default: beads
+  repository:
+    description: Governed downstream Beads release repository.
+    required: false
+    default: marlon-costa-dc/beads
 
 runs:
   using: composite
@@ -13,8 +17,10 @@ runs:
     - name: Resolve beads version
       id: beads-version
       shell: bash
+      env:
+        GH_REPO: ${{ inputs.repository }}
       run: |
-        version="$(go list -mod=readonly -m -f '{{.Version}}' github.com/steveyegge/beads)"
+        version="$(gh api "repos/${GH_REPO}/releases" --jq '[.[] | select(.draft == false and .prerelease == true)][0].tag_name')"
         test -n "$version"
         echo "version=$version" >> "$GITHUB_OUTPUT"
 
@@ -28,7 +34,25 @@ runs:
     - name: Install beads (bd)
       if: steps.cache-beads.outputs.cache-hit != 'true'
       shell: bash
-      run: CGO_ENABLED=0 go install "github.com/steveyegge/beads/cmd/bd@${{ steps.beads-version.outputs.version }}"
+      env:
+        GH_REPO: ${{ inputs.repository }}
+        BD_VERSION: ${{ steps.beads-version.outputs.version }}
+      run: |
+        version="${BD_VERSION#v}"
+        case "${RUNNER_OS}-${RUNNER_ARCH}" in
+          Linux-X64) asset="beads_${version}_linux_amd64.tar.gz" ;;
+          Linux-ARM64) asset="beads_${version}_linux_arm64.tar.gz" ;;
+          macOS-X64) asset="beads_${version}_darwin_amd64.tar.gz" ;;
+          macOS-ARM64) asset="beads_${version}_darwin_arm64.tar.gz" ;;
+          *) echo "unsupported runner: ${RUNNER_OS}-${RUNNER_ARCH}" >&2; exit 1 ;;
+        esac
+        release_dir="${RUNNER_TEMP}/bd-release"
+        mkdir -p "$release_dir"
+        gh release download "$BD_VERSION" --repo "$GH_REPO" --pattern "$asset" --dir "$release_dir" --clobber
+        tar -xzf "$release_dir/$asset" -C "$release_dir"
+        binary="$(find "$release_dir" -type f -name bd -print -quit)"
+        test -n "$binary"
+        install -m 0755 "$binary" "$(go env GOPATH)/bin/bd"
 
     - name: Add Go bin to PATH
       shell: bash

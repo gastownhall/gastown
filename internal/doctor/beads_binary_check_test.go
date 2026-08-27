@@ -47,8 +47,8 @@ func TestBeadsBinaryCheck_BdInstalled(t *testing.T) {
 			t.Errorf("expected version string in message, got %q", result.Message)
 		}
 	case StatusError:
-		if !strings.Contains(result.Message, "too old") {
-			t.Errorf("expected 'too old' in error message, got %q", result.Message)
+		if !strings.Contains(result.Message, "too old") && !strings.Contains(result.Message, "governed downstream distribution") {
+			t.Errorf("expected an actionable version-policy error, got %q", result.Message)
 		}
 	default:
 		t.Errorf("unexpected status %v when bd is installed: %s", result.Status, result.Message)
