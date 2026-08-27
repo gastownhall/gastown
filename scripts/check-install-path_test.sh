@@ -4,7 +4,11 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
-MAKE_BIN="$(command -v "${MAKE:-make}")"
+if [[ -x /usr/bin/make ]]; then
+  MAKE_BIN=/usr/bin/make
+else
+  MAKE_BIN="$(command -v "${MAKE:-make}")"
+fi
 SYSTEM_PATH="/usr/bin:/bin"
 SCRATCH_DIR=""
 PASS=0

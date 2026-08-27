@@ -99,9 +99,10 @@ endif
 
 check-install-path:
 	@resolved=$$(command -v $(BINARY) 2>/dev/null || true); \
-	if [ "$$resolved" != "$(INSTALL_DIR)/$(BINARY)" ]; then \
+	mise_resolved=$$(command -v mise >/dev/null 2>&1 && mise which $(BINARY) 2>/dev/null || true); \
+	if [ "$$resolved" != "$(INSTALL_DIR)/$(BINARY)" ] && [ -z "$$mise_resolved" -o "$$resolved" != "$$mise_resolved" ]; then \
 		echo "Warning: $(BINARY) resolves to $${resolved:-nothing in PATH}, not $(INSTALL_DIR)/$(BINARY)"; \
-		echo "  Add this before other PATH entries in your shell profile:"; \
+		echo "  Select the intended binary with mise, or add this before other PATH entries:"; \
 		echo '  export PATH="$(INSTALL_DIR):$$PATH"'; \
 	fi
 
