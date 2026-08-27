@@ -290,8 +290,8 @@ func TestEngineerCloseMRWithReasonNormalizesSuperseded(t *testing.T) {
 
 func setupEngineerTerminalCloseTest(t *testing.T, activeMR string) (*Engineer, *beads.Beads, *beads.Issue, *beads.Issue, *beads.Issue) {
 	t.Helper()
-	testutil.RequireDoltContainer(t)
-	port, _ := strconv.Atoi(testutil.DoltContainerPort())
+	testutil.RequireManagedDoltEndpoint(t)
+	port, _ := strconv.Atoi(testutil.ManagedDoltPort())
 	rigPath := t.TempDir()
 	b := beads.NewIsolatedWithPort(rigPath, port)
 	if err := b.Init("gt"); err != nil {
