@@ -168,6 +168,17 @@ func StartSession(t *tmux.Tmux, cfg SessionConfig) (_ *StartResult, retErr error
 		runtimeConfig = rc
 	}
 
+	// Credential preflight. A dead OAuth token does not make Claude Code
+	// exit — it drops into the interactive onboarding flow and parks there.
+	// The tmux session exists and the process runs, so every liveness check
+	// passes while the agent never reaches a prompt and never heartbeats
+	// (hq-ac0). Refuse to spawn instead of creating a silent zombie.
+	if warning, err := config.PreflightAgentAuth(runtimeConfig, cfg.RuntimeConfigDir); err != nil {
+		return nil, fmt.Errorf("credential preflight for %s: %w", cfg.Role, err)
+	} else if warning != "" {
+		fmt.Printf("warning: %s\n", warning)
+	}
+
 	// 2. Ensure settings/plugins exist for the agent.
 	settingsDir := config.RoleSettingsDir(cfg.Role, cfg.RigPath)
 	if settingsDir == "" {
