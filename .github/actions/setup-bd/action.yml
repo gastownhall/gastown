@@ -19,6 +19,7 @@ runs:
       shell: bash
       env:
         GH_REPO: ${{ inputs.repository }}
+        GH_TOKEN: ${{ github.token }}
       run: |
         version="$(gh api "repos/${GH_REPO}/releases" --jq '[.[] | select(.draft == false and .prerelease == true)][0].tag_name')"
         test -n "$version"
@@ -36,6 +37,7 @@ runs:
       shell: bash
       env:
         GH_REPO: ${{ inputs.repository }}
+        GH_TOKEN: ${{ github.token }}
         BD_VERSION: ${{ steps.beads-version.outputs.version }}
       run: |
         version="${BD_VERSION#v}"
