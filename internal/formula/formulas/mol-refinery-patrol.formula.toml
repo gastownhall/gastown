@@ -187,11 +187,17 @@ default = "gt"
 id = "inbox-check"
 title = "Check refinery mail"
 description = """
-First, clean up wisps from previous cycles (closed wisps + abandoned wisps):
+First, clean up CLOSED wisps from previous cycles:
 ```bash
 bd mol wisp gc --closed --force
-bd mol wisp gc --age 1h --force
 ```
+
+> **Warning (hq-675, hq-3pp):** Do not run unscoped age-based wisp GC from
+> inside this patrol. `bd mol wisp gc --age` has no ownership scope and does
+> not exclude HOOKED wisps, so it deletes live work town-wide: this patrol's
+> own open step wisps (making the cycle appear complete early) and other
+> agents' active molecules. Use closed-only cleanup here; age-based cleanup of
+> open wisps belongs to the reaper, outside active patrol molecules.
 
 Then check mail for MERGE_READY submissions, escalations, and messages.
 
