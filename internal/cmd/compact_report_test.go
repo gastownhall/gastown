@@ -668,3 +668,151 @@ func assertNoMailSent(t *testing.T, mailLog string) {
 		t.Fatalf("mail was sent unexpectedly: %s", string(data))
 	}
 }
+
+// writeBdListStub installs a fake `bd` on PATH that logs its args to
+// $BD_ARGS_LOG and answers any `list` invocation with listJSON.
+//
+// The stub honors --status=closed by returning an empty list, mirroring real
+// bd: a status-filtered query genuinely cannot see beads on the other side of
+// the filter. Without that, a caller that still filters would keep matching
+// the fixture and the open-audit-bead cases would pass vacuously.
+//
+// Returns the args log path.
+func writeBdListStub(t *testing.T, listJSON string) string {
+	t.Helper()
+	binDir := t.TempDir()
+	argsLog := filepath.Join(t.TempDir(), "bd-args.log")
+	script := `#!/bin/sh
+printf '%s\n' "$*" >> "$BD_ARGS_LOG"
+case "$*" in
+  *--status=closed*) printf '[]\n'; exit 0 ;;
+esac
+printf '%s\n' '` + listJSON + `'
+`
+	if err := os.WriteFile(filepath.Join(binDir, "bd"), []byte(script), 0755); err != nil {
+		t.Fatalf("write fake bd: %v", err)
+	}
+	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	t.Setenv("BD_ARGS_LOG", argsLog)
+	return argsLog
+}
+
+func assertBdListArgs(t *testing.T, argsLog string, want ...string) {
+	t.Helper()
+	args, err := os.ReadFile(argsLog)
+	if err != nil {
+		t.Fatalf("read bd args: %v", err)
+	}
+	for _, w := range want {
+		if !strings.Contains(string(args), w) {
+			t.Fatalf("bd args = %q, want %q", string(args), w)
+		}
+	}
+}
+
+// An audit bead is created open and closed a moment later. If that close does
+// not stick, a status-filtered lookup cannot see the bead and the digest
+// re-fires every patrol cycle — the duplicate-digest bug (hq-3k3).
+func TestFindExistingCompactReportMatchesOpenAuditBead(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("shell script command stubs not supported on Windows")
+	}
+
+	argsLog := writeBdListStub(t, `[{"id":"hq-0m4","title":"Compaction Report 2026-08-26","status":"open","event_kind":"wisp.compaction"}]`)
+
+	id, err := findExistingCompactReport("2026-08-26")
+	if err != nil {
+		t.Fatalf("findExistingCompactReport: %v", err)
+	}
+	if id != "hq-0m4" {
+		t.Fatalf("id = %q, want hq-0m4 (open audit bead must still suppress the digest)", id)
+	}
+	// --limit=0 matters too: report beads accumulate one per day forever, so a
+	// fixed cap eventually pages today's entry out of the result set.
+	assertBdListArgs(t, argsLog, "--status=all", "--limit=0", "--type=event")
+}
+
+func TestFindExistingCompactReportMatchesPayloadDateWhenTitleDiffers(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("shell script command stubs not supported on Windows")
+	}
+
+	writeBdListStub(t, `[{"id":"hq-jg6","title":"Wisp Compaction: 2026-08-26","status":"closed","event_kind":"wisp.compaction","payload":"{\"date\":\"2026-08-26\"}"}]`)
+
+	id, err := findExistingCompactReport("2026-08-26")
+	if err != nil {
+		t.Fatalf("findExistingCompactReport: %v", err)
+	}
+	if id != "hq-jg6" {
+		t.Fatalf("id = %q, want hq-jg6 from payload date fallback", id)
+	}
+}
+
+func TestFindExistingCompactReportIgnoresOtherDatesAndKinds(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("shell script command stubs not supported on Windows")
+	}
+
+	writeBdListStub(t, `[`+
+		`{"id":"hq-yesterday","title":"Compaction Report 2026-08-25","status":"closed","event_kind":"wisp.compaction","payload":"{\"date\":\"2026-08-25\"}"},`+
+		`{"id":"hq-weekly","title":"Weekly Compaction Rollup 2026-08-19 to 2026-08-26","status":"closed","event_kind":"wisp.compaction.weekly","payload":"{\"week_start\":\"2026-08-19\",\"week_end\":\"2026-08-26\"}"},`+
+		`{"id":"hq-junk","title":"Something else","status":"open","event_kind":"wisp.compaction","payload":"not-json"}`+
+		`]`)
+
+	id, err := findExistingCompactReport("2026-08-26")
+	if err != nil {
+		t.Fatalf("findExistingCompactReport: %v", err)
+	}
+	if id != "" {
+		t.Fatalf("id = %q, want empty (no digest recorded for 2026-08-26)", id)
+	}
+}
+
+func TestFindExistingWeeklyRollupMatchesOpenBead(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("shell script command stubs not supported on Windows")
+	}
+
+	argsLog := writeBdListStub(t, `[{"id":"hq-wk","title":"Weekly Compaction Rollup 2026-08-19 to 2026-08-26","status":"open","event_kind":"wisp.compaction.weekly"}]`)
+
+	id, err := findExistingWeeklyRollup("2026-08-19", "2026-08-26")
+	if err != nil {
+		t.Fatalf("findExistingWeeklyRollup: %v", err)
+	}
+	if id != "hq-wk" {
+		t.Fatalf("id = %q, want hq-wk", id)
+	}
+	assertBdListArgs(t, argsLog, "--status=all", "--limit=0")
+}
+
+func TestFindExistingWeeklyRollupMatchesPayloadWeekWhenTitleDiffers(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("shell script command stubs not supported on Windows")
+	}
+
+	writeBdListStub(t, `[{"id":"hq-wk2","title":"Weekly Rollup (renamed)","status":"closed","event_kind":"wisp.compaction.weekly","payload":"{\"week_start\":\"2026-08-19\",\"week_end\":\"2026-08-26\"}"}]`)
+
+	id, err := findExistingWeeklyRollup("2026-08-19", "2026-08-26")
+	if err != nil {
+		t.Fatalf("findExistingWeeklyRollup: %v", err)
+	}
+	if id != "hq-wk2" {
+		t.Fatalf("id = %q, want hq-wk2 from payload week fallback", id)
+	}
+}
+
+func TestFindExistingWeeklyRollupIgnoresDailyReports(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("shell script command stubs not supported on Windows")
+	}
+
+	writeBdListStub(t, `[{"id":"hq-daily","title":"Compaction Report 2026-08-26","status":"closed","event_kind":"wisp.compaction","payload":"{\"date\":\"2026-08-26\"}"}]`)
+
+	id, err := findExistingWeeklyRollup("2026-08-19", "2026-08-26")
+	if err != nil {
+		t.Fatalf("findExistingWeeklyRollup: %v", err)
+	}
+	if id != "" {
+		t.Fatalf("id = %q, want empty", id)
+	}
+}
