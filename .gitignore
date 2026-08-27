@@ -86,6 +86,9 @@ __pycache__/
 
 # Dolt database files (added by bd init)
 .dolt/
+# Runtime lock dir created by the embedded Dolt server in whatever cwd it
+# starts in; an auto-checkpoint committed it once already (hq-io5).
+embeddeddolt/
 *.db
 
 # Beads / Dolt files (added by bd init)

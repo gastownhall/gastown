@@ -419,21 +419,16 @@ func MergeRuntimeLivenessEnv(envVars map[string]string, runtimeConfig *config.Ru
 	}
 
 	if _, hasProcessNames := envVars["GT_PROCESS_NAMES"]; !hasProcessNames {
-		agentForLookup := runtimeConfig.ResolvedAgent
-		commandForLookup := runtimeConfig.Command
-		argsForLookup := runtimeConfig.Args
-		if existing, ok := envVars["GT_AGENT"]; ok && existing != "" {
-			agentForLookup = existing
-			// When GT_AGENT was set by AgentOverride (differs from the
-			// workspace-resolved agent), the runtimeConfig.Command/Args
-			// belong to the workspace agent, not the override. Pass empty
-			// command so ResolveProcessNames uses the preset's own command.
-			if existing != runtimeConfig.ResolvedAgent {
-				commandForLookup = ""
-				argsForLookup = nil
-			}
+		// Default: resolve from the populated RuntimeConfig, so a wrapper
+		// command (a launcher script that execs the real binary) never becomes
+		// the only name liveness checks look for (hq-io5).
+		processNames := config.RuntimeProcessNames(runtimeConfig)
+		if existing, ok := envVars["GT_AGENT"]; ok && existing != "" && existing != runtimeConfig.ResolvedAgent {
+			// GT_AGENT was set by AgentOverride, so runtimeConfig belongs to
+			// the workspace agent, not the override. Pass empty command so
+			// ResolveProcessNames uses the override preset's own command.
+			processNames = config.ResolveProcessNames(existing, "")
 		}
-		processNames := config.ResolveProcessNames(agentForLookup, commandForLookup, argsForLookup...)
 		if len(processNames) > 0 {
 			envVars["GT_PROCESS_NAMES"] = strings.Join(processNames, ",")
 		}

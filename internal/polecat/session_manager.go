@@ -471,7 +471,10 @@ func (m *SessionManager) Start(polecat string, opts SessionStartOptions) error {
 	envVars["GT_TOWN_ROOT"] = townRoot
 	envVars["GT_RUN"] = runID
 	envVars["POLECAT_SLOT"] = fmt.Sprintf("%d", m.polecatSlot(polecat))
-	envVars["GT_PROCESS_NAMES"] = strings.Join(config.ResolveProcessNames(runtimeConfig.ResolvedAgent, runtimeConfig.Command, runtimeConfig.Args...), ",")
+	// Resolve from the populated RuntimeConfig so a wrapper command (a launcher
+	// script that execs the real agent binary) does not become the only name
+	// liveness checks look for — no live process carries it after the exec (hq-io5).
+	envVars["GT_PROCESS_NAMES"] = strings.Join(config.RuntimeProcessNames(runtimeConfig), ",")
 	if polecatGitBranch != "" {
 		envVars["GT_BRANCH"] = polecatGitBranch
 	}

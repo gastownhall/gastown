@@ -2278,9 +2278,10 @@ func BuildStartupCommand(envVars map[string]string, rigPath, prompt string) stri
 	}
 	// Set GT_PROCESS_NAMES for accurate liveness detection. Custom agents may
 	// shadow built-in preset names (e.g., custom "codex" running "opencode"),
-	// or wrap the real binary with a launcher (e.g., `env -u VAR claude ...`).
-	// Pass rc.Args so wrapper-unwrap can find the real binary.
-	processNames := ResolveProcessNames(rc.ResolvedAgent, rc.Command, rc.Args...)
+	// or wrap the real binary with a launcher script that execs it. Resolve
+	// from the fully-populated RuntimeConfig so the provider preset's process
+	// names win over the wrapper's own name (hq-io5).
+	processNames := RuntimeProcessNames(rc)
 	resolvedEnv["GT_PROCESS_NAMES"] = strings.Join(processNames, ",")
 	// Merge agent-specific env vars (e.g., OPENCODE_PERMISSION for yolo mode)
 	for k, v := range rc.Env {
@@ -2527,17 +2528,15 @@ func BuildStartupCommandWithAgentOverride(envVars map[string]string, rigPath, pr
 	}
 	// Record agent name so IsAgentAlive can detect the running process.
 	// Explicit override takes priority; fall back to resolved agent name.
-	agentForProcess := rc.ResolvedAgent
 	if agentOverride != "" {
 		resolvedEnv["GT_AGENT"] = agentOverride
-		agentForProcess = agentOverride
 	} else if rc.ResolvedAgent != "" {
 		resolvedEnv["GT_AGENT"] = rc.ResolvedAgent
 	}
 	// Set GT_PROCESS_NAMES for accurate liveness detection of custom agents.
-	// Pass rc.Args so wrapper-unwrap (env/sudo/nohup wrapping a real binary)
-	// can find the real agent binary.
-	processNamesOverride := ResolveProcessNames(agentForProcess, rc.Command, rc.Args...)
+	// rc was already resolved for agentOverride above, so its provider preset
+	// (not the possibly-wrapper command name) drives detection (hq-io5).
+	processNamesOverride := RuntimeProcessNames(rc)
 	resolvedEnv["GT_PROCESS_NAMES"] = strings.Join(processNamesOverride, ",")
 	// Merge agent-specific env vars (e.g., OPENCODE_PERMISSION for yolo mode)
 	for k, v := range rc.Env {
