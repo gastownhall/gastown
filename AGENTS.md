@@ -8,6 +8,13 @@ This file exists for compatibility with tools that look for AGENTS.md.
 
 Full context is injected by `gt prime` at session start.
 
+> **Before your first build:** if `go build` fails with
+> `'unicode/regex.h' file not found`, this is a missing ICU system dependency
+> pulled in through Dolt, not a broken checkout — no package in the repo builds
+> until cgo can find it. See the troubleshooting note under **Getting Started**
+> in CONTRIBUTING.md for the `CGO_CPPFLAGS` / `CGO_LDFLAGS` settings, and note
+> that the prefix must match your Go toolchain's `GOARCH`, not your CPU.
+
 <!-- beads-agent-instructions-v2 -->
 
 ---
