@@ -1,0 +1,10 @@
+name: simplify
+description: simplify, refine, recently, modified, clarity, consistency, after, writing, improve, readability
+tools:
+- Read
+- Edit
+- Write
+- Bash
+- Grep
+- Glob
+model: gpt-5.5

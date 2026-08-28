@@ -1,0 +1,9 @@
+{
+  "managed": {
+    "security-triage.md": {
+      "digest": "be5cfe204e9d19e9b50504bd623be3ec9c6aee63072ee755353c982e8c49f72a",
+      "origin": "agents:commands"
+    }
+  },
+  "version": 2
+}

@@ -1,0 +1,49 @@
+{
+  "managed": {
+    "api-design": {
+      "digest": "deed86e125a0079a2cb882791e0ff6177089e8635a6d88a3abc1a8bf8a3ca6c8",
+      "origin": "agents:project-generic"
+    },
+    "backend-patterns": {
+      "digest": "5dc29864231524fcf9adbf3317dc053ed694e89b0fdf12034a562808cec48003",
+      "origin": "agents:project-generic"
+    },
+    "code-review-expert": {
+      "digest": "fe812609342935856831ff6151ea0880be7dd0315fd66c47e73b230bf77b0667",
+      "origin": "agents:project-generic"
+    },
+    "coding-standards": {
+      "digest": "ceae53d9e2aa50ac127c0c87b0008e21dc3eb1ff54625969998a595048db0d33",
+      "origin": "agents:project-generic"
+    },
+    "documentation-criteria": {
+      "digest": "c57bded7609b54bad780c43e10c2913471552a2bfb8bd67c1caedd5a0b36e23d",
+      "origin": "agents:project-generic"
+    },
+    "documentation-lookup": {
+      "digest": "d26a35e41a797ed724559323f355609af2642568b01a524108d0d5ada411c5e2",
+      "origin": "agents:project-generic"
+    },
+    "go-development": {
+      "digest": "0c5dbff8cf23f38da71c60076334b35c9e96cfc2d522d08ee56c6950cb71d593",
+      "origin": "agents:technology:go"
+    },
+    "security-review": {
+      "digest": "70b484f45c5a4bcea1bc5694adfe51b1ab8f12d74006e73faf1250abb580741f",
+      "origin": "agents:project-generic"
+    },
+    "simplify": {
+      "digest": "1dbfa12b85c4b4742a464fc63166400be15a1dfa5964681bd2e5b212c59fe057",
+      "origin": "agents:project-generic"
+    },
+    "tdd-workflow": {
+      "digest": "e2d72d6c7549c144120ca7b773239e2e10d5f8063d7e0a9a8396554df48da2c9",
+      "origin": "agents:project-generic"
+    },
+    "technical-writing-style": {
+      "digest": "3b7d3de54a92e498163fbe9313b930ec544d7f9c6a506ab2b420f5c72086fb7c",
+      "origin": "agents:project-generic"
+    }
+  },
+  "version": 2
+}

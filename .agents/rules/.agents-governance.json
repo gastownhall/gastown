@@ -1,0 +1,9 @@
+{
+  "managed": {
+    "security": {
+      "digest": "80099fe052d446179c4124c707ffffd9976d5c873b360989c99a65239ed0b86b",
+      "origin": "agents:rules"
+    }
+  },
+  "version": 2
+}
