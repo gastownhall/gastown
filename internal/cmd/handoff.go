@@ -1340,7 +1340,7 @@ func sendHandoffMail(subject, message string) (string, error) {
 	}
 
 	// Auto-hook the created mail bead
-	hookCmd := BdCmd("update", beadID, "--status=hooked", "--assignee="+agentID).
+	hookCmd := BdCmd("update", beadID, "--status=hooked", assigneeFlag(agentID)).
 		WithAutoCommit().
 		Dir(townRoot).
 		Build()
@@ -1445,12 +1445,12 @@ func hookBeadForHandoff(beadID string) error {
 	fmt.Printf("%s Hooking %s...\n", style.Bold.Render("🪝"), beadID)
 
 	if handoffDryRun {
-		fmt.Printf("Would run: bd update %s --status=pinned --assignee=%s\n", beadID, agentID)
+		fmt.Printf("Would run: bd update %s --status=pinned %s\n", beadID, assigneeFlag(agentID))
 		return nil
 	}
 
 	// Pin the bead using bd update (discovery-based approach)
-	pinCmd := exec.Command("bd", "update", beadID, "--status=pinned", "--assignee="+agentID)
+	pinCmd := exec.Command("bd", "update", beadID, "--status=pinned", assigneeFlag(agentID))
 	pinCmd.Stderr = os.Stderr
 	if err := pinCmd.Run(); err != nil {
 		return fmt.Errorf("pinning bead: %w", err)

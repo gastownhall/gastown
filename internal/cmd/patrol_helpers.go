@@ -7,6 +7,7 @@ import (
 	"os/exec"
 	"strings"
 
+	"github.com/steveyegge/gastown/internal/agentaddr"
 	"github.com/steveyegge/gastown/internal/beads"
 	"github.com/steveyegge/gastown/internal/cli"
 	"github.com/steveyegge/gastown/internal/constants"
@@ -27,6 +28,48 @@ type PatrolConfig struct {
 	WorkLoopSteps []string     // role-specific instructions
 	ExtraVars     []string     // additional --var key=value args for wisp creation
 	Beads         *beads.Beads // optional injected beads instance (for test isolation)
+}
+
+// buildPatrolConfig assembles the patrol configuration for a role.
+//
+// gt patrol new and gt patrol report must agree on the assignee down to the
+// byte: report finds the wisp to close by matching this string. They used to
+// build it separately and wrote a bare "deacon" while gt sling wrote "deacon/",
+// so report could not see a slung patrol and opened a fresh cycle instead of
+// closing the hooked one, stranding the old wisp. One builder and one canonical
+// spelling remove that whole class of mismatch.
+func buildPatrolConfig(role Role, roleInfo RoleInfo) (PatrolConfig, error) {
+	addr, ok := addressForRole(role, roleInfo.Rig, roleInfo.Polecat)
+	if !ok {
+		return PatrolConfig{}, fmt.Errorf("unsupported role for patrol: %q (expected deacon, witness, or refinery)", string(role))
+	}
+
+	cfg := PatrolConfig{
+		RoleName: string(role),
+		BeadsDir: roleInfo.TownRoot,
+		Assignee: addr.String(),
+	}
+
+	switch role {
+	case RoleDeacon:
+		cfg.PatrolMolName = constants.MolDeaconPatrol
+	case RoleWitness:
+		cfg.PatrolMolName = constants.MolWitnessPatrol
+	case RoleRefinery:
+		cfg.PatrolMolName = constants.MolRefineryPatrol
+		cfg.ExtraVars = buildRefineryPatrolVars(roleInfo)
+	default:
+		return PatrolConfig{}, fmt.Errorf("unsupported role for patrol: %q (expected deacon, witness, or refinery)", string(role))
+	}
+
+	return cfg, nil
+}
+
+// assigneeVariants returns every spelling of the patrol assignee that a lookup
+// must match. Rows written before addresses were canonicalized still carry the
+// legacy spelling, so matching only the canonical form would strand them.
+func (c PatrolConfig) assigneeVariants() []string {
+	return agentaddr.Variants(c.Assignee)
 }
 
 // maxStalePurgePerRun caps the number of stale patrol beads cleaned up in a
@@ -55,7 +98,7 @@ func findActivePatrol(cfg PatrolConfig) (patrolID, patrolLine string, found bool
 	}
 
 	// Find active patrol beads for this agent across durable issues and wisps.
-	hookedBeads, listErr := listAssignedActiveWorkAcrossStatuses(b, cfg.Assignee)
+	hookedBeads, listErr := listActiveWorkForAnyAssignee(b, cfg.assigneeVariants())
 	if listErr != nil {
 		return "", "", false, fmt.Errorf("listing active patrol work: %w", listErr)
 	}
@@ -160,7 +203,7 @@ func burnPreviousPatrolWisps(cfg PatrolConfig) {
 	}
 
 	// Find all active patrol beads for this agent across durable issues and wisps.
-	hookedBeads, err := listAssignedActiveWorkAcrossStatuses(b, cfg.Assignee)
+	hookedBeads, err := listActiveWorkForAnyAssignee(b, cfg.assigneeVariants())
 	if err != nil {
 		style.PrintWarning("burn: could not list active patrol work: %v", err)
 		return
@@ -324,12 +367,16 @@ func renderPatrolWispDescription(cfg PatrolConfig) (string, error) {
 	return renderFormulaRootAndStepsFull(cfg.PatrolMolName, cfg.BeadsDir, rigName, vars)
 }
 
+// patrolRigName returns the rig the patrol belongs to, or "" for town-level
+// patrols. It reads the rig off the parsed address rather than cutting at the
+// first slash: the canonical town-level address ends in a slash ("deacon/"),
+// which a naive cut would report as a rig named "deacon".
 func patrolRigName(cfg PatrolConfig) string {
-	rigName, _, ok := strings.Cut(cfg.Assignee, "/")
+	addr, ok := agentaddr.Parse(cfg.Assignee)
 	if !ok {
 		return ""
 	}
-	return rigName
+	return addr.Rig
 }
 
 func updatePatrolWispDescription(cfg PatrolConfig, resolvedBeadsDir, patrolID, desc string) error {
@@ -406,9 +453,9 @@ func refineryPatrolSafetyStop(cfg PatrolConfig) (*refinery.SafetyStop, error) {
 	if cfg.RoleName != "refinery" {
 		return nil, nil
 	}
-	rigName := strings.TrimSuffix(cfg.Assignee, "/refinery")
-	if rigName == cfg.Assignee || rigName == "" {
+	addr, ok := agentaddr.Parse(cfg.Assignee)
+	if !ok || addr.Role != agentaddr.RoleRefinery || addr.Rig == "" {
 		return nil, nil
 	}
-	return refinery.ActiveSafetyStop(cfg.BeadsDir, rigName)
+	return refinery.ActiveSafetyStop(cfg.BeadsDir, addr.Rig)
 }

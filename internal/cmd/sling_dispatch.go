@@ -397,6 +397,13 @@ func executeSling(params SlingParams) (*SlingResult, error) {
 
 	fmt.Printf("  %s Work attached to %s\n", style.Bold.Render("✓"), spawnInfo.PolecatName)
 
+	// Give the attached molecule's steps the address the root just resolved to.
+	// Steps come out of the formula carrying its bare pool role, which names no
+	// single agent and leaves them unfindable by assignee.
+	if attachedMoleculeID != "" {
+		propagateAssigneeToSteps(beads.ResolveHookDir(townRoot, attachedMoleculeID, hookWorkDir), attachedMoleculeID, targetAgent)
+	}
+
 	// 8. Log sling event
 	_ = events.LogFeed(events.TypeSling, actor, events.SlingPayload(beadToHook, targetAgent))
 

@@ -507,6 +507,10 @@ func runSlingFormula(ctx context.Context, args []string) (err error) {
 	}
 	fmt.Printf("%s Attached to hook (status=hooked)\n", style.Bold.Render("✓"))
 
+	// Give every step the address the root just resolved to. Steps are created
+	// from the formula and come back carrying its bare pool role.
+	propagateAssigneeToSteps(hookDir, wispRootID, targetAgent)
+
 	// Log sling event to activity feed (formula slinging)
 	actor := detectActor()
 	payload := events.SlingPayload(wispRootID, targetAgent)
