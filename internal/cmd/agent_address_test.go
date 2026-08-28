@@ -132,3 +132,42 @@ func TestStepsNeedingAssigneeIgnoresEquivalentSpellings(t *testing.T) {
 		}
 	}
 }
+
+// Every `bd update` that sets an assignee goes through assigneeFlag, so a write
+// site cannot store a non-canonical spelling even when its caller holds one.
+// The bare "deacon" case is the exact split that stranded the patrol wisps.
+func TestAssigneeFlagCanonicalizes(t *testing.T) {
+	cases := []struct {
+		name string
+		addr string
+		want string
+	}{
+		{"bare town role", "deacon", "--assignee=deacon/"},
+		{"town role already canonical", "deacon/", "--assignee=deacon/"},
+		{"bare mayor", "mayor", "--assignee=mayor/"},
+		{"dog worker", "deacon/dogs/alpha", "--assignee=deacon/dogs/alpha"},
+		{"rig role", "gastown/witness", "--assignee=gastown/witness"},
+		{"legacy singular polecat", "gastown/polecat/jasper", "--assignee=gastown/polecats/jasper"},
+		{"crew worker", "gastown/crew/amber", "--assignee=gastown/crew/amber"},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := assigneeFlag(tc.addr); got != tc.want {
+				t.Errorf("assigneeFlag(%q) = %q, want %q", tc.addr, got, tc.want)
+			}
+		})
+	}
+}
+
+// An address agentaddr cannot parse is written through unchanged rather than
+// dropped, so a write site never silently loses an assignee it was handed.
+func TestAssigneeFlagPreservesUnparseableAddress(t *testing.T) {
+	const addr = "not/a/known/address"
+	if got := assigneeFlag(addr); got != "--assignee="+addr {
+		t.Errorf("assigneeFlag(%q) = %q, want passthrough", addr, got)
+	}
+	if got := agentaddr.Canonical(""); got != "" {
+		t.Errorf("Canonical(\"\") = %q, want empty", got)
+	}
+}

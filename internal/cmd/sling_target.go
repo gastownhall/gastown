@@ -339,3 +339,14 @@ func missingPolecatTargetRig(target string, allowShorthand bool, townRoot string
 	}
 	return parts[0], true
 }
+
+// assigneeFlag renders the `--assignee` flag for a `bd update`, canonicalizing
+// the address on the way through.
+//
+// Every write site used to interpolate whatever string it happened to hold, so
+// the same agent landed in storage under several spellings and exact-match
+// lookups missed rows that plainly existed (gt-cw1). Routing the flag through
+// one helper means a new write site cannot reintroduce the split by accident.
+func assigneeFlag(addr string) string {
+	return "--assignee=" + agentaddr.Canonical(addr)
+}

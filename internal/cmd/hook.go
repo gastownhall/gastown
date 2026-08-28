@@ -357,7 +357,7 @@ func runHook(_ *cobra.Command, args []string) error {
 	}
 
 	if hookDryRun {
-		fmt.Printf("Would run: bd update %s --status=hooked --assignee=%s\n", beadID, agentID)
+		fmt.Printf("Would run: bd update %s --status=hooked %s\n", beadID, assigneeFlag(agentID))
 		if hookSubject != "" {
 			fmt.Printf("  subject (for handoff mail): %s\n", hookSubject)
 		}
@@ -377,7 +377,7 @@ func runHook(_ *cobra.Command, args []string) error {
 	const hookBackoffMax = 10 * time.Second
 	var lastHookErr error
 	for attempt := 1; attempt <= hookMaxRetries; attempt++ {
-		if err := BdCmd("update", beadID, "--status=hooked", "--assignee="+agentID).
+		if err := BdCmd("update", beadID, "--status=hooked", assigneeFlag(agentID)).
 			Dir(resolveBeadDir(beadID)).
 			StripBeadsDir().
 			WithAutoCommit().
