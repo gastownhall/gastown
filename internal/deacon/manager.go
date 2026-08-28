@@ -10,6 +10,7 @@ import (
 	"github.com/steveyegge/gastown/internal/config"
 	"github.com/steveyegge/gastown/internal/constants"
 	"github.com/steveyegge/gastown/internal/nudge"
+	"github.com/steveyegge/gastown/internal/pressure"
 	"github.com/steveyegge/gastown/internal/runtime"
 	"github.com/steveyegge/gastown/internal/session"
 	"github.com/steveyegge/gastown/internal/tmux"
@@ -20,6 +21,8 @@ var (
 	ErrNotRunning     = errors.New("deacon not running")
 	ErrAlreadyRunning = errors.New("deacon already running")
 )
+
+var pressureGate = pressure.CheckHostSpawn
 
 // tmuxOps abstracts tmux operations for testing.
 type tmuxOps interface {
@@ -169,6 +172,9 @@ func (m *Manager) Start(agentOverride string) error {
 	// Create session with command and env vars via -e flags so the initial
 	// shell (and subprocesses Claude spawns) inherit them from the start.
 	// See: https://github.com/anthropics/gastown/issues/280 (race condition fix)
+	if err := pressureGate(m.townRoot); err != nil {
+		return err
+	}
 	if err := t.NewSessionWithCommandAndEnv(sessionID, deaconDir, startupCmd, envVars); err != nil {
 		return fmt.Errorf("creating tmux session: %w", err)
 	}

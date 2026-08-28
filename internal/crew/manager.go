@@ -17,6 +17,7 @@ import (
 	"github.com/steveyegge/gastown/internal/constants"
 	"github.com/steveyegge/gastown/internal/git"
 	"github.com/steveyegge/gastown/internal/nudge"
+	"github.com/steveyegge/gastown/internal/pressure"
 	"github.com/steveyegge/gastown/internal/rig"
 	"github.com/steveyegge/gastown/internal/runtime"
 	"github.com/steveyegge/gastown/internal/session"
@@ -34,6 +35,8 @@ var (
 	ErrSessionRunning  = errors.New("session already running")
 	ErrSessionNotFound = errors.New("session not found")
 )
+
+var pressureGate = pressure.CheckHostSpawn
 
 // StartOptions configures crew session startup.
 type StartOptions struct {
@@ -839,6 +842,9 @@ func (m *Manager) Start(name string, opts StartOptions) error {
 	// initial shell inherits the correct GT_ROLE (not the parent's).
 	// See: https://github.com/anthropics/gastown/issues/280 (race condition fix)
 	// See: https://github.com/steveyegge/gastown/issues/1289 (env inheritance fix)
+	if err := pressureGate(townRoot); err != nil {
+		return err
+	}
 	if err := t.NewSessionWithCommandAndEnv(sessionID, worker.ClonePath, claudeCmd, envVars); err != nil {
 		return fmt.Errorf("creating session: %w", err)
 	}

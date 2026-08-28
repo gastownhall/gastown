@@ -47,8 +47,8 @@ func TestBeadsBinaryCheck_BdInstalled(t *testing.T) {
 			t.Errorf("expected version string in message, got %q", result.Message)
 		}
 	case StatusError:
-		if !strings.Contains(result.Message, "too old") {
-			t.Errorf("expected 'too old' in error message, got %q", result.Message)
+		if !strings.Contains(result.Message, "too old") && !strings.Contains(result.Message, "governed downstream distribution") {
+			t.Errorf("expected an actionable version-policy error, got %q", result.Message)
 		}
 	default:
 		t.Errorf("unexpected status %v when bd is installed: %s", result.Status, result.Message)
@@ -115,7 +115,7 @@ func TestBeadsBinaryCheck_BdNotInPath(t *testing.T) {
 	if result.FixHint == "" {
 		t.Error("expected a fix hint with install instructions")
 	}
-	if !strings.Contains(result.FixHint, "beads/cmd/bd") {
+	if !strings.Contains(result.FixHint, "marlon-costa-dc/beads") {
 		t.Errorf("fix hint should reference beads install path, got %q", result.FixHint)
 	}
 }
@@ -123,8 +123,8 @@ func TestBeadsBinaryCheck_BdNotInPath(t *testing.T) {
 func TestBeadsBinaryCheck_BdTooOld(t *testing.T) {
 	fakeDir := t.TempDir()
 	writeFakeBd(t, fakeDir,
-		"#!/bin/sh\necho 'bd version 0.44.0'\n",
-		"@echo off\r\necho bd version 0.44.0\r\n",
+		"#!/bin/sh\necho 'bd version 1.2.2-dc2'\n",
+		"@echo off\r\necho bd version 1.2.2-dc2\r\n",
 	)
 
 	t.Setenv("PATH", fakeDir)

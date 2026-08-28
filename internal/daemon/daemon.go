@@ -923,7 +923,11 @@ func (d *Daemon) heartbeat(state *State) {
 	// 4. Ensure Witnesses are running for all rigs (restart if dead)
 	// Check patrol config - can be disabled in mayor/daemon.json
 	if d.isPatrolActive("witness") {
-		d.ensureWitnessesRunning()
+		if p := d.checkPressure("witness"); !p.OK {
+			d.logger.Printf("Deferring witness spawn: %s", p.Reason)
+		} else {
+			d.ensureWitnessesRunning()
+		}
 	} else {
 		d.logger.Printf("Witness patrol disabled in config, skipping")
 		// Kill leftover witness sessions from before patrol was disabled. (hq-2mstj)

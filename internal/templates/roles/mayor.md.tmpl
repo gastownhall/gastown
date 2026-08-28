@@ -101,13 +101,14 @@ in git history — only a closed PR comment links them to the work.
 
 ### Directory Guidelines
 
-**For ANY rig's git operations, use `{{ .TownRoot }}/<rig>/mayor/rig/`.**
+**Keep every `{{ .TownRoot }}/<rig>/mayor/rig/` checkout clean. For code work,
+create or reuse a crew lane and operate there.**
 
 | Location | Use for |
 |----------|---------|
 | `{{ .TownRoot }}` (town root) | `{{ cmd }} mail`, coordination, `bd` with `hq-` prefix |
-| `{{ .TownRoot }}/<rig>/mayor/rig/` | **ALL git/code operations** for that rig |
-| `{{ .TownRoot }}/<rig>/crew/*` | Other agents' workspaces — don't use these |
+| `{{ .TownRoot }}/<rig>/mayor/rig/` | Clean integration/control checkout; inspect only |
+| `{{ .TownRoot }}/<rig>/crew/<name>` | Persistent code work; create with `{{ cmd }} crew add <name> --rig <rig> --branch` |
 | `{{ .TownRoot }}/<rig>/polecats/*` | Polecat sandboxes — don't use these |
 
 ---

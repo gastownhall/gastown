@@ -38,24 +38,32 @@ func (c *BeadsBinaryCheck) Run(ctx *CheckContext) *CheckResult {
 
 	case deps.BeadsNotFound:
 		return &CheckResult{
-			Name:   c.Name(),
-			Status: StatusError,
+			Name:    c.Name(),
+			Status:  StatusError,
 			Message: "beads (bd) not found in PATH",
 			Details: []string{
 				"The bd CLI is required for beads operations",
 			},
-			FixHint: fmt.Sprintf("Install: go install %s", deps.BeadsInstallPath),
+			FixHint: "Install: " + deps.BeadsInstallHint,
 		}
 
 	case deps.BeadsTooOld:
 		return &CheckResult{
-			Name:   c.Name(),
-			Status: StatusError,
+			Name:    c.Name(),
+			Status:  StatusError,
 			Message: fmt.Sprintf("bd %s is too old (minimum: %s)", version, deps.MinBeadsVersion),
 			Details: []string{
 				fmt.Sprintf("Installed version %s does not meet the minimum requirement of %s", version, deps.MinBeadsVersion),
 			},
-			FixHint: fmt.Sprintf("Upgrade: go install %s", deps.BeadsInstallPath),
+			FixHint: "Upgrade: " + deps.BeadsInstallHint,
+		}
+
+	case deps.BeadsWrongDistribution:
+		return &CheckResult{
+			Name:    c.Name(),
+			Status:  StatusError,
+			Message: fmt.Sprintf("bd %s is not the governed downstream distribution", version),
+			FixHint: "Replace it: " + deps.BeadsInstallHint,
 		}
 
 	case deps.BeadsUnknown:
@@ -63,7 +71,7 @@ func (c *BeadsBinaryCheck) Run(ctx *CheckContext) *CheckResult {
 			Name:    c.Name(),
 			Status:  StatusWarning,
 			Message: "bd found but version could not be determined",
-			FixHint: fmt.Sprintf("Try reinstalling: go install %s", deps.BeadsInstallPath),
+			FixHint: "Try reinstalling: " + deps.BeadsInstallHint,
 		}
 	}
 

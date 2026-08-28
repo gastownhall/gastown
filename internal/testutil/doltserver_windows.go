@@ -7,33 +7,21 @@ import (
 	"testing"
 )
 
-// DoltDockerImage is the Docker image used for Dolt test containers.
-// Kept in sync with doltserver.go; see that file for details.
-const DoltDockerImage = "dolthub/dolt-sql-server:2.0.7"
-
-// StartIsolatedDoltContainer is not supported on Windows CI.
-func StartIsolatedDoltContainer(t *testing.T) string {
+// RequireManagedDoltEndpoint requires an externally managed endpoint, which
+// is not provisioned by the Windows CI environment.
+func RequireManagedDoltEndpoint(t *testing.T) string {
 	t.Helper()
-	t.Skip("Docker not available on Windows CI")
+	t.Skip("managed Dolt endpoint not configured on Windows CI")
 	return ""
 }
 
-// EnsureDoltContainerForTestMain is not supported on Windows CI.
-func EnsureDoltContainerForTestMain() error {
-	return fmt.Errorf("Docker not available on Windows CI")
+// EnsureManagedDoltEndpointForTestMain reports the missing managed endpoint.
+func EnsureManagedDoltEndpointForTestMain() error {
+	return fmt.Errorf("managed Dolt endpoint not configured on Windows CI")
 }
 
-// RequireDoltContainer is not supported on Windows CI.
-func RequireDoltContainer(t *testing.T) {
-	t.Helper()
-	t.Skip("Docker not available on Windows CI")
-}
+// ManagedDoltAddr returns empty string on Windows.
+func ManagedDoltAddr() string { return "" }
 
-// DoltContainerAddr returns empty string on Windows.
-func DoltContainerAddr() string { return "" }
-
-// DoltContainerPort returns empty string on Windows.
-func DoltContainerPort() string { return "" }
-
-// TerminateDoltContainer is a no-op on Windows.
-func TerminateDoltContainer() {}
+// ManagedDoltPort returns empty string on Windows.
+func ManagedDoltPort() string { return "" }

@@ -19,6 +19,7 @@ import (
 	"github.com/steveyegge/gastown/internal/constants"
 	"github.com/steveyegge/gastown/internal/git"
 	"github.com/steveyegge/gastown/internal/nudge"
+	"github.com/steveyegge/gastown/internal/pressure"
 	"github.com/steveyegge/gastown/internal/rig"
 	"github.com/steveyegge/gastown/internal/runtime"
 	"github.com/steveyegge/gastown/internal/session"
@@ -34,6 +35,8 @@ var (
 	ErrNoQueue        = errors.New("no items in queue")
 	ErrForkRig        = errors.New("refinery disabled for fork-backed rig")
 )
+
+var pressureGate = pressure.CheckHostSpawn
 
 // ForkRigError reports that refinery startup is disabled because the rig has
 // an upstream_url and must use the fork/PR workflow instead of local MQ merge.
@@ -310,6 +313,9 @@ func (m *Manager) start(foreground bool, agentOverride string, allowForkRig bool
 	// Create session with command and env vars via -e flags so the initial
 	// shell — and Claude's subprocesses — inherit them from the start.
 	// See: https://github.com/anthropics/gastown/issues/280 (race condition fix)
+	if err := pressureGate(townRoot); err != nil {
+		return err
+	}
 	if err := t.NewSessionWithCommandAndEnv(sessionID, refineryRigDir, command, envVars); err != nil {
 		return fmt.Errorf("creating tmux session: %w", err)
 	}

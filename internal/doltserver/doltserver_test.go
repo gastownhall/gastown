@@ -4523,6 +4523,16 @@ func TestCollectDatabaseOwners_ProtectedDatabaseNotPhantom(t *testing.T) {
 // writeServerConfig tests
 // =============================================================================
 
+func TestDefaultTimeoutsAllowLongRunningMaintenance(t *testing.T) {
+	const eightHoursMs = 8 * 60 * 60 * 1000
+	if DefaultReadTimeoutMs != eightHoursMs {
+		t.Fatalf("DefaultReadTimeoutMs = %d, want %d", DefaultReadTimeoutMs, eightHoursMs)
+	}
+	if DefaultWriteTimeoutMs != eightHoursMs {
+		t.Fatalf("DefaultWriteTimeoutMs = %d, want %d", DefaultWriteTimeoutMs, eightHoursMs)
+	}
+}
+
 func TestWriteServerConfig_Defaults(t *testing.T) {
 	dir := t.TempDir()
 	configPath := filepath.Join(dir, "config.yaml")

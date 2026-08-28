@@ -1336,8 +1336,8 @@ func TestResolveDoltPort_IgnoresRunningStateFile(t *testing.T) {
 	}
 
 	got := resolveDoltPort(tmpDir)
-	if got != 0 {
-		t.Errorf("resolveDoltPort() = %d, want 0 (transient state ignored)", got)
+	if got != 3307 {
+		t.Errorf("resolveDoltPort() = %d, want 3307 (transient state ignored, managed default retained)", got)
 	}
 }
 
@@ -1409,12 +1409,12 @@ func TestResolveDoltPort_FromDaemonJSON(t *testing.T) {
 	}
 }
 
-func TestResolveDoltPort_NoConfig(t *testing.T) {
+func TestResolveDoltPort_NoConfigUsesManagedDefault(t *testing.T) {
 	t.Setenv("GT_DOLT_PORT", "") // isolate from live Dolt server
 	tmpDir := t.TempDir()
 	got := resolveDoltPort(tmpDir)
-	if got != 0 {
-		t.Errorf("resolveDoltPort() = %d, want 0 (no config)", got)
+	if got != 3307 {
+		t.Errorf("resolveDoltPort() = %d, want 3307 (managed default)", got)
 	}
 }
 
@@ -1689,7 +1689,7 @@ func TestAgentEnv_NoDoltPortWithoutTownRoot(t *testing.T) {
 	assertNotSet(t, env, "BEADS_DOLT_PORT")
 }
 
-func TestAgentEnv_NoDoltPortWithoutConfig(t *testing.T) {
+func TestAgentEnv_DefaultsToManagedPortWithoutConfig(t *testing.T) {
 	t.Setenv("GT_DOLT_PORT", "") // isolate from live Dolt server
 	t.Setenv("BEADS_DOLT_SERVER_PORT", "")
 	t.Setenv("BEADS_DOLT_PORT", "") // isolate from live Dolt server
@@ -1698,8 +1698,9 @@ func TestAgentEnv_NoDoltPortWithoutConfig(t *testing.T) {
 		Role:     "mayor",
 		TownRoot: tmpDir,
 	})
-	assertNotSet(t, env, "GT_DOLT_PORT")
-	assertNotSet(t, env, "BEADS_DOLT_PORT")
+	assertEnv(t, env, "GT_DOLT_PORT", "3307")
+	assertEnv(t, env, "BEADS_DOLT_SERVER_PORT", "3307")
+	assertEnv(t, env, "BEADS_DOLT_PORT", "3307")
 }
 
 func TestClaudeConfigDir_Default(t *testing.T) {

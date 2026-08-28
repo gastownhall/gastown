@@ -151,6 +151,21 @@ func TestGetAgentBeadID_UsesRigPrefix(t *testing.T) {
 	}
 }
 
+func TestWorkspacePlacementLawUsesManagedLanes(t *testing.T) {
+	output := workspacePlacementLaw(RoleContext{TownRoot: "/town"})
+	for _, want := range []string{
+		"Workspace Placement Law",
+		"/town/<rig>/crew/<name>",
+		"must remain clean",
+		"TMPDIR`/`GOTMPDIR",
+		"make temp",
+	} {
+		if !strings.Contains(output, want) {
+			t.Errorf("workspace placement law missing %q", want)
+		}
+	}
+}
+
 func TestRigBeadsRootPrefersRouteResolvedRigDir(t *testing.T) {
 	townRoot := t.TempDir()
 	writeTestRoutes(t, townRoot, []beads.Route{
