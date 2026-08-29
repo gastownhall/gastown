@@ -260,36 +260,35 @@ func runDown(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	doltCfg := doltserver.DefaultConfig(townRoot)
-	if doltCfg.IsExternallyManaged() {
-		printDownStatus("Dolt", true, fmt.Sprintf("externally managed at %s; left running", doltCfg.HostPort()))
-	} else {
-		// Phase 4b-i: Stop bd dolt idle-monitor processes.
-		// These background processes respawn per-agent Dolt servers after they're
-		// terminated, creating a race condition where rogues grab the port before
-		// the canonical server can restart. Must be stopped BEFORE Dolt shutdown.
-		idleMonitors := doltserver.FindIdleMonitorProcesses(townRoot)
-		if len(idleMonitors) > 0 {
-			if downDryRun {
-				printDownStatus("Dolt idle-monitors", true, fmt.Sprintf("%d would stop", len(idleMonitors)))
-			} else {
-				stopped := stopIdleMonitors(idleMonitors)
-				if stopped > 0 {
-					printDownStatus("Dolt idle-monitors", true, fmt.Sprintf("stopped %d", stopped))
-				}
+	// Phase 4b-i: Stop bd dolt idle-monitor processes.
+	// These background processes respawn per-agent Dolt servers after they're
+	// terminated, creating a race condition where rogues grab the port before
+	// the canonical server can restart. Must be stopped BEFORE Dolt shutdown.
+	idleMonitors := doltserver.FindIdleMonitorProcesses(townRoot)
+	if len(idleMonitors) > 0 {
+		if downDryRun {
+			printDownStatus("Dolt idle-monitors", true, fmt.Sprintf("%d would stop", len(idleMonitors)))
+		} else {
+			stopped := stopIdleMonitors(idleMonitors)
+			if stopped > 0 {
+				printDownStatus("Dolt idle-monitors", true, fmt.Sprintf("stopped %d", stopped))
 			}
 		}
+	}
 
-		if _, statErr := os.Stat(doltCfg.DataDir); statErr == nil {
-			doltRunning, doltPid, doltErr := doltserver.IsRunning(townRoot)
-			if doltErr != nil {
-				printDownStatus("Dolt", false, fmt.Sprintf("status check failed: %v", doltErr))
-				allOK = false
-			} else if downDryRun {
-				if doltRunning {
-					printDownStatus("Dolt", true, fmt.Sprintf("would stop (PID %d)", doltPid))
-				}
-			} else if doltRunning {
+	// Phase 4b-ii: Stop Dolt server
+	doltCfg := doltserver.DefaultConfig(townRoot)
+	if _, statErr := os.Stat(doltCfg.DataDir); statErr == nil {
+		doltRunning, doltPid, doltErr := doltserver.IsRunning(townRoot)
+		if doltErr != nil {
+			printDownStatus("Dolt", false, fmt.Sprintf("status check failed: %v", doltErr))
+			allOK = false
+		} else if downDryRun {
+			if doltRunning {
+				printDownStatus("Dolt", true, fmt.Sprintf("would stop (PID %d)", doltPid))
+			}
+		} else {
+			if doltRunning {
 				if err := doltserver.Stop(townRoot); err != nil {
 					printDownStatus("Dolt", false, err.Error())
 					allOK = false
@@ -300,39 +299,48 @@ func runDown(cmd *cobra.Command, args []string) error {
 				printDownStatus("Dolt", true, "not running")
 			}
 		}
+	}
 
-		if !downDryRun {
-			if err := doltserver.KillImposters(townRoot); err != nil {
-				printDownStatus("Dolt imposters", false, err.Error())
-				allOK = false
-			}
-			orphanDolts := findOrphanDoltServers(townRoot)
-			if len(orphanDolts) > 0 {
-				stopped := stopOrphanDoltServers(orphanDolts)
-				if stopped > 0 {
-					printDownStatus("Dolt orphans", true, fmt.Sprintf("stopped %d rogue server(s)", stopped))
-				}
-			}
-		} else {
-			conflictPID, _ := doltserver.CheckPortConflict(townRoot)
-			if conflictPID > 0 {
-				printDownStatus("Dolt imposters", true, fmt.Sprintf("would stop imposter (PID %d)", conflictPID))
-			}
-			orphanDolts := findOrphanDoltServers(townRoot)
-			if len(orphanDolts) > 0 {
-				printDownStatus("Dolt orphans", true, fmt.Sprintf("%d rogue server(s) would stop", len(orphanDolts)))
+	// Phase 4b-iii: Stop imposter Dolt servers.
+	// After stopping the canonical server, rogue Dolt servers spawned by bd
+	// from .beads/dolt/ directories may still be running. KillImposters only
+	// catches servers on our port, so also scan for any dolt sql-server
+	// processes rooted in this town's directory tree.
+	if !downDryRun {
+		if err := doltserver.KillImposters(townRoot); err != nil {
+			printDownStatus("Dolt imposters", false, err.Error())
+			allOK = false
+		}
+		orphanDolts := findOrphanDoltServers(townRoot)
+		if len(orphanDolts) > 0 {
+			stopped := stopOrphanDoltServers(orphanDolts)
+			if stopped > 0 {
+				printDownStatus("Dolt orphans", true, fmt.Sprintf("stopped %d rogue server(s)", stopped))
 			}
 		}
+	} else {
+		conflictPID, _ := doltserver.CheckPortConflict(townRoot)
+		if conflictPID > 0 {
+			printDownStatus("Dolt imposters", true, fmt.Sprintf("would stop imposter (PID %d)", conflictPID))
+		}
+		orphanDolts := findOrphanDoltServers(townRoot)
+		if len(orphanDolts) > 0 {
+			printDownStatus("Dolt orphans", true, fmt.Sprintf("%d rogue server(s) would stop", len(orphanDolts)))
+		}
+	}
 
-		beadsDoltDirs := findBeadsDoltDirs(townRoot)
-		if len(beadsDoltDirs) > 0 {
-			if downDryRun {
-				printDownStatus("Beads dolt dirs", true, fmt.Sprintf("%d would remove", len(beadsDoltDirs)))
-			} else {
-				removed := removeBeadsDoltDirs(beadsDoltDirs)
-				if removed > 0 {
-					printDownStatus("Beads dolt dirs", true, fmt.Sprintf("removed %d", removed))
-				}
+	// Phase 4b-iv: Remove .beads/dolt directories.
+	// These legacy per-agent data directories trigger bd to auto-spawn local
+	// Dolt servers. Removing them prevents rogue respawn on next gt up.
+	// Data has already been migrated to .dolt-data/ by gt dolt migrate.
+	beadsDoltDirs := findBeadsDoltDirs(townRoot)
+	if len(beadsDoltDirs) > 0 {
+		if downDryRun {
+			printDownStatus("Beads dolt dirs", true, fmt.Sprintf("%d would remove", len(beadsDoltDirs)))
+		} else {
+			removed := removeBeadsDoltDirs(beadsDoltDirs)
+			if removed > 0 {
+				printDownStatus("Beads dolt dirs", true, fmt.Sprintf("removed %d", removed))
 			}
 		}
 	}

@@ -28,7 +28,7 @@ gt dolt status 2>&1 | tee /tmp/dolt-status-$(date +%s).log
 Then escalate with the evidence path:
 
 ```bash
-gt escalate -s HIGH "Dolt: <symptom>" -m "Evidence: /tmp/dolt-status-..."
+gt escalate -s HIGH "Dolt: <symptom>" -r "Evidence: /tmp/dolt-status-..."
 ```
 
 ## RCA Capture Checklist

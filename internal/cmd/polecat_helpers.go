@@ -102,34 +102,81 @@ func checkPolecatSafety(target polecatTarget) *SafetyCheckResult {
 	result := &SafetyCheckResult{
 		Polecat: fmt.Sprintf("%s/%s", target.rigName, target.polecatName),
 	}
-	polecatInfo, err := target.mgr.Get(target.polecatName)
-	if err != nil || polecatInfo == nil {
-		result.Reasons = []string{"polecat_state=unknown"}
-		result.Blocked = true
-		return result
+
+	// Get polecat info for branch name
+	polecatInfo, infoErr := target.mgr.Get(target.polecatName)
+
+	// Check 1: Unpushed commits via cleanup_status or git state
+	bd := beads.New(target.r.Path)
+	agentBeadID := polecatBeadIDForRig(target.r, target.rigName, target.polecatName)
+	agentIssue, fields, err := bd.GetAgentBead(agentBeadID)
+
+	if err != nil || fields == nil {
+		// No agent bead - fall back to git check
+		if infoErr == nil && polecatInfo != nil {
+			gitState, gitErr := getGitState(polecatInfo.ClonePath)
+			result.GitState = gitState
+			if gitErr != nil {
+				result.Reasons = append(result.Reasons, "cannot check git state")
+			} else if !gitState.Clean {
+				if gitState.UnpushedCommits > 0 {
+					result.Reasons = append(result.Reasons, fmt.Sprintf("has %d unpushed commit(s)", gitState.UnpushedCommits))
+				} else if len(gitState.UncommittedFiles) > 0 {
+					result.Reasons = append(result.Reasons, fmt.Sprintf("has %d uncommitted file(s)", len(gitState.UncommittedFiles)))
+				} else if gitState.StashCount > 0 {
+					result.Reasons = append(result.Reasons, fmt.Sprintf("has %d stash(es)", gitState.StashCount))
+				}
+			}
+		}
+	} else {
+		// Check cleanup_status from agent bead
+		result.CleanupStatus = polecat.CleanupStatus(fields.CleanupStatus)
+		switch result.CleanupStatus {
+		case polecat.CleanupClean:
+			// OK
+		default:
+			result.Reasons = append(result.Reasons, cleanupStatusBlocker(result.CleanupStatus))
+		}
+
+		// Check 3: Work on hook
+		hookBead := agentIssue.HookBead
+		if hookBead == "" {
+			hookBead = fields.HookBead
+		}
+		if hookBead != "" {
+			result.HookBead = hookBead
+			// Check if hooked bead is still active (not closed)
+			hookedIssue, err := bd.Show(hookBead)
+			if err == nil && hookedIssue != nil {
+				if hookedIssue.Status != "closed" {
+					result.Reasons = append(result.Reasons, fmt.Sprintf("has work on hook (%s)", hookBead))
+				} else {
+					result.HookStale = true
+				}
+			} else {
+				result.Reasons = append(result.Reasons, fmt.Sprintf("has work on hook (%s, unverified)", hookBead))
+			}
+		}
+
+		if fields.ActiveMR != "" {
+			result.ActiveMR = fields.ActiveMR
+			if blocker := activeMRBlocker(bd, fields.ActiveMR); blocker != "" {
+				result.Reasons = append(result.Reasons, blocker)
+			}
+		}
 	}
 
-	disposition := target.mgr.WorkstateDispositionForPolecat(
-		target.polecatName, polecatInfo.State, polecatInfo.Issue,
-	)
-	result.Reasons = safetyReasonsForDisposition(disposition)
+	// Check 2: Open MR beads for this branch
+	if infoErr == nil && polecatInfo != nil && polecatInfo.Branch != "" {
+		mr, mrErr := bd.FindMRForBranch(polecatInfo.Branch)
+		if mrErr == nil && mr != nil {
+			result.OpenMR = mr.ID
+			result.Reasons = append(result.Reasons, fmt.Sprintf("has open MR (%s)", mr.ID))
+		}
+	}
 
 	result.Blocked = len(result.Reasons) > 0
 	return result
-}
-
-func safetyReasonsForDisposition(disposition polecat.WorkstateDisposition) []string {
-	if disposition.SafeToNuke {
-		return nil
-	}
-	if len(disposition.Blockers) > 0 {
-		return append([]string(nil), disposition.Blockers...)
-	}
-	reason := disposition.Reason
-	if reason == "" {
-		reason = "unknown"
-	}
-	return []string{"workstate=" + disposition.Verdict + " reason=" + reason}
 }
 
 func rigPrefix(r *rig.Rig) string {
@@ -228,12 +275,7 @@ func displayDryRunSafetyCheck(target polecatTarget) bool {
 		}
 
 		if fields.ActiveMR != "" {
-			sourceHint := agentSourceIssueHint("", fields)
-			gitSafe := false
-			if infoErr == nil && polecatInfo != nil {
-				gitSafe = activeMRGitSafeForWorktree(polecatInfo.ClonePath)
-			}
-			if blocker := activeMRBlocker(bd, fields.ActiveMR, sourceHint, true, gitSafe); blocker != "" {
+			if blocker := activeMRBlocker(bd, fields.ActiveMR); blocker != "" {
 				fmt.Printf("    - Active MR: %s (%s)\n", style.Error.Render("blocked"), blocker)
 			} else {
 				fmt.Printf("    - Active MR: %s (%s)\n", style.Success.Render("terminal"), fields.ActiveMR)

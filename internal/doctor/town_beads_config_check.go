@@ -69,35 +69,13 @@ func (c *TownBeadsConfigCheck) Run(ctx *CheckContext) *CheckResult {
 		}
 	}
 
-	// A rig rename/adoption has repeatedly rewritten the town root's
-	// issue-prefix to a rig prefix while metadata.json kept pointing at the
-	// town database, so gt's internal bd queries resolved to a database that
-	// does not own those beads and failed with "no beads database found"
-	// (gtf-k2k). Catch the divergence here instead of waiting for the symptom.
-	if configPrefix, metadataPrefix, ok := beads.ConfigPrefixMatchesMetadata(beadsDir); !ok {
-		return &CheckResult{
-			Name:   c.Name(),
-			Status: StatusError,
-			Message: fmt.Sprintf("Town beads issue-prefix %q does not match database owner %q",
-				configPrefix, metadataPrefix),
-			Details: []string{
-				fmt.Sprintf("%s declares issue-prefix: %q", configPath, configPrefix),
-				fmt.Sprintf("metadata.json resolves to prefix %q", metadataPrefix),
-				"gt's internal bd queries will route to a database that does not own these beads.",
-				"Fix the owner of the contract, not the generated projection.",
-			},
-			FixHint:  "Reconcile .beads/config.yaml issue-prefix with .beads/metadata.json",
-			Category: c.CheckCategory,
-		}
-	}
-
 	if data, err := os.ReadFile(configPath); err == nil && !beads.ConfigYAMLDisablesAutoExport(string(data)) {
 		c.needsRepair = true
 		return &CheckResult{
 			Name:     c.Name(),
 			Status:   StatusWarning,
 			Message:  "Town beads config.yaml must disable export.auto",
-			Details:  []string{"Fix will set export.auto: \"false\" to prevent non-actionable bd auto-export git-add warnings in server-mode runtime beads dirs."},
+			Details:  []string{"Fix will ensure export.auto: \"false\" (and normalize required defaults like prefix/issue-prefix and dolt.idle-timeout) to prevent non-actionable bd auto-export git-add warnings in server-mode runtime beads dirs."},
 			FixHint:  "Run 'gt doctor --fix' to repair config.yaml",
 			Category: c.CheckCategory,
 		}

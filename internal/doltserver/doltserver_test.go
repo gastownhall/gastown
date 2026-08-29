@@ -7,16 +7,12 @@ import (
 	"io"
 	"net"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"runtime"
-	"strconv"
 	"strings"
 	"sync"
 	"testing"
 	"time"
-
-	"gopkg.in/yaml.v3"
 )
 
 // =============================================================================
@@ -299,98 +295,6 @@ func TestFindIdleMonitorProcessesFromPS(t *testing.T) {
 				if got[i] != tt.want[i] {
 					t.Fatalf("got %v, want %v", got, tt.want)
 				}
-			}
-		})
-	}
-}
-
-func TestFindOwnedDoltTestServerCandidatesFromPS(t *testing.T) {
-	townRoot := "/tmp/gt"
-	dataDir := "/tmp/gt/.dolt-data"
-	output := strings.Join([]string{
-		"101 dolt sql-server --config /tmp/gt/.dolt-data/config.yaml",
-		"102 dolt sql-server --config /tmp/gt-old/.dolt-data/config.yaml",
-		"103 grep dolt sql-server /tmp/gt/.dolt-data/config.yaml",
-		"104 dolt sql-server --data-dir /tmp/gt/.dolt-data",
-		"105 /usr/bin/dolt sql-server --config=/tmp/gt/.dolt-data/config.yaml",
-		"106 dolt status /tmp/gt/.dolt-data",
-		"107 dolt sql-server --port 3307",
-	}, "\n")
-
-	got := findOwnedDoltTestServerCandidatesFromPS(output, townRoot, dataDir)
-	want := []int{101, 104, 105}
-	if len(got) != len(want) {
-		t.Fatalf("got %v, want %v", got, want)
-	}
-	for i := range want {
-		if got[i] != want[i] {
-			t.Fatalf("got %v, want %v", got, want)
-		}
-	}
-}
-
-func TestReapOwnedTestServersRefusesNonTempRoot(t *testing.T) {
-	if _, err := ReapOwnedTestServers(string(filepath.Separator)); err == nil {
-		t.Fatal("expected non-temp root to be rejected")
-	}
-}
-
-func TestReapOwnedTestServersIgnoresNonDoltPID(t *testing.T) {
-	townRoot := t.TempDir()
-	config := DefaultConfig(townRoot)
-	if err := os.MkdirAll(filepath.Dir(config.PidFile), 0755); err != nil {
-		t.Fatal(err)
-	}
-	cmd := exec.Command(os.Args[0], "-test.run=^TestReapOwnedTestServersHelperProcess$")
-	cmd.Env = append(os.Environ(), "GT_DOLT_REAP_HELPER=1")
-	if err := cmd.Start(); err != nil {
-		t.Fatalf("start helper process: %v", err)
-	}
-	t.Cleanup(func() {
-		if cmd.Process != nil {
-			_ = cmd.Process.Kill()
-			_, _ = cmd.Process.Wait()
-		}
-	})
-	if err := os.WriteFile(config.PidFile, []byte(strconv.Itoa(cmd.Process.Pid)), 0644); err != nil {
-		t.Fatal(err)
-	}
-
-	stopped, err := ReapOwnedTestServers(townRoot)
-	if err != nil {
-		t.Fatalf("ReapOwnedTestServers: %v", err)
-	}
-	if stopped != 0 {
-		t.Fatalf("stopped = %d, want 0", stopped)
-	}
-	if !processIsAlive(cmd.Process.Pid) {
-		t.Fatalf("non-Dolt child process %d was killed", cmd.Process.Pid)
-	}
-}
-
-func TestReapOwnedTestServersHelperProcess(t *testing.T) {
-	if os.Getenv("GT_DOLT_REAP_HELPER") != "1" {
-		return
-	}
-	time.Sleep(30 * time.Second)
-	os.Exit(0)
-}
-
-func TestIsDoltSQLServerArgs(t *testing.T) {
-	tests := []struct {
-		name string
-		args []string
-		want bool
-	}{
-		{name: "plain dolt", args: []string{"dolt", "sql-server", "--config", "/tmp/gt/.dolt-data/config.yaml"}, want: true},
-		{name: "absolute dolt", args: []string{"/usr/bin/dolt", "sql-server"}, want: true},
-		{name: "not sql server", args: []string{"dolt", "status"}, want: false},
-		{name: "grep", args: []string{"grep", "dolt", "sql-server"}, want: false},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			if got := isDoltSQLServerArgs(tt.args); got != tt.want {
-				t.Fatalf("isDoltSQLServerArgs(%v) = %v, want %v", tt.args, got, tt.want)
 			}
 		})
 	}
@@ -2247,92 +2151,6 @@ func TestInitRig_InvalidCharacters(t *testing.T) {
 	}
 }
 
-func TestIssuePrefixForRigInit_PrefersRoutes(t *testing.T) {
-	townRoot := t.TempDir()
-	beadsDir := filepath.Join(townRoot, ".beads")
-	if err := os.MkdirAll(beadsDir, 0755); err != nil {
-		t.Fatal(err)
-	}
-	routes := []byte(`{"prefix":"tr-","path":"testrig/mayor/rig"}` + "\n")
-	if err := os.WriteFile(filepath.Join(beadsDir, "routes.jsonl"), routes, 0644); err != nil {
-		t.Fatal(err)
-	}
-
-	if got := issuePrefixForRigInit(townRoot, "testrig"); got != "tr" {
-		t.Fatalf("issuePrefixForRigInit() = %q, want tr", got)
-	}
-}
-
-func TestIssuePrefixForRigInit_PrefersRigsConfigBeforeFallback(t *testing.T) {
-	townRoot := t.TempDir()
-	mayorDir := filepath.Join(townRoot, "mayor")
-	if err := os.MkdirAll(mayorDir, 0755); err != nil {
-		t.Fatal(err)
-	}
-	rigsJSON := []byte(`{"version":1,"rigs":{"testrig":{"beads":{"prefix":"tc-"}}}}`)
-	if err := os.WriteFile(filepath.Join(mayorDir, "rigs.json"), rigsJSON, 0644); err != nil {
-		t.Fatal(err)
-	}
-
-	if got := issuePrefixForRigInit(townRoot, "testrig"); got != "tc" {
-		t.Fatalf("issuePrefixForRigInit() = %q, want tc", got)
-	}
-}
-
-func TestIssuePrefixForRigInit_FallsBackToRigName(t *testing.T) {
-	townRoot := t.TempDir()
-
-	if got := issuePrefixForRigInit(townRoot, "newrig"); got != "newrig" {
-		t.Fatalf("issuePrefixForRigInit() = %q, want newrig", got)
-	}
-}
-
-func TestInitRigSeedsIssuePrefixEmbedded(t *testing.T) {
-	if _, err := exec.LookPath("dolt"); err != nil {
-		t.Skip("dolt binary not available")
-	}
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatalf("free port: %v", err)
-	}
-	port := listener.Addr().(*net.TCPAddr).Port
-	if err := listener.Close(); err != nil {
-		t.Fatalf("close free port listener: %v", err)
-	}
-	t.Setenv("GT_DOLT_PORT", strconv.Itoa(port))
-
-	townRoot := t.TempDir()
-	beadsDir := filepath.Join(townRoot, ".beads")
-	if err := os.MkdirAll(beadsDir, 0755); err != nil {
-		t.Fatal(err)
-	}
-	routes := []byte(`{"prefix":"tr-","path":"testrig/mayor/rig"}` + "\n")
-	if err := os.WriteFile(filepath.Join(beadsDir, "routes.jsonl"), routes, 0644); err != nil {
-		t.Fatal(err)
-	}
-
-	_, created, err := InitRig(townRoot, "testrig")
-	if err != nil {
-		if strings.Contains(err.Error(), "initializing Dolt database") {
-			t.Skipf("dolt init unavailable in test environment: %v", err)
-		}
-		t.Fatalf("InitRig: %v", err)
-	}
-	if !created {
-		t.Fatal("InitRig created = false, want true")
-	}
-
-	cmd := exec.Command("dolt", "sql", "-q", "SELECT value FROM config WHERE `key` = 'issue_prefix'")
-	cmd.Dir = RigDatabaseDir(townRoot, "testrig")
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		t.Fatalf("query issue_prefix: %v\n%s", err, out)
-	}
-	if !strings.Contains(string(out), "tr") {
-		t.Fatalf("issue_prefix query missing tr:\n%s", out)
-	}
-}
-
 // =============================================================================
 // Catalog race condition tests (isDoltRetryableError coverage)
 // =============================================================================
@@ -2355,60 +2173,27 @@ func TestIsDoltRetryableError_CatalogRace(t *testing.T) {
 	}
 }
 
-func setupNoServerDoltConfig(t *testing.T, townRoot string) *Config {
-	t.Helper()
-
-	// The parent Gas Town process normally exports its live Dolt endpoint.
-	// Clear those overrides so this fixture's managed config is authoritative.
-	t.Setenv("GT_DOLT_HOST", "")
-	t.Setenv("GT_DOLT_PORT", "")
-	t.Setenv("GT_DOLT_IGNORE_CONFIG", "")
-
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatalf("allocate isolated Dolt port: %v", err)
-	}
-	port := listener.Addr().(*net.TCPAddr).Port
-	if err := listener.Close(); err != nil {
-		t.Fatalf("release isolated Dolt port: %v", err)
-	}
-
-	config := DefaultConfig(townRoot)
-	config.Host = "127.0.0.1"
-	config.Port = port
-	if err := os.MkdirAll(config.DataDir, 0755); err != nil {
-		t.Fatalf("create isolated Dolt data dir: %v", err)
-	}
-	if err := writeServerConfig(config, filepath.Join(config.DataDir, "config.yaml")); err != nil {
-		t.Fatalf("write isolated Dolt config: %v", err)
-	}
-
-	resolved := DefaultConfig(townRoot)
-	if resolved.HostPort() != config.HostPort() {
-		t.Fatalf("isolated Dolt endpoint = %q, want %q", resolved.HostPort(), config.HostPort())
-	}
-	if running, _, err := IsRunning(townRoot); err != nil {
-		t.Fatalf("check isolated Dolt endpoint: %v", err)
-	} else if running {
-		t.Fatalf("isolated Dolt endpoint %s unexpectedly has a server", resolved.HostPort())
-	}
-
-	return resolved
-}
-
 func TestWaitForCatalog_NoServer(t *testing.T) {
+	// When no Dolt server is reachable, waitForCatalog should fail.
+	// Use port 13399 (unlikely to be in use) to ensure no server responds.
 	townRoot := t.TempDir()
-	config := setupNoServerDoltConfig(t, townRoot)
-
+	dataDir := filepath.Join(townRoot, ".dolt-data")
+	if err := os.MkdirAll(dataDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	// Write a config.yaml with an unreachable port so buildServerSQLCmd
+	// tries to connect to a port that nobody is listening on.
+	configContent := "listener:\n  port: 13399\ndata_dir: " + dataDir + "\n"
+	if err := os.WriteFile(filepath.Join(dataDir, "config.yaml"), []byte(configContent), 0644); err != nil {
+		t.Fatal(err)
+	}
 	err := waitForCatalog(townRoot, "testdb")
 	if err == nil {
 		t.Fatal("expected error when no server is running")
 	}
+	// Connection refused or similar non-retryable error
 	if !strings.Contains(err.Error(), "non-retryable") {
 		t.Errorf("expected non-retryable error, got: %v", err)
-	}
-	if !strings.Contains(err.Error(), strconv.Itoa(config.Port)) {
-		t.Errorf("expected error from isolated port %d, got: %v", config.Port, err)
 	}
 }
 
@@ -2946,7 +2731,16 @@ func TestFindBrokenWorkspaces_SqliteNotBroken(t *testing.T) {
 
 func TestFindBrokenWorkspaces_MultipleRigs(t *testing.T) {
 	townRoot := t.TempDir()
-	config := setupNoServerDoltConfig(t, townRoot)
+
+	// Isolate from real Dolt server on default port
+	doltDataDir := filepath.Join(townRoot, ".dolt-data")
+	if err := os.MkdirAll(doltDataDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(doltDataDir, "config.yaml"),
+		[]byte("listener:\n  port: 13307\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
 
 	// Set up rigs.json with two rigs
 	if err := os.MkdirAll(filepath.Join(townRoot, "mayor"), 0755); err != nil {
@@ -2976,12 +2770,11 @@ func TestFindBrokenWorkspaces_MultipleRigs(t *testing.T) {
 		[]byte(`{"backend":"dolt","dolt_mode":"server","dolt_database":"rig-b"}`), 0644); err != nil {
 		t.Fatal(err)
 	}
-	setupDoltDB(t, config.DataDir, "rig-b")
-
-	broken, warning := FindBrokenWorkspaces(townRoot)
-	if warning != "" {
-		t.Fatalf("unexpected live-catalog warning: %s", warning)
+	if err := os.MkdirAll(filepath.Join(townRoot, ".dolt-data", "rig-b", ".dolt"), 0755); err != nil {
+		t.Fatal(err)
 	}
+
+	broken, _ := FindBrokenWorkspaces(townRoot)
 	if len(broken) != 1 {
 		t.Fatalf("expected 1 broken workspace (rig-a only), got %d", len(broken))
 	}
@@ -3814,61 +3607,6 @@ func TestIsRemote(t *testing.T) {
 	}
 }
 
-func TestConfig_IsExternallyManaged_when_loopback_external_is_declared(t *testing.T) {
-	// Given
-	config := &Config{Host: "127.0.0.1", External: true}
-
-	// When
-	managed := config.IsExternallyManaged()
-
-	// Then
-	if !managed {
-		t.Fatal("loopback external server must not be owned by Gas Town")
-	}
-}
-
-func TestDefaultConfig_ExternalLoopbackUsesDaemonEndpoint(t *testing.T) {
-	// Given
-	townRoot := t.TempDir()
-	t.Setenv("GT_DOLT_EXTERNAL", "")
-	t.Setenv("GT_DOLT_HOST", "")
-	t.Setenv("GT_DOLT_PORT", "")
-	mayorDir := filepath.Join(townRoot, "mayor")
-	if err := os.MkdirAll(mayorDir, 0755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(mayorDir, "daemon.json"), []byte(`{"env":{"GT_DOLT_EXTERNAL":"true","GT_DOLT_HOST":"127.0.0.1","GT_DOLT_PORT":"3308"}}`), 0644); err != nil {
-		t.Fatal(err)
-	}
-
-	// When
-	config := DefaultConfig(townRoot)
-
-	// Then
-	if !config.IsExternallyManaged() {
-		t.Fatal("loopback external server must not be owned by Gas Town")
-	}
-	if config.HostPort() != "127.0.0.1:3308" {
-		t.Fatalf("HostPort() = %q, want 127.0.0.1:3308", config.HostPort())
-	}
-}
-
-func TestStart_RejectsExternalLoopbackEndpoint(t *testing.T) {
-	// Given
-	townRoot := t.TempDir()
-	t.Setenv("GT_DOLT_EXTERNAL", "true")
-	t.Setenv("GT_DOLT_HOST", "127.0.0.1")
-	t.Setenv("GT_DOLT_PORT", "3308")
-
-	// When
-	err := Start(townRoot)
-
-	// Then
-	if err == nil || !strings.Contains(err.Error(), "externally managed") {
-		t.Fatalf("Start() error = %v, want externally managed error", err)
-	}
-}
-
 func TestSQLArgs(t *testing.T) {
 	tests := []struct {
 		name string
@@ -3985,7 +3723,6 @@ func TestDefaultConfig_EnvVarPartialOverride(t *testing.T) {
 
 	// Only override host, rest should keep defaults
 	t.Setenv("GT_DOLT_HOST", "remote.host")
-	t.Setenv("GT_DOLT_PORT", "")
 
 	config := DefaultConfig(townRoot)
 
@@ -4011,103 +3748,6 @@ func TestDefaultConfig_InvalidPortIgnored(t *testing.T) {
 	config := DefaultConfig(townRoot)
 	if config.Port != DefaultPort {
 		t.Errorf("Port = %d, want default %d when env var is invalid", config.Port, DefaultPort)
-	}
-}
-
-func TestDefaultConfig_ConfigYAMLBeatsDaemonJSON(t *testing.T) {
-	townRoot := t.TempDir()
-	t.Setenv("GT_DOLT_IGNORE_CONFIG", "")
-	t.Setenv("GT_DOLT_HOST", "")
-	t.Setenv("GT_DOLT_PORT", "")
-	dataDir := filepath.Join(townRoot, ".dolt-data")
-	if err := os.MkdirAll(dataDir, 0755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(dataDir, "config.yaml"), []byte("listener:\n  host: 127.0.0.2\n  port: 4407\n"), 0600); err != nil {
-		t.Fatal(err)
-	}
-	mayorDir := filepath.Join(townRoot, "mayor")
-	if err := os.MkdirAll(mayorDir, 0755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(mayorDir, "daemon.json"), []byte(`{"env":{"GT_DOLT_HOST":"127.0.0.3","GT_DOLT_PORT":"5507"}}`), 0600); err != nil {
-		t.Fatal(err)
-	}
-
-	config := DefaultConfig(townRoot)
-	if config.Host != "127.0.0.2" {
-		t.Errorf("Host = %q, want config.yaml host 127.0.0.2", config.Host)
-	}
-	if config.Port != 4407 {
-		t.Errorf("Port = %d, want config.yaml port 4407", config.Port)
-	}
-}
-
-func TestDefaultConfig_DaemonJSONFallbackWithoutConfigOrEnv(t *testing.T) {
-	townRoot := t.TempDir()
-	t.Setenv("GT_DOLT_PORT", "")
-	mayorDir := filepath.Join(townRoot, "mayor")
-	if err := os.MkdirAll(mayorDir, 0755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(mayorDir, "daemon.json"), []byte(`{"env":{"GT_DOLT_PORT":"5507"}}`), 0600); err != nil {
-		t.Fatal(err)
-	}
-
-	config := DefaultConfig(townRoot)
-	if config.Port != 5507 {
-		t.Errorf("Port = %d, want daemon.json port 5507", config.Port)
-	}
-}
-
-func TestDefaultConfig_IgnoreConfigUsesEnvPort(t *testing.T) {
-	townRoot := t.TempDir()
-	dataDir := filepath.Join(townRoot, ".dolt-data")
-	if err := os.MkdirAll(dataDir, 0755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(dataDir, "config.yaml"), []byte("listener:\n  port: 4407\n"), 0600); err != nil {
-		t.Fatal(err)
-	}
-	t.Setenv("GT_DOLT_IGNORE_CONFIG", "1")
-	t.Setenv("GT_DOLT_PORT", "5507")
-
-	config := DefaultConfig(townRoot)
-	if config.Port != 5507 {
-		t.Errorf("Port = %d, want env port 5507 when config ignored", config.Port)
-	}
-}
-
-func TestDefaultConfig_ManagedDefaultsAndEnvOverrides(t *testing.T) {
-	townRoot := t.TempDir()
-	t.Setenv("GT_DOLT_PORT", "")
-	unsetEnv(t, "GT_DOLT_STATS_ENABLED")
-	unsetEnv(t, "GT_DOLT_EVENT_SCHEDULER")
-	unsetEnv(t, "GT_DOLT_AUTO_GC")
-
-	config := DefaultConfig(townRoot)
-	if config.EventScheduler != "OFF" {
-		t.Errorf("EventScheduler = %q, want OFF", config.EventScheduler)
-	}
-	if config.DoltStatsEnabled != "0" {
-		t.Errorf("DoltStatsEnabled = %q, want 0", config.DoltStatsEnabled)
-	}
-	if config.AutoGC != "on" {
-		t.Errorf("AutoGC = %q, want on", config.AutoGC)
-	}
-
-	t.Setenv("GT_DOLT_STATS_ENABLED", "omit")
-	t.Setenv("GT_DOLT_EVENT_SCHEDULER", "omit")
-	t.Setenv("GT_DOLT_AUTO_GC", "off")
-	config = DefaultConfig(townRoot)
-	if config.DoltStatsEnabled != "omit" {
-		t.Errorf("DoltStatsEnabled = %q, want omit", config.DoltStatsEnabled)
-	}
-	if config.EventScheduler != "omit" {
-		t.Errorf("EventScheduler = %q, want omit", config.EventScheduler)
-	}
-	if config.AutoGC != "off" {
-		t.Errorf("AutoGC = %q, want off", config.AutoGC)
 	}
 }
 
@@ -4523,16 +4163,6 @@ func TestCollectDatabaseOwners_ProtectedDatabaseNotPhantom(t *testing.T) {
 // writeServerConfig tests
 // =============================================================================
 
-func TestDefaultTimeoutsAllowLongRunningMaintenance(t *testing.T) {
-	const eightHoursMs = 8 * 60 * 60 * 1000
-	if DefaultReadTimeoutMs != eightHoursMs {
-		t.Fatalf("DefaultReadTimeoutMs = %d, want %d", DefaultReadTimeoutMs, eightHoursMs)
-	}
-	if DefaultWriteTimeoutMs != eightHoursMs {
-		t.Fatalf("DefaultWriteTimeoutMs = %d, want %d", DefaultWriteTimeoutMs, eightHoursMs)
-	}
-}
-
 func TestWriteServerConfig_Defaults(t *testing.T) {
 	dir := t.TempDir()
 	configPath := filepath.Join(dir, "config.yaml")
@@ -4564,116 +4194,11 @@ func TestWriteServerConfig_Defaults(t *testing.T) {
 		"data_dir: \"" + dir + "\"",
 		"log_level: warning",
 		"auto_gc_behavior:",
-		"event_scheduler: \"OFF\"",
-		"system_variables:",
-		"dolt_stats_enabled: 0",
 	}
 	for _, want := range checks {
 		if !strings.Contains(content, want) {
 			t.Errorf("config missing %q\nfull content:\n%s", want, content)
 		}
-	}
-
-	var parsed struct {
-		LogLevel string `yaml:"log_level"`
-		Listener struct {
-			Port               int `yaml:"port"`
-			MaxConnections     int `yaml:"max_connections"`
-			ReadTimeoutMillis  int `yaml:"read_timeout_millis"`
-			WriteTimeoutMillis int `yaml:"write_timeout_millis"`
-		} `yaml:"listener"`
-		DataDir  string `yaml:"data_dir"`
-		Behavior struct {
-			DoltTransactionCommit bool    `yaml:"dolt_transaction_commit"`
-			EventScheduler        *string `yaml:"event_scheduler"`
-			AutoGCBehavior        struct {
-				Enable       bool `yaml:"enable"`
-				ArchiveLevel int  `yaml:"archive_level"`
-			} `yaml:"auto_gc_behavior"`
-		} `yaml:"behavior"`
-		SystemVariables struct {
-			DoltStatsEnabled *int `yaml:"dolt_stats_enabled"`
-		} `yaml:"system_variables"`
-	}
-	if err := yaml.Unmarshal(data, &parsed); err != nil {
-		t.Fatalf("generated config is invalid YAML: %v\n%s", err, content)
-	}
-	if parsed.LogLevel != "warning" {
-		t.Errorf("log_level = %q, want warning", parsed.LogLevel)
-	}
-	if parsed.Listener.Port != 3307 {
-		t.Errorf("listener.port = %d, want 3307", parsed.Listener.Port)
-	}
-	if parsed.Listener.MaxConnections != 1000 {
-		t.Errorf("listener.max_connections = %d, want 1000", parsed.Listener.MaxConnections)
-	}
-	if parsed.Listener.ReadTimeoutMillis != DefaultReadTimeoutMs {
-		t.Errorf("listener.read_timeout_millis = %d, want %d", parsed.Listener.ReadTimeoutMillis, DefaultReadTimeoutMs)
-	}
-	if parsed.Listener.WriteTimeoutMillis != DefaultWriteTimeoutMs {
-		t.Errorf("listener.write_timeout_millis = %d, want %d", parsed.Listener.WriteTimeoutMillis, DefaultWriteTimeoutMs)
-	}
-	if parsed.DataDir != dir {
-		t.Errorf("data_dir = %q, want %q", parsed.DataDir, dir)
-	}
-	if parsed.Behavior.DoltTransactionCommit {
-		t.Error("behavior.dolt_transaction_commit = true, want false")
-	}
-	if parsed.Behavior.EventScheduler == nil || *parsed.Behavior.EventScheduler != "OFF" {
-		t.Fatalf("behavior.event_scheduler = %v, want OFF", parsed.Behavior.EventScheduler)
-	}
-	if !parsed.Behavior.AutoGCBehavior.Enable {
-		t.Error("behavior.auto_gc_behavior.enable = false, want true (non-blocking auto_gc re-enabled, hq-excy9g)")
-	}
-	if parsed.Behavior.AutoGCBehavior.ArchiveLevel != 1 {
-		t.Errorf("behavior.auto_gc_behavior.archive_level = %d, want 1", parsed.Behavior.AutoGCBehavior.ArchiveLevel)
-	}
-	if parsed.SystemVariables.DoltStatsEnabled == nil || *parsed.SystemVariables.DoltStatsEnabled != 0 {
-		t.Fatalf("system_variables.dolt_stats_enabled = %v, want 0", parsed.SystemVariables.DoltStatsEnabled)
-	}
-}
-
-// TestWriteServerConfig_AutoGCDisabled verifies the GT_DOLT_AUTO_GC kill-switch:
-// AutoGC="off" emits auto_gc_behavior {enable:false, archive_level:0} so auto_gc can
-// be disabled at runtime without a source revert+rebuild (hq-excy9g escape hatch).
-func TestWriteServerConfig_AutoGCDisabled(t *testing.T) {
-	dir := t.TempDir()
-	configPath := filepath.Join(dir, "config.yaml")
-
-	config := &Config{
-		Port:           3307,
-		DataDir:        dir,
-		MaxConnections: 1000,
-		ReadTimeoutMs:  DefaultReadTimeoutMs,
-		WriteTimeoutMs: DefaultWriteTimeoutMs,
-		LogLevel:       "warning",
-		AutoGC:         "off",
-	}
-
-	if err := writeServerConfig(config, configPath); err != nil {
-		t.Fatalf("writeServerConfig: %v", err)
-	}
-	data, err := os.ReadFile(configPath)
-	if err != nil {
-		t.Fatalf("reading config: %v", err)
-	}
-
-	var parsed struct {
-		Behavior struct {
-			AutoGCBehavior struct {
-				Enable       bool `yaml:"enable"`
-				ArchiveLevel int  `yaml:"archive_level"`
-			} `yaml:"auto_gc_behavior"`
-		} `yaml:"behavior"`
-	}
-	if err := yaml.Unmarshal(data, &parsed); err != nil {
-		t.Fatalf("generated config is invalid YAML: %v\n%s", err, data)
-	}
-	if parsed.Behavior.AutoGCBehavior.Enable {
-		t.Error("AutoGC=off: auto_gc_behavior.enable = true, want false")
-	}
-	if parsed.Behavior.AutoGCBehavior.ArchiveLevel != 0 {
-		t.Errorf("AutoGC=off: archive_level = %d, want 0", parsed.Behavior.AutoGCBehavior.ArchiveLevel)
 	}
 }
 
@@ -4736,33 +4261,6 @@ func TestWriteServerConfig_ZeroTimeoutsOmitted(t *testing.T) {
 	}
 	if strings.Contains(content, "write_timeout_millis") {
 		t.Error("zero WriteTimeoutMs should not write write_timeout_millis")
-	}
-}
-
-func TestWriteServerConfig_StatsAndSchedulerCanBeOmitted(t *testing.T) {
-	dir := t.TempDir()
-	configPath := filepath.Join(dir, "config.yaml")
-
-	config := &Config{
-		Port:             3307,
-		DataDir:          dir,
-		DoltStatsEnabled: "omit",
-		EventScheduler:   "omit",
-	}
-	if err := writeServerConfig(config, configPath); err != nil {
-		t.Fatal(err)
-	}
-
-	data, err := os.ReadFile(configPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	content := string(data)
-	if strings.Contains(content, "dolt_stats_enabled") {
-		t.Fatalf("dolt_stats_enabled should be omitted:\n%s", content)
-	}
-	if strings.Contains(content, "event_scheduler") {
-		t.Fatalf("event_scheduler should be omitted:\n%s", content)
 	}
 }
 
