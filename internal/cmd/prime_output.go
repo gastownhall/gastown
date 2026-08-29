@@ -611,7 +611,7 @@ func outputStartupDirective(ctx RoleContext) {
 		fmt.Println("2. If mail has work → execute it")
 		fmt.Println("3. If no mail → check ready queue: `bd ready`")
 		fmt.Println("4. If ready queue has work → claim top bead: `bd update <id> --claim`")
-		fmt.Println("5. If nothing available → run `" + cli.Name() + " done` and exit")
+		fmt.Println("5. If nothing available → run `" + cli.Name() + " dog done` and exit")
 		fmt.Println()
 		fmt.Println("DO NOT sit idle waiting. Recover or terminate. (GH#2748)")
 	case RoleBoot:
