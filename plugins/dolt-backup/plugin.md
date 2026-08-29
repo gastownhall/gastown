@@ -24,10 +24,12 @@ Executed via `run.sh` — no AI interpretation.
 
 ## What it does
 
-1. For each production DB (hq, beads, gt): compare HEAD hash against last backup
-2. Skip unchanged databases
-3. Run `dolt backup sync` for changed databases
-4. Only escalate when actual backup operations fail (FAILED > 0)
+1. Discover production DBs from the rig registry (routes.jsonl + per-rig
+   metadata.json `dolt_database`), skipping any `.dolt` dir not registered
+2. For each registered DB: compare HEAD hash against last backup
+3. Skip unchanged databases
+4. Run `dolt backup sync` for changed databases
+5. Only escalate when actual backup operations fail (FAILED > 0)
 
 ## Usage
 
