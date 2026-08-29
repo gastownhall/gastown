@@ -226,7 +226,7 @@ func addBeadDependency(t *testing.T, blocked, blocker, dir string) {
 }
 
 // addBeadDependencyOfType adds a dependency with a specific type (e.g., "tracks",
-// "depends_on"). The from bead must exist in the local DB at dir; the to bead can
+// "depends-on"). The from bead must exist in the local DB at dir; the to bead can
 // be in a different DB if routes.jsonl is present in dir's .beads/.
 func addBeadDependencyOfType(t *testing.T, from, to, depType, dir string) {
 	t.Helper()
