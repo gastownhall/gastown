@@ -342,7 +342,7 @@ func notifyRefineryMergeReady(workDir, rigName string, result *HandlerResult) {
 	townRoot, _ := workspace.Find(workDir)
 	// Emit file-based event so refinery's await-event unblocks instantly.
 	if townRoot != "" {
-		_, _ = channelevents.EmitToTown(townRoot, "refinery", "MERGE_READY", []string{
+		_, _ = channelevents.EmitToRig(townRoot, rigName, "refinery", "MERGE_READY", []string{
 			"source=witness",
 			"rig=" + rigName,
 		})
