@@ -296,6 +296,39 @@ func TestIsDoneCommand(t *testing.T) {
 	if isDoneCommand(root) {
 		t.Fatal("root command should not be detected as done")
 	}
+
+	// Subcommands that merely happen to be named "done" are NOT the
+	// polecat-only `gt done`. Catching them made `gt dog done` fail with
+	// "gt done is for polecats only (BD_ACTOR=dog)", stranding dogs in the
+	// working state with no way back to the kennel.
+	for _, parentName := range []string{"dog", "wl"} {
+		parent := &cobra.Command{Use: parentName}
+		sub := &cobra.Command{Use: "done"}
+		parent.AddCommand(sub)
+		nested := &cobra.Command{Use: "gt"}
+		nested.AddCommand(parent)
+		if isDoneCommand(sub) {
+			t.Fatalf("gt %s done should not be detected as the polecat-only done", parentName)
+		}
+	}
+
+	// Three levels deep: gt mol step done
+	molRoot := &cobra.Command{Use: "gt"}
+	mol := &cobra.Command{Use: "mol"}
+	step := &cobra.Command{Use: "step"}
+	stepDone := &cobra.Command{Use: "done"}
+	molRoot.AddCommand(mol)
+	mol.AddCommand(step)
+	step.AddCommand(stepDone)
+	if isDoneCommand(stepDone) {
+		t.Fatal("gt mol step done should not be detected as the polecat-only done")
+	}
+
+	// A detached done (no parent) still trips the guard, so persistentPreRun
+	// called directly keeps rejecting non-polecats.
+	if !isDoneCommand(&cobra.Command{Use: "done"}) {
+		t.Fatal("detached done command should be detected")
+	}
 }
 
 func TestPersistentPreRunDoneRejectsBeforeRegistryFallback(t *testing.T) {
