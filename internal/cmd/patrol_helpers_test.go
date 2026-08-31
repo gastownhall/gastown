@@ -676,13 +676,21 @@ func TestPatrolRigName(t *testing.T) {
 	if got := patrolRigName(PatrolConfig{Assignee: "deacon"}); got != "" {
 		t.Fatalf("patrolRigName without rig = %q, want empty", got)
 	}
+	// Town-level agents are written in canonical form with a trailing slash;
+	// the deacon is not a rig.
+	if got := patrolRigName(PatrolConfig{Assignee: "deacon/"}); got != "" {
+		t.Fatalf("patrolRigName for canonical town address = %q, want empty", got)
+	}
+	if got := patrolRigName(PatrolConfig{Assignee: "mayor/"}); got != "" {
+		t.Fatalf("patrolRigName for canonical town address = %q, want empty", got)
+	}
 }
 
 func TestRenderPatrolWispDescription_DeaconInlinesStepsAndVars(t *testing.T) {
 	desc, err := renderPatrolWispDescription(PatrolConfig{
 		PatrolMolName: "mol-deacon-patrol",
 		BeadsDir:      t.TempDir(),
-		Assignee:      "deacon",
+		Assignee:      "deacon/",
 		ExtraVars:     []string{"idle_effort_threshold=7"},
 	})
 	if err != nil {
@@ -717,7 +725,7 @@ description = "overlay heartbeat note"
 	desc, err := renderPatrolWispDescription(PatrolConfig{
 		PatrolMolName: "mol-deacon-patrol",
 		BeadsDir:      townRoot,
-		Assignee:      "deacon",
+		Assignee:      "deacon/",
 	})
 	if err != nil {
 		t.Fatalf("renderPatrolWispDescription: %v", err)

@@ -189,13 +189,24 @@ func isRoleCommand(cmd *cobra.Command) bool {
 	return false
 }
 
+// isDoneCommand reports whether cmd is the top-level `gt done` command, which
+// is polecat-only and needs its worktree ownership proven before any shared
+// pre-run writes.
+//
+// It must match ONLY the root-level command. Several unrelated subcommands are
+// also named "done" — `gt dog done`, `gt mol step done`, `gt wl done` — and
+// walking the whole ancestor chain caught those too, so a dog running
+// `gt dog done` was rejected with "gt done is for polecats only (BD_ACTOR=dog)"
+// and could never return itself to the kennel.
+//
+// A detached command with no parent is treated as the root-level one so the
+// guard still applies when persistentPreRun is called directly.
 func isDoneCommand(cmd *cobra.Command) bool {
-	for c := cmd; c != nil; c = c.Parent() {
-		if c.Name() == "done" {
-			return true
-		}
+	if cmd == nil || cmd.Name() != "done" {
+		return false
 	}
-	return false
+	parent := cmd.Parent()
+	return parent == nil || parent.Parent() == nil
 }
 
 // initCLITheme initializes the CLI color theme based on settings and environment.

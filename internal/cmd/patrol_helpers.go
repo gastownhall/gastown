@@ -324,9 +324,14 @@ func renderPatrolWispDescription(cfg PatrolConfig) (string, error) {
 	return renderFormulaRootAndStepsFull(cfg.PatrolMolName, cfg.BeadsDir, rigName, vars)
 }
 
+// patrolRigName extracts the rig name from a patrol assignee address.
+// Rig-scoped agents use "<rig>/<role>" (e.g. "gastown/witness"), so the
+// segment before the slash is the rig. Town-level agents have no rig and may
+// be written either bare ("deacon") or in canonical form with a trailing
+// slash ("deacon/"); both must yield "".
 func patrolRigName(cfg PatrolConfig) string {
-	rigName, _, ok := strings.Cut(cfg.Assignee, "/")
-	if !ok {
+	rigName, role, ok := strings.Cut(cfg.Assignee, "/")
+	if !ok || role == "" {
 		return ""
 	}
 	return rigName
