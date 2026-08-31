@@ -1166,13 +1166,13 @@ needs = ["patrol-cleanup"]
 description = """
 Check own context limit.
 
-The Deacon runs in a Claude session with finite context. Check if approaching the limit:
+The Deacon runs in an agent session with finite context. There is no gt command
+that reports this — assess your own remaining context directly (your harness
+reports tokens used vs. the window) and classify it as LOW or HIGH.
 
-```bash
-gt context --usage
-```
+Treat context as HIGH once you are past roughly 80% of the window.
 
-If context is high (>80%), prepare for handoff:
+If context is HIGH, prepare for handoff:
 - Summarize current state
 - Note any pending work
 - Write handoff to molecule state
