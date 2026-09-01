@@ -134,6 +134,8 @@ func TestManager_StartSafetyStoppedDoesNotCreateSession(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(townRoot, "mayor", "town.json"), []byte(`{"name":"test"}`), 0o644); err != nil {
 		t.Fatalf("write town.json: %v", err)
 	}
+	// Local (non-fork) rig config: the fork guard fails closed without one.
+	writeRigConfig(t, filepath.Join(townRoot, "testrig"), `{}`)
 
 	binDir := t.TempDir()
 	logPath := filepath.Join(t.TempDir(), "commands.log")
@@ -170,6 +172,8 @@ func TestManager_StartSafetyStoppedKillsLeftoverSession(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(townRoot, "mayor", "town.json"), []byte(`{"name":"test"}`), 0o644); err != nil {
 		t.Fatalf("write town.json: %v", err)
 	}
+	// Local (non-fork) rig config: the fork guard fails closed without one.
+	writeRigConfig(t, filepath.Join(townRoot, "testrig"), `{}`)
 
 	binDir := t.TempDir()
 	logPath := filepath.Join(t.TempDir(), "commands.log")
@@ -257,6 +261,182 @@ func TestManager_StartAllowingForkRigStillHonorsSafetyStop(t *testing.T) {
 	err := mgr.StartAllowingForkRig(false, "")
 	if !errors.Is(err, ErrSafetyStopped) {
 		t.Fatalf("StartAllowingForkRig error = %v, want ErrSafetyStopped", err)
+	}
+}
+
+// --- Fork-rig guard: fail closed on config-read error (gt-9gv) ---------------
+//
+// Regression cover for incident gt-kx4: /gt/gastown/config.json went missing
+// and ForkRigStartError folded the read failure into the "not a fork rig"
+// branch, so the daemon auto-started the refinery on a fork-backed rig with no
+// --force. A config the guard cannot read must block startup, not pass it.
+
+func TestManager_ForkRigStartErrorFailsClosedOnMissingConfig(t *testing.T) {
+	setupTestRegistry(t)
+
+	rigPath := filepath.Join(t.TempDir(), "testrig")
+	if err := os.MkdirAll(rigPath, 0o755); err != nil {
+		t.Fatalf("mkdir rig: %v", err)
+	}
+	// No config.json written at all.
+
+	mgr := NewManager(&rig.Rig{Name: "testrig", Path: rigPath})
+	err := mgr.ForkRigStartError()
+	if err == nil {
+		t.Fatal("ForkRigStartError() = nil for missing config.json, want blocking error")
+	}
+	if !errors.Is(err, ErrForkRigUndetermined) {
+		t.Fatalf("ForkRigStartError() = %v, want ErrForkRigUndetermined", err)
+	}
+	if !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("ForkRigStartError() = %v, want wrapped os.ErrNotExist", err)
+	}
+	if !strings.Contains(err.Error(), "testrig") {
+		t.Fatalf("error does not name the rig: %v", err)
+	}
+}
+
+func TestManager_ForkRigStartErrorFailsClosedOnUnreadableConfig(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("chmod-based unreadable file does not apply on windows")
+	}
+	if os.Geteuid() == 0 {
+		t.Skip("running as root: mode 0000 is still readable")
+	}
+	setupTestRegistry(t)
+
+	rigPath := filepath.Join(t.TempDir(), "testrig")
+	if err := os.MkdirAll(rigPath, 0o755); err != nil {
+		t.Fatalf("mkdir rig: %v", err)
+	}
+	configPath := filepath.Join(rigPath, "config.json")
+	writeRigConfig(t, rigPath, `{"upstream_url":"https://github.com/upstream/repo"}`)
+	if err := os.Chmod(configPath, 0o000); err != nil {
+		t.Fatalf("chmod config: %v", err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(configPath, 0o644) })
+
+	mgr := NewManager(&rig.Rig{Name: "testrig", Path: rigPath})
+	err := mgr.ForkRigStartError()
+	if !errors.Is(err, ErrForkRigUndetermined) {
+		t.Fatalf("ForkRigStartError() = %v, want ErrForkRigUndetermined", err)
+	}
+}
+
+func TestManager_ForkRigStartErrorFailsClosedOnMalformedConfig(t *testing.T) {
+	setupTestRegistry(t)
+
+	rigPath := filepath.Join(t.TempDir(), "testrig")
+	if err := os.MkdirAll(rigPath, 0o755); err != nil {
+		t.Fatalf("mkdir rig: %v", err)
+	}
+	writeRigConfig(t, rigPath, `{"upstream_url": `)
+
+	mgr := NewManager(&rig.Rig{Name: "testrig", Path: rigPath})
+	if err := mgr.ForkRigStartError(); !errors.Is(err, ErrForkRigUndetermined) {
+		t.Fatalf("ForkRigStartError() = %v, want ErrForkRigUndetermined", err)
+	}
+}
+
+func TestManager_ForkRigStartErrorClassifiesReadableConfigs(t *testing.T) {
+	setupTestRegistry(t)
+
+	tests := []struct {
+		name    string
+		config  string
+		wantErr error // nil means startup allowed
+	}{
+		{name: "local rig", config: `{}`, wantErr: nil},
+		{name: "empty upstream", config: `{"upstream_url":""}`, wantErr: nil},
+		{name: "whitespace upstream", config: `{"upstream_url":"   "}`, wantErr: nil},
+		{name: "fork rig", config: `{"upstream_url":"https://github.com/upstream/repo"}`, wantErr: ErrForkRig},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			rigPath := filepath.Join(t.TempDir(), "testrig")
+			if err := os.MkdirAll(rigPath, 0o755); err != nil {
+				t.Fatalf("mkdir rig: %v", err)
+			}
+			writeRigConfig(t, rigPath, tt.config)
+
+			err := NewManager(&rig.Rig{Name: "testrig", Path: rigPath}).ForkRigStartError()
+			if tt.wantErr == nil {
+				if err != nil {
+					t.Fatalf("ForkRigStartError() = %v, want nil", err)
+				}
+				return
+			}
+			if !errors.Is(err, tt.wantErr) {
+				t.Fatalf("ForkRigStartError() = %v, want %v", err, tt.wantErr)
+			}
+			if errors.Is(err, ErrForkRigUndetermined) {
+				t.Fatalf("readable config reported as undetermined: %v", err)
+			}
+		})
+	}
+}
+
+func TestManager_StartMissingConfigDoesNotCreateSession(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("mock tmux script uses POSIX shell")
+	}
+	setupTestRegistry(t)
+
+	townRoot := t.TempDir()
+	rigPath := filepath.Join(townRoot, "testrig")
+	if err := os.MkdirAll(rigPath, 0o755); err != nil {
+		t.Fatalf("mkdir rig: %v", err)
+	}
+	// config.json is missing, exactly as in incident gt-kx4.
+
+	binDir := t.TempDir()
+	logPath := filepath.Join(t.TempDir(), "commands.log")
+	writeSafetyStopMockTmux(t, binDir, logPath)
+	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	mgr := NewManager(&rig.Rig{Name: "testrig", Path: rigPath})
+	err := mgr.Start(false, "")
+	if !errors.Is(err, ErrForkRigUndetermined) {
+		t.Fatalf("Start error = %v, want ErrForkRigUndetermined", err)
+	}
+	logData, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatalf("read command log: %v", err)
+	}
+	if strings.Contains(string(logData), "new-session") {
+		t.Fatalf("Start created a tmux session despite unreadable rig config; log:\n%s", logData)
+	}
+}
+
+func TestManager_StartAllowingForkRigBypassesUnreadableConfig(t *testing.T) {
+	setupTestRegistry(t)
+
+	// --force (StartAllowingForkRig) is the operator escape hatch: it must
+	// bypass the fork guard, including its fail-closed branch. Start fails
+	// later here (no town/tmux), which is enough to prove the guard did not
+	// short-circuit it.
+	rigPath := filepath.Join(t.TempDir(), "testrig")
+	if err := os.MkdirAll(rigPath, 0o755); err != nil {
+		t.Fatalf("mkdir rig: %v", err)
+	}
+
+	mgr := NewManager(&rig.Rig{Name: "testrig", Path: rigPath})
+	err := mgr.StartAllowingForkRig(false, "")
+	if errors.Is(err, ErrForkRigUndetermined) {
+		t.Fatalf("StartAllowingForkRig blocked by fork guard: %v", err)
+	}
+}
+
+func TestForkRigConfigErrorMessage(t *testing.T) {
+	err := NewForkRigConfigError("testrig", os.ErrNotExist)
+	msg := err.Error()
+	for _, want := range []string{"testrig", "config", "--force"} {
+		if !strings.Contains(msg, want) {
+			t.Fatalf("error message %q missing %q", msg, want)
+		}
+	}
+	if errors.Is(err, ErrForkRig) {
+		t.Fatal("config-read failure must not be reported as a confirmed fork rig")
 	}
 }
 
