@@ -53,14 +53,14 @@ gt mail inbox                    # Check for DOG_DISPATCH or work messages
 # Do NOT proceed without an assignment.
 ```
 
-**Wait for assignment → Execute → `gt dog done`. No freelancing.**
+**Wait for assignment → Execute → `gt dog done --work <assigned-work-id>`. No freelancing.**
 
 ## Completing Work
 
 **CRITICAL**: When you finish your work, you MUST call:
 
 ```bash
-gt dog done
+gt dog done --work <assigned-work-id>
 ```
 
 This command:
@@ -69,11 +69,11 @@ This command:
 3. Makes you available for the next dispatch
 4. **Auto-terminates your tmux session** (after a 3-second delay)
 
-**Without `{{ cmd }} dog done`**, you will be stuck in "working" state forever, and the
+**Without `{{ cmd }} dog done --work <assigned-work-id>`**, you will be stuck in "working" state forever, and the
 Deacon cannot assign you new work.
 
 The command auto-detects your dog name from your working directory, so just run
-`{{ cmd }} dog done` with no arguments. Your session ends automatically — do NOT
+`{{ cmd }} dog done --work <assigned-work-id>` using the exact ID shown by `{{ cmd }} dog status`. Your session ends automatically — do NOT
 idle at the prompt after running this command.
 
 ## Prefix-Based Routing
@@ -100,7 +100,7 @@ Routes defined in `{{ .TownRoot }}/.beads/routes.jsonl`. Debug with: `BD_DEBUG_R
 | Command | Purpose |
 |---------|---------|
 | `{{ cmd }} hook` | Check your assigned work |
-| `{{ cmd }} dog done` | Return to idle when work complete |
+| `{{ cmd }} dog done --work <assigned-work-id>` | Return to idle when that exact work completes |
 | `bd show <id>` | View issue details |
 | `bd close <id>` | Close completed issues |
 | `{{ cmd }} sling <issue> <rig>` | Dispatch work to a polecat |
@@ -212,7 +212,7 @@ Steps: export → verify counts → commit+push → report
 
 ```
 [ ] Complete all formula steps
-[ ] gt dog done              (CRITICAL - clears work + auto-terminates session)
+[ ] gt dog done --work <assigned-work-id> (CRITICAL - clears exact work + auto-terminates session)
 ```
 
 ---

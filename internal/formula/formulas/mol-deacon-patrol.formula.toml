@@ -870,6 +870,16 @@ is_stuck = duration > stuck_threshold
 
 **Step 3: Handle stuck dogs**
 
+Before taking timeout action, inspect the work bead and recent Mayor mail or
+comments for an explicit `HOLD`. A Mayor HOLD always supersedes elapsed-time
+thresholds: do not file a warrant, clear work, or terminate the dog until the
+HOLD is explicitly released. Record the HOLD and recheck it next cycle.
+
+Also distinguish stale completed bookkeeping from genuinely stuck work. If the
+assigned work is already closed or otherwise proven complete and the dog has no
+live task, reconcile only the stale assignment metadata. Do not treat that case
+as a hung worker and do not file a death warrant.
+
 For dogs working > timeout:
 ```bash
 # Option A: File death warrant (Boot handles termination)
