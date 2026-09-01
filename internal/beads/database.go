@@ -21,6 +21,18 @@ var bdTargetEnvKeys = []string{
 	"GT_DOLT_DATA",
 }
 
+// bdRoutingEnvKeys are the bd config keys that decide which repository a bd
+// subprocess reads and writes, independent of BEADS_DIR. bd resolves them via
+// viper (BD_<KEY> with dots as underscores), and its BEADS_-prefixed spellings
+// are honoured for legacy compatibility, so both are stripped before Gas Town
+// re-pins them.
+var bdRoutingEnvKeys = []string{
+	"BD_ROUTING_MODE",
+	"BD_ROUTING_DEFAULT",
+	"BEADS_ROUTING_MODE",
+	"BEADS_ROUTING_DEFAULT",
+}
+
 // DatabaseNameFromMetadata reads the dolt_database field from .beads/metadata.json.
 // Returns empty string if metadata doesn't exist or has no database configured.
 func DatabaseNameFromMetadata(beadsDir string) string {
@@ -78,12 +90,37 @@ func isBDTargetEnv(entry string) bool {
 	return envKeyHasPrefix(keyName, "BEADS_DOLT_")
 }
 
+// PinBDRoutingToTarget disables Beads' contributor auto-routing for a Gas Town
+// bd subprocess, so the target selected by BEADS_DIR / prefix routing is the
+// repository the subprocess actually reads and writes.
+//
+// Beads routes by *repository* as well as by database: with routing.mode=auto
+// and git config beads.role=contributor, bd redirects creates AND reads to
+// routing.contributor (default ~/.beads-planning) — the write reports success,
+// reads from the same seat find it, and nothing ever reaches the database
+// BEADS_DIR selected. routing.default hijacks the target the same way even when
+// the mode is not auto, so both keys are pinned. Every write-by-id path (bd dep,
+// bd comment) then fails with "embeddeddolt: store is read-only", because an
+// auto-routed store is deliberately opened read-only for write-intent callers.
+//
+// Gas Town always addresses a specific town database, so neither redirect is
+// ever wanted here. Measured against bd 1.2.2 (hq-z871, hq-2f0m).
+func PinBDRoutingToTarget(env []string) []string {
+	for _, key := range bdRoutingEnvKeys {
+		env = StripEnvKey(env, key)
+	}
+	return append(env,
+		"BD_ROUTING_MODE=explicit",
+		"BD_ROUTING_DEFAULT=.",
+	)
+}
+
 // BuildPinnedBDEnv returns env for a bd subprocess pinned to beadsDir. BEADS_DIR
 // and the metadata-backed Dolt database are the authoritative target selectors;
 // inherited selectors are stripped first so stale shell state cannot make bd
 // write to a different database than the selected .beads directory.
 func BuildPinnedBDEnv(base []string, beadsDir string) []string {
-	env := SuppressBDSideEffects(StripBDTargetEnv(base))
+	env := PinBDRoutingToTarget(SuppressBDSideEffects(StripBDTargetEnv(base)))
 	if beadsDir == "" {
 		return addResolvedDoltConnectionEnv(env, "")
 	}
@@ -100,7 +137,7 @@ func BuildPinnedBDEnv(base []string, beadsDir string) []string {
 // bd prefix routing. It strips stale target/database selectors, then re-adds only
 // connection host/port from fallbackBeadsDir so routing can choose the database.
 func BuildRoutingBDEnv(base []string, fallbackBeadsDir string) []string {
-	env := SuppressBDSideEffects(StripBDTargetEnv(base))
+	env := PinBDRoutingToTarget(SuppressBDSideEffects(StripBDTargetEnv(base)))
 	fallbackBeadsDir = canonicalBeadsDir(fallbackBeadsDir)
 	env = append(env, doltTargetEnvFromBeadsDir(fallbackBeadsDir)...)
 	return addResolvedDoltConnectionEnv(env, fallbackBeadsDir)
@@ -136,7 +173,7 @@ func BuildMutationRoutingBDEnv(base []string, fallbackBeadsDir string) []string 
 // Gas Town target selectors and suppresses side effects without adding BEADS_DIR
 // or town Dolt connection metadata that could change native bd path semantics.
 func BuildMutationNeutralBDEnv(base []string) []string {
-	return forceBDMutation(SuppressBDSideEffects(StripBDTargetEnv(base)))
+	return forceBDMutation(PinBDRoutingToTarget(SuppressBDSideEffects(StripBDTargetEnv(base))))
 }
 
 // ArgsAreReadOnly classifies bd CLI arguments for env policy. Unknown commands

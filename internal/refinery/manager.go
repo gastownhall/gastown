@@ -33,6 +33,12 @@ var (
 	ErrAlreadyRunning = errors.New("refinery already running")
 	ErrNoQueue        = errors.New("no items in queue")
 	ErrForkRig        = errors.New("refinery disabled for fork-backed rig")
+
+	// ErrForkRigUndetermined reports that the fork-backed-rig guard could not
+	// be evaluated because the rig config could not be read. The guard fails
+	// closed: an unreadable or missing config.json must never be interpreted
+	// as "not a fork-backed rig" (gt-9gv; incident gt-kx4).
+	ErrForkRigUndetermined = errors.New("refinery blocked: cannot determine fork-backed rig status")
 )
 
 // ForkRigError reports that refinery startup is disabled because the rig has
@@ -59,6 +65,44 @@ func (e *ForkRigError) Unwrap() error {
 // NewForkRigError returns a typed startup-blocking fork-rig error.
 func NewForkRigError(rigName, upstreamURL string) error {
 	return &ForkRigError{RigName: rigName, UpstreamURL: upstreamURL}
+}
+
+// ForkRigConfigError reports that the rig config could not be read, so the
+// fork-backed-rig guard cannot be evaluated. Refinery startup is blocked
+// rather than allowed, because the alternative silently disarms the only
+// runtime policy protecting fork-backed rigs from local merges.
+type ForkRigConfigError struct {
+	RigName string
+	Err     error
+}
+
+func (e *ForkRigConfigError) Error() string {
+	if e == nil {
+		return ErrForkRigUndetermined.Error()
+	}
+	msg := fmt.Sprintf("%s for rig %s: rig config unreadable", ErrForkRigUndetermined, e.RigName)
+	if e.Err != nil {
+		msg = fmt.Sprintf("%s: %v", msg, e.Err)
+	}
+	return msg + " (restore config.json, or use --force to start anyway)"
+}
+
+// Unwrap exposes both the sentinel and the underlying read/parse failure so
+// callers can match either with errors.Is.
+func (e *ForkRigConfigError) Unwrap() []error {
+	if e == nil {
+		return nil
+	}
+	if e.Err == nil {
+		return []error{ErrForkRigUndetermined}
+	}
+	return []error{ErrForkRigUndetermined, e.Err}
+}
+
+// NewForkRigConfigError returns a typed startup-blocking error for a rig whose
+// config could not be read.
+func NewForkRigConfigError(rigName string, err error) error {
+	return &ForkRigConfigError{RigName: rigName, Err: err}
 }
 
 // Manager handles refinery lifecycle and queue operations.
@@ -336,9 +380,21 @@ func (m *Manager) start(foreground bool, agentOverride string, allowForkRig bool
 
 // ForkRigStartError returns ErrForkRig when the rig config has upstream_url.
 // The derived config guard is the single runtime policy for fork-backed rigs.
+//
+// It fails closed (gt-9gv): if the rig config cannot be read at all — missing,
+// unreadable, or malformed config.json — the guard cannot tell a fork-backed
+// rig from a local one, so it blocks startup with ErrForkRigUndetermined
+// instead of silently passing. Only a config that was read successfully and
+// has an empty upstream_url is allowed through.
 func (m *Manager) ForkRigStartError() error {
 	cfg, err := rig.LoadRigConfig(m.rig.Path)
-	if err != nil || cfg == nil || strings.TrimSpace(cfg.UpstreamURL) == "" {
+	if err != nil {
+		return NewForkRigConfigError(m.rig.Name, err)
+	}
+	if cfg == nil {
+		return NewForkRigConfigError(m.rig.Name, errors.New("rig config loaded as nil"))
+	}
+	if strings.TrimSpace(cfg.UpstreamURL) == "" {
 		return nil
 	}
 	return NewForkRigError(m.rig.Name, cfg.UpstreamURL)
@@ -357,7 +413,11 @@ func (m *Manager) blockForkRigStart(t *tmux.Tmux) error {
 	}
 	sessionID := m.SessionName()
 	if running, _ := t.HasSession(sessionID); running {
-		_, _ = fmt.Fprintf(m.output, "Refinery %s is disabled for fork-backed rig; killing leftover session %s.\n", m.rig.Name, sessionID)
+		reason := "is disabled for fork-backed rig"
+		if errors.Is(err, ErrForkRigUndetermined) {
+			reason = "cannot be verified as non-fork (rig config unreadable)"
+		}
+		_, _ = fmt.Fprintf(m.output, "Refinery %s %s; killing leftover session %s.\n", m.rig.Name, reason, sessionID)
 		if killErr := t.KillSessionWithProcesses(sessionID); killErr != nil {
 			return fmt.Errorf("%w: killing leftover refinery session: %v", err, killErr)
 		}

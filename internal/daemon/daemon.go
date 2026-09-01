@@ -1884,6 +1884,13 @@ func (d *Daemon) ensureRefineryRunning(rigName string) {
 			d.logger.Printf("Skipping refinery auto-start for %s: %v", rigName, err)
 			return
 		}
+		if errors.Is(err, refinery.ErrForkRigUndetermined) {
+			// Fail closed (gt-9gv): an unreadable rig config must not be
+			// treated as "not a fork rig". Auto-start stays blocked until the
+			// config is restored or an operator starts with --force.
+			d.logger.Printf("BLOCKED refinery auto-start for %s: %v", rigName, err)
+			return
+		}
 		d.logger.Printf("Error starting refinery for %s: %v", rigName, err)
 		return
 	}
