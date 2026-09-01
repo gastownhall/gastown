@@ -1993,6 +1993,59 @@ func (t *Tmux) CheckStartupBlocked(session string) error {
 	}
 }
 
+// --- workspace trust dialog option selection -------------------------------
+//
+// The affirmative option is NOT reliably pre-selected. Claude Code v2.1.252
+// renders the trust dialog with "No, exit" FIRST and selected, so a bare Enter
+// DECLINES trust — the session then refuses to start and the caller rolls back
+// (gt-ma1 / gt-jnr). Position is not a contract another tool owes us, so select
+// by option TEXT and navigate to it.
+var (
+	trustAffirmativeRe = regexp.MustCompile(`(?i)^\s*[>\x{276f}\x{203a}*]?\s*(?:\d[.)]\s*)?(?:yes\b|proceed\b|trust\b|allow\b)`)
+	trustDeclineRe     = regexp.MustCompile(`(?i)^\s*[>\x{276f}\x{203a}*]?\s*(?:\d[.)]\s*)?(?:no\b|cancel\b|exit\b|don'?t\b)`)
+	trustCursorRe      = regexp.MustCompile(`^\s*[>\x{276f}\x{203a}]\s+\S`)
+)
+
+// trustDialogNavigation reports how to reach the affirmative option.
+// upFirst is a count of Up presses used to normalise to the first option when
+// the cursor is not visible; steps is the number of Down presses from there
+// (or, when the cursor IS visible, the signed offset from it — negative means
+// Up). ok is false only when no affirmative option is in view at all, in which
+// case the caller keeps the legacy behaviour rather than erroring.
+func trustDialogNavigation(content string) (upFirst int, steps int, ok bool) {
+	selected, affirmative, idx := -1, -1, 0
+	for _, line := range strings.Split(content, "\n") {
+		// A line ending in "?" is the dialog's question, not one of its options.
+		if strings.HasSuffix(strings.TrimSpace(line), "?") {
+			continue
+		}
+		isAff := trustAffirmativeRe.MatchString(line)
+		isDec := trustDeclineRe.MatchString(line)
+		if !isAff && !isDec {
+			continue
+		}
+		if trustCursorRe.MatchString(line) && selected < 0 {
+			selected = idx
+		}
+		if isAff && affirmative < 0 {
+			affirmative = idx
+		}
+		idx++
+	}
+	if affirmative < 0 {
+		// No affirmative option in view: this is banner text or an unknown
+		// variant, not a list we can steer. Caller falls back to legacy Enter.
+		return 0, 0, false
+	}
+	if selected < 0 {
+		// Options are visible but the cursor is not (it may be rendered with
+		// terminal attributes rather than a glyph). Normalise deterministically:
+		// press Up past every option to land on the first, then descend.
+		return idx, affirmative, true
+	}
+	return 0, affirmative - selected, true
+}
+
 // AcceptWorkspaceTrustDialog dismisses workspace trust dialogs for supported
 // agents. Claude shows "Quick safety check"; Codex shows
 // "Do you trust the contents of this directory?". In both cases the safe
@@ -2014,7 +2067,32 @@ func (t *Tmux) AcceptWorkspaceTrustDialog(session string) error {
 		// Codex trust screens include a leading ">" banner line, so prompt
 		// detection alone would exit too early.
 		if containsWorkspaceTrustDialog(content) {
-			// Dialog found — accept it (option 1 is pre-selected, just press Enter)
+			// Dialog found. Locate the affirmative option by TEXT and move to it;
+			// never assume it is pre-selected.
+			// When the options are in view, steer to the affirmative one. When
+			// they are not (banner-only text, or an unrecognised variant) fall
+			// back to the historical bare Enter so this is never a regression.
+			if upFirst, steps, ok := trustDialogNavigation(content); ok {
+				press := func(key string, n int) error {
+					for i := 0; i < n; i++ {
+						if _, err := t.run("send-keys", "-t", session, key); err != nil {
+							return err
+						}
+						time.Sleep(60 * time.Millisecond)
+					}
+					return nil
+				}
+				if err := press("Up", upFirst); err != nil {
+					return err
+				}
+				key := "Down"
+				if steps < 0 {
+					key, steps = "Up", -steps
+				}
+				if err := press(key, steps); err != nil {
+					return err
+				}
+			}
 			if _, err := t.run("send-keys", "-t", session, "Enter"); err != nil {
 				return err
 			}
