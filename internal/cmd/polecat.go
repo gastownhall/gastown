@@ -446,6 +446,29 @@ func polecatReuseStatus(state polecat.State, cleanupStatus, activeMR, branch str
 }
 
 // getPolecatManager creates a polecat manager for the given rig.
+// dispositionBlockedOnlyByMissingCleanup reports whether the sole reason a
+// polecat is being held is that its agent bead carries no cleanup_status.
+//
+// This is the narrow gt-3up case. It must stay narrow: if anything else is also
+// blocking (a hook bead, a failed push, active work, a dirty worktree) the cheap
+// disposition is already correct and there is nothing to reconcile. Only when
+// "cleanup is unknown" is the WHOLE story is the bead-only view unable to answer,
+// and only then is it worth paying for the git check.
+func dispositionBlockedOnlyByMissingCleanup(d polecat.WorkstateDisposition) bool {
+	if d.Verdict != polecat.WorkstateVerdictNeedsRecovery {
+		return false
+	}
+	if d.Reason != "cleanup-unknown" {
+		return false
+	}
+	// Exactly one blocker, and it is the cleanup one. More than one means other
+	// evidence is in play and the cheap verdict stands.
+	if len(d.Blockers) != 1 {
+		return false
+	}
+	return strings.HasPrefix(d.Blockers[0], "cleanup_status=")
+}
+
 func getPolecatManager(rigName string) (*polecat.Manager, *rig.Rig, error) {
 	_, r, err := getRig(rigName)
 	if err != nil {
@@ -519,6 +542,24 @@ func runPolecatList(cmd *cobra.Command, args []string) error {
 				item = buildPolecatInventoryItemFromEvidence(r.Name, name, fields, polecatActiveWorkLookupError(activeWorkErr), sessions)
 			}
 			disposition := item.Disposition
+			// gt-3up: the inventory path above is deliberately cheap — it reads
+			// agent beads and never touches git. That is fine until the ONLY
+			// thing blocking a polecat is that its cleanup metadata is missing,
+			// because then this view asserts NEEDS_RECOVERY, safe_to_nuke=false
+			// and counts_toward_capacity=true from evidence it never gathered.
+			// check-recovery, which does inspect the worktree, calls the same
+			// polecats clean and SAFE_TO_NUKE. The two disagreed indefinitely and
+			// the pool stayed pinned at capacity on a blocker that did not exist.
+			//
+			// Escalate to the authoritative disposition for exactly that case.
+			// It is rare (legacy polecats and ones whose agent bead lost the
+			// field), so the extra git I/O is bounded, and every other polecat
+			// keeps the cheap path.
+			if dispositionBlockedOnlyByMissingCleanup(disposition) {
+				if mgr, _, mgrErr := getPolecatManager(r.Name); mgrErr == nil && mgr != nil {
+					disposition = mgr.WorkstateDispositionForPolecat(name, item.State, item.Issue)
+				}
+			}
 			state := effectivePolecatState(PolecatListItem{
 				State:                item.State,
 				Issue:                item.Issue,
