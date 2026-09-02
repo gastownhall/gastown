@@ -264,7 +264,10 @@ func listPolecatDirectoryNames(rigPath string) ([]string, error) {
 
 func applyAgentFieldsToCapacitySnapshot(snapshot *polecatCapacitySnapshot, rigName, polecatName string, fields *beads.AgentFields, activeWork *beads.Issue, sessions polecatSessionSet) {
 	item := buildPolecatInventoryItem(rigName, polecatName, fields, activeWork, sessions)
-	applyWorkstateDispositionToCapacitySnapshot(snapshot, item.State, item.Disposition)
+	// gt-b3a2: this is a GATE, not a display. It must consult the same
+	// reconciled disposition `gt polecat list` shows, or the scheduler refuses
+	// to dispatch against polecats the rest of the CLI reports as free.
+	applyWorkstateDispositionToCapacitySnapshot(snapshot, item.State, reconcilePolecatDispositionFn(rigName, polecatName, item))
 }
 
 func applyWorkstateDispositionToCapacitySnapshot(snapshot *polecatCapacitySnapshot, state polecat.State, disposition polecat.WorkstateDisposition) {

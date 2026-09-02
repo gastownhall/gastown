@@ -445,7 +445,6 @@ func polecatReuseStatus(state polecat.State, cleanupStatus, activeMR, branch str
 	return polecat.DecideWorkstate(input).ReuseStatus
 }
 
-// getPolecatManager creates a polecat manager for the given rig.
 // dispositionBlockedOnlyByMissingCleanup reports whether the sole reason a
 // polecat is being held is that its agent bead carries no cleanup_status.
 //
@@ -469,6 +468,41 @@ func dispositionBlockedOnlyByMissingCleanup(d polecat.WorkstateDisposition) bool
 	return strings.HasPrefix(d.Blockers[0], "cleanup_status=")
 }
 
+// reconcilePolecatDisposition returns the disposition a caller should ACT on,
+// as opposed to the cheap one the bead-only inventory path can produce.
+//
+// Every caller that gates behaviour on a disposition must go through here.
+// gt-b3a2 exists because that was not true: #4798 taught `gt polecat list` to
+// escalate the missing-cleanup case inline, and the scheduler's capacity path —
+// which builds its disposition from the very same buildPolecatInventoryItem —
+// was left on the raw value. For four hours the two answered the same question
+// differently in the same second: list reported counts_toward_capacity=false for
+// every polecat in the pool while the scheduler counted all of them as
+// recovery-blocked and refused to dispatch a single ready bead.
+//
+// Keeping the escalation in one function is the actual fix. Duplicating it at
+// each call site would restore the identical drift the moment a third caller
+// appears.
+func reconcilePolecatDisposition(rigName, polecatName string, item polecatInventoryItem) polecat.WorkstateDisposition {
+	d := item.Disposition
+	if !dispositionBlockedOnlyByMissingCleanup(d) {
+		return d
+	}
+	// The bead cannot answer this one, so ask the worktree. A failure here is
+	// not fatal: fall back to the cheap disposition, which errs toward holding
+	// the polecat rather than freeing one that may have work at risk.
+	mgr, _, err := getPolecatManager(rigName)
+	if err != nil || mgr == nil {
+		return d
+	}
+	return mgr.WorkstateDispositionForPolecat(polecatName, item.State, item.Issue)
+}
+
+// Indirected so tests can assert that every gating caller routes through the
+// single reconciler rather than reading item.Disposition directly (gt-b3a2).
+var reconcilePolecatDispositionFn = reconcilePolecatDisposition
+
+// getPolecatManager creates a polecat manager for the given rig.
 func getPolecatManager(rigName string) (*polecat.Manager, *rig.Rig, error) {
 	_, r, err := getRig(rigName)
 	if err != nil {
@@ -541,25 +575,15 @@ func runPolecatList(cmd *cobra.Command, args []string) error {
 			if activeWorkErr != nil {
 				item = buildPolecatInventoryItemFromEvidence(r.Name, name, fields, polecatActiveWorkLookupError(activeWorkErr), sessions)
 			}
-			disposition := item.Disposition
 			// gt-3up: the inventory path above is deliberately cheap — it reads
 			// agent beads and never touches git. That is fine until the ONLY
 			// thing blocking a polecat is that its cleanup metadata is missing,
 			// because then this view asserts NEEDS_RECOVERY, safe_to_nuke=false
 			// and counts_toward_capacity=true from evidence it never gathered.
-			// check-recovery, which does inspect the worktree, calls the same
-			// polecats clean and SAFE_TO_NUKE. The two disagreed indefinitely and
-			// the pool stayed pinned at capacity on a blocker that did not exist.
-			//
-			// Escalate to the authoritative disposition for exactly that case.
-			// It is rare (legacy polecats and ones whose agent bead lost the
-			// field), so the extra git I/O is bounded, and every other polecat
-			// keeps the cheap path.
-			if dispositionBlockedOnlyByMissingCleanup(disposition) {
-				if mgr, _, mgrErr := getPolecatManager(r.Name); mgrErr == nil && mgr != nil {
-					disposition = mgr.WorkstateDispositionForPolecat(name, item.State, item.Issue)
-				}
-			}
+			// reconcilePolecatDisposition escalates exactly that case, and is
+			// shared with the scheduler capacity path so the two cannot drift
+			// apart again (gt-b3a2).
+			disposition := reconcilePolecatDispositionFn(r.Name, name, item)
 			state := effectivePolecatState(PolecatListItem{
 				State:                item.State,
 				Issue:                item.Issue,
