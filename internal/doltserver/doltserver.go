@@ -3950,10 +3950,24 @@ type HealthMetrics struct {
 	// DiskUsageHuman is a human-readable disk usage string.
 	DiskUsageHuman string `json:"disk_usage_human"`
 
-	// QueryLatency is the time taken for a SELECT active_branch() round-trip.
+	// QueryLatency is the time taken for a SELECT active_branch() round-trip
+	// AGAINST THE :3307 SERVER.
+	//
+	// READ THE NEXT SENTENCE BEFORE USING THIS FOR ANYTHING. bd does NOT use
+	// that server -- it runs Dolt embedded out of .beads/embeddeddolt -- so
+	// this number is a fact about the server and says NOTHING about how slow
+	// bd is. It read a steady "0s" through a real outage in which bd swung
+	// from 210ms to 6.7s. For bd's latency use BeadsRead below.
+	//
 	// Note: json.Marshal emits nanoseconds for time.Duration. Consumers should use
 	// ServerHealth.LatencyMs (int64 milliseconds) for JSON output instead.
 	QueryLatency time.Duration `json:"query_latency_ns"`
+
+	// BeadsRead is the latency DISTRIBUTION of reads against the store bd
+	// actually uses. This is the number an operator means when they ask
+	// whether beads is slow. See MeasureBeadsReadLatency for why it is a
+	// distribution rather than a single sample.
+	BeadsRead BeadsReadLatency `json:"beads_read"`
 
 	// ReadOnly indicates whether the server is in read-only mode.
 	// When true, the server accepts reads but rejects all writes.
@@ -3987,14 +4001,28 @@ func GetHealthMetrics(townRoot string) *HealthMetrics {
 		metrics.MaxConnections = 1000 // Dolt default
 	}
 
-	// 1. Query latency: time a SELECT active_branch()
+	// 1. Server query latency: time a SELECT active_branch() against :3307.
+	// A fact about the SERVER only. bd does not use it; see BeadsRead below.
 	latency, err := MeasureQueryLatency(townRoot)
 	if err == nil {
 		metrics.QueryLatency = latency
 		if latency > 1*time.Second {
 			metrics.Warnings = append(metrics.Warnings,
-				fmt.Sprintf("query latency %v exceeds 1s threshold — server may be under stress", latency.Round(time.Millisecond)))
+				fmt.Sprintf("server query latency %v exceeds 1s threshold — server may be under stress", latency.Round(time.Millisecond)))
 		}
+	}
+
+	// 1b. bd read latency: the store bd ACTUALLY uses.
+	//
+	// The warning fires on the MAX, not the median, and that is deliberate.
+	// Latency here is bimodal: a tight ~200ms floor with independent
+	// excursions to several seconds. The median sits on the floor and barely
+	// moves while the town is suffering, so a median-based threshold is blind
+	// to the tail BY CONSTRUCTION -- which is the same shape of mistake as
+	// probing the wrong server, arriving by a different route.
+	metrics.BeadsRead = MeasureBeadsReadLatency(townRoot)
+	if w := BeadsLatencyWarning(metrics.BeadsRead, 1*time.Second); w != "" {
+		metrics.Warnings = append(metrics.Warnings, w)
 	}
 
 	// 2. Connection count

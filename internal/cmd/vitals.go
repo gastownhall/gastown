@@ -48,7 +48,7 @@ func printVitalsDoltServers(townRoot string) {
 		fmt.Printf("  %s :%d  production  PID %d  %s  %d/%d conn  %v\n",
 			style.Success.Render("●"), config.Port, pid,
 			m.DiskUsageHuman, m.Connections, m.MaxConnections,
-			m.QueryLatency.Round(time.Millisecond))
+			beadsLatencySummary(m))
 		for _, w := range m.Warnings {
 			fmt.Printf("    %s %s\n", style.Warning.Render("!"), w)
 		}
@@ -260,4 +260,16 @@ func vitalsShortHome(path string) string {
 		return "~" + filepath.ToSlash(path[len(home):])
 	}
 	return path
+}
+
+// beadsLatencySummary renders bd's read latency for the one-line vitals view.
+//
+// It shows the MAX rather than the median on purpose. The median sits on a
+// tight ~200ms floor and barely moves while the town is suffering; the max is
+// the number that corresponds to an agent actually waiting.
+func beadsLatencySummary(m *doltserver.HealthMetrics) string {
+	if m.BeadsRead.Err != nil {
+		return "bd:unmeasured"
+	}
+	return fmt.Sprintf("bd:%v max", m.BeadsRead.Max.Round(time.Millisecond))
 }
