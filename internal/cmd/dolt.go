@@ -595,7 +595,7 @@ func runDoltStatus(cmd *cobra.Command, args []string) error {
 		if running {
 			metrics := doltserver.GetHealthMetrics(townRoot)
 			fmt.Printf("\n  %s\n", style.Bold.Render("Resource Metrics:"))
-			fmt.Printf("    Query latency: %v\n", metrics.QueryLatency.Round(time.Millisecond))
+			printLatencyLines(metrics)
 			fmt.Printf("    Connections:   %d / %d (%.0f%%)\n",
 				metrics.Connections, metrics.MaxConnections, metrics.ConnectionPct)
 			if metrics.ReadOnly {
@@ -637,7 +637,7 @@ func runDoltStatus(cmd *cobra.Command, args []string) error {
 		// Resource metrics
 		metrics := doltserver.GetHealthMetrics(townRoot)
 		fmt.Printf("\n  %s\n", style.Bold.Render("Resource Metrics:"))
-		fmt.Printf("    Query latency: %v\n", metrics.QueryLatency.Round(time.Millisecond))
+		printLatencyLines(metrics)
 		fmt.Printf("    Connections:   %d / %d (%.0f%%)\n",
 			metrics.Connections, metrics.MaxConnections, metrics.ConnectionPct)
 		fmt.Printf("    Disk usage:    %s\n", metrics.DiskUsageHuman)
@@ -1840,5 +1840,30 @@ func printMigrateWispsResult(result *doltserver.MigrateWispsResult) {
 	}
 	if result.AgentsCopied == 0 && len(result.AuxTablesCreated) == 0 && !result.WispsTableCreated {
 		fmt.Printf("  %s Already migrated (no changes needed)\n", style.Bold.Render("✓"))
+	}
+}
+
+// printLatencyLines renders the two latency numbers with labels that cannot be
+// confused for one another.
+//
+// There used to be ONE line here reading "Query latency: 0s", and operators
+// read it as "beads is fast". It was measuring the :3307 server, which bd does
+// not use, and it sat at 0s through an outage in which bd swung from 210ms to
+// 6.7s (gt-iw5s, gt-kei9). The label was doing more damage than the missing
+// metric: a health check that reads green through a real outage is worse than
+// no health check, because it actively discourages looking.
+func printLatencyLines(metrics *doltserver.HealthMetrics) {
+	fmt.Printf("    Server latency: %v  (:3307 — bd does NOT use this server)\n",
+		metrics.QueryLatency.Round(time.Millisecond))
+
+	br := metrics.BeadsRead
+	switch {
+	case br.Err != nil:
+		fmt.Printf("    bd read latency: UNMEASURED (%v)\n", br.Err)
+	default:
+		fmt.Printf("    bd read latency: median %v, max %v over %d samples\n",
+			br.Median.Round(time.Millisecond),
+			br.Max.Round(time.Millisecond),
+			br.Samples)
 	}
 }
