@@ -303,22 +303,30 @@ If a dog's tmux session is dead but worktree dirs remain, prune them.
 # For each dog directory
 for dogdir in ~/gt/deacon/dogs/*/; do
   DOG=$(basename "$dogdir")
-  # Check if dog has a live tmux session
-  if ! tmux has-session -t "dog-$DOG" 2>/dev/null; then
-    # Dog session is dead - check for leftover worktree dirs
-    for rigrepo in "$dogdir"*/; do
-      [ -d "$rigrepo/.git" ] || continue
-      # Worktree exists but session is dead - prune it
-      git -C "$rigrepo" worktree list 2>/dev/null
-      echo "Dead dog worktree: $DOG/$(basename "$rigrepo") (session dead)"
-      # Use git worktree remove to clean up properly
-      MAIN_REPO=$(git -C "$rigrepo" rev-parse --git-common-dir 2>/dev/null)
-      if [ -n "$MAIN_REPO" ]; then
-        git worktree remove --force "$rigrepo" 2>/dev/null && \
-          echo "Pruned worktree: $rigrepo"
-      fi
-    done
-  fi
+  # Check if dog has a live session via gt itself. Dog sessions are named
+  # hq-dog-<name> (see gt dog health-check), and gt also catches the case
+  # where the tmux session exists but the agent process inside died. Only
+  # the definitively-dead statuses select a dog for pruning, so a hung dog
+  # (live session, per the safety rules below) and a failed probe never do.
+  STATUS=$(gt dog health-check "$DOG" --json 2>/dev/null | jq -r '.dogs[0].session_status // ""')
+  case "$STATUS" in
+    session-dead|agent-dead) ;;
+    *) continue ;;
+  esac
+  # Dog is dead - check for leftover worktree dirs
+  for rigrepo in "$dogdir"*/; do
+    # -e, not -d: gt-created dog worktrees are linked worktrees (.git file)
+    [ -e "$rigrepo/.git" ] || continue
+    # Worktree exists but session is dead - prune it
+    git -C "$rigrepo" worktree list 2>/dev/null
+    echo "Dead dog worktree: $DOG/$(basename "$rigrepo") (session dead)"
+    # Use git worktree remove to clean up properly, from the owning repo
+    MAIN_REPO=$(git -C "$rigrepo" rev-parse --git-common-dir 2>/dev/null)
+    if [ -n "$MAIN_REPO" ]; then
+      git -C "$MAIN_REPO" worktree remove --force "$rigrepo" 2>/dev/null && \
+        echo "Pruned worktree: $rigrepo"
+    fi
+  done
 done
 ```
 
