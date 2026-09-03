@@ -1059,6 +1059,33 @@ func DefaultBase() *HooksConfig {
 					Command: gtCommand("gt tap guard dangerous-command"),
 				}},
 			},
+			// A repo-root recursive search walks into .env, which the repo's
+			// own deny rule covers, and the resulting permission prompt is
+			// owner-only -- so the agent blocks on it indefinitely while every
+			// status surface still reports it working. Two polecats lost 9.5
+			// hours to exactly this on 2026-09-02/03. The guard refuses the
+			// unbounded sweep so the agent can narrow it and carry on.
+			{
+				Matcher: "Bash(grep*)",
+				Hooks: []Hook{{
+					Type:    "command",
+					Command: gtCommand("gt tap guard broad-search"),
+				}},
+			},
+			{
+				Matcher: "Bash(rg*)",
+				Hooks: []Hook{{
+					Type:    "command",
+					Command: gtCommand("gt tap guard broad-search"),
+				}},
+			},
+			{
+				Matcher: "Bash(find*)",
+				Hooks: []Hook{{
+					Type:    "command",
+					Command: gtCommand("gt tap guard broad-search"),
+				}},
+			},
 		},
 		SessionStart: []HookEntry{
 			{
