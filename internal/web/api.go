@@ -62,11 +62,18 @@ type APIHandler struct {
 	optionsCacheMu   sync.RWMutex
 	// cmdSem limits concurrent command executions to prevent resource exhaustion.
 	cmdSem chan struct{}
+	// Dashboard hash cache coalesces the identical polling work performed by
+	// every connected SSE client. Only one client refreshes it per interval.
+	dashboardHashMu    sync.RWMutex
+	dashboardHash      string
+	dashboardHashTime  time.Time
+	dashboardHashInUse sync.Mutex
 	// csrfToken is validated on POST requests to prevent cross-site request forgery.
 	csrfToken string
 }
 
 const optionsCacheTTL = 30 * time.Second
+const dashboardHashCacheTTL = 2 * time.Second
 
 // maxConcurrentCommands limits how many gt subprocesses can run at once.
 // handleOptions alone spawns 7; allow headroom for other concurrent handlers.
@@ -242,6 +249,7 @@ func (h *APIHandler) runGtCommand(ctx context.Context, timeout time.Duration, ar
 	}
 
 	cmd := exec.CommandContext(ctx, h.gtPath, args...)
+	configureWebCommand(cmd)
 	if h.workDir != "" {
 		cmd.Dir = h.workDir
 	}
@@ -1388,6 +1396,7 @@ func (h *APIHandler) runBdCommand(ctx context.Context, timeout time.Duration, ar
 	}
 
 	cmd := exec.CommandContext(ctx, "bd", args...)
+	configureWebCommand(cmd)
 	if h.workDir != "" {
 		cmd.Dir = h.workDir
 	}
@@ -1666,6 +1675,7 @@ func (h *APIHandler) runGhCommand(ctx context.Context, timeout time.Duration, ar
 	}
 
 	cmd := exec.CommandContext(ctx, "gh", args...)
+	configureWebCommand(cmd)
 	if h.workDir != "" {
 		cmd.Dir = h.workDir
 	}
@@ -2228,6 +2238,36 @@ func (h *APIHandler) handleSSE(w http.ResponseWriter, r *http.Request) {
 // computeDashboardHash generates a lightweight hash of key dashboard state.
 // It runs quick commands in parallel and hashes their output to detect changes.
 func (h *APIHandler) computeDashboardHash(ctx context.Context) string {
+	if hash := h.cachedDashboardHash(); hash != "" {
+		return hash
+	}
+
+	h.dashboardHashInUse.Lock()
+	defer h.dashboardHashInUse.Unlock()
+	if hash := h.cachedDashboardHash(); hash != "" {
+		return hash
+	}
+
+	hash := h.computeDashboardHashFresh(ctx)
+	if hash != "" {
+		h.dashboardHashMu.Lock()
+		h.dashboardHash = hash
+		h.dashboardHashTime = time.Now()
+		h.dashboardHashMu.Unlock()
+	}
+	return hash
+}
+
+func (h *APIHandler) cachedDashboardHash() string {
+	h.dashboardHashMu.RLock()
+	defer h.dashboardHashMu.RUnlock()
+	if h.dashboardHash == "" || time.Since(h.dashboardHashTime) >= dashboardHashCacheTTL {
+		return ""
+	}
+	return h.dashboardHash
+}
+
+func (h *APIHandler) computeDashboardHashFresh(ctx context.Context) string {
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 
@@ -2273,7 +2313,13 @@ func (h *APIHandler) computeDashboardHash(ctx context.Context) string {
 		return ""
 	}
 
-	h256 := sha256.Sum256([]byte(strings.Join(parts, "|")))
+	return hashDashboardParts(parts)
+}
+
+func hashDashboardParts(parts []string) string {
+	canonical := append([]string(nil), parts...)
+	sort.Strings(canonical)
+	h256 := sha256.Sum256([]byte(strings.Join(canonical, "|")))
 	return fmt.Sprintf("%x", h256[:8])
 }
 

@@ -346,6 +346,7 @@ func (h *SetupAPIHandler) handleCheckWorkspace(w http.ResponseWriter, r *http.Re
 	// Try to get rig list from this workspace
 	var rigs []string
 	cmd := exec.CommandContext(r.Context(), "gt", "rig", "list", "--json")
+	configureWebCommand(cmd)
 	cmd.Dir = path
 	if output, err := cmd.Output(); err == nil {
 		// Parse JSON output for rig names
@@ -395,6 +396,7 @@ func (h *SetupAPIHandler) runGtCommand(ctx context.Context, timeout time.Duratio
 	defer cancel()
 
 	cmd := exec.CommandContext(ctx, "gt", args...)
+	configureWebCommand(cmd)
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
