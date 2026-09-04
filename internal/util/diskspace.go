@@ -64,7 +64,7 @@ const (
 	DiskSpaceMinimumMB uint64 = 500
 
 	// DiskSpaceWarningMB is the threshold (in MB) at which warnings are emitted.
-	// At 1 GB free, the system is at risk and should shed load.
+	// Below 1 GB free, the system is at risk and should shed load.
 	DiskSpaceWarningMB uint64 = 1024
 
 	// DiskSpaceCriticalPercent is the usage percentage at or above which

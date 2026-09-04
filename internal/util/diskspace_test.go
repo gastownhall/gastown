@@ -105,6 +105,12 @@ func TestCheckDiskSpace_CurrentDir(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CheckDiskSpace(\".\") failed: %v", err)
 	}
+	info, err := GetDiskSpace(".")
+	if err != nil {
+		t.Fatalf("GetDiskSpace(\".\") failed: %v", err)
+	}
+	t.Logf("current filesystem: %s free, %.2f%% used => level=%s message=%q",
+		info.AvailableHuman(), info.UsedPercent, level, msg)
 
 	// In a normal test environment, disk should be OK
 	if level == DiskSpaceCritical {
@@ -129,8 +135,11 @@ func TestEvaluateDiskSpaceThresholds(t *testing.T) {
 	}{
 		{name: "below percentage limit", availableMB: 1024, usedPercent: 97.49, want: DiskSpaceOK},
 		{name: "at percentage limit", availableMB: 1024, usedPercent: 97.5, want: DiskSpaceCritical},
+		{name: "above percentage limit", availableMB: 1024, usedPercent: 97.51, want: DiskSpaceCritical},
 		{name: "below absolute floor", availableMB: 499, usedPercent: 10, want: DiskSpaceCritical},
-		{name: "below warning floor", availableMB: 900, usedPercent: 10, want: DiskSpaceWarning},
+		{name: "at absolute floor", availableMB: 500, usedPercent: 10, want: DiskSpaceWarning},
+		{name: "below warning floor", availableMB: 1023, usedPercent: 10, want: DiskSpaceWarning},
+		{name: "at warning floor", availableMB: 1024, usedPercent: 10, want: DiskSpaceOK},
 	}
 
 	for _, tt := range tests {
@@ -140,10 +149,12 @@ func TestEvaluateDiskSpaceThresholds(t *testing.T) {
 				TotalBytes:     100 * 1024 * MB,
 				UsedPercent:    tt.usedPercent,
 			}
-			got, _ := evaluateDiskSpace(info)
+			got, message := evaluateDiskSpace(info)
 			if got != tt.want {
 				t.Fatalf("evaluateDiskSpace() = %s, want %s", got, tt.want)
 			}
+			t.Logf("available=%d MB used=%.2f%% => level=%s message=%q",
+				tt.availableMB, tt.usedPercent, got, message)
 		})
 	}
 }
