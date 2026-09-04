@@ -533,6 +533,9 @@ Current agent capabilities at a glance:
 | Auggie | No | `--resume` (flag) | No | No | arg | auggie |
 | AMP | No | `threads continue` (subcmd) | No | No | arg | amp |
 | OpenCode | Yes (plugin JS) | No | `run` subcmd | No | none | opencode, node, bun |
+| Grok | Yes (`.grok/hooks/gastown.json`) | `--resume` / `--continue` (flag) | `-p` / `--output-format json` | No* | arg | grok |
+
+\*Grok CLI supports `--fork-session`, but the builtin preset leaves it off because `gt seance --talk` currently picks the first fork-capable preset (Claude).
 
 ---
 

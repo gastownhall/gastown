@@ -461,11 +461,16 @@ gt config agent remove <name>     # Remove custom agent (built-ins protected)
 gt config default-agent [name]    # Get or set town default agent
 ```
 
-**Built-in agents**: `claude`, `gemini`, `codex`, `kiro`, `cursor`, `auggie`, `amp`, `opencode`, `copilot`
+**Built-in agents**: `claude`, `gemini`, `codex`, `kiro`, `cursor`, `auggie`, `amp`, `opencode`, `copilot`, `grok`
 
 The `kiro` preset launches `kiro-cli chat --trust-all-tools` and uses Kiro's
 documented `--resume` / `--resume-id` session flags. Gas Town does not install
 Kiro hooks or `.kiro` project files for this preset.
+
+The `grok` preset launches Grok Build CLI (`grok --always-approve --trust --no-leader`)
+with hooks in `.grok/hooks/gastown.json`. It is not `groq-compound` (Claude CLI
+proxied to Groq). Session restore uses `--continue`; `gt seance --talk` stays
+Claude-only (`SupportsForkSession` is false).
 
 > **Note on GitHub Copilot**: The `copilot` preset uses executable lifecycle hooks in
 > `.github/hooks/gastown.json` (`sessionStart`, `userPromptSubmitted`, `preToolUse`,

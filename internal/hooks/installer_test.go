@@ -693,6 +693,53 @@ func TestInstallForRole_CodexRoleAware(t *testing.T) {
 	}
 }
 
+func TestInstallForRole_GrokRoleAware(t *testing.T) {
+	dir := t.TempDir()
+	err := InstallForRole("grok", dir, dir, "polecat", ".grok/hooks", "gastown.json", false)
+	if err != nil {
+		t.Fatalf("InstallForRole(grok, polecat): %v", err)
+	}
+
+	got, _ := os.ReadFile(filepath.Join(dir, ".grok/hooks", "gastown.json"))
+	want, err := resolveAndSubstitute("grok", "hooks-autonomous.json", "polecat")
+	if err != nil {
+		t.Fatalf("resolveAndSubstitute: %v", err)
+	}
+	if string(got) != string(want) {
+		t.Error("grok autonomous: content mismatch")
+	}
+	content := string(got)
+	for _, needle := range []string{
+		"prime --hook",
+		"mail check --inject",
+		"tap guard pr-workflow",
+		"run_terminal_command|Bash",
+		"*witness*",
+	} {
+		if !strings.Contains(content, needle) {
+			t.Errorf("grok autonomous template missing %q", needle)
+		}
+	}
+
+	dir2 := t.TempDir()
+	err = InstallForRole("grok", dir2, dir2, "crew", ".grok/hooks", "gastown.json", false)
+	if err != nil {
+		t.Fatalf("InstallForRole(grok, crew): %v", err)
+	}
+
+	got, _ = os.ReadFile(filepath.Join(dir2, ".grok/hooks", "gastown.json"))
+	want, err = resolveAndSubstitute("grok", "hooks-interactive.json", "crew")
+	if err != nil {
+		t.Fatalf("resolveAndSubstitute: %v", err)
+	}
+	if string(got) != string(want) {
+		t.Error("grok interactive: content mismatch")
+	}
+	if strings.Contains(string(got), "*witness*") {
+		t.Error("grok interactive: UserPromptSubmit should not skip witness/refinery roles")
+	}
+}
+
 func TestInstallForRole_CopilotRoleAware(t *testing.T) {
 	// Copilot uses gastown-autonomous.json / gastown-interactive.json naming
 	dir := t.TempDir()

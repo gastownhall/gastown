@@ -475,6 +475,8 @@ func TestGasTownRuntimeYOLO(t *testing.T) {
 		{"agent_f_only", "agent", "agent -f", false},
 		{"copilot_yolo", "copilot", "copilot --yolo", true},
 		{"copilot_plain", "copilot", "copilot", false},
+		{"grok_always_approve", "grok", "grok --always-approve --trust", true},
+		{"grok_plain", "grok", "grok", false},
 		{"unknown", "vim", "vim foo", false},
 	}
 	for _, tt := range tests {

@@ -44,6 +44,9 @@ const (
 	// AgentOmp is Oh My Pi (OMP) — Pi fork with hook-based lifecycle.
 	// Inspired by github.com/ProbabilityEngineer/pi-mono gastown integration.
 	AgentOmp AgentPreset = "omp"
+	// AgentGrok is the Grok Build CLI (binary "grok"). This is not groq-compound,
+	// which proxies the Claude CLI to Groq's API.
+	AgentGrok AgentPreset = "grok"
 	// AgentMistral is Mistral Vibe CLI.
 	AgentMistral AgentPreset = "vibe"
 	// AgentGroqCompound routes the Claude CLI to Groq's compound-beta model via
@@ -465,6 +468,39 @@ var builtinPresets = map[AgentPreset]*AgentPresetInfo{
 		SupportsForkSession: false,
 		NonInteractive: &NonInteractiveConfig{
 			PromptFlag: "--prompt",
+		},
+	},
+	AgentGrok: {
+		Name:    AgentGrok,
+		Command: "grok",
+		// --always-approve: skip tool permission prompts (documented; --yolo is a hidden alias).
+		// --trust: project hooks in .grok/hooks require folder trust.
+		// --no-leader: do not share a Grok leader process across Gas Town roles.
+		Args:                []string{"--always-approve", "--trust", "--no-leader"},
+		ProcessNames:        []string{"grok"},
+		SessionIDEnv:        "", // GROK_SESSION_ID is process/hook env, not tmux session env
+		ResumeFlag:          "--resume",
+		ContinueFlag:        "--continue",
+		ResumeStyle:         "flag",
+		SupportsHooks:       true,
+		SupportsForkSession: false, // CLI has --fork-session; seance is Claude-only
+		NonInteractive: &NonInteractiveConfig{
+			PromptFlag: "-p",
+			OutputFlag: "--output-format json",
+		},
+		PromptMode:           "arg",
+		ConfigDir:            ".grok",
+		HooksProvider:        "grok",
+		HooksDir:             ".grok/hooks",
+		HooksSettingsFile:    "gastown.json",
+		ReadyDelayMs:         5000,
+		InstructionsFile:     "AGENTS.md",
+		HasTurnBoundaryDrain: true,
+		EscapeCancelsRequest: true,
+		ACP: &ACPConfig{
+			Mode:    ACPModeSubcommand,
+			Command: "agent",
+			Args:    []string{"--always-approve", "stdio"},
 		},
 	},
 	AgentMistral: {
