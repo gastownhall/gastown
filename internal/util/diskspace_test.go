@@ -119,6 +119,35 @@ func TestCheckDiskSpace_InvalidPath(t *testing.T) {
 	}
 }
 
+func TestEvaluateDiskSpaceThresholds(t *testing.T) {
+	const MB = uint64(1024 * 1024)
+	tests := []struct {
+		name        string
+		availableMB uint64
+		usedPercent float64
+		want        DiskSpaceLevel
+	}{
+		{name: "below percentage limit", availableMB: 1024, usedPercent: 97.49, want: DiskSpaceOK},
+		{name: "at percentage limit", availableMB: 1024, usedPercent: 97.5, want: DiskSpaceCritical},
+		{name: "below absolute floor", availableMB: 499, usedPercent: 10, want: DiskSpaceCritical},
+		{name: "below warning floor", availableMB: 900, usedPercent: 10, want: DiskSpaceWarning},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			info := &DiskSpaceInfo{
+				AvailableBytes: tt.availableMB * MB,
+				TotalBytes:     100 * 1024 * MB,
+				UsedPercent:    tt.usedPercent,
+			}
+			got, _ := evaluateDiskSpace(info)
+			if got != tt.want {
+				t.Fatalf("evaluateDiskSpace() = %s, want %s", got, tt.want)
+			}
+		})
+	}
+}
+
 func TestDiskSpaceLevel_String(t *testing.T) {
 	tests := []struct {
 		level DiskSpaceLevel
