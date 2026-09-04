@@ -6,6 +6,7 @@ import (
 	"os"
 
 	"github.com/spf13/cobra"
+	"github.com/steveyegge/gastown/internal/agenthealth"
 	"github.com/steveyegge/gastown/internal/session"
 	"github.com/steveyegge/gastown/internal/style"
 	"github.com/steveyegge/gastown/internal/tmux"
@@ -226,6 +227,16 @@ type WitnessStatusOutput struct {
 	RigName           string   `json:"rig_name"`
 	Session           string   `json:"session,omitempty"`
 	MonitoredPolecats []string `json:"monitored_polecats,omitempty"`
+
+	// Health reports whether the witness is doing work rather than merely
+	// existing: "healthy", "degraded", "unknown" or "stopped" (gt-o57).
+	// Running can be true while Health is "degraded" — that combination is the
+	// failure this field was added to make visible.
+	Health                   string `json:"health"`
+	HealthNote               string `json:"health_note,omitempty"`
+	HookBead                 string `json:"hook_bead,omitempty"`
+	HookIdleSeconds          int    `json:"hook_idle_seconds,omitempty"`
+	HookIdleThresholdSeconds int    `json:"hook_idle_threshold_seconds,omitempty"`
 }
 
 func runWitnessStatus(cmd *cobra.Command, args []string) error {
@@ -240,18 +251,32 @@ func runWitnessStatus(cmd *cobra.Command, args []string) error {
 	mgr := witness.NewManager(r)
 
 	// ZFC: tmux is source of truth for running state
-	running, _ := mgr.IsRunning()
+	running, runningErr := mgr.IsRunning()
 	sessionInfo, _ := mgr.Status() // may be nil if not running
 
 	// Polecats come from rig config, not state file
 	polecats := r.Polecats
 
+	// "Running" only answers whether a session exists. Ask separately whether
+	// the witness's hooked work is advancing (gt-o57).
+	health := agenthealth.Assessment{State: agenthealth.StateUnknown, Reason: "town root not found"}
+	if townRoot, err := workspace.FindFromCwd(); err == nil {
+		health = assessWitnessProgress(townRoot, rigName, running, runningErr)
+	}
+
 	// JSON output
 	if witnessStatusJSON {
 		output := WitnessStatusOutput{
-			Running:           running,
-			RigName:           rigName,
-			MonitoredPolecats: polecats,
+			Running:                  running,
+			RigName:                  rigName,
+			MonitoredPolecats:        polecats,
+			Health:                   string(health.State),
+			HealthNote:               health.Reason,
+			HookBead:                 health.HookBeadID,
+			HookIdleThresholdSeconds: int(health.Threshold.Seconds()),
+		}
+		if health.HookIdleKnown {
+			output.HookIdleSeconds = int(health.HookIdle.Seconds())
 		}
 		if sessionInfo != nil {
 			output.Session = sessionInfo.Name
@@ -264,13 +289,20 @@ func runWitnessStatus(cmd *cobra.Command, args []string) error {
 	// Human-readable output
 	fmt.Printf("%s Witness: %s\n\n", style.Bold.Render(AgentTypeIcons[AgentWitness]), rigName)
 
-	if running {
+	switch health.State {
+	case agenthealth.StateHealthy:
 		fmt.Printf("  State: %s\n", style.Bold.Render("● running"))
-		if sessionInfo != nil {
-			fmt.Printf("  Session: %s\n", sessionInfo.Name)
-		}
-	} else {
+	case agenthealth.StateDegraded:
+		fmt.Printf("  State: %s\n", style.Warning.Render("◐ degraded — "+witnessHookLabel(int(health.HookIdle.Seconds()))))
+		fmt.Printf("  Why:   %s\n", style.Dim.Render(health.Reason))
+	case agenthealth.StateUnknown:
+		fmt.Printf("  State: %s\n", style.Warning.Render("? unknown"))
+		fmt.Printf("  Why:   %s\n", style.Dim.Render(health.Reason))
+	default:
 		fmt.Printf("  State: %s\n", style.Dim.Render("○ stopped"))
+	}
+	if running && sessionInfo != nil {
+		fmt.Printf("  Session: %s\n", sessionInfo.Name)
 	}
 
 	// Show monitored polecats
