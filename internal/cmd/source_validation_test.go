@@ -302,6 +302,7 @@ func installSubmitSourceBDRecorder(t *testing.T, currentBeadsDir, ownerBeadsDir 
 	t.Helper()
 	binDir := t.TempDir()
 	logPath := filepath.Join(t.TempDir(), "bd.log")
+	createdMarker := filepath.Join(t.TempDir(), "mr-created")
 	script := fmt.Sprintf(`#!/bin/sh
 if [ "$1" = "--allow-stale" ]; then
   shift
@@ -323,19 +324,33 @@ if [ "$1" = "show" ] && [ "$2" = "bd-source" ]; then
   echo "Issue not found in $BEADS_DIR" >&2
   exit 1
 fi
-if [ "$1" = "show" ] && [ "$2" = "gt-mr" ]; then
-  echo '[{"id":"gt-mr","title":"Merge: bd-source","status":"open","priority":1,"issue_type":"task","labels":["gt:merge-request"],"description":"branch: feature/routed-submit\\ntarget: main\\nsource_issue: bd-source\\nrig: gastown"}]'
-  exit 0
+if [ "$1" = "show" ]; then
+  # Tolerate flag position: dependency hydration issues "show --json gt-mr",
+  # while the direct read-back issues "show gt-mr --json".
+  case " $* " in
+    *" gt-mr "*)
+      echo '[{"id":"gt-mr","title":"Merge: bd-source","status":"open","priority":1,"issue_type":"task","labels":["gt:merge-request"],"description":"branch: feature/routed-submit\\ntarget: main\\nsource_issue: bd-source\\nrig: gastown"}]'
+      exit 0
+      ;;
+  esac
 fi
 if [ "$1" = "list" ]; then
   echo '[]'
   exit 0
 fi
 if [ "$1" = "sql" ]; then
-  echo '[]'
+  # The rig queue is empty until the MR is actually created, and contains it
+  # afterwards. Modelling that ordering keeps the dedup lookup (which runs
+  # before create) distinct from the queue-visibility check (which runs after).
+  if [ -f %q ]; then
+    echo '[{"id":"gt-mr","title":"Merge: bd-source","description":"branch: feature/routed-submit\\ntarget: main\\nsource_issue: bd-source\\nrig: gastown\\n","status":"open","priority":1,"assignee":"","created_at":"2026-09-04T00:00:00Z","updated_at":"2026-09-04T00:00:00Z","created_by":"tester","labels_csv":"gt:merge-request"}]'
+  else
+    echo '[]'
+  fi
   exit 0
 fi
 if [ "$1" = "create" ]; then
+  : > %q
   echo '{"id":"gt-mr","title":"Merge: bd-source","status":"open","priority":1,"issue_type":"task","labels":["gt:merge-request"]}'
   exit 0
 fi
@@ -347,7 +362,7 @@ if [ "$1" = "close" ]; then
 fi
 echo "unexpected bd command: $*" >&2
 exit 1
-`, logPath, currentBeadsDir, ownerBeadsDir)
+`, logPath, currentBeadsDir, ownerBeadsDir, createdMarker, createdMarker)
 	path := filepath.Join(binDir, "bd")
 	if err := os.WriteFile(path, []byte(script), 0o755); err != nil {
 		t.Fatalf("write bd recorder: %v", err)

@@ -75,6 +75,10 @@ const (
 	ExitCompleted = "COMPLETED"
 	ExitEscalated = "ESCALATED"
 	ExitDeferred  = "DEFERRED"
+	// ExitIncomplete is reported instead of COMPLETED when the push or the MR
+	// submission failed. The work is not merge-queued, so calling it COMPLETED
+	// tells the Witness the opposite of what happened (gt-6sg).
+	ExitIncomplete = "INCOMPLETE"
 )
 
 func doneContaminationBaseRef(defaultBranch, explicitTarget string) string {
@@ -951,6 +955,9 @@ func runDone(cmd *cobra.Command, args []string) (retErr error) {
 	var pushFailed bool
 	var mrFailed bool
 	var doneErrors []string
+	// Declared here rather than at the notifyWitness label: several failure paths
+	// goto that label, and Go forbids jumping over a variable declaration.
+	var reportedExit string
 	var convoyInfo *ConvoyInfo // Populated if issue is tracked by a convoy
 	var sourceIssueForNoMerge *beads.Issue
 	var sourceBD *beads.Beads
@@ -1804,6 +1811,24 @@ func runDone(cmd *cobra.Command, args []string) (retErr error) {
 				style.PrintWarning("MR bead prefix mismatch: %v\nThe refinery may not find this MR — check 'gt mq list %s'", prefixErr, rigName)
 			}
 
+			// gt-6sg: Confirm the MR is visible in the rig's own merge queue.
+			// The two guards above are both satisfied by a misfiled MR: the
+			// prefix check compares only the ID prefix, which is identical when
+			// a town's rig store and contributor store share one, and the Show
+			// read-back resolves across repos.additional and finds the bead in
+			// whichever store it landed in. So an MR can be created, readable,
+			// and still invisible to the Refinery — the branch is pushed, the
+			// polecat reports COMPLETED, and nothing is ever queued to merge it.
+			// That is silent work loss, so this guard sets mrFailed rather than
+			// warning: an unqueued MR is a failed submission, not a cosmetic one.
+			if queueErr := bd.VerifyMRInRigQueue(rigName, mrID); queueErr != nil {
+				mrFailed = true
+				errMsg := fmt.Sprintf("MR bead created but not queued: %v", queueErr)
+				doneErrors = append(doneErrors, errMsg)
+				style.PrintWarning("%s\nBranch is pushed but the Refinery will not see this MR. Preserving worktree.\nCheck 'gt mq list %s'.", errMsg, rigName)
+				goto notifyWitness
+			}
+
 			// GH#3032: Supersede older open MRs for the same source issue.
 			// When a polecat re-submits after fixing a gate failure, the old MR
 			// (same branch, different SHA) is stale. Close it so the refinery
@@ -1879,8 +1904,12 @@ func runDone(cmd *cobra.Command, args []string) (retErr error) {
 	}
 
 notifyWitness:
+	// gt-6sg: what we tell the Witness and the feed must reflect whether the work
+	// actually reached the merge queue, not merely that gt done ran to the end.
+	reportedExit = reportedExitType(exitType, pushFailed, mrFailed)
+
 	// Nudge refinery — MR bead is already on main (transaction-based shared main).
-	if shouldNudgeRefinery(exitType, mrID) {
+	if shouldNudgeRefinery(exitType, mrID, mrFailed) {
 		nudgeRefinery(rigName, "MERGE_READY received - check inbox for pending work")
 	}
 
@@ -1930,8 +1959,8 @@ notifyWitness:
 	// Nudge witness only after hook/cleanup state is updated. Otherwise witness can
 	// evaluate slot availability against stale hook_bead or cleanup_status and emit
 	// false SLOT_BLOCKED/SLOT_OPEN signals.
-	nudgeWitness(rigName, fmt.Sprintf("POLECAT_DONE %s exit=%s", polecatName, exitType))
-	fmt.Printf("%s Witness notified of %s (via nudge)\n", style.Bold.Render("✓"), exitType)
+	nudgeWitness(rigName, fmt.Sprintf("POLECAT_DONE %s exit=%s", polecatName, reportedExit))
+	fmt.Printf("%s Witness notified of %s (via nudge)\n", style.Bold.Render("✓"), reportedExit)
 
 	// Clean successful polecats are retired after durable handoff. Preserve the
 	// feature branch and metadata; Witness/refinery cleanup owns the sandbox.
@@ -1941,7 +1970,11 @@ notifyWitness:
 		isPolecat = true
 
 		if pushFailed || mrFailed {
+			// gt-6sg: say why the sandbox survives. A sandbox preserved here holds
+			// work that never reached the queue and genuinely needs recovery — as
+			// opposed to one left behind by a cleanup step that simply did not run.
 			fmt.Printf("%s Work needs recovery (push or MR failed) — session preserved\n", style.Bold.Render("⚠"))
+			fmt.Printf("  This sandbox is preserved because the work is NOT queued, not merely uncleaned.\n")
 		}
 		if exitType == ExitCompleted && issueID != "" && convoyInfo == nil {
 			convoyInfo = getConvoyInfoFromSourceIssue(sourceIssueForNoMerge)
@@ -1974,6 +2007,14 @@ notifyWitness:
 		if err := retirePolecatSessionAfterDone(rigName, polecatName, os.Getpid()); err != nil {
 			style.PrintWarning("could not terminate polecat session: %v", err)
 		}
+	}
+
+	// gt-6sg: exit non-zero when the work never reached the merge queue. Every
+	// notification above has already been written, so this only changes the exit
+	// status — but a zero exit is what let callers and formula steps treat a
+	// failed submission as a successful one.
+	if reportedExit == ExitIncomplete {
+		return fmt.Errorf("work not submitted to the merge queue: %s", strings.Join(doneErrors, "; "))
 	}
 
 	return nil
@@ -2102,8 +2143,25 @@ func verifyPushedCommitWithBareFallback(g *git.Git, townRoot, rigName, branch, c
 // never emit MQ_SUBMIT, or the refinery wakes from backoff to find an empty
 // merge queue (gh#3885). The exitType check is defensive: it holds the
 // invariant even if a future code path populates mrID outside COMPLETED.
-func shouldNudgeRefinery(exitType, mrID string) bool {
+func shouldNudgeRefinery(exitType, mrID string, mrFailed bool) bool {
+	// A created-but-unqueued MR still yields a non-empty mrID (gt-6sg). Nudging
+	// the Refinery for one sends it hunting for work its queue cannot see.
+	if mrFailed {
+		return false
+	}
 	return exitType == ExitCompleted && mrID != ""
+}
+
+// reportedExitType degrades COMPLETED to INCOMPLETE when the push or the MR
+// submission failed. The branch may be pushed and the MR bead may even exist,
+// but nothing is queued to merge it, so reporting COMPLETED is what turns this
+// failure into silent work loss (gt-6sg). ESCALATED and DEFERRED pass through:
+// they already describe a non-completion and carry their own meaning.
+func reportedExitType(exitType string, pushFailed, mrFailed bool) string {
+	if exitType == ExitCompleted && (pushFailed || mrFailed) {
+		return ExitIncomplete
+	}
+	return exitType
 }
 
 // setDoneIntentLabel writes a done-intent:<type>:<unix-ts> label on the agent bead
