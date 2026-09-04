@@ -7,7 +7,9 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -877,6 +879,62 @@ func TestAPIHandler_SSE_ContentType(t *testing.T) {
 	body := w.Body.String()
 	if !strings.Contains(body, "event: connected") {
 		t.Error("SSE response should contain initial 'connected' event")
+	}
+}
+
+func TestHashDashboardPartsIsIndependentOfCompletionOrder(t *testing.T) {
+	first := hashDashboardParts([]string{"status:stable", "hooks:stable", "mail:stable"})
+	second := hashDashboardParts([]string{"mail:stable", "status:stable", "hooks:stable"})
+
+	if first != second {
+		t.Fatalf("dashboard hash changed with command completion order: %q != %q", first, second)
+	}
+}
+
+func TestComputeDashboardHashCoalescesConcurrentClients(t *testing.T) {
+	dir := t.TempDir()
+	commandLog := filepath.Join(dir, "commands.log")
+	gtStub := filepath.Join(dir, "gt-stub")
+	if err := os.WriteFile(gtStub, []byte("#!/bin/sh\nprintf '%s\\n' \"$*\" >> \"$GT_WEB_COMMAND_LOG\"\nprintf '%s\\n' \"$*\"\n"), 0755); err != nil {
+		t.Fatalf("write gt stub: %v", err)
+	}
+	t.Setenv("GT_WEB_COMMAND_LOG", commandLog)
+
+	h := NewAPIHandler(30*time.Second, 60*time.Second, "test-token")
+	h.gtPath = gtStub
+	h.workDir = dir
+
+	const clients = 10
+	var wg sync.WaitGroup
+	wg.Add(clients)
+	for range clients {
+		go func() {
+			defer wg.Done()
+			if got := h.computeDashboardHash(context.Background()); got == "" {
+				t.Error("computeDashboardHash returned an empty hash")
+			}
+		}()
+	}
+	wg.Wait()
+
+	data, err := os.ReadFile(commandLog)
+	if err != nil {
+		t.Fatalf("read command log: %v", err)
+	}
+	if got := len(strings.Split(strings.TrimSpace(string(data)), "\n")); got != 3 {
+		t.Fatalf("concurrent clients launched %d hash commands, want 3 total; log: %q", got, data)
+	}
+}
+
+func TestConfigureWebCommandInstallsProcessTreeCancellation(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("process-group cancellation is Unix-specific")
+	}
+
+	cmd := exec.Command("true")
+	configureWebCommand(cmd)
+	if cmd.Cancel == nil {
+		t.Fatal("web subprocess has no process-group cancellation hook")
 	}
 }
 
