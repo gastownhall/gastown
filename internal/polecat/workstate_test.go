@@ -144,3 +144,93 @@ func TestDecideWorkstateCanonicalFields(t *testing.T) {
 		})
 	}
 }
+
+// gt-ets: a cleanup_status that was never written must not strand a polecat
+// whose worktree has been directly observed to be clean — but absence with no
+// git evidence, or with evidence of risk, still fails closed.
+func TestDecideWorkstateMissingCleanupStatusNeedsGitEvidence(t *testing.T) {
+	tests := []struct {
+		name         string
+		in           WorkstateInput
+		wantReusable bool
+		wantReason   string
+	}{
+		{
+			name:         "missing cleanup status with observed clean tree is reusable",
+			in:           WorkstateInput{State: StateIdle, CleanupStatus: "", Branch: "polecat/test", GitStateKnown: true},
+			wantReusable: true,
+			wantReason:   "reusable",
+		},
+		{
+			name:         "unknown cleanup status with observed clean tree is reusable",
+			in:           WorkstateInput{State: StateIdle, CleanupStatus: CleanupUnknown, Branch: "polecat/test", GitStateKnown: true},
+			wantReusable: true,
+			wantReason:   "reusable",
+		},
+		{
+			name:         "missing cleanup status without git evidence still blocks",
+			in:           WorkstateInput{State: StateIdle, CleanupStatus: "", Branch: "polecat/test"},
+			wantReusable: false,
+			wantReason:   "cleanup-unknown",
+		},
+		{
+			name:         "missing cleanup status with failed git check still blocks",
+			in:           WorkstateInput{State: StateIdle, CleanupStatus: "", Branch: "polecat/test", GitStateKnown: true, GitCheckFailed: true, GitCheckFailedReason: "git_state=unknown"},
+			wantReusable: false,
+			wantReason:   "cleanup-unknown",
+		},
+		{
+			name:         "missing cleanup status with dirty tree still blocks",
+			in:           WorkstateInput{State: StateIdle, CleanupStatus: "", Branch: "polecat/test", GitStateKnown: true, GitDirty: true},
+			wantReusable: false,
+			wantReason:   "cleanup-unknown",
+		},
+		{
+			name:         "missing cleanup status with unpushed commits still blocks",
+			in:           WorkstateInput{State: StateIdle, CleanupStatus: "", Branch: "polecat/test", GitStateKnown: true, UnpushedCommits: 2},
+			wantReusable: false,
+			wantReason:   "cleanup-unknown",
+		},
+		{
+			name:         "missing cleanup status with stash still blocks",
+			in:           WorkstateInput{State: StateIdle, CleanupStatus: "", Branch: "polecat/test", GitStateKnown: true, StashCount: 1},
+			wantReusable: false,
+			wantReason:   "cleanup-unknown",
+		},
+		{
+			name:         "known-unsafe cleanup status blocks even with a clean tree",
+			in:           WorkstateInput{State: StateIdle, CleanupStatus: CleanupUncommitted, Branch: "polecat/test", GitStateKnown: true},
+			wantReusable: false,
+			wantReason:   "cleanup-has_uncommitted",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := DecideWorkstate(tt.in)
+			if got.Reusable != tt.wantReusable {
+				t.Fatalf("DecideWorkstate() reusable = %v, want %v (reason %q, blockers %v)", got.Reusable, tt.wantReusable, got.Reason, got.Blockers)
+			}
+			if got.Reason != tt.wantReason {
+				t.Fatalf("DecideWorkstate() reason = %q, want %q", got.Reason, tt.wantReason)
+			}
+		})
+	}
+}
+
+// Other blockers must survive the missing-cleanup_status relaxation: a polecat
+// whose MR submission failed still needs recovery even with a clean worktree.
+func TestDecideWorkstateMissingCleanupStatusKeepsOtherBlockers(t *testing.T) {
+	got := DecideWorkstate(WorkstateInput{State: StateIdle, CleanupStatus: "", Branch: "polecat/test", GitStateKnown: true, MRFailed: true})
+	if got.Reusable {
+		t.Fatalf("DecideWorkstate() reusable = true with mr_failed set, want false")
+	}
+	if got.Reason != "mr-failed" {
+		t.Fatalf("DecideWorkstate() reason = %q, want %q", got.Reason, "mr-failed")
+	}
+	for _, blocker := range got.Blockers {
+		if blocker == "cleanup_status=<missing>" {
+			t.Fatalf("DecideWorkstate() reported a phantom cleanup blocker alongside %v", got.Blockers)
+		}
+	}
+}

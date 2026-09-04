@@ -2321,8 +2321,10 @@ func (m *Manager) workstateInputForPolecat(name string, state State, issue strin
 	_, fields, err := m.agentBeads().GetAgentBead(agentID)
 	hookSafe := true
 	hookTerminal := false
-	if err != nil {
-		input.GitCheckFailed = true
+	if err != nil || fields == nil {
+		// A bead that cannot be read is not a git failure. Labeling it as one
+		// sends recovery after the worktree instead of the bead (gt-ets).
+		input.AgentBeadMissing = true
 	}
 	if err == nil && fields != nil {
 		hookSafe, hookTerminal = m.hookBeadSafeForWorkstate(fields.HookBead)
@@ -2370,13 +2372,12 @@ func (m *Manager) workstateInputForPolecat(name string, state State, issue strin
 			input.GitCheckFailed = true
 		}
 	}
-	// Legacy/test polecats can lack agent cleanup metadata. If git proves there is
-	// no local work at risk, treat the missing cleanup_status as clean; otherwise
-	// DecideSlotReuse will continue to fail closed on CleanupUnknown.
+	// The git predicates above were actually evaluated here, so DecideWorkstate
+	// may use them to settle a missing/unknown cleanup_status. Reporting the
+	// evidence instead of rewriting CleanupStatus to "clean" keeps the field's
+	// real value visible to callers that surface it (gt-ets).
+	input.GitStateKnown = true
 	gitSafe := !input.GitCheckFailed && !input.GitDirty && input.StashCount == 0 && input.UnpushedCommits == 0
-	if input.CleanupStatus == CleanupUnknown && gitSafe {
-		input.CleanupStatus = CleanupClean
-	}
 	activeMRSafe := true
 	sourceTerminal := sourceHint != "" && m.assignedBeadTerminal(sourceHint)
 	if activeMR != "" {

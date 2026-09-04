@@ -943,21 +943,65 @@ func TestUpdateAgentStateAfterSubmissionSkipsFailedSubmissions(t *testing.T) {
 	}
 	t.Cleanup(func() { updateAgentStateOnDoneFn = old })
 
-	if err := updateAgentStateAfterSubmission("/work", "/town", ExitCompleted, "gt-abc", true, false); err != nil {
+	oldRecord := recordObservedCleanupStatusFn
+	recordObservedCleanupStatusFn = func(cwd, agentBeadID string) {}
+	t.Cleanup(func() { recordObservedCleanupStatusFn = oldRecord })
+
+	if err := updateAgentStateAfterSubmission("/work", "/town", ExitCompleted, "gt-abc", "gt-rig-polecat-p", true, false); err != nil {
 		t.Fatalf("updateAgentStateAfterSubmission push failure: %v", err)
 	}
-	if err := updateAgentStateAfterSubmission("/work", "/town", ExitCompleted, "gt-abc", false, true); err != nil {
+	if err := updateAgentStateAfterSubmission("/work", "/town", ExitCompleted, "gt-abc", "gt-rig-polecat-p", false, true); err != nil {
 		t.Fatalf("updateAgentStateAfterSubmission mr failure: %v", err)
 	}
 	if calls != 0 {
 		t.Fatalf("state update calls after failed submissions = %d, want 0", calls)
 	}
 
-	if err := updateAgentStateAfterSubmission("/work", "/town", ExitCompleted, "gt-abc", false, false); err != nil {
+	if err := updateAgentStateAfterSubmission("/work", "/town", ExitCompleted, "gt-abc", "gt-rig-polecat-p", false, false); err != nil {
 		t.Fatalf("updateAgentStateAfterSubmission clean submission: %v", err)
 	}
 	if calls != 1 {
 		t.Fatalf("state update calls after clean submission = %d, want 1", calls)
+	}
+}
+
+// A failed push or MR submission must still record the observed cleanup_status.
+// Leaving the field unwritten is what strands a polecat: an absent
+// cleanup_status blocks reuse forever even though the worktree is clean (gt-ets).
+func TestUpdateAgentStateAfterSubmissionRecordsCleanupStatusOnFailure(t *testing.T) {
+	old := updateAgentStateOnDoneFn
+	updateAgentStateOnDoneFn = func(cwd, townRoot, exitType, issueID string) error { return nil }
+	t.Cleanup(func() { updateAgentStateOnDoneFn = old })
+
+	var gotBeadIDs []string
+	oldRecord := recordObservedCleanupStatusFn
+	recordObservedCleanupStatusFn = func(cwd, agentBeadID string) {
+		gotBeadIDs = append(gotBeadIDs, agentBeadID)
+	}
+	t.Cleanup(func() { recordObservedCleanupStatusFn = oldRecord })
+
+	if err := updateAgentStateAfterSubmission("/work", "/town", ExitCompleted, "gt-abc", "gt-rig-polecat-p", false, true); err != nil {
+		t.Fatalf("mr failure: %v", err)
+	}
+	if err := updateAgentStateAfterSubmission("/work", "/town", ExitCompleted, "gt-abc", "gt-rig-polecat-p", true, false); err != nil {
+		t.Fatalf("push failure: %v", err)
+	}
+	if len(gotBeadIDs) != 2 {
+		t.Fatalf("cleanup status recordings after failed submissions = %d, want 2", len(gotBeadIDs))
+	}
+	for _, id := range gotBeadIDs {
+		if id != "gt-rig-polecat-p" {
+			t.Fatalf("recorded cleanup status for agent bead %q, want gt-rig-polecat-p", id)
+		}
+	}
+
+	// A clean submission goes through the full lifecycle update, which writes
+	// cleanup_status itself — no extra recording.
+	if err := updateAgentStateAfterSubmission("/work", "/town", ExitCompleted, "gt-abc", "gt-rig-polecat-p", false, false); err != nil {
+		t.Fatalf("clean submission: %v", err)
+	}
+	if len(gotBeadIDs) != 2 {
+		t.Fatalf("cleanup status recordings after clean submission = %d, want 2", len(gotBeadIDs))
 	}
 }
 
