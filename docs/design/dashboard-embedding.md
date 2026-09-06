@@ -58,3 +58,7 @@ go test -tags=embedbrowser ./internal/web -run TestEmbedBrowser -v
 The browser suite requires Chrome and checks production dashboard rendering,
 cross-origin delivery, standalone dependency navigation and blocked framing.
 On macOS, use the ICU compiler/linker flags configured by the Makefile.
+
+## Convoy summary hydration
+
+Dashboard summaries use `gt convoy list --status=open --json`, which resolves raw cross-database tracking edges and hydrates their issue IDs through prefix routing. This avoids the local dependency join that could show an existing cross-rig convoy as `0/0`. The dashboard preserves unresolved tracked IDs in the denominator and displays an Unknown badge; blocked or unknown issues are not counted as ready. Missing tracked data produces a fetch error. The reader runs from the town root, clears caller database-directory overrides, and has a process-group timeout.

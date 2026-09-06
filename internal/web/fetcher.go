@@ -183,7 +183,7 @@ type LiveConvoyFetcher struct {
 	tmuxSocket string
 
 	// Circuit breaker for FetchConvoys — prevents process storms when
-	// bd list by convoy label fails persistently (e.g., schema mismatch).
+	// the canonical convoy reader fails persistently (e.g., schema mismatch).
 	convoyBreaker fetchCircuitBreaker
 }
 
