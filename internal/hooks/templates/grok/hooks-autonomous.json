@@ -51,6 +51,11 @@
           {
             "type": "command",
             "command": "{{GT_BIN}} costs record &"
+          },
+          {
+            "type": "command",
+            "command": "{{GT_BIN}} tap polecat-stop-check",
+            "timeout": 600
           }
         ]
       }

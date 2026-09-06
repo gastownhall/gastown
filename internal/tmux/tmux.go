@@ -2357,17 +2357,52 @@ func (t *Tmux) GetPanePID(target string) (string, error) {
 
 // GetSessionActivity returns the last activity time for a session.
 // This is updated whenever there's any activity in the session (input/output).
+//
+// Grok Build CLI (and some other TUIs) can leave #{session_activity} frozen at
+// session creation while #{window_activity} still advances. Witness stall
+// detection and `gt polecat status` both read this value, so a frozen
+// session_activity looks like "zero activity since creation" even after the
+// agent has been working. Prefer the latest of session_activity and every
+// window_activity.
 func (t *Tmux) GetSessionActivity(session string) (time.Time, error) {
 	out, err := t.run("display-message", "-t", session, "-p", "#{session_activity}")
 	if err != nil {
 		return time.Time{}, err
 	}
-
-	timestamp, err := strconv.ParseInt(strings.TrimSpace(out), 10, 64)
-	if err != nil {
-		return time.Time{}, fmt.Errorf("parsing session activity: %w", err)
+	values := []string{strings.TrimSpace(out)}
+	if windows, werr := t.run("list-windows", "-t", session, "-F", "#{window_activity}"); werr == nil {
+		for _, line := range strings.Split(windows, "\n") {
+			if s := strings.TrimSpace(line); s != "" {
+				values = append(values, s)
+			}
+		}
 	}
-	return time.Unix(timestamp, 0), nil
+	return latestUnixActivity(values...)
+}
+
+// latestUnixActivity returns the newest Unix timestamp among the given
+// decimal strings. Empty or unparsable values are skipped.
+func latestUnixActivity(values ...string) (time.Time, error) {
+	var max int64
+	found := false
+	for _, v := range values {
+		v = strings.TrimSpace(v)
+		if v == "" {
+			continue
+		}
+		n, err := strconv.ParseInt(v, 10, 64)
+		if err != nil {
+			continue
+		}
+		if !found || n > max {
+			max = n
+			found = true
+		}
+	}
+	if !found {
+		return time.Time{}, fmt.Errorf("parsing session activity: no timestamps")
+	}
+	return time.Unix(max, 0), nil
 }
 
 // ZombieStatus describes the liveness state of a tmux agent session.
@@ -3278,8 +3313,8 @@ func matchesPromptPrefix(line, readyPromptPrefix string) bool {
 // agent working?" scrapes the pane for any of these (see hasBusyIndicator), and
 // that signal underpins IsIdle, WaitForIdle, and the nudge Escape-suppression in
 // shouldSendEscape. Claude Code, Codex, and Gemini all surface "esc to
-// interrupt"; if an agent uses different wording, add it here — that is the only
-// place that needs to change.
+// interrupt"; Grok Build CLI surfaces "Esc:cancel". If an agent uses different
+// wording, add it here — that is the only place that needs to change.
 //
 // FRAGILITY (gastownhall/gastown#4240): this couples to upstream TUI status
 // text. Scraping the status bar cannot detect a silent upstream rename on its
@@ -3289,7 +3324,7 @@ func matchesPromptPrefix(line, readyPromptPrefix string) bool {
 // change is intentional rather than accidental. The idle side is already
 // centralized via the agent presets' ReadyPromptPrefix; this is its busy-side
 // counterpart.
-var busyIndicators = []string{"esc to interrupt"}
+var busyIndicators = []string{"esc to interrupt", "Esc:cancel"}
 
 func hasBusyIndicator(line string) bool {
 	trimmed := strings.TrimSpace(line)

@@ -204,7 +204,16 @@ func composerContent(line []rune, dim []bool, promptPrefix string) ([]rune, []bo
 	}
 	after := line[idx+len(prefix):]
 	afterDim := dim[idx+len(prefix):]
-	return trimRunesAndDim(after, afterDim)
+	after, afterDim = trimRunesAndDim(after, afterDim)
+	// Grok draws the composer inside a box ("│ ❯ … │"). The trailing
+	// border is not typed content; leaving it in makes an empty composer
+	// look dirty and a stranded nudge look like unrelated text.
+	if len(after) > 0 && after[len(after)-1] == '│' {
+		after = after[:len(after)-1]
+		afterDim = afterDim[:len(afterDim)-1]
+		after, afterDim = trimRunesAndDim(after, afterDim)
+	}
+	return after, afterDim
 }
 
 func analyzeComposerLine(line []rune, dim []bool, needle, promptPrefix string) submitProbe {

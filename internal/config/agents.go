@@ -488,11 +488,16 @@ var builtinPresets = map[AgentPreset]*AgentPresetInfo{
 			PromptFlag: "-p",
 			OutputFlag: "--output-format json",
 		},
-		PromptMode:           "arg",
-		ConfigDir:            ".grok",
-		HooksProvider:        "grok",
-		HooksDir:             ".grok/hooks",
-		HooksSettingsFile:    "gastown.json",
+		PromptMode:        "arg",
+		ConfigDir:         ".grok",
+		HooksProvider:     "grok",
+		HooksDir:          ".grok/hooks",
+		HooksSettingsFile: "gastown.json",
+		// Boxed composer ("│ ❯ … │"), not Claude's bare "❯ ". Grok scrollback
+		// user lines are "❯ [GAS TOWN]…" and the composer stays visible while
+		// busy, so idle detection must use this prefix plus the Esc:cancel
+		// busy marker. Empty prefix made wait-idle fall back to queue mode.
+		ReadyPromptPrefix:    "│ ❯",
 		ReadyDelayMs:         5000,
 		InstructionsFile:     "AGENTS.md",
 		HasTurnBoundaryDrain: true,

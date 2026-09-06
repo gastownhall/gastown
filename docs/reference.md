@@ -470,7 +470,10 @@ Kiro hooks or `.kiro` project files for this preset.
 The `grok` preset launches Grok Build CLI (`grok --always-approve --trust --no-leader`)
 with hooks in `.grok/hooks/gastown.json`. It is not `groq-compound` (Claude CLI
 proxied to Groq). Session restore uses `--continue`; `gt seance --talk` stays
-Claude-only (`SupportsForkSession` is false).
+Claude-only (`SupportsForkSession` is false). Idle detection uses the boxed
+composer prefix `│ ❯` and the `Esc:cancel` busy marker; autonomous Stop hooks
+run `gt tap polecat-stop-check` so a finished polecat cannot sit at an empty
+prompt.
 
 > **Note on GitHub Copilot**: The `copilot` preset uses executable lifecycle hooks in
 > `.github/hooks/gastown.json` (`sessionStart`, `userPromptSubmitted`, `preToolUse`,

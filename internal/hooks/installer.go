@@ -86,6 +86,16 @@ func needsUpgrade(content []byte) bool {
 			bytes.Contains(content, []byte("$`gt prime`")) ||
 			!bytes.Contains(content, []byte(`prime --hook`))
 	}
+	// Autonomous Grok (and Copilot-style) polecat hooks originally only
+	// recorded costs on Stop. Without polecat-stop-check, a Grok polecat
+	// that finishes a turn sits at an empty composer instead of running
+	// gt done. The *witness* mail-check skip is unique to the autonomous
+	// template, so interactive/crew hooks are left alone.
+	if bytes.Contains(content, []byte(`*witness*`)) &&
+		bytes.Contains(content, []byte(`costs record`)) &&
+		!bytes.Contains(content, []byte(`polecat-stop-check`)) {
+		return true
+	}
 	return false
 }
 

@@ -1008,6 +1008,11 @@ func TestGrokAgentPreset(t *testing.T) {
 	if info.HooksSettingsFile != "gastown.json" {
 		t.Errorf("grok HooksSettingsFile = %q, want gastown.json", info.HooksSettingsFile)
 	}
+	// Grok's composer is a boxed "│ ❯ … │". Using Claude's bare "❯ " false-idles
+	// on scrollback user lines ("❯ [GAS TOWN]…") while the session is working.
+	if info.ReadyPromptPrefix != "│ ❯" {
+		t.Errorf("grok ReadyPromptPrefix = %q, want %q (boxed composer)", info.ReadyPromptPrefix, "│ ❯")
+	}
 	if info.ReadyDelayMs != 5000 {
 		t.Errorf("grok ReadyDelayMs = %d, want 5000", info.ReadyDelayMs)
 	}
