@@ -25,9 +25,10 @@ A user clicking a bead sends exactly this object to the configured origin:
 {"type":"gastown:focus-bead","version":1,"beadId":"inktree-3r67i"}
 ```
 
-Issue rows, dependency links, convoy tracked-issue IDs, crew/polecat work IDs and
+Issue rows, dependency links, convoy IDs and tracked-issue IDs, crew/polecat work IDs and
 hook IDs use their actual bead identifiers. PR URLs remain PR links: this
 dashboard has no authoritative PR-to-bead mapping and does not invent one.
+Cross-rig dependency IDs wrapped as `external:prefix:id` emit the underlying ID.
 There are no incoming dashboard messages and no action, URL, authentication
 token, title, or status in the payload. Existing API token and CORS behavior
 remain in force, including for a trusted parent.
@@ -42,6 +43,11 @@ or authorization from message data. No acknowledgement is required in v1.
 Validation:
 
 ```sh
-go test ./internal/web
+go test ./internal/web -run 'TestEmbed|TestDashboardEmbed|TestValidateEmbed'
 node --test internal/web/testdata/embed.test.cjs
+go test -tags=embedbrowser ./internal/web -run TestEmbedBrowser -v
 ```
+
+The browser suite requires Chrome and checks production dashboard rendering,
+cross-origin delivery, standalone dependency navigation and blocked framing.
+On macOS, use the ICU compiler/linker flags configured by the Makefile.

@@ -30,6 +30,12 @@ test('standalone and unconfigured frames retain local navigation', () => {
     }
 });
 
+test('cross-rig dependency wrappers emit the actual bead identity', () => {
+    const { focus, messages } = dashboard();
+    assert.equal(focus('external:inktree:inktree-d2rn2.6'), true);
+    assert.equal(messages[0].data.beadId, 'inktree-d2rn2.6');
+});
+
 test('malformed origins and IDs cannot send events', () => {
     for (const origin of ['*', 'null', 'https://canvas.example/path', 'javascript:alert(1)', 'https://user@canvas.example']) {
         const { focus, messages } = dashboard({ origin });
@@ -37,6 +43,6 @@ test('malformed origins and IDs cannot send events', () => {
         assert.equal(messages.length, 0);
     }
     const { focus, messages } = dashboard();
-    for (const id of [null, {}, '', 'http://evil.example', 'external:inktree:inktree-abc', 'gt-abc --close', 'gt-<script>', 'gt-' + 'x'.repeat(256)]) assert.equal(focus(id), false);
+    for (const id of [null, {}, '', 'http://evil.example', 'external:inktree', 'external:inktree:gt-abc:extra', 'gt-abc --close', 'gt-<script>', 'gt-' + 'x'.repeat(256)]) assert.equal(focus(id), false);
     assert.equal(messages.length, 0);
 });

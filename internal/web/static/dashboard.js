@@ -1584,6 +1584,7 @@
 
         // Reset views
         document.getElementById('convoy-detail-id').textContent = convoyId;
+        document.getElementById('convoy-detail-id').setAttribute('data-bead-focus', convoyId);
         document.getElementById('convoy-detail-title').textContent = 'Convoy: ' + convoyId;
         document.getElementById('convoy-detail-status').textContent = '';
         document.getElementById('convoy-detail-progress').textContent = '';
@@ -1601,7 +1602,7 @@
         fetch('/api/run', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ command: 'convoy status ' + convoyId })
+            body: JSON.stringify({ command: 'convoy status ' + convoyId + ' --json' })
         })
         .then(function(r) { return r.json(); })
         .then(function(data) {
@@ -1613,7 +1614,14 @@
                 return;
             }
 
-            var issues = parseConvoyStatusOutput(data.output || '');
+            var convoy = JSON.parse(data.output || '{}');
+            if (!Array.isArray(convoy.tracked)) throw new Error('Invalid convoy status response');
+            var issues = convoy.tracked;
+            var statusEl = document.getElementById('convoy-detail-status');
+            statusEl.textContent = convoy.status || 'unknown';
+            statusEl.className = 'badge ' + (convoy.status === 'closed' ? 'badge-green' : 'badge-muted');
+            document.getElementById('convoy-detail-progress').textContent =
+                convoy.completed + '/' + convoy.total + ' completed';
             if (issues.length === 0) {
                 document.getElementById('convoy-issues-empty').style.display = 'block';
                 return;
@@ -1652,84 +1660,6 @@
             document.getElementById('convoy-issues-empty').style.display = 'block';
             document.getElementById('convoy-issues-empty').querySelector('p').textContent = 'Error: ' + err.message;
         });
-    }
-
-    // Parse convoy status text output into issue objects
-    function parseConvoyStatusOutput(output) {
-        var issues = [];
-        var lines = output.split('\n');
-        for (var i = 0; i < lines.length; i++) {
-            var line = lines[i].trim();
-            if (!line) continue;
-            // Skip header lines and convoy summary lines
-            if (line.startsWith('Convoy') || line.startsWith('===') || line.startsWith('---') ||
-                line.startsWith('Status:') || line.startsWith('Progress:') || line.startsWith('Created:') ||
-                line.startsWith('Title:') || line.startsWith('Issues:') || line.startsWith('Name:')) {
-                // Extract convoy-level status/progress for the detail header
-                if (line.startsWith('Status:')) {
-                    var statusEl = document.getElementById('convoy-detail-status');
-                    var statusVal = line.replace('Status:', '').trim().toLowerCase();
-                    statusEl.textContent = statusVal;
-                    statusEl.className = 'badge';
-                    if (statusVal === 'active') statusEl.classList.add('badge-green');
-                    else if (statusVal === 'stale') statusEl.classList.add('badge-yellow');
-                    else if (statusVal === 'stuck') statusEl.classList.add('badge-red');
-                    else if (statusVal === 'complete') statusEl.classList.add('badge-green');
-                    else statusEl.classList.add('badge-muted');
-                }
-                if (line.startsWith('Progress:')) {
-                    document.getElementById('convoy-detail-progress').textContent = line.replace('Progress:', '').trim();
-                }
-                continue;
-            }
-            // Look for issue lines - typically formatted as:
-            // "○ id · title [● P2 · STATUS]" or similar bead-style output
-            // Or tabular: "id   title   status   assignee"
-            var issue = parseConvoyIssueLine(line);
-            if (issue) {
-                issues.push(issue);
-            }
-        }
-        return issues;
-    }
-
-    // Parse a single issue line from convoy status output
-    function parseConvoyIssueLine(line) {
-        // Try bead-style format: "○ id · title   [● P2 · OPEN]"
-        // or "◐ id · title   [● P2 · IN_PROGRESS]"
-        var beadMatch = line.match(/^[○◐●✓]\s+(\S+)\s+[·:]\s+(.+?)(?:\s+\[.*?([A-Z_]+)\])?$/);
-        if (beadMatch) {
-            var statusFromBracket = '';
-            if (beadMatch[3]) {
-                statusFromBracket = beadMatch[3].toLowerCase().replace('_', ' ');
-            } else {
-                // Infer from icon
-                if (line.startsWith('✓')) statusFromBracket = 'closed';
-                else if (line.startsWith('◐')) statusFromBracket = 'in progress';
-                else statusFromBracket = 'open';
-            }
-            return {
-                id: beadMatch[1],
-                title: beadMatch[2].trim(),
-                status: statusFromBracket,
-                assignee: '',
-                progress: ''
-            };
-        }
-
-        // Try simple "id title" format (at least an ID-like token)
-        var parts = line.split(/\s{2,}/);
-        if (parts.length >= 2 && parts[0].match(/^[a-zA-Z0-9_-]+$/)) {
-            return {
-                id: parts[0],
-                title: parts[1] || '',
-                status: parts[2] || '',
-                assignee: parts[3] || '',
-                progress: parts[4] || ''
-            };
-        }
-
-        return null;
     }
 
     // Back button from convoy detail
