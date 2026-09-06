@@ -146,7 +146,8 @@
         if (!inDetailView && !hasExpanded) {
             window.pauseRefresh = false;
         }
-        // Reload dynamic panels after swap (handled via window functions)
+        // Reload API-backed panels whose HTML resets to a loading state.
+        loadMailInbox();
         if (window.refreshCrewPanel) window.refreshCrewPanel();
         if (window.refreshReadyPanel) window.refreshReadyPanel();
         // Update connection status indicator after morph
