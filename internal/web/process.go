@@ -2,6 +2,7 @@ package web
 
 import (
 	"os/exec"
+	"strings"
 	"time"
 
 	"github.com/steveyegge/gastown/internal/util"
@@ -18,7 +19,14 @@ func configureWebCommand(cmd *exec.Cmd) {
 // Keep synchronous read descendants in the group owned by the dashboard.
 // Otherwise gt mail detaches bd, which survives cancellation of the outer gt.
 func configureWebReadCommand(cmd *exec.Cmd) {
-	cmd.Env = append(cmd.Environ(), util.ManagedReadEnv+"=1")
+	env := cmd.Environ()
+	cmd.Env = make([]string, 0, len(env)+1)
+	for _, value := range env {
+		if !strings.HasPrefix(value, util.ManagedReadEnv+"=") {
+			cmd.Env = append(cmd.Env, value)
+		}
+	}
+	cmd.Env = append(cmd.Env, util.ManagedReadEnv+"=1")
 }
 
 func managedDashboardRead(args []string) bool {

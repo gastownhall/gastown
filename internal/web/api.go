@@ -250,11 +250,11 @@ func (h *APIHandler) runGtCommand(ctx context.Context, timeout time.Duration, ar
 
 	cmd := exec.CommandContext(ctx, h.gtPath, args...)
 	configureWebCommand(cmd)
-	if managedDashboardRead(args) {
-		configureWebReadCommand(cmd)
-	}
 	if h.workDir != "" {
 		cmd.Dir = h.workDir
+	}
+	if managedDashboardRead(args) {
+		configureWebReadCommand(cmd)
 	}
 	// Ensure the command doesn't wait for stdin
 	cmd.Stdin = nil

@@ -892,6 +892,9 @@ func TestHashDashboardPartsIsIndependentOfCompletionOrder(t *testing.T) {
 }
 
 func TestComputeDashboardHashCoalescesConcurrentClients(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("shell command fixture")
+	}
 	dir := t.TempDir()
 	commandLog := filepath.Join(dir, "commands.log")
 	gtStub := filepath.Join(dir, "gt-stub")
