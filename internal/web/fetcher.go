@@ -826,16 +826,16 @@ func (f *LiveConvoyFetcher) FetchWorkers() ([]WorkerRow, error) {
 	// Query all tmux sessions with window_activity for more accurate timing
 	stdout, err := f.runTmuxCmd("list-sessions", "-F", "#{session_name}|#{window_activity}")
 	if err != nil {
-		// tmux not running or no sessions
-		return nil, nil
+		return nil, fmt.Errorf("listing worker sessions: %w", err)
 	}
 
-	// Pre-fetch merge queue count to determine refinery idle status
-	mergeQueue, err := f.FetchMergeQueue()
-	if err != nil {
-		return nil, err
+	// Snapshot rendering derives refinery hints from its shared MergeQueue
+	// panel. Standalone fetch callers retain the legacy lookup.
+	mergeQueueCount := 0
+	if f.ctx == nil {
+		mergeQueue, _ := f.FetchMergeQueue()
+		mergeQueueCount = len(mergeQueue)
 	}
-	mergeQueueCount := len(mergeQueue)
 
 	var workers []WorkerRow
 	lines := strings.Split(strings.TrimSpace(stdout.String()), "\n")
@@ -1013,6 +1013,10 @@ func (f *LiveConvoyFetcher) getWorkerStatusHint(sessionName string) string {
 
 // getRefineryStatusHint returns appropriate status for refinery based on merge queue.
 func (f *LiveConvoyFetcher) getRefineryStatusHint(mergeQueueCount int) string {
+	return refineryStatusHint(mergeQueueCount)
+}
+
+func refineryStatusHint(mergeQueueCount int) string {
 	if mergeQueueCount == 0 {
 		return "Idle - Waiting for PRs"
 	}
@@ -1444,7 +1448,7 @@ func (f *LiveConvoyFetcher) FetchSessions() ([]SessionRow, error) {
 	// List tmux sessions
 	stdout, err := f.runTmuxCmd("list-sessions", "-F", "#{session_name}:#{session_activity}")
 	if err != nil {
-		return nil, nil // tmux not running or no sessions
+		return nil, fmt.Errorf("listing sessions: %w", err)
 	}
 
 	var rows []SessionRow
@@ -1562,8 +1566,7 @@ func (f *LiveConvoyFetcher) FetchMayor() (*MayorStatus, error) {
 	// Check if mayor tmux session exists
 	stdout, err := f.runTmuxCmd("list-sessions", "-F", "#{session_name}:#{session_activity}")
 	if err != nil {
-		// tmux not running or no sessions
-		return status, nil
+		return nil, fmt.Errorf("listing mayor session: %w", err)
 	}
 
 	lines := strings.Split(strings.TrimSpace(stdout.String()), "\n")

@@ -1151,8 +1151,8 @@ func TestConvoyHandler_CachePreventsDuplicateFetches(t *testing.T) {
 	}
 }
 
-// TestConvoyHandler_CacheBypassOnExpand verifies that ?expand= requests bypass
-// the normal response cache but have their own per-panel expand cache (GH#3117).
+// TestConvoyHandler_CacheBypassOnExpand verifies that expanded templates reuse
+// the same snapshot as normal requests without additional fetches (GH#3117).
 func TestConvoyHandler_CacheBypassOnExpand(t *testing.T) {
 	fetchCount := 0
 	mock := &CountingMockFetcher{
@@ -1175,7 +1175,7 @@ func TestConvoyHandler_CacheBypassOnExpand(t *testing.T) {
 		t.Fatalf("After first request, fetchCount = %d, want 1", fetchCount)
 	}
 
-	// First expand request — should bypass normal cache (different template)
+	// First expand request — different template, same snapshot
 	req2 := httptest.NewRequest("GET", "/?expand=convoys", nil)
 	w2 := httptest.NewRecorder()
 	handler.ServeHTTP(w2, req2)
@@ -1184,7 +1184,7 @@ func TestConvoyHandler_CacheBypassOnExpand(t *testing.T) {
 		t.Errorf("First expand request fetchCount = %d, want 1 (shared snapshot)", fetchCount)
 	}
 
-	// Second identical expand request — should hit expand cache (GH#3117)
+	// Second identical expand request — still the same snapshot (GH#3117)
 	req3 := httptest.NewRequest("GET", "/?expand=convoys", nil)
 	w3 := httptest.NewRecorder()
 	handler.ServeHTTP(w3, req3)

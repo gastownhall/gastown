@@ -614,8 +614,8 @@ exit 0
 				t.Fatal("expected first FetchConvoys call to fail")
 			}
 
-			if _, err := f.FetchConvoys(); err != nil {
-				t.Fatalf("expected immediate retry to be backed off silently, got: %v", err)
+			if _, err := f.FetchConvoys(); err == nil {
+				t.Fatal("backoff must report unavailable data")
 			}
 
 			countBytes, err := os.ReadFile(gtPath + ".count")
@@ -669,8 +669,8 @@ exit 0
 			errCount++
 		}
 	}
-	if errCount != 1 {
-		t.Fatalf("FetchConvoys errors = %d, want 1; backed-off callers should return nil", errCount)
+	if errCount != 8 {
+		t.Fatalf("FetchConvoys errors = %d, want 8; backoff must report unavailable data", errCount)
 	}
 
 	countBytes, err := os.ReadFile(gtPath + ".count")

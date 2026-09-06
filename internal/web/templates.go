@@ -15,24 +15,25 @@ var templateFS embed.FS
 
 // ConvoyData represents data passed to the convoy template.
 type ConvoyData struct {
-	PanelErrors map[string]string // Explicit unavailable or stale panels; never raw command errors.
-	Convoys     []ConvoyRow
-	MergeQueue  []MergeQueueRow
-	Workers     []WorkerRow
-	Mail        []MailRow
-	Rigs        []RigRow
-	Dogs        []DogRow
-	Escalations []EscalationRow
-	Health      *HealthRow
-	Queues      []QueueRow
-	Sessions    []SessionRow
-	Hooks       []HookRow
-	Mayor       *MayorStatus
-	Issues      []IssueRow
-	Activity    []ActivityRow
-	Summary     *DashboardSummary
-	Expand      string // Panel to show fullscreen (from ?expand=name)
-	CSRFToken   string // Token for CSRF protection on POST requests
+	panelSuccess map[string]bool   // Last-good availability, independent of rendered error wording.
+	PanelErrors  map[string]string // Explicit unavailable or stale panels; never raw command errors.
+	Convoys      []ConvoyRow
+	MergeQueue   []MergeQueueRow
+	Workers      []WorkerRow
+	Mail         []MailRow
+	Rigs         []RigRow
+	Dogs         []DogRow
+	Escalations  []EscalationRow
+	Health       *HealthRow
+	Queues       []QueueRow
+	Sessions     []SessionRow
+	Hooks        []HookRow
+	Mayor        *MayorStatus
+	Issues       []IssueRow
+	Activity     []ActivityRow
+	Summary      *DashboardSummary
+	Expand       string // Panel to show fullscreen (from ?expand=name)
+	CSRFToken    string // Token for CSRF protection on POST requests
 
 	EmbedParentOrigin string // Explicit server-configured trusted Canvas origin
 }

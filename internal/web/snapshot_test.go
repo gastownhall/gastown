@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"errors"
+	"github.com/steveyegge/gastown/internal/activity"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -74,7 +75,7 @@ func (f *snapshotFixture) FetchConvoys() ([]ConvoyRow, error) {
 	if fail {
 		return nil, errors.New("private command error")
 	}
-	return []ConvoyRow{{ID: "hq-canonical", Title: title, Status: "open", TotalBeads: 5, ClosedBeads: 2}}, nil
+	return []ConvoyRow{{ID: "hq-canonical", Title: title, Status: "open", Total: 5, Completed: 2}}, nil
 }
 func newSnapshotHarness(t *testing.T, f ConvoyFetcher) (*ConvoyHandler, *APIHandler) {
 	t.Helper()
@@ -120,7 +121,7 @@ func TestDashboardSnapshotChangesAndFailureRecovery(t *testing.T) {
 		t.Fatal("failure must be observable")
 	}
 	data, _ := h.snapshot(context.Background())
-	if data.Convoys[0].Title != "changed" || data.Convoys[0].TotalBeads != 5 || data.Convoys[0].ClosedBeads != 2 {
+	if data.Convoys[0].Title != "changed" || data.Convoys[0].Total != 5 || data.Convoys[0].Completed != 2 {
 		t.Fatal("failure lost canonical last-good data")
 	}
 	w := httptest.NewRecorder()
@@ -229,15 +230,138 @@ func TestDashboardSnapshotEveryPanelAffectsHash(t *testing.T) {
 	typ := reflect.TypeOf(baseline)
 	for i := 0; i < typ.NumField(); i++ {
 		field := typ.Field(i)
-		if field.Type.Kind() != reflect.Slice {
+		if field.Type.Kind() != reflect.Slice && field.Type.Kind() != reflect.Pointer {
 			continue
 		}
 		t.Run(field.Name, func(t *testing.T) {
 			data := ConvoyData{}
-			reflect.ValueOf(&data).Elem().Field(i).Set(reflect.MakeSlice(field.Type, 1, 1))
+			value := reflect.New(field.Type.Elem())
+			if field.Type.Kind() == reflect.Slice {
+				value = reflect.MakeSlice(field.Type, 1, 1)
+			}
+			reflect.ValueOf(&data).Elem().Field(i).Set(value)
 			if hashDashboardSnapshot(&data) == first {
 				t.Fatal("panel omitted from hash")
 			}
 		})
+	}
+}
+
+func TestDashboardSnapshotSSEEmitsChangedStateWithoutPageLoads(t *testing.T) {
+	f := &snapshotFixture{title: "first"}
+	h, api := newSnapshotHarness(t, f)
+	h.cacheTTL = 30 * time.Millisecond
+	mux := http.NewServeMux()
+	mux.Handle("/api/", api)
+	mux.Handle("/", h)
+	server := httptest.NewServer(mux)
+	defer server.Close()
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	req, _ := http.NewRequestWithContext(ctx, "GET", server.URL+"/api/events", nil)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	events := make(chan string, 10)
+	go func() {
+		defer close(events)
+		scan := bufio.NewScanner(resp.Body)
+		for scan.Scan() {
+			if strings.HasPrefix(scan.Text(), "data: ") && scan.Text() != "data: ok" {
+				events <- scan.Text()
+			}
+		}
+	}()
+	next := func() string {
+		t.Helper()
+		select {
+		case value := <-events:
+			if value == "" {
+				t.Fatal("stream ended")
+			}
+			return value
+		case <-time.After(3 * time.Second):
+			t.Fatal("missing dashboard-update")
+			return ""
+		}
+	}
+	first := next()
+	select {
+	case value := <-events:
+		t.Fatalf("unchanged snapshot emitted %s", value)
+	case <-time.After(2200 * time.Millisecond):
+	}
+	f.mu.Lock()
+	f.title = "changed without page load"
+	f.mu.Unlock()
+	changed := next()
+	if changed == first {
+		t.Fatal("change event reused initial hash")
+	}
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, httptest.NewRequest("GET", "/", nil))
+	if !strings.Contains(w.Body.String(), "changed without page load") {
+		t.Fatal("SSE and HTML disagree")
+	}
+}
+
+func TestDashboardSnapshotLiveActivityDoesNotInventChanges(t *testing.T) {
+	timestamp := time.Now().Add(-2 * time.Minute)
+	firstActivity := activity.Calculate(timestamp)
+	secondActivity := activity.Calculate(timestamp)
+	first := &ConvoyData{Workers: []WorkerRow{{LastActivity: firstActivity}}, Convoys: []ConvoyRow{{ID: "hq-live", LastActivity: firstActivity}}}
+	second := &ConvoyData{Workers: []WorkerRow{{LastActivity: secondActivity}}, Convoys: []ConvoyRow{{ID: "hq-live", LastActivity: secondActivity}}}
+	if firstActivity.Duration == secondActivity.Duration {
+		t.Fatal("fixture failed to advance duration")
+	}
+	if hashDashboardSnapshot(first) != hashDashboardSnapshot(second) {
+		t.Fatal("unrendered elapsed duration invented a dashboard change")
+	}
+	second.Workers[0].LastActivity.ColorClass = "red"
+	if hashDashboardSnapshot(first) == hashDashboardSnapshot(second) {
+		t.Fatal("visible activity color change hidden")
+	}
+}
+
+func TestDashboardSnapshotNewClientDuringCancelledDrain(t *testing.T) {
+	block := make(chan struct{})
+	f := &snapshotFixture{title: "after drain", block: block, started: make(chan struct{}, 1)}
+	h, api := newSnapshotHarness(t, f)
+	ctx, cancel := context.WithCancel(context.Background())
+	first := make(chan string, 1)
+	go func() { first <- api.computeDashboardHash(ctx) }()
+	<-f.started
+	cancel()
+	<-first
+	newCtx, newCancel := context.WithTimeout(context.Background(), time.Second)
+	defer newCancel()
+	response := httptest.NewRecorder()
+	done := make(chan struct{})
+	go func() { h.ServeHTTP(response, httptest.NewRequest("GET", "/", nil).WithContext(newCtx)); close(done) }()
+	// Allow the new client to join while the cancelled fetch deliberately drains.
+	select {
+	case <-done:
+		close(block)
+		t.Fatalf("new client returned during cancelled drain: status=%d bytes=%d", response.Code, response.Body.Len())
+	case <-time.After(20 * time.Millisecond):
+	}
+	f.mu.Lock()
+	f.block = nil
+	f.mu.Unlock()
+	close(block)
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("new client did not retry after drain")
+	}
+	if response.Code != 200 || !strings.Contains(response.Body.String(), "after drain") {
+		t.Fatalf("new client got status=%d bytes=%d", response.Code, response.Body.Len())
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.calls != 2 {
+		t.Fatalf("refreshes=%d, want cancelled plus retry", f.calls)
 	}
 }

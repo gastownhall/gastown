@@ -60,6 +60,8 @@ type dashboardRefresh struct {
 	cancel    context.CancelFunc
 	waiters   int
 	published bool
+	abandoned bool
+	drained   chan struct{}
 }
 
 // defaultCacheTTL is the minimum interval between full dashboard fetches.
@@ -86,6 +88,7 @@ func NewConvoyHandler(fetcher ConvoyFetcher, fetchTimeout time.Duration, csrfTok
 func (h *ConvoyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	data, _ := h.snapshot(r.Context())
 	if data == nil {
+		http.Error(w, "Dashboard refresh unavailable; retry shortly", http.StatusServiceUnavailable)
 		return
 	}
 	view := *data
@@ -108,39 +111,53 @@ func (h *ConvoyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 // snapshot starts a refresh even without a page load. All callers share it;
 // disconnecting waiters leave promptly, and the final waiter cancels its work.
 func (h *ConvoyHandler) snapshot(ctx context.Context) (*ConvoyData, string) {
-	if ctx.Err() != nil {
-		return nil, ""
-	}
-	h.cacheMu.Lock()
-	if !h.cacheTime.IsZero() && time.Since(h.cacheTime) < h.cacheTTL {
+	for {
+		if ctx.Err() != nil {
+			return nil, ""
+		}
+		h.cacheMu.Lock()
+		if !h.cacheTime.IsZero() && time.Since(h.cacheTime) < h.cacheTTL {
+			data, hash := h.cacheData, h.cacheHash
+			h.cacheMu.Unlock()
+			return data, hash
+		}
+		flight := h.refresh
+		if flight != nil && flight.abandoned {
+			// A new client must not join work cancelled by its last predecessor.
+			// Wait for cleanup, then retry within this client's own deadline.
+			h.cacheMu.Unlock()
+			select {
+			case <-ctx.Done():
+				return nil, ""
+			case <-flight.drained:
+				continue
+			}
+		}
+		if flight == nil {
+			workCtx, cancel := context.WithTimeout(context.Background(), h.fetchTimeout)
+			flight = &dashboardRefresh{ready: make(chan struct{}), drained: make(chan struct{}), cancel: cancel}
+			h.refresh = flight
+			go h.refreshSnapshot(workCtx, flight, h.cacheData)
+		}
+		flight.waiters++
+		h.cacheMu.Unlock()
+		select {
+		case <-ctx.Done():
+		case <-flight.ready:
+		}
+		h.cacheMu.Lock()
+		flight.waiters--
+		if flight.waiters == 0 && !flight.published {
+			flight.abandoned = true
+			flight.cancel()
+		}
 		data, hash := h.cacheData, h.cacheHash
 		h.cacheMu.Unlock()
+		if ctx.Err() != nil {
+			return nil, ""
+		}
 		return data, hash
 	}
-	flight := h.refresh
-	if flight == nil {
-		workCtx, cancel := context.WithTimeout(context.Background(), h.fetchTimeout)
-		flight = &dashboardRefresh{ready: make(chan struct{}), cancel: cancel}
-		h.refresh = flight
-		go h.refreshSnapshot(workCtx, flight, h.cacheData)
-	}
-	flight.waiters++
-	h.cacheMu.Unlock()
-	select {
-	case <-ctx.Done():
-	case <-flight.ready:
-	}
-	h.cacheMu.Lock()
-	flight.waiters--
-	if flight.waiters == 0 && !flight.published {
-		flight.cancel()
-	}
-	data, hash := h.cacheData, h.cacheHash
-	h.cacheMu.Unlock()
-	if ctx.Err() != nil {
-		return nil, ""
-	}
-	return data, hash
 }
 
 func (h *ConvoyHandler) refreshSnapshot(ctx context.Context, flight *dashboardRefresh, previous *ConvoyData) {
@@ -159,6 +176,7 @@ func (h *ConvoyHandler) refreshSnapshot(ctx context.Context, flight *dashboardRe
 	flight.cancel()
 	h.cacheMu.Lock()
 	h.refresh = nil
+	close(flight.drained)
 	h.cacheMu.Unlock()
 }
 
@@ -177,6 +195,12 @@ func (h *ConvoyHandler) fetchSnapshot(ctx context.Context, previous *ConvoyData)
 		*data = *previous
 	}
 	data.PanelErrors = make(map[string]string)
+	data.panelSuccess = make(map[string]bool)
+	if previous != nil {
+		for name, success := range previous.panelSuccess {
+			data.panelSuccess[name] = success
+		}
+	}
 	fetcher := h.fetcher
 	if contextual, ok := fetcher.(interface {
 		WithContext(context.Context) ConvoyFetcher
@@ -253,7 +277,7 @@ func (h *ConvoyHandler) fetchSnapshot(ctx context.Context, previous *ConvoyData)
 	failed := func(name string, err error) {
 		log.Printf("dashboard: %s refresh failed: %v", name, err)
 		message := "Unavailable; refresh will retry."
-		if previous != nil && previous.PanelErrors[name] != "Unavailable; refresh will retry." {
+		if data.panelSuccess[name] {
 			message = "Refresh failed; showing last known data."
 		}
 		data.PanelErrors[name] = message
@@ -266,6 +290,7 @@ func (h *ConvoyHandler) fetchSnapshot(ctx context.Context, previous *ConvoyData)
 				failed(result.name, result.err)
 			} else {
 				result.apply(data)
+				data.panelSuccess[result.name] = true
 			}
 		case <-ctx.Done():
 			for name := range pending {
@@ -275,6 +300,16 @@ func (h *ConvoyHandler) fetchSnapshot(ctx context.Context, previous *ConvoyData)
 		}
 	}
 	// Enrichment must not mutate slices belonging to the previous snapshot.
+	data.Workers = append([]WorkerRow(nil), data.Workers...)
+	for i := range data.Workers {
+		if data.Workers[i].Name == "refinery" {
+			if _, failed := data.PanelErrors["MergeQueue"]; failed {
+				data.Workers[i].StatusHint = "Merge queue unavailable (see panel notice)"
+			} else {
+				data.Workers[i].StatusHint = refineryStatusHint(len(data.MergeQueue))
+			}
+		}
+	}
 	data.Issues = append([]IssueRow(nil), data.Issues...)
 	data.Issues = enrichIssuesWithAssignees(data.Issues, data.Hooks)
 	data.Summary = computeSummary(data.Workers, data.Hooks, data.Issues, data.Convoys, data.Escalations, data.Activity)
@@ -284,7 +319,18 @@ func (h *ConvoyHandler) fetchSnapshot(ctx context.Context, previous *ConvoyData)
 // Hash every panel and its availability. Canonicalize top-level row order so
 // unordered source results cannot cause a refresh loop; no field is omitted.
 func hashDashboardSnapshot(data *ConvoyData) string {
-	raw, _ := json.Marshal(data)
+	// Duration is a continuously advancing calculation, not rendered state.
+	// Keep source timestamps, formatted ages and colors so real changes remain visible.
+	normalized := *data
+	normalized.Workers = append([]WorkerRow(nil), data.Workers...)
+	normalized.Convoys = append([]ConvoyRow(nil), data.Convoys...)
+	for i := range normalized.Workers {
+		normalized.Workers[i].LastActivity.Duration = 0
+	}
+	for i := range normalized.Convoys {
+		normalized.Convoys[i].LastActivity.Duration = 0
+	}
+	raw, _ := json.Marshal(normalized)
 	var fields map[string]json.RawMessage
 	_ = json.Unmarshal(raw, &fields)
 	var parts []string
