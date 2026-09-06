@@ -147,7 +147,9 @@
                                 <tr class="convoy-row" data-convoy-id="{{.ID}}">
                                     <td>
                                         <span class="convoy-toggle">▶</span>
-                                        {{if eq .WorkStatus "complete"}}
+                                        {{if eq .WorkStatus "unknown"}}
+                                        <span class="badge badge-muted" title="Some tracked issues could not be loaded">Unknown ({{.UnknownBeads}})</span>
+                                        {{else if eq .WorkStatus "complete"}}
                                         <span class="badge badge-green" title="All issues completed">✓ Done</span>
                                         {{else if eq .WorkStatus "active"}}
                                         <span class="badge badge-green" title="Workers actively progressing">Active</span>

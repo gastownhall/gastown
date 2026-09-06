@@ -1,84 +1,71 @@
 package web
 
 import (
-	"bytes"
-	"errors"
+	"os"
+	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
 )
 
-func TestGetIssueDetailsBatch_ReturnsStructuredErrorOnCommandFailure(t *testing.T) {
-	original := fetcherRunCmd
-	t.Cleanup(func() {
-		fetcherRunCmd = original
-	})
+// Every invocation uses an absolute fixture executable, never a live gt or bd.
+func convoyFixtureFetcher(t *testing.T, script string) *LiveConvoyFetcher {
+	t.Helper()
+	if runtime.GOOS == "windows" {
+		t.Skip("shell command fixtures")
+	}
+	dir, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(dir, "gt")
+	if err := os.WriteFile(path, []byte("#!/bin/sh\n"+script), 0755); err != nil {
+		t.Fatal(err)
+	}
+	return &LiveConvoyFetcher{townRoot: dir, gtBin: path, cmdTimeout: 5 * time.Second}
+}
 
-	fetcherRunCmd = func(_ time.Duration, _ string, _ ...string) (*bytes.Buffer, error) {
-		return nil, errors.New("boom")
-	}
-
-	f := &LiveConvoyFetcher{cmdTimeout: 100 * time.Millisecond}
-	_, err := f.getIssueDetailsBatch([]string{"gt-1", "gt-2"})
-	if err == nil {
-		t.Fatal("expected error, got nil")
-	}
-	if !strings.Contains(err.Error(), "bd show failed") {
-		t.Fatalf("expected structured failure context, got: %v", err)
-	}
-	if !strings.Contains(err.Error(), "issue_count=2") {
-		t.Fatalf("expected issue count in error, got: %v", err)
+func TestConvoyListReturnsStructuredErrorOnCommandFailure(t *testing.T) {
+	f := convoyFixtureFetcher(t, "exit 1\n")
+	_, err := f.FetchConvoys()
+	if err == nil || !strings.Contains(err.Error(), "gt convoy list failed") {
+		t.Fatalf("expected command failure context, got: %v", err)
 	}
 }
 
-func TestGetIssueDetailsBatch_ReturnsStructuredErrorOnInvalidJSON(t *testing.T) {
-	original := fetcherRunCmd
-	t.Cleanup(func() {
-		fetcherRunCmd = original
-	})
-
-	fetcherRunCmd = func(_ time.Duration, _ string, _ ...string) (*bytes.Buffer, error) {
-		return bytes.NewBufferString("{invalid"), nil
-	}
-
-	f := &LiveConvoyFetcher{cmdTimeout: 100 * time.Millisecond}
-	_, err := f.getIssueDetailsBatch([]string{"gt-9"})
-	if err == nil {
-		t.Fatal("expected error, got nil")
-	}
-	if !strings.Contains(err.Error(), "invalid JSON") {
+func TestConvoyListReturnsStructuredErrorOnInvalidJSON(t *testing.T) {
+	f := convoyFixtureFetcher(t, "printf '{invalid'\n")
+	_, err := f.FetchConvoys()
+	if err == nil || !strings.Contains(err.Error(), "parsing convoy list") {
 		t.Fatalf("expected parse context, got: %v", err)
 	}
-	if !strings.Contains(err.Error(), "issue_count=1") {
-		t.Fatalf("expected issue count in error, got: %v", err)
+}
+
+func TestConvoyListRejectsMissingHydration(t *testing.T) {
+	f := convoyFixtureFetcher(t, `echo '[{"id":"hq-cv-missing","title":"Missing tracked data"}]'`)
+	_, err := f.FetchConvoys()
+	if err == nil || !strings.Contains(err.Error(), "missing tracked issue data") {
+		t.Fatalf("missing data must not become a false 0/0 convoy: %v", err)
 	}
 }
 
-func TestGetIssueDetailsBatch_ParsesIssueDetails(t *testing.T) {
-	original := fetcherRunCmd
-	t.Cleanup(func() {
-		fetcherRunCmd = original
-	})
-
-	fetcherRunCmd = func(_ time.Duration, _ string, _ ...string) (*bytes.Buffer, error) {
-		return bytes.NewBufferString(`[
-			{"id":"gt-1","title":"One","status":"open","assignee":"rig/polecats/a","updated_at":"2026-02-01T12:00:00Z"},
-			{"id":"gt-2","title":"Two","status":"closed","assignee":"","updated_at":"2026-02-01T12:01:00Z"}
-		]`), nil
+func TestConvoyListBoundsCommandAndClearsCallerDatabase(t *testing.T) {
+	t.Setenv("BEADS_DIR", "/wrong/rig/.beads")
+	t.Setenv("BEADS_DB", "/wrong/database")
+	t.Setenv("BD_DB", "/wrong/database")
+	f := convoyFixtureFetcher(t, `
+if [ -n "$BEADS_DIR$BEADS_DB$BD_DB" ]; then exit 1; fi
+if [ "$PWD/gt" != "$0" ]; then exit 1; fi
+echo '[]'
+`)
+	if _, err := f.FetchConvoys(); err != nil {
+		t.Fatal(err)
 	}
-
-	f := &LiveConvoyFetcher{cmdTimeout: 100 * time.Millisecond}
-	details, err := f.getIssueDetailsBatch([]string{"gt-1", "gt-2"})
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if len(details) != 2 {
-		t.Fatalf("expected 2 details, got %d", len(details))
-	}
-	if details["gt-1"] == nil || details["gt-1"].Title != "One" {
-		t.Fatalf("unexpected parsed details for gt-1: %#v", details["gt-1"])
-	}
-	if details["gt-2"] == nil || details["gt-2"].Status != "closed" {
-		t.Fatalf("unexpected parsed details for gt-2: %#v", details["gt-2"])
+	f = convoyFixtureFetcher(t, "exec sleep 10\n")
+	f.cmdTimeout = 100 * time.Millisecond
+	_, err := f.FetchConvoys()
+	if err == nil || !strings.Contains(err.Error(), "timed out") {
+		t.Fatalf("expected bounded command, got: %v", err)
 	}
 }

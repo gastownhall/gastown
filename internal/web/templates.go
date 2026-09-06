@@ -207,6 +207,7 @@ type ConvoyRow struct {
 	Completed     int
 	Total         int
 	ProgressPct   int      // 0-100, computed from Completed/Total
+	UnknownBeads  int      // Tracked issues whose cross-rig details are unavailable
 	ReadyBeads    int      // open beads with no assignee (available to pick up)
 	InProgress    int      // beads currently being worked on
 	Assignees     []string // unique assignees across tracked issues
