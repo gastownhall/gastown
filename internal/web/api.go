@@ -62,6 +62,8 @@ type APIHandler struct {
 	optionsCacheMu   sync.RWMutex
 	// cmdSem limits concurrent command executions to prevent resource exhaustion.
 	cmdSem chan struct{}
+	// dashboard supplies the same independently refreshed snapshot as HTML.
+	dashboard *ConvoyHandler
 	// csrfToken is validated on POST requests to prevent cross-site request forgery.
 	csrfToken string
 }
@@ -242,8 +244,12 @@ func (h *APIHandler) runGtCommand(ctx context.Context, timeout time.Duration, ar
 	}
 
 	cmd := exec.CommandContext(ctx, h.gtPath, args...)
+	configureWebCommand(cmd)
 	if h.workDir != "" {
 		cmd.Dir = h.workDir
+	}
+	if managedDashboardRead(args) {
+		configureWebReadCommand(cmd)
 	}
 	// Ensure the command doesn't wait for stdin
 	cmd.Stdin = nil
@@ -1388,6 +1394,7 @@ func (h *APIHandler) runBdCommand(ctx context.Context, timeout time.Duration, ar
 	}
 
 	cmd := exec.CommandContext(ctx, "bd", args...)
+	configureWebCommand(cmd)
 	if h.workDir != "" {
 		cmd.Dir = h.workDir
 	}
@@ -1666,6 +1673,7 @@ func (h *APIHandler) runGhCommand(ctx context.Context, timeout time.Duration, ar
 	}
 
 	cmd := exec.CommandContext(ctx, "gh", args...)
+	configureWebCommand(cmd)
 	if h.workDir != "" {
 		cmd.Dir = h.workDir
 	}
@@ -2225,55 +2233,20 @@ func (h *APIHandler) handleSSE(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// computeDashboardHash generates a lightweight hash of key dashboard state.
-// It runs quick commands in parallel and hashes their output to detect changes.
+// computeDashboardHash reads the shared dashboard snapshot. It never launches
+// status/hooks/mail CLI probes, which duplicate reads and can starve SSE.
 func (h *APIHandler) computeDashboardHash(ctx context.Context) string {
-	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
-	defer cancel()
-
-	var mu sync.Mutex
-	var parts []string
-
-	var wg sync.WaitGroup
-	wg.Add(3)
-
-	// Check worker/polecat state
-	go func() {
-		defer wg.Done()
-		if out, err := h.runGtCommand(ctx, 3*time.Second, []string{"status", "--json"}); err == nil {
-			mu.Lock()
-			parts = append(parts, "status:"+out)
-			mu.Unlock()
-		}
-	}()
-
-	// Check hooks state
-	go func() {
-		defer wg.Done()
-		if out, err := h.runGtCommand(ctx, 3*time.Second, []string{"hooks", "list"}); err == nil {
-			mu.Lock()
-			parts = append(parts, "hooks:"+out)
-			mu.Unlock()
-		}
-	}()
-
-	// Check mail count
-	go func() {
-		defer wg.Done()
-		if out, err := h.runGtCommand(ctx, 3*time.Second, []string{"mail", "inbox"}); err == nil {
-			mu.Lock()
-			parts = append(parts, "mail:"+out)
-			mu.Unlock()
-		}
-	}()
-
-	wg.Wait()
-
-	if len(parts) == 0 {
+	if h.dashboard == nil {
 		return ""
 	}
+	_, hash := h.dashboard.snapshot(ctx)
+	return hash
+}
 
-	h256 := sha256.Sum256([]byte(strings.Join(parts, "|")))
+func hashDashboardParts(parts []string) string {
+	canonical := append([]string(nil), parts...)
+	sort.Strings(canonical)
+	h256 := sha256.Sum256([]byte(strings.Join(canonical, "|")))
 	return fmt.Sprintf("%x", h256[:8])
 }
 

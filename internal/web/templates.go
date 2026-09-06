@@ -15,23 +15,27 @@ var templateFS embed.FS
 
 // ConvoyData represents data passed to the convoy template.
 type ConvoyData struct {
-	Convoys     []ConvoyRow
-	MergeQueue  []MergeQueueRow
-	Workers     []WorkerRow
-	Mail        []MailRow
-	Rigs        []RigRow
-	Dogs        []DogRow
-	Escalations []EscalationRow
-	Health      *HealthRow
-	Queues      []QueueRow
-	Sessions    []SessionRow
-	Hooks       []HookRow
-	Mayor       *MayorStatus
-	Issues      []IssueRow
-	Activity    []ActivityRow
-	Summary     *DashboardSummary
-	Expand      string // Panel to show fullscreen (from ?expand=name)
-	CSRFToken   string // Token for CSRF protection on POST requests
+	panelSuccess map[string]bool   // Last-good availability, independent of rendered error wording.
+	PanelErrors  map[string]string // Explicit unavailable or stale panels; never raw command errors.
+	Convoys      []ConvoyRow
+	MergeQueue   []MergeQueueRow
+	Workers      []WorkerRow
+	Mail         []MailRow
+	Rigs         []RigRow
+	Dogs         []DogRow
+	Escalations  []EscalationRow
+	Health       *HealthRow
+	Queues       []QueueRow
+	Sessions     []SessionRow
+	Hooks        []HookRow
+	Mayor        *MayorStatus
+	Issues       []IssueRow
+	Activity     []ActivityRow
+	Summary      *DashboardSummary
+	Expand       string // Panel to show fullscreen (from ?expand=name)
+	CSRFToken    string // Token for CSRF protection on POST requests
+
+	EmbedParentOrigin string // Explicit server-configured trusted Canvas origin
 }
 
 // RigRow represents a registered rig in the dashboard.
@@ -205,6 +209,7 @@ type ConvoyRow struct {
 	Completed     int
 	Total         int
 	ProgressPct   int      // 0-100, computed from Completed/Total
+	UnknownBeads  int      // Tracked issues whose cross-rig details are unavailable
 	ReadyBeads    int      // open beads with no assignee (available to pick up)
 	InProgress    int      // beads currently being worked on
 	Assignees     []string // unique assignees across tracked issues
@@ -232,7 +237,7 @@ func LoadTemplates() (*template.Template, error) {
 		"dogStateClass":      dogStateClass,
 		"queueStatusClass":   queueStatusClass,
 		"polecatStatusClass": polecatStatusClass,
-		"activityTypeClass": activityTypeClass,
+		"activityTypeClass":  activityTypeClass,
 		"contains": func(s, substr string) bool {
 			return strings.Contains(s, substr)
 		},

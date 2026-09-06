@@ -573,8 +573,8 @@ func TestConvoyHandler_HTMXAutoRefresh(t *testing.T) {
 	if !strings.Contains(body, "hx-trigger") {
 		t.Error("Response should contain hx-trigger attribute for HTMX")
 	}
-	if !strings.Contains(body, "sse:dashboard-update") {
-		t.Error("Response should contain 'sse:dashboard-update' trigger for SSE")
+	if !strings.Contains(body, "dashboard-update") {
+		t.Error("Response should contain 'dashboard-update' trigger for SSE")
 	}
 	if !strings.Contains(body, "every 30s") {
 		t.Error("Response should contain 'every 30s' polling fallback")
@@ -743,7 +743,7 @@ func TestE2E_Server_FullDashboard(t *testing.T) {
 		{"PR repo", "roxas"},
 		{"Polecats section", "Polecats"},
 		{"Polecat name", "furiosa"},
-		{"HTMX SSE trigger", `hx-trigger="sse:dashboard-update`},
+		{"HTMX SSE trigger", `hx-trigger="dashboard-update`},
 	}
 
 	for _, check := range checks {
@@ -1151,8 +1151,8 @@ func TestConvoyHandler_CachePreventsDuplicateFetches(t *testing.T) {
 	}
 }
 
-// TestConvoyHandler_CacheBypassOnExpand verifies that ?expand= requests bypass
-// the normal response cache but have their own per-panel expand cache (GH#3117).
+// TestConvoyHandler_CacheBypassOnExpand verifies that expanded templates reuse
+// the same snapshot as normal requests without additional fetches (GH#3117).
 func TestConvoyHandler_CacheBypassOnExpand(t *testing.T) {
 	fetchCount := 0
 	mock := &CountingMockFetcher{
@@ -1175,22 +1175,22 @@ func TestConvoyHandler_CacheBypassOnExpand(t *testing.T) {
 		t.Fatalf("After first request, fetchCount = %d, want 1", fetchCount)
 	}
 
-	// First expand request — should bypass normal cache (different template)
+	// First expand request — different template, same snapshot
 	req2 := httptest.NewRequest("GET", "/?expand=convoys", nil)
 	w2 := httptest.NewRecorder()
 	handler.ServeHTTP(w2, req2)
 
-	if fetchCount != 2 {
-		t.Errorf("First expand request fetchCount = %d, want 2 (should bypass normal cache)", fetchCount)
+	if fetchCount != 1 {
+		t.Errorf("First expand request fetchCount = %d, want 1 (shared snapshot)", fetchCount)
 	}
 
-	// Second identical expand request — should hit expand cache (GH#3117)
+	// Second identical expand request — still the same snapshot (GH#3117)
 	req3 := httptest.NewRequest("GET", "/?expand=convoys", nil)
 	w3 := httptest.NewRecorder()
 	handler.ServeHTTP(w3, req3)
 
-	if fetchCount != 2 {
-		t.Errorf("Second expand request fetchCount = %d, want 2 (should hit expand cache)", fetchCount)
+	if fetchCount != 1 {
+		t.Errorf("Second expand request fetchCount = %d, want 1 (shared snapshot)", fetchCount)
 	}
 }
 

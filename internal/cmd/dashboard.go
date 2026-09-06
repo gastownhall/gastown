@@ -19,9 +19,10 @@ import (
 )
 
 var (
-	dashboardPort int
-	dashboardBind string
-	dashboardOpen bool
+	dashboardPort              int
+	dashboardBind              string
+	dashboardOpen              bool
+	dashboardEmbedParentOrigin string
 )
 
 var dashboardCmd = &cobra.Command{
@@ -52,10 +53,14 @@ func init() {
 	}
 	dashboardCmd.Flags().StringVar(&dashboardBind, "bind", defaultBind, "Address to bind to (use 0.0.0.0 for all interfaces)")
 	dashboardCmd.Flags().BoolVar(&dashboardOpen, "open", false, "Open browser automatically")
+	dashboardCmd.Flags().StringVar(&dashboardEmbedParentOrigin, "embed-parent-origin", "", "Trusted Canvas origin for opt-in frame navigation (HTTPS or loopback HTTP)")
 	rootCmd.AddCommand(dashboardCmd)
 }
 
 func runDashboard(cmd *cobra.Command, args []string) error {
+	if err := web.ValidateEmbedParentOrigin(dashboardEmbedParentOrigin); err != nil {
+		return err
+	}
 	// Check if we're in a workspace - if not, run in setup mode
 	var handler http.Handler
 	var err error
@@ -63,6 +68,9 @@ func runDashboard(cmd *cobra.Command, args []string) error {
 
 	townRoot, wsErr := workspace.FindFromCwdOrError()
 	if wsErr != nil {
+		if dashboardEmbedParentOrigin != "" {
+			return fmt.Errorf("embedded dashboard requires an initialized workspace; setup cannot be embedded")
+		}
 		// No workspace - run in setup mode
 		handler, err = web.NewSetupMux()
 		if err != nil {
@@ -90,7 +98,13 @@ func runDashboard(cmd *cobra.Command, args []string) error {
 			fmt.Fprintf(cmd.ErrOrStderr(), "warning: loading town settings: %v (using defaults)\n", loadErr)
 		}
 
-		handler, err = web.NewDashboardMux(fetcher, webCfg)
+		// Resolve only at the CLI entry point: library tests must never discover
+		// and launch their own test executable as gt.
+		gtPath, executableErr := os.Executable()
+		if executableErr != nil {
+			return fmt.Errorf("locating dashboard executable: %w", executableErr)
+		}
+		handler, err = web.NewDashboardMuxWithOptions(fetcher, webCfg, web.DashboardOptions{EmbedParentOrigin: dashboardEmbedParentOrigin, GTPath: gtPath})
 		if err != nil {
 			return fmt.Errorf("creating dashboard handler: %w", err)
 		}

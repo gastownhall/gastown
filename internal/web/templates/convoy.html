@@ -4,13 +4,14 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta name="dashboard-token" content="{{.CSRFToken}}">
+    {{if .EmbedParentOrigin}}<meta name="dashboard-parent-origin" content="{{.EmbedParentOrigin}}">{{end}}
     <title>Gas Town Control Center</title>
     <script src="https://unpkg.com/htmx.org@1.9.10"></script>
     <script src="https://unpkg.com/idiomorph@0.3.0/dist/idiomorph-ext.min.js"></script>
     <link rel="stylesheet" href="/static/dashboard.css">
 </head>
 <body>
-    <div class="dashboard" id="dashboard-main" hx-get="/" hx-trigger="sse:dashboard-update, every 30s [!window.pauseRefresh && !window.sseConnected]" hx-swap="morph:outerHTML" hx-ext="morph">
+    <div class="dashboard" id="dashboard-main" hx-get="/" hx-select="#dashboard-main" hx-trigger="dashboard-update, every 30s [!window.pauseRefresh && !window.sseConnected]" hx-swap="morph:outerHTML" hx-ext="morph">
         <header>
             <pre class="ascii-title">  __  __    __   _____ __  _   _  __  _    ___ __  __  _ _____ ___  __  _      ______ __  _ _____ ___ ___ 
  / _]/  \ /' _| |_   _/__\| | | ||  \| |  / _//__\|  \| |_   _| _ \/__\| |    / _/ __|  \| |_   _| __| _ \
@@ -26,6 +27,12 @@
                 </span>
             </div>
         </header>
+
+        {{if .PanelErrors}}
+        <div class="snapshot-errors" role="status" aria-live="polite">
+            {{range $panel, $message := .PanelErrors}}<div><strong>{{$panel}}</strong>: {{$message}}</div>{{end}}
+        </div>
+        {{end}}
 
         <!-- Mayor Status Banner -->
         <div class="mayor-banner {{if .Mayor}}{{if .Mayor.IsAttached}}attached{{else}}detached{{end}}{{else}}detached{{end}}">
@@ -146,7 +153,9 @@
                                 <tr class="convoy-row" data-convoy-id="{{.ID}}">
                                     <td>
                                         <span class="convoy-toggle">▶</span>
-                                        {{if eq .WorkStatus "complete"}}
+                                        {{if eq .WorkStatus "unknown"}}
+                                        <span class="badge badge-muted" title="Some tracked issues could not be loaded">Unknown ({{.UnknownBeads}})</span>
+                                        {{else if eq .WorkStatus "complete"}}
                                         <span class="badge badge-green" title="All issues completed">✓ Done</span>
                                         {{else if eq .WorkStatus "active"}}
                                         <span class="badge badge-green" title="Workers actively progressing">Active</span>
@@ -205,7 +214,7 @@
                         </div>
                         <div class="convoy-detail-content">
                             <div class="convoy-detail-meta">
-                                <span id="convoy-detail-id" class="convoy-id"></span>
+                                <button id="convoy-detail-id" class="bead-link convoy-id" data-bead-focus=""></button>
                                 <span id="convoy-detail-status" class="badge"></span>
                                 <span id="convoy-detail-progress"></span>
                             </div>
@@ -323,7 +332,7 @@
                                 <td><span class="polecat-rig">{{.Rig}}</span></td>
                                 <td class="polecat-issue">
                                     {{if .IssueID}}
-                                    <span class="issue-id">{{.IssueID}}</span>
+                                    <button class="bead-link issue-id" data-bead-focus="{{.IssueID}}">{{.IssueID}}</button>
                                     <span class="issue-title">{{.IssueTitle}}</span>
                                     {{else}}
                                     <span class="no-issue">—</span>
@@ -984,7 +993,7 @@
                         <tbody>
                             {{range .Hooks}}
                             <tr class="{{if .IsStale}}hook-stale{{end}}">
-                                <td><span class="hook-id">{{.ID}}</span></td>
+                                <td><button class="bead-link hook-id" data-bead-focus="{{.ID}}">{{.ID}}</button></td>
                                 <td class="hook-title">{{.Title}}</td>
                                 <td class="hook-agent">{{.Agent}}</td>
                                 <td class="hook-age">
@@ -1074,6 +1083,7 @@
         <div id="output-panel-content" class="output-panel-content"></div>
     </div>
 
-    <script src="/static/dashboard.js?v=3"></script>
+    <script src="/static/embed.js?v=1"></script>
+    <script src="/static/dashboard.js?v=5"></script>
 </body>
 </html>
