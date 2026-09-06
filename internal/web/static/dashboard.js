@@ -1080,7 +1080,7 @@
                             '<td><span class="crew-name">' + escapeHtml(member.name) + '</span></td>' +
                             '<td><span class="crew-rig">' + escapeHtml(member.rig) + '</span></td>' +
                             '<td><span class="' + stateClass + '">' + stateIcon + stateText + '</span></td>' +
-                            '<td><span class="crew-hook">' + (member.hook ? escapeHtml(member.hook) : '—') + '</span></td>' +
+                            '<td><span class="crew-hook">' + (member.hook ? '<button class="bead-link" data-bead-focus="' + escapeHtml(member.hook) + '">' + escapeHtml(member.hook) + '</button>' : '—') + '</span></td>' +
                             '<td class="crew-activity">' + (member.last_active || '—') + '</td>' +
                             '<td>' + sessionBadge + '</td>' +
                             '<td><button class="attach-btn" data-cmd="' + escapeHtml(attachCmd) + '" title="Copy attach command">📎 Attach</button></td>';
@@ -1639,7 +1639,7 @@
 
                 tr.innerHTML =
                     '<td class="convoy-issue-status">' + statusBadge + '</td>' +
-                    '<td><span class="issue-id">' + escapeHtml(issue.id) + '</span></td>' +
+                    '<td><button class="bead-link issue-id" data-bead-focus="' + escapeHtml(issue.id) + '">' + escapeHtml(issue.id) + '</button></td>' +
                     '<td class="issue-title">' + escapeHtml(issue.title || '') + '</td>' +
                     '<td>' + (issue.assignee ? '<span class="badge badge-blue">' + escapeHtml(issue.assignee) + '</span>' : '<span class="badge badge-muted">Unassigned</span>') + '</td>' +
                     '<td>' + escapeHtml(issue.progress || '') + '</td>';
@@ -2160,12 +2160,20 @@
 
     // Click on issue row to view details
     document.addEventListener('click', function(e) {
+        if (e.target.closest('button, a, input, select, textarea') && !e.target.closest('[data-bead-focus]')) return;
+        var beadLink = e.target.closest('[data-bead-focus]');
+        if (beadLink) {
+            e.preventDefault();
+            var beadId = beadLink.getAttribute('data-bead-focus');
+            if (!window.dashboardFocusBead(beadId)) openIssueDetail(beadId);
+            return;
+        }
         var issueRow = e.target.closest('.issue-row');
         if (issueRow && issueRow.hasAttribute('data-issue-id')) {
             e.preventDefault();
             var issueId = issueRow.getAttribute('data-issue-id');
             if (issueId) {
-                openIssueDetail(issueId);
+                if (!window.dashboardFocusBead(issueId)) openIssueDetail(issueId);
             }
         }
 
@@ -2175,7 +2183,7 @@
             e.preventDefault();
             var depId = depItem.getAttribute('data-issue-id');
             if (depId) {
-                openIssueDetail(depId);
+                if (!window.dashboardFocusBead(depId)) openIssueDetail(depId);
             }
         }
     });
@@ -3207,7 +3215,7 @@
 
             html += '<tr class="tracked-issue-row tracked-issue-' + escapeHtml(issue.status) + '">' +
                 '<td>' + statusBadge + '</td>' +
-                '<td><span class="issue-id">' + escapeHtml(issue.id) + '</span></td>' +
+                '<td><button class="bead-link issue-id" data-bead-focus="' + escapeHtml(issue.id) + '">' + escapeHtml(issue.id) + '</button></td>' +
                 '<td class="tracked-issue-title">' + escapeHtml(issue.title) + '</td>' +
                 '<td class="tracked-issue-assignee">' + escapeHtml(assignee) + '</td>' +
                 '<td class="tracked-issue-progress">' + progress + '</td>' +

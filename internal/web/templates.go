@@ -32,6 +32,8 @@ type ConvoyData struct {
 	Summary     *DashboardSummary
 	Expand      string // Panel to show fullscreen (from ?expand=name)
 	CSRFToken   string // Token for CSRF protection on POST requests
+
+	EmbedParentOrigin string // Explicit server-configured trusted Canvas origin
 }
 
 // RigRow represents a registered rig in the dashboard.
@@ -232,7 +234,7 @@ func LoadTemplates() (*template.Template, error) {
 		"dogStateClass":      dogStateClass,
 		"queueStatusClass":   queueStatusClass,
 		"polecatStatusClass": polecatStatusClass,
-		"activityTypeClass": activityTypeClass,
+		"activityTypeClass":  activityTypeClass,
 		"contains": func(s, substr string) bool {
 			return strings.Contains(s, substr)
 		},

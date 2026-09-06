@@ -4,6 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta name="dashboard-token" content="{{.CSRFToken}}">
+    {{if .EmbedParentOrigin}}<meta name="dashboard-parent-origin" content="{{.EmbedParentOrigin}}">{{end}}
     <title>Gas Town Control Center</title>
     <script src="https://unpkg.com/htmx.org@1.9.10"></script>
     <script src="https://unpkg.com/idiomorph@0.3.0/dist/idiomorph-ext.min.js"></script>
@@ -323,7 +324,7 @@
                                 <td><span class="polecat-rig">{{.Rig}}</span></td>
                                 <td class="polecat-issue">
                                     {{if .IssueID}}
-                                    <span class="issue-id">{{.IssueID}}</span>
+                                    <button class="bead-link issue-id" data-bead-focus="{{.IssueID}}">{{.IssueID}}</button>
                                     <span class="issue-title">{{.IssueTitle}}</span>
                                     {{else}}
                                     <span class="no-issue">—</span>
@@ -984,7 +985,7 @@
                         <tbody>
                             {{range .Hooks}}
                             <tr class="{{if .IsStale}}hook-stale{{end}}">
-                                <td><span class="hook-id">{{.ID}}</span></td>
+                                <td><button class="bead-link hook-id" data-bead-focus="{{.ID}}">{{.ID}}</button></td>
                                 <td class="hook-title">{{.Title}}</td>
                                 <td class="hook-agent">{{.Agent}}</td>
                                 <td class="hook-age">
@@ -1074,6 +1075,7 @@
         <div id="output-panel-content" class="output-panel-content"></div>
     </div>
 
-    <script src="/static/dashboard.js?v=3"></script>
+    <script src="/static/embed.js?v=1"></script>
+    <script src="/static/dashboard.js?v=4"></script>
 </body>
 </html>
