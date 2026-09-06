@@ -1,10 +1,23 @@
 (function() {
     'use strict';
 
-    // One-way navigation only. No incoming messages, commands, URLs or tokens.
-    window.dashboardFocusBead = function(beadId) {
+    // One-way readiness/navigation only. No incoming messages, commands or tokens.
+    function trustedParentOrigin() {
         var meta = document.querySelector('meta[name="dashboard-parent-origin"]');
-        if (window.parent === window || new URLSearchParams(window.location.search).get('embed') !== '1' || !meta) return false;
+        if (window.parent === window || new URLSearchParams(window.location.search).get('embed') !== '1' || !meta) return null;
+        var origin = meta.content;
+        try {
+            var parsed = new URL(origin);
+            if (parsed.origin !== origin || !/^https?:$/.test(parsed.protocol)) return null;
+        } catch (_) {
+            return null;
+        }
+        return origin;
+    }
+
+    window.dashboardFocusBead = function(beadId) {
+        var origin = trustedParentOrigin();
+        if (!origin) return false;
         // Dependency APIs may preserve beads' external:prefix:id wrapper.
         // Canvas resolves the actual ID, just as the standalone issue API does.
         if (typeof beadId === 'string' && beadId.length <= 512) {
@@ -12,14 +25,12 @@
             if (external) beadId = external[1];
         }
         if (typeof beadId !== 'string' || beadId.length > 256 || !/^[a-zA-Z0-9][a-zA-Z0-9._-]*-[a-zA-Z0-9._-]+$/.test(beadId)) return false;
-        var origin = meta.content;
-        try {
-            var parsed = new URL(origin);
-            if (parsed.origin !== origin || !/^https?:$/.test(parsed.protocol)) return false;
-        } catch (_) {
-            return false;
-        }
         window.parent.postMessage({ type: 'gastown:focus-bead', version: 1, beadId: beadId }, origin);
         return true;
     };
+
+    // A frame load also fires for browser error pages. Announce that the real
+    // opted-in producer has initialized so Canvas can detect unavailable frames.
+    var origin = trustedParentOrigin();
+    if (origin) window.parent.postMessage({ type: 'gastown:ready', version: 1 }, origin);
 })();

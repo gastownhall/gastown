@@ -32,7 +32,7 @@ func TestEmbedBrowser(t *testing.T) {
 	var dashboardURL string
 	parent := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/html")
-		fmt.Fprintf(w, `<script>window.received=[];addEventListener('message',e=>{if(e.origin===%q && e.source===document.querySelector('iframe').contentWindow) received.push(e.data)})</script><iframe style="width:1200px;height:900px" src="%s/?embed=1"></iframe>`, dashboardURL, dashboardURL)
+		fmt.Fprintf(w, `<script>window.received=[];window.ready=[];addEventListener('message',e=>{if(e.origin===%q && e.source===document.querySelector('iframe').contentWindow) (e.data.type==='gastown:ready' ? ready : received).push(e.data)})</script><iframe style="width:1200px;height:900px" src="%s/?embed=1"></iframe>`, dashboardURL, dashboardURL)
 	}))
 	defer parent.Close()
 	fetcher := &MockConvoyFetcher{
@@ -73,6 +73,10 @@ func TestEmbedBrowser(t *testing.T) {
 	defer page.MustClose()
 	frame := page.MustElement("iframe").MustFrame()
 	frame.MustWait(`() => typeof window.dashboardFocusBead === 'function'`)
+	page.MustWait(`() => ready.length === 1`)
+	if page.MustEval(`() => JSON.stringify(ready[0])`).Str() != `{"type":"gastown:ready","version":1}` {
+		t.Fatal("unexpected bootstrap readiness payload")
+	}
 	// Wait until the full dashboard bundle has installed its click handlers.
 	frame.MustWait(`() => typeof window.reopenIssue === 'function'`)
 	for i, selector := range []string{`.issue-row`, `.polecat-issue [data-bead-focus]`, `.hook-id[data-bead-focus]`} {

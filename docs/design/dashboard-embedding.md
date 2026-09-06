@@ -25,6 +25,13 @@ A user clicking a bead sends exactly this object to the configured origin:
 {"type":"gastown:focus-bead","version":1,"beadId":"inktree-3r67i"}
 ```
 
+On initialization the opted-in producer also sends exactly
+`{"type":"gastown:ready","version":1}` once. Canvas must validate its origin and
+source using the same checks as bead focus. A frame `load` event alone does not
+prove availability (browser error pages also load); the consumer can use a
+bounded readiness timeout to present its unavailable state. This confirms
+producer initialization, not data freshness or backend health.
+
 Issue rows, dependency links, convoy IDs and tracked-issue IDs, crew/polecat work IDs and
 hook IDs use their actual bead identifiers. PR URLs remain PR links: this
 dashboard has no authoritative PR-to-bead mapping and does not invent one.
