@@ -45,9 +45,11 @@ func testDashboardMailCancellation(t *testing.T, useDeadline bool) {
 		t.Fatal(err)
 	}
 	// A surviving bd writes a marker after the dashboard caller has timed out.
+	// Allow helper/test-binary startup under macOS race instrumentation; the
+	// completion marker remains strictly later than the command deadline.
 	bd := `#!/bin/sh
 echo started >> "$GT_TEST_MAIL_DIR/started"
-sleep 1.5
+sleep 4
 echo survived >> "$GT_TEST_MAIL_DIR/survived"
 echo '[]'
 `
@@ -71,8 +73,8 @@ exec "$GT_TEST_MAIL_BINARY" -test.run '^TestDashboardMailHelper$'
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	done := make(chan error, 1)
-	go func() { _, err := h.runGtCommand(ctx, time.Second, []string{"mail", "inbox"}); done <- err }()
-	deadline := time.Now().Add(time.Second)
+	go func() { _, err := h.runGtCommand(ctx, 3*time.Second, []string{"mail", "inbox"}); done <- err }()
+	deadline := time.Now().Add(2500 * time.Millisecond)
 	for {
 		if b, _ := os.ReadFile(filepath.Join(dir, "started")); len(strings.Fields(string(b))) >= 3 {
 			break
@@ -90,10 +92,10 @@ exec "$GT_TEST_MAIL_BINARY" -test.run '^TestDashboardMailHelper$'
 		if err == nil {
 			t.Error("expected cancellation")
 		}
-	case <-time.After(1500 * time.Millisecond):
+	case <-time.After(3500 * time.Millisecond):
 		t.Fatal("command cancellation blocked on descendant pipes")
 	}
-	time.Sleep(1600 * time.Millisecond)
+	time.Sleep(4100 * time.Millisecond)
 	if b, _ := os.ReadFile(filepath.Join(dir, "survived")); len(b) > 0 {
 		t.Fatalf("bd descendants survived dashboard cancellation: %s", b)
 	}

@@ -126,10 +126,13 @@ func (h *ConvoyHandler) snapshot(ctx context.Context) (*ConvoyData, string) {
 			// A new client must not join work cancelled by its last predecessor.
 			// Wait for cleanup, then retry within this client's own deadline.
 			h.cacheMu.Unlock()
+			waitCtx, cancel := context.WithTimeout(ctx, h.fetchTimeout)
 			select {
-			case <-ctx.Done():
+			case <-waitCtx.Done():
+				cancel()
 				return nil, ""
 			case <-flight.drained:
+				cancel()
 				continue
 			}
 		}
@@ -317,7 +320,8 @@ func (h *ConvoyHandler) fetchSnapshot(ctx context.Context, previous *ConvoyData)
 }
 
 // Hash every panel and its availability. Canonicalize top-level row order so
-// unordered source results cannot cause a refresh loop; no field is omitted.
+// unordered source results cannot cause a refresh loop. Only the unrendered
+// continuously advancing activity duration is normalized.
 func hashDashboardSnapshot(data *ConvoyData) string {
 	// Duration is a continuously advancing calculation, not rendered state.
 	// Keep source timestamps, formatted ages and colors so real changes remain visible.

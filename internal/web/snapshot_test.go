@@ -4,7 +4,6 @@ import (
 	"bufio"
 	"context"
 	"errors"
-	"github.com/steveyegge/gastown/internal/activity"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -14,6 +13,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/steveyegge/gastown/internal/activity"
 )
 
 // The page snapshot is available even when the old independent status probe
@@ -88,6 +89,14 @@ func newSnapshotHarness(t *testing.T, f ConvoyFetcher) (*ConvoyHandler, *APIHand
 	return h, api
 }
 func expireSnapshot(h *ConvoyHandler) {
+	// Normal cache expiry happens long after worker cleanup. Wait for that
+	// barrier before forcing time forward; the undrained test bypasses it.
+	h.cacheMu.Lock()
+	flight := h.refresh
+	h.cacheMu.Unlock()
+	if flight != nil {
+		<-flight.drained
+	}
 	h.cacheMu.Lock()
 	h.cacheTime = time.Time{}
 	h.cacheMu.Unlock()
@@ -191,7 +200,9 @@ func TestDashboardSnapshotDeadlineDoesNotOverlapUndrainedFetcher(t *testing.T) {
 	if time.Since(start) > 300*time.Millisecond {
 		t.Fatal("waiter blocked waiting for fetcher drain")
 	}
-	expireSnapshot(h)
+	h.cacheMu.Lock()
+	h.cacheTime = time.Time{}
+	h.cacheMu.Unlock()
 	if got := api.computeDashboardHash(context.Background()); got == "" {
 		t.Fatal("lost visible state during cleanup")
 	}
@@ -307,20 +318,39 @@ func TestDashboardSnapshotSSEEmitsChangedStateWithoutPageLoads(t *testing.T) {
 	}
 }
 
+type activitySnapshotFixture struct {
+	MockConvoyFetcher
+	timestamp time.Time
+}
+
+func (f *activitySnapshotFixture) FetchWorkers() ([]WorkerRow, error) {
+	return []WorkerRow{{LastActivity: activity.Calculate(f.timestamp)}}, nil
+}
+func (f *activitySnapshotFixture) FetchConvoys() ([]ConvoyRow, error) {
+	return []ConvoyRow{{ID: "hq-live", LastActivity: activity.Calculate(f.timestamp)}}, nil
+}
+
 func TestDashboardSnapshotLiveActivityDoesNotInventChanges(t *testing.T) {
-	timestamp := time.Now().Add(-2 * time.Minute)
-	firstActivity := activity.Calculate(timestamp)
-	secondActivity := activity.Calculate(timestamp)
-	first := &ConvoyData{Workers: []WorkerRow{{LastActivity: firstActivity}}, Convoys: []ConvoyRow{{ID: "hq-live", LastActivity: firstActivity}}}
-	second := &ConvoyData{Workers: []WorkerRow{{LastActivity: secondActivity}}, Convoys: []ConvoyRow{{ID: "hq-live", LastActivity: secondActivity}}}
-	if firstActivity.Duration == secondActivity.Duration {
-		t.Fatal("fixture failed to advance duration")
+	h, _ := newSnapshotHarness(t, &activitySnapshotFixture{timestamp: time.Now().Add(-2 * time.Minute)})
+	first, firstHash := h.snapshot(context.Background())
+	h.cacheMu.Lock()
+	flight := h.refresh
+	h.cacheMu.Unlock()
+	if flight != nil {
+		<-flight.drained
 	}
-	if hashDashboardSnapshot(first) != hashDashboardSnapshot(second) {
+	expireSnapshot(h)
+	second, secondHash := h.snapshot(context.Background())
+	if first.Workers[0].LastActivity.Duration == second.Workers[0].LastActivity.Duration {
+		t.Fatal("fixture failed to refresh live activity")
+	}
+	if firstHash != secondHash {
 		t.Fatal("unrendered elapsed duration invented a dashboard change")
 	}
-	second.Workers[0].LastActivity.ColorClass = "red"
-	if hashDashboardSnapshot(first) == hashDashboardSnapshot(second) {
+	changed := *second
+	changed.Workers = append([]WorkerRow(nil), second.Workers...)
+	changed.Workers[0].LastActivity.ColorClass = "red"
+	if hashDashboardSnapshot(first) == hashDashboardSnapshot(&changed) {
 		t.Fatal("visible activity color change hidden")
 	}
 }
@@ -363,5 +393,28 @@ func TestDashboardSnapshotNewClientDuringCancelledDrain(t *testing.T) {
 	defer f.mu.Unlock()
 	if f.calls != 2 {
 		t.Fatalf("refreshes=%d, want cancelled plus retry", f.calls)
+	}
+}
+
+func TestDashboardSnapshotAbandonedDrainReturnsHonestUnavailable(t *testing.T) {
+	block := make(chan struct{})
+	defer close(block)
+	f := &snapshotFixture{block: block, started: make(chan struct{}, 1)}
+	h, api := newSnapshotHarness(t, f)
+	h.fetchTimeout = 40 * time.Millisecond
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan string, 1)
+	go func() { done <- api.computeDashboardHash(ctx) }()
+	<-f.started
+	cancel()
+	<-done
+	start := time.Now()
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, httptest.NewRequest("GET", "/", nil))
+	if time.Since(start) > 250*time.Millisecond {
+		t.Fatal("new request waited unbounded for abandoned drain")
+	}
+	if w.Code != http.StatusServiceUnavailable || !strings.Contains(w.Body.String(), "unavailable") {
+		t.Fatalf("unavailable refresh returned %d %q", w.Code, w.Body.String())
 	}
 }

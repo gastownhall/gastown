@@ -28,7 +28,7 @@ import (
 // Returns empty buffer on timeout or error.
 // Security: errors from this function are logged server-side only (via log.Printf
 // in callers) and never included in HTTP responses. The handler renders templates
-// with whatever data was successfully fetched; fetch failures result in empty panels.
+// with last-good panel data and explicit availability notices on fetch failures.
 func runCmd(timeout time.Duration, name string, args ...string) (*bytes.Buffer, error) {
 	return runCmdContext(context.Background(), timeout, name, args...)
 }

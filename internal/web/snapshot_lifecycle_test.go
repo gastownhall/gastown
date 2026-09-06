@@ -26,7 +26,15 @@ func TestDashboardSnapshotCancelsLiveReadTree(t *testing.T) {
 			dir := t.TempDir()
 			bin := filepath.Join(dir, "bd")
 			// Test-owned process tree only. A surviving shell child leaves a marker.
-			script := "#!/bin/sh\necho start > \"$0.started\"\n(sleep 3; echo survived > \"$0.survived\") &\nwait\necho '[]'\n"
+			script := `#!/bin/sh
+(sleep 3 &
+ sleeper=$!
+ echo start > "$0.started"
+ wait "$sleeper"
+ echo survived > "$0.survived") &
+wait
+echo '[]'
+`
 			if err := os.WriteFile(bin, []byte(script), 0755); err != nil {
 				t.Fatal(err)
 			}
@@ -92,6 +100,20 @@ func TestDashboardSnapshotLiveReadErrorsAreNotEmptyPanels(t *testing.T) {
 	}
 }
 
+type liveSnapshotTmuxFixture struct {
+	MockConvoyFetcher
+	live *LiveConvoyFetcher
+}
+
+func (f *liveSnapshotTmuxFixture) WithContext(ctx context.Context) ConvoyFetcher {
+	return &liveSnapshotTmuxFixture{live: f.live.WithContext(ctx).(*LiveConvoyFetcher)}
+}
+func (f *liveSnapshotTmuxFixture) FetchWorkers() ([]WorkerRow, error) { return f.live.FetchWorkers() }
+func (f *liveSnapshotTmuxFixture) FetchSessions() ([]SessionRow, error) {
+	return f.live.FetchSessions()
+}
+func (f *liveSnapshotTmuxFixture) FetchMayor() (*MayorStatus, error) { return f.live.FetchMayor() }
+
 func TestDashboardSnapshotTmuxFailuresRetainLivePanels(t *testing.T) {
 	dir := t.TempDir()
 	if err := os.Mkdir(filepath.Join(dir, "mayor"), 0755); err != nil {
@@ -127,6 +149,14 @@ func TestDashboardSnapshotTmuxFailuresRetainLivePanels(t *testing.T) {
 			if _, err := live.FetchMayor(); err == nil {
 				t.Fatal("mayor tmux failure looked detached")
 			}
+			h, _ := newSnapshotHarness(t, &liveSnapshotTmuxFixture{live: live})
+			previous := &ConvoyData{Workers: []WorkerRow{{Name: "retained-worker"}}, Sessions: []SessionRow{{Name: "retained-session"}}, Mayor: &MayorStatus{IsAttached: true}, panelSuccess: map[string]bool{"Workers": true, "Sessions": true, "Mayor": true}}
+			snapshot, drained := h.fetchSnapshot(context.Background(), previous)
+			<-drained
+			if len(snapshot.PanelErrors) != 3 || snapshot.Workers[0].Name != "retained-worker" || snapshot.Sessions[0].Name != "retained-session" || !snapshot.Mayor.IsAttached {
+				t.Fatal("live tmux failure erased previous panels or omitted notices")
+			}
+
 		})
 	}
 	// Successful empty output is the confirmed-empty case.
