@@ -11,7 +11,7 @@
     <link rel="stylesheet" href="/static/dashboard.css">
 </head>
 <body>
-    <div class="dashboard" id="dashboard-main" hx-get="/" hx-trigger="sse:dashboard-update, every 30s [!window.pauseRefresh && !window.sseConnected]" hx-swap="morph:outerHTML" hx-ext="morph">
+    <div class="dashboard" id="dashboard-main" hx-get="/" hx-select="#dashboard-main" hx-trigger="dashboard-update, every 30s [!window.pauseRefresh && !window.sseConnected]" hx-swap="morph:outerHTML" hx-ext="morph">
         <header>
             <pre class="ascii-title">  __  __    __   _____ __  _   _  __  _    ___ __  __  _ _____ ___  __  _      ______ __  _ _____ ___ ___ 
  / _]/  \ /' _| |_   _/__\| | | ||  \| |  / _//__\|  \| |_   _| _ \/__\| |    / _/ __|  \| |_   _| __| _ \
@@ -1084,6 +1084,6 @@
     </div>
 
     <script src="/static/embed.js?v=1"></script>
-    <script src="/static/dashboard.js?v=4"></script>
+    <script src="/static/dashboard.js?v=5"></script>
 </body>
 </html>

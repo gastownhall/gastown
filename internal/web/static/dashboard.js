@@ -40,10 +40,11 @@
 
         evtSource.addEventListener('dashboard-update', function(e) {
             if (window.pauseRefresh) return;
-            // Trigger HTMX to re-fetch the dashboard
+            // Native EventSource dispatches an ordinary DOM event. The sse:
+            // prefix is reserved for HTMX-managed SSE connections.
             var dashboard = document.getElementById('dashboard-main');
             if (dashboard && typeof htmx !== 'undefined') {
-                htmx.trigger(dashboard, 'sse:dashboard-update');
+                htmx.trigger(dashboard, 'dashboard-update');
             }
         });
 
