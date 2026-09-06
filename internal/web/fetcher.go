@@ -20,7 +20,7 @@ import (
 	"github.com/steveyegge/gastown/internal/constants"
 	"github.com/steveyegge/gastown/internal/session"
 	"github.com/steveyegge/gastown/internal/tmux"
-	"github.com/steveyegge/gastown/internal/util"
+
 	"github.com/steveyegge/gastown/internal/workspace"
 )
 
@@ -407,8 +407,8 @@ func (f *LiveConvoyFetcher) runConvoyList() (*bytes.Buffer, error) {
 		}
 		cmd.Env = append(cmd.Env, value)
 	}
-	util.SetProcessGroup(cmd)
-	cmd.WaitDelay = time.Second
+	configureWebCommand(cmd)
+	configureWebReadCommand(cmd)
 	var stdout bytes.Buffer
 	cmd.Stdout = &stdout
 	if err := cmd.Run(); err != nil {

@@ -13,6 +13,8 @@ import (
 // DashboardOptions controls optional integrations. The default is standalone.
 type DashboardOptions struct {
 	EmbedParentOrigin string
+	// GTPath pins subprocess reads to the serving CLI; empty keeps PATH lookup.
+	GTPath string
 }
 
 // ValidateEmbedParentOrigin accepts a single literal HTTPS origin, or HTTP on

@@ -2,6 +2,7 @@ package web
 
 import (
 	"os/exec"
+	"time"
 
 	"github.com/steveyegge/gastown/internal/util"
 )
@@ -11,4 +12,28 @@ import (
 // only the immediate child on timeout leaks work and connections into Dolt.
 func configureWebCommand(cmd *exec.Cmd) {
 	util.SetProcessGroup(cmd)
+	cmd.WaitDelay = time.Second
+}
+
+// Keep synchronous read descendants in the group owned by the dashboard.
+// Otherwise gt mail detaches bd, which survives cancellation of the outer gt.
+func configureWebReadCommand(cmd *exec.Cmd) {
+	cmd.Env = append(cmd.Environ(), util.ManagedReadEnv+"=1")
+}
+
+func managedDashboardRead(args []string) bool {
+	if len(args) == 0 {
+		return false
+	}
+	if args[0] == "status" {
+		return true
+	}
+	if len(args) < 2 {
+		return false
+	}
+	switch args[0] + " " + args[1] {
+	case "mail inbox", "mail check", "hooks list", "convoy list", "convoy status", "rig list", "agents list":
+		return true
+	}
+	return false
 }

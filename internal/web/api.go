@@ -64,10 +64,10 @@ type APIHandler struct {
 	cmdSem chan struct{}
 	// Dashboard hash cache coalesces the identical polling work performed by
 	// every connected SSE client. Only one client refreshes it per interval.
-	dashboardHashMu    sync.RWMutex
-	dashboardHash      string
-	dashboardHashTime  time.Time
-	dashboardHashInUse sync.Mutex
+	dashboardHashMu   sync.RWMutex
+	dashboardHash     string
+	dashboardHashTime time.Time
+	dashboardHashDone chan struct{}
 	// csrfToken is validated on POST requests to prevent cross-site request forgery.
 	csrfToken string
 }
@@ -250,6 +250,9 @@ func (h *APIHandler) runGtCommand(ctx context.Context, timeout time.Duration, ar
 
 	cmd := exec.CommandContext(ctx, h.gtPath, args...)
 	configureWebCommand(cmd)
+	if managedDashboardRead(args) {
+		configureWebReadCommand(cmd)
+	}
 	if h.workDir != "" {
 		cmd.Dir = h.workDir
 	}
@@ -2238,33 +2241,39 @@ func (h *APIHandler) handleSSE(w http.ResponseWriter, r *http.Request) {
 // computeDashboardHash generates a lightweight hash of key dashboard state.
 // It runs quick commands in parallel and hashes their output to detect changes.
 func (h *APIHandler) computeDashboardHash(ctx context.Context) string {
-	if hash := h.cachedDashboardHash(); hash != "" {
-		return hash
-	}
-
-	h.dashboardHashInUse.Lock()
-	defer h.dashboardHashInUse.Unlock()
-	if hash := h.cachedDashboardHash(); hash != "" {
-		return hash
-	}
-
-	hash := h.computeDashboardHashFresh(ctx)
-	if hash != "" {
-		h.dashboardHashMu.Lock()
-		h.dashboardHash = hash
-		h.dashboardHashTime = time.Now()
-		h.dashboardHashMu.Unlock()
-	}
-	return hash
-}
-
-func (h *APIHandler) cachedDashboardHash() string {
-	h.dashboardHashMu.RLock()
-	defer h.dashboardHashMu.RUnlock()
-	if h.dashboardHash == "" || time.Since(h.dashboardHashTime) >= dashboardHashCacheTTL {
+	if ctx.Err() != nil {
 		return ""
 	}
-	return h.dashboardHash
+	h.dashboardHashMu.Lock()
+	// Cache failed attempts too: unavailable data must not turn each waiting
+	// SSE client into a new three-command retry. Retain the last complete hash.
+	if !h.dashboardHashTime.IsZero() && time.Since(h.dashboardHashTime) < dashboardHashCacheTTL {
+		hash := h.dashboardHash
+		h.dashboardHashMu.Unlock()
+		return hash
+	}
+	if done := h.dashboardHashDone; done != nil {
+		h.dashboardHashMu.Unlock()
+		select {
+		case <-ctx.Done():
+			return ""
+		case <-done:
+			return h.computeDashboardHash(ctx)
+		}
+	}
+	h.dashboardHashDone = make(chan struct{})
+	h.dashboardHashMu.Unlock()
+	hash := h.computeDashboardHashFresh(ctx)
+	h.dashboardHashMu.Lock()
+	if hash != "" {
+		h.dashboardHash = hash
+	}
+	h.dashboardHashTime = time.Now()
+	close(h.dashboardHashDone)
+	h.dashboardHashDone = nil
+	hash = h.dashboardHash
+	h.dashboardHashMu.Unlock()
+	return hash
 }
 
 func (h *APIHandler) computeDashboardHashFresh(ctx context.Context) string {
@@ -2309,7 +2318,7 @@ func (h *APIHandler) computeDashboardHashFresh(ctx context.Context) string {
 
 	wg.Wait()
 
-	if len(parts) == 0 {
+	if len(parts) != 3 {
 		return ""
 	}
 

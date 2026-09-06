@@ -98,7 +98,13 @@ func runDashboard(cmd *cobra.Command, args []string) error {
 			fmt.Fprintf(cmd.ErrOrStderr(), "warning: loading town settings: %v (using defaults)\n", loadErr)
 		}
 
-		handler, err = web.NewDashboardMuxWithOptions(fetcher, webCfg, web.DashboardOptions{EmbedParentOrigin: dashboardEmbedParentOrigin})
+		// Resolve only at the CLI entry point: library tests must never discover
+		// and launch their own test executable as gt.
+		gtPath, executableErr := os.Executable()
+		if executableErr != nil {
+			return fmt.Errorf("locating dashboard executable: %w", executableErr)
+		}
+		handler, err = web.NewDashboardMuxWithOptions(fetcher, webCfg, web.DashboardOptions{EmbedParentOrigin: dashboardEmbedParentOrigin, GTPath: gtPath})
 		if err != nil {
 			return fmt.Errorf("creating dashboard handler: %w", err)
 		}

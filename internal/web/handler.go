@@ -486,6 +486,12 @@ func NewDashboardMuxWithOptions(fetcher ConvoyFetcher, webCfg *config.WebTimeout
 	defaultRunTimeout := config.ParseDurationOrDefault(webCfg.DefaultRunTimeout, 30*time.Second)
 	maxRunTimeout := config.ParseDurationOrDefault(webCfg.MaxRunTimeout, 60*time.Second)
 	apiHandler := NewAPIHandler(defaultRunTimeout, maxRunTimeout, csrfToken)
+	if opts.GTPath != "" {
+		apiHandler.gtPath = opts.GTPath
+		if live, ok := fetcher.(*LiveConvoyFetcher); ok {
+			live.gtBin = opts.GTPath
+		}
+	}
 
 	// Create static file server from embedded files
 	staticFS, err := fs.Sub(staticFiles, "static")
