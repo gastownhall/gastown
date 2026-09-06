@@ -62,18 +62,13 @@ type APIHandler struct {
 	optionsCacheMu   sync.RWMutex
 	// cmdSem limits concurrent command executions to prevent resource exhaustion.
 	cmdSem chan struct{}
-	// Dashboard hash cache coalesces the identical polling work performed by
-	// every connected SSE client. Only one client refreshes it per interval.
-	dashboardHashMu   sync.RWMutex
-	dashboardHash     string
-	dashboardHashTime time.Time
-	dashboardHashDone chan struct{}
+	// dashboard supplies the same independently refreshed snapshot as HTML.
+	dashboard *ConvoyHandler
 	// csrfToken is validated on POST requests to prevent cross-site request forgery.
 	csrfToken string
 }
 
 const optionsCacheTTL = 30 * time.Second
-const dashboardHashCacheTTL = 2 * time.Second
 
 // maxConcurrentCommands limits how many gt subprocesses can run at once.
 // handleOptions alone spawns 7; allow headroom for other concurrent handlers.
@@ -2238,91 +2233,14 @@ func (h *APIHandler) handleSSE(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// computeDashboardHash generates a lightweight hash of key dashboard state.
-// It runs quick commands in parallel and hashes their output to detect changes.
+// computeDashboardHash reads the shared dashboard snapshot. It never launches
+// status/hooks/mail CLI probes, which duplicate reads and can starve SSE.
 func (h *APIHandler) computeDashboardHash(ctx context.Context) string {
-	if ctx.Err() != nil {
+	if h.dashboard == nil {
 		return ""
 	}
-	h.dashboardHashMu.Lock()
-	// Cache failed attempts too: unavailable data must not turn each waiting
-	// SSE client into a new three-command retry. Retain the last complete hash.
-	if !h.dashboardHashTime.IsZero() && time.Since(h.dashboardHashTime) < dashboardHashCacheTTL {
-		hash := h.dashboardHash
-		h.dashboardHashMu.Unlock()
-		return hash
-	}
-	if done := h.dashboardHashDone; done != nil {
-		h.dashboardHashMu.Unlock()
-		select {
-		case <-ctx.Done():
-			return ""
-		case <-done:
-			return h.computeDashboardHash(ctx)
-		}
-	}
-	h.dashboardHashDone = make(chan struct{})
-	h.dashboardHashMu.Unlock()
-	hash := h.computeDashboardHashFresh(ctx)
-	h.dashboardHashMu.Lock()
-	if hash != "" {
-		h.dashboardHash = hash
-	}
-	h.dashboardHashTime = time.Now()
-	close(h.dashboardHashDone)
-	h.dashboardHashDone = nil
-	hash = h.dashboardHash
-	h.dashboardHashMu.Unlock()
+	_, hash := h.dashboard.snapshot(ctx)
 	return hash
-}
-
-func (h *APIHandler) computeDashboardHashFresh(ctx context.Context) string {
-	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
-	defer cancel()
-
-	var mu sync.Mutex
-	var parts []string
-
-	var wg sync.WaitGroup
-	wg.Add(3)
-
-	// Check worker/polecat state
-	go func() {
-		defer wg.Done()
-		if out, err := h.runGtCommand(ctx, 3*time.Second, []string{"status", "--json"}); err == nil {
-			mu.Lock()
-			parts = append(parts, "status:"+out)
-			mu.Unlock()
-		}
-	}()
-
-	// Check hooks state
-	go func() {
-		defer wg.Done()
-		if out, err := h.runGtCommand(ctx, 3*time.Second, []string{"hooks", "list"}); err == nil {
-			mu.Lock()
-			parts = append(parts, "hooks:"+out)
-			mu.Unlock()
-		}
-	}()
-
-	// Check mail count
-	go func() {
-		defer wg.Done()
-		if out, err := h.runGtCommand(ctx, 3*time.Second, []string{"mail", "inbox"}); err == nil {
-			mu.Lock()
-			parts = append(parts, "mail:"+out)
-			mu.Unlock()
-		}
-	}()
-
-	wg.Wait()
-
-	if len(parts) != 3 {
-		return ""
-	}
-
-	return hashDashboardParts(parts)
 }
 
 func hashDashboardParts(parts []string) string {

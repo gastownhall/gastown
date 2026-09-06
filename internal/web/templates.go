@@ -15,6 +15,7 @@ var templateFS embed.FS
 
 // ConvoyData represents data passed to the convoy template.
 type ConvoyData struct {
+	PanelErrors map[string]string // Explicit unavailable or stale panels; never raw command errors.
 	Convoys     []ConvoyRow
 	MergeQueue  []MergeQueueRow
 	Workers     []WorkerRow

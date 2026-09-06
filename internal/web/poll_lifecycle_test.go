@@ -9,7 +9,6 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"sync"
 	"testing"
 	"time"
 
@@ -97,106 +96,6 @@ exec "$GT_TEST_MAIL_BINARY" -test.run '^TestDashboardMailHelper$'
 	time.Sleep(1600 * time.Millisecond)
 	if b, _ := os.ReadFile(filepath.Join(dir, "survived")); len(b) > 0 {
 		t.Fatalf("bd descendants survived dashboard cancellation: %s", b)
-	}
-}
-
-func TestDashboardFailedPollIsCoalesced(t *testing.T) {
-	dir := t.TempDir()
-	log := filepath.Join(dir, "calls")
-	path := filepath.Join(dir, "gt")
-	if err := os.WriteFile(path, []byte("#!/bin/sh\necho call >> \"$GT_POLL_LOG\"\nexit 1\n"), 0755); err != nil {
-		t.Fatal(err)
-	}
-	t.Setenv("GT_POLL_LOG", log)
-	h := NewAPIHandler(time.Second, time.Second, "test-token")
-	h.gtPath = path
-	h.workDir = dir
-	var wg sync.WaitGroup
-	for range 10 {
-		wg.Add(1)
-		go func() { defer wg.Done(); h.computeDashboardHash(context.Background()) }()
-	}
-	wg.Wait()
-	b, _ := os.ReadFile(log)
-	if n := len(strings.Fields(string(b))); n != 3 {
-		t.Fatalf("failed poll amplified into %d commands, want 3", n)
-	}
-}
-
-func TestDashboardPollWaiterCancelsWithoutNewCommands(t *testing.T) {
-	dir := t.TempDir()
-	path := filepath.Join(dir, "gt")
-	log := filepath.Join(dir, "calls")
-	if err := os.WriteFile(path, []byte("#!/bin/sh\necho call >> \"$GT_POLL_LOG\"\nsleep 0.3\necho stable\n"), 0755); err != nil {
-		t.Fatal(err)
-	}
-	t.Setenv("GT_POLL_LOG", log)
-	h := NewAPIHandler(time.Second, time.Second, "test-token")
-	h.gtPath = path
-	h.workDir = dir
-	done := make(chan string, 1)
-	go func() { done <- h.computeDashboardHash(context.Background()) }()
-	deadline := time.Now().Add(time.Second)
-	for {
-		if b, _ := os.ReadFile(log); len(strings.Fields(string(b))) == 3 {
-			break
-		}
-		if time.Now().After(deadline) {
-			t.Fatal("poll did not start")
-		}
-		time.Sleep(5 * time.Millisecond)
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Millisecond)
-	defer cancel()
-	start := time.Now()
-	if hash := h.computeDashboardHash(ctx); hash != "" {
-		t.Fatalf("cancelled waiter got %q", hash)
-	}
-	if elapsed := time.Since(start); elapsed > 150*time.Millisecond {
-		t.Fatalf("cancelled waiter blocked for %s", elapsed)
-	}
-	if hash := <-done; hash == "" {
-		t.Fatal("remaining client lost complete result")
-	}
-	b, _ := os.ReadFile(log)
-	if n := len(strings.Fields(string(b))); n != 3 {
-		t.Fatalf("waiter started %d commands", n)
-	}
-}
-
-func TestDashboardPollRetainsCompleteStateAcrossPartialFailure(t *testing.T) {
-	dir := t.TempDir()
-	path := filepath.Join(dir, "gt")
-	script := `#!/bin/sh
-if [ "$1" = mail ] && [ -f "$GT_POLL_DIR/fail" ]; then exit 1; fi
-if [ "$1" = status ] && [ -f "$GT_POLL_DIR/change" ]; then echo changed; else echo stable; fi
-`
-	if err := os.WriteFile(path, []byte(script), 0755); err != nil {
-		t.Fatal(err)
-	}
-	t.Setenv("GT_POLL_DIR", dir)
-	h := NewAPIHandler(time.Second, time.Second, "test-token")
-	h.gtPath = path
-	h.workDir = dir
-	first := h.computeDashboardHash(context.Background())
-	if first == "" {
-		t.Fatal("missing initial snapshot")
-	}
-	for _, file := range []string{"fail", "change"} {
-		if err := os.WriteFile(filepath.Join(dir, file), nil, 0644); err != nil {
-			t.Fatal(err)
-		}
-	}
-	h.dashboardHashTime = time.Time{}
-	if got := h.computeDashboardHash(context.Background()); got != first {
-		t.Fatal("partial command failure replaced complete snapshot")
-	}
-	if err := os.Remove(filepath.Join(dir, "fail")); err != nil {
-		t.Fatal(err)
-	}
-	h.dashboardHashTime = time.Time{}
-	if got := h.computeDashboardHash(context.Background()); got == first || got == "" {
-		t.Fatal("recovered complete state change was hidden")
 	}
 }
 

@@ -28,6 +28,12 @@
             </div>
         </header>
 
+        {{if .PanelErrors}}
+        <div class="snapshot-errors" role="status" aria-live="polite">
+            {{range $panel, $message := .PanelErrors}}<div><strong>{{$panel}}</strong>: {{$message}}</div>{{end}}
+        </div>
+        {{end}}
+
         <!-- Mayor Status Banner -->
         <div class="mayor-banner {{if .Mayor}}{{if .Mayor.IsAttached}}attached{{else}}detached{{end}}{{else}}detached{{end}}">
             <div class="mayor-info">

@@ -30,7 +30,11 @@ import (
 // in callers) and never included in HTTP responses. The handler renders templates
 // with whatever data was successfully fetched; fetch failures result in empty panels.
 func runCmd(timeout time.Duration, name string, args ...string) (*bytes.Buffer, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	return runCmdContext(context.Background(), timeout, name, args...)
+}
+
+func runCmdContext(parent context.Context, timeout time.Duration, name string, args ...string) (*bytes.Buffer, error) {
+	ctx, cancel := context.WithTimeout(parent, timeout)
 	defer cancel()
 
 	cmd := exec.CommandContext(ctx, name, args...)
@@ -55,6 +59,9 @@ func (f *LiveConvoyFetcher) runTmuxCmd(args ...string) (*bytes.Buffer, error) {
 		fullArgs = append(fullArgs, "-L", f.tmuxSocket)
 	}
 	fullArgs = append(fullArgs, args...)
+	if f.ctx != nil {
+		return runCmdContext(f.ctx, f.tmuxCmdTimeout, "tmux", fullArgs...)
+	}
 	return fetcherRunCmd(f.tmuxCmdTimeout, "tmux", fullArgs...)
 }
 
@@ -68,7 +75,7 @@ func (f *LiveConvoyFetcher) runBdCmd(beadsDir string, args ...string) (*bytes.Bu
 	// bd v0.59+ requires --flat for list --json to produce JSON output
 	args = beads.InjectFlatForListJSON(args)
 
-	ctx, cancel := context.WithTimeout(context.Background(), f.cmdTimeout)
+	ctx, cancel := context.WithTimeout(f.context(), f.cmdTimeout)
 	defer cancel()
 
 	bin := f.bdBin
@@ -87,7 +94,7 @@ func (f *LiveConvoyFetcher) runBdCmd(beadsDir string, args ...string) (*bytes.Bu
 			return nil, fmt.Errorf("bd timed out after %v", f.cmdTimeout)
 		}
 		// If we got some output, return it anyway (bd may exit non-zero with warnings)
-		if stdout.Len() > 0 {
+		if stdout.Len() > 0 && f.ctx == nil {
 			return &stdout, nil
 		}
 		return nil, err
@@ -154,8 +161,10 @@ func (cb *fetchCircuitBreaker) recordSuccess() {
 
 // LiveConvoyFetcher fetches convoy data from beads.
 type LiveConvoyFetcher struct {
-	townRoot  string
-	townBeads string
+	ctx                 context.Context
+	sharedConvoyBreaker *fetchCircuitBreaker
+	townRoot            string
+	townBeads           string
 
 	// bdBin is the bd binary name or path. Defaults to "bd" if empty.
 	bdBin string
@@ -187,6 +196,33 @@ type LiveConvoyFetcher struct {
 	// Circuit breaker for FetchConvoys — prevents process storms when
 	// the canonical convoy reader fails persistently (e.g., schema mismatch).
 	convoyBreaker fetchCircuitBreaker
+}
+
+// WithContext returns a per-refresh view without mutating the shared fetcher or
+// copying its mutex. All command trees inherit this bounded refresh lifetime.
+func (f *LiveConvoyFetcher) WithContext(ctx context.Context) ConvoyFetcher {
+	return &LiveConvoyFetcher{
+		ctx: ctx, sharedConvoyBreaker: f.breaker(),
+		townRoot: f.townRoot, townBeads: f.townBeads, bdBin: f.bdBin, gtBin: f.gtBin,
+		registry: f.registry, cmdTimeout: f.cmdTimeout, ghCmdTimeout: f.ghCmdTimeout,
+		tmuxCmdTimeout: f.tmuxCmdTimeout, staleThreshold: f.staleThreshold,
+		stuckThreshold: f.stuckThreshold, heartbeatFreshThreshold: f.heartbeatFreshThreshold,
+		mayorActiveThreshold: f.mayorActiveThreshold, tmuxSocket: f.tmuxSocket,
+	}
+}
+
+func (f *LiveConvoyFetcher) context() context.Context {
+	if f.ctx != nil {
+		return f.ctx
+	}
+	return context.Background()
+}
+
+func (f *LiveConvoyFetcher) breaker() *fetchCircuitBreaker {
+	if f.sharedConvoyBreaker != nil {
+		return f.sharedConvoyBreaker
+	}
+	return &f.convoyBreaker
 }
 
 // NewLiveConvoyFetcher creates a fetcher for the current workspace.
@@ -238,15 +274,15 @@ func NewLiveConvoyFetcher() (*LiveConvoyFetcher, error) {
 // Uses a circuit breaker to avoid hammering bd/dolt when listing fails
 // persistently (e.g., "invalid issue type: convoy" schema mismatch).
 func (f *LiveConvoyFetcher) FetchConvoys() ([]ConvoyRow, error) {
-	if !f.convoyBreaker.allow() {
-		return nil, nil // Backed off — return empty result silently
+	if !f.breaker().allow() {
+		return nil, fmt.Errorf("convoy refresh is backing off after a failed read")
 	}
 
 	// The canonical loader reads raw cross-database dependencies and routes
 	// issue hydration by prefix. A local bd dep list JOIN drops external targets.
 	stdout, err := f.runConvoyList()
 	if err != nil {
-		f.convoyBreaker.recordFailure()
+		f.breaker().recordFailure()
 		return nil, fmt.Errorf("listing convoys: %w", err)
 	}
 
@@ -257,7 +293,7 @@ func (f *LiveConvoyFetcher) FetchConvoys() ([]ConvoyRow, error) {
 		Tracked []trackedIssueInfo `json:"tracked"`
 	}
 	if err := json.Unmarshal(stdout.Bytes(), &convoys); err != nil {
-		f.convoyBreaker.recordFailure()
+		f.breaker().recordFailure()
 		return nil, fmt.Errorf("parsing convoy list: %w", err)
 	}
 
@@ -265,7 +301,7 @@ func (f *LiveConvoyFetcher) FetchConvoys() ([]ConvoyRow, error) {
 	rows := make([]ConvoyRow, 0, len(convoys))
 	for _, c := range convoys {
 		if c.Tracked == nil {
-			f.convoyBreaker.recordFailure()
+			f.breaker().recordFailure()
 			return nil, fmt.Errorf("convoy %s is missing tracked issue data", c.ID)
 		}
 		row := ConvoyRow{
@@ -385,14 +421,14 @@ func (f *LiveConvoyFetcher) FetchConvoys() ([]ConvoyRow, error) {
 		rows = append(rows, row)
 	}
 
-	f.convoyBreaker.recordSuccess()
+	f.breaker().recordSuccess()
 	return rows, nil
 }
 
 // runConvoyList uses a single bounded canonical reader instead of independently
 // querying dependencies and hydrating mixed-prefix IDs in the dashboard.
 func (f *LiveConvoyFetcher) runConvoyList() (*bytes.Buffer, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), f.cmdTimeout)
+	ctx, cancel := context.WithTimeout(f.context(), f.cmdTimeout)
 	defer cancel()
 	bin := f.gtBin
 	if bin == "" {
@@ -613,8 +649,7 @@ func (f *LiveConvoyFetcher) FetchMergeQueue() ([]MergeQueueRow, error) {
 
 		prs, err := f.fetchPRsForRepo(repoPath, rigName)
 		if err != nil {
-			// Non-fatal: continue with other repos
-			continue
+			return nil, err
 		}
 		result = append(result, prs...)
 	}
@@ -659,7 +694,7 @@ type prResponse struct {
 
 // fetchPRsForRepo fetches open PRs for a single repo.
 func (f *LiveConvoyFetcher) fetchPRsForRepo(repoFull, repoShort string) ([]MergeQueueRow, error) {
-	stdout, err := runCmd(f.ghCmdTimeout, "gh", "pr", "list",
+	stdout, err := runCmdContext(f.context(), f.ghCmdTimeout, "gh", "pr", "list",
 		"--repo", repoFull,
 		"--state", "open",
 		"--json", "number,title,url,mergeable,statusCheckRollup")
@@ -783,7 +818,10 @@ func (f *LiveConvoyFetcher) FetchWorkers() ([]WorkerRow, error) {
 	}
 
 	// Pre-fetch assigned issues map: assignee -> (issueID, title)
-	assignedIssues := f.getAssignedIssuesMap()
+	assignedIssues, err := f.getAssignedIssuesMap()
+	if err != nil {
+		return nil, err
+	}
 
 	// Query all tmux sessions with window_activity for more accurate timing
 	stdout, err := f.runTmuxCmd("list-sessions", "-F", "#{session_name}|#{window_activity}")
@@ -793,7 +831,11 @@ func (f *LiveConvoyFetcher) FetchWorkers() ([]WorkerRow, error) {
 	}
 
 	// Pre-fetch merge queue count to determine refinery idle status
-	mergeQueueCount := f.getMergeQueueCount()
+	mergeQueue, err := f.FetchMergeQueue()
+	if err != nil {
+		return nil, err
+	}
+	mergeQueueCount := len(mergeQueue)
 
 	var workers []WorkerRow
 	lines := strings.Split(strings.TrimSpace(stdout.String()), "\n")
@@ -891,14 +933,14 @@ type assignedIssue struct {
 
 // getAssignedIssuesMap returns a map of assignee -> assigned issue.
 // Queries beads for all in_progress issues with assignees.
-func (f *LiveConvoyFetcher) getAssignedIssuesMap() map[string]assignedIssue {
+func (f *LiveConvoyFetcher) getAssignedIssuesMap() (map[string]assignedIssue, error) {
 	result := make(map[string]assignedIssue)
 
 	// Query all in_progress issues (these are the ones being worked on)
 	stdout, err := f.runBdCmd(f.townRoot, "list", "--status=in_progress", "--json")
 	if err != nil {
 		log.Printf("warning: bd list in_progress failed: %v", err)
-		return result
+		return nil, err
 	}
 
 	var issues []struct {
@@ -908,7 +950,7 @@ func (f *LiveConvoyFetcher) getAssignedIssuesMap() map[string]assignedIssue {
 	}
 	if err := json.Unmarshal(stdout.Bytes(), &issues); err != nil {
 		log.Printf("warning: parsing bd list output: %v", err)
-		return result
+		return nil, err
 	}
 
 	for _, issue := range issues {
@@ -920,7 +962,7 @@ func (f *LiveConvoyFetcher) getAssignedIssuesMap() map[string]assignedIssue {
 		}
 	}
 
-	return result
+	return result, nil
 }
 
 // calculateWorkerWorkStatus determines the worker's work status based on activity and assignment.
@@ -967,15 +1009,6 @@ func (f *LiveConvoyFetcher) getWorkerStatusHint(sessionName string) string {
 		}
 	}
 	return ""
-}
-
-// getMergeQueueCount returns the total number of open PRs across all repos.
-func (f *LiveConvoyFetcher) getMergeQueueCount() int {
-	mergeQueue, err := f.FetchMergeQueue()
-	if err != nil {
-		return 0
-	}
-	return len(mergeQueue)
 }
 
 // getRefineryStatusHint returns appropriate status for refinery based on merge queue.
@@ -1254,7 +1287,7 @@ func (f *LiveConvoyFetcher) FetchEscalations() ([]EscalationRow, error) {
 	// List open escalations
 	stdout, err := f.runBdCmd(f.townRoot, "list", "--label=gt:escalation", "--status=open", "--json")
 	if err != nil {
-		return nil, nil // No escalations or bd not available
+		return nil, fmt.Errorf("listing escalations: %w", err)
 	}
 
 	var issues []struct {
@@ -1358,7 +1391,7 @@ func (f *LiveConvoyFetcher) FetchQueues() ([]QueueRow, error) {
 	// List queue beads
 	stdout, err := f.runBdCmd(f.townRoot, "list", "--label=gt:queue", "--json")
 	if err != nil {
-		return nil, nil // No queues or bd not available
+		return nil, fmt.Errorf("listing queues: %w", err)
 	}
 
 	var queues []struct {
@@ -1470,7 +1503,7 @@ func (f *LiveConvoyFetcher) FetchHooks() ([]HookRow, error) {
 	// Query all beads with status=hooked
 	stdout, err := f.runBdCmd(f.townRoot, "list", "--status=hooked", "--json", "--limit=0")
 	if err != nil {
-		return nil, nil // No hooked beads or bd not available
+		return nil, fmt.Errorf("listing hooks: %w", err)
 	}
 
 	var beads []struct {
@@ -1559,8 +1592,19 @@ func (f *LiveConvoyFetcher) FetchMayor() (*MayorStatus, error) {
 	return status, nil
 }
 
+func (f *LiveConvoyFetcher) sessionEnv(sessionName, key string) (string, error) {
+	if f.ctx == nil {
+		return fetcherGetSessionEnv(sessionName, key)
+	}
+	out, err := f.runTmuxCmd("show-environment", "-t", sessionName, key)
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimPrefix(strings.TrimSpace(out.String()), key+"="), nil
+}
+
 func (f *LiveConvoyFetcher) resolveMayorRuntime(sessionName string) string {
-	if agentName, err := fetcherGetSessionEnv(sessionName, "GT_AGENT"); err == nil && strings.TrimSpace(agentName) != "" {
+	if agentName, err := f.sessionEnv(sessionName, "GT_AGENT"); err == nil && strings.TrimSpace(agentName) != "" {
 		agentName = strings.TrimSpace(agentName)
 		rc, _, resolveErr := config.ResolveAgentConfigWithOverride(f.townRoot, "", agentName)
 		if resolveErr == nil {
@@ -1636,9 +1680,8 @@ func stripModelSuffix(model string) string {
 
 // FetchIssues returns open issues (the backlog).
 func (f *LiveConvoyFetcher) FetchIssues() ([]IssueRow, error) {
-	// Query both open AND hooked issues for the Work panel
-	// Open = ready to assign, Hooked = in progress
-	var allBeads []struct {
+	// Both sources are required; a failed half must not look like deleted issues.
+	var beads []struct {
 		ID        string   `json:"id"`
 		Title     string   `json:"title"`
 		Type      string   `json:"type"`
@@ -1646,38 +1689,17 @@ func (f *LiveConvoyFetcher) FetchIssues() ([]IssueRow, error) {
 		Labels    []string `json:"labels"`
 		CreatedAt string   `json:"created_at"`
 	}
-
-	// Fetch open issues
-	if stdout, err := f.runBdCmd(f.townRoot, "list", "--status=open", "--json", "--limit=50"); err == nil {
-		var openBeads []struct {
-			ID        string   `json:"id"`
-			Title     string   `json:"title"`
-			Type      string   `json:"type"`
-			Priority  int      `json:"priority"`
-			Labels    []string `json:"labels"`
-			CreatedAt string   `json:"created_at"`
+	for _, status := range []string{"open", "hooked"} {
+		out, err := f.runBdCmd(f.townRoot, "list", "--status="+status, "--json", "--limit=50")
+		if err != nil {
+			return nil, fmt.Errorf("listing %s issues: %w", status, err)
 		}
-		if err := json.Unmarshal(stdout.Bytes(), &openBeads); err == nil {
-			allBeads = append(allBeads, openBeads...)
+		subset := beads[:0:0]
+		if err := json.Unmarshal(out.Bytes(), &subset); err != nil {
+			return nil, fmt.Errorf("parsing %s issues: %w", status, err)
 		}
+		beads = append(beads, subset...)
 	}
-
-	// Fetch hooked issues (in progress)
-	if stdout, err := f.runBdCmd(f.townRoot, "list", "--status=hooked", "--json", "--limit=50"); err == nil {
-		var hookedBeads []struct {
-			ID        string   `json:"id"`
-			Title     string   `json:"title"`
-			Type      string   `json:"type"`
-			Priority  int      `json:"priority"`
-			Labels    []string `json:"labels"`
-			CreatedAt string   `json:"created_at"`
-		}
-		if err := json.Unmarshal(stdout.Bytes(), &hookedBeads); err == nil {
-			allBeads = append(allBeads, hookedBeads...)
-		}
-	}
-
-	beads := allBeads
 
 	var rows []IssueRow
 	for _, bead := range beads {

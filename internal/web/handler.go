@@ -6,10 +6,12 @@ import (
 	"crypto/rand"
 	"embed"
 	"encoding/hex"
+	"encoding/json"
 	"html/template"
 	"io/fs"
 	"log"
 	"net/http"
+	"sort"
 	"sync"
 	"time"
 
@@ -37,35 +39,27 @@ type ConvoyFetcher interface {
 	FetchActivity() ([]ActivityRow, error)
 }
 
-// expandCacheEntry holds a cached expanded-view response.
-type expandCacheEntry struct {
-	body []byte
-	time time.Time
+// ConvoyHandler shares one snapshot between HTML, expanded panels and SSE.
+// Cache entries are immutable after publication.
+type ConvoyHandler struct {
+	fetcher           ConvoyFetcher
+	template          *template.Template
+	fetchTimeout      time.Duration
+	csrfToken         string
+	embedParentOrigin string
+	cacheMu           sync.Mutex
+	cacheData         *ConvoyData
+	cacheHash         string
+	cacheTime         time.Time // Last attempt, including failed refreshes.
+	cacheTTL          time.Duration
+	refresh           *dashboardRefresh
 }
 
-// ConvoyHandler handles HTTP requests for the convoy dashboard.
-type ConvoyHandler struct {
-	fetcher      ConvoyFetcher
-	template     *template.Template
-	fetchTimeout time.Duration
-	csrfToken    string
-
-	embedParentOrigin string
-
-	// Response cache: prevents cascading bd process storms when multiple
-	// browser tabs or htmx auto-refresh requests arrive faster than fetches
-	// complete. See GH#2618.
-	cacheMu    sync.Mutex
-	cacheBody  []byte
-	cacheTime  time.Time
-	cacheTTL   time.Duration
-	cacheInUse sync.Mutex // serializes concurrent fetches (only one runs at a time)
-
-	// Expanded-view cache: expanded views previously bypassed the response
-	// cache entirely, allowing process storms via repeated ?expand= requests.
-	// See GH#3117.
-	expandCacheMu sync.Mutex
-	expandCache   map[string]expandCacheEntry
+type dashboardRefresh struct {
+	ready     chan struct{}
+	cancel    context.CancelFunc
+	waiters   int
+	published bool
 }
 
 // defaultCacheTTL is the minimum interval between full dashboard fetches.
@@ -88,291 +82,221 @@ func NewConvoyHandler(fetcher ConvoyFetcher, fetchTimeout time.Duration, csrfTok
 	}, nil
 }
 
-// ServeHTTP handles GET / requests and renders the convoy dashboard.
-// Uses a response cache to prevent bd process storms from overlapping
-// requests (htmx auto-refresh, multiple tabs). Only one fetch cycle
-// runs at a time; concurrent requests get the cached response.
+// ServeHTTP renders every view from the same snapshot; expand never refetches.
 func (h *ConvoyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	// Check for expand parameter — expanded views render a different template
-	// variant but are still cached to prevent process storms (GH#3117).
-	expandPanel := r.URL.Query().Get("expand")
-
-	// Fast path: serve from cache if fresh.
-	if expandPanel == "" {
-		h.cacheMu.Lock()
-		if len(h.cacheBody) > 0 && time.Since(h.cacheTime) < h.cacheTTL {
-			body := h.cacheBody
-			h.cacheMu.Unlock()
-			w.Header().Set("Content-Type", "text/html; charset=utf-8")
-			if _, err := w.Write(body); err != nil {
-				log.Printf("dashboard: cached response write failed: %v", err)
-			}
-			return
-		}
-		h.cacheMu.Unlock()
-	} else {
-		// Expanded views: check per-panel cache to prevent process storms
-		h.expandCacheMu.Lock()
-		if entry, ok := h.expandCache[expandPanel]; ok && time.Since(entry.time) < h.cacheTTL {
-			body := entry.body
-			h.expandCacheMu.Unlock()
-			w.Header().Set("Content-Type", "text/html; charset=utf-8")
-			if _, err := w.Write(body); err != nil {
-				log.Printf("dashboard: cached expand response write failed: %v", err)
-			}
-			return
-		}
-		h.expandCacheMu.Unlock()
+	data, _ := h.snapshot(r.Context())
+	if data == nil {
+		return
 	}
-
-	// Serialize fetch cycles: only one request triggers a full fetch at a time.
-	// Others wait and will likely hit the cache when this one finishes.
-	h.cacheInUse.Lock()
-	defer h.cacheInUse.Unlock()
-
-	// Double-check cache after acquiring lock (another request may have populated it).
-	if expandPanel == "" {
-		h.cacheMu.Lock()
-		if len(h.cacheBody) > 0 && time.Since(h.cacheTime) < h.cacheTTL {
-			body := h.cacheBody
-			h.cacheMu.Unlock()
-			w.Header().Set("Content-Type", "text/html; charset=utf-8")
-			if _, err := w.Write(body); err != nil {
-				log.Printf("dashboard: cached response write failed: %v", err)
-			}
-			return
-		}
-		h.cacheMu.Unlock()
-	} else {
-		h.expandCacheMu.Lock()
-		if entry, ok := h.expandCache[expandPanel]; ok && time.Since(entry.time) < h.cacheTTL {
-			body := entry.body
-			h.expandCacheMu.Unlock()
-			w.Header().Set("Content-Type", "text/html; charset=utf-8")
-			if _, err := w.Write(body); err != nil {
-				log.Printf("dashboard: cached expand response write failed: %v", err)
-			}
-			return
-		}
-		h.expandCacheMu.Unlock()
-	}
-
-	body := h.fetchAndRender(r, expandPanel)
-	if body == nil {
+	view := *data
+	view.Expand = r.URL.Query().Get("expand")
+	var buf bytes.Buffer
+	if err := h.template.ExecuteTemplate(&buf, "convoy.html", view); err != nil {
+		log.Printf("dashboard: template execution failed: %v", err)
 		http.Error(w, "Failed to render template", http.StatusInternalServerError)
 		return
 	}
-
-	// Update cache
-	if expandPanel == "" {
-		h.cacheMu.Lock()
-		h.cacheBody = body
-		h.cacheTime = time.Now()
-		h.cacheMu.Unlock()
-	} else {
-		h.expandCacheMu.Lock()
-		if h.expandCache == nil {
-			h.expandCache = make(map[string]expandCacheEntry)
-		}
-		h.expandCache[expandPanel] = expandCacheEntry{body: body, time: time.Now()}
-		h.expandCacheMu.Unlock()
-	}
-
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	if _, err := w.Write(body); err != nil {
+	if len(view.PanelErrors) > 0 {
+		w.Header().Set("X-Dashboard-State", "degraded")
+	}
+	if _, err := w.Write(buf.Bytes()); err != nil {
 		log.Printf("dashboard: response write failed: %v", err)
 	}
 }
 
-// fetchAndRender runs all 14 fetchers in parallel and renders the template.
-// Returns the rendered HTML bytes, or nil on template error.
-func (h *ConvoyHandler) fetchAndRender(r *http.Request, expandPanel string) []byte {
-	ctx, cancel := context.WithTimeout(r.Context(), h.fetchTimeout)
-	defer cancel()
-
-	var (
-		convoys     []ConvoyRow
-		mergeQueue  []MergeQueueRow
-		workers     []WorkerRow
-		mail        []MailRow
-		rigs        []RigRow
-		dogs        []DogRow
-		escalations []EscalationRow
-		health      *HealthRow
-		queues      []QueueRow
-		sessions    []SessionRow
-		hooks       []HookRow
-		mayor       *MayorStatus
-		issues      []IssueRow
-		activity    []ActivityRow
-		wg          sync.WaitGroup
-	)
-
-	// Run all fetches in parallel with error logging
-	wg.Add(14)
-
-	go func() {
-		defer wg.Done()
-		var err error
-		convoys, err = h.fetcher.FetchConvoys()
-		if err != nil {
-			log.Printf("dashboard: FetchConvoys failed: %v", err)
-		}
-	}()
-	go func() {
-		defer wg.Done()
-		var err error
-		mergeQueue, err = h.fetcher.FetchMergeQueue()
-		if err != nil {
-			log.Printf("dashboard: FetchMergeQueue failed: %v", err)
-		}
-	}()
-	go func() {
-		defer wg.Done()
-		var err error
-		workers, err = h.fetcher.FetchWorkers()
-		if err != nil {
-			log.Printf("dashboard: FetchWorkers failed: %v", err)
-		}
-	}()
-	go func() {
-		defer wg.Done()
-		var err error
-		mail, err = h.fetcher.FetchMail()
-		if err != nil {
-			log.Printf("dashboard: FetchMail failed: %v", err)
-		}
-	}()
-	go func() {
-		defer wg.Done()
-		var err error
-		rigs, err = h.fetcher.FetchRigs()
-		if err != nil {
-			log.Printf("dashboard: FetchRigs failed: %v", err)
-		}
-	}()
-	go func() {
-		defer wg.Done()
-		var err error
-		dogs, err = h.fetcher.FetchDogs()
-		if err != nil {
-			log.Printf("dashboard: FetchDogs failed: %v", err)
-		}
-	}()
-	go func() {
-		defer wg.Done()
-		var err error
-		escalations, err = h.fetcher.FetchEscalations()
-		if err != nil {
-			log.Printf("dashboard: FetchEscalations failed: %v", err)
-		}
-	}()
-	go func() {
-		defer wg.Done()
-		var err error
-		health, err = h.fetcher.FetchHealth()
-		if err != nil {
-			log.Printf("dashboard: FetchHealth failed: %v", err)
-		}
-	}()
-	go func() {
-		defer wg.Done()
-		var err error
-		queues, err = h.fetcher.FetchQueues()
-		if err != nil {
-			log.Printf("dashboard: FetchQueues failed: %v", err)
-		}
-	}()
-	go func() {
-		defer wg.Done()
-		var err error
-		sessions, err = h.fetcher.FetchSessions()
-		if err != nil {
-			log.Printf("dashboard: FetchSessions failed: %v", err)
-		}
-	}()
-	go func() {
-		defer wg.Done()
-		var err error
-		hooks, err = h.fetcher.FetchHooks()
-		if err != nil {
-			log.Printf("dashboard: FetchHooks failed: %v", err)
-		}
-	}()
-	go func() {
-		defer wg.Done()
-		var err error
-		mayor, err = h.fetcher.FetchMayor()
-		if err != nil {
-			log.Printf("dashboard: FetchMayor failed: %v", err)
-		}
-	}()
-	go func() {
-		defer wg.Done()
-		var err error
-		issues, err = h.fetcher.FetchIssues()
-		if err != nil {
-			log.Printf("dashboard: FetchIssues failed: %v", err)
-		}
-	}()
-	go func() {
-		defer wg.Done()
-		var err error
-		activity, err = h.fetcher.FetchActivity()
-		if err != nil {
-			log.Printf("dashboard: FetchActivity failed: %v", err)
-		}
-	}()
-
-	// Wait for fetches or timeout
-	done := make(chan struct{})
-	go func() {
-		wg.Wait()
-		close(done)
-	}()
-
+// snapshot starts a refresh even without a page load. All callers share it;
+// disconnecting waiters leave promptly, and the final waiter cancels its work.
+func (h *ConvoyHandler) snapshot(ctx context.Context) (*ConvoyData, string) {
+	if ctx.Err() != nil {
+		return nil, ""
+	}
+	h.cacheMu.Lock()
+	if !h.cacheTime.IsZero() && time.Since(h.cacheTime) < h.cacheTTL {
+		data, hash := h.cacheData, h.cacheHash
+		h.cacheMu.Unlock()
+		return data, hash
+	}
+	flight := h.refresh
+	if flight == nil {
+		workCtx, cancel := context.WithTimeout(context.Background(), h.fetchTimeout)
+		flight = &dashboardRefresh{ready: make(chan struct{}), cancel: cancel}
+		h.refresh = flight
+		go h.refreshSnapshot(workCtx, flight, h.cacheData)
+	}
+	flight.waiters++
+	h.cacheMu.Unlock()
 	select {
-	case <-done:
-		// All fetches completed
 	case <-ctx.Done():
-		log.Printf("dashboard: fetch timeout after %v", h.fetchTimeout)
-		// Goroutines may still be writing to shared result variables.
-		// Wait for them to finish to avoid a data race on read below.
-		<-done
+	case <-flight.ready:
 	}
-
-	// Compute summary from already-fetched data
-	summary := computeSummary(workers, hooks, issues, convoys, escalations, activity)
-
-	data := ConvoyData{
-		Convoys:     convoys,
-		MergeQueue:  mergeQueue,
-		Workers:     workers,
-		Mail:        mail,
-		Rigs:        rigs,
-		Dogs:        dogs,
-		Escalations: escalations,
-		Health:      health,
-		Queues:      queues,
-		Sessions:    sessions,
-		Hooks:       hooks,
-		Mayor:       mayor,
-		Issues:      enrichIssuesWithAssignees(issues, hooks),
-		Activity:    activity,
-		Summary:     summary,
-		Expand:      expandPanel,
-		CSRFToken:   h.csrfToken,
-
-		EmbedParentOrigin: h.embedParentOrigin,
+	h.cacheMu.Lock()
+	flight.waiters--
+	if flight.waiters == 0 && !flight.published {
+		flight.cancel()
 	}
-
-	var buf bytes.Buffer
-	if err := h.template.ExecuteTemplate(&buf, "convoy.html", data); err != nil {
-		log.Printf("dashboard: template execution failed: %v", err)
-		return nil
+	data, hash := h.cacheData, h.cacheHash
+	h.cacheMu.Unlock()
+	if ctx.Err() != nil {
+		return nil, ""
 	}
+	return data, hash
+}
 
-	return buf.Bytes()
+func (h *ConvoyHandler) refreshSnapshot(ctx context.Context, flight *dashboardRefresh, previous *ConvoyData) {
+	data, drained := h.fetchSnapshot(ctx, previous)
+	hash := hashDashboardSnapshot(data)
+	h.cacheMu.Lock()
+	if ctx.Err() != context.Canceled {
+		h.cacheData, h.cacheHash, h.cacheTime = data, hash, time.Now()
+	}
+	flight.published = true
+	close(flight.ready)
+	h.cacheMu.Unlock()
+	// Keep the single-flight reservation until every fetch has exited. Even a
+	// non-context-aware fetcher cannot overlap a later refresh after timeout.
+	<-drained
+	flight.cancel()
+	h.cacheMu.Lock()
+	h.refresh = nil
+	h.cacheMu.Unlock()
+}
+
+type dashboardPanelResult struct {
+	name  string
+	apply func(*ConvoyData)
+	err   error
+}
+
+// fetchSnapshot keeps last-good panel data on errors, and publishes explicit
+// unavailable/stale panel notices. An unavailable optional panel must neither
+// erase useful data nor prevent the initial SSE event indefinitely.
+func (h *ConvoyHandler) fetchSnapshot(ctx context.Context, previous *ConvoyData) (*ConvoyData, <-chan struct{}) {
+	data := &ConvoyData{CSRFToken: h.csrfToken, EmbedParentOrigin: h.embedParentOrigin}
+	if previous != nil {
+		*data = *previous
+	}
+	data.PanelErrors = make(map[string]string)
+	fetcher := h.fetcher
+	if contextual, ok := fetcher.(interface {
+		WithContext(context.Context) ConvoyFetcher
+	}); ok {
+		fetcher = contextual.WithContext(ctx)
+	}
+	results := make(chan dashboardPanelResult, 14)
+	pending := make(map[string]bool)
+	var wg sync.WaitGroup
+	launch := func(name string, fetch func() (func(*ConvoyData), error)) {
+		pending[name] = true
+		wg.Add(1)
+		go func() { defer wg.Done(); apply, err := fetch(); results <- dashboardPanelResult{name, apply, err} }()
+	}
+	launch("Convoys", func() (func(*ConvoyData), error) {
+		value, err := fetcher.FetchConvoys()
+		return func(d *ConvoyData) { d.Convoys = value }, err
+	})
+	launch("MergeQueue", func() (func(*ConvoyData), error) {
+		value, err := fetcher.FetchMergeQueue()
+		return func(d *ConvoyData) { d.MergeQueue = value }, err
+	})
+	launch("Workers", func() (func(*ConvoyData), error) {
+		value, err := fetcher.FetchWorkers()
+		return func(d *ConvoyData) { d.Workers = value }, err
+	})
+	launch("Mail", func() (func(*ConvoyData), error) {
+		value, err := fetcher.FetchMail()
+		return func(d *ConvoyData) { d.Mail = value }, err
+	})
+	launch("Rigs", func() (func(*ConvoyData), error) {
+		value, err := fetcher.FetchRigs()
+		return func(d *ConvoyData) { d.Rigs = value }, err
+	})
+	launch("Dogs", func() (func(*ConvoyData), error) {
+		value, err := fetcher.FetchDogs()
+		return func(d *ConvoyData) { d.Dogs = value }, err
+	})
+	launch("Escalations", func() (func(*ConvoyData), error) {
+		value, err := fetcher.FetchEscalations()
+		return func(d *ConvoyData) { d.Escalations = value }, err
+	})
+	launch("Health", func() (func(*ConvoyData), error) {
+		value, err := fetcher.FetchHealth()
+		return func(d *ConvoyData) { d.Health = value }, err
+	})
+	launch("Queues", func() (func(*ConvoyData), error) {
+		value, err := fetcher.FetchQueues()
+		return func(d *ConvoyData) { d.Queues = value }, err
+	})
+	launch("Sessions", func() (func(*ConvoyData), error) {
+		value, err := fetcher.FetchSessions()
+		return func(d *ConvoyData) { d.Sessions = value }, err
+	})
+	launch("Hooks", func() (func(*ConvoyData), error) {
+		value, err := fetcher.FetchHooks()
+		return func(d *ConvoyData) { d.Hooks = value }, err
+	})
+	launch("Mayor", func() (func(*ConvoyData), error) {
+		value, err := fetcher.FetchMayor()
+		return func(d *ConvoyData) { d.Mayor = value }, err
+	})
+	launch("Issues", func() (func(*ConvoyData), error) {
+		value, err := fetcher.FetchIssues()
+		return func(d *ConvoyData) { d.Issues = value }, err
+	})
+	launch("Activity", func() (func(*ConvoyData), error) {
+		value, err := fetcher.FetchActivity()
+		return func(d *ConvoyData) { d.Activity = value }, err
+	})
+
+	drained := make(chan struct{})
+	go func() { wg.Wait(); close(drained) }()
+	failed := func(name string, err error) {
+		log.Printf("dashboard: %s refresh failed: %v", name, err)
+		message := "Unavailable; refresh will retry."
+		if previous != nil && previous.PanelErrors[name] != "Unavailable; refresh will retry." {
+			message = "Refresh failed; showing last known data."
+		}
+		data.PanelErrors[name] = message
+	}
+	for len(pending) > 0 {
+		select {
+		case result := <-results:
+			delete(pending, result.name)
+			if result.err != nil {
+				failed(result.name, result.err)
+			} else {
+				result.apply(data)
+			}
+		case <-ctx.Done():
+			for name := range pending {
+				failed(name, ctx.Err())
+			}
+			pending = nil
+		}
+	}
+	// Enrichment must not mutate slices belonging to the previous snapshot.
+	data.Issues = append([]IssueRow(nil), data.Issues...)
+	data.Issues = enrichIssuesWithAssignees(data.Issues, data.Hooks)
+	data.Summary = computeSummary(data.Workers, data.Hooks, data.Issues, data.Convoys, data.Escalations, data.Activity)
+	return data, drained
+}
+
+// Hash every panel and its availability. Canonicalize top-level row order so
+// unordered source results cannot cause a refresh loop; no field is omitted.
+func hashDashboardSnapshot(data *ConvoyData) string {
+	raw, _ := json.Marshal(data)
+	var fields map[string]json.RawMessage
+	_ = json.Unmarshal(raw, &fields)
+	var parts []string
+	for name, value := range fields {
+		var rows []json.RawMessage
+		if len(value) > 0 && value[0] == '[' && json.Unmarshal(value, &rows) == nil {
+			sort.Slice(rows, func(i, j int) bool { return bytes.Compare(rows[i], rows[j]) < 0 })
+			value, _ = json.Marshal(rows)
+		}
+		parts = append(parts, name+":"+string(value))
+	}
+	return hashDashboardParts(parts)
 }
 
 // computeSummary calculates dashboard stats and alerts from fetched data.
@@ -486,6 +410,7 @@ func NewDashboardMuxWithOptions(fetcher ConvoyFetcher, webCfg *config.WebTimeout
 	defaultRunTimeout := config.ParseDurationOrDefault(webCfg.DefaultRunTimeout, 30*time.Second)
 	maxRunTimeout := config.ParseDurationOrDefault(webCfg.MaxRunTimeout, 60*time.Second)
 	apiHandler := NewAPIHandler(defaultRunTimeout, maxRunTimeout, csrfToken)
+	apiHandler.dashboard = convoyHandler
 	if opts.GTPath != "" {
 		apiHandler.gtPath = opts.GTPath
 		if live, ok := fetcher.(*LiveConvoyFetcher); ok {

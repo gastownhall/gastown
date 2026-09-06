@@ -1180,8 +1180,8 @@ func TestConvoyHandler_CacheBypassOnExpand(t *testing.T) {
 	w2 := httptest.NewRecorder()
 	handler.ServeHTTP(w2, req2)
 
-	if fetchCount != 2 {
-		t.Errorf("First expand request fetchCount = %d, want 2 (should bypass normal cache)", fetchCount)
+	if fetchCount != 1 {
+		t.Errorf("First expand request fetchCount = %d, want 1 (shared snapshot)", fetchCount)
 	}
 
 	// Second identical expand request — should hit expand cache (GH#3117)
@@ -1189,8 +1189,8 @@ func TestConvoyHandler_CacheBypassOnExpand(t *testing.T) {
 	w3 := httptest.NewRecorder()
 	handler.ServeHTTP(w3, req3)
 
-	if fetchCount != 2 {
-		t.Errorf("Second expand request fetchCount = %d, want 2 (should hit expand cache)", fetchCount)
+	if fetchCount != 1 {
+		t.Errorf("Second expand request fetchCount = %d, want 1 (shared snapshot)", fetchCount)
 	}
 }
 
