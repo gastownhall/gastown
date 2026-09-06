@@ -409,7 +409,7 @@ func parseEtime(etime string) (int, error) {
 // TTY-less orphan / zombie cleanup (matches internal/config agent presets).
 func isAgentOrphanCommName(cmdLower string) bool {
 	switch cmdLower {
-	case "claude", "claude-code", "codex", "opencode", "cursor-agent", "agent", "copilot":
+	case "claude", "claude-code", "codex", "opencode", "cursor-agent", "agent", "copilot", "grok":
 		return true
 	default:
 		return false
@@ -424,7 +424,7 @@ type OrphanedProcess struct {
 	TownRoot string // Gas Town workspace root, or "" if not in any workspace
 }
 
-// FindOrphanedClaudeProcesses finds Gas Town agent processes (claude/codex/opencode/cursor-agent/copilot, etc.)
+// FindOrphanedClaudeProcesses finds Gas Town agent processes (claude/codex/opencode/cursor-agent/copilot/grok, etc.)
 // without a controlling terminal.
 // These are typically subagent processes spawned by Claude Code's Task tool that didn't
 // clean up properly after completion.

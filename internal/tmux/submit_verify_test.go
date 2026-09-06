@@ -139,6 +139,41 @@ func TestAnalyzeSubmission(t *testing.T) {
 	}
 }
 
+func TestAnalyzeSubmissionGrokComposer(t *testing.T) {
+	t.Parallel()
+	const needle = "resume the patrol"
+	const grokPrefix = "│ ❯"
+
+	tests := []struct {
+		name    string
+		content string
+		want    submitProbe
+	}{
+		{
+			name:    "empty boxed composer is cleared",
+			content: "transcript\n│ ❯                                                                        │\nShift+Tab:mode  │  Ctrl+x:shortcuts\n",
+			want:    probeComposerCleared,
+		},
+		{
+			name:    "nudge text still in boxed composer is stranded",
+			content: "transcript\n│ ❯ resume the patrol                                                     │\n",
+			want:    probeStranded,
+		},
+		{
+			name:    "grok busy footer is turn-started when composer line is absent",
+			content: "agent output\nShift+Tab:mode  │  Esc:cancel  │  Ctrl+b:send to bg  │  Ctrl+x:shortcuts\n",
+			want:    probeTurnStarted,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := analyzeSubmission(tt.content, needle, grokPrefix); got != tt.want {
+				t.Errorf("analyzeSubmission() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
 func TestErrSubmitNotVerifiedWrapping(t *testing.T) {
 	t.Parallel()
 	wrapped := fmt.Errorf("nudge to session: %w", fmt.Errorf("submit: %w", ErrSubmitNotVerified))

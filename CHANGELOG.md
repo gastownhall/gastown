@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Grok Build CLI preset** (`grok`) — first-class runtime for the `grok` binary
+  (`--always-approve --trust --no-leader`), session resume/continue, ACP
+  (`grok agent --always-approve stdio`), and Gas Town hooks in `.grok/hooks/`.
+  This is not `groq-compound` (Claude CLI proxied to Groq).
+
+### Fixed
+
+- **Grok polecats no longer stall at an empty composer after finishing work.**
+  Autonomous Grok Stop hooks now run `gt tap polecat-stop-check` (the same
+  idle-polecat safety net Claude polecats already had). Idle detection uses
+  the boxed composer prefix `│ ❯` plus Grok's `Esc:cancel` busy marker, so
+  `gt nudge --mode=wait-idle` no longer falls back to queue mode or false-idles
+  on scrollback `❯ [GAS TOWN]…` lines. `GetSessionActivity` prefers
+  `window_activity` when `session_activity` is frozen at session creation.
+
 ## [1.2.1] - 2026-06-06
 
 ### Fixed

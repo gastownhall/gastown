@@ -1935,7 +1935,7 @@ func (h *APIHandler) isClaudeRunningInSession(ctx context.Context, sessionName s
 }
 
 // paneCurrentCommandIsAgent returns true if tmux #{pane_current_command} names a known
-// Gas Town agent (claude/codex/opencode/cursor-agent/copilot/node, or cursor-agent as "agent").
+// Gas Town agent (claude/codex/opencode/cursor-agent/copilot/grok/node, or cursor-agent as "agent").
 func paneCurrentCommandIsAgent(output string) bool {
 	output = strings.ToLower(strings.TrimSpace(output))
 	if output == "" {
@@ -1948,6 +1948,7 @@ func paneCurrentCommandIsAgent(output string) bool {
 		strings.Contains(output, "opencode") ||
 		strings.Contains(output, "cursor-agent") ||
 		strings.Contains(output, "copilot") ||
+		strings.Contains(output, "grok") ||
 		output == "agent"
 }
 

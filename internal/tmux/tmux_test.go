@@ -2233,6 +2233,14 @@ func TestMatchesPromptPrefix(t *testing.T) {
 
 		// Bare prompt character without any space
 		{"bare prompt no space", "❯", regularPrefix, true},
+
+		// Grok Build CLI composer is a boxed "│ ❯ … │". The grok preset uses
+		// that boxed prefix so scrollback user lines ("❯ [GAS TOWN]…") are not
+		// false-idles. Captured from a stalled Grok polecat pane.
+		{"grok boxed composer", "  │ ❯                                                                        │", "│ ❯", true},
+		{"grok boxed composer with draft", "│ ❯ gt prime                                                                 │", "│ ❯", true},
+		{"grok scrollback user line is not the composer", "     ❯ [GAS TOWN] polecat dinki (rig: tl) <- witness", "│ ❯", false},
+		{"claude prefix must not be used for grok scrollback", "     ❯ [GAS TOWN] polecat dinki (rig: tl) <- witness", regularPrefix, true},
 	}
 
 	for _, tt := range tests {
@@ -2411,14 +2419,20 @@ func TestBusyIndicators(t *testing.T) {
 	// "esc to interrupt" is the marker Claude Code / Codex / Gemini render while
 	// generating. If this assertion fails, the change must be deliberate.
 	found := false
+	grokCancel := false
 	for _, m := range busyIndicators {
 		if m == "esc to interrupt" {
 			found = true
-			break
+		}
+		if m == "Esc:cancel" {
+			grokCancel = true
 		}
 	}
 	if !found {
 		t.Errorf("busyIndicators = %q, want it to contain the known \"esc to interrupt\" marker", busyIndicators)
+	}
+	if !grokCancel {
+		t.Errorf("busyIndicators = %q, want it to contain Grok's \"Esc:cancel\" footer marker", busyIndicators)
 	}
 
 	// Every marker must be matched by hasBusyIndicator (guards against an empty
@@ -2441,6 +2455,52 @@ func TestDefaultReadyPromptPrefix(t *testing.T) {
 	}
 	if !strings.Contains(DefaultReadyPromptPrefix, "❯") {
 		t.Errorf("DefaultReadyPromptPrefix = %q, want to contain ❯", DefaultReadyPromptPrefix)
+	}
+}
+
+func TestLatestUnixActivity(t *testing.T) {
+	t.Parallel()
+
+	got, err := latestUnixActivity("100", "200")
+	if err != nil {
+		t.Fatalf("latestUnixActivity: %v", err)
+	}
+	if got.Unix() != 200 {
+		t.Errorf("latestUnixActivity(100, 200) = %d, want 200", got.Unix())
+	}
+
+	got, err = latestUnixActivity("1788677276", "")
+	if err != nil {
+		t.Fatalf("latestUnixActivity missing window: %v", err)
+	}
+	if got.Unix() != 1788677276 {
+		t.Errorf("latestUnixActivity fell back to session_activity = %d, want 1788677276", got.Unix())
+	}
+
+	// Grok polecat dinki: session_activity frozen at create, window_activity
+	// advanced through the 12m29s of actual work.
+	got, err = latestUnixActivity("1788677276", "1788678029")
+	if err != nil {
+		t.Fatalf("latestUnixActivity grok stall: %v", err)
+	}
+	if got.Unix() != 1788678029 {
+		t.Errorf("latestUnixActivity preferred session_activity %d, want window_activity 1788678029", got.Unix())
+	}
+
+	if _, err := latestUnixActivity("", ""); err == nil {
+		t.Fatal("latestUnixActivity empty values should error")
+	}
+}
+
+func TestGrokBusyFooter(t *testing.T) {
+	t.Parallel()
+	idle := "  Shift+Tab:mode  │  Ctrl+x:shortcuts"
+	busy := "  Shift+Tab:mode  │  Esc:cancel  │  Ctrl+b:send to bg  │  Ctrl+x:shortcuts"
+	if hasBusyIndicator(idle) {
+		t.Error("idle Grok footer must not look busy")
+	}
+	if !hasBusyIndicator(busy) {
+		t.Error("busy Grok footer with Esc:cancel must be detected")
 	}
 }
 

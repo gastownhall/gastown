@@ -1,0 +1,64 @@
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "run_terminal_command|Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "CMD=$(jq -r '.toolInput.command // empty'); if echo \"$CMD\" | grep -qE 'gh[[:space:]]+pr[[:space:]]+create|git[[:space:]]+checkout[[:space:]]+-b|git[[:space:]]+switch[[:space:]]+-c'; then {{GT_BIN}} tap guard pr-workflow; fi"
+          }
+        ]
+      }
+    ],
+    "SessionStart": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "{{GT_BIN}} prime --hook"
+          }
+        ]
+      }
+    ],
+    "PreCompact": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "{{GT_BIN}} prime --hook"
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "case \"${GT_ROLE:-}\" in *witness*|*refinery*|deacon*|*boot*) exit 0 ;; *) {{GT_BIN}} mail check --inject ;; esac"
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "{{GT_BIN}} costs record &"
+          },
+          {
+            "type": "command",
+            "command": "{{GT_BIN}} tap polecat-stop-check",
+            "timeout": 600
+          }
+        ]
+      }
+    ]
+  }
+}

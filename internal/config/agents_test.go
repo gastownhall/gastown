@@ -32,7 +32,7 @@ func TestBuiltInAgentPresetSummary(t *testing.T) {
 func TestBuiltinPresets(t *testing.T) {
 	t.Parallel()
 	// Ensure all built-in presets are accessible
-	presets := []AgentPreset{AgentClaude, AgentGemini, AgentCodex, AgentKiro, AgentCursor, AgentAuggie, AgentAmp, AgentOpenCode, AgentCopilot, AgentPi, AgentOmp}
+	presets := []AgentPreset{AgentClaude, AgentGemini, AgentCodex, AgentKiro, AgentCursor, AgentAuggie, AgentAmp, AgentOpenCode, AgentCopilot, AgentPi, AgentOmp, AgentGrok}
 
 	for _, preset := range presets {
 		info := GetAgentPreset(preset)
@@ -71,6 +71,7 @@ func TestGetAgentPresetByName(t *testing.T) {
 		{"copilot", AgentCopilot, false},   // Built-in GitHub Copilot CLI agent
 		{"pi", AgentPi, false},             // Pi Coding Agent
 		{"omp", AgentOmp, false},           // Oh My Pi
+		{"grok", AgentGrok, false},         // Grok Build CLI (not groq-compound)
 		{"unknown", "", true},
 	}
 
@@ -101,6 +102,7 @@ func TestRuntimeConfigFromPreset(t *testing.T) {
 		{AgentCodex, "codex"},
 		{AgentKiro, "kiro-cli"},
 		{AgentCursor, "cursor-agent"},
+		{AgentGrok, "grok"},
 		{AgentAuggie, "auggie"},
 		{AgentAmp, "amp"},
 		{AgentCopilot, "copilot"},
@@ -657,6 +659,13 @@ func TestBuildResumeCommand(t *testing.T) {
 			contains:  []string{"copilot", "--yolo", "--resume", "cea0d5f0-662a-4a98-9585-060b9d2a7a19"},
 		},
 		{
+			name:      "grok flag style",
+			agentName: "grok",
+			sessionID: "0193a1c2-0000-7000-8000-000000000001",
+			wantEmpty: false,
+			contains:  []string{"grok", "--always-approve", "--trust", "--no-leader", "--resume", "0193a1c2-0000-7000-8000-000000000001"},
+		},
+		{
 			name:      "unknown agent",
 			agentName: "unknown-agent",
 			sessionID: "session-123",
@@ -751,6 +760,7 @@ func TestGetProcessNames(t *testing.T) {
 		{"opencode", []string{"opencode", "node", "bun"}},
 		{"copilot", []string{"copilot"}},
 		{"pi", []string{"pi", "node", "bun"}},
+		{"grok", []string{"grok"}},
 		{"unknown", []string{"node", "claude"}}, // Falls back to Claude's process
 	}
 
@@ -773,7 +783,7 @@ func TestGetProcessNames(t *testing.T) {
 func TestListAgentPresetsMatchesConstants(t *testing.T) {
 	t.Parallel()
 	// Ensure all AgentPreset constants are returned by ListAgentPresets
-	allConstants := []AgentPreset{AgentClaude, AgentGemini, AgentCodex, AgentCursor, AgentAuggie, AgentAmp, AgentOpenCode, AgentCopilot, AgentPi, AgentOmp}
+	allConstants := []AgentPreset{AgentClaude, AgentGemini, AgentCodex, AgentCursor, AgentAuggie, AgentAmp, AgentOpenCode, AgentCopilot, AgentPi, AgentOmp, AgentGrok}
 	presets := ListAgentPresets()
 
 	// Convert to map for quick lookup
@@ -839,6 +849,11 @@ func TestAgentCommandGeneration(t *testing.T) {
 			preset:       AgentCopilot,
 			wantCommand:  "copilot",
 			wantContains: []string{"--yolo"},
+		},
+		{
+			preset:       AgentGrok,
+			wantCommand:  "grok",
+			wantContains: []string{"--always-approve", "--trust", "--no-leader"},
 		},
 	}
 
@@ -921,6 +936,106 @@ func TestCursorAgentPreset(t *testing.T) {
 	}
 	if info.ReadyDelayMs != 5000 {
 		t.Errorf("cursor ReadyDelayMs = %d, want 5000 (nudge poller + WaitForRuntimeReady)", info.ReadyDelayMs)
+	}
+}
+
+func TestGrokAgentPreset(t *testing.T) {
+	t.Parallel()
+	info := GetAgentPreset(AgentGrok)
+	if info == nil {
+		t.Fatal("grok preset not found")
+	}
+	if info.Name != AgentGrok {
+		t.Errorf("grok Name = %q, want grok", info.Name)
+	}
+	if info.Command != "grok" {
+		t.Errorf("grok command = %q, want grok", info.Command)
+	}
+	wantArgs := []string{"--always-approve", "--trust", "--no-leader"}
+	if len(info.Args) != len(wantArgs) {
+		t.Fatalf("grok args = %v, want %v", info.Args, wantArgs)
+	}
+	for i, arg := range wantArgs {
+		if info.Args[i] != arg {
+			t.Errorf("grok args[%d] = %q, want %q", i, info.Args[i], arg)
+		}
+	}
+	if len(info.ProcessNames) != 1 || info.ProcessNames[0] != "grok" {
+		t.Errorf("grok ProcessNames = %v, want [grok]", info.ProcessNames)
+	}
+	if info.SessionIDEnv != "" {
+		t.Errorf("grok SessionIDEnv = %q, want empty (restore uses --continue)", info.SessionIDEnv)
+	}
+	if info.ResumeFlag != "--resume" {
+		t.Errorf("grok ResumeFlag = %q, want --resume", info.ResumeFlag)
+	}
+	if info.ContinueFlag != "--continue" {
+		t.Errorf("grok ContinueFlag = %q, want --continue", info.ContinueFlag)
+	}
+	if info.ResumeStyle != "flag" {
+		t.Errorf("grok ResumeStyle = %q, want flag", info.ResumeStyle)
+	}
+	if !info.SupportsHooks {
+		t.Error("grok SupportsHooks = false, want true")
+	}
+	if info.SupportsForkSession {
+		t.Error("grok SupportsForkSession = true, want false (seance is Claude-only)")
+	}
+	if info.NonInteractive == nil {
+		t.Fatal("grok NonInteractive is nil")
+	}
+	if info.NonInteractive.PromptFlag != "-p" {
+		t.Errorf("grok PromptFlag = %q, want -p", info.NonInteractive.PromptFlag)
+	}
+	if info.NonInteractive.OutputFlag != "--output-format json" {
+		t.Errorf("grok OutputFlag = %q, want --output-format json", info.NonInteractive.OutputFlag)
+	}
+	if info.PromptMode != "arg" {
+		t.Errorf("grok PromptMode = %q, want arg", info.PromptMode)
+	}
+	if info.ConfigDir != ".grok" {
+		t.Errorf("grok ConfigDir = %q, want .grok", info.ConfigDir)
+	}
+	if info.ConfigDirEnv != "" {
+		t.Errorf("grok ConfigDirEnv = %q, want empty (auth lives in ~/.grok)", info.ConfigDirEnv)
+	}
+	if info.HooksProvider != "grok" {
+		t.Errorf("grok HooksProvider = %q, want grok", info.HooksProvider)
+	}
+	if info.HooksDir != ".grok/hooks" {
+		t.Errorf("grok HooksDir = %q, want .grok/hooks", info.HooksDir)
+	}
+	if info.HooksSettingsFile != "gastown.json" {
+		t.Errorf("grok HooksSettingsFile = %q, want gastown.json", info.HooksSettingsFile)
+	}
+	// Grok's composer is a boxed "│ ❯ … │". Using Claude's bare "❯ " false-idles
+	// on scrollback user lines ("❯ [GAS TOWN]…") while the session is working.
+	if info.ReadyPromptPrefix != "│ ❯" {
+		t.Errorf("grok ReadyPromptPrefix = %q, want %q (boxed composer)", info.ReadyPromptPrefix, "│ ❯")
+	}
+	if info.ReadyDelayMs != 5000 {
+		t.Errorf("grok ReadyDelayMs = %d, want 5000", info.ReadyDelayMs)
+	}
+	if info.InstructionsFile != "AGENTS.md" {
+		t.Errorf("grok InstructionsFile = %q, want AGENTS.md", info.InstructionsFile)
+	}
+	if !info.HasTurnBoundaryDrain {
+		t.Error("grok HasTurnBoundaryDrain = false, want true (UserPromptSubmit hook)")
+	}
+	if !info.EscapeCancelsRequest {
+		t.Error("grok EscapeCancelsRequest = false, want true")
+	}
+	if info.ACP == nil {
+		t.Fatal("grok ACP is nil")
+	}
+	if info.ACP.Mode != "" && info.ACP.Mode != ACPModeSubcommand {
+		t.Errorf("grok ACP.Mode = %q, want subcommand or empty", info.ACP.Mode)
+	}
+	if info.ACP.Command != "agent" {
+		t.Errorf("grok ACP.Command = %q, want agent", info.ACP.Command)
+	}
+	if len(info.ACP.Args) != 2 || info.ACP.Args[0] != "--always-approve" || info.ACP.Args[1] != "stdio" {
+		t.Errorf("grok ACP.Args = %v, want [--always-approve stdio]", info.ACP.Args)
 	}
 }
 
