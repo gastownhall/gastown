@@ -33,14 +33,14 @@ func managedDashboardRead(args []string) bool {
 	if len(args) == 0 {
 		return false
 	}
-	if args[0] == "status" {
+	if args[0] == "status" || args[0] == "ready" {
 		return true
 	}
 	if len(args) < 2 {
 		return false
 	}
 	switch args[0] + " " + args[1] {
-	case "mail inbox", "mail check", "hooks list", "convoy list", "convoy status", "rig list", "agents list":
+	case "mail inbox", "mail check", "hooks list", "convoy list", "convoy status", "rig list", "agents list", "crew list", "polecat list":
 		return true
 	}
 	return false
