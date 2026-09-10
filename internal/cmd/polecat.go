@@ -498,7 +498,12 @@ func runPolecatList(cmd *cobra.Command, args []string) error {
 			fmt.Fprintf(os.Stderr, "warning: failed to list polecats in %s: %v\n", r.Name, err)
 			continue
 		}
-		agents, agentErr := bd.ListAgentBeads()
+		// Agent beads live in the TOWN database; ForAgentBead() routes there.
+		// Omitting it lists the rig db, finds no polecat agent beads, and reports
+		// every polecat as cleanup_status=<missing>. Same defect as the capacity
+		// path in polecat_capacity.go — see the comment there for why a map miss
+		// silently becomes a held capacity slot.
+		agents, agentErr := bd.ForAgentBead().ListAgentBeads()
 		if agentErr != nil {
 			fmt.Fprintf(os.Stderr, "warning: failed to list agent beads in %s: %v\n", r.Name, agentErr)
 			agents = nil
