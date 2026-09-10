@@ -2611,9 +2611,43 @@ func (t *Tmux) FindSessionByWorkDir(targetDir string, processNames []string) ([]
 	return matches, nil
 }
 
-// CapturePane captures the visible content of a pane.
+// CapturePane captures the pane's ENTIRE VISIBLE CONTENT plus `lines` rows of
+// scrollback above it. It does NOT return the last `lines` rows.
+//
+// The flags are `-S -<lines>` with no `-E`, so the capture starts `lines` rows
+// above the top of the visible pane and runs to the bottom of it. On an ordinary
+// 66-row pane, CapturePane(s, 5) returns about 71 lines, not 5.
+//
+// This matters because the old comment said "visible content" and the parameter
+// is named `lines`, which reads as a tail length. Code that diffed
+// CapturePane(target, 5) against itself to detect a change was in fact diffing
+// the whole pane -- including Claude Code's spinner and elapsed-time counter --
+// so the comparison ALWAYS reported a change and the check could never fail.
+// See sendEnterVerified. Use CapturePaneTail when you want an actual tail.
 func (t *Tmux) CapturePane(session string, lines int) (string, error) {
 	return t.run("capture-pane", "-p", "-t", session, "-S", fmt.Sprintf("-%d", lines))
+}
+
+// CapturePaneTail returns ONLY the last `lines` rows of a pane, which is what
+// CapturePane's signature looks like it should do and does not.
+//
+// The tail is taken in Go rather than with tmux's -E flag. -E's line numbering is
+// relative to the visible pane in a way that is easy to get wrong -- `-S -5 -E -1`
+// does not give five lines -- and a capture whose length silently disagrees with
+// the caller's intent is exactly the defect this function exists to avoid.
+func (t *Tmux) CapturePaneTail(session string, lines int) (string, error) {
+	if lines < 1 {
+		lines = 1
+	}
+	out, err := t.CapturePane(session, 0)
+	if err != nil {
+		return "", err
+	}
+	rows := strings.Split(strings.TrimRight(out, "\n"), "\n")
+	if len(rows) > lines {
+		rows = rows[len(rows)-lines:]
+	}
+	return strings.Join(rows, "\n"), nil
 }
 
 // CapturePaneAll captures all scrollback history.
@@ -2621,7 +2655,9 @@ func (t *Tmux) CapturePaneAll(session string) (string, error) {
 	return t.run("capture-pane", "-p", "-t", session, "-S", "-")
 }
 
-// CapturePaneLines captures the last N lines of a pane as a slice.
+// CapturePaneLines splits CapturePane's output into lines. Like CapturePane, it
+// returns the whole visible pane plus `lines` rows of scrollback -- NOT the last
+// N lines, despite the name. Use CapturePaneTail for a real tail.
 func (t *Tmux) CapturePaneLines(session string, lines int) ([]string, error) {
 	out, err := t.CapturePane(session, lines)
 	if err != nil {
