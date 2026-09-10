@@ -3,6 +3,7 @@ package cmd
 import (
 	"os"
 	"path/filepath"
+	"slices"
 	"testing"
 
 	"github.com/steveyegge/gastown/internal/beads"
@@ -93,6 +94,24 @@ func TestActiveWorkStatusesPreferHookedOverInProgress(t *testing.T) {
 	for i := range want {
 		if got[i] != want[i] {
 			t.Fatalf("activeWorkStatuses()[%d] = %q, want %q", i, got[i], want[i])
+		}
+	}
+}
+
+func TestActiveWorkAssigneesTownRoleCompatibility(t *testing.T) {
+	tests := []struct {
+		assignee string
+		want     []string
+	}{
+		{assignee: "deacon/", want: []string{"deacon/", "deacon"}},
+		{assignee: "deacon", want: []string{"deacon/", "deacon"}},
+		{assignee: "mayor/", want: []string{"mayor/", "mayor"}},
+		{assignee: "sac_charts/witness", want: []string{"sac_charts/witness"}},
+	}
+
+	for _, tt := range tests {
+		if got := activeWorkAssignees(tt.assignee); !slices.Equal(got, tt.want) {
+			t.Fatalf("activeWorkAssignees(%q) = %#v, want %#v", tt.assignee, got, tt.want)
 		}
 	}
 }
