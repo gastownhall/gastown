@@ -33,9 +33,25 @@ func (f FreezeFinding) String() string {
 		f.BeadID, f.Explanation, f.Title)
 }
 
-// beadStatusLookup reads a bead's status and title. Kept as a function value so
-// the guard is testable without a beads database.
-type beadStatusLookup func(beadID string) (status, title string, err error)
+// beadStatusLookup reads a bead's status, labels and title. Kept as a function
+// value so the guard is testable without a beads database.
+type beadStatusLookup func(beadID string) (status string, labels []string, title string, err error)
+
+// FrozenLabels are labels that mean "this whole class of work is frozen".
+//
+// MEMBERSHIP IS THE FACT; STATUS IS AN ATTRIBUTE THAT DRIFTS. A status field is
+// changed by ordinary work: rust resumed ap-mnp minutes after it was deferred,
+// which set it in_progress, and in_progress is not a frozen status -- so the bead
+// un-froze itself without anyone intending it. Resuming work is the NORMAL path,
+// so a guard keyed on status is defeated by agents behaving correctly.
+//
+// A label is not moved by working on a bead. Keying the freeze on identity rather
+// than on a mutable attribute is the same correction that fixed the witness's own
+// freeze check, which compared a set built from statuses against beads whose
+// status was necessarily different.
+var FrozenLabels = map[string]string{
+	"tv-card": "TV-card intake, frozen on capability grounds (hq-wisp-9b4e3): wave2 cards cannot register",
+}
 
 // CheckFrozen reports whether the bead behind a branch says its work must not
 // proceed, in which case the merge should HALT for judgement.
@@ -66,7 +82,7 @@ func CheckFrozen(beadID string, lookup beadStatusLookup) (*FreezeFinding, error)
 		// No bead behind the branch is not this guard's business to refuse.
 		return nil, nil
 	}
-	status, title, err := lookup(beadID)
+	status, labels, title, err := lookup(beadID)
 	if err != nil {
 		// FAIL CLOSED IS WRONG HERE and fail open is also wrong, so say so: the
 		// caller decides. Returning an error rather than "not frozen" keeps a
@@ -74,14 +90,28 @@ func CheckFrozen(beadID string, lookup beadStatusLookup) (*FreezeFinding, error)
 		// the exact shape of the defect this guard exists to close.
 		return nil, fmt.Errorf("cannot determine whether %s is frozen: %w", beadID, err)
 	}
-	explanation, frozen := FrozenStatuses[strings.ToLower(strings.TrimSpace(status))]
-	if !frozen {
-		return nil, nil
+	status = strings.ToLower(strings.TrimSpace(status))
+
+	// Membership first. A frozen label halts REGARDLESS of status, because status
+	// is the field ordinary work moves and a label is not.
+	for _, label := range labels {
+		if explanation, frozen := FrozenLabels[strings.ToLower(strings.TrimSpace(label))]; frozen {
+			return &FreezeFinding{
+				BeadID:      beadID,
+				Status:      status,
+				Title:       title,
+				Explanation: explanation,
+			}, nil
+		}
 	}
-	return &FreezeFinding{
-		BeadID:      beadID,
-		Status:      strings.ToLower(strings.TrimSpace(status)),
-		Title:       title,
-		Explanation: explanation,
-	}, nil
+
+	if explanation, frozen := FrozenStatuses[status]; frozen {
+		return &FreezeFinding{
+			BeadID:      beadID,
+			Status:      status,
+			Title:       title,
+			Explanation: explanation,
+		}, nil
+	}
+	return nil, nil
 }
