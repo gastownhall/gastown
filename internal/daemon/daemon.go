@@ -50,6 +50,10 @@ import (
 // This is recovery-focused: normal wake is handled by feed subscription (bd activity --follow).
 // The daemon is the safety net for dead sessions, GUPP violations, and orphaned work.
 type Daemon struct {
+	// wallRecovery tracks which sessions are showing a usage-limit wall and
+	// when each was last probed. See wall_recovery.go.
+	wallRecovery *wallRecoveryState
+
 	config        *Config
 	patrolConfig  *DaemonPatrolConfig
 	tmux          *tmux.Tmux
@@ -717,6 +721,18 @@ func (d *Daemon) Run() (err error) {
 		d.logger.Printf("Quota dog ticker started (interval %v)", interval)
 	}
 
+	// Start wall-recovery ticker. Nudges agents showing a Claude usage-limit
+	// wall so work resumes when capacity returns. Defaults to enabled.
+	var wallRecoveryTicker *time.Ticker
+	var wallRecoveryChan <-chan time.Time
+	if d.isPatrolActive("wall_recovery") {
+		interval := wallRecoveryInterval(d.patrolConfig)
+		wallRecoveryTicker = time.NewTicker(interval)
+		wallRecoveryChan = wallRecoveryTicker.C
+		defer wallRecoveryTicker.Stop()
+		d.logger.Printf("Wall-recovery ticker started (interval %v)", interval)
+	}
+
 	// Note: PATCH-010 uses per-session hooks in deacon/manager.go (SetAutoRespawnHook).
 	// Global pane-died hooks don't fire reliably in tmux 3.2a, so we rely on the
 	// per-session approach which has been tested to work for continuous recovery.
@@ -817,6 +833,14 @@ func (d *Daemon) Run() (err error) {
 			// rig's main branch to catch regressions from merges or direct pushes.
 			if !d.isShutdownInProgress() {
 				d.runMainBranchTests()
+			}
+
+		case <-wallRecoveryChan:
+			// Wall recovery — probes sessions showing a Claude usage-limit wall,
+			// so a fleet that hit a limit resumes when capacity returns instead
+			// of sitting idle. See wall_recovery.go for why the nudge IS the probe.
+			if !d.isShutdownInProgress() {
+				d.runWallRecovery()
 			}
 
 		case <-quotaDogChan:
@@ -1659,11 +1683,17 @@ func (d *Daemon) restartStuckDeacon(sessionName, reason string) {
 	// at a rate-limit prompt the heartbeat will go stale, looking identical
 	// to a crash — but killing and respawning won't help (the new session
 	// hits the same limit) and the repeated kills burn the crash-loop budget.
-	// Detect the rate-limit signature in the pane and let quota_dog handle
-	// account rotation instead.
+	//
+	// Declining to kill is right; it must not be the WHOLE response. This site
+	// used to hand off to quota_dog, which cannot rotate without an account
+	// roster (hq-rqcc), so the path ended nowhere: on 2026-09-10 it logged this
+	// same line 299 times over fourteen hours with staleness climbing to 14h17m
+	// while nothing re-checked. Recovery is now the wall_recovery patrol's job
+	// (wall_recovery.go), which enumerates ALL sessions rather than only the one
+	// heartbeat tracked here, and probes them until capacity returns.
 	if d.tmux != nil {
 		if pane, err := d.tmux.CapturePane(sessionName, 30); err == nil && IsClaudeUsageLimit(pane) {
-			d.logger.Printf("Stuck-agent-dog: Deacon paused — Claude usage-limit detected, skipping kill (quota_dog will rotate accounts). Reason: %s", reason)
+			d.logger.Printf("Stuck-agent-dog: Deacon paused — Claude usage-limit detected, skipping kill (wall_recovery will probe for capacity returning). Reason: %s", reason)
 			if d.restartTracker != nil {
 				d.restartTracker.RecordPause(agentID)
 				if err := d.restartTracker.Save(); err != nil {
