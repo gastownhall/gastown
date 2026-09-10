@@ -39,20 +39,36 @@ func listBeadsAcrossTables(b *beads.Beads, opts beads.ListOptions) ([]*beads.Iss
 }
 
 func listAssignedActiveWork(b *beads.Beads, assignee string) ([]*beads.Issue, error) {
-	for _, status := range activeWorkStatuses() {
-		beadsForStatus, err := listBeadsAcrossTables(b, beads.ListOptions{
-			Status:   status,
-			Assignee: assignee,
-			Priority: -1,
-		})
-		if err != nil {
-			return nil, err
-		}
-		if len(beadsForStatus) > 0 {
-			return beadsForStatus, nil
+	for _, candidate := range activeWorkAssignees(assignee) {
+		for _, status := range activeWorkStatuses() {
+			beadsForStatus, err := listBeadsAcrossTables(b, beads.ListOptions{
+				Status:   status,
+				Assignee: candidate,
+				Priority: -1,
+			})
+			if err != nil {
+				return nil, err
+			}
+			if len(beadsForStatus) > 0 {
+				return beadsForStatus, nil
+			}
 		}
 	}
 	return nil, nil
+}
+
+// activeWorkAssignees includes the legacy bare spelling for town-level roles.
+// Patrol wisps created before town-level assignees were canonicalized used
+// "deacon"/"mayor", while current hook readers use "deacon/"/"mayor/".
+func activeWorkAssignees(assignee string) []string {
+	switch assignee {
+	case "deacon/", "mayor/":
+		return []string{assignee, strings.TrimSuffix(assignee, "/")}
+	case "deacon", "mayor":
+		return []string{assignee + "/", assignee}
+	default:
+		return []string{assignee}
+	}
 }
 
 func listAssignedActiveWorkAcrossStatuses(b *beads.Beads, assignee string) ([]*beads.Issue, error) {
