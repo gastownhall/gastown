@@ -287,14 +287,26 @@ func TestRunDoneRejectsMayorRigBeforeAutosave(t *testing.T) {
 }
 
 func TestIsDoneCommand(t *testing.T) {
-	done := &cobra.Command{Use: "done"}
-	root := &cobra.Command{Use: "gt"}
-	root.AddCommand(done)
-	if !isDoneCommand(done) {
-		t.Fatal("done command should be detected")
+	if !isDoneCommand(doneCmd) {
+		t.Fatal("the real gt done command should be detected")
 	}
-	if isDoneCommand(root) {
+	if isDoneCommand(rootCmd) {
 		t.Fatal("root command should not be detected as done")
+	}
+	// Regression: gt dog done is a different command that also happens to be
+	// named "done". isDoneCommand used to match on name alone, so it caught
+	// this too, routing gt dog done through the polecat-only guard.
+	if isDoneCommand(dogDoneCmd) {
+		t.Fatal("gt dog done should not be detected as the polecat-only gt done command")
+	}
+}
+
+func TestIsDoneCommandIgnoresUnrelatedCommandsNamedDone(t *testing.T) {
+	otherParent := &cobra.Command{Use: "other"}
+	otherDone := &cobra.Command{Use: "done"}
+	otherParent.AddCommand(otherDone)
+	if isDoneCommand(otherDone) {
+		t.Fatal("a command named done under an unrelated parent should not match the real gt done command")
 	}
 }
 
@@ -315,8 +327,7 @@ func TestPersistentPreRunDoneRejectsBeforeRegistryFallback(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = os.Chdir(origDir) })
 
-	done := &cobra.Command{Use: "done"}
-	err = persistentPreRun(done, nil)
+	err = persistentPreRun(doneCmd, nil)
 	if err == nil || !strings.Contains(err.Error(), "assigned polecat worktree") {
 		t.Fatalf("persistentPreRun error = %v, want assigned worktree rejection", err)
 	}

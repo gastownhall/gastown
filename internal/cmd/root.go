@@ -191,7 +191,7 @@ func isRoleCommand(cmd *cobra.Command) bool {
 
 func isDoneCommand(cmd *cobra.Command) bool {
 	for c := cmd; c != nil; c = c.Parent() {
-		if c.Name() == "done" {
+		if c == doneCmd {
 			return true
 		}
 	}
