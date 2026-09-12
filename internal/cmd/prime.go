@@ -176,8 +176,7 @@ func runPrime(cmd *cobra.Command, args []string) (retErr error) {
 	// any new mail. This keeps PreCompress hooks under 1s for non-Claude
 	// runtimes that have short hook timeouts (Gemini CLI).
 	if isCompactResume() {
-		runPrimeCompactResume(ctx)
-		return nil
+		return runPrimeCompactResume(ctx)
 	}
 
 	if err := setupPrimeSession(ctx, roleInfo); err != nil {
@@ -273,7 +272,10 @@ func roleRequiresWorktreeIntegrity(role Role) bool {
 // Unlike the full prime path, this outputs a brief recovery line instead of
 // the full AUTONOMOUS WORK MODE block. This prevents agents from re-announcing
 // and re-initializing after compaction. (GH#1965)
-func runPrimeCompactResume(ctx RoleContext) {
+func runPrimeCompactResume(ctx RoleContext) error {
+	if err := outputContextFile(ctx); err != nil {
+		return err
+	}
 	// Brief identity confirmation
 	actor := getAgentIdentity(ctx)
 	source := primeHookSource
@@ -300,6 +302,7 @@ func runPrimeCompactResume(ctx RoleContext) {
 			fmt.Printf("\n**IMPORTANT**: When all work is complete (code committed, tests pass), run `%s done` to submit to the merge queue.\n", cli.Name())
 		}
 	}
+	return nil
 }
 
 // validatePrimeFlags checks that CLI flag combinations are valid.
@@ -538,7 +541,9 @@ func outputRoleContext(ctx RoleContext) (string, error) {
 	}
 
 	outputRoleDirectives(ctx, os.Stdout, primeExplain)
-	outputContextFile(ctx)
+	if err := outputContextFile(ctx); err != nil {
+		return "", err
+	}
 	outputHandoffContent(ctx)
 	outputAttachmentStatus(ctx)
 	return formula, nil
