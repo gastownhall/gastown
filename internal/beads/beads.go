@@ -290,15 +290,44 @@ func InternalIssueLabel(label string) bool {
 	}
 }
 
+// protectedIssueLabels marks beads that automated status changes (AutoClose,
+// unassign on polecat removal, etc.) must leave alone.
+//
+// gt:agent is included because agent registry beads are identified by label,
+// not type (see IsAgentBead), and their liveness is recorded in heartbeat
+// labels that never touch issues.updated_at. Without this entry a permanently
+// live agent looks stale to AutoClose and gets closed, after which
+// `gt agents resolve` (which only matches open beads) returns nothing and the
+// role's patrol loses its idle/backoff signal.
+//
+// The reaper's AutoClose SQL carries its own copy of this list; the reaper
+// tests assert the two stay in sync.
+var protectedIssueLabels = []string{
+	"gt:standing-orders",
+	"gt:keep",
+	"gt:role",
+	"gt:rig",
+	"gt:agent",
+}
+
+// ProtectedIssueLabels returns the labels that mark a bead as protected from
+// automated status changes. The returned slice is a copy.
+func ProtectedIssueLabels() []string {
+	out := make([]string, len(protectedIssueLabels))
+	copy(out, protectedIssueLabels)
+	return out
+}
+
 // ProtectedIssueLabel reports whether a label marks a bead that automated
 // completion paths must not close as ordinary work.
 func ProtectedIssueLabel(label string) bool {
-	switch strings.ToLower(strings.TrimSpace(label)) {
-	case "gt:standing-orders", "gt:keep", "gt:role", "gt:rig":
-		return true
-	default:
-		return false
+	normalized := strings.ToLower(strings.TrimSpace(label))
+	for _, protected := range protectedIssueLabels {
+		if normalized == protected {
+			return true
+		}
 	}
+	return false
 }
 
 // HasUncheckedCriteria checks if an issue has acceptance criteria with unchecked items.
@@ -334,7 +363,7 @@ func IsAgentBead(issue *Issue) bool {
 
 // IsProtectedBead checks if a bead has any protection labels that should
 // prevent automated status changes (AutoClose, unassign on polecat removal, etc.).
-// Protected labels: gt:standing-orders, gt:keep, gt:role, gt:rig.
+// Protected labels: gt:standing-orders, gt:keep, gt:role, gt:rig, gt:agent.
 func IsProtectedBead(issue *Issue) bool {
 	if issue == nil {
 		return false
