@@ -2,6 +2,8 @@ package cmd
 
 import (
 	"os"
+	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -227,6 +229,57 @@ func TestExtractJSONArray(t *testing.T) {
 				t.Errorf("extractJSONArray(%q) = %q, want %q", tc.data, got, tc.want)
 			}
 		})
+	}
+}
+
+// TestListWispsIncludesInfrastructure is the gastown#4869 regression: the
+// compaction candidate-selection query (listWisps) silently scanned an empty
+// set on any town where ephemeral work is infra-scoped (type=agent, e.g.
+// patrol wisps), because `bd list` hides infra rows without --include-infra
+// — while listReportWisps (compact_report.go) already passed the flag and
+// saw the real population. `gt compact` reported 0/0/0 across every category
+// while `gt compact report` reported tens of thousands active. Mirrors
+// TestListReportWispsIncludesInfrastructure's fixture in compact_report_test.go.
+func TestListWispsIncludesInfrastructure(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("shell script command stubs not supported on Windows")
+	}
+
+	binDir := t.TempDir()
+	argsLog := filepath.Join(t.TempDir(), "bd-args.log")
+	bdScript := `#!/bin/sh
+printf '%s\n' "$*" >> "$BD_ARGS_LOG"
+case "$*" in
+  *list*)
+    printf '[{"id":"hq-wisp-patrol","title":"mol-deacon-patrol","status":"hooked","issue_type":"molecule","ephemeral":true,"wisp_type":"patrol"}]\n'
+    ;;
+  *)
+    printf 'bd test stub\n'
+    ;;
+esac
+`
+	if err := os.WriteFile(filepath.Join(binDir, "bd"), []byte(bdScript), 0755); err != nil {
+		t.Fatalf("write fake bd: %v", err)
+	}
+	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	t.Setenv("BD_ARGS_LOG", argsLog)
+	beads.ResetBdAllowStaleCacheForTest()
+	t.Cleanup(beads.ResetBdAllowStaleCacheForTest)
+
+	wisps, err := listWisps(beads.New(t.TempDir()))
+	if err != nil {
+		t.Fatalf("listWisps: %v", err)
+	}
+	if len(wisps) != 1 || wisps[0].ID != "hq-wisp-patrol" {
+		t.Fatalf("wisps = %#v, want patrol infrastructure wisp", wisps)
+	}
+
+	args, err := os.ReadFile(argsLog)
+	if err != nil {
+		t.Fatalf("read bd args: %v", err)
+	}
+	if !strings.Contains(string(args), "--include-infra") {
+		t.Fatalf("bd args = %q, want --include-infra", string(args))
 	}
 }
 
