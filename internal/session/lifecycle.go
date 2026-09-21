@@ -253,7 +253,7 @@ func StartSession(t *tmux.Tmux, cfg SessionConfig) (_ *StartResult, retErr error
 		_ = t.AcceptStartupDialogs(cfg.SessionID)
 		if err := t.CheckStartupBlocked(cfg.SessionID); err != nil {
 			_ = t.KillSessionWithProcesses(cfg.SessionID)
-			return nil, fmt.Errorf("startup blocked: %w", err)
+			return nil, startupFailure(cfg.SessionID, err)
 		}
 	}
 
@@ -279,7 +279,7 @@ func StartSession(t *tmux.Tmux, cfg SessionConfig) (_ *StartResult, retErr error
 		}
 		if err := t.CheckStartupBlocked(cfg.SessionID); err != nil {
 			_ = t.KillSessionWithProcesses(cfg.SessionID)
-			return nil, fmt.Errorf("startup blocked: %w", err)
+			return nil, startupFailure(cfg.SessionID, err)
 		}
 		if status := t.CheckSessionHealth(cfg.SessionID, 0); status != tmux.SessionHealthy {
 			_ = t.KillSessionWithProcesses(cfg.SessionID)
@@ -429,6 +429,20 @@ func MergeRuntimeLivenessEnv(envVars map[string]string, runtimeConfig *config.Ru
 	}
 
 	return envVars
+}
+
+// startupFailure names the condition behind a failed CheckStartupBlocked.
+//
+// CheckStartupBlocked answers two different questions with one error: "a modal
+// dialog is still up" and "the session I was inspecting is gone". Only the first
+// is a blocked startup. The second means the agent command exited and took the
+// pane with it, and reporting that as "startup blocked" points the reader at a
+// dialog that never existed.
+func startupFailure(sessionID string, err error) error {
+	if tmux.IsSessionGone(err) {
+		return fmt.Errorf("session %s died during startup (agent command may have failed): %w", sessionID, err)
+	}
+	return fmt.Errorf("startup blocked: %w", err)
 }
 
 // KillExistingSession kills an existing session if one is found.
