@@ -123,12 +123,16 @@ func (c *TownCLAUDEmdCheck) Fix(ctx *CheckContext) error {
 
 	// For each missing section, find it in the canonical and append
 	var toAppend strings.Builder
+	appended := make(map[int]bool)
 	for _, missing := range c.missingSections {
 		// Find the H2 section that contains this heading
-		for _, cs := range canonicalSections {
+		for i, cs := range canonicalSections {
 			if strings.Contains(cs.content, missing.Heading) {
-				toAppend.WriteString("\n")
-				toAppend.WriteString(cs.content)
+				if !appended[i] {
+					toAppend.WriteString("\n")
+					toAppend.WriteString(cs.content)
+					appended[i] = true
+				}
 				break
 			}
 		}
