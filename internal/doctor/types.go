@@ -181,7 +181,7 @@ func (r *Report) IsHealthy() bool {
 // Used after streaming output where checks were already printed as they ran.
 // Slow checks are already counted during streaming, so slowThreshold is only
 // used for the summary display.
-func (r *Report) PrintSummaryOnly(w io.Writer, verbose bool, slowThreshold time.Duration) {
+func (r *Report) PrintSummaryOnly(w io.Writer, _ bool, slowThreshold time.Duration) {
 	// Collect warnings/errors for summary section
 	var warnings []*CheckResult
 	for _, check := range r.Checks {
@@ -197,8 +197,10 @@ func (r *Report) PrintSummaryOnly(w io.Writer, verbose bool, slowThreshold time.
 	// Print warnings/errors section with fixes
 	r.printWarningsSection(w, warnings)
 
-	// Print details for non-OK checks in verbose mode
-	if verbose && len(warnings) > 0 {
+	// Streaming output otherwise loses fix errors: the per-check line only
+	// renders the result message, while FixStreaming records the cause in
+	// Details. Non-OK details are actionable and must always be visible.
+	if len(warnings) > 0 {
 		for _, check := range warnings {
 			if len(check.Details) > 0 {
 				for _, detail := range check.Details {

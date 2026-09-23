@@ -3,9 +3,23 @@ package doctor
 import (
 	"encoding/json"
 	"fmt"
+	"os"
 	"os/exec"
 	"strings"
 )
+
+var lifecycleExecCommand = exec.Command
+
+func lifecycleDeaconEnv(environ []string) []string {
+	env := make([]string, 0, len(environ)+2)
+	for _, entry := range environ {
+		if strings.HasPrefix(entry, "GT_ROLE=") || strings.HasPrefix(entry, "BD_ACTOR=") {
+			continue
+		}
+		env = append(env, entry)
+	}
+	return append(env, "GT_ROLE=deacon", "BD_ACTOR=deacon/")
+}
 
 // LifecycleHygieneCheck detects and cleans up stale lifecycle state.
 // This can happen when lifecycle messages weren't properly deleted after processing.
@@ -58,7 +72,7 @@ func (c *LifecycleHygieneCheck) Run(ctx *CheckContext) *CheckResult {
 // checkDeaconInbox looks for stale lifecycle messages.
 func (c *LifecycleHygieneCheck) checkDeaconInbox(ctx *CheckContext) int {
 	// Get deacon inbox via gt mail
-	cmd := exec.Command("gt", "mail", "inbox", "--identity", "deacon/", "--json")
+	cmd := lifecycleExecCommand("gt", "mail", "inbox", "--identity", "deacon/", "--json")
 	cmd.Dir = ctx.TownRoot
 
 	output, err := cmd.Output()
@@ -99,10 +113,17 @@ func (c *LifecycleHygieneCheck) Fix(ctx *CheckContext) error {
 
 	// Delete stale lifecycle messages
 	for _, msg := range c.staleMessages {
-		cmd := exec.Command("gt", "mail", "delete", msg.ID) //nolint:gosec // G204: msg.ID is from internal state, not user input
+		cmd := lifecycleExecCommand("gt", "mail", "delete", msg.ID) //nolint:gosec // G204: msg.ID is from internal state, not user input
 		cmd.Dir = ctx.TownRoot
-		if err := cmd.Run(); err != nil {
-			errors = append(errors, fmt.Sprintf("failed to delete message %s: %v", msg.ID, err))
+		cmd.Env = lifecycleDeaconEnv(os.Environ())
+		output, err := cmd.CombinedOutput()
+		if err != nil {
+			detail := strings.TrimSpace(string(output))
+			if detail != "" {
+				errors = append(errors, fmt.Sprintf("failed to delete message %s: %v: %s", msg.ID, err, detail))
+			} else {
+				errors = append(errors, fmt.Sprintf("failed to delete message %s: %v", msg.ID, err))
+			}
 		}
 	}
 
