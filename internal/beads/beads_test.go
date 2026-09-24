@@ -811,6 +811,10 @@ func withCaseInsensitiveEnvKeys(t *testing.T) {
 // BEADS_DIR already holds one, causing a pthread_cond_wait deadlock when both
 // paths resolve to the same database (polecat running gt done on its own rig).
 func TestCreateRoutesSameDatabaseViaBEADSDIR(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("test uses Unix shell script mock for bd")
+	}
+
 	// Build a minimal town layout with a single rig.
 	townRoot := t.TempDir()
 
