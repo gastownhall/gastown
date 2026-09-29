@@ -408,6 +408,21 @@ func writeFakeTmuxIdleSession(t *testing.T, dir string) {
 	writeFakeTmuxWithAgent(t, dir, "bash")
 }
 
+func writeFakeTmuxFreshIdleSession(t *testing.T, dir string, created time.Time) {
+	t.Helper()
+	script := fmt.Sprintf("#!/bin/sh\n"+
+		"case \"$*\" in\n"+
+		"  *has-session*) exit 0;;\n"+
+		"  *list-sessions*) echo '%d';;\n"+
+		"  *display-message*) echo 'bash';;\n"+
+		"  *kill-session*) exit 0;;\n"+
+		"  *) exit 1;;\n"+
+		"esac\n", created.Unix())
+	if err := os.WriteFile(filepath.Join(dir, "tmux"), []byte(script), 0755); err != nil {
+		t.Fatalf("writing fake tmux: %v", err)
+	}
+}
+
 // writeFakeBDLookupFail creates a "bd" script that fails on "show" (simulating a
 // bead infrastructure error) but returns configurable output for "list" queries.
 // When hasWork is true, "list" returns an open work bead assigned to "myr/polecats/mycat".
@@ -470,6 +485,48 @@ func TestReapIdlePolecat_SkipsWhenBeadLookupFailsButHasWork(t *testing.T) {
 
 	if strings.Contains(logBuf.String(), "Reaping idle polecat") {
 		t.Errorf("must NOT reap polecat with open assigned work when agent bead lookup fails, got: %q", logBuf.String())
+	}
+}
+
+func TestReapIdlePolecat_SkipsFreshSessionWithStaleExitingHeartbeat(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("test uses Unix shell script mocks for tmux")
+	}
+	old := session.DefaultRegistry()
+	reg := session.NewPrefixRegistry()
+	reg.Register("myr", "myr")
+	session.SetDefaultRegistry(reg)
+	defer session.SetDefaultRegistry(old)
+
+	binDir := t.TempDir()
+	writeFakeTmuxFreshIdleSession(t, binDir, time.Now().Add(-time.Second))
+	t.Setenv("PATH", binDir+":"+os.Getenv("PATH"))
+
+	townRoot := t.TempDir()
+	var logBuf strings.Builder
+	d := &Daemon{
+		config: &Config{TownRoot: townRoot},
+		logger: log.New(&logBuf, "", 0),
+		tmux:   tmux.NewTmuxWithSocket(""),
+	}
+
+	hbPath := filepath.Join(townRoot, ".runtime", "heartbeats", "myr-mycat.json")
+	if err := os.MkdirAll(filepath.Dir(hbPath), 0755); err != nil {
+		t.Fatal(err)
+	}
+	staleHB := polecat.SessionHeartbeat{
+		Timestamp: time.Now().UTC().Add(-24 * time.Hour),
+		State:     polecat.HeartbeatExiting,
+	}
+	data, _ := json.Marshal(staleHB)
+	if err := os.WriteFile(hbPath, data, 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	d.reapIdlePolecat("myr", "mycat", 15*time.Minute)
+
+	if strings.Contains(logBuf.String(), "Reaping idle polecat") {
+		t.Fatalf("fresh session must not inherit the prior session's stale heartbeat: %q", logBuf.String())
 	}
 }
 
