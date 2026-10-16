@@ -3308,6 +3308,7 @@ func TestCheckCrossRigGuard(t *testing.T) {
 
 	routesContent := `{"prefix":"gt-","path":"gastown/mayor/rig"}
 {"prefix":"bd-","path":"beads/mayor/rig"}
+{"prefix":"home-projects-","path":"home-projects/mayor/rig"}
 {"prefix":"hq-","path":"."}
 `
 	if err := os.WriteFile(filepath.Join(beadsDir, "routes.jsonl"), []byte(routesContent), 0644); err != nil {
@@ -3342,6 +3343,18 @@ func TestCheckCrossRigGuard(t *testing.T) {
 			name:        "cross-rig: gt bead to beads polecat",
 			beadID:      "gt-abc123",
 			targetAgent: "beads/polecats/obsidian",
+			wantErr:     true,
+		},
+		{
+			name:        "same rig: hyphenated prefix to home-projects polecat",
+			beadID:      "home-projects-rig-home_projects",
+			targetAgent: "home-projects/polecats/Toast",
+			wantErr:     false,
+		},
+		{
+			name:        "cross-rig: hyphenated prefix to gastown polecat",
+			beadID:      "home-projects-rig-home_projects",
+			targetAgent: "gastown/polecats/Toast",
 			wantErr:     true,
 		},
 		{

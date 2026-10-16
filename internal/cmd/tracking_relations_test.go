@@ -33,6 +33,22 @@ func TestTrackingDependsOnID_HQStaysLocal(t *testing.T) {
 	}
 }
 
+func TestTrackingDependsOnID_UsesConfiguredHyphenatedPrefix(t *testing.T) {
+	townRoot := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(townRoot, ".beads"), 0o755); err != nil {
+		t.Fatalf("mkdir .beads: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(townRoot, ".beads", "routes.jsonl"), []byte("{\"prefix\":\"home-projects-\",\"path\":\"home-projects/mayor/rig\"}\n"), 0o644); err != nil {
+		t.Fatalf("write routes.jsonl: %v", err)
+	}
+
+	got := trackingDependsOnID(townRoot, "home-projects-rig-home_projects")
+	want := "external:home-projects:home-projects-rig-home_projects"
+	if got != want {
+		t.Fatalf("trackingDependsOnID() = %q, want %q", got, want)
+	}
+}
+
 func TestFallbackTrackingRelationUsesExternalTarget(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("skipping on windows")
