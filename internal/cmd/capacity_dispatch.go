@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -772,10 +773,13 @@ func validatePendingBeadForDispatch(townRoot string, b capacity.PendingBead, esc
 	}
 	rigPath := filepath.Join(townRoot, b.TargetRig)
 	rigPrefix := rigBeadsPrefix(townRoot, rigPath, b.TargetRig)
-	if capacity.AcceptsPrefix(rigPrefix, b.WorkBeadID) {
+	if rigPrefix == "" {
 		return nil
 	}
-	gotPrefix := capacity.BeadIDPrefix(b.WorkBeadID)
+	gotPrefix := strings.TrimSuffix(beads.ResolvePrefixForID(townRoot, b.WorkBeadID), "-")
+	if gotPrefix == rigPrefix {
+		return nil
+	}
 	fmt.Fprintf(os.Stderr,
 		"%s dispatch_refused reason=cross_rig_prefix bead=%s target_rig=%s rig_prefix=%s bead_prefix=%s\n",
 		style.Warning.Render("⚠"), b.WorkBeadID, b.TargetRig, rigPrefix, gotPrefix)

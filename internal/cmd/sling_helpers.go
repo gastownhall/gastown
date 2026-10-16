@@ -437,7 +437,7 @@ func verifyBeadExistsInTargetRigDatabase(beadID, targetRig, townRoot string) err
 }
 
 func routedBeadExistsForTargetRig(beadID, targetRig, townRoot string) bool {
-	prefixRig := beads.GetRigNameForPrefix(townRoot, beads.ExtractPrefix(beadID))
+	prefixRig := beads.GetRigNameForPrefix(townRoot, beads.ResolvePrefixForID(townRoot, beadID))
 	if prefixRig != targetRig {
 		return false
 	}

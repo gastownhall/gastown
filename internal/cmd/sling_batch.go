@@ -36,7 +36,7 @@ func runBatchSling(beadIDs []string, rigName string, townBeadsDir string) error 
 	// Cross-rig guard: check all beads match the target rig before spawning (gt-myecw)
 	if !slingForce {
 		for _, beadID := range beadIDs {
-			prefix := beads.ExtractPrefix(beadID)
+			prefix := beads.ResolvePrefixForID(townRoot, beadID)
 			beadRig := beads.GetRigNameForPrefix(townRoot, prefix)
 			if prefix != "" && beadRig != "" && beadRig != rigName {
 				others := make([]string, 0, len(beadIDs)-1)
@@ -287,7 +287,7 @@ func resolveRigFromBeadIDs(beadIDs []string, townRoot string) (string, error) {
 	mismatches := []string{} // "bead-id -> rig" for error reporting
 
 	for _, beadID := range beadIDs {
-		prefix := beads.ExtractPrefix(beadID)
+		prefix := beads.ResolvePrefixForID(townRoot, beadID)
 		if prefix == "" {
 			return "", fmt.Errorf("cannot resolve rig for %s: no valid prefix\n\n"+
 				"  Options:\n"+

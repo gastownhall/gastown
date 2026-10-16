@@ -104,7 +104,7 @@ func (r *StoreResolver) storeForID(id string) string {
 		}
 	}
 
-	prefix := beads.ExtractPrefix(id)
+	prefix := beads.ResolvePrefixForID(r.townRoot, id)
 	if prefix == "" {
 		return ""
 	}

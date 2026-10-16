@@ -79,7 +79,11 @@ esac
 	}
 	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
 	t.Setenv("BD_LOG", logPath)
-	t.Setenv("TARGET_RIG", rigDir)
+	targetRig, err := filepath.EvalSymlinks(rigDir)
+	if err != nil {
+		t.Fatalf("resolve target rig: %v", err)
+	}
+	t.Setenv("TARGET_RIG", targetRig)
 	t.Setenv("GT_TEST_SKIP_HOOK_VERIFY", "1")
 	t.Setenv("GT_TEST_NO_NUDGE", "1")
 

@@ -79,7 +79,7 @@ func runEpicScheduleByID(epicID string, opts epicScheduleOpts) error {
 		rigName := resolveRigForBead(townRoot, c.ID)
 		if rigName == "" {
 			skippedNoRig++
-			prefix := beads.ExtractPrefix(c.ID)
+			prefix := beads.ResolvePrefixForID(townRoot, c.ID)
 			fmt.Printf("  %s %s: cannot resolve rig from prefix %q (town-root or unknown)\n",
 				style.Dim.Render("○"), c.ID, prefix)
 			continue
@@ -194,7 +194,7 @@ func runEpicSlingByID(epicID string, opts epicScheduleOpts) error {
 		rigName := resolveRigForBead(townRoot, c.ID)
 		if rigName == "" {
 			skippedNoRig++
-			prefix := beads.ExtractPrefix(c.ID)
+			prefix := beads.ResolvePrefixForID(townRoot, c.ID)
 			fmt.Printf("  %s %s: cannot resolve rig from prefix %q (town-root or unknown)\n",
 				style.Dim.Render("○"), c.ID, prefix)
 			continue
@@ -304,9 +304,8 @@ func getEpicChildren(epicID string) ([]epicChild, error) {
 	// bd sql queries the correct database. resolveBeadDir returns the town root
 	// (for bd CLI routing), but bd sql doesn't use routes.jsonl.
 	sqlDir := dir
-	if prefix := beads.ExtractPrefix(epicID); prefix != "" {
-		townRoot, err := workspace.FindFromCwd()
-		if err == nil {
+	if townRoot, err := workspace.FindFromCwd(); err == nil {
+		if prefix := beads.ResolvePrefixForID(townRoot, epicID); prefix != "" {
 			if rigPath := beads.GetRigPathForPrefix(townRoot, prefix); rigPath != "" {
 				sqlDir = rigPath
 			}

@@ -9,8 +9,58 @@ import (
 	"time"
 
 	"github.com/steveyegge/gastown/internal/beads"
+	"github.com/steveyegge/gastown/internal/config"
 	"github.com/steveyegge/gastown/internal/scheduler/capacity"
 )
+
+func TestValidatePendingBeadForDispatchUsesConfiguredHyphenatedPrefix(t *testing.T) {
+	townRoot := t.TempDir()
+	townBeadsDir := filepath.Join(townRoot, ".beads")
+	if err := os.MkdirAll(townBeadsDir, 0o755); err != nil {
+		t.Fatalf("mkdir town beads: %v", err)
+	}
+	writeJSONFile(t, filepath.Join(townRoot, "mayor", "rigs.json"), &config.RigsConfig{
+		Version: config.CurrentRigsVersion,
+		Rigs: map[string]config.RigEntry{
+			"home-projects": {BeadsConfig: &config.BeadsConfig{Prefix: "home-projects"}},
+		},
+	})
+	if err := beads.WriteRoutes(townBeadsDir, []beads.Route{
+		{Prefix: "home-", Path: "home/mayor/rig"},
+		{Prefix: "home-projects-", Path: "home-projects/mayor/rig"},
+	}); err != nil {
+		t.Fatalf("write routes: %v", err)
+	}
+
+	tests := []struct {
+		name    string
+		beadID  string
+		target  string
+		wantErr bool
+	}{
+		{name: "longest configured prefix allows target rig", beadID: "home-projects-rig-123", target: "home-projects"},
+		{name: "overlapping shorter prefix rejects target rig", beadID: "home-rig-123", target: "home-projects", wantErr: true},
+		{name: "unknown prefix rejects target rig", beadID: "unknown-123", target: "home-projects", wantErr: true},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			err := validatePendingBeadForDispatch(townRoot, capacity.PendingBead{
+				WorkBeadID: tc.beadID,
+				TargetRig:  tc.target,
+			}, false)
+			if (err != nil) != tc.wantErr {
+				t.Fatalf("validatePendingBeadForDispatch(%q, %q) error = %v, wantErr %v", tc.beadID, tc.target, err, tc.wantErr)
+			}
+		})
+	}
+
+	if err := validatePendingBeadForDispatch(townRoot, capacity.PendingBead{
+		WorkBeadID: "unknown-123",
+		TargetRig:  "unconfigured",
+	}, false); err != nil {
+		t.Fatalf("empty rig configuration should preserve allow behavior: %v", err)
+	}
+}
 
 func TestShouldFireCrossRigEscalation_Debounces(t *testing.T) {
 	resetCrossRigEscalationStateForTest()

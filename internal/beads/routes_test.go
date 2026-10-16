@@ -824,6 +824,7 @@ func TestValidateRigPrefix(t *testing.T) {
 	}
 	routesContent := `{"prefix": "gt-", "path": "gastown/mayor/rig"}
 {"prefix": "bd-", "path": "beads/mayor/rig"}
+{"prefix": "home-projects-", "path": "home-projects/mayor/rig"}
 {"prefix": "hq-", "path": "."}
 `
 	if err := os.WriteFile(filepath.Join(beadsDir, "routes.jsonl"), []byte(routesContent), 0644); err != nil {
@@ -852,6 +853,12 @@ func TestValidateRigPrefix(t *testing.T) {
 			name:    "bd- bead on beads rig: no error",
 			rigName: "beads",
 			beadID:  "bd-wisp-123",
+			wantErr: false,
+		},
+		{
+			name:    "hyphenated configured prefix: no error",
+			rigName: "home-projects",
+			beadID:  "home-projects-rig-home_projects",
 			wantErr: false,
 		},
 		{

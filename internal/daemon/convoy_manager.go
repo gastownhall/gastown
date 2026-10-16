@@ -541,7 +541,7 @@ func (m *ConvoyManager) feedFirstReady(c strandedConvoyInfo) {
 	}
 
 	for _, issueID := range c.ReadyIssues {
-		prefix := beads.ExtractPrefix(issueID)
+		prefix := beads.ResolvePrefixForID(m.townRoot, issueID)
 		if prefix == "" {
 			m.logger("Convoy %s: no prefix for %s, skipping", c.ID, issueID)
 			continue

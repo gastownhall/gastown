@@ -367,7 +367,7 @@ func PruneRedispatchState(townRoot string) (int, error) {
 
 // resolveRigFromBead determines the rig that owns a bead based on its prefix.
 func resolveRigFromBead(townRoot, beadID string) string {
-	prefix := beads.ExtractPrefix(beadID)
+	prefix := beads.ResolvePrefixForID(townRoot, beadID)
 	if prefix == "" {
 		return ""
 	}
