@@ -4,13 +4,16 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
 
 	"github.com/spf13/cobra"
 	"github.com/steveyegge/gastown/internal/channelevents"
+	"github.com/steveyegge/gastown/internal/workspace"
 )
 
 var (
 	emitEventChannel string
+	emitEventRig     string
 	emitEventType    string
 	emitEventPayload []string
 )
@@ -19,6 +22,7 @@ var moleculeEmitEventCmd = &cobra.Command{
 	Use:   "emit-event",
 	Short: "Emit a file-based event on a named channel",
 	Long: `Emit an event file to ~/gt/events/<channel>/ for subscribers to pick up.
+With --rig, emit to ~/gt/events/<channel>/<rig>/ instead.
 
 This is the Go counterpart to emit-event.sh. Events are JSON files consumed
 by await-event subscribers (e.g., the refinery watching for MERGE_READY events).
@@ -29,15 +33,15 @@ Creates a JSON file at ~/gt/events/<channel>/<timestamp>.event:
 
 EXAMPLES:
   # Emit a MERGE_READY event for the refinery
-  gt mol step emit-event --channel refinery --type MERGE_READY \
+  gt mol step emit-event --channel refinery --rig gastown --type MERGE_READY \
     --payload polecat=nux --payload branch=polecat/nux/gt-iw7m
 
   # Emit a PATROL_WAKE event
-  gt mol step emit-event --channel refinery --type PATROL_WAKE \
+  gt mol step emit-event --channel refinery --rig gastown --type PATROL_WAKE \
     --payload source=witness --payload queue_depth=3
 
   # Emit an MQ_SUBMIT event
-  gt mol step emit-event --channel refinery --type MQ_SUBMIT \
+  gt mol step emit-event --channel refinery --rig gastown --type MQ_SUBMIT \
     --payload branch=feat/new-feature --payload mr_id=bd-42`,
 	RunE: runMoleculeEmitEvent,
 }
@@ -52,6 +56,8 @@ type EmitEventResult struct {
 func init() {
 	moleculeEmitEventCmd.Flags().StringVar(&emitEventChannel, "channel", "",
 		"Event channel name (required, e.g., 'refinery')")
+	moleculeEmitEventCmd.Flags().StringVar(&emitEventRig, "rig", "",
+		"Optional rig name for an isolated channel (e.g., 'gastown')")
 	moleculeEmitEventCmd.Flags().StringVar(&emitEventType, "type", "",
 		"Event type (required, e.g., 'MERGE_READY')")
 	moleculeEmitEventCmd.Flags().StringArrayVar(&emitEventPayload, "payload", nil,
@@ -65,7 +71,18 @@ func init() {
 }
 
 func runMoleculeEmitEvent(cmd *cobra.Command, args []string) error {
-	path, err := channelevents.Emit(emitEventChannel, emitEventType, emitEventPayload)
+	var path string
+	var err error
+	if emitEventRig == "" {
+		path, err = channelevents.Emit(emitEventChannel, emitEventType, emitEventPayload)
+	} else {
+		townRoot, findErr := workspace.FindFromCwd()
+		if findErr != nil || townRoot == "" {
+			home, _ := os.UserHomeDir()
+			townRoot = filepath.Join(home, "gt")
+		}
+		path, err = channelevents.EmitToRig(townRoot, emitEventRig, emitEventChannel, emitEventType, emitEventPayload)
+	}
 	if err != nil {
 		return err
 	}

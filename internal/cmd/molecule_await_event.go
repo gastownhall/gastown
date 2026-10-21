@@ -18,6 +18,7 @@ import (
 
 var (
 	awaitEventChannel              string
+	awaitEventRig                  string
 	awaitEventTimeout              string
 	awaitEventBackoffBase          string
 	awaitEventBackoffMult          int
@@ -34,7 +35,7 @@ var validChannelName = channelevents.ValidChannelName
 var moleculeAwaitEventCmd = &cobra.Command{
 	Use:   "await-event",
 	Short: "Wait for a file-based event on a named channel",
-	Long: `Wait for event files to appear in ~/gt/events/<channel>/, with optional backoff.
+	Long: `Wait for event files to appear in ~/gt/events/<channel>/, with optional rig scoping and backoff.
 
 Unlike await-signal (which subscribes to the generic beads activity feed),
 await-event watches a dedicated event channel directory for .event files.
@@ -45,7 +46,8 @@ at a time. If multiple consumers watch the same channel with --cleanup,
 events may be deleted before all consumers read them.
 
 EVENT FORMAT:
-Events are JSON files in ~/gt/events/<channel>/*.event:
+Events are JSON files in ~/gt/events/<channel>/*.event. With --rig, they are
+read from ~/gt/events/<channel>/<rig>/*.event instead:
   {"type": "...", "channel": "...", "timestamp": "...", "payload": {...}}
 
 BEHAVIOR:
@@ -79,17 +81,17 @@ EXIT CODES:
 
 EXAMPLES:
   # Wait for refinery events with 10min timeout
-  gt mol step await-event --channel refinery --timeout 10m
+  gt mol step await-event --channel refinery --rig gastown --timeout 10m
 
   # Backoff mode with agent bead tracking
-  gt mol step await-event --channel refinery --agent-bead VAS-refinery \
+  gt mol step await-event --channel refinery --rig gastown --agent-bead VAS-refinery \
     --backoff-base 60s --backoff-mult 2 --backoff-max 10m
 
   # Auto-cleanup processed events
-  gt mol step await-event --channel refinery --cleanup
+  gt mol step await-event --channel refinery --rig gastown --cleanup
 
   # Yield every 5m for context check during long idle waits
-  gt mol step await-event --channel refinery --agent-bead VAS-refinery \
+  gt mol step await-event --channel refinery --rig gastown --agent-bead VAS-refinery \
     --backoff-base 60s --backoff-mult 2 --backoff-max 15m --cleanup \
     --context-check-interval 5m`,
 	RunE: runMoleculeAwaitEvent,
@@ -113,6 +115,8 @@ type EventFile struct {
 func init() {
 	moleculeAwaitEventCmd.Flags().StringVar(&awaitEventChannel, "channel", "",
 		"Event channel name (required, e.g., 'refinery')")
+	moleculeAwaitEventCmd.Flags().StringVar(&awaitEventRig, "rig", "",
+		"Optional rig name for an isolated channel (e.g., 'gastown')")
 	moleculeAwaitEventCmd.Flags().StringVar(&awaitEventTimeout, "timeout", "60s",
 		"Maximum time to wait for event (e.g., 30s, 5m, 10m)")
 	moleculeAwaitEventCmd.Flags().StringVar(&awaitEventBackoffBase, "backoff-base", "",
@@ -149,7 +153,10 @@ func runMoleculeAwaitEvent(cmd *cobra.Command, args []string) error {
 		home, _ := os.UserHomeDir()
 		townRoot = filepath.Join(home, "gt")
 	}
-	eventDir := filepath.Join(townRoot, "events", awaitEventChannel)
+	eventDir, err := channelevents.ChannelDir(townRoot, awaitEventChannel, awaitEventRig)
+	if err != nil {
+		return err
+	}
 	if err := os.MkdirAll(eventDir, 0755); err != nil {
 		return fmt.Errorf("creating event directory: %w", err)
 	}
