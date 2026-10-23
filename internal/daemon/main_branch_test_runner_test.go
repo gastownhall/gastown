@@ -1,10 +1,14 @@
 package daemon
 
 import (
-	"encoding/json"
+	"context"
+	"io"
+	"log"
 	"os"
 	"path/filepath"
 	"testing"
+
+	gtconfig "github.com/steveyegge/gastown/internal/config"
 )
 
 func TestMainBranchTestInterval(t *testing.T) {
@@ -112,8 +116,10 @@ func TestLoadRigGateConfig(t *testing.T) {
 
 	t.Run("no merge_queue section", func(t *testing.T) {
 		dir := t.TempDir()
-		data := `{"type":"rig","version":1,"name":"test"}`
-		if err := os.WriteFile(filepath.Join(dir, "config.json"), []byte(data), 0644); err != nil {
+		if err := os.MkdirAll(filepath.Join(dir, "settings"), 0755); err != nil {
+			t.Fatal(err)
+		}
+		if err := gtconfig.SaveRigSettings(gtconfig.RigSettingsPath(dir), gtconfig.NewRigSettings()); err != nil {
 			t.Fatal(err)
 		}
 		cfg, err := loadRigGateConfig(dir)
@@ -127,13 +133,12 @@ func TestLoadRigGateConfig(t *testing.T) {
 
 	t.Run("test_command only", func(t *testing.T) {
 		dir := t.TempDir()
-		data := map[string]interface{}{
-			"merge_queue": map[string]interface{}{
-				"test_command": "go test ./...",
-			},
+		if err := os.MkdirAll(filepath.Join(dir, "settings"), 0755); err != nil {
+			t.Fatal(err)
 		}
-		raw, _ := json.Marshal(data)
-		if err := os.WriteFile(filepath.Join(dir, "config.json"), raw, 0644); err != nil {
+		settings := gtconfig.NewRigSettings()
+		settings.MergeQueue = &gtconfig.MergeQueueConfig{TestCommand: "go test ./..."}
+		if err := gtconfig.SaveRigSettings(gtconfig.RigSettingsPath(dir), settings); err != nil {
 			t.Fatal(err)
 		}
 		cfg, err := loadRigGateConfig(dir)
@@ -143,24 +148,34 @@ func TestLoadRigGateConfig(t *testing.T) {
 		if cfg == nil {
 			t.Fatal("expected non-nil config")
 		}
-		if cfg.TestCommand != "go test ./..." {
-			t.Errorf("expected 'go test ./...', got %q", cfg.TestCommand)
+		if len(cfg.Commands) != 1 || cfg.Commands[0].Command != "go test ./..." {
+			t.Errorf("expected one go test command, got %+v", cfg.Commands)
 		}
 	})
 
-	t.Run("gates configured", func(t *testing.T) {
+	t.Run("effective repo and local settings are merged", func(t *testing.T) {
 		dir := t.TempDir()
-		data := map[string]interface{}{
-			"merge_queue": map[string]interface{}{
-				"gates": map[string]interface{}{
-					"build": map[string]interface{}{"cmd": "go build ./..."},
-					"test":  map[string]interface{}{"cmd": "go test ./..."},
-					"lint":  map[string]interface{}{"cmd": "golangci-lint run"},
-				},
-			},
+		if err := os.MkdirAll(filepath.Join(dir, "settings"), 0755); err != nil {
+			t.Fatal(err)
 		}
-		raw, _ := json.Marshal(data)
-		if err := os.WriteFile(filepath.Join(dir, "config.json"), raw, 0644); err != nil {
+		local := gtconfig.NewRigSettings()
+		local.MergeQueue = &gtconfig.MergeQueueConfig{
+			SetupCommand: "make setup",
+			TestCommand:  "go test ./...",
+		}
+		if err := gtconfig.SaveRigSettings(gtconfig.RigSettingsPath(dir), local); err != nil {
+			t.Fatal(err)
+		}
+		repoSettingsPath := filepath.Join(dir, "refinery", "rig", ".gastown", "settings.json")
+		if err := os.MkdirAll(filepath.Dir(repoSettingsPath), 0755); err != nil {
+			t.Fatal(err)
+		}
+		repo := gtconfig.NewRigSettings()
+		repo.MergeQueue = &gtconfig.MergeQueueConfig{
+			BuildCommand: "go build ./...",
+			LintCommand:  "golangci-lint run",
+		}
+		if err := gtconfig.SaveRigSettings(repoSettingsPath, repo); err != nil {
 			t.Fatal(err)
 		}
 		cfg, err := loadRigGateConfig(dir)
@@ -170,23 +185,25 @@ func TestLoadRigGateConfig(t *testing.T) {
 		if cfg == nil {
 			t.Fatal("expected non-nil config")
 		}
-		if len(cfg.Gates) != 3 {
-			t.Errorf("expected 3 gates, got %d", len(cfg.Gates))
+		if cfg.SetupCommand != "make setup" {
+			t.Errorf("expected setup command, got %q", cfg.SetupCommand)
 		}
-		if cfg.Gates["build"] != "go build ./..." {
-			t.Errorf("expected build gate 'go build ./...', got %q", cfg.Gates["build"])
+		if len(cfg.Commands) != 3 {
+			t.Fatalf("expected build, lint, and test commands, got %+v", cfg.Commands)
+		}
+		if cfg.Commands[0].Command != "go build ./..." || cfg.Commands[2].Command != "go test ./..." {
+			t.Errorf("unexpected effective commands: %+v", cfg.Commands)
 		}
 	})
 
 	t.Run("no test commands", func(t *testing.T) {
 		dir := t.TempDir()
-		data := map[string]interface{}{
-			"merge_queue": map[string]interface{}{
-				"enabled": true,
-			},
+		if err := os.MkdirAll(filepath.Join(dir, "settings"), 0755); err != nil {
+			t.Fatal(err)
 		}
-		raw, _ := json.Marshal(data)
-		if err := os.WriteFile(filepath.Join(dir, "config.json"), raw, 0644); err != nil {
+		settings := gtconfig.NewRigSettings()
+		settings.MergeQueue = &gtconfig.MergeQueueConfig{Enabled: true}
+		if err := gtconfig.SaveRigSettings(gtconfig.RigSettingsPath(dir), settings); err != nil {
 			t.Fatal(err)
 		}
 		cfg, err := loadRigGateConfig(dir)
@@ -208,6 +225,31 @@ func TestContains(t *testing.T) {
 	}
 	if sliceContains(nil, "a") {
 		t.Error("expected false for nil slice")
+	}
+}
+
+func TestRunCommandOnWorktreeRetriesFlakyFailure(t *testing.T) {
+	workDir := t.TempDir()
+	d := &Daemon{logger: log.New(io.Discard, "", 0)}
+	failure := d.runCommandOnWorktree(context.Background(), "canary", workDir, validationCommand{
+		Kind:    "test",
+		Label:   "test",
+		Command: "if [ ! -f retry-marker ]; then touch retry-marker; exit 1; fi",
+	}, 1)
+	if failure != nil {
+		t.Fatalf("expected retry to pass, got %v", failure)
+	}
+}
+
+func TestRunCommandOnWorktreeClassifiesMissingCommandAsInfrastructure(t *testing.T) {
+	d := &Daemon{logger: log.New(io.Discard, "", 0)}
+	failure := d.runCommandOnWorktree(context.Background(), "canary", t.TempDir(), validationCommand{
+		Kind:    "test",
+		Label:   "test",
+		Command: "exec definitely-not-a-command",
+	}, 0)
+	if failure == nil || !failure.Infrastructure || failure.ExitCode != 127 {
+		t.Fatalf("expected exit 127 infrastructure failure, got %+v", failure)
 	}
 }
 

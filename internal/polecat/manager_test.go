@@ -2914,3 +2914,64 @@ func TestReuseIdlePolecat_NoSessionNoop(t *testing.T) {
 		t.Fatal("expected error from worktree operations")
 	}
 }
+
+func TestRemoveWithOptions_RefusesNeedRecovery(t *testing.T) {
+	mgr, _ := setupCanonicalBranchManagerTest(t)
+
+	polecat, err := mgr.AddWithOptions("toast", AddOptions{})
+	if err != nil {
+		t.Fatalf("AddWithOptions: %v", err)
+	}
+
+	// Dirt the worktree so DecideWorkstate returns NEEDS_RECOVERY when idle
+	dirtyPath := filepath.Join(polecat.ClonePath, "dirty-file.txt")
+	if err := os.WriteFile(dirtyPath, []byte("uncommitted work\n"), 0644); err != nil {
+		t.Fatalf("write dirty file: %v", err)
+	}
+
+	// Set polecat idle so the worktree dirtiness triggers NEEDS_RECOVERY
+	if err := mgr.SetState("toast", StateIdle); err != nil {
+		t.Fatalf("SetState idle: %v", err)
+	}
+
+	polecat, err = mgr.Get("toast")
+	if err != nil {
+		t.Fatalf("Get after SetState: %v", err)
+	}
+
+	// Verify disposition shows NEEDS_RECOVERY
+	disp := mgr.WorkstateDispositionForPolecat("toast", polecat.State, "")
+	if disp.Verdict != WorkstateVerdictNeedsRecovery {
+		t.Fatalf("expected NEEDS_RECOVERY verdict, got %s", disp.Verdict)
+	}
+
+	// Remove should refuse without --force
+	err = mgr.Remove("toast", false)
+	if err == nil {
+		t.Fatal("Remove should have failed with NEEDS_RECOVERY")
+	}
+	if !errors.Is(err, ErrPolecatNeedsRecovery) {
+		t.Fatalf("error = %v, want ErrPolecatNeedsRecovery", err)
+	}
+
+	// Worktree must still exist (not torn down)
+	if _, statErr := os.Stat(polecat.ClonePath); os.IsNotExist(statErr) {
+		t.Fatal("worktree was deleted despite NEEDS_RECOVERY")
+	}
+
+	// Dirty file must still exist
+	if _, statErr := os.Stat(dirtyPath); os.IsNotExist(statErr) {
+		t.Fatal("dirty file was deleted despite NEEDS_RECOVERY")
+	}
+
+	// Force mode should bypass the check
+	err = mgr.Remove("toast", true)
+	if err != nil {
+		t.Fatalf("Remove with force should bypass NEEDS_RECOVERY: %v", err)
+	}
+
+	// Worktree should be gone after force remove
+	if _, statErr := os.Stat(polecat.ClonePath); !os.IsNotExist(statErr) {
+		t.Fatal("worktree should have been removed with --force")
+	}
+}
