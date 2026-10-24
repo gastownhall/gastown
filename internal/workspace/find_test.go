@@ -278,3 +278,43 @@ func TestFindSkipsNestedWorkspaceInCrew(t *testing.T) {
 		t.Errorf("Find = %q, want %q (should skip nested workspace in crew/)", found, root)
 	}
 }
+
+func TestFind_StopsAtTownSearchCeiling(t *testing.T) {
+	town := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(town, "mayor"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(town, PrimaryMarker), []byte(`{"name":"live"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	worktree := filepath.Join(town, "gastown", "polecats", "nitro", "gastown")
+	start := filepath.Join(worktree, "internal", "cmd")
+	if err := os.MkdirAll(start, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	tests := []struct {
+		name    string
+		ceiling string
+		want    string
+	}{
+		{name: "no ceiling", ceiling: "", want: town},
+		{name: "ceiling above worktree", ceiling: filepath.Dir(worktree), want: ""},
+		{name: "ceiling is town root", ceiling: town, want: ""},
+		{name: "unrelated ceiling", ceiling: t.TempDir(), want: town},
+		{name: "relative ceiling ignored", ceiling: "gastown/polecats", want: town},
+		{name: "one of several ceilings", ceiling: t.TempDir() + string(os.PathListSeparator) + filepath.Dir(worktree), want: ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Setenv("GT_CEILING_DIRECTORIES", tt.ceiling)
+			got, err := Find(start)
+			if err != nil {
+				t.Fatalf("Find: %v", err)
+			}
+			if got != tt.want {
+				t.Errorf("Find(%s) = %q, want %q", start, got, tt.want)
+			}
+		})
+	}
+}

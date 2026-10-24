@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/steveyegge/gastown/internal/testutil/hermetic"
 )
 
 func TestAgentEnv_Mayor(t *testing.T) {
@@ -1712,4 +1714,11 @@ func TestAgentEnv_EffortLevel(t *testing.T) {
 			t.Error("CLAUDE_CODE_EFFORT_LEVEL should always be set")
 		}
 	})
+}
+
+func TestTownSearchCeilingEnvMatchesHermeticTestHelper(t *testing.T) {
+	// The test helper sets the ceiling by name without importing config.
+	if hermetic.TownSearchCeilingVar != TownSearchCeilingEnv {
+		t.Fatalf("hermetic.TownSearchCeilingVar = %q, config.TownSearchCeilingEnv = %q", hermetic.TownSearchCeilingVar, TownSearchCeilingEnv)
+	}
 }

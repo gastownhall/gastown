@@ -1840,6 +1840,8 @@ func TestEnsureMetadata_RepairsMissingDoltFields(t *testing.T) {
 // correct port from DefaultConfig. This is the root cause of "connection
 // refused" errors reported by community users after gt dolt fix-metadata.
 func TestEnsureMetadata_RepairsStalePort(t *testing.T) {
+	// Exercise the built-in default port, not the one TestMain isolates to.
+	t.Setenv("GT_DOLT_PORT", "")
 	townRoot := t.TempDir()
 
 	beadsDir := filepath.Join(townRoot, ".beads")
@@ -2436,6 +2438,8 @@ func TestListDatabases_MixedContent(t *testing.T) {
 // =============================================================================
 
 func TestGetConnectionString(t *testing.T) {
+	// Exercise the built-in default port, not the one TestMain isolates to.
+	t.Setenv("GT_DOLT_PORT", "")
 	townRoot := t.TempDir()
 	s := GetConnectionString(townRoot)
 	if s != "root@tcp(127.0.0.1:3307)/" {
@@ -2444,6 +2448,8 @@ func TestGetConnectionString(t *testing.T) {
 }
 
 func TestGetConnectionStringForRig(t *testing.T) {
+	// Exercise the built-in default port, not the one TestMain isolates to.
+	t.Setenv("GT_DOLT_PORT", "")
 	townRoot := t.TempDir()
 	s := GetConnectionStringForRig(townRoot, "hq")
 	if s != "root@tcp(127.0.0.1:3307)/hq" {

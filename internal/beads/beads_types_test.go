@@ -1050,3 +1050,27 @@ func TestBeads_getTownRoot(t *testing.T) {
 		t.Errorf("expected townRoot to be cached as %q, got %q", tmpDir, b.townRoot)
 	}
 }
+
+func TestFindTownRoot_StopsAtTownSearchCeiling(t *testing.T) {
+	town := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(town, "mayor"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(town, "mayor", "town.json"), []byte("{}"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	worktree := filepath.Join(town, "gastown", "polecats", "nitro", "gastown")
+	start := filepath.Join(worktree, "internal", "beads")
+	if err := os.MkdirAll(start, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	t.Setenv("GT_CEILING_DIRECTORIES", "")
+	if got := FindTownRoot(start); got != town {
+		t.Fatalf("FindTownRoot without ceiling = %q, want %q", got, town)
+	}
+	t.Setenv("GT_CEILING_DIRECTORIES", filepath.Dir(worktree))
+	if got := FindTownRoot(start); got != "" {
+		t.Fatalf("FindTownRoot with ceiling above worktree = %q, want empty", got)
+	}
+}

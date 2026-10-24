@@ -5,6 +5,8 @@ import (
 	"os"
 	"os/exec"
 	"testing"
+
+	"github.com/steveyegge/gastown/internal/testutil/hermetic"
 )
 
 // TestMain sets up a dedicated tmux server for the package's integration tests.
@@ -12,6 +14,16 @@ import (
 // down after all tests complete. This prevents test sessions from appearing on
 // the user's interactive tmux and avoids socket conflicts with other packages.
 func TestMain(m *testing.M) {
+	// Cut the caller's session and town out of the environment; this also
+	// gives tmux a private socket directory so the test server cannot collide
+	// with the caller's tmux server.
+	restore := hermetic.Isolate()
+	if err := hermetic.Check(); err != nil {
+		fmt.Fprintf(os.Stderr, "tmux TestMain: %v\n", err)
+		restore()
+		os.Exit(1)
+	}
+
 	socket := fmt.Sprintf("gt-test-%d", os.Getpid())
 
 	// Set defaultSocket so NewTmux() connects to the test server, not the
@@ -33,6 +45,7 @@ func TestMain(m *testing.M) {
 	// Kill the test tmux server and restore the original socket state.
 	_ = exec.Command("tmux", "-L", socket, "kill-server").Run()
 	SetDefaultSocket("")
+	restore()
 
 	os.Exit(code)
 }

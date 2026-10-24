@@ -37,18 +37,20 @@ var (
 // Returns the outermost town root found, so that rig repos which were
 // originally standalone towns (and still contain mayor/town.json) don't
 // shadow the real town root above them.
-// Returns empty string if not found (reached filesystem root).
+// Returns empty string if not found (reached filesystem root). The search
+// does not walk up into directories listed in GT_CEILING_DIRECTORIES.
 func FindTownRoot(startDir string) string {
 	dir := startDir
 	candidate := ""
+	ceilings := config.TownSearchCeilings()
 	for {
 		townFile := filepath.Join(dir, "mayor", "town.json")
 		if _, err := os.Stat(townFile); err == nil {
 			candidate = dir
 		}
 		parent := filepath.Dir(dir)
-		if parent == dir {
-			return candidate // Reached filesystem root — return outermost found
+		if parent == dir || ceilings[parent] {
+			return candidate // Reached filesystem root or ceiling — return outermost found
 		}
 		dir = parent
 	}

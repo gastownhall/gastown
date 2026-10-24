@@ -29,7 +29,8 @@ const (
 // It prefers mayor/town.json over mayor/ directory as workspace marker.
 // Always continues to the outermost workspace, correctly handling nested
 // workspace structures (e.g., rig directories with their own mayor/town.json).
-// Does not resolve symlinks to stay consistent with os.Getwd().
+// Does not resolve symlinks to stay consistent with os.Getwd(). The search
+// does not walk up into directories listed in GT_CEILING_DIRECTORIES.
 func Find(startDir string) (string, error) {
 	absDir, err := filepath.Abs(startDir)
 	if err != nil {
@@ -37,6 +38,7 @@ func Find(startDir string) (string, error) {
 	}
 
 	var primaryMatch, secondaryMatch string
+	ceilings := config.TownSearchCeilings()
 
 	current := absDir
 	for {
@@ -53,7 +55,7 @@ func Find(startDir string) (string, error) {
 		}
 
 		parent := filepath.Dir(current)
-		if parent == current {
+		if parent == current || ceilings[parent] {
 			if primaryMatch != "" {
 				return primaryMatch, nil
 			}

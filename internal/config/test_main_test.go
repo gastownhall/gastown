@@ -6,9 +6,18 @@ import (
 	"path/filepath"
 	"runtime"
 	"testing"
+
+	"github.com/steveyegge/gastown/internal/testutil/hermetic"
 )
 
 func TestMain(m *testing.M) {
+	// Keep tests away from the caller's session, town and Dolt server.
+	restoreEnv := hermetic.Isolate()
+	if err := hermetic.Check(); err != nil {
+		fmt.Fprintf(os.Stderr, "config TestMain: %v\n", err)
+		os.Exit(1)
+	}
+
 	stubDir, err := os.MkdirTemp("", "gt-agent-bin-*")
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "create stub dir: %v\n", err)
@@ -50,5 +59,6 @@ func TestMain(m *testing.M) {
 	_ = os.Setenv("PATH", originalPath)
 	_ = os.Unsetenv("GT_AGENT_STUB_BIN_DIR")
 	_ = os.RemoveAll(stubDir)
+	restoreEnv()
 	os.Exit(code)
 }

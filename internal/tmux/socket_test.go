@@ -1,6 +1,9 @@
 package tmux
 
 import (
+	"fmt"
+	"os"
+	"path/filepath"
 	"testing"
 )
 
@@ -74,5 +77,20 @@ func TestBuildCommandWithSocket(t *testing.T) {
 		if a != expected[i] {
 			t.Errorf("args[%d] = %q, want %q", i, a, expected[i])
 		}
+	}
+}
+
+func TestSocketDir_HonorsTMUXTMPDIR(t *testing.T) {
+	uid := fmt.Sprintf("tmux-%d", os.Getuid())
+
+	t.Setenv("TMUX_TMPDIR", "")
+	if got, want := SocketDir(), filepath.Join("/tmp", uid); got != want {
+		t.Errorf("SocketDir() = %q, want %q", got, want)
+	}
+
+	dir := t.TempDir()
+	t.Setenv("TMUX_TMPDIR", dir)
+	if got, want := SocketDir(), filepath.Join(dir, uid); got != want {
+		t.Errorf("SocketDir() with TMUX_TMPDIR = %q, want %q", got, want)
 	}
 }

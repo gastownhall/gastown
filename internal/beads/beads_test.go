@@ -12,6 +12,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/steveyegge/gastown/internal/testutil/hermetic"
 )
 
 // TestNew verifies the constructor.
@@ -2034,6 +2036,12 @@ func TestIntegration(t *testing.T) {
 	doltPath := filepath.Join(beadsDir, "dolt")
 	if _, err := os.Stat(doltPath); os.IsNotExist(err) {
 		t.Skip("no dolt database found")
+	}
+	// This is the enclosing workspace's live database (polecat and crew
+	// worktrees redirect .beads to their rig). Hermetic test runs never
+	// connect to the caller's Dolt server.
+	if os.Getenv(hermetic.IsolatedVar) == "1" {
+		t.Skip("would read the workspace's live beads database; hermetic test runs do not reach the caller's Dolt server")
 	}
 
 	b := New(dir)

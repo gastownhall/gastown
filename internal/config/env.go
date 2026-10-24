@@ -884,3 +884,26 @@ func ClaudeConfigDir() (string, error) {
 	}
 	return filepath.Join(home, ".claude"), nil
 }
+
+// TownSearchCeilingEnv lists directories, separated by os.PathListSeparator,
+// that town-root discovery must not walk up into, like Git's
+// GIT_CEILING_DIRECTORIES. A search that starts below a ceiling stops before
+// examining the ceiling or anything above it. Tests set it so that running
+// inside a worktree that lives in a town cannot discover and act on that town.
+const TownSearchCeilingEnv = "GT_CEILING_DIRECTORIES"
+
+// TownSearchCeilings returns the cleaned absolute directories listed in
+// GT_CEILING_DIRECTORIES. Relative entries are ignored, as Git does.
+func TownSearchCeilings() map[string]bool {
+	value := os.Getenv(TownSearchCeilingEnv)
+	if value == "" {
+		return nil
+	}
+	ceilings := map[string]bool{}
+	for _, dir := range filepath.SplitList(value) {
+		if dir != "" && filepath.IsAbs(dir) {
+			ceilings[filepath.Clean(dir)] = true
+		}
+	}
+	return ceilings
+}

@@ -99,6 +99,8 @@ func setupRigsJSON(t *testing.T, townRoot string, rigNames []string) {
 }
 
 func TestGetServerAddr(t *testing.T) {
+	// Exercise the built-in default port, not the one TestMain isolates to.
+	t.Setenv("GT_DOLT_PORT", "")
 	check := NewDoltServerReachableCheck()
 
 	tests := []struct {
@@ -188,6 +190,8 @@ func TestGetServerAddr_NoMetadata(t *testing.T) {
 }
 
 func TestGetServerAddr_UsesConfigYAMLPort(t *testing.T) {
+	// GT_DOLT_PORT outranks config.yaml; clear the port TestMain isolates to.
+	t.Setenv("GT_DOLT_PORT", "")
 	check := NewDoltServerReachableCheck()
 	townRoot := t.TempDir()
 

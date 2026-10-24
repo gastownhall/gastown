@@ -18,6 +18,8 @@ import (
 // Use this guard for integration tests that shell out to gt/bd or otherwise
 // depend on a live Gas Town directory tree being present. Tests that create
 // their own temporary town structure (via t.TempDir) do NOT need this guard.
+// Test binaries isolated by hermetic.Isolate cannot discover the caller's
+// town, so under them this always skips.
 func RequireTownEnv(t *testing.T) string {
 	t.Helper()
 

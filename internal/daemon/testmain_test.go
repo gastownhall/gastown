@@ -8,10 +8,16 @@ import (
 	"testing"
 
 	"github.com/steveyegge/gastown/internal/testutil"
+	"github.com/steveyegge/gastown/internal/testutil/hermetic"
 	"github.com/steveyegge/gastown/internal/tmux"
 )
 
 func TestMain(m *testing.M) {
+	// Cut the caller's session and town out of the environment before the
+	// container claims the Dolt ports. Without Docker, Dolt-dependent tests then
+	// fail to connect and skip instead of reaching the caller's server.
+	restore := hermetic.Isolate()
+
 	// Start an ephemeral Dolt container for this package's tests.
 	// convoy_manager_test.go calls setupTestStore which sets BEADS_TEST_MODE=1,
 	// causing the beads SDK to create testdb_<hash> databases. By routing
@@ -24,6 +30,12 @@ func TestMain(m *testing.M) {
 	// boot_spawn_frequency_test.go) still run. (fixes gt-kw4449)
 	if err := testutil.EnsureDoltContainerForTestMain(); err != nil {
 		fmt.Fprintf(os.Stderr, "daemon TestMain: Dolt container unavailable (%v), Dolt-dependent tests will skip\n", err)
+	}
+	if err := hermetic.Check(); err != nil {
+		fmt.Fprintf(os.Stderr, "daemon TestMain: %v\n", err)
+		testutil.TerminateDoltContainer()
+		restore()
+		os.Exit(1)
 	}
 
 	// Isolate tmux sessions on a package-specific socket.
@@ -45,5 +57,6 @@ func TestMain(m *testing.M) {
 		_ = os.Remove(socketPath)
 	}
 	testutil.TerminateDoltContainer()
+	restore()
 	os.Exit(code)
 }

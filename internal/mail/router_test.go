@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"hash/fnv"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -1663,10 +1664,12 @@ func requireNotifyTestSocket(t *testing.T) string {
 	if _, err := exec.LookPath("tmux"); err != nil {
 		t.Skip("tmux not installed")
 	}
-	// Use test name for unique socket per test to prevent cleanup interference.
-	// Sanitize: tmux socket names cannot contain slashes or dots.
-	safe := strings.NewReplacer("/", "-", ".", "-").Replace(t.Name())
-	socket := fmt.Sprintf("gt-test-%s-%d", safe, os.Getpid())
+	// Use a unique socket per test to prevent cleanup interference. Hash the
+	// test name: socket paths must fit in sun_path (about 104 bytes), and the
+	// socket directory may already be long (e.g. a private TMUX_TMPDIR).
+	h := fnv.New32a()
+	_, _ = h.Write([]byte(t.Name()))
+	socket := fmt.Sprintf("gt-test-%08x-%d", h.Sum32(), os.Getpid())
 	// Pre-kill any stale server on this socket (e.g., from a crashed prior run).
 	_ = exec.Command("tmux", "-L", socket, "kill-server").Run()
 	t.Cleanup(func() {
