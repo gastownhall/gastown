@@ -24,6 +24,17 @@ and passes them to Claude Code via the `--settings` flag. This keeps customer re
 clean while providing role-specific hook configuration. The hooks system provides
 a single source of truth with a base config and per-role/per-rig overrides.
 
+## Required operator context
+
+`CONTEXT.md` in the town root is included on full prime and compact/resume.
+An optional `CONTEXT.paths` lists required instruction files, one path per line;
+relative paths resolve against the town root, and blank lines and `#` comments are ignored.
+Sources are read fresh with their absolute paths and SHA-256 hashes on every invocation.
+A missing configured source makes prime fail instead of silently omitting instructions.
+When configured, the actual worker Git checkout's `CLAUDE.md` and `AGENTS.md` are also required and injected.
+This is a file loader, not a shell or Markdown-import evaluator.
+Codex and other startup-nudge runtimes receive it when running `gt prime`; they must also run prime after compaction, as their role instructions require.
+
 ## Architecture
 
 ```

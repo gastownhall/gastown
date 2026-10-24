@@ -1443,3 +1443,36 @@ func TestErrHookUnresolvable_IsErrors(t *testing.T) {
 		t.Fatalf("errors.Is should report wrapped err matches ErrHookUnresolvable")
 	}
 }
+
+func TestCompactResumeRequiresConfiguredContext(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "CONTEXT.paths"), []byte("missing-instructions.md\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := runPrimeCompactResume(RoleContext{TownRoot: root}); err == nil {
+		t.Fatal("compact recovery accepted a missing required context source")
+	}
+}
+
+func TestCompactResumePrintsRequiredContext(t *testing.T) {
+	root := t.TempDir()
+	for path, content := range map[string]string{
+		"CONTEXT.md":    "operator safety contract",
+		"CONTEXT.paths": "CLAUDE.md\n",
+		"CLAUDE.md":     "required Python backend rules",
+	} {
+		if err := os.WriteFile(filepath.Join(root, path), []byte(content), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	output := captureStdout(t, func() {
+		if err := runPrimeCompactResume(RoleContext{TownRoot: root, Role: RoleMayor}); err != nil {
+			t.Fatal(err)
+		}
+	})
+	for _, required := range []string{"operator safety contract", "required Python backend rules", "SHA-256:"} {
+		if !strings.Contains(output, required) {
+			t.Fatalf("compact recovery omitted %q", required)
+		}
+	}
+}
