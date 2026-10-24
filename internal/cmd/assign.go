@@ -144,7 +144,7 @@ func runAssign(_ *cobra.Command, args []string) error {
 	const backoffMax = 10 * time.Second
 	var lastErr error
 	for attempt := 1; attempt <= maxRetries; attempt++ {
-		if err := BdCmd("update", beadID, "--status=hooked", "--assignee="+agentID).
+		if err := BdCmd("update", beadID, "--status=hooked", assigneeFlag(agentID)).
 			Dir(townRoot).
 			WithAutoCommit().
 			Run(); err != nil {

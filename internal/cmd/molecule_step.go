@@ -294,7 +294,7 @@ func handleStepContinue(cwd, townRoot string, nextStep *beads.Issue, dryRun bool
 	}
 
 	// Pin the next step bead
-	pinCmd := exec.Command("bd", "update", nextStep.ID, "--status=pinned", "--assignee="+agentID)
+	pinCmd := exec.Command("bd", "update", nextStep.ID, "--status=pinned", assigneeFlag(agentID))
 	pinCmd.Dir = gitRoot
 	pinCmd.Stderr = os.Stderr
 	if err := pinCmd.Run(); err != nil {
