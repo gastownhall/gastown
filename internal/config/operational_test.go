@@ -352,6 +352,9 @@ func TestWitnessThresholds_Defaults(t *testing.T) {
 	if got := wit.StartupActivityGraceD(); got != DefaultWitnessStartupActivityGrace {
 		t.Errorf("StartupActivityGrace: got %v, want %v", got, DefaultWitnessStartupActivityGrace)
 	}
+	if got := wit.StartupDismissWindowD(); got != DefaultWitnessStartupDismissWindow {
+		t.Errorf("StartupDismissWindow: got %v, want %v", got, DefaultWitnessStartupDismissWindow)
+	}
 	if got := wit.MaxBeadRespawnsV(); got != DefaultWitnessMaxBeadRespawns {
 		t.Errorf("MaxBeadRespawns: got %v, want %v", got, DefaultWitnessMaxBeadRespawns)
 	}
@@ -371,6 +374,7 @@ func TestWitnessThresholds_Overrides(t *testing.T) {
 		Witness: &WitnessThresholds{
 			StartupStallThreshold:  "2m",
 			StartupActivityGrace:   "45s",
+			StartupDismissWindow:   "20m",
 			MaxBeadRespawns:        &maxRespawns,
 			DoneIntentStuckTimeout: "90s",
 			DoneIntentRecentGrace:  "15s",
@@ -383,6 +387,9 @@ func TestWitnessThresholds_Overrides(t *testing.T) {
 	}
 	if got := wit.StartupActivityGraceD(); got != 45*time.Second {
 		t.Errorf("StartupActivityGrace: got %v, want 45s", got)
+	}
+	if got := wit.StartupDismissWindowD(); got != 20*time.Minute {
+		t.Errorf("StartupDismissWindow: got %v, want 20m", got)
 	}
 	if got := wit.MaxBeadRespawnsV(); got != 5 {
 		t.Errorf("MaxBeadRespawns: got %v, want 5", got)

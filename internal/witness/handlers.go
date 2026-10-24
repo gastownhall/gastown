@@ -2221,10 +2221,52 @@ const SpawnGracePeriod = 5 * time.Minute
 type StalledResult struct {
 	PolecatName   string // e.g., "alpha"
 	StallType     string // "startup-stall", "unknown-prompt"
-	Action        string // "auto-dismissed", "escalated"
+	Action        string // "auto-dismissed", "already-dismissed", "escalated"
 	AgentState    string // Agent state from beads (e.g., "idle", "working")
 	HasHookedWork bool   // Whether this polecat has hooked work assigned
 	Error         error
+}
+
+// startupDialogDismissedEnv is the tmux session environment variable recording
+// that DetectStalledPolecats already blind-dismissed startup dialogs in the
+// session. It lives and dies with the session, so a respawned session starts
+// without it.
+const startupDialogDismissedEnv = "GT_STARTUP_DIALOG_DISMISSED"
+
+// startupStallThresholds bounds when a silent session counts as stuck at startup.
+type startupStallThresholds struct {
+	StallThreshold time.Duration // min session age before a stall is possible
+	ActivityGrace  time.Duration // max output silence before a session is stalled
+	DismissWindow  time.Duration // max session age still considered startup
+}
+
+// inStartupWindow reports whether a session of the given age is old enough to
+// be stalled but young enough to still be stuck at startup. Sessions past the
+// window have been running long enough that silence means a long-running
+// command or an idle agent, not a blocking startup dialog, and sending blind
+// keys into them can corrupt live work (gs-sl0).
+func (th startupStallThresholds) inStartupWindow(sessionAge time.Duration) bool {
+	return sessionAge >= th.StallThreshold && sessionAge <= th.DismissWindow
+}
+
+// dismissStartupDialogsOnce blind-dismisses startup dialogs in a stalled
+// session unless that was already done for this session, and returns the
+// resulting StalledResult action and error.
+func dismissStartupDialogsOnce(t *tmux.Tmux, sessionName string, now time.Time) (string, error) {
+	if dismissed, _ := t.GetEnvironment(sessionName, startupDialogDismissedEnv); dismissed != "" {
+		// Already tried once; repeating Enter/Down/Enter would only risk
+		// corrupting the session, so just report the stall.
+		return "already-dismissed", nil
+	}
+	// Record the attempt before sending keys. If it cannot be recorded we
+	// could not stop the next scan from sending them again, so don't send.
+	if err := t.SetEnvironment(sessionName, startupDialogDismissedEnv, now.UTC().Format(time.RFC3339)); err != nil {
+		return "escalated", fmt.Errorf("recording blind dismiss: %w", err)
+	}
+	if err := t.DismissStartupDialogsBlind(sessionName); err != nil {
+		return "escalated", fmt.Errorf("blind dismiss failed: %w", err)
+	}
+	return "auto-dismissed", nil
 }
 
 // DetectStalledPolecatsResult holds aggregate results.
@@ -2242,12 +2284,16 @@ type DetectStalledPolecatsResult struct {
 // Detection uses structured tmux signals (session creation time + last activity)
 // rather than screen-scraping pane content. A session is considered stalled when:
 //   - It is older than StartupStallThreshold (90s)
-//   - Its last tmux activity is older than StartupActivityGrace (60s)
+//   - It is no older than StartupDismissWindow (10m) — past that it is not
+//     stuck at startup, so silence is left to zombie/hung detection
+//   - Its last tmux output activity is older than StartupActivityGrace (60s)
 //
 // When a startup stall is detected, DismissStartupDialogsBlind is called to
 // send blind key sequences that dismiss known blocking dialogs (workspace trust,
 // bypass permissions) without screen-scraping pane content. This avoids coupling
 // to third-party TUI strings that can change with any Claude Code update.
+// Because those keys can corrupt a session that is actually working, the
+// dismiss is sent at most once per session (gs-sl0).
 func DetectStalledPolecats(workDir, rigName string) *DetectStalledPolecatsResult {
 	result := &DetectStalledPolecatsResult{}
 
@@ -2260,8 +2306,11 @@ func DetectStalledPolecats(workDir, rigName string) *DetectStalledPolecatsResult
 
 	// Load witness thresholds from config (fallback to compiled-in defaults).
 	witCfg := config.LoadOperationalConfig(townRoot).GetWitnessConfig()
-	stallThreshold := witCfg.StartupStallThresholdD()
-	activityGrace := witCfg.StartupActivityGraceD()
+	thresholds := startupStallThresholds{
+		StallThreshold: witCfg.StartupStallThresholdD(),
+		ActivityGrace:  witCfg.StartupActivityGraceD(),
+		DismissWindow:  witCfg.StartupDismissWindowD(),
+	}
 
 	// List all polecat directories
 	polecatsDir := filepath.Join(townRoot, rigName, "polecats")
@@ -2306,7 +2355,7 @@ func DetectStalledPolecats(workDir, rigName string) *DetectStalledPolecatsResult
 		}
 
 		// Legacy: Use structured signals to detect startup stalls:
-		// session_created (age) + session_activity (last output).
+		// session_created (age) + window output activity.
 		createdUnix, err := t.GetSessionCreatedUnix(sessionName)
 		if err != nil {
 			result.Errors = append(result.Errors,
@@ -2314,34 +2363,30 @@ func DetectStalledPolecats(workDir, rigName string) *DetectStalledPolecatsResult
 			continue
 		}
 		sessionAge := now.Sub(time.Unix(createdUnix, 0))
-		if sessionAge < stallThreshold {
-			continue // Too young — still in normal startup
+		if !thresholds.inStartupWindow(sessionAge) {
+			continue // Too young for a stall, or too old to be stuck at startup
 		}
 
-		activity, err := t.GetSessionActivity(sessionName)
+		// Use output activity, not #{session_activity}: the latter only tracks
+		// client input, so a detached agent busily producing output looks idle.
+		activity, err := t.GetOutputActivity(sessionName)
 		if err != nil {
 			result.Errors = append(result.Errors,
 				fmt.Errorf("getting session activity for %s: %w", sessionName, err))
 			continue
 		}
-		activityAge := now.Sub(activity)
-		if activityAge < activityGrace {
+		if now.Sub(activity) < thresholds.ActivityGrace {
 			continue // Recent activity — agent is making progress
 		}
 
-		// Session is old enough and has no recent activity: startup stall.
-		// Send blind key sequences to dismiss any startup dialogs without
+		// Session is in its startup window and has no recent activity: startup
+		// stall. Send blind key sequences to dismiss any startup dialogs without
 		// screen-scraping pane content (avoids coupling to third-party TUI strings).
 		stalled := StalledResult{
 			PolecatName: polecatName,
 			StallType:   "startup-stall",
 		}
-		if err := t.DismissStartupDialogsBlind(sessionName); err != nil {
-			stalled.Action = "escalated"
-			stalled.Error = fmt.Errorf("blind dismiss failed: %w", err)
-		} else {
-			stalled.Action = "auto-dismissed"
-		}
+		stalled.Action, stalled.Error = dismissStartupDialogsOnce(t, sessionName, now)
 		result.Stalled = append(result.Stalled, stalled)
 	}
 

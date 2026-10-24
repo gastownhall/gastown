@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -1704,6 +1705,72 @@ func TestStalledResult_Types(t *testing.T) {
 	}
 	if s2.Error == nil {
 		t.Error("Error = nil, want non-nil")
+	}
+}
+
+func TestStartupStallThresholds_InStartupWindow(t *testing.T) {
+	t.Parallel()
+	th := startupStallThresholds{
+		StallThreshold: config.DefaultWitnessStartupStallThreshold,
+		ActivityGrace:  config.DefaultWitnessStartupActivityGrace,
+		DismissWindow:  config.DefaultWitnessStartupDismissWindow,
+	}
+	tests := []struct {
+		name string
+		age  time.Duration
+		want bool
+	}{
+		{name: "still starting", age: 30 * time.Second, want: false},
+		{name: "at stall threshold", age: th.StallThreshold, want: true},
+		{name: "stuck at startup", age: 3 * time.Minute, want: true},
+		{name: "at dismiss window", age: th.DismissWindow, want: true},
+		// gs-sl0: a polecat running a long silent command (go test ~7m) hours
+		// into its session must never receive blind Enter/Down/Enter.
+		{name: "long-running session", age: 2 * time.Hour, want: false},
+		{name: "just past dismiss window", age: th.DismissWindow + time.Second, want: false},
+	}
+	for _, tt := range tests {
+		if got := th.inStartupWindow(tt.age); got != tt.want {
+			t.Errorf("%s: inStartupWindow(%v) = %v, want %v", tt.name, tt.age, got, tt.want)
+		}
+	}
+}
+
+// TestDismissStartupDialogsOnce verifies gs-sl0: blind keys are sent into a
+// session at most once, however many patrol scans see it as stalled.
+func TestDismissStartupDialogsOnce(t *testing.T) {
+	if _, err := exec.LookPath("tmux"); err != nil {
+		t.Skip("tmux not installed")
+	}
+	// Isolated tmux server so the test never touches the town's sessions.
+	socket := "gt-test-dismiss-once-" + strconv.Itoa(os.Getpid())
+	tm := tmux.NewTmuxWithSocket(socket)
+	defer func() { _ = exec.Command("tmux", "-L", socket, "kill-server").Run() }()
+	sessionName := "gt-test-dismiss-once"
+	if err := tm.NewSessionWithCommand(sessionName, "", "cat"); err != nil {
+		t.Fatalf("NewSessionWithCommand: %v", err)
+	}
+
+	now := time.Now()
+	if action, err := dismissStartupDialogsOnce(tm, sessionName, now); err != nil || action != "auto-dismissed" {
+		t.Fatalf("first dismiss = (%q, %v), want (auto-dismissed, nil)", action, err)
+	}
+	for i := 0; i < 2; i++ {
+		if action, err := dismissStartupDialogsOnce(tm, sessionName, now); err != nil || action != "already-dismissed" {
+			t.Fatalf("repeat dismiss %d = (%q, %v), want (already-dismissed, nil)", i, action, err)
+		}
+	}
+}
+
+func TestDismissStartupDialogsOnce_NoSession(t *testing.T) {
+	if _, err := exec.LookPath("tmux"); err != nil {
+		t.Skip("tmux not installed")
+	}
+	socket := "gt-test-dismiss-none-" + strconv.Itoa(os.Getpid())
+	defer func() { _ = exec.Command("tmux", "-L", socket, "kill-server").Run() }()
+	action, err := dismissStartupDialogsOnce(tmux.NewTmuxWithSocket(socket), "gt-nonexistent-dismiss-once-xyz", time.Now())
+	if action != "escalated" || err == nil {
+		t.Errorf("dismiss on missing session = (%q, %v), want (escalated, error)", action, err)
 	}
 }
 

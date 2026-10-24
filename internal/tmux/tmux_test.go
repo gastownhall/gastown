@@ -2489,6 +2489,85 @@ func TestGetSessionActivity_NonexistentSession(t *testing.T) {
 	}
 }
 
+func TestParseLatestActivity(t *testing.T) {
+	tests := []struct {
+		name    string
+		out     string
+		want    int64
+		wantErr bool
+	}{
+		{name: "window newer than session", out: "1790818185 1790818585\n", want: 1790818585},
+		{name: "session newer than window", out: "1790818600 1790818585", want: 1790818600},
+		{name: "window format unsupported", out: "1790818185 ", want: 1790818185},
+		{name: "unexpanded format ignored", out: "1790818185 #{window_activity}", want: 1790818185},
+		{name: "no timestamp", out: "  \n", wantErr: true},
+		{name: "garbage", out: "abc def", wantErr: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := parseLatestActivity(tt.out)
+			if tt.wantErr {
+				if err == nil {
+					t.Fatalf("parseLatestActivity(%q) = %v, want error", tt.out, got)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("parseLatestActivity(%q): %v", tt.out, err)
+			}
+			if got.Unix() != tt.want {
+				t.Errorf("parseLatestActivity(%q) = %d, want %d", tt.out, got.Unix(), tt.want)
+			}
+		})
+	}
+}
+
+// TestGetOutputActivity_DetachedOutput is a regression test for gs-sl0: a
+// detached session that keeps producing output must not look idle. tmux's
+// #{session_activity} stays at creation time for such a session, which made
+// the witness blind-dismiss (Enter/Down/Enter) into actively working agents.
+func TestGetOutputActivity_DetachedOutput(t *testing.T) {
+	tm := newTestTmux(t)
+	sessionName := "gt-test-output-activity-" + t.Name()
+	_ = tm.KillSession(sessionName)
+
+	if err := tm.NewSessionWithCommand(sessionName, "", "while true; do echo tick; sleep 1; done"); err != nil {
+		t.Fatalf("NewSessionWithCommand: %v", err)
+	}
+	defer func() { _ = tm.KillSession(sessionName) }()
+
+	created, err := tm.GetSessionCreatedUnix(sessionName)
+	if err != nil {
+		t.Fatalf("GetSessionCreatedUnix: %v", err)
+	}
+
+	// Wait until output activity has moved past the creation second.
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		activity, err := tm.GetOutputActivity(sessionName)
+		if err != nil {
+			t.Fatalf("GetOutputActivity: %v", err)
+		}
+		if activity.Unix() >= created+2 {
+			if age := time.Since(activity); age > 5*time.Second {
+				t.Errorf("GetOutputActivity is %v old for a session printing every second", age)
+			}
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("GetOutputActivity stuck at %d (created %d) while the session prints output", activity.Unix(), created)
+		}
+		time.Sleep(500 * time.Millisecond)
+	}
+}
+
+func TestGetOutputActivity_NonexistentSession(t *testing.T) {
+	tm := newTestTmux(t)
+	if _, err := tm.GetOutputActivity("nonexistent-session-xyz-12345"); err == nil {
+		t.Error("GetOutputActivity on nonexistent session should return error")
+	}
+}
+
 func TestNewSessionSet(t *testing.T) {
 	// Test creating SessionSet from names
 	names := []string{"session-a", "session-b", "session-c"}
