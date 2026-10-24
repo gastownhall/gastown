@@ -123,6 +123,14 @@ func findHookedFormulaSingleton(workDir, targetAgent, formulaName string) (*bead
 		return nil, nil
 	}
 
+	// Town-level agent dirs (e.g. deacon/) may have no .beads; their hooks
+	// live in town beads.
+	if _, err := os.Stat(beads.ResolveBeadsDir(workDir)); err != nil {
+		if townRoot := beads.FindTownRoot(workDir); townRoot != "" {
+			workDir = townRoot
+		}
+	}
+
 	b := beads.New(workDir)
 	hookedBeads, err := b.List(beads.ListOptions{
 		Status:    beads.StatusHooked,

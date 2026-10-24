@@ -89,6 +89,18 @@ type AgentEnvConfig struct {
 	SessionName string
 }
 
+// BDActorForRole returns the BD_ACTOR value for a GT_ROLE. Town-level agents
+// (mayor, deacon) use the trailing-slash form so BD_ACTOR matches the canonical
+// assignee written by sling and hook (canonicalAssigneeAddress); bd refuses to
+// close a bead when actor and assignee differ.
+func BDActorForRole(gtRole string) string {
+	switch gtRole {
+	case constants.RoleMayor, constants.RoleDeacon:
+		return gtRole + "/"
+	}
+	return gtRole
+}
+
 // AgentEnv returns all environment variables for an agent based on the config.
 // This is the single source of truth for agent environment variables.
 func AgentEnv(cfg AgentEnvConfig) map[string]string {
@@ -100,12 +112,12 @@ func AgentEnv(cfg AgentEnvConfig) map[string]string {
 	switch cfg.Role {
 	case constants.RoleMayor:
 		env["GT_ROLE"] = constants.RoleMayor
-		env["BD_ACTOR"] = constants.RoleMayor
+		env["BD_ACTOR"] = BDActorForRole(constants.RoleMayor)
 		env["GIT_AUTHOR_NAME"] = constants.RoleMayor
 
 	case constants.RoleDeacon:
 		env["GT_ROLE"] = constants.RoleDeacon
-		env["BD_ACTOR"] = constants.RoleDeacon
+		env["BD_ACTOR"] = BDActorForRole(constants.RoleDeacon)
 		env["GIT_AUTHOR_NAME"] = constants.RoleDeacon
 
 	case "boot":
