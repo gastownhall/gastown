@@ -102,6 +102,33 @@ func buildResumeArgs(agentName, sessionID string) (string, error) {
 	return preset.ResumeFlag + " " + config.ShellQuote(sessionID), nil
 }
 
+// resumeAgentName returns the agent preset whose resume flag applies to a
+// crew session. It resolves the same config the startup command is built
+// from, so a town alias such as "opus" (command "claude") maps to the
+// "claude" preset instead of being rejected as an unknown agent.
+func resumeAgentName(crewName, townRoot, rigPath, agentOverride string) (string, error) {
+	var rc *config.RuntimeConfig
+	if agentOverride != "" {
+		var err error
+		rc, _, err = config.ResolveAgentConfigWithOverride(townRoot, rigPath, agentOverride)
+		if err != nil {
+			return "", err
+		}
+	} else {
+		rc = config.ResolveWorkerAgentConfig(crewName, townRoot, rigPath)
+	}
+	if rc == nil {
+		return "claude", nil
+	}
+	if rc.Provider != "" {
+		return rc.Provider, nil
+	}
+	if config.IsResolvedAgentClaude(rc) {
+		return "claude", nil
+	}
+	return rc.Command, nil
+}
+
 // validateCrewName checks that a crew name is safe and valid.
 // Rejects path traversal attempts and characters that break agent ID parsing.
 func validateCrewName(name string) error {
@@ -758,15 +785,9 @@ func (m *Manager) Start(name string, opts StartOptions) error {
 			return fmt.Errorf("building resume command: %w", err)
 		}
 
-		// Determine agent preset for resume flag.
-		// Try worker-level agent config first, fall back to "claude".
-		agentName := opts.AgentOverride
-		if agentName == "" {
-			if rc := config.ResolveWorkerAgentConfig(name, townRoot, m.rig.Path); rc != nil && rc.Provider != "" {
-				agentName = rc.Provider
-			} else {
-				agentName = "claude"
-			}
+		agentName, err := resumeAgentName(name, townRoot, m.rig.Path, opts.AgentOverride)
+		if err != nil {
+			return err
 		}
 		resumeArgs, err := buildResumeArgs(agentName, opts.ResumeSessionID)
 		if err != nil {
