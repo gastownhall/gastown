@@ -108,7 +108,7 @@ When `await-event` outputs `EFFORT: full`, run all steps thoroughly (normal mode
 
 The goal: idle cycles should burn ~10% of the tokens a full patrol uses."""
 formula = "mol-refinery-patrol"
-version = 16
+version = 17
 
 [vars]
 [vars.wisp_type]
@@ -1263,7 +1263,23 @@ After await-event returns (either by event, timeout, or context-yield):
 gt patrol report --summary "<brief summary: branches merged, test results, queue state>"
 ```
 This closes the current patrol wisp and automatically creates a new one.
-4. Continue executing from the first step of the new patrol cycle
+4. Continue executing from the first step of the new patrol cycle (inbox-check)
+   IN THE SAME TURN.
+
+## 🚨 End-of-Turn Rule
+
+**Do NOT end your turn at the prompt after `gt patrol report`.** The report
+starts the next cycle; it is not a stopping point. A refinery that stops at the
+prompt keeps its session alive and answers nudges, but merges nothing until
+someone notices — MRs pile up silently.
+
+Your turn may only rest inside the blocking `gt mol step await-event` call.
+The only other legitimate way to stop is `gt handoff`.
+
+**After answering any nudge or mail** (HEALTH_CHECK, PATROL: Wake up, Mayor or
+Witness questions): resume the patrol loop in the same turn. If you were
+waiting in await-event, run `gt mol step await-event ...` again; otherwise
+continue the current patrol step. Never answer and stop.
 
 **If you decide to hand off:**
 

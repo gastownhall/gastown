@@ -72,7 +72,7 @@ When `await-signal` outputs `EFFORT: full`, run all steps thoroughly (normal mod
 
 The goal: idle cycles should burn ~10% of the tokens a full patrol uses."""
 formula = "mol-deacon-patrol"
-version = 14
+version = 15
 
 [vars]
 [vars.wisp_type]
@@ -588,6 +588,36 @@ gt refinery status <rig>
 gt nudge --mode=queue <rig>/witness 'HEALTH_CHECK from deacon'
 gt nudge --mode=queue <rig>/refinery 'HEALTH_CHECK from deacon'
 ```
+
+**Patrol loop stall check — run for every non-docked/parked rig, even
+when the town is idle.** A witness or refinery can stay "running" and answer
+nudges while its patrol loop is dead: it ended its turn at the prompt after
+`gt patrol report` (or after answering a nudge) instead of re-entering its await
+step. Session liveness and HEALTH_CHECK replies cannot see this; the age of the
+hooked patrol wisp can, because every `gt patrol report` replaces it.
+
+```bash
+gt witness status <rig> --json    # .running, .patrol.id, .patrol.age_seconds
+gt refinery status <rig> --json   # .running, .queue_length, .patrol.age_seconds
+```
+
+- **Witness**: await-signal caps at 5m, so a looping witness reports at least
+  every ~5-10 minutes. If `running` is true and `patrol.age_seconds` > 1200
+  (20 min), the patrol loop has stalled.
+- **Refinery**: await-event caps at 15m and context-yields re-enter the wait
+  without reporting, so an idle refinery's patrol wisp legitimately ages. Treat
+  it as stalled only if `running` is true, `queue_length` > 0, and
+  `patrol.age_seconds` > 2700 (45 min).
+
+For a stalled loop, nudge with the default (wait-idle) mode — the stalled agent
+is idle at its prompt, so the nudge lands directly:
+```bash
+gt nudge <rig>/witness "PATROL_STALLED: patrol <patrol-id> not reported for <N>m. Resume your patrol loop now: run the next patrol step, then gt patrol report and gt mol step await-signal. Do not end your turn at the prompt."
+gt nudge <rig>/refinery "PATROL_STALLED: patrol <patrol-id> not reported for <N>m with <Q> MRs queued. Resume your patrol loop now and end in gt mol step await-event. Do not end your turn at the prompt."
+```
+Count a stalled loop as an unresponsive cycle below. If the patrol wisp is still
+stale on the next deacon cycle after the nudge, restart the agent
+(`gt witness restart <rig>` / `gt refinery restart <rig>`).
 
 **Health Ping Benefit**: The queued nudge commands serve as a **backoff reset** —
 any nudge resets the agent's backoff to base interval, ensuring patrol agents

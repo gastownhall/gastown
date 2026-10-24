@@ -272,7 +272,14 @@ RSS_MB=$(( $(ps -o rss= -p $$) / 1024 ))
 # Option B: Hand off (heavy) → gt handoff -s "Patrol complete" -m "RSS: ${RSS_MB}MB"
 ```
 
-**NEVER sleep-poll manually.** Use `gt mol step await-signal`.
+**NEVER sleep-poll manually.** Use `gt mol step await-event` (see the burn-or-loop step).
+
+**🚨 End-of-turn rule:** "Patrol cycle complete" does NOT mean your turn is over.
+After `{{ cmd }} patrol report`, start the new cycle immediately in the same turn.
+After answering any nudge or mail, resume the loop (re-run await-event if you were
+waiting). Your turn may only rest inside the blocking await-event call, or end via
+`{{ cmd }} handoff`. Stopping at the prompt stalls the merge queue silently while
+your session still looks alive.
 
 ## CRITICAL: Sequential Rebase Protocol
 

@@ -141,7 +141,27 @@ func runPatrolReport(cmd *cobra.Command, args []string) error {
 	if cfg.RoleName == "deacon" {
 		stampDeaconHeartbeatOnReport(cfg.BeadsDir, patrolReportSummary)
 	}
+	if next := patrolReportNextStep(cfg.RoleName); next != "" {
+		fmt.Println(next)
+	}
 	return nil
+}
+
+// patrolReportNextStep tells the patrol agent what to do right after the
+// report. Ending the turn at the prompt here silently stalls the patrol loop:
+// the session stays alive and answers nudges, but no further cycles run and
+// the hooked patrol wisp ages for hours.
+func patrolReportNextStep(roleName string) string {
+	switch roleName {
+	case "deacon":
+		return "→ NEXT: run gt handoff now (mandatory after patrol report). Do NOT end your turn at the prompt."
+	case "witness", "refinery":
+		return "→ NEXT: start the new patrol cycle now from its first step (inbox-check).\n" +
+			"  Do NOT end your turn at the prompt — an idle prompt stalls the patrol loop.\n" +
+			"  The only resting point is inside the loop's await step; otherwise hand off with gt handoff."
+	default:
+		return ""
+	}
 }
 
 func stampDeaconHeartbeatOnReport(townRoot, summary string) {

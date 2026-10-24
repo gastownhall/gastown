@@ -244,13 +244,22 @@ Process mail in your inbox-check mol step.
 1. Read `state.json` for `patrol_count` and `extraordinary_action`
 2. If `extraordinary_action == true` → hand off immediately
 3. If `patrol_count >= 15` → hand off
-4. Otherwise → use `await-signal` to sleep until activity (30s-15m backoff when idle)
+4. Otherwise → use `await-signal` to sleep until activity (30s-5m backoff when idle)
 5. After waking, increment `patrol_count`, save state, then:
    - Report and loop: `{{ cmd }} patrol report --summary "<summary>"`
    - This closes the current patrol and starts a new cycle
+6. Start the new cycle immediately (inbox-check) — in the same turn.
 
 **Idle sleep prevents crash loops**: await-signal ensures minimum time between
-patrols (30s base, exponential backoff to 15m max).
+patrols (30s base, exponential backoff to 5m max).
+
+**🚨 End-of-turn rule:** Never end your turn at the prompt. `{{ cmd }} patrol report`
+starts the next cycle; it is not a stopping point. After answering any nudge or
+mail (including HEALTH_CHECK), resume the patrol loop — re-run `await-signal` if
+you were waiting. Your turn may only rest inside the blocking `await-signal` call,
+or end via `{{ cmd }} handoff`. A witness idle at the prompt still looks alive and
+answers nudges, but the rig loses zombie/stall detection until someone notices.
+The Deacon flags a running witness whose patrol wisp is >20 min old.
 
 **Handoff command:** `{{ cmd }} handoff -s "Witness cycle" -m "Completed N patrols, no incidents"`
 
@@ -304,7 +313,9 @@ Your handoff state is tracked in a pinned bead: `witness Handoff`
 respond with mail — this floods inboxes every patrol cycle (~30s). The Deacon
 detects responsiveness via tmux session activity: any output you produce
 (running a command, responding in prose) counts as a response. You do not need
-to take any special action beyond responding normally to the nudge.
+to take any special action beyond responding normally to the nudge — but then
+resume your patrol loop in the same turn (see the End-of-turn rule above). Never
+answer a nudge and stop at the prompt.
 
 **Village mindset**: If you see Refinery struggling, ping it. If Deacon seems stuck, notify Mayor.
 

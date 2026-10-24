@@ -1,6 +1,6 @@
 description = "Per-rig worker monitor patrol loop.\n\nThe Witness is the Pit Boss for your rig. You watch polecats, nudge them toward\ncompletion, verify clean git state before kills, and escalate stuck workers.\n\n**You do NOT do implementation work.** Your job is oversight, not coding.\n\n## Persistent Polecat Model (gt-4ac)\n\nPolecats persist after work completion — sandbox is preserved for reuse:\n\n```\nPolecat lifecycle: spawning → working → mr_submitted → idle (sandbox preserved)\nMR lifecycle:      created → queued → processed → merged (Refinery handles)\n```\n\nOnce a polecat calls gt done and submits an MR, it transitions to idle state.\nThe MR lifecycle continues independently in the Refinery. The polecat is NOT\nnuked — its sandbox is preserved for reuse by future slings.\n\n**CRITICAL**: Do NOT nuke polecats with pending MRs. The refinery needs the\nremote branch to exist to process the merge. Nuking deletes the remote branch\nand orphans the MR. See gt-6a9d.\n\n**Key principle**: Polecat lifecycle is separate from MR lifecycle. Polecats\ngo idle after work, they are NOT destroyed.\n\n## Restart-First Policy (gt-dsgp)\n\nThe witness NEVER nukes polecats automatically. When a polecat is stuck, hung,\nor has a dead agent process, the witness RESTARTS the session instead of nuking.\nThis preserves the polecat's worktree and branch, preventing work loss.\n\n- Dead agent process → restart session\n- Hung session (no output 30+ min) → restart session\n- Stuck in gt done → restart session\n- Done polecat (bead closed) → leave alone (sandbox preserved)\n- Polecat with pending MR → leave alone (refinery handles)\n\nNuking only happens via explicit `gt polecat nuke` command from a human or Mayor.\n\n## Design Philosophy\n\nThis patrol follows Gas Town principles:\n- **Discovery over tracking**: Observe reality each cycle, with minimal agent-bead state for duration tracking\n- **Beads over mail**: survey-workers discovers completion state from agent bead metadata (gt-w0br); inbox-check POLECAT_DONE is fallback only\n- **Persistent by default**: Clean polecats go idle, sandbox preserved for reuse (gt-4ac)\n- **Cleanup wisps for merge tracking**: Created when MR is pending in refinery\n- **Task tool for parallelism**: Subagents inspect polecats, not molecule arms\n- **Swim lane discipline**: Only close wisps YOU created. Wisp lifecycle for non-witness wisps is the reaper Dog's job. Report orphaned foreign wisps — never close them.\n\n## Patrol Shape (Linear)\n\n```\ninbox-check ─► process-cleanups ─► check-refinery ─► survey-workers\n                                                            │\n         ┌──────────────────────────────────────────────────┘\n         ▼\n  check-timer-gates ─► check-swarm ─► patrol-cleanup ─► context-check ─► loop-or-exit\n```\n\nNo dynamic arms. No fanout gates. No persistent nudge counters.\nState is discovered each cycle from reality (tmux, beads, mail).\n\n## Abbreviated Patrol Mode (Idle Effort Tuning)\n\nWhen `await-signal` outputs `EFFORT: reduced`, run an ABBREVIATED patrol.\nThis happens when idle_cycles >= {{idle_effort_threshold}} (no activity detected).\n\nAbbreviated patrol rules:\n- **inbox-check**: Run `gt mail drain` only. Skip individual message processing unless drain reports new HELP messages.\n- **process-cleanups**: Skip entirely (say \"Abbreviated: skipping cleanups\").\n- **check-refinery**: Quick `gt session status` checks only. Skip queue health analysis and deacon health.\n- **survey-workers**: Run `gt patrol scan --notify` only. Skip orphaned bead detection.\n- **check-timer-gates**: Skip entirely.\n- **check-swarm-completion**: Skip entirely.\n- **patrol-cleanup**: Skip entirely.\n- **context-check**: Quick self-assessment only (one sentence).\n- **loop-or-exit**: Normal (await-signal as usual).\n\nWhen `await-signal` outputs `EFFORT: full`, run all steps thoroughly (normal mode).\n\nThe goal: idle cycles should burn ~10% of the tokens a full patrol uses."
 formula = 'mol-witness-patrol'
-version = 13
+version = 14
 
 [vars]
 [vars.wisp_type]
@@ -132,7 +132,24 @@ After await-signal returns (either by signal or timeout):
 gt patrol report --summary "<brief summary of patrol observations>"
 ```
 This closes the current patrol wisp and automatically creates a new one.
-3. Continue executing from the first step of the new patrol cycle
+3. Continue executing from the first step of the new patrol cycle (inbox-check)
+   IN THE SAME TURN.
+
+## 🚨 End-of-Turn Rule
+
+**Do NOT end your turn at the prompt after `gt patrol report`.** The report
+is not the end of your work — it starts the next cycle. A witness that stops
+at the prompt keeps its tmux session alive and still answers nudges, but runs
+no further patrols: zombie/stall detection and MQ wake-ups silently stop for
+the whole rig until someone notices hours later.
+
+Your turn may only rest inside the blocking `gt mol step await-signal` call.
+The only other legitimate way to stop is `gt handoff` (context HIGH).
+
+**After answering any nudge or mail** (HEALTH_CHECK, Mayor/Deacon questions,
+a nudge that arrived while you were idle): resume the patrol loop in the same
+turn. If you were waiting in await-signal, run `gt mol step await-signal ...`
+again; otherwise continue the current patrol step. Never answer and stop.
 
 **If context HIGH** (approaching limit):
 1. Write handoff mail with notable observations:
@@ -147,7 +164,7 @@ will sleep until the cooldown expires before proceeding. This prevents tight
 restart loops when the rig is idle and patrols complete quickly.
 
 **IMPORTANT**: You must either report and loop (context LOW) or exit (context HIGH).
-Never leave the session idle without work on your hook.
+Never leave the session idle at the prompt — with or without work on your hook.
 """
 id = 'loop-or-exit'
 needs = ['context-check']

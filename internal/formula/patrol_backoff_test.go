@@ -118,7 +118,84 @@ func TestPatrolFormulasHaveReportCycle(t *testing.T) {
 					"All patrol formulas must use gt patrol report in their loop step.",
 					pf.name, pf.loopStepID)
 			}
+
+			// The report starts the next cycle; ending the turn at the prompt
+			// afterwards silently stalls the patrol loop.
+			if !strings.Contains(loopDesc, "Do NOT end your turn at the prompt after `gt patrol report`") {
+				t.Errorf("%s %s step must forbid ending the turn after gt patrol report",
+					pf.name, pf.loopStepID)
+			}
 		})
+	}
+}
+
+// TestLoopingPatrolFormulasResumeAfterNudge verifies that patrol agents which
+// loop in-session (witness, refinery) are told to resume their await step after
+// answering a nudge. A witness that answered HEALTH_CHECK nudges and stopped at
+// the prompt left its rig unpatrolled for hours.
+func TestLoopingPatrolFormulasResumeAfterNudge(t *testing.T) {
+	cases := []struct {
+		name, loopStepID, await string
+	}{
+		{"mol-witness-patrol.formula.toml", "loop-or-exit", "gt mol step await-signal"},
+		{"mol-refinery-patrol.formula.toml", "burn-or-loop", "gt mol step await-event"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			content, err := formulasFS.ReadFile("formulas/" + tc.name)
+			if err != nil {
+				t.Fatalf("reading %s: %v", tc.name, err)
+			}
+			f, err := Parse(content)
+			if err != nil {
+				t.Fatalf("parsing %s: %v", tc.name, err)
+			}
+			var loopDesc string
+			for _, step := range f.Steps {
+				if step.ID == tc.loopStepID {
+					loopDesc = step.Description
+				}
+			}
+			if !strings.Contains(loopDesc, "After answering any nudge or mail") {
+				t.Errorf("%s %s step must require resuming the loop after answering a nudge", tc.name, tc.loopStepID)
+			}
+			if !strings.Contains(loopDesc, "Your turn may only rest inside the blocking `"+tc.await+"` call") {
+				t.Errorf("%s %s step must name %q as the only resting point", tc.name, tc.loopStepID, tc.await)
+			}
+		})
+	}
+}
+
+// TestDeaconHealthScanDetectsStalledPatrolLoops verifies the deacon checks the
+// age of each witness/refinery patrol wisp, not just session liveness. A stalled
+// patrol loop keeps its session alive and answers HEALTH_CHECK.
+func TestDeaconHealthScanDetectsStalledPatrolLoops(t *testing.T) {
+	content, err := formulasFS.ReadFile("formulas/mol-deacon-patrol.formula.toml")
+	if err != nil {
+		t.Fatalf("reading deacon patrol: %v", err)
+	}
+	f, err := Parse(content)
+	if err != nil {
+		t.Fatalf("parsing deacon patrol: %v", err)
+	}
+	var desc string
+	for _, step := range f.Steps {
+		if step.ID == "health-scan" {
+			desc = step.Description
+		}
+	}
+	if desc == "" {
+		t.Fatal("health-scan step not found")
+	}
+	for _, want := range []string{
+		"gt witness status <rig> --json",
+		"gt refinery status <rig> --json",
+		"patrol.age_seconds",
+		"PATROL_STALLED",
+	} {
+		if !strings.Contains(desc, want) {
+			t.Errorf("health-scan step missing %q (patrol stall detection)", want)
+		}
 	}
 }
 

@@ -6,6 +6,7 @@ import (
 	"os"
 
 	"github.com/spf13/cobra"
+	"github.com/steveyegge/gastown/internal/constants"
 	"github.com/steveyegge/gastown/internal/session"
 	"github.com/steveyegge/gastown/internal/style"
 	"github.com/steveyegge/gastown/internal/tmux"
@@ -226,13 +227,17 @@ type WitnessStatusOutput struct {
 	RigName           string   `json:"rig_name"`
 	Session           string   `json:"session,omitempty"`
 	MonitoredPolecats []string `json:"monitored_polecats,omitempty"`
+	// Patrol is the hooked mol-witness-patrol wisp. Its age is the time since
+	// the last completed patrol cycle; a running witness with a stale patrol
+	// has stopped looping.
+	Patrol *PatrolActivity `json:"patrol,omitempty"`
 }
 
 func runWitnessStatus(cmd *cobra.Command, args []string) error {
 	rigName := args[0]
 
 	// Get rig for polecat info
-	_, r, err := getRig(rigName)
+	townRoot, r, err := getRig(rigName)
 	if err != nil {
 		return err
 	}
@@ -246,12 +251,16 @@ func runWitnessStatus(cmd *cobra.Command, args []string) error {
 	// Polecats come from rig config, not state file
 	polecats := r.Polecats
 
+	// Patrol wisps live in town beads, assigned to <rig>/witness.
+	patrol, patrolErr := lookupPatrolActivity(townRoot, rigName+"/witness", constants.MolWitnessPatrol)
+
 	// JSON output
 	if witnessStatusJSON {
 		output := WitnessStatusOutput{
 			Running:           running,
 			RigName:           rigName,
 			MonitoredPolecats: polecats,
+			Patrol:            patrol,
 		}
 		if sessionInfo != nil {
 			output.Session = sessionInfo.Name
@@ -271,6 +280,11 @@ func runWitnessStatus(cmd *cobra.Command, args []string) error {
 		}
 	} else {
 		fmt.Printf("  State: %s\n", style.Dim.Render("○ stopped"))
+	}
+	if patrolErr != nil {
+		fmt.Printf("  Patrol: %s\n", style.Dim.Render("unknown: "+patrolErr.Error()))
+	} else {
+		fmt.Printf("  Patrol: %s\n", formatPatrolActivity(patrol))
 	}
 
 	// Show monitored polecats

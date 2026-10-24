@@ -11,6 +11,7 @@ import (
 
 	"github.com/spf13/cobra"
 	"github.com/steveyegge/gastown/internal/beads"
+	"github.com/steveyegge/gastown/internal/constants"
 	"github.com/steveyegge/gastown/internal/refinery"
 	"github.com/steveyegge/gastown/internal/rig"
 	"github.com/steveyegge/gastown/internal/session"
@@ -364,6 +365,10 @@ type RefineryStatusOutput struct {
 	RigName     string `json:"rig_name"`
 	Session     string `json:"session,omitempty"`
 	QueueLength int    `json:"queue_length"`
+	// Patrol is the hooked mol-refinery-patrol wisp. Its age is the time since
+	// the last completed patrol cycle; a running refinery with a stale patrol
+	// has stopped looping.
+	Patrol *PatrolActivity `json:"patrol,omitempty"`
 }
 
 func runRefineryStatus(cmd *cobra.Command, args []string) error {
@@ -385,12 +390,20 @@ func runRefineryStatus(cmd *cobra.Command, args []string) error {
 	queue, _ := mgr.Queue()
 	queueLen := len(queue)
 
+	// Patrol wisps live in town beads, assigned to <rig>/refinery.
+	var patrol *PatrolActivity
+	townRoot, patrolErr := workspace.FindFromCwdOrError()
+	if patrolErr == nil {
+		patrol, patrolErr = lookupPatrolActivity(townRoot, rigName+"/refinery", constants.MolRefineryPatrol)
+	}
+
 	// JSON output
 	if refineryStatusJSON {
 		output := RefineryStatusOutput{
 			Running:     running,
 			RigName:     rigName,
 			QueueLength: queueLen,
+			Patrol:      patrol,
 		}
 		if sessionInfo != nil {
 			output.Session = sessionInfo.Name
@@ -410,6 +423,12 @@ func runRefineryStatus(cmd *cobra.Command, args []string) error {
 		}
 	} else {
 		fmt.Printf("  State: %s\n", style.Dim.Render("○ stopped"))
+	}
+
+	if patrolErr != nil {
+		fmt.Printf("  Patrol: %s\n", style.Dim.Render("unknown: "+patrolErr.Error()))
+	} else {
+		fmt.Printf("  Patrol: %s\n", formatPatrolActivity(patrol))
 	}
 
 	fmt.Printf("\n  Queue: %d pending\n", queueLen)
