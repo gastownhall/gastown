@@ -32,7 +32,7 @@ This is infrastructure work. You:
 Digest generation requires reading from multiple rigs. Dogs have multi-rig
 worktrees. This is also a periodic task that doesn't need a dedicated polecat."""
 formula = "mol-digest-generate"
-version = 1
+version = 2
 
 [squash]
 trigger = "on_complete"
@@ -216,7 +216,11 @@ Ready for next assignment."
 ```
 
 **2. Return to kennel:**
-Dog returns to available state in the pool.
+```bash
+gt dog done
+```
+This closes this molecule (its root and every step), sets the dog back to
+idle and ends the session. Run it even if an earlier step failed.
 
 **Exit criteria:** Deacon notified, dog ready for next work."""
 

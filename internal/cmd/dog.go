@@ -144,7 +144,8 @@ var dogDoneCmd = &cobra.Command{
 	Long: `Mark a dog as done with its current work and return to idle state.
 
 Dogs should call this when they complete their work assignment.
-This clears the work field and sets state to idle, making the dog
+This closes the formula molecule hooked to the dog (its root and every
+step), clears the work field and sets state to idle, making the dog
 available for new work.
 
 Without a name argument, auto-detects the current dog from the working
@@ -614,6 +615,9 @@ func runDogClear(cmd *cobra.Command, args []string) error {
 
 	// Check if already idle
 	if d.State == dog.StateIdle && d.Work == "" {
+		// An idle dog can still hold a formula molecule that an earlier
+		// clear or done left behind; release it so it does not leak.
+		closeDogFormulaMoleculesFromCwd(name, dogClearedReason)
 		fmt.Printf("Dog %s is already idle\n", name)
 		return nil
 	}
@@ -626,6 +630,9 @@ func runDogClear(cmd *cobra.Command, args []string) error {
 			return fmt.Errorf("dog %s has an active session (%s)\nUse --force to clear anyway", name, sessionName)
 		}
 	}
+
+	// The dog's assignment is being abandoned, so its formula molecule is too.
+	closeDogFormulaMoleculesFromCwd(name, dogClearedReason)
 
 	// Clear work and return to idle
 	if err := mgr.ClearWork(name); err != nil {
@@ -680,6 +687,11 @@ func runDogDone(cmd *cobra.Command, args []string) error {
 	// regardless of current work state.
 	closePluginMails(name)
 
+	// Close the formula molecule the dog was working (root and every step),
+	// even if the dog is already idle: dog formulas end with a report step,
+	// not a molecule close, so nothing else finishes the molecule.
+	closeDogFormulaMoleculesFromCwd(name, dogDoneReason)
+
 	if d.State == dog.StateIdle && d.Work == "" {
 		fmt.Printf("Dog %s is already idle with no work\n", name)
 		return nil
@@ -719,6 +731,87 @@ func runDogDone(cmd *cobra.Command, args []string) error {
 	time.Sleep(4 * time.Second)
 
 	return nil
+}
+
+const (
+	dogDoneReason    = "dog done: formula complete"
+	dogClearedReason = "burned: dog cleared"
+)
+
+// listDogHookedWorkFn and closeDogFormulaWispFn are seams for tests.
+var (
+	listDogHookedWorkFn   = listDogHookedWork
+	closeDogFormulaWispFn = closeFormulaWisp
+)
+
+// listDogHookedWork returns the ephemeral beads (wisps) hooked to, or in
+// progress for, the given dog in the town beads database.
+func listDogHookedWork(townRoot, dogName string) ([]*beads.Issue, error) {
+	b := beads.New(townRoot)
+	assignee := "deacon/dogs/" + dogName
+	var work []*beads.Issue
+	for _, status := range []string{beads.StatusHooked, string(beads.StatusInProgress)} {
+		issues, err := b.List(beads.ListOptions{
+			Status:    status,
+			Assignee:  assignee,
+			Priority:  -1,
+			Ephemeral: true,
+		})
+		if err != nil {
+			return nil, err
+		}
+		work = append(work, issues...)
+	}
+	return work, nil
+}
+
+// closeDogFormulaMolecules closes every standalone formula molecule (for
+// example a mol-dog-* wisp slung with `gt sling <formula> deacon/dogs`) still
+// assigned to the dog: all step wisps first, then the root. Without this the
+// root stays hooked and its steps stay open after the dog finishes, because
+// dog formulas never close their own molecule.
+//
+// Only roots carrying attached_formula without attached_molecule are closed,
+// which is how formula sling marks a wisp that is itself the work. Ordinary
+// beads slung to a dog are left for the dog to close. Best-effort: failures are
+// reported but never stop the dog from going idle. Returns the number of
+// molecules closed.
+func closeDogFormulaMolecules(townRoot, dogName, reason string) int {
+	work, err := listDogHookedWorkFn(townRoot, dogName)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "warning: listing hooked work for dog %s: %v\n", dogName, err)
+		return 0
+	}
+
+	closed := 0
+	seen := make(map[string]bool)
+	for _, issue := range work {
+		if issue == nil || seen[issue.ID] {
+			continue
+		}
+		seen[issue.ID] = true
+		fields := beads.ParseAttachmentFields(issue)
+		if fields == nil || fields.AttachedFormula == "" || fields.AttachedMolecule != "" {
+			continue
+		}
+		if err := closeDogFormulaWispFn(issue.ID, townRoot, reason); err != nil {
+			fmt.Fprintf(os.Stderr, "warning: closing %s molecule %s for dog %s: %v\n", fields.AttachedFormula, issue.ID, dogName, err)
+			continue
+		}
+		closed++
+		fmt.Printf("✓ Closed %s molecule %s\n", fields.AttachedFormula, issue.ID)
+	}
+	return closed
+}
+
+// closeDogFormulaMoleculesFromCwd runs closeDogFormulaMolecules against the
+// town found from the working directory. Outside a town it does nothing.
+func closeDogFormulaMoleculesFromCwd(dogName, reason string) {
+	townRoot, err := workspace.FindFromCwd()
+	if err != nil || townRoot == "" {
+		return
+	}
+	closeDogFormulaMolecules(townRoot, dogName, reason)
 }
 
 func splitPathComponents(path string) []string {

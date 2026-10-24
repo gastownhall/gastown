@@ -38,7 +38,7 @@ Only removes databases matching known test/orphan patterns. Production databases
 are identified by rig metadata.json references and are never touched.
 Uses the same safety logic as gt dolt cleanup."""
 formula = "mol-dog-stale-db"
-version = 1
+version = 2
 
 [squash]
 trigger = "on_complete"
@@ -169,6 +169,13 @@ Orphans: {{orphan_count}}
 Removed: {{removed_count}}
 Status: COMPLETE"
 ```
+
+**4. Return to kennel:**
+```bash
+gt dog done
+```
+This closes this molecule (its root and every step), sets the dog back to
+idle and ends the session. Run it even if an earlier step failed.
 
 **Exit criteria:** Report sent, dog returned to kennel."""
 

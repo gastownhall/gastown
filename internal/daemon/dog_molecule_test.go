@@ -1,7 +1,11 @@
 package daemon
 
 import (
+	"os"
+	"path/filepath"
 	"reflect"
+	"runtime"
+	"strings"
 	"testing"
 )
 
@@ -196,4 +200,82 @@ func TestDogMolGracefulDegradation(t *testing.T) {
 	dm.closeStep("scan")
 	dm.failStep("scan", "test failure")
 	dm.close()
+}
+
+// writeBlockingFakeBd writes a fake bd that mimics bd's close guards: a plain
+// close of a step whose predecessor is open, or of a root with open children,
+// fails. Only --force bypasses the guards. Every invocation is logged.
+func writeBlockingFakeBd(t *testing.T) (bdPath, logPath string) {
+	t.Helper()
+	dir := t.TempDir()
+	logPath = filepath.Join(dir, "bd.log")
+	bdPath = filepath.Join(dir, "bd")
+	script := `#!/bin/sh
+echo "$*" >> "` + logPath + `"
+case "$1" in
+show)
+  cat <<'JSON'
+{"hq-wisp-root": [
+  {"id": "hq-wisp-s3", "title": "Report findings and return to kennel", "status": "open"},
+  {"id": "hq-wisp-s2", "title": "Inspect resource conditions", "status": "open"},
+  {"id": "hq-wisp-s1", "title": "Probe server connectivity", "status": "open"}
+], "schema_version": 1}
+JSON
+  exit 0 ;;
+close)
+  for a in "$@"; do
+    if [ "$a" = "--force" ]; then exit 0; fi
+  done
+  case "$2" in
+  hq-wisp-s1) exit 0 ;;
+  hq-wisp-root) echo "cannot close hq-wisp-root: open child issue(s)" >&2; exit 1 ;;
+  *) echo "cannot close blocked issue: $2" >&2; exit 1 ;;
+  esac ;;
+esac
+exit 0
+`
+	if err := os.WriteFile(bdPath, []byte(script), 0o755); err != nil {
+		t.Fatalf("write fake bd: %v", err)
+	}
+	return bdPath, logPath
+}
+
+type discardLogger struct{}
+
+func (discardLogger) Printf(string, ...interface{}) {}
+
+func TestDogMolCloseForcesBlockedStepsAndRoot(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("test uses Unix shell script mock")
+	}
+	bdPath, logPath := writeBlockingFakeBd(t)
+
+	dm := &dogMol{
+		rootID:   "hq-wisp-root",
+		stepIDs:  map[string]string{},
+		bdPath:   bdPath,
+		townRoot: t.TempDir(),
+		logger:   discardLogger{},
+	}
+	dm.close()
+
+	data, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatalf("read bd log: %v", err)
+	}
+	var closes []string
+	for _, line := range strings.Split(strings.TrimSpace(string(data)), "\n") {
+		if strings.HasPrefix(line, "close ") {
+			closes = append(closes, line)
+		}
+	}
+	want := []string{
+		"close hq-wisp-s3 --force",
+		"close hq-wisp-s2 --force",
+		"close hq-wisp-s1 --force",
+		"close hq-wisp-root --force",
+	}
+	if !reflect.DeepEqual(closes, want) {
+		t.Fatalf("close calls = %q, want %q (each step and the root closed once, forced, root last)", closes, want)
+	}
 }

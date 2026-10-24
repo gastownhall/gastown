@@ -131,6 +131,13 @@ func (dm *dogMol) failStep(stepSlug, reason string) {
 // close closes all remaining open child step wisps, then closes the root molecule wisp.
 // This prevents orphan step wisps from accumulating when callers forget to
 // explicitly close individual steps (the root cause of gt-3o59).
+//
+// Both closes use --force. Formula steps are chained by `needs` (blocks deps),
+// and bd refuses to close a step whose predecessor is still open, or a root
+// that still has open children. A plain close here therefore failed for every
+// step after the first unclosed one and then for the root, leaving the whole
+// molecule open. The molecule is finished when close runs, so its blocking
+// structure no longer matters.
 func (dm *dogMol) close() {
 	if dm.rootID == "" {
 		return
@@ -139,14 +146,15 @@ func (dm *dogMol) close() {
 	// Close any step wisps that were never explicitly closed/failed.
 	dm.closeRemainingSteps()
 
-	if err := dm.closeWisp(dm.rootID); err != nil {
+	if err := dm.closeWisp(dm.rootID, "--force"); err != nil {
 		dm.logger.Printf("dog_molecule: close root %s failed after %d attempts (non-fatal): %v", dm.rootID, dogCloseMaxAttempts, err)
 	}
 }
 
 // closeRemainingSteps queries all children of the root wisp and closes any that
 // are still open. This is the backstop that prevents step wisp leaks regardless
-// of whether individual callers remembered to close each step.
+// of whether individual callers remembered to close each step. Children come
+// back in no particular dependency order, so each close is forced (see close).
 func (dm *dogMol) closeRemainingSteps() {
 	if dm.rootID == "" {
 		return
@@ -171,7 +179,7 @@ func (dm *dogMol) closeRemainingSteps() {
 		}
 		// Close any child that is still open/hooked/in_progress.
 		if child.Status == "open" || child.Status == "hooked" || child.Status == "in_progress" {
-			if err := dm.closeWisp(child.ID); err != nil {
+			if err := dm.closeWisp(child.ID, "--force"); err != nil {
 				dm.logger.Printf("dog_molecule: closeRemainingSteps: close %s failed after %d attempts: %v", child.ID, dogCloseMaxAttempts, err)
 			} else {
 				closed++

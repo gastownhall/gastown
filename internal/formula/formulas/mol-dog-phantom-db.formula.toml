@@ -37,7 +37,7 @@ Dolt manages these files itself; external interference is never safe.
 
 This molecule detects and escalates only — it never removes files."""
 formula = "mol-dog-phantom-db"
-version = 1
+version = 2
 
 [squash]
 trigger = "on_complete"
@@ -133,6 +133,13 @@ Phantoms: {{phantom_count}}
 Quarantined: {{quarantined_count}}
 Status: COMPLETE"
 ```
+
+**3. Return to kennel:**
+```bash
+gt dog done
+```
+This closes this molecule (its root and every step), sets the dog back to
+idle and ends the session. Run it even if an earlier step failed.
 
 **Exit criteria:** Report sent, dog returned to kennel."""
 

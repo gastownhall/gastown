@@ -34,7 +34,7 @@ Exports are read-only against Dolt. Git operations are append-only
 (commit + push). The archive repo is a separate repository from
 the main codebase."""
 formula = "mol-dog-jsonl"
-version = 1
+version = 2
 
 [squash]
 trigger = "on_complete"
@@ -176,6 +176,13 @@ Records: {{record_count}}
 Push: {{push_status}}
 Status: COMPLETE"
 ```
+
+**3. Return to kennel:**
+```bash
+gt dog done
+```
+This closes this molecule (its root and every step), sets the dog back to
+idle and ends the session. Run it even if an earlier step failed.
 
 **Exit criteria:** Report sent, dog returned to kennel."""
 

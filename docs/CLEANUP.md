@@ -99,8 +99,8 @@ A comprehensive catalog of all cleanup-related commands in the gastown/beads eco
 |---------|-------------|
 | `gt dog remove <name>` | Removes worktrees and dog directory |
 | `gt dog remove --all` | Removes all dogs |
-| `gt dog clear <name>` | Resets stuck dog to idle state |
-| `gt dog done [name]` | Marks dog as done, clears work field |
+| `gt dog clear <name>` | Resets stuck dog to idle state, closing its hooked formula molecule |
+| `gt dog done [name]` | Marks dog as done, clears work field, closes its hooked formula molecule (root and steps) |
 
 ## Convoy Cleanup
 
