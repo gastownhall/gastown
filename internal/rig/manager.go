@@ -640,6 +640,10 @@ func (m *Manager) AddRig(opts AddRigOptions) (*Rig, error) {
 			cmd.Dir = mayorRigPath
 			cmd.Env = sourceBdEnv
 			if output, err := cmd.CombinedOutput(); err != nil {
+				// A cross-era refusal is fatal: see isLegacyBeadsRefusal.
+				if isLegacyBeadsRefusal(string(output)) {
+					return nil, legacyBeadsRefusalError(opts.Name, string(output))
+				}
 				fmt.Printf("  Warning: Could not init bd database: %v (%s)\n", err, strings.TrimSpace(string(output)))
 			}
 			// Drop orphan databases created by bd init (gh#3562, gt-sv1h).
@@ -1073,6 +1077,45 @@ func warnDeprecatedRigConfigKeys(data []byte, path string) {
 	}
 }
 
+// legacyBeadsRefusalMarker is the stable fragment of bd's cross-era upgrade
+// refusal ("... detected; explicit migration is required before this bd version
+// can open or modify the workspace."). bd emits it from its legacy-upgrade guard
+// for every command, including `bd init`.
+const legacyBeadsRefusalMarker = "explicit migration is required"
+
+// isLegacyBeadsRefusal reports whether bd refused to open the workspace because
+// it classifies the on-disk schema as belonging to an older storage era.
+//
+// This is not a cosmetic distinction. Rig provisioning creates the rig's Dolt
+// database and its beads schema through the beads library compiled into gt
+// (doltserver.InitRig -> EnsureRigIssuePrefix) *before* it shells out to the
+// installed `bd` binary. When that binary is from a newer storage era than gt's
+// compiled-in library, it refuses the schema gt just created, `bd init` fails,
+// and the rig is left with a database no bd command can ever open or migrate:
+// `bd list`, `bd ready`, `bd migrate` and `gt sling` into that rig all fail with
+// the refusal, and `gt reaper scan` fails separately because the rig's
+// wisp_dependencies table never gets the split depends_on_* columns.
+//
+// Nothing repairs this after the fact — `gt dolt fix-metadata` only rewrites
+// metadata, it cannot backfill missing tables — so the failure must abort
+// `gt rig add` loudly instead of being reported as a successful rig.
+func isLegacyBeadsRefusal(output string) bool {
+	return strings.Contains(output, legacyBeadsRefusalMarker)
+}
+
+// legacyBeadsRefusalError explains a bd/gt storage-era mismatch in terms the
+// operator can act on.
+func legacyBeadsRefusalError(rigName, output string) error {
+	return fmt.Errorf("bd refused to initialize beads for rig %q: %s\n\n"+
+		"The installed bd binary is from a newer beads storage era than the beads\n"+
+		"library compiled into this gt binary, so bd cannot open the schema gt just\n"+
+		"created. Continuing would leave the rig with a database no bd command can\n"+
+		"open or migrate. Upgrade gt (and bd) so both come from the same era:\n"+
+		"  go install github.com/steveyegge/gastown/cmd/gt@latest\n"+
+		"then remove the partially-created rig with `gt rig remove %s --force` and retry",
+		rigName, strings.TrimSpace(output), rigName)
+}
+
 // dropRigOrphanDBs drops orphan Dolt databases that bd init creates as a side
 // effect of `bd init --prefix <prefix>`. The orphan name depends on bd version:
 //
@@ -1180,10 +1223,17 @@ func (m *Manager) InitBeads(rigPath, prefix, rigName string) error {
 	cmd := exec.Command("bd", initArgs...)
 	cmd.Dir = rigPath
 	cmd.Env = filteredEnv
-	_, bdInitErr := cmd.CombinedOutput()
+	bdInitOut, bdInitErr := cmd.CombinedOutput()
 	if bdInitErr != nil {
 		// bd might not be installed or failed — the shared helper below will
 		// create config.yaml with the required defaults as a fallback.
+		//
+		// A cross-era refusal is the one failure that must not fall through:
+		// the fallback config.yaml would make the rig look initialized while
+		// every bd command against it fails forever (see isLegacyBeadsRefusal).
+		if isLegacyBeadsRefusal(string(bdInitOut)) {
+			return legacyBeadsRefusalError(rigName, string(bdInitOut))
+		}
 	} else {
 		// bd init succeeded - configure the Dolt database
 
