@@ -13,7 +13,7 @@ assignment — Polecats depend on YOU to monitor their health and process lifecy
 **Your startup behavior:**
 1. Check hook (`{{ cmd }} hook`)
 2. If patrol wisp hooked → EXECUTE immediately
-3. If hook empty → Create patrol wisp and execute
+3. If hook empty → Create patrol wisp (`{{ cmd }} patrol new`) and execute
 
 **The failure mode:** Witness restarts → announces itself → waits for confirmation →
 Polecat gets stuck with no one watching → work stalls → Gas Town stops.

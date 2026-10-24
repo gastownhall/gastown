@@ -900,11 +900,11 @@ func buildRestartCommandWithOpts(sessionName string, opts buildRestartCommandOpt
 	// Unix, $env: on Windows).
 	envMap := make(map[string]string)
 	var agentEnv map[string]string // agent config Env (rc.toml [agents.X.env])
+	var runtimeConfig *config.RuntimeConfig
 	if gtRole != "" {
 		// When GT_AGENT is set, resolve config with the override so we pick up
 		// the active agent's env (e.g., NODE_OPTIONS from [agents.X.env]).
 		// Otherwise, fall back to role-based resolution.
-		var runtimeConfig *config.RuntimeConfig
 		if currentAgent != "" {
 			rc, _, err := config.ResolveAgentConfigWithOverride(townRoot, rigPath, currentAgent)
 			if err == nil {
@@ -935,13 +935,23 @@ func buildRestartCommandWithOpts(sessionName string, opts buildRestartCommandOpt
 		envMap["GT_AGENT"] = currentAgent
 	}
 
-	// Preserve GT_PROCESS_NAMES across handoff for accurate liveness detection.
-	// Without this, custom agents that shadow built-in presets (e.g., custom
+	// Carry GT_PROCESS_NAMES across handoff for accurate liveness detection.
+	// Without it, custom agents that shadow built-in presets (e.g., custom
 	// "codex" running "opencode") would revert to GT_AGENT-based lookup after
 	// handoff, causing false liveness failures.
-	if processNames := os.Getenv("GT_PROCESS_NAMES"); processNames != "" {
-		envMap["GT_PROCESS_NAMES"] = processNames
-	} else if currentAgent != "" {
+	//
+	// Recompute from the resolved RuntimeConfig in preference to inheriting the
+	// current session's value: runtimeConfig was resolved with the currentAgent
+	// override just above, so it covers the shadowing case too, and it lets a
+	// session that was spawned with a wrong value (a wrapper command's own name,
+	// which no process carries after the wrapper execs — hq-io5) heal on handoff
+	// instead of propagating the bad value into every successor session.
+	switch resolvedNames := config.RuntimeProcessNames(runtimeConfig); {
+	case len(resolvedNames) > 0:
+		envMap["GT_PROCESS_NAMES"] = strings.Join(resolvedNames, ",")
+	case os.Getenv("GT_PROCESS_NAMES") != "":
+		envMap["GT_PROCESS_NAMES"] = os.Getenv("GT_PROCESS_NAMES")
+	case currentAgent != "":
 		resolved := config.ResolveProcessNames(currentAgent, "")
 		envMap["GT_PROCESS_NAMES"] = strings.Join(resolved, ",")
 	}
@@ -1033,7 +1043,7 @@ func updateSessionEnvForHandoff(t *tmux.Tmux, sessionName, agentOverride string)
 			}
 			rc, _, err := config.ResolveAgentConfigWithOverride(townRoot, rigPath, currentAgent)
 			if err == nil {
-				resolved := config.ResolveProcessNames(currentAgent, rc.Command, rc.Args...)
+				resolved := config.RuntimeProcessNames(rc)
 				processNames = strings.Join(resolved, ",")
 			}
 		}

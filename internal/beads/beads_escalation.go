@@ -179,12 +179,20 @@ func (b *Beads) CreateEscalationBead(title string, fields *EscalationFields) (*I
 	// to avoid embedding newlines in a flag value. bd 1.0.3+ rejects newline-
 	// containing flag values, which broke `gt escalate` for any escalation
 	// with structured YAML metadata in the description.
+	// Escalations are created PERSISTENT, not ephemeral (hq-81i).
+	//
+	// The wisps table is in dolt_ignore, so wisp rows are never versioned: no
+	// history, no diff on delete, no audit trail for who reaped what. An
+	// escalation is the canonical "needs an audit trail" record — it carries a
+	// severity decision, an ack, and a resolution — and its ID is embedded as a
+	// live handle in the permanent escalation mail bead ("gt escalate ack <id>").
+	// Creating it as a wisp meant the reaper could silently delete the thread
+	// root out from under a versioned row that still pointed at it, leaving the
+	// permanent record's own instructions inoperable.
 	args := []string{"create", "--json",
 		"--title=" + title,
 		"--body-file=-",
 		"--type=task",
-		"--ephemeral",
-		"--wisp-type=escalation",
 		"--labels=gt:escalation",
 	}
 

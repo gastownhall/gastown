@@ -1851,3 +1851,90 @@ func TestACPModeConstants(t *testing.T) {
 		t.Errorf("ACPModeFlag = %q, want flag", ACPModeFlag)
 	}
 }
+
+// TestRuntimeProcessNames covers hq-io5: a custom agent whose command is a
+// launcher script that execs the real binary (e.g. "claude-gastown" ending in
+// `exec claude "$@"`) must not have the wrapper's own name become the only
+// process name liveness checks look for. No live process carries it after the
+// exec, so IsAgentAlive reports a healthy session as agent-dead and
+// gt witness status / gt rig status print "stopped" for a working witness.
+func TestRuntimeProcessNames(t *testing.T) {
+	t.Run("nil config returns nil", func(t *testing.T) {
+		if got := RuntimeProcessNames(nil); got != nil {
+			t.Errorf("RuntimeProcessNames(nil) = %v, want nil", got)
+		}
+	})
+
+	t.Run("wrapper command keeps provider preset names", func(t *testing.T) {
+		// This is the exact shape of the town-settings agent that triggered
+		// hq-io5: provider claude, command a same-named wrapper script.
+		rc := normalizeRuntimeConfig(&RuntimeConfig{
+			Provider: "claude",
+			Command:  "/home/gastown/.local/bin/claude-gastown",
+			Args:     []string{"--dangerously-skip-permissions"},
+		})
+		rc.ResolvedAgent = "claude-gastown"
+
+		got := RuntimeProcessNames(rc)
+		want := []string{"node", "claude", "claude-gastown"}
+		if !equalStrings(got, want) {
+			t.Errorf("RuntimeProcessNames() = %v, want %v", got, want)
+		}
+
+		// Regression guard: the old call shape resolved to the wrapper alone.
+		if old := ResolveProcessNames(rc.ResolvedAgent, rc.Command, rc.Args...); !equalStrings(old, []string{"claude-gastown"}) {
+			t.Logf("note: ResolveProcessNames no longer yields the wrapper alone (got %v)", old)
+		}
+	})
+
+	t.Run("explicit tmux process names win", func(t *testing.T) {
+		rc := &RuntimeConfig{
+			Provider:      "claude",
+			Command:       "/opt/bin/my-launcher",
+			ResolvedAgent: "custom",
+			Tmux:          &RuntimeTmuxConfig{ProcessNames: []string{"my-runtime"}},
+		}
+
+		got := RuntimeProcessNames(rc)
+		want := []string{"my-runtime", "my-launcher"}
+		if !equalStrings(got, want) {
+			t.Errorf("RuntimeProcessNames() = %v, want %v", got, want)
+		}
+	})
+
+	t.Run("duplicates are collapsed", func(t *testing.T) {
+		rc := &RuntimeConfig{
+			Command:       "/usr/bin/claude",
+			ResolvedAgent: "claude",
+			Tmux:          &RuntimeTmuxConfig{ProcessNames: []string{"node", "claude", "node"}},
+		}
+
+		got := RuntimeProcessNames(rc)
+		want := []string{"node", "claude"}
+		if !equalStrings(got, want) {
+			t.Errorf("RuntimeProcessNames() = %v, want %v", got, want)
+		}
+	})
+
+	t.Run("falls back to ResolveProcessNames without tmux names", func(t *testing.T) {
+		rc := &RuntimeConfig{Command: "claude", ResolvedAgent: "claude"}
+
+		got := RuntimeProcessNames(rc)
+		want := []string{"node", "claude"}
+		if !equalStrings(got, want) {
+			t.Errorf("RuntimeProcessNames() = %v, want %v", got, want)
+		}
+	})
+}
+
+func equalStrings(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
+}

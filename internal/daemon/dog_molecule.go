@@ -25,6 +25,10 @@ const (
 	// failure back into a clean close instead of a permanent orphan.
 	dogCloseMaxAttempts = 3
 	dogCloseRetryDelay  = 500 * time.Millisecond
+
+	// dogSummaryMaxLen caps the step summary recorded as the root wisp's close
+	// reason, so a chatty failure message cannot bloat the wisp row.
+	dogSummaryMaxLen = 500
 )
 
 // closeWisp runs `bd close <id>` (plus any extra args) with bounded retries so a
@@ -44,12 +48,26 @@ func (dm *dogMol) closeWisp(id string, extra ...string) error {
 	return err
 }
 
+// dogStepResult records the outcome of one formula step within a dog cycle.
+type dogStepResult struct {
+	slug   string
+	failed bool
+	reason string
+}
+
 // dogMol tracks a molecule (wisp) lifecycle for a daemon dog patrol.
 // Graceful degradation: if bd fails, the dog still does its work — molecule
 // tracking is observability, not control flow.
+//
+// Wisps are root-only (gt-th5n, b8f79dc8): `bd mol wisp` materializes child step
+// rows only for formulas that opt in with `pour = true`, and no dog formula does
+// — materializing them would recreate the wisp flood the root-only default was
+// introduced to stop (mol-dog-doctor alone runs every 5 minutes with 13 steps).
+// So step outcomes are accumulated in memory here and summarized onto the root
+// wisp when the cycle closes, rather than closing per-step child wisps.
 type dogMol struct {
-	rootID   string            // Root wisp ID (e.g., "gt-wisp-abc123"), empty if pour failed.
-	stepIDs  map[string]string // step slug -> wisp issue ID
+	rootID   string          // Root wisp ID (e.g., "gt-wisp-abc123"), empty if pour failed.
+	steps    []dogStepResult // Ordered step outcomes for this cycle.
 	bdPath   string
 	townRoot string
 	logger   interface{ Printf(string, ...interface{}) }
@@ -60,7 +78,6 @@ type dogMol struct {
 // handle so the caller can proceed without error checking.
 func (d *Daemon) pourDogMolecule(formulaName string, vars map[string]string) *dogMol {
 	dm := &dogMol{
-		stepIDs:  make(map[string]string),
 		bdPath:   d.bdPath,
 		townRoot: d.config.TownRoot,
 		logger:   d.logger,
@@ -86,60 +103,90 @@ func (d *Daemon) pourDogMolecule(formulaName string, vars map[string]string) *do
 		return dm
 	}
 
-	// Discover step IDs by listing children of the root wisp.
-	dm.discoverSteps()
-
-	d.logger.Printf("dog_molecule: poured %s → %s (%d steps)", formulaName, dm.rootID, len(dm.stepIDs))
+	d.logger.Printf("dog_molecule: poured %s → %s (root-only)", formulaName, dm.rootID)
 	return dm
 }
 
-// closeStep marks a molecule step as closed.
+// closeStep marks a molecule step as completed. Root-only wisps have no child
+// row to close, so the outcome is recorded and reported when the cycle closes.
 func (dm *dogMol) closeStep(stepSlug string) {
-	if dm.rootID == "" {
-		return // No molecule — graceful degradation.
-	}
-
-	stepID, ok := dm.stepIDs[stepSlug]
-	if !ok {
-		dm.logger.Printf("dog_molecule: closeStep %q: unknown step (known: %v)", stepSlug, dm.knownSteps())
-		return
-	}
-
-	if err := dm.closeWisp(stepID); err != nil {
-		dm.logger.Printf("dog_molecule: close step %s (%s) failed after %d attempts (non-fatal): %v", stepSlug, stepID, dogCloseMaxAttempts, err)
-		return
-	}
+	dm.recordStep(stepSlug, false, "")
 }
 
 // failStep marks a molecule step as failed with a reason.
 func (dm *dogMol) failStep(stepSlug, reason string) {
-	if dm.rootID == "" {
-		return
-	}
-
-	stepID, ok := dm.stepIDs[stepSlug]
-	if !ok {
-		dm.logger.Printf("dog_molecule: failStep %q: unknown step", stepSlug)
-		return
-	}
-
-	if err := dm.closeWisp(stepID, "--reason", reason); err != nil {
-		dm.logger.Printf("dog_molecule: fail step %s (%s) failed after %d attempts (non-fatal): %v", stepSlug, stepID, dogCloseMaxAttempts, err)
-	}
+	dm.recordStep(stepSlug, true, reason)
 }
 
-// close closes all remaining open child step wisps, then closes the root molecule wisp.
-// This prevents orphan step wisps from accumulating when callers forget to
-// explicitly close individual steps (the root cause of gt-3o59).
+// recordStep stores a step outcome, replacing any earlier outcome for the same
+// slug so a step that is retried within a cycle reports its final state.
+func (dm *dogMol) recordStep(stepSlug string, failed bool, reason string) {
+	if dm.rootID == "" {
+		return // No molecule — graceful degradation.
+	}
+	for i := range dm.steps {
+		if dm.steps[i].slug == stepSlug {
+			dm.steps[i].failed = failed
+			dm.steps[i].reason = reason
+			return
+		}
+	}
+	dm.steps = append(dm.steps, dogStepResult{slug: stepSlug, failed: failed, reason: reason})
+}
+
+// stepSummary renders the cycle's step outcomes as a single line, e.g.
+// "scan ok, reap ok, purge failed (2 databases had errors)". Empty if no steps
+// were recorded. The result is truncated so it stays usable as a close reason.
+func (dm *dogMol) stepSummary() string {
+	if len(dm.steps) == 0 {
+		return ""
+	}
+	parts := make([]string, 0, len(dm.steps))
+	for _, step := range dm.steps {
+		if !step.failed {
+			parts = append(parts, step.slug+" ok")
+			continue
+		}
+		if step.reason == "" {
+			parts = append(parts, step.slug+" failed")
+			continue
+		}
+		parts = append(parts, fmt.Sprintf("%s failed (%s)", step.slug, step.reason))
+	}
+	return truncateSummary(strings.Join(parts, ", "), dogSummaryMaxLen)
+}
+
+// truncateSummary caps s at maxRunes, appending an ellipsis when it cuts.
+func truncateSummary(s string, maxRunes int) string {
+	runes := []rune(s)
+	if len(runes) <= maxRunes {
+		return s
+	}
+	return string(runes[:maxRunes]) + "…"
+}
+
+// close records the cycle's step outcomes on the root molecule wisp and closes
+// it. It first closes any materialized child step wisps that were left open,
+// which prevents orphan step wisps from accumulating for `pour = true` formulas
+// whose callers forget to close individual steps (the root cause of gt-3o59).
 func (dm *dogMol) close() {
 	if dm.rootID == "" {
 		return
 	}
 
-	// Close any step wisps that were never explicitly closed/failed.
+	// Backstop for formulas that opt into `pour = true`: close any materialized
+	// step wisps that were never explicitly closed. A no-op for root-only wisps.
 	dm.closeRemainingSteps()
 
-	if err := dm.closeWisp(dm.rootID); err != nil {
+	// Record the cycle's step outcomes on the root wisp. This is the observability
+	// the per-step child wisps used to carry.
+	var closeArgs []string
+	if summary := dm.stepSummary(); summary != "" {
+		dm.logger.Printf("dog_molecule: %s steps: %s", dm.rootID, summary)
+		closeArgs = []string{"--reason", "steps: " + summary}
+	}
+
+	if err := dm.closeWisp(dm.rootID, closeArgs...); err != nil {
 		dm.logger.Printf("dog_molecule: close root %s failed after %d attempts (non-fatal): %v", dm.rootID, dogCloseMaxAttempts, err)
 	}
 }
@@ -183,79 +230,7 @@ func (dm *dogMol) closeRemainingSteps() {
 	}
 }
 
-// discoverSteps lists children of the root wisp and maps step slugs to IDs.
-// Step titles in the formula are like "Scan databases for stale wisps" —
-// we match on the step ID embedded in the wisp title or metadata.
-func (dm *dogMol) discoverSteps() {
-	if dm.rootID == "" {
-		return
-	}
-
-	// Use bd show to get children. The mol wisp command creates child wisps
-	// whose titles include the step ID from the formula.
-	out, err := dm.runBd("show", dm.rootID, "--children", "--json")
-	if err != nil {
-		dm.logger.Printf("dog_molecule: discover steps for %s failed: %v", dm.rootID, err)
-		return
-	}
-
-	children, parseErr := parseChildrenJSON(out)
-	if parseErr != nil {
-		dm.logger.Printf("dog_molecule: discover steps: parse children JSON for %s failed: %v", dm.rootID, parseErr)
-		return
-	}
-
-	// Map known step slugs from each child's title. The wisp title typically starts
-	// with the step title from the formula.
-	for _, child := range children {
-		if child.ID == "" || child.Title == "" {
-			continue
-		}
-
-		titleLower := strings.ToLower(child.Title)
-		switch {
-		case strings.Contains(titleLower, "scan"):
-			dm.stepIDs["scan"] = child.ID
-		case strings.Contains(titleLower, "reap"):
-			dm.stepIDs["reap"] = child.ID
-		case strings.Contains(titleLower, "purge"):
-			dm.stepIDs["purge"] = child.ID
-		case strings.Contains(titleLower, "report"):
-			dm.stepIDs["report"] = child.ID
-		case strings.Contains(titleLower, "export"):
-			dm.stepIDs["export"] = child.ID
-		case strings.Contains(titleLower, "push"):
-			dm.stepIDs["push"] = child.ID
-		case strings.Contains(titleLower, "diagnos"):
-			dm.stepIDs["diagnose"] = child.ID
-		case strings.Contains(titleLower, "backup"):
-			dm.stepIDs["backup"] = child.ID
-		case strings.Contains(titleLower, "probe"):
-			dm.stepIDs["probe"] = child.ID
-		case strings.Contains(titleLower, "inspect"):
-			dm.stepIDs["inspect"] = child.ID
-		case strings.Contains(titleLower, "clean"):
-			dm.stepIDs["clean"] = child.ID
-		case strings.Contains(titleLower, "verif"):
-			dm.stepIDs["verify"] = child.ID
-		case strings.Contains(titleLower, "compact"):
-			dm.stepIDs["compact"] = child.ID
-		case strings.Contains(titleLower, "checkpoint"):
-			dm.stepIDs["checkpoint"] = child.ID
-		case strings.Contains(titleLower, "auto-close") || strings.Contains(titleLower, "auto close"):
-			dm.stepIDs["auto-close"] = child.ID
-		case strings.Contains(titleLower, "sync"):
-			dm.stepIDs["sync"] = child.ID
-		case strings.Contains(titleLower, "offsite"):
-			dm.stepIDs["offsite"] = child.ID
-		case strings.Contains(titleLower, "rotat"):
-			dm.stepIDs["rotate"] = child.ID
-		}
-	}
-}
-
-// childInfo holds fields from child wisp JSON used by discoverSteps and
-// closeRemainingSteps.
+// childInfo holds fields from child wisp JSON used by closeRemainingSteps.
 type childInfo struct {
 	ID     string `json:"id"`
 	Title  string `json:"title"`
@@ -323,15 +298,6 @@ func parseChildrenJSON(raw string) ([]childInfo, error) {
 	}
 
 	return children, nil
-}
-
-// knownSteps returns the list of known step slugs for debugging.
-func (dm *dogMol) knownSteps() []string {
-	var steps []string
-	for k := range dm.stepIDs {
-		steps = append(steps, k)
-	}
-	return steps
 }
 
 // runBd executes a bd command and returns stdout.
