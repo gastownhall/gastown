@@ -1588,7 +1588,9 @@ func pathExists(path string) bool {
 }
 
 func isAgentSessionHealthy(t *tmux.Tmux, sessionName string) bool {
-	return t.CheckSessionHealth(sessionName, 0) == tmux.SessionHealthy
+	// Non-zero inactivity bound: a session whose agent process is alive but whose
+	// pane has produced nothing for this long is hung, not healthy (hq-3l8r).
+	return t.CheckSessionHealth(sessionName, polecat.NoProgressTimeout) == tmux.SessionHealthy
 }
 
 func runRigBoot(cmd *cobra.Command, args []string) error {
