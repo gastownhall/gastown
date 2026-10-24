@@ -296,6 +296,100 @@ func TestIsDoneCommand(t *testing.T) {
 	if isDoneCommand(root) {
 		t.Fatal("root command should not be detected as done")
 	}
+	if isDoneCommand(&cobra.Command{Use: "done"}) {
+		t.Fatal("detached done command should not be detected as gt done")
+	}
+}
+
+func TestIsDoneCommandOnlyMatchesTopLevelDone(t *testing.T) {
+	for _, tt := range []struct {
+		args []string
+		want bool
+	}{
+		{args: []string{"done"}, want: true},
+		{args: []string{"dog", "done"}, want: false},
+		{args: []string{"dog", "done", "alpha"}, want: false},
+		{args: []string{"mol", "step", "done", "gt-abc.1"}, want: false},
+		{args: []string{"wl", "done", "w-abc"}, want: false},
+	} {
+		t.Run(strings.Join(tt.args, " "), func(t *testing.T) {
+			cmd, _, err := rootCmd.Find(tt.args)
+			if err != nil {
+				t.Fatalf("rootCmd.Find(%v): %v", tt.args, err)
+			}
+			if cmd.Name() != "done" {
+				t.Fatalf("rootCmd.Find(%v) = %q, want a done command", tt.args, cmd.CommandPath())
+			}
+			if got := isDoneCommand(cmd); got != tt.want {
+				t.Fatalf("isDoneCommand(%q) = %v, want %v", cmd.CommandPath(), got, tt.want)
+			}
+			if got := isDoneInvocation(tt.args); got != tt.want {
+				t.Fatalf("isDoneInvocation(%v) = %v, want %v", tt.args, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestPersistentPreRunAllowsNestedDoneForNonPolecat(t *testing.T) {
+	// A dog finishing its formula runs `gt dog done` with a non-polecat
+	// BD_ACTOR from outside any polecat worktree. The gt done ownership guard
+	// must not reject it before the subcommand's own RunE runs.
+	t.Setenv("BD_ACTOR", "dog")
+	t.Setenv("GT_ROLE", "dog")
+	t.Setenv("GT_RIG", "")
+	t.Setenv("GT_POLECAT", "")
+	t.Setenv("GT_TOWN_ROOT", "")
+	t.Setenv("GT_ROOT", "")
+	t.Setenv("GT_SESSION", "")
+
+	origStaleWarned := staleBinaryWarned
+	staleBinaryWarned = true
+	t.Cleanup(func() { staleBinaryWarned = origStaleWarned })
+	origUsagePath := logUsagePath
+	logUsagePath = filepath.Join(t.TempDir(), "cmd-usage.jsonl")
+	t.Cleanup(func() { logUsagePath = origUsagePath })
+
+	origDir, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir(t.TempDir()); err != nil {
+		t.Fatalf("chdir temp dir: %v", err)
+	}
+	t.Cleanup(func() { _ = os.Chdir(origDir) })
+
+	for _, path := range [][]string{
+		{"dog", "done"},
+		{"mol", "step", "done"},
+		{"wl", "done"},
+	} {
+		t.Run(strings.Join(path, " "), func(t *testing.T) {
+			ran := false
+			root := &cobra.Command{Use: "gt", PersistentPreRunE: persistentPreRun, SilenceUsage: true, SilenceErrors: true}
+			parent := root
+			for _, name := range path[:len(path)-1] {
+				child := &cobra.Command{Use: name}
+				parent.AddCommand(child)
+				parent = child
+			}
+			parent.AddCommand(&cobra.Command{
+				Use:  "done [name]",
+				Args: cobra.MaximumNArgs(1),
+				RunE: func(*cobra.Command, []string) error {
+					ran = true
+					return nil
+				},
+			})
+
+			root.SetArgs(append(append([]string{}, path...), "alpha"))
+			if err := root.Execute(); err != nil {
+				t.Fatalf("gt %s alpha: %v", strings.Join(path, " "), err)
+			}
+			if !ran {
+				t.Fatalf("gt %s RunE did not run", strings.Join(path, " "))
+			}
+		})
+	}
 }
 
 func TestPersistentPreRunDoneRejectsBeforeRegistryFallback(t *testing.T) {
@@ -316,6 +410,7 @@ func TestPersistentPreRunDoneRejectsBeforeRegistryFallback(t *testing.T) {
 	t.Cleanup(func() { _ = os.Chdir(origDir) })
 
 	done := &cobra.Command{Use: "done"}
+	(&cobra.Command{Use: "gt"}).AddCommand(done)
 	err = persistentPreRun(done, nil)
 	if err == nil || !strings.Contains(err.Error(), "assigned polecat worktree") {
 		t.Fatalf("persistentPreRun error = %v, want assigned worktree rejection", err)
