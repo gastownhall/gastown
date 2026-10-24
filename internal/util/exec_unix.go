@@ -3,6 +3,7 @@
 package util
 
 import (
+	"os"
 	"os/exec"
 	"syscall"
 )
@@ -10,6 +11,10 @@ import (
 // SetProcessGroup configures a command to run in its own process group so that
 // context cancellation kills the entire process tree, preventing orphaned children.
 func SetProcessGroup(cmd *exec.Cmd) {
+	// The outer dashboard read owns cancellation of this inherited group.
+	if os.Getenv(ManagedReadEnv) == "1" {
+		return
+	}
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	cmd.Cancel = func() error {
 		if cmd.Process != nil {
@@ -22,5 +27,9 @@ func SetProcessGroup(cmd *exec.Cmd) {
 // SetDetachedProcessGroup configures a command to run in its own process
 // group without installing a cancellation hook.
 func SetDetachedProcessGroup(cmd *exec.Cmd) {
+	// The outer dashboard read owns cancellation of this inherited group.
+	if os.Getenv(ManagedReadEnv) == "1" {
+		return
+	}
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 }
