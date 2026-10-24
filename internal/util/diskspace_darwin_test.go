@@ -124,11 +124,13 @@ func TestAPFSPurgeablePreventsBlock(t *testing.T) {
 			float64(info.AvailableBytes)/float64(GB), float64(containerFree)/float64(GB))
 	}
 
-	// Old code would have used statfs Bavail (~41 GB) → 95.6% → CRITICAL block.
+	// Old code used a 95% threshold with statfs Bavail (~41 GB), so 95.6%
+	// produced a false-positive CRITICAL block.
+	const historicalCriticalPercent = 95.0
 	oldUsed := containerTotal - statfsFree
 	oldPct := float64(oldUsed) / float64(containerTotal) * 100
-	if oldPct < DiskSpaceCriticalPercent {
-		t.Errorf("test setup broken: old code would show %.1f%% (expected >= %.1f%%)", oldPct, DiskSpaceCriticalPercent)
+	if oldPct < historicalCriticalPercent {
+		t.Errorf("test setup broken: old code would show %.1f%% (expected >= %.1f%%)", oldPct, historicalCriticalPercent)
 	}
 
 	// New code must be below the critical threshold.

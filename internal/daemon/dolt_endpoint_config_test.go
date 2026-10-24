@@ -169,7 +169,7 @@ func writeAndReadDaemonAutoGC(t *testing.T) struct {
 	dir := t.TempDir()
 	configPath := filepath.Join(dir, "config.yaml")
 	cfg := &DoltServerConfig{Port: 3307, DataDir: dir}
-	if err := writeDaemonDoltConfig(cfg, configPath); err != nil {
+	if err := writeDaemonDoltConfig(dir, cfg, configPath); err != nil {
 		t.Fatalf("writeDaemonDoltConfig: %v", err)
 	}
 	data, err := os.ReadFile(configPath)
