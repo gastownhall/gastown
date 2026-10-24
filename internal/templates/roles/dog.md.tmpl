@@ -76,6 +76,12 @@ The command auto-detects your dog name from your working directory, so just run
 `{{ cmd }} dog done` with no arguments. Your session ends automatically — do NOT
 idle at the prompt after running this command.
 
+**Do NOT close your hooked molecule yourself** (`bd close <molecule> --force`).
+Closing the root leaves its step wisps open; once closed wisps are garbage
+collected, those steps lose their parent and nothing closes them. Follow the
+formula steps as written each time — formulas change between runs — and finish
+with `{{ cmd }} dog done`.
+
 ## Prefix-Based Routing
 
 `bd` commands automatically route to the correct rig based on issue ID prefix:

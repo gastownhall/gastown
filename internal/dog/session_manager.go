@@ -238,6 +238,22 @@ func (m *SessionManager) GetPane(dogName string) (string, error) {
 	return pane, nil
 }
 
+// StartFresh starts a new dog session for a new work assignment and returns its
+// pane ID. A session still running from an earlier assignment (the agent never
+// ran `gt dog done`) is killed first. Reusing such a session hands the new work
+// to an agent whose context still holds earlier cycles and possibly outdated
+// formula steps, which it then repeats from memory instead of following the
+// current formula. Dog state is left as is: the caller has just assigned work.
+func (m *SessionManager) StartFresh(dogName string, opts SessionStartOptions) (string, error) {
+	if _, err := session.KillExistingSession(m.tmux, m.SessionName(dogName), false); err != nil {
+		return "", err
+	}
+	if err := m.Start(dogName, opts); err != nil {
+		return "", err
+	}
+	return m.GetPane(dogName)
+}
+
 // EnsureRunning ensures a dog session is running, starting it if needed.
 // Returns the pane ID.
 func (m *SessionManager) EnsureRunning(dogName string, opts SessionStartOptions) (string, error) {

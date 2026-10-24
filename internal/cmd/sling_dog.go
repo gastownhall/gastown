@@ -10,6 +10,7 @@ import (
 	"github.com/steveyegge/gastown/internal/beads"
 	"github.com/steveyegge/gastown/internal/config"
 	"github.com/steveyegge/gastown/internal/dog"
+	"github.com/steveyegge/gastown/internal/formula"
 	"github.com/steveyegge/gastown/internal/style"
 	"github.com/steveyegge/gastown/internal/tmux"
 	"github.com/steveyegge/gastown/internal/workspace"
@@ -119,6 +120,8 @@ func DispatchToDog(dogName string, opts DogDispatchOptions) (*DogDispatchInfo, e
 			}
 		}
 
+		reclaimFinishedFormulaDogBestEffort(mgr, townRoot, targetDog)
+
 		agentID := fmt.Sprintf("deacon/dogs/%s", targetDog.Name)
 		if existing, err := findHookedFormulaSingleton(townRoot, agentID, opts.WorkDesc); err != nil {
 			return nil, fmt.Errorf("checking existing dog formula: %w", err)
@@ -160,6 +163,14 @@ func DispatchToDog(dogName string, opts DogDispatchOptions) (*DogDispatchInfo, e
 					agentOverride:  opts.AgentOverride,
 					rigsConfig:     rigsConfig,
 				}, nil
+			}
+		}
+
+		// Return dogs whose formula already finished to the pool before
+		// looking for an idle one.
+		if dogs, listErr := mgr.List(); listErr == nil {
+			for _, d := range dogs {
+				reclaimFinishedFormulaDogBestEffort(mgr, townRoot, d)
 			}
 		}
 
@@ -241,7 +252,7 @@ func DispatchToDog(dogName string, opts DogDispatchOptions) (*DogDispatchInfo, e
 		WorkDesc:      opts.WorkDesc,
 		AgentOverride: opts.AgentOverride,
 	}
-	pane, err := sessMgr.EnsureRunning(targetDog.Name, sessOpts)
+	pane, err := startDogSessionFn(sessMgr, targetDog.Name, sessOpts, true)
 	if err != nil {
 		// Log but don't fail - dog state is set, session may start later
 		style.PrintWarning("could not start dog session: %v", err)
@@ -256,6 +267,112 @@ func DispatchToDog(dogName string, opts DogDispatchOptions) (*DogDispatchInfo, e
 		workStartedAt: workStartedAt,
 		ownsWork:      true,
 	}, nil
+}
+
+// startDogSessionFn starts the session for a dispatched dog and returns its
+// pane. fresh is set when the dispatch made a new assignment: a session left
+// over from earlier work is then replaced instead of reused (see
+// dog.SessionManager.StartFresh). A test seam.
+var startDogSessionFn = func(sessMgr *dog.SessionManager, dogName string, opts dog.SessionStartOptions, fresh bool) (string, error) {
+	if fresh {
+		return sessMgr.StartFresh(dogName, opts)
+	}
+	return sessMgr.EnsureRunning(dogName, opts)
+}
+
+// dogFormulaReclaimGrace is how old a formula assignment must be before a dog
+// without a matching molecule counts as finished. It covers the window in which
+// a concurrent sling has assigned the dog but not yet hooked the new wisp.
+const dogFormulaReclaimGrace = 5 * time.Minute
+
+// Test seams for reclaimFinishedFormulaDog.
+var (
+	isDogFormulaWorkFn = func(townRoot, work string) bool {
+		_, err := formula.ResolveFormulaContent(work, townRoot, "")
+		return err == nil
+	}
+	listDogWispsFn = func(townRoot, agentID string) ([]*beads.Issue, error) {
+		return beads.New(townRoot).List(beads.ListOptions{
+			Status:    "all",
+			Assignee:  agentID,
+			Priority:  -1,
+			Ephemeral: true,
+		})
+	}
+	dogReclaimNowFn = time.Now
+)
+
+// reclaimFinishedFormulaDog returns a dog to idle when it is still marked as
+// working on a formula, but no unclosed molecule of that formula from the
+// current assignment is assigned to it any more. That happens when the agent
+// closes the molecule root itself and never runs `gt dog done`, or when the
+// session dies after the molecule was closed. Without this the dog stays
+// "working" until someone clears it by hand, and dispatch skips it.
+//
+// Plugin work and slung beads are left alone: only formula molecules live in
+// town beads, where this can look for them. Reports whether the dog was
+// reclaimed.
+func reclaimFinishedFormulaDog(mgr *dog.Manager, townRoot string, d *dog.Dog) (bool, error) {
+	if d == nil || d.State != dog.StateWorking || d.Work == "" || d.WorkStartedAt.IsZero() {
+		return false, nil
+	}
+	if dogReclaimNowFn().Sub(d.WorkStartedAt) < dogFormulaReclaimGrace {
+		return false, nil
+	}
+	if !isDogFormulaWorkFn(townRoot, d.Work) {
+		return false, nil
+	}
+	wisps, err := listDogWispsFn(townRoot, "deacon/dogs/"+d.Name)
+	if err != nil {
+		return false, fmt.Errorf("listing molecules of dog %s: %w", d.Name, err)
+	}
+	if dogFormulaMoleculeActive(wisps, d.Work, d.WorkStartedAt) {
+		return false, nil
+	}
+	return mgr.ClearWorkIfMatches(d.Name, d.Work, d.WorkStartedAt)
+}
+
+// reclaimFinishedFormulaDogBestEffort runs reclaimFinishedFormulaDog and
+// updates d in place when the dog was returned to idle. Errors only warn:
+// reclaiming is cleanup and must not block a dispatch.
+func reclaimFinishedFormulaDogBestEffort(mgr *dog.Manager, townRoot string, d *dog.Dog) {
+	if d == nil {
+		return
+	}
+	work := d.Work
+	reclaimed, err := reclaimFinishedFormulaDog(mgr, townRoot, d)
+	if err != nil {
+		style.PrintWarning("could not check whether dog %s finished %s: %v", d.Name, work, err)
+		return
+	}
+	if !reclaimed {
+		return
+	}
+	d.State = dog.StateIdle
+	d.Work = ""
+	d.WorkStartedAt = time.Time{}
+	fmt.Printf("%s Dog %s finished %s without `gt dog done`; returned to idle\n",
+		style.Dim.Render("○"), d.Name, work)
+}
+
+// dogFormulaMoleculeActive reports whether wisps holds an unclosed molecule of
+// formulaName attached at or after workStartedAt. A molecule without a usable
+// attached_at counts as active, so an unreadable record never frees the dog.
+func dogFormulaMoleculeActive(wisps []*beads.Issue, formulaName string, workStartedAt time.Time) bool {
+	for _, wisp := range wisps {
+		if wisp == nil || wisp.Status == "closed" {
+			continue
+		}
+		fields := beads.ParseAttachmentFields(wisp)
+		if fields == nil || fields.AttachedFormula != formulaName {
+			continue
+		}
+		attachedAt, ok := attachmentTime(fields)
+		if !ok || !attachedAt.Before(workStartedAt.UTC()) {
+			return true
+		}
+	}
+	return false
 }
 
 func dogWorksOn(d *dog.Dog, work string) bool {
@@ -304,7 +421,7 @@ func (d *DogDispatchInfo) StartDelayedSession() (string, error) {
 		WorkDesc:      d.workDesc,
 		AgentOverride: d.agentOverride,
 	}
-	pane, err := sessMgr.EnsureRunning(d.DogName, opts)
+	pane, err := startDogSessionFn(sessMgr, d.DogName, opts, d.ownsWork)
 	if err != nil {
 		if errors.Is(err, dog.ErrSessionRunning) {
 			d.Pane = ""

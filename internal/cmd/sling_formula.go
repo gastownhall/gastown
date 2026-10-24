@@ -105,10 +105,17 @@ func formulaSlingPrompt(formulaName string) string {
 	return fmt.Sprintf("Formula %s slung. Run `"+cli.Name()+" hook` to see your hook, then execute the steps.", formulaName)
 }
 
+// dogFormulaPrompt adds dog completion guidance to a formula sling prompt.
+// Follow the current formula and finish with `gt dog done`: a dog that closes
+// the molecule root itself leaves its step wisps open and stays "working".
+func dogFormulaPrompt(prompt string) string {
+	return prompt + " Follow the steps of this formula as written, even if you ran it before. When they are done, run `" + cli.Name() + " dog done`; do not close the molecule yourself."
+}
+
 func nudgeFormulaDog(delayedDogInfo *DogDispatchInfo, prompt string) {
 	dogSession := fmt.Sprintf("hq-dog-%s", delayedDogInfo.DogName)
 	t := tmux.NewTmux()
-	if err := t.NudgeSession(dogSession, prompt); err != nil {
+	if err := t.NudgeSession(dogSession, dogFormulaPrompt(prompt)); err != nil {
 		fmt.Printf("%s Could not nudge dog %s: %v (will discover work via gt prime)\n",
 			style.Dim.Render("○"), delayedDogInfo.DogName, err)
 	} else {
