@@ -190,10 +190,19 @@ func isRoleCommand(cmd *cobra.Command) bool {
 }
 
 func isDoneCommand(cmd *cobra.Command) bool {
+	// Only the top-level `gt done` (the polecat completion command) may trigger
+	// the polecat worktree guard. Subcommands that happen to be named "done" —
+	// notably `gt dog done` — are different commands with their own semantics
+	// and must not inherit the polecat-only BD_ACTOR/GT_ROLE check.
 	for c := cmd; c != nil; c = c.Parent() {
-		if c.Name() == "done" {
+		if c.Name() != "done" {
+			continue
+		}
+		parent := c.Parent()
+		if parent == nil || !parent.HasParent() {
 			return true
 		}
+		return false
 	}
 	return false
 }
