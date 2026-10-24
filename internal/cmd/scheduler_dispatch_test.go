@@ -36,6 +36,14 @@ func setupSchedulerScanFailureTown(t *testing.T) string {
 			t.Fatalf("mkdir %s: %v", dir, err)
 		}
 	}
+	// The failing rig must be registered: beadsSearchDirs only scans
+	// registered rigs (plus HQ), and fail-closed semantics apply to those.
+	writeJSONFile(t, filepath.Join(townRoot, "mayor", "rigs.json"), &config.RigsConfig{
+		Version: config.CurrentRigsVersion,
+		Rigs: map[string]config.RigEntry{
+			"rig": {BeadsConfig: &config.BeadsConfig{Prefix: "gt"}},
+		},
+	})
 	installFakeBD(t, `#!/bin/sh
 case "$BEADS_DIR" in
   */rig/.beads) echo "scan failed" >&2; exit 7 ;;
@@ -43,6 +51,57 @@ case "$BEADS_DIR" in
 esac
 `)
 	return townRoot
+}
+
+// TestBeadsSearchDirsSkipsUnregisteredWorkspaces verifies that directories
+// containing a .beads workspace but not registered in mayor/rigs.json are not
+// scanned. Abandoned legacy-era workspaces in the town root would otherwise
+// fail the (deliberately fail-closed) sling context scan and disable the
+// scheduler entirely (hq-ndiy).
+func TestBeadsSearchDirsSkipsUnregisteredWorkspaces(t *testing.T) {
+	townRoot := t.TempDir()
+	for _, dir := range []string{
+		filepath.Join(townRoot, "mayor"),
+		filepath.Join(townRoot, ".beads"),
+		filepath.Join(townRoot, "rig", ".beads"),
+		filepath.Join(townRoot, "legacy", ".beads"),
+	} {
+		if err := os.MkdirAll(dir, 0755); err != nil {
+			t.Fatalf("mkdir %s: %v", dir, err)
+		}
+	}
+	writeJSONFile(t, filepath.Join(townRoot, "mayor", "rigs.json"), &config.RigsConfig{
+		Version: config.CurrentRigsVersion,
+		Rigs: map[string]config.RigEntry{
+			"rig": {BeadsConfig: &config.BeadsConfig{Prefix: "gt"}},
+		},
+	})
+
+	dirs, err := beadsSearchDirs(townRoot)
+	if err != nil {
+		t.Fatalf("beadsSearchDirs: %v", err)
+	}
+	want := []string{townRoot, filepath.Join(townRoot, "rig")}
+	if len(dirs) != len(want) || dirs[0] != want[0] || dirs[1] != want[1] {
+		t.Fatalf("beadsSearchDirs = %v, want %v (unregistered 'legacy' dir must be excluded)", dirs, want)
+	}
+}
+
+// TestBeadsSearchDirsNoRigsConfig verifies a town without mayor/rigs.json
+// scans HQ only instead of erroring.
+func TestBeadsSearchDirsNoRigsConfig(t *testing.T) {
+	townRoot := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(townRoot, ".beads"), 0755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+
+	dirs, err := beadsSearchDirs(townRoot)
+	if err != nil {
+		t.Fatalf("beadsSearchDirs: %v", err)
+	}
+	if len(dirs) != 1 || dirs[0] != townRoot {
+		t.Fatalf("beadsSearchDirs = %v, want just [%s]", dirs, townRoot)
+	}
 }
 
 func TestDispatchScheduledWorkReportsHeldLock(t *testing.T) {
