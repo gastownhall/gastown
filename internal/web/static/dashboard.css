@@ -3,8 +3,8 @@
             --bg-card: #1a1f26;
             --bg-card-hover: #242b33;
             --text-primary: #e6e1cf;
-            --text-secondary: #6c7680;
-            --text-muted: #4a5159;
+            --text-secondary: #9aa3ac;
+            --text-muted: #7d8791;
             --border: #2d363f;
             --border-accent: #3d4752;
             --green: #c2d94c;
@@ -15,6 +15,28 @@
             --cyan: #95e6cb;
             --orange: #ff8f40;
             --pink: #ff79c6;
+
+            /* Aliases referenced by later rules; undefined they rendered transparent */
+            --accent: var(--cyan);
+            --bg-primary: var(--bg-dark);
+            --bg-secondary: var(--bg-card);
+            --bg-tertiary: var(--bg-card-hover);
+            --bg-elevated: var(--bg-card-hover);
+            --font-mono: 'SF Mono', 'Menlo', 'Monaco', 'Consolas', monospace;
+            --blue-rgb: 89, 194, 255;
+            --cyan-rgb: 149, 230, 203;
+            --yellow-rgb: 255, 180, 84;
+            --green-rgb: 194, 217, 76;
+        }
+
+        ::selection {
+            background: rgba(var(--cyan-rgb), 0.3);
+            color: var(--text-primary);
+        }
+
+        :focus-visible {
+            outline: 2px solid var(--cyan);
+            outline-offset: 2px;
         }
 
         * {
@@ -54,7 +76,15 @@
             color: var(--cyan);
             margin: 0;
             white-space: pre;
-            text-shadow: 0 0 10px var(--cyan);
+            text-shadow: 0 0 4px rgba(var(--cyan-rgb), 0.45);
+        }
+
+        /* Plain title, shown when the ASCII banner is too wide */
+        .title-text {
+            display: none;
+            font-size: 1rem;
+            color: var(--cyan);
+            letter-spacing: 0.02em;
         }
 
         h1 {
@@ -118,7 +148,7 @@
 
         .panel-header .count {
             font-size: 0.75rem;
-            color: var(--text-muted);
+            color: var(--text-secondary);
             background: var(--border);
             padding: 2px 8px;
             border-radius: 10px;
@@ -1830,6 +1860,7 @@
             gap: 0;
             padding: 0 8px;
             min-height: 42px;
+            flex-shrink: 0;
             transition: opacity 0.15s ease;
         }
 
@@ -1992,6 +2023,33 @@
 
         .panel.expanded .tl-timeline {
             max-height: none;
+        }
+
+        /* Sub-section heading inside a panel body (e.g. Ready Across Rigs) */
+        .section-header {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 10px 14px;
+            border-top: 1px solid var(--border);
+            border-bottom: 1px solid var(--border);
+            background: var(--bg-dark);
+        }
+
+        .section-header h3 {
+            font-size: 0.75rem;
+            font-weight: 600;
+            color: var(--text-secondary);
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+        }
+
+        .section-header .count {
+            font-size: 0.7rem;
+            color: var(--text-secondary);
+            background: var(--border);
+            padding: 1px 7px;
+            border-radius: 10px;
         }
 
         /* Empty state */
@@ -2404,6 +2462,10 @@
             .ascii-title {
                 font-size: 6px;
                 display: none; /* Hide on mobile, too wide */
+            }
+
+            .title-text {
+                display: block;
             }
 
             .mayor-banner {
