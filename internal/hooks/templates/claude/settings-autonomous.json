@@ -102,6 +102,33 @@
             "command": "{{GT_BIN}} tap guard dangerous-command"
           }
         ]
+      },
+      {
+        "matcher": "Bash(grep*)",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "{{GT_BIN}} tap guard broad-search"
+          }
+        ]
+      },
+      {
+        "matcher": "Bash(rg*)",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "{{GT_BIN}} tap guard broad-search"
+          }
+        ]
+      },
+      {
+        "matcher": "Bash(find*)",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "{{GT_BIN}} tap guard broad-search"
+          }
+        ]
       }
     ],
     "SessionStart": [
