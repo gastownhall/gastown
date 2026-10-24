@@ -12,6 +12,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -189,6 +190,34 @@ esac
 		}
 	}
 	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+}
+
+// agentBeadsDBCounter gives each test that initializes a real beads database
+// its own prefix. The Dolt container is shared by the whole package and bd
+// names the server database after the prefix, so reusing one prefix makes
+// later tests connect to an earlier test's database and fail with a project
+// identity mismatch.
+var agentBeadsDBCounter atomic.Int32
+
+// initAgentBeadsDB prepares mayorRig/.beads so AddWithOptions can create agent
+// beads. With bd installed it initializes a uniquely named database on the
+// shared Dolt container (skipping when Docker is unavailable); otherwise it
+// installs a mock bd, as on Windows CI.
+func initAgentBeadsDB(t *testing.T, mayorRig string) {
+	t.Helper()
+	if _, err := exec.LookPath("bd"); err != nil {
+		installMockBd(t)
+		// Write the type-config sentinel so EnsureCustomTypes is a no-op.
+		sentinel := filepath.Join(mayorRig, ".beads", ".gt-types-configured")
+		_ = os.WriteFile(sentinel, []byte(beads.TypeConfigSentinelValue()+"\n"), 0644)
+		return
+	}
+	testutil.RequireDoltContainer(t)
+	port, _ := strconv.Atoi(testutil.DoltContainerPort())
+	prefix := fmt.Sprintf("pa%d", agentBeadsDBCounter.Add(1))
+	if err := beads.NewIsolatedWithPort(mayorRig, port).Init(prefix); err != nil {
+		t.Fatalf("bd init: %v", err)
+	}
 }
 
 func installEmptyMockBd(t *testing.T) {
@@ -1399,20 +1428,7 @@ func TestAddWithOptions_NoPrimeMDCreatedLocally(t *testing.T) {
 	}
 
 	// Initialize beads database so agent bead creation works.
-	// Use real bd if available; fall back to a mock for environments (like
-	// Windows CI) where bd is not installed.
-	if _, err := exec.LookPath("bd"); err == nil {
-		testutil.RequireDoltContainer(t)
-		port, _ := strconv.Atoi(testutil.DoltContainerPort())
-		bd := beads.NewIsolatedWithPort(mayorRig, port)
-		if err := bd.Init("gt"); err != nil {
-			t.Fatalf("bd init: %v", err)
-		}
-	} else {
-		installMockBd(t)
-		// Write the type-config sentinel so EnsureCustomTypes is a no-op.
-		_ = os.WriteFile(filepath.Join(mayorBeads, ".gt-types-configured"), []byte(beads.TypeConfigSentinelValue()+"\n"), 0644)
-	}
+	initAgentBeadsDB(t, mayorRig)
 
 	// Initialize git repo in mayor/rig WITHOUT any .beads/PRIME.md
 	cmd := exec.Command("git", "init")
@@ -1749,20 +1765,7 @@ func TestAddWithOptions_NoFilesAddedToRepo(t *testing.T) {
 	}
 
 	// Initialize beads database so agent bead creation works.
-	// Use real bd if available; fall back to a mock for environments (like
-	// Windows CI) where bd is not installed.
-	if _, err := exec.LookPath("bd"); err == nil {
-		testutil.RequireDoltContainer(t)
-		port, _ := strconv.Atoi(testutil.DoltContainerPort())
-		bd := beads.NewIsolatedWithPort(mayorRig, port)
-		if err := bd.Init("gt"); err != nil {
-			t.Fatalf("bd init: %v", err)
-		}
-	} else {
-		installMockBd(t)
-		// Write the type-config sentinel so EnsureCustomTypes is a no-op.
-		_ = os.WriteFile(filepath.Join(mayorBeads, ".gt-types-configured"), []byte(beads.TypeConfigSentinelValue()+"\n"), 0644)
-	}
+	initAgentBeadsDB(t, mayorRig)
 
 	// Initialize a CLEAN git repo with known files only
 	cmd := exec.Command("git", "init")
@@ -1895,20 +1898,7 @@ func TestAddWithOptions_SettingsInstalledInPolecatsDir(t *testing.T) {
 	}
 
 	// Initialize beads database so agent bead creation works.
-	// Use real bd if available; fall back to a mock for environments (like
-	// Windows CI) where bd is not installed.
-	if _, err := exec.LookPath("bd"); err == nil {
-		testutil.RequireDoltContainer(t)
-		port, _ := strconv.Atoi(testutil.DoltContainerPort())
-		bd := beads.NewIsolatedWithPort(mayorRig, port)
-		if err := bd.Init("gt"); err != nil {
-			t.Fatalf("bd init: %v", err)
-		}
-	} else {
-		installMockBd(t)
-		// Write the type-config sentinel so EnsureCustomTypes is a no-op.
-		_ = os.WriteFile(filepath.Join(mayorBeads, ".gt-types-configured"), []byte(beads.TypeConfigSentinelValue()+"\n"), 0644)
-	}
+	initAgentBeadsDB(t, mayorRig)
 
 	// Initialize a git repo
 	cmd := exec.Command("git", "init")
