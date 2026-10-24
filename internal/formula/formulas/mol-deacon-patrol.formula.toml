@@ -107,7 +107,7 @@ needs = ["heartbeat"]
 description = """
 First, clean up CLOSED wisps from previous cycles:
 ```bash
-bd mol wisp gc --closed --force
+bd mol wisp gc --closed
 ```
 
 > **Warning (hq-3pp):** Do not run unscoped age-based wisp GC from inside
