@@ -9,6 +9,8 @@ import (
 	"time"
 
 	"github.com/steveyegge/gastown/internal/config"
+	"github.com/steveyegge/gastown/internal/refinery"
+	"github.com/steveyegge/gastown/internal/rig"
 )
 
 // setupTestRigForSettings creates a test rig for settings testing.
@@ -27,9 +29,9 @@ func setupTestRigForSettings(t *testing.T) (string, string) {
 	// Create town.json (primary marker for workspace detection)
 	townConfig := &config.TownConfig{
 		Type:      "town",
-		Version:    config.CurrentTownVersion,
-		Name:       "test-town",
-		CreatedAt:  time.Now().Truncate(time.Second),
+		Version:   config.CurrentTownVersion,
+		Name:      "test-town",
+		CreatedAt: time.Now().Truncate(time.Second),
 	}
 	townConfigPath := filepath.Join(mayorDir, "town.json")
 	if err := config.SaveTownConfig(townConfigPath, townConfig); err != nil {
@@ -814,5 +816,116 @@ func TestParseValue(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// TestRigSettingsWriterReaderAgree is the regression test for hq-am01: it proves
+// that values written by `gt rig settings set merge_queue.*` (writer →
+// settings/config.json) are the values the refinery resolves via LoadConfig
+// (reader). Before the fix the reader read the rig-root config.json and silently
+// fell back to DefaultMergeQueueConfig (on_conflict=assign_back, max_concurrent=1).
+func TestRigSettingsWriterReaderAgree(t *testing.T) {
+	townRoot, rigName := setupTestRigForSettings(t)
+	rigPath := filepath.Join(townRoot, rigName)
+
+	// Writer path: drive the real `gt rig settings set` handlers.
+	if err := runRigSettingsSet(rigSettingsSetCmd, []string{rigName, "merge_queue.max_concurrent", "3"}); err != nil {
+		t.Fatalf("set merge_queue.max_concurrent: %v", err)
+	}
+	if err := runRigSettingsSet(rigSettingsSetCmd, []string{rigName, "merge_queue.on_conflict", "auto_rebase"}); err != nil {
+		t.Fatalf("set merge_queue.on_conflict: %v", err)
+	}
+
+	// Sanity: the writer wrote settings/config.json (canonical path).
+	settingsPath := filepath.Join(rigPath, "settings", "config.json")
+	if _, err := os.Stat(settingsPath); err != nil {
+		t.Fatalf("expected writer to create %s: %v", settingsPath, err)
+	}
+
+	// Reader path: exactly what the refinery's LoadConfig resolves.
+	r := &rig.Rig{Name: rigName, Path: rigPath}
+	cfg, srcPath, err := refinery.EffectiveConfig(r)
+	if err != nil {
+		t.Fatalf("EffectiveConfig: %v", err)
+	}
+
+	if srcPath != settingsPath {
+		t.Errorf("effective config source = %q, want canonical %q", srcPath, settingsPath)
+	}
+	if cfg.MaxConcurrent != 3 {
+		t.Errorf("MaxConcurrent = %d, want 3 (writer value, not default 1)", cfg.MaxConcurrent)
+	}
+	if cfg.OnConflict != "auto_rebase" {
+		t.Errorf("OnConflict = %q, want %q (writer value, not default assign_back)", cfg.OnConflict, "auto_rebase")
+	}
+}
+
+// TestRigSettingsShowEffective verifies `gt rig settings show --effective` runs
+// against the canonical file and surfaces resolved values (with defaults applied
+// for unset fields).
+func TestRigSettingsShowEffective(t *testing.T) {
+	townRoot, rigName := setupTestRigForSettings(t)
+	rigPath := filepath.Join(townRoot, rigName)
+
+	if err := runRigSettingsSet(rigSettingsSetCmd, []string{rigName, "merge_queue.max_concurrent", "4"}); err != nil {
+		t.Fatalf("set merge_queue.max_concurrent: %v", err)
+	}
+
+	// Drive the --effective path; must not error and must read the set value.
+	prev := rigSettingsShowEffective
+	rigSettingsShowEffective = true
+	t.Cleanup(func() { rigSettingsShowEffective = prev })
+
+	if err := runRigSettingsShow(rigSettingsShowCmd, []string{rigName}); err != nil {
+		t.Fatalf("runRigSettingsShow --effective: %v", err)
+	}
+
+	// Confirm the underlying resolver returns the set value plus defaults.
+	r := &rig.Rig{Name: rigName, Path: rigPath}
+	cfg, _, err := refinery.EffectiveConfig(r)
+	if err != nil {
+		t.Fatalf("EffectiveConfig: %v", err)
+	}
+	if cfg.MaxConcurrent != 4 {
+		t.Errorf("MaxConcurrent = %d, want 4", cfg.MaxConcurrent)
+	}
+	// Default preserved for an unset field.
+	if cfg.PollInterval != 30*time.Second {
+		t.Errorf("PollInterval = %v, want default 30s", cfg.PollInterval)
+	}
+}
+
+// TestRigSettingsEffectiveLegacyFallback verifies that a rig with only a legacy
+// rig-root config.json merge_queue (no settings/config.json) still resolves via
+// the fallback, so the mayor's earlier hand-patched stopgaps keep working until
+// removed.
+func TestRigSettingsEffectiveLegacyFallback(t *testing.T) {
+	tmpDir := t.TempDir()
+	legacy := map[string]interface{}{
+		"type":    "rig",
+		"version": 1,
+		"merge_queue": map[string]interface{}{
+			"max_concurrent": 7,
+			"on_conflict":    "auto_rebase",
+		},
+	}
+	data, _ := json.MarshalIndent(legacy, "", "  ")
+	if err := os.WriteFile(filepath.Join(tmpDir, "config.json"), data, 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	r := &rig.Rig{Name: "legacy-rig", Path: tmpDir}
+	cfg, srcPath, err := refinery.EffectiveConfig(r)
+	if err != nil {
+		t.Fatalf("EffectiveConfig: %v", err)
+	}
+	if srcPath != filepath.Join(tmpDir, "config.json") {
+		t.Errorf("source = %q, want legacy rig-root config.json", srcPath)
+	}
+	if cfg.MaxConcurrent != 7 {
+		t.Errorf("MaxConcurrent = %d, want 7 (legacy fallback)", cfg.MaxConcurrent)
+	}
+	if cfg.OnConflict != "auto_rebase" {
+		t.Errorf("OnConflict = %q, want auto_rebase (legacy fallback)", cfg.OnConflict)
 	}
 }
