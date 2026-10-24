@@ -5,7 +5,6 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
-	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -13,7 +12,6 @@ import (
 	"github.com/steveyegge/gastown/internal/beads"
 	"github.com/steveyegge/gastown/internal/rig"
 	"github.com/steveyegge/gastown/internal/session"
-	"github.com/steveyegge/gastown/internal/testutil"
 )
 
 func setupTestRegistry(t *testing.T) {
@@ -416,12 +414,7 @@ func TestManager_Queue_NoBeads(t *testing.T) {
 
 func TestManager_Queue_FiltersClosedMergeRequests(t *testing.T) {
 	mgr, rigPath := setupTestManager(t)
-	testutil.RequireDoltContainer(t)
-	port, _ := strconv.Atoi(testutil.DoltContainerPort())
-	b := beads.NewIsolatedWithPort(rigPath, port)
-	if err := b.Init("gt"); err != nil {
-		t.Skipf("bd init unavailable in test environment: %v", err)
-	}
+	b := initTestBeads(t, rigPath)
 
 	openIssue, err := b.Create(beads.CreateOptions{
 		Title:  "Open MR",
@@ -531,12 +524,7 @@ func TestCompareScoredIssues_UsesDeterministicIDTieBreaker(t *testing.T) {
 
 func TestManager_PostMerge_ClosesMRAndSourceIssue(t *testing.T) {
 	mgr, rigPath := setupTestManager(t)
-	testutil.RequireDoltContainer(t)
-	port, _ := strconv.Atoi(testutil.DoltContainerPort())
-	b := beads.NewIsolatedWithPort(rigPath, port)
-	if err := b.Init("gt"); err != nil {
-		t.Skipf("bd init unavailable: %v", err)
-	}
+	b := initTestBeads(t, rigPath)
 
 	// Create a source issue
 	srcIssue, err := b.Create(beads.CreateOptions{
@@ -581,12 +569,7 @@ func TestManager_PostMerge_ClosesMRAndSourceIssue(t *testing.T) {
 
 func TestManager_RejectMR_ClearsMatchingActiveMR(t *testing.T) {
 	mgr, rigPath := setupTestManager(t)
-	testutil.RequireDoltContainer(t)
-	port, _ := strconv.Atoi(testutil.DoltContainerPort())
-	b := beads.NewIsolatedWithPort(rigPath, port)
-	if err := b.Init("gt"); err != nil {
-		t.Skipf("bd init unavailable: %v", err)
-	}
+	b := initTestBeads(t, rigPath)
 
 	srcIssue, err := b.Create(beads.CreateOptions{Title: "Implement feature X", Labels: []string{"gt:task"}})
 	if err != nil {
@@ -627,12 +610,7 @@ func TestManager_RejectMR_ClearsMatchingActiveMR(t *testing.T) {
 
 func TestManager_PostMerge_ClearsMatchingActiveMRAndClosesSource(t *testing.T) {
 	mgr, rigPath := setupTestManager(t)
-	testutil.RequireDoltContainer(t)
-	port, _ := strconv.Atoi(testutil.DoltContainerPort())
-	b := beads.NewIsolatedWithPort(rigPath, port)
-	if err := b.Init("gt"); err != nil {
-		t.Skipf("bd init unavailable: %v", err)
-	}
+	b := initTestBeads(t, rigPath)
 
 	srcIssue, err := b.Create(beads.CreateOptions{Title: "Implement feature X", Labels: []string{"gt:task"}})
 	if err != nil {
@@ -673,12 +651,7 @@ func TestManager_PostMerge_ClearsMatchingActiveMRAndClosesSource(t *testing.T) {
 
 func TestManager_PostMerge_ClosesWorkBeadFromAgentFallbackBeforeActiveMRClear(t *testing.T) {
 	mgr, rigPath := setupTestManager(t)
-	testutil.RequireDoltContainer(t)
-	port, _ := strconv.Atoi(testutil.DoltContainerPort())
-	b := beads.NewIsolatedWithPort(rigPath, port)
-	if err := b.Init("gt"); err != nil {
-		t.Skipf("bd init unavailable: %v", err)
-	}
+	b := initTestBeads(t, rigPath)
 
 	srcIssue, err := b.Create(beads.CreateOptions{Title: "Implement feature X", Labels: []string{"gt:task"}})
 	if err != nil {
@@ -727,12 +700,7 @@ func TestManager_PostMerge_ClosesWorkBeadFromAgentFallbackBeforeActiveMRClear(t 
 
 func TestManager_PostMerge_AlreadyClosedMRRetriesActiveMRCleanup(t *testing.T) {
 	mgr, rigPath := setupTestManager(t)
-	testutil.RequireDoltContainer(t)
-	port, _ := strconv.Atoi(testutil.DoltContainerPort())
-	b := beads.NewIsolatedWithPort(rigPath, port)
-	if err := b.Init("gt"); err != nil {
-		t.Skipf("bd init unavailable: %v", err)
-	}
+	b := initTestBeads(t, rigPath)
 
 	srcIssue, err := b.Create(beads.CreateOptions{Title: "Implement feature X", Labels: []string{"gt:task"}})
 	if err != nil {
@@ -775,12 +743,7 @@ func TestManager_PostMerge_AlreadyClosedMRRetriesActiveMRCleanup(t *testing.T) {
 
 func TestManager_TerminalCloseDoesNotClearNewerActiveMR(t *testing.T) {
 	mgr, rigPath := setupTestManager(t)
-	testutil.RequireDoltContainer(t)
-	port, _ := strconv.Atoi(testutil.DoltContainerPort())
-	b := beads.NewIsolatedWithPort(rigPath, port)
-	if err := b.Init("gt"); err != nil {
-		t.Skipf("bd init unavailable: %v", err)
-	}
+	b := initTestBeads(t, rigPath)
 
 	srcIssue, err := b.Create(beads.CreateOptions{Title: "Implement feature X", Labels: []string{"gt:task"}})
 	if err != nil {
@@ -813,12 +776,7 @@ func TestManager_TerminalCloseDoesNotClearNewerActiveMR(t *testing.T) {
 
 func TestManager_PostMerge_AlreadyClosedMR(t *testing.T) {
 	mgr, rigPath := setupTestManager(t)
-	testutil.RequireDoltContainer(t)
-	port, _ := strconv.Atoi(testutil.DoltContainerPort())
-	b := beads.NewIsolatedWithPort(rigPath, port)
-	if err := b.Init("gt"); err != nil {
-		t.Skipf("bd init unavailable: %v", err)
-	}
+	b := initTestBeads(t, rigPath)
 
 	// Create and close an MR bead
 	mrIssue, err := b.Create(beads.CreateOptions{
