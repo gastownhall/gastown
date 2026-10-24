@@ -2767,7 +2767,7 @@ func openRigStoreFromConfig(ctx context.Context, townRoot, beadsDir, rigName str
 		}
 	}()
 
-	return beadssdk.OpenFromConfig(ctx, beadsDir)
+	return beads.CreateOrOpenStoreFromConfig(ctx, beadsDir)
 }
 
 func issuePrefixForRigInit(townRoot, rigName string) string {

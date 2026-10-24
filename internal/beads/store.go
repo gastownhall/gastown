@@ -9,7 +9,10 @@ package beads
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -63,7 +66,7 @@ func (b *Beads) OpenStore(ctx context.Context) (beadsdk.Storage, func(), error) 
 		return nil, nil, fmt.Errorf("no beads directory found")
 	}
 
-	store, err := beadsdk.OpenFromConfig(ctx, beadsDir)
+	store, err := OpenStoreFromConfig(ctx, beadsDir)
 	if err != nil {
 		return nil, nil, fmt.Errorf("opening beads store: %w", err)
 	}
@@ -72,6 +75,64 @@ func (b *Beads) OpenStore(ctx context.Context) (beadsdk.Storage, func(), error) 
 		_ = store.Close()
 	}
 	return store, cleanup, nil
+}
+
+// ErrStoreDatabaseNotConfigured is returned by OpenStoreFromConfig when the
+// .beads directory does not name its Dolt database in metadata.json.
+var ErrStoreDatabaseNotConfigured = errors.New("beads database not configured")
+
+// OpenStoreFromConfig opens the beadsdk.Storage described by
+// <beadsDir>/metadata.json. It refuses to open a directory whose metadata.json
+// is missing or lacks dolt_database.
+//
+// beadsdk.OpenFromConfig always opens with CreateIfMissing and falls back to
+// the database name "beads" when metadata.json names none, so opening a stray
+// or uninitialized .beads directory would silently create an empty "beads"
+// database on whatever Dolt server the environment points at. All non-init
+// callers must use this function instead of calling the SDK directly.
+func OpenStoreFromConfig(ctx context.Context, beadsDir string) (beadsdk.Storage, error) {
+	if err := requireStoreDatabaseConfigured(beadsDir); err != nil {
+		return nil, err
+	}
+	return beadsdk.OpenFromConfig(ctx, beadsDir)
+}
+
+// CreateOrOpenStoreFromConfig opens the beadsdk.Storage described by
+// <beadsDir>/metadata.json, creating the database on the Dolt server if it
+// does not exist yet. Only paths that intentionally provision a town or rig
+// database (install, rig init) may use it; everything else must use
+// OpenStoreFromConfig.
+func CreateOrOpenStoreFromConfig(ctx context.Context, beadsDir string) (beadsdk.Storage, error) {
+	return beadsdk.OpenFromConfig(ctx, beadsDir)
+}
+
+// requireStoreDatabaseConfigured checks the same metadata.json the SDK will
+// read. Redirects are deliberately not followed: the SDK does not follow them
+// either, so a redirect-only directory would still open the default database.
+func requireStoreDatabaseConfigured(beadsDir string) error {
+	if beadsDir == "" {
+		return fmt.Errorf("%w: empty beads directory", ErrStoreDatabaseNotConfigured)
+	}
+	metadataPath := filepath.Join(beadsDir, "metadata.json")
+	data, err := os.ReadFile(metadataPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return fmt.Errorf("%w: %s does not exist; run 'gt doctor --fix' (or 'bd init' for a standalone repo) to initialize it",
+				ErrStoreDatabaseNotConfigured, metadataPath)
+		}
+		return fmt.Errorf("reading %s: %w", metadataPath, err)
+	}
+	var meta struct {
+		DoltDatabase string `json:"dolt_database"`
+	}
+	if err := json.Unmarshal(data, &meta); err != nil {
+		return fmt.Errorf("parsing %s: %w", metadataPath, err)
+	}
+	if strings.TrimSpace(meta.DoltDatabase) == "" {
+		return fmt.Errorf("%w: %s has no dolt_database; run 'gt doctor --fix' (or 'bd init' for a standalone repo) to set it",
+			ErrStoreDatabaseNotConfigured, metadataPath)
+	}
+	return nil
 }
 
 // storeCtx returns a context with a standard timeout for store operations.
