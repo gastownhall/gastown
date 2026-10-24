@@ -1154,7 +1154,7 @@ func runSling(cmd *cobra.Command, args []string) (retErr error) {
 //
 // Truly unknown prefixes (not in routes.jsonl at all) are still hard-rejected.
 func checkCrossRigGuard(beadID, targetAgent, townRoot string) error {
-	beadPrefix := beads.ExtractPrefix(beadID)
+	beadPrefix := beads.ResolvePrefixForID(townRoot, beadID)
 	if beadPrefix == "" {
 		return nil // Can't determine prefix, skip check
 	}

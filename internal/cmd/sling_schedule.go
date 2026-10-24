@@ -274,7 +274,7 @@ func runBatchSchedule(beadIDs []string, rigName, townRoot string) error {
 
 // resolveRigForBead determines the rig that owns a bead from its ID prefix.
 func resolveRigForBead(townRoot, beadID string) string {
-	prefix := beads.ExtractPrefix(beadID)
+	prefix := beads.ResolvePrefixForID(townRoot, beadID)
 	if prefix == "" {
 		return ""
 	}

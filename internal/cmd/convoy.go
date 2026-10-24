@@ -1756,7 +1756,7 @@ func isReadyIssue(t trackedIssueInfo, scheduledSet map[string]bool) bool {
 // Town-level beads (hq- prefix with path=".") and beads with unknown
 // prefixes are not slingable — they're handled by the deacon/mayor.
 func isSlingableBead(townRoot, beadID string) bool {
-	prefix := beads.ExtractPrefix(beadID)
+	prefix := beads.ResolvePrefixForID(townRoot, beadID)
 	if prefix == "" {
 		return true // No prefix info, assume slingable
 	}

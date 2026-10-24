@@ -1,6 +1,7 @@
 package beads
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -335,6 +336,148 @@ func TestResolveBeadsDirForID_UsesTownRoutesFromWorktreeBeadsDir(t *testing.T) {
 	result = ResolveBeadsDirForID(worktreeBeadsDir, "hq-wisp-abc")
 	if result != townBeadsDir {
 		t.Fatalf("ResolveBeadsDirForID(%q, %q) = %q, want %q", worktreeBeadsDir, "hq-wisp-abc", result, townBeadsDir)
+	}
+}
+
+func TestConfiguredPrefixRoutingUsesLongestMatch(t *testing.T) {
+	townRoot := t.TempDir()
+	townBeadsDir := filepath.Join(townRoot, ".beads")
+	if err := os.MkdirAll(townBeadsDir, 0755); err != nil {
+		t.Fatalf("mkdir town beads: %v", err)
+	}
+
+	routes := []Route{
+		{Prefix: "hq-", Path: "."},
+		{Prefix: "gt-", Path: "gastown/mayor/rig"},
+		{Prefix: "home-", Path: "home/mayor/rig"},
+		{Prefix: "home-projects-", Path: "home-projects/mayor/rig"},
+	}
+	for _, path := range []string{
+		"gastown/mayor/rig/.beads",
+		"home/mayor/rig/.beads",
+		"home-projects/mayor/rig/.beads",
+	} {
+		if err := os.MkdirAll(filepath.Join(townRoot, path), 0755); err != nil {
+			t.Fatalf("mkdir %s: %v", path, err)
+		}
+	}
+
+	tests := []struct {
+		name         string
+		beadID       string
+		wantDir      string
+		wantHook     string
+		hookFallback string
+	}{
+		{
+			name:     "hyphenated configured prefix",
+			beadID:   "home-projects-rig-home_projects",
+			wantDir:  filepath.Join(townRoot, "home-projects/mayor/rig/.beads"),
+			wantHook: filepath.Join(townRoot, "home-projects/mayor/rig"),
+		},
+		{
+			name:     "shorter overlapping prefix",
+			beadID:   "home-rig-home",
+			wantDir:  filepath.Join(townRoot, "home/mayor/rig/.beads"),
+			wantHook: filepath.Join(townRoot, "home/mayor/rig"),
+		},
+		{
+			name:     "ordinary rig prefix",
+			beadID:   "gt-rig-123",
+			wantDir:  filepath.Join(townRoot, "gastown/mayor/rig/.beads"),
+			wantHook: filepath.Join(townRoot, "gastown/mayor/rig"),
+		},
+		{
+			name:     "town convoy prefix",
+			beadID:   "hq-cv-123",
+			wantDir:  townBeadsDir,
+			wantHook: townRoot,
+		},
+		{
+			name:         "unknown prefix preserves fallback",
+			beadID:       "unknown-123",
+			wantDir:      townBeadsDir,
+			wantHook:     "/fallback/hook",
+			hookFallback: "/fallback/hook",
+		},
+	}
+
+	routeOrders := [][]Route{
+		routes,
+		{
+			{Prefix: "hq-", Path: "."},
+			{Prefix: "gt-", Path: "gastown/mayor/rig"},
+			{Prefix: "home-projects-", Path: "home-projects/mayor/rig"},
+			{Prefix: "home-", Path: "home/mayor/rig"},
+		},
+	}
+	for order, routeOrder := range routeOrders {
+		t.Run(fmt.Sprintf("route order %d", order+1), func(t *testing.T) {
+			if err := WriteRoutes(townBeadsDir, routeOrder); err != nil {
+				t.Fatalf("write routes: %v", err)
+			}
+			for _, tc := range tests {
+				t.Run(tc.name, func(t *testing.T) {
+					if got := ResolveBeadsDirForID(townBeadsDir, tc.beadID); got != tc.wantDir {
+						t.Fatalf("ResolveBeadsDirForID(%q) = %q, want %q", tc.beadID, got, tc.wantDir)
+					}
+					if got := ResolveHookDir(townRoot, tc.beadID, tc.hookFallback); got != tc.wantHook {
+						t.Fatalf("ResolveHookDir(%q) = %q, want %q", tc.beadID, got, tc.wantHook)
+					}
+				})
+			}
+		})
+	}
+}
+
+func TestConfiguredPrefixRoutingHandlesMissingAndMalformedRoutes(t *testing.T) {
+	townRoot := t.TempDir()
+	townBeadsDir := filepath.Join(townRoot, ".beads")
+	if err := os.MkdirAll(townBeadsDir, 0755); err != nil {
+		t.Fatalf("mkdir town beads: %v", err)
+	}
+
+	if got := ResolveBeadsDirForID(townBeadsDir, "home-projects-rig-home_projects"); got != townBeadsDir {
+		t.Fatalf("missing routes fallback = %q, want %q", got, townBeadsDir)
+	}
+
+	if err := os.WriteFile(filepath.Join(townBeadsDir, RoutesFileName), []byte("not-json\n{\"prefix\":\"home-projects-\",\"path\":\"home-projects/mayor/rig\"}\n"), 0644); err != nil {
+		t.Fatalf("write malformed routes: %v", err)
+	}
+	rigBeadsDir := filepath.Join(townRoot, "home-projects/mayor/rig/.beads")
+	if err := os.MkdirAll(rigBeadsDir, 0755); err != nil {
+		t.Fatalf("mkdir rig beads: %v", err)
+	}
+	if got := ResolveBeadsDirForID(townBeadsDir, "home-projects-rig-home_projects"); got != rigBeadsDir {
+		t.Fatalf("malformed route handling = %q, want %q", got, rigBeadsDir)
+	}
+}
+
+func TestConfiguredPrefixRoutingUsesWorktreeFallbackAndRedirect(t *testing.T) {
+	townRoot := t.TempDir()
+	townBeadsDir := filepath.Join(townRoot, ".beads")
+	worktreeBeadsDir := filepath.Join(townRoot, "home-projects", "polecats", "worker", "home-projects", ".beads")
+	rigBeadsDir := filepath.Join(townRoot, "home-projects", "mayor", "rig", ".beads")
+	for _, dir := range []string{townBeadsDir, worktreeBeadsDir, rigBeadsDir} {
+		if err := os.MkdirAll(dir, 0755); err != nil {
+			t.Fatalf("mkdir %s: %v", dir, err)
+		}
+	}
+	if err := os.MkdirAll(filepath.Join(townRoot, "mayor"), 0755); err != nil {
+		t.Fatalf("mkdir mayor: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(townRoot, "mayor", "town.json"), []byte("{}"), 0644); err != nil {
+		t.Fatalf("write town marker: %v", err)
+	}
+	if err := WriteRoutes(townBeadsDir, []Route{{Prefix: "home-projects-", Path: "home-projects/polecats/worker/home-projects"}}); err != nil {
+		t.Fatalf("write routes: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(worktreeBeadsDir, "redirect"), []byte("../../../mayor/rig/.beads\n"), 0644); err != nil {
+		t.Fatalf("write worktree redirect: %v", err)
+	}
+
+	if got := ResolveBeadsDirForID(worktreeBeadsDir, "home-projects-rig-home_projects"); got != rigBeadsDir {
+		t.Fatalf("worktree route = %q, want redirected rig beads %q", got, rigBeadsDir)
 	}
 }
 
@@ -681,6 +824,7 @@ func TestValidateRigPrefix(t *testing.T) {
 	}
 	routesContent := `{"prefix": "gt-", "path": "gastown/mayor/rig"}
 {"prefix": "bd-", "path": "beads/mayor/rig"}
+{"prefix": "home-projects-", "path": "home-projects/mayor/rig"}
 {"prefix": "hq-", "path": "."}
 `
 	if err := os.WriteFile(filepath.Join(beadsDir, "routes.jsonl"), []byte(routesContent), 0644); err != nil {
@@ -709,6 +853,12 @@ func TestValidateRigPrefix(t *testing.T) {
 			name:    "bd- bead on beads rig: no error",
 			rigName: "beads",
 			beadID:  "bd-wisp-123",
+			wantErr: false,
+		},
+		{
+			name:    "hyphenated configured prefix: no error",
+			rigName: "home-projects",
+			beadID:  "home-projects-rig-home_projects",
 			wantErr: false,
 		},
 		{
