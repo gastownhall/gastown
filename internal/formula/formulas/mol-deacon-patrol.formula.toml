@@ -107,8 +107,13 @@ needs = ["heartbeat"]
 description = """
 First, clean up CLOSED wisps from previous cycles:
 ```bash
-bd mol wisp gc --closed --force
+gt reaper close-steps && bd mol wisp gc --closed --force
 ```
+
+`gt reaper close-steps` first closes any step still open under an already-closed
+molecule root (only those; live molecules are untouched). gc deletes closed roots
+with their parent links, so a step left open would be orphaned. If close-steps
+fails, gc is skipped this cycle; that is safe.
 
 > **Warning (hq-3pp):** Do not run unscoped age-based wisp GC from inside
 > this patrol. Active patrol step wisps can be older than 1h before they run;

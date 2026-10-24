@@ -409,6 +409,23 @@ func Scan(db *sql.DB, dbName string, maxAge, purgeAge, mailDeleteAge, staleIssue
 // Reap closes stale wisps in a database whose parent molecule is already closed.
 // UPDATEs are batched to avoid holding a write lock for extended periods on large tables.
 func Reap(db *sql.DB, dbName string, maxAge time.Duration, dryRun bool) (*ReapResult, error) {
+	return reap(db, dbName, maxAge, true, dryRun)
+}
+
+// CloseMoleculeSteps closes only the open step wisps whose parent molecule is
+// already closed, regardless of age. It is the closed-molecule pass of Reap
+// without the max-age stale-wisp pass.
+//
+// Run it before `bd mol wisp gc --closed`: gc deletes closed molecule roots
+// together with their parent-child dependency rows, so any step still open at
+// that point loses its parent and is only reaped as a stale orphan after
+// max-age. Steps with any other open or external parent are left alone, so
+// live molecules are never touched.
+func CloseMoleculeSteps(db *sql.DB, dbName string, dryRun bool) (*ReapResult, error) {
+	return reap(db, dbName, 0, false, dryRun)
+}
+
+func reap(db *sql.DB, dbName string, maxAge time.Duration, includeStale, dryRun bool) (*ReapResult, error) {
 	// Use a longer timeout to accommodate batched processing across large tables.
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
@@ -433,9 +450,11 @@ func Reap(db *sql.DB, dbName string, maxAge time.Duration, dryRun bool) (*ReapRe
 		if err := db.QueryRowContext(ctx, moleculeStepCountQuery).Scan(&result.MoleculeStepsClosed); err != nil {
 			return nil, fmt.Errorf("dry-run molecule step count: %w", err)
 		}
-		countQuery := fmt.Sprintf("SELECT COUNT(*) FROM wisps w %s %s WHERE %s", parentJoin, moleculeStepExcludeJoin, whereClause)
-		if err := db.QueryRowContext(ctx, countQuery, cutoff).Scan(&result.Reaped); err != nil {
-			return nil, fmt.Errorf("dry-run count: %w", err)
+		if includeStale {
+			countQuery := fmt.Sprintf("SELECT COUNT(*) FROM wisps w %s %s WHERE %s", parentJoin, moleculeStepExcludeJoin, whereClause)
+			if err := db.QueryRowContext(ctx, countQuery, cutoff).Scan(&result.Reaped); err != nil {
+				return nil, fmt.Errorf("dry-run count: %w", err)
+			}
 		}
 		openQuery := "SELECT COUNT(*) FROM wisps WHERE status IN ('open', 'hooked', 'in_progress')"
 		if err := db.QueryRowContext(ctx, openQuery).Scan(&result.OpenRemain); err != nil {
@@ -470,20 +489,22 @@ func Reap(db *sql.DB, dbName string, maxAge time.Duration, dryRun bool) (*ReapRe
 	}
 	result.MoleculeStepsClosed = moleculeStepsClosed
 
-	// Batch UPDATE: select IDs in chunks, update each chunk.
-	// This avoids holding a write lock on the entire table for minutes.
-	// Uses LEFT JOIN anti-pattern instead of correlated EXISTS to avoid O(n*m) cost (gt-jd1z).
-	idQuery := fmt.Sprintf(
-		"SELECT w.id FROM wisps w %s %s WHERE %s LIMIT %d",
-		parentJoin, moleculeStepExcludeJoin, whereClause, DefaultBatchSize)
+	if includeStale {
+		// Batch UPDATE: select IDs in chunks, update each chunk.
+		// This avoids holding a write lock on the entire table for minutes.
+		// Uses LEFT JOIN anti-pattern instead of correlated EXISTS to avoid O(n*m) cost (gt-jd1z).
+		idQuery := fmt.Sprintf(
+			"SELECT w.id FROM wisps w %s %s WHERE %s LIMIT %d",
+			parentJoin, moleculeStepExcludeJoin, whereClause, DefaultBatchSize)
 
-	totalReaped, err := closeWispsInBatches(ctx, conn, idQuery, []interface{}{cutoff}, "stale wisps")
-	if err != nil {
-		return nil, err
+		totalReaped, err := closeWispsInBatches(ctx, conn, idQuery, []interface{}{cutoff}, "stale wisps")
+		if err != nil {
+			return nil, err
+		}
+		result.Reaped = totalReaped
 	}
 
-	result.Reaped = totalReaped
-	totalClosed := totalReaped + moleculeStepsClosed
+	totalClosed := result.Reaped + moleculeStepsClosed
 
 	if totalClosed > 0 {
 		// Flush the SQL transaction to the Dolt working set before DOLT_COMMIT.

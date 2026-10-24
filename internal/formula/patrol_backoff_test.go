@@ -171,6 +171,52 @@ func TestPatrolFormulasHaveWispGC(t *testing.T) {
 	}
 }
 
+// TestPatrolFormulasCloseMoleculeStepsBeforeClosedWispGC verifies that every
+// closed-wisp GC in the patrol formulas is gated on `gt reaper close-steps`.
+//
+// `bd mol wisp gc --closed` deletes closed molecule roots together with their
+// parent-child dependency rows. Any step still open under such a root would
+// lose its parent and linger as an orphan until the max-age reaper pass.
+func TestPatrolFormulasCloseMoleculeStepsBeforeClosedWispGC(t *testing.T) {
+	patrolFormulas := []string{
+		"mol-witness-patrol.formula.toml",
+		"mol-deacon-patrol.formula.toml",
+		"mol-refinery-patrol.formula.toml",
+	}
+	const gated = "gt reaper close-steps && bd mol wisp gc --closed --force"
+
+	for _, name := range patrolFormulas {
+		t.Run(name, func(t *testing.T) {
+			content, err := formulasFS.ReadFile("formulas/" + name)
+			if err != nil {
+				t.Fatalf("reading %s: %v", name, err)
+			}
+
+			f, err := Parse(content)
+			if err != nil {
+				t.Fatalf("parsing %s: %v", name, err)
+			}
+
+			found := 0
+			for _, step := range f.Steps {
+				for _, line := range strings.Split(step.Description, "\n") {
+					if !strings.Contains(line, "bd mol wisp gc --closed") {
+						continue
+					}
+					found++
+					if strings.TrimSpace(line) != gated {
+						t.Errorf("%s step %q runs closed-wisp GC without closing molecule steps first:\n  %s\nwant:\n  %s",
+							name, step.ID, strings.TrimSpace(line), gated)
+					}
+				}
+			}
+			if found == 0 {
+				t.Errorf("%s: no closed-wisp GC found", name)
+			}
+		})
+	}
+}
+
 // TestDeaconPatrolDoesNotRunAgeBasedWispGC verifies that the Deacon patrol
 // does not reap open step wisps from its own active patrol molecule.
 //

@@ -463,6 +463,92 @@ func TestClosedMoleculeStepReapBehavior(t *testing.T) {
 	}
 }
 
+func TestCloseMoleculeStepsSkipsStaleWisps(t *testing.T) {
+	now := time.Now().UTC()
+	state := &fakeReaperState{
+		wisps: map[string]*fakeWisp{
+			"mol-closed":             {id: "mol-closed", status: "closed", issueType: "molecule", createdAt: now},
+			"mol-open":               {id: "mol-open", status: "open", issueType: "molecule", createdAt: now},
+			"step-closed-mol":        {id: "step-closed-mol", status: "open", issueType: "task", createdAt: now.Add(-1 * time.Minute)},
+			"step-closed-mol-hooked": {id: "step-closed-mol-hooked", status: "hooked", issueType: "task", createdAt: now.Add(-1 * time.Minute)},
+			"step-mixed-parent":      {id: "step-mixed-parent", status: "open", issueType: "task", createdAt: now.Add(-48 * time.Hour)},
+			"step-open-mol":          {id: "step-open-mol", status: "open", issueType: "task", createdAt: now.Add(-48 * time.Hour)},
+			"stale-orphan":           {id: "stale-orphan", status: "open", issueType: "task", createdAt: now.Add(-48 * time.Hour)},
+		},
+		deps: []fakeDep{
+			{issueID: "step-closed-mol", dependsOnID: "mol-closed", depType: "parent-child"},
+			{issueID: "step-closed-mol-hooked", dependsOnID: "mol-closed", depType: "parent-child"},
+			{issueID: "step-mixed-parent", dependsOnID: "mol-closed", depType: "parent-child"},
+			{issueID: "step-mixed-parent", dependsOnID: "mol-open", depType: "parent-child"},
+			{issueID: "step-open-mol", dependsOnID: "mol-open", depType: "parent-child"},
+		},
+		ops: map[int][]string{},
+	}
+	db := openFakeReaperDB(t, state)
+	t.Cleanup(func() { _ = db.Close() })
+
+	before := state.statuses()
+	dryRun, err := CloseMoleculeSteps(db, "testdb", true)
+	if err != nil {
+		t.Fatalf("dry-run CloseMoleculeSteps: %v", err)
+	}
+	if dryRun.MoleculeStepsClosed != 2 || dryRun.Reaped != 0 || dryRun.OpenRemain != 6 {
+		t.Fatalf("dry-run result = %+v, want 2 molecule steps, 0 reaped, 6 open", dryRun)
+	}
+	if after := state.statuses(); !reflect.DeepEqual(after, before) {
+		t.Fatalf("dry-run mutated statuses: before=%v after=%v", before, after)
+	}
+
+	preOps := state.opCounts()
+	result, err := CloseMoleculeSteps(db, "testdb", false)
+	if err != nil {
+		t.Fatalf("CloseMoleculeSteps: %v", err)
+	}
+	if result.MoleculeStepsClosed != 2 || result.Reaped != 0 || result.OpenRemain != 4 {
+		t.Fatalf("result = %+v, want 2 molecule steps, 0 reaped, 4 open", result)
+	}
+	for _, id := range []string{"step-closed-mol", "step-closed-mol-hooked"} {
+		if got := state.status(id); got != "closed" {
+			t.Fatalf("%s status = %q, want closed", id, got)
+		}
+	}
+	for _, id := range []string{"step-mixed-parent", "step-open-mol", "stale-orphan", "mol-open"} {
+		if got := state.status(id); got != "open" {
+			t.Fatalf("%s status = %q, want open", id, got)
+		}
+	}
+	for _, ops := range state.opsSince(preOps) {
+		for _, op := range ops {
+			if strings.Contains(op, "created_at <") {
+				t.Fatalf("CloseMoleculeSteps ran the stale-wisp pass: %s", op)
+			}
+		}
+		assertOpsContainInOrder(t, ops,
+			"QUERY SELECT w.id FROM wisps w INNER JOIN",
+			"EXEC UPDATE wisps SET status='closed'",
+			"EXEC COMMIT",
+			"EXEC CALL DOLT_COMMIT",
+		)
+	}
+
+	// Nothing left to close: no Dolt commit.
+	preOps = state.opCounts()
+	again, err := CloseMoleculeSteps(db, "testdb", false)
+	if err != nil {
+		t.Fatalf("second CloseMoleculeSteps: %v", err)
+	}
+	if again.MoleculeStepsClosed != 0 {
+		t.Fatalf("second run closed %d steps, want 0", again.MoleculeStepsClosed)
+	}
+	for _, ops := range state.opsSince(preOps) {
+		for _, op := range ops {
+			if strings.Contains(op, "DOLT_COMMIT") {
+				t.Fatalf("second run made a Dolt commit with nothing closed: %v", ops)
+			}
+		}
+	}
+}
+
 var fakeReaperDriverID uint64
 
 func openFakeReaperDB(t *testing.T, state *fakeReaperState) *sql.DB {

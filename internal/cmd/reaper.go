@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
+	"github.com/steveyegge/gastown/internal/beads"
 	agentconfig "github.com/steveyegge/gastown/internal/config"
 	"github.com/steveyegge/gastown/internal/reaper"
 	"github.com/steveyegge/gastown/internal/style"
@@ -39,6 +40,20 @@ func reaperDatabaseNames() []string {
 		}
 	}
 	return databases
+}
+
+// currentBeadsDatabase returns the Dolt database of the beads directory bd
+// would use from here (BEADS_DIR, else the nearest .beads above cwd).
+func currentBeadsDatabase() (string, error) {
+	workDir, err := findLocalBeadsDir()
+	if err != nil {
+		return "", fmt.Errorf("no beads directory found from current directory (pass --db): %w", err)
+	}
+	name := beads.DatabaseNameFromMetadata(beads.ResolveBeadsDir(workDir))
+	if name == "" {
+		return "", fmt.Errorf("no dolt_database configured for beads in %s (pass --db)", workDir)
+	}
+	return name, nil
 }
 
 func defaultReaperEndpoint() (string, int) {
@@ -93,6 +108,7 @@ Dog agent or daemon orchestrator.
 When run by a Dog:
   gt reaper scan --db=gastown          # Discover candidates
   gt reaper reap --db=gastown          # Close stale wisps
+  gt reaper close-steps                # Close open steps of closed molecules
   gt reaper purge --db=gastown         # Delete old closed wisps + mail
   gt reaper auto-close --db=gastown    # Close stale issues`,
 	RunE: requireSubcommand,
@@ -305,6 +321,84 @@ Returns the count of reaped wisps. Use --dry-run to preview.`,
 						totalOpen, reaper.DefaultAlertThreshold)
 				}
 			}
+		}
+		return nil
+	},
+}
+
+var reaperCloseStepsCmd = &cobra.Command{
+	Use:   "close-steps",
+	Short: "Close open steps of already-closed molecules",
+	Long: `Close open step wisps whose parent molecule is already closed,
+regardless of age. Steps that still have an open or external parent are left
+alone, so live molecules are never touched.
+
+Run this before 'bd mol wisp gc --closed': gc deletes closed molecule roots
+together with their parent-child dependency rows, so a step still open at that
+point loses its parent and is only reaped as a stale orphan after max-age.
+
+When --db is omitted, targets the database bd would use from the current
+directory (BEADS_DIR, else the nearest .beads), so it pairs with a bd command
+run from the same place. Use --db to target other databases.
+
+  gt reaper close-steps && bd mol wisp gc --closed --force`,
+	RunE: func(cmd *cobra.Command, args []string) error {
+		var databases []string
+		if reaperDB == "" {
+			name, err := currentBeadsDatabase()
+			if err != nil {
+				return err
+			}
+			databases = []string{name}
+		} else {
+			databases = reaperDatabaseNames()
+		}
+
+		// Fail on any error instead of skipping the database: callers chain
+		// gc with &&, and gc must not run while steps may still be open.
+		var results []*reaper.ReapResult
+		for i, dbName := range databases {
+			if err := waitBeforeReaperDatabase(i); err != nil {
+				return err
+			}
+			if err := reaper.ValidateDBName(dbName); err != nil {
+				return err
+			}
+
+			db, err := reaper.OpenDB(reaperHost, reaperPort, dbName, 10*time.Second, 10*time.Second)
+			if err != nil {
+				return fmt.Errorf("%s: connect error: %w", dbName, err)
+			}
+
+			ok, err := reaper.HasReaperSchema(db)
+			if err != nil {
+				db.Close()
+				return fmt.Errorf("%s: schema check error: %w", dbName, err)
+			}
+			if !ok {
+				db.Close()
+				continue
+			}
+
+			result, err := reaper.CloseMoleculeSteps(db, dbName, reaperDryRun)
+			db.Close()
+			if err != nil {
+				return fmt.Errorf("%s: close-steps error: %w", dbName, err)
+			}
+			results = append(results, result)
+		}
+
+		if reaperJSON {
+			fmt.Println(reaper.FormatJSON(results))
+			return nil
+		}
+		for _, r := range results {
+			prefix := ""
+			if r.DryRun {
+				prefix = "[DRY RUN] would "
+			}
+			fmt.Printf("%s: %sclosed %d closed-molecule steps, %d open remain\n",
+				r.Database, prefix, r.MoleculeStepsClosed, r.OpenRemain)
 		}
 		return nil
 	},
@@ -604,18 +698,18 @@ func init() {
 	// client outputs, not endpoint authority.
 	defaultHost, defaultPort := defaultReaperEndpoint()
 
-	for _, cmd := range []*cobra.Command{reaperScanCmd, reaperReapCmd, reaperPurgeCmd, reaperAutoCloseCmd, reaperRunCmd, reaperDatabasesCmd} {
+	for _, cmd := range []*cobra.Command{reaperScanCmd, reaperReapCmd, reaperCloseStepsCmd, reaperPurgeCmd, reaperAutoCloseCmd, reaperRunCmd, reaperDatabasesCmd} {
 		cmd.Flags().StringVar(&reaperDB, "db", "", "Database name (required for single-db commands)")
 		cmd.Flags().StringVar(&reaperHost, "host", defaultHost, "Dolt server host (env: GT_DOLT_HOST)")
 		cmd.Flags().IntVar(&reaperPort, "port", defaultPort, "Dolt server port (env: GT_DOLT_PORT)")
 		cmd.Flags().BoolVar(&reaperDryRun, "dry-run", false, "Report what would happen without acting")
 	}
-	for _, cmd := range []*cobra.Command{reaperScanCmd, reaperReapCmd, reaperPurgeCmd, reaperAutoCloseCmd, reaperRunCmd} {
+	for _, cmd := range []*cobra.Command{reaperScanCmd, reaperReapCmd, reaperCloseStepsCmd, reaperPurgeCmd, reaperAutoCloseCmd, reaperRunCmd} {
 		cmd.Flags().StringVar(&reaperDBDelay, "db-delay", "250ms", "Delay between databases to reduce Dolt load")
 	}
 
 	// JSON output flag for single-db commands
-	for _, cmd := range []*cobra.Command{reaperScanCmd, reaperReapCmd, reaperPurgeCmd, reaperAutoCloseCmd, reaperDatabasesCmd} {
+	for _, cmd := range []*cobra.Command{reaperScanCmd, reaperReapCmd, reaperCloseStepsCmd, reaperPurgeCmd, reaperAutoCloseCmd, reaperDatabasesCmd} {
 		cmd.Flags().BoolVar(&reaperJSON, "json", false, "Output as JSON")
 	}
 
@@ -634,6 +728,7 @@ func init() {
 	reaperCmd.AddCommand(reaperDatabasesCmd)
 	reaperCmd.AddCommand(reaperScanCmd)
 	reaperCmd.AddCommand(reaperReapCmd)
+	reaperCmd.AddCommand(reaperCloseStepsCmd)
 	reaperCmd.AddCommand(reaperPurgeCmd)
 	reaperCmd.AddCommand(reaperAutoCloseCmd)
 	reaperCmd.AddCommand(reaperRunCmd)
