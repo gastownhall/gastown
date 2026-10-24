@@ -20,6 +20,7 @@ import (
 	"github.com/steveyegge/gastown/internal/constants"
 	"github.com/steveyegge/gastown/internal/session"
 	"github.com/steveyegge/gastown/internal/tmux"
+	"github.com/steveyegge/gastown/internal/util"
 	"github.com/steveyegge/gastown/internal/workspace"
 )
 
@@ -156,6 +157,8 @@ type LiveConvoyFetcher struct {
 
 	// bdBin is the bd binary name or path. Defaults to "bd" if empty.
 	bdBin string
+	// gtBin is the canonical convoy reader binary. Defaults to "gt".
+	gtBin string
 
 	// registry is a prefix registry built from the town's rigs.json.
 	// Used for parsing tmux session names instead of relying on the
@@ -180,7 +183,7 @@ type LiveConvoyFetcher struct {
 	tmuxSocket string
 
 	// Circuit breaker for FetchConvoys — prevents process storms when
-	// bd list by convoy label fails persistently (e.g., schema mismatch).
+	// the canonical convoy reader fails persistently (e.g., schema mismatch).
 	convoyBreaker fetchCircuitBreaker
 }
 
@@ -237,20 +240,19 @@ func (f *LiveConvoyFetcher) FetchConvoys() ([]ConvoyRow, error) {
 		return nil, nil // Backed off — return empty result silently
 	}
 
-	// List all open issues and filter locally so legacy type=convoy beads remain visible.
-	stdout, err := f.runBdCmd(f.townRoot, "list", "--status=open", "--json", "--limit=0")
+	// The canonical loader reads raw cross-database dependencies and routes
+	// issue hydration by prefix. A local bd dep list JOIN drops external targets.
+	stdout, err := f.runConvoyList()
 	if err != nil {
 		f.convoyBreaker.recordFailure()
 		return nil, fmt.Errorf("listing convoys: %w", err)
 	}
 
 	var convoys []struct {
-		ID        string   `json:"id"`
-		Title     string   `json:"title"`
-		Status    string   `json:"status"`
-		CreatedAt string   `json:"created_at"`
-		IssueType string   `json:"issue_type"`
-		Labels    []string `json:"labels"`
+		ID      string             `json:"id"`
+		Title   string             `json:"title"`
+		Status  string             `json:"status"`
+		Tracked []trackedIssueInfo `json:"tracked"`
 	}
 	if err := json.Unmarshal(stdout.Bytes(), &convoys); err != nil {
 		f.convoyBreaker.recordFailure()
@@ -260,8 +262,9 @@ func (f *LiveConvoyFetcher) FetchConvoys() ([]ConvoyRow, error) {
 	// Build convoy rows with activity data
 	rows := make([]ConvoyRow, 0, len(convoys))
 	for _, c := range convoys {
-		if c.IssueType != "convoy" && !webConvoyHasLabel(c.Labels, "gt:convoy") {
-			continue
+		if c.Tracked == nil {
+			f.convoyBreaker.recordFailure()
+			return nil, fmt.Errorf("convoy %s is missing tracked issue data", c.ID)
 		}
 		row := ConvoyRow{
 			ID:     c.ID,
@@ -269,11 +272,24 @@ func (f *LiveConvoyFetcher) FetchConvoys() ([]ConvoyRow, error) {
 			Status: c.Status,
 		}
 
-		// Get tracked issues for progress and activity calculation
-		tracked, err := f.getTrackedIssues(c.ID)
-		if err != nil {
-			log.Printf("warning: skipping convoy %s: %v", c.ID, err)
-			continue
+		tracked := c.Tracked
+		details := make(map[string]*issueDetail, len(tracked))
+		for i := range tracked {
+			t := &tracked[i]
+			t.ID = beads.ExtractIssueID(t.ID)
+			if t.Status == "" || t.Status == "unknown" {
+				t.Status = "unknown"
+				if t.Title == "" {
+					t.Title = "(unavailable)"
+				}
+			}
+			details[t.ID] = &issueDetail{Assignee: t.Assignee}
+		}
+		workers := f.getWorkersFromAssignees(details)
+		for i := range tracked {
+			if worker := workers[tracked[i].ID]; worker != nil && worker.LastActivity != nil {
+				tracked[i].LastActivity = *worker.LastActivity
+			}
 		}
 		row.Total = len(tracked)
 
@@ -282,11 +298,13 @@ func (f *LiveConvoyFetcher) FetchConvoys() ([]ConvoyRow, error) {
 		var hasAssignee bool
 		assigneeSet := make(map[string]struct{})
 		for _, t := range tracked {
-			if t.Status == "closed" {
+			if t.Status == "unknown" {
+				row.UnknownBeads++
+			} else if t.Status == "closed" {
 				row.Completed++
 			} else if t.Assignee != "" {
 				row.InProgress++
-			} else {
+			} else if t.Status == "open" && !t.Blocked {
 				row.ReadyBeads++
 			}
 			// Track most recent activity from workers
@@ -347,6 +365,9 @@ func (f *LiveConvoyFetcher) FetchConvoys() ([]ConvoyRow, error) {
 
 		// Calculate work status based on progress and activity
 		row.WorkStatus = calculateWorkStatus(row.Completed, row.Total, row.LastActivity.ColorClass)
+		if row.UnknownBeads > 0 {
+			row.WorkStatus = "unknown"
+		}
 
 		// Get tracked issues for expandable view
 		row.TrackedIssues = make([]TrackedIssue, len(tracked))
@@ -366,133 +387,51 @@ func (f *LiveConvoyFetcher) FetchConvoys() ([]ConvoyRow, error) {
 	return rows, nil
 }
 
-func webConvoyHasLabel(labels []string, target string) bool {
-	for _, label := range labels {
-		if label == target {
-			return true
-		}
+// runConvoyList uses a single bounded canonical reader instead of independently
+// querying dependencies and hydrating mixed-prefix IDs in the dashboard.
+func (f *LiveConvoyFetcher) runConvoyList() (*bytes.Buffer, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), f.cmdTimeout)
+	defer cancel()
+	bin := f.gtBin
+	if bin == "" {
+		bin = "gt"
 	}
-	return false
+	cmd := exec.CommandContext(ctx, bin, "convoy", "list", "--status=open", "--json")
+	cmd.Dir = f.townRoot
+	// The reader must discover the town's databases, not a caller's rig override.
+	for _, value := range os.Environ() {
+		if strings.HasPrefix(value, "BEADS_DIR=") || strings.HasPrefix(value, "BEADS_DB=") || strings.HasPrefix(value, "BD_DB=") {
+			continue
+		}
+		cmd.Env = append(cmd.Env, value)
+	}
+	util.SetProcessGroup(cmd)
+	cmd.WaitDelay = time.Second
+	var stdout bytes.Buffer
+	cmd.Stdout = &stdout
+	if err := cmd.Run(); err != nil {
+		if ctx.Err() != nil {
+			return nil, fmt.Errorf("gt convoy list timed out after %s", f.cmdTimeout)
+		}
+		return nil, fmt.Errorf("gt convoy list failed: %w", err)
+	}
+	return &stdout, nil
 }
 
-// trackedIssueInfo holds info about an issue being tracked by a convoy.
+// trackedIssueInfo is the canonical convoy JSON payload, enriched with local
+// session activity for the dashboard's existing activity display.
 type trackedIssueInfo struct {
-	ID           string
-	Title        string
-	Status       string
-	Assignee     string
-	LastActivity time.Time
-	UpdatedAt    time.Time // Fallback for activity when no assignee
+	ID           string    `json:"id"`
+	Title        string    `json:"title"`
+	Status       string    `json:"status"`
+	Assignee     string    `json:"assignee"`
+	Blocked      bool      `json:"blocked"`
+	UpdatedAt    time.Time `json:"updated_at"`
+	LastActivity time.Time `json:"-"`
 }
 
-// getTrackedIssues fetches tracked issues for a convoy.
-func (f *LiveConvoyFetcher) getTrackedIssues(convoyID string) ([]trackedIssueInfo, error) {
-	// Query tracked dependencies using bd dep list
-	stdout, err := f.runBdCmd(f.townRoot, "dep", "list", convoyID, "-t", "tracks", "--json")
-	if err != nil {
-		return nil, fmt.Errorf("querying tracked issues for %s: %w", convoyID, err)
-	}
-
-	var deps []struct {
-		ID string `json:"id"`
-	}
-	if err := json.Unmarshal(stdout.Bytes(), &deps); err != nil {
-		return nil, fmt.Errorf("parsing tracked issues for %s: %w", convoyID, err)
-	}
-
-	// Collect resolved issue IDs, unwrapping external:prefix:id format
-	issueIDs := make([]string, 0, len(deps))
-	for _, dep := range deps {
-		issueIDs = append(issueIDs, beads.ExtractIssueID(dep.ID))
-	}
-
-	// Batch fetch issue details
-	details, err := f.getIssueDetailsBatch(issueIDs)
-	if err != nil {
-		return nil, fmt.Errorf("fetching tracked issue details for %s: %w", convoyID, err)
-	}
-
-	// Get worker activity from tmux sessions based on assignees
-	workers := f.getWorkersFromAssignees(details)
-
-	// Build result
-	result := make([]trackedIssueInfo, 0, len(issueIDs))
-	for _, id := range issueIDs {
-		info := trackedIssueInfo{ID: id}
-
-		if d, ok := details[id]; ok {
-			info.Title = d.Title
-			info.Status = d.Status
-			info.Assignee = d.Assignee
-			info.UpdatedAt = d.UpdatedAt
-		} else {
-			info.Title = "(external)"
-			info.Status = "unknown"
-		}
-
-		if w, ok := workers[id]; ok && w.LastActivity != nil {
-			info.LastActivity = *w.LastActivity
-		}
-
-		result = append(result, info)
-	}
-
-	return result, nil
-}
-
-// issueDetail holds basic issue info.
-type issueDetail struct {
-	ID        string
-	Title     string
-	Status    string
-	Assignee  string
-	UpdatedAt time.Time
-}
-
-// getIssueDetailsBatch fetches details for multiple issues.
-func (f *LiveConvoyFetcher) getIssueDetailsBatch(issueIDs []string) (map[string]*issueDetail, error) {
-	result := make(map[string]*issueDetail)
-	if len(issueIDs) == 0 {
-		return result, nil
-	}
-
-	args := append([]string{"show"}, issueIDs...)
-	args = append(args, "--json")
-
-	stdout, err := fetcherRunCmd(f.cmdTimeout, "bd", args...)
-	if err != nil {
-		return nil, fmt.Errorf("bd show failed (issue_count=%d): %w", len(issueIDs), err)
-	}
-
-	var issues []struct {
-		ID        string `json:"id"`
-		Title     string `json:"title"`
-		Status    string `json:"status"`
-		Assignee  string `json:"assignee"`
-		UpdatedAt string `json:"updated_at"`
-	}
-	if err := json.Unmarshal(stdout.Bytes(), &issues); err != nil {
-		return nil, fmt.Errorf("bd show returned invalid JSON (issue_count=%d): %w", len(issueIDs), err)
-	}
-
-	for _, issue := range issues {
-		detail := &issueDetail{
-			ID:       issue.ID,
-			Title:    issue.Title,
-			Status:   issue.Status,
-			Assignee: issue.Assignee,
-		}
-		// Parse updated_at timestamp
-		if issue.UpdatedAt != "" {
-			if t, err := time.Parse(time.RFC3339, issue.UpdatedAt); err == nil {
-				detail.UpdatedAt = t
-			}
-		}
-		result[issue.ID] = detail
-	}
-
-	return result, nil
-}
+// issueDetail contains the assignee used to resolve live session activity.
+type issueDetail struct{ Assignee string }
 
 // workerDetail holds worker info including last activity.
 type workerDetail struct {

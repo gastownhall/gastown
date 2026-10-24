@@ -50,6 +50,8 @@ type ConvoyHandler struct {
 	fetchTimeout time.Duration
 	csrfToken    string
 
+	embedParentOrigin string
+
 	// Response cache: prevents cascading bd process storms when multiple
 	// browser tabs or htmx auto-refresh requests arrive faster than fetches
 	// complete. See GH#2618.
@@ -360,6 +362,8 @@ func (h *ConvoyHandler) fetchAndRender(r *http.Request, expandPanel string) []by
 		Summary:     summary,
 		Expand:      expandPanel,
 		CSRFToken:   h.csrfToken,
+
+		EmbedParentOrigin: h.embedParentOrigin,
 	}
 
 	var buf bytes.Buffer
@@ -457,6 +461,14 @@ func generateCSRFToken() string {
 // NewDashboardMux creates an HTTP handler that serves both the dashboard and API.
 // webCfg may be nil, in which case defaults are used.
 func NewDashboardMux(fetcher ConvoyFetcher, webCfg *config.WebTimeoutsConfig) (http.Handler, error) {
+	return NewDashboardMuxWithOptions(fetcher, webCfg, DashboardOptions{})
+}
+
+// NewDashboardMuxWithOptions configures explicit trusted frame navigation.
+func NewDashboardMuxWithOptions(fetcher ConvoyFetcher, webCfg *config.WebTimeoutsConfig, opts DashboardOptions) (http.Handler, error) {
+	if err := ValidateEmbedParentOrigin(opts.EmbedParentOrigin); err != nil {
+		return nil, err
+	}
 	if webCfg == nil {
 		webCfg = config.DefaultWebTimeoutsConfig()
 	}
@@ -468,6 +480,8 @@ func NewDashboardMux(fetcher ConvoyFetcher, webCfg *config.WebTimeoutsConfig) (h
 	if err != nil {
 		return nil, err
 	}
+
+	convoyHandler.embedParentOrigin = opts.EmbedParentOrigin
 
 	defaultRunTimeout := config.ParseDurationOrDefault(webCfg.DefaultRunTimeout, 30*time.Second)
 	maxRunTimeout := config.ParseDurationOrDefault(webCfg.MaxRunTimeout, 60*time.Second)
@@ -485,5 +499,5 @@ func NewDashboardMux(fetcher ConvoyFetcher, webCfg *config.WebTimeoutsConfig) (h
 	mux.Handle("/static/", http.StripPrefix("/static/", staticHandler))
 	mux.Handle("/", convoyHandler)
 
-	return mux, nil
+	return dashboardFramePolicy(mux, opts.EmbedParentOrigin), nil
 }
