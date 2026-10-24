@@ -271,6 +271,15 @@ func runMqSubmit(cmd *cobra.Command, args []string) error {
 			style.PrintWarning("MR bead prefix mismatch: %v\nThe refinery may not find this MR — check 'gt mq list %s'", prefixErr, rigName)
 		}
 
+		// gt-6sg: the prefix check above passes whenever the rig store and the
+		// contributor store share a prefix, so it cannot tell a queued MR from a
+		// misfiled one. Confirm the Refinery can actually see this MR before
+		// reporting a successful submission — an unqueued MR here is the same
+		// silent work loss gt done guards against, reached by a different command.
+		if queueErr := bd.VerifyMRInRigQueue(rigName, mrIssue.ID); queueErr != nil {
+			return fmt.Errorf("submitting to merge queue: %w", queueErr)
+		}
+
 		// Nudge refinery to pick up the new MR
 		nudgeRefinery(rigName, "MERGE_READY received - check inbox for pending work")
 
