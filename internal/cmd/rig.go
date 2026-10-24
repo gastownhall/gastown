@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
+	"github.com/steveyegge/gastown/internal/agenthealth"
 	"github.com/steveyegge/gastown/internal/beads"
 	"github.com/steveyegge/gastown/internal/config"
 	"github.com/steveyegge/gastown/internal/crew"
@@ -769,6 +770,16 @@ func runRigList(cmd *cobra.Command, args []string) error {
 		Refinery    string `json:"refinery"`
 		Polecats    int    `json:"polecats"`
 		Crew        int    `json:"crew"`
+
+		// WitnessHealth reports whether the witness is doing work, not just
+		// whether a session exists for it: "healthy", "degraded", "unknown" or
+		// "stopped" (gt-o57). A witness frozen with untouched hooked work reads
+		// "degraded" here while Witness still reads "running".
+		WitnessHealth      string `json:"witness_health"`
+		WitnessHealthNote  string `json:"witness_health_note,omitempty"`
+		WitnessHookBead    string `json:"witness_hook_bead,omitempty"`
+		WitnessHookIdleSec int    `json:"witness_hook_idle_seconds,omitempty"`
+
 		// sorting fields (not exported to JSON)
 		sortPrio int
 	}
@@ -788,29 +799,40 @@ func runRigList(cmd *cobra.Command, args []string) error {
 
 		witnessSession := session.WitnessSessionName(prefix)
 		refinerySession := session.RefinerySessionName(prefix)
-		witnessRunning, _ := t.HasSession(witnessSession)
+		witnessRunning, witnessSessionErr := t.HasSession(witnessSession)
 		refineryRunning, _ := t.HasSession(refinerySession)
 
 		witnessStatus := "stopped"
 		if witnessRunning {
 			witnessStatus = "running"
 		}
+
+		// Session existence answers "is there a process", not "is it working".
+		// Consult the age of the witness's hooked work too (gt-o57).
+		witnessHealth := assessWitnessProgress(townRoot, name, witnessRunning, witnessSessionErr)
 		refineryStatus := "stopped"
 		if refineryRunning {
 			refineryStatus = "running"
 		}
 
 		summary := r.Summary()
-		rigs = append(rigs, rigInfo{
-			Name:        name,
-			BeadsPrefix: prefix,
-			Status:      strings.ToLower(opState),
-			Witness:     witnessStatus,
-			Refinery:    refineryStatus,
-			Polecats:    summary.PolecatCount,
-			Crew:        summary.CrewCount,
-			sortPrio:    rigStatePriority(witnessRunning, refineryRunning, opState),
-		})
+		info := rigInfo{
+			Name:              name,
+			BeadsPrefix:       prefix,
+			Status:            strings.ToLower(opState),
+			Witness:           witnessStatus,
+			Refinery:          refineryStatus,
+			Polecats:          summary.PolecatCount,
+			Crew:              summary.CrewCount,
+			WitnessHealth:     string(witnessHealth.State),
+			WitnessHealthNote: witnessHealth.Reason,
+			WitnessHookBead:   witnessHealth.HookBeadID,
+			sortPrio:          rigStatePriority(witnessRunning, refineryRunning, opState),
+		}
+		if witnessHealth.HookIdleKnown {
+			info.WitnessHookIdleSec = int(witnessHealth.HookIdle.Seconds())
+		}
+		rigs = append(rigs, info)
 	}
 
 	// Sort by state priority (active first), then alphabetically
@@ -843,9 +865,19 @@ func runRigList(cmd *cobra.Command, args []string) error {
 
 		fmt.Printf("%s%s%s\n", led, space, style.Bold.Render(ri.Name))
 
+		// A running-but-stalled witness must not render green (gt-o57): the
+		// icon and label carry the work-progress verdict, not just liveness.
 		witnessIcon := style.Dim.Render("○")
-		if ri.Witness == "running" {
+		witnessLabel := ri.Witness
+		switch agenthealth.State(ri.WitnessHealth) {
+		case agenthealth.StateHealthy:
 			witnessIcon = style.Success.Render("●")
+		case agenthealth.StateDegraded:
+			witnessIcon = style.Warning.Render("◐")
+			witnessLabel = style.Warning.Render(witnessHookLabel(ri.WitnessHookIdleSec))
+		case agenthealth.StateUnknown:
+			witnessIcon = style.Warning.Render("?")
+			witnessLabel = style.Warning.Render("running, progress unknown")
 		}
 		refineryIcon := style.Dim.Render("○")
 		if ri.Refinery == "running" {
@@ -853,7 +885,7 @@ func runRigList(cmd *cobra.Command, args []string) error {
 		}
 
 		fmt.Printf("   Witness: %s %s  Refinery: %s %s\n",
-			witnessIcon, ri.Witness, refineryIcon, ri.Refinery)
+			witnessIcon, witnessLabel, refineryIcon, ri.Refinery)
 		fmt.Printf("   Polecats: %d  Crew: %d\n", ri.Polecats, ri.Crew)
 		fmt.Println()
 	}
