@@ -1,6 +1,8 @@
-.PHONY: build desktop-build desktop-run install safe-install check-forward-only check-version-tag check-install-path clean test test-makefile test-e2e-container check-up-to-date
+.PHONY: build web web-notice desktop-build desktop-run install safe-install check-forward-only check-version-tag check-install-path clean test test-makefile test-e2e-container check-up-to-date
 
-BINARY := gt
+BINARY := gtb
+# LEGACY_LINK is a symlink to $(BINARY) kept during migration from gt.
+LEGACY_LINK := gt
 BINARY_DESKTOP := gt-desktop
 BUILD_DIR := .
 INSTALL_DIR := $(HOME)/.local/bin
@@ -32,10 +34,31 @@ ifeq ($(shell uname),Darwin)
   endif
 endif
 
+# The dashboard (web/) is embedded from internal/server/dist. `build` runs
+# `web` first when bun is on PATH; otherwise the server serves its
+# "UI not built" placeholder.
+HAVE_BUN := $(shell command -v bun 2>/dev/null)
+
+web:
+	cd web && bun install --frozen-lockfile && bun run build
+	rm -rf internal/server/dist
+	mkdir -p internal/server/dist
+	cp -r web/dist/. internal/server/dist/
+	touch internal/server/dist/.keep
+
+ifeq ($(HAVE_BUN),)
+build: web-notice
+else
+build: web
+endif
+
+web-notice:
+	@echo "bun not found: building gtb with the 'UI not built' placeholder (install bun and run 'make web' for the dashboard)"
+
 build:
-	go build -ldflags "$(LDFLAGS)" -o $(BUILD_DIR)/$(BINARY)-proxy-server ./cmd/gt-proxy-server
-	go build -ldflags "$(LDFLAGS)" -o $(BUILD_DIR)/$(BINARY)-proxy-client ./cmd/gt-proxy-client
-	go build -ldflags "$(LDFLAGS)" -o $(BUILD_DIR)/$(BINARY) ./cmd/gt
+	@# cmd/gt-proxy-server and cmd/gt-proxy-client are upstream-only (spec §9):
+	@# kept in the tree but not built. Build them with: go build ./cmd/gt-proxy-...
+	go build -ldflags "$(LDFLAGS)" -o $(BUILD_DIR)/$(BINARY) ./cmd/gtb
 
 desktop-build:
 	go build -ldflags "$(LDFLAGS)" -o $(BUILD_DIR)/$(BINARY_DESKTOP) ./cmd/gt-desktop
@@ -103,6 +126,7 @@ install: check-up-to-date build
 	@mkdir -p $(INSTALL_DIR)
 	@rm -f $(INSTALL_DIR)/$(BINARY)
 	@cp $(BUILD_DIR)/$(BINARY) $(INSTALL_DIR)/$(BINARY)
+	@ln -sfn $(BINARY) $(INSTALL_DIR)/$(LEGACY_LINK)
 	@# Nuke any stale go-install binaries that shadow the canonical location
 	@for bad in $(HOME)/go/bin/$(BINARY) $(HOME)/bin/$(BINARY); do \
 		if [ -f "$$bad" ]; then \
@@ -110,7 +134,7 @@ install: check-up-to-date build
 			rm -f "$$bad"; \
 		fi; \
 	done
-	@echo "Installed $(BINARY) to $(INSTALL_DIR)/$(BINARY)"
+	@echo "Installed $(BINARY) to $(INSTALL_DIR)/$(BINARY) (with $(LEGACY_LINK) -> $(BINARY) symlink)"
 	@$(MAKE) --no-print-directory check-install-path
 	@# Restart daemon so it picks up the new binary.
 	@# A stale daemon is a recurring source of bugs (wrong session prefixes, etc.)
@@ -120,7 +144,7 @@ install: check-up-to-date build
 		sleep 1; \
 		$(INSTALL_DIR)/$(BINARY) daemon start >/dev/null 2>&1 && \
 			echo "Daemon restarted." || \
-			echo "Warning: daemon restart failed (start manually with: gt daemon start)"; \
+			echo "Warning: daemon restart failed (start manually with: $(BINARY) daemon start)"; \
 	fi
 	@# Sync plugins from build repo to town runtime directories.
 	@# Prevents drift when plugin fixes merge but runtime dirs are stale.
@@ -135,6 +159,7 @@ safe-install: check-up-to-date check-forward-only build
 	@# Atomic-ish replace: copy to temp then move (move is atomic on same filesystem)
 	@cp $(BUILD_DIR)/$(BINARY) $(INSTALL_DIR)/$(BINARY).new
 	@mv $(INSTALL_DIR)/$(BINARY).new $(INSTALL_DIR)/$(BINARY)
+	@ln -sfn $(BINARY) $(INSTALL_DIR)/$(LEGACY_LINK)
 	@# Nuke any stale go-install binaries that shadow the canonical location
 	@for bad in $(HOME)/go/bin/$(BINARY) $(HOME)/bin/$(BINARY); do \
 		if [ -f "$$bad" ]; then \

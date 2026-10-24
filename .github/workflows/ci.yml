@@ -24,7 +24,7 @@ jobs:
           if grep -qE '^replace\s' go.mod; then
             echo "ERROR: go.mod contains replace directives."
             echo ""
-            echo "Replace directives break 'go install github.com/steveyegge/gastown/cmd/gt@latest'."
+            echo "Replace directives break 'go install github.com/steveyegge/gastown/cmd/gtb@latest'."
             echo "See: https://github.com/steveyegge/gastown/issues/2230"
             echo ""
             echo "Found:"
@@ -92,7 +92,7 @@ jobs:
         run: go install gotest.tools/gotestsum@latest
 
       - name: Build
-        run: go build -v ./cmd/gt
+        run: go build -v ./cmd/gtb
 
       - name: Test with Coverage
         run: |
@@ -178,10 +178,11 @@ jobs:
       - name: Install gotestsum
         run: go install gotest.tools/gotestsum@latest
 
-      - name: Build gt
+      - name: Build gtb
         run: |
           make build
-          cp gt "$(go env GOPATH)/bin/"
+          cp gtb "$(go env GOPATH)/bin/"
+          ln -sf gtb "$(go env GOPATH)/bin/gt"
 
       - name: Integration Tests
         run: |

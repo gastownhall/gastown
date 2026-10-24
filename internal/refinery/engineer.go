@@ -24,6 +24,7 @@ import (
 	"github.com/steveyegge/gastown/internal/mail"
 	"github.com/steveyegge/gastown/internal/rig"
 	"github.com/steveyegge/gastown/internal/util"
+	"github.com/steveyegge/gastown/internal/workflow"
 )
 
 // shortSHA returns at most 8 characters of a SHA for display.
@@ -269,9 +270,10 @@ type Engineer struct {
 	mergeSlotEnsureExists func() (string, error)
 	mergeSlotAcquire      func(holder string, addWaiter bool) (*beads.MergeSlotStatus, error)
 	mergeSlotRelease      func(holder string) error
-	mergeSlotMaxRetries   int           // Max retries for slot acquisition (0 = no retry)
-	mergeSlotRetryBackoff time.Duration // Initial backoff between retries
-	testAllowSyntheticMRs bool          // Test-only: legacy merge-mechanics tests use synthetic MRs without beads.
+	mergeSlotMaxRetries   int               // Max retries for slot acquisition (0 = no retry)
+	mergeSlotRetryBackoff time.Duration     // Initial backoff between retries
+	testAllowSyntheticMRs bool              // Test-only: legacy merge-mechanics tests use synthetic MRs without beads.
+	wfEnv                 *workflow.GateEnv // gated-workflow env, built on first use (see workflowEnv)
 }
 
 // NewEngineer creates a new Engineer for the given rig.
@@ -315,8 +317,35 @@ func (e *Engineer) SetOutput(w io.Writer) {
 	e.output = w
 }
 
-// LoadConfig loads merge queue configuration from the rig's config.json.
+// LoadConfig loads merge queue configuration from the rig's config.json. A
+// rig with the gated workflow enabled (settings/config.json
+// workflow.gated.enabled) always merges through PRs: MergeStrategy is forced
+// to "pr" and the PR provider initialized.
 func (e *Engineer) LoadConfig() error {
+	if err := e.loadMergeQueueConfig(); err != nil {
+		return err
+	}
+	gated, err := loadGatedConfig(e.rig)
+	if err != nil {
+		return err
+	}
+	if !gated.Enabled {
+		return nil
+	}
+	if e.config.MergeStrategy != "pr" {
+		_, _ = fmt.Fprintf(e.output, "[Engineer] Gated workflow enabled for rig %s: forced merge_strategy=pr (was %q)\n", e.rig.Name, e.config.MergeStrategy)
+		e.config.MergeStrategy = "pr"
+	}
+	if e.prProvider == nil {
+		if err := e.initPRProvider(); err != nil {
+			return fmt.Errorf("initializing PR provider: %w", err)
+		}
+	}
+	return nil
+}
+
+// loadMergeQueueConfig applies the merge_queue section of the rig's config.json.
+func (e *Engineer) loadMergeQueueConfig() error {
 	configPath := filepath.Join(e.rig.Path, "config.json")
 	data, err := os.ReadFile(configPath)
 	if err != nil {
@@ -633,8 +662,20 @@ func (e *Engineer) doMerge(ctx context.Context, mr *MRInfo, skipGates ...bool) P
 	// instead of local merge + direct push. This respects branch
 	// protection/restriction rules and preserves the PR audit trail.
 	// The VCS provider (GitHub, Bitbucket) is selected via vcs_provider config.
+	//
+	// Gated workflow items must pass the refinery merge gate first (review
+	// approved, version bump committed and pushed, CI green on the PR head);
+	// non-gated MRs pass through untouched.
+	gate := e.workflowGate(ctx, mr)
+	if !gate.OK {
+		return gate.Result
+	}
 	if e.config.MergeStrategy == "pr" {
-		return e.doMergePR(ctx, mr)
+		res := e.doMergePR(ctx, mr)
+		if res.Success {
+			e.recordGatedMerged(gate)
+		}
+		return res
 	}
 
 	// Step 5: Perform the actual merge, preserving the submitted head in target ancestry.

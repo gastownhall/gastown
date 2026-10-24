@@ -91,9 +91,6 @@ ignore:
   # Scripts and tooling
   - "scripts/**"
 
-  # npm package (separate project)
-  - "npm-package/**"
-
   # E2E and container test infrastructure
   - "Dockerfile*"
 

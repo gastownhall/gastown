@@ -13,7 +13,6 @@ set -e
 #
 # WHAT IT UPDATES:
 #   - internal/cmd/version.go   - CLI version constant
-#   - npm-package/package.json  - npm package version
 #   - flake.nix                 - Nix flake package version and vendorHash (if nix available)
 #   - CHANGELOG.md              - Creates release entry from [Unreleased]
 #
@@ -168,12 +167,6 @@ main() {
         "Version = \"$CURRENT_VERSION\"" \
         "Version = \"$NEW_VERSION\""
 
-    # 2. Update npm-package/package.json
-    echo "  • npm-package/package.json"
-    update_file "npm-package/package.json" \
-        "\"version\": \"$CURRENT_VERSION\"" \
-        "\"version\": \"$NEW_VERSION\""
-
     # 3. Update flake.nix (if nix is available)
     if command -v nix &> /dev/null; then
         echo "  • flake.nix (version)"
@@ -206,26 +199,23 @@ main() {
     # Verify versions match
     echo "Verifying version consistency..."
     VERSION_GO=$(grep 'Version = ' internal/cmd/version.go | sed 's/.*"\(.*\)".*/\1/')
-    VERSION_NPM=$(grep '"version"' npm-package/package.json | head -1 | sed 's/.*"\([0-9.]*\)".*/\1/')
 
     if command -v nix &> /dev/null; then
         VERSION_NIX=$(grep 'version = ' flake.nix | head -1 | sed 's/.*"\(.*\)".*/\1/')
-        if [ "$VERSION_GO" = "$NEW_VERSION" ] && [ "$VERSION_NPM" = "$NEW_VERSION" ] && [ "$VERSION_NIX" = "$NEW_VERSION" ]; then
+        if [ "$VERSION_GO" = "$NEW_VERSION" ] && [ "$VERSION_NIX" = "$NEW_VERSION" ]; then
             echo -e "${GREEN}✓ All versions match: $NEW_VERSION${NC}"
         else
             echo -e "${RED}✗ Version mismatch detected!${NC}"
             echo "  version.go: $VERSION_GO"
-            echo "  package.json: $VERSION_NPM"
             echo "  flake.nix: $VERSION_NIX"
             exit 1
         fi
     else
-        if [ "$VERSION_GO" = "$NEW_VERSION" ] && [ "$VERSION_NPM" = "$NEW_VERSION" ]; then
+        if [ "$VERSION_GO" = "$NEW_VERSION" ]; then
             echo -e "${GREEN}✓ All versions match: $NEW_VERSION${NC}"
         else
             echo -e "${RED}✗ Version mismatch detected!${NC}"
             echo "  version.go: $VERSION_GO"
-            echo "  package.json: $VERSION_NPM"
             exit 1
         fi
     fi
@@ -265,8 +255,7 @@ main() {
     if [ "$AUTO_COMMIT" = true ]; then
         echo "Creating git commit..."
 
-        git add internal/cmd/version.go \
-                npm-package/package.json
+        git add internal/cmd/version.go
 
         if command -v nix &> /dev/null && [ -f "flake.nix" ]; then
             git add flake.nix

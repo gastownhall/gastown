@@ -378,6 +378,7 @@ func runDaemonRun(cmd *cobra.Command, args []string) error {
 	}
 	os.Setenv("BD_ACTOR", "daemon")
 
+	daemon.GtbVersion = Version
 	config := daemon.DefaultConfig(townRoot)
 	d, err := daemon.New(config)
 	if err != nil {
