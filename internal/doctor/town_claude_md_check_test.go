@@ -185,6 +185,32 @@ This is user-added content that should be preserved.
 	}
 }
 
+func TestTownCLAUDEmdCheck_Fix_AppendsSharedH2SectionOnce(t *testing.T) {
+	tmpDir := t.TempDir()
+	ctx := &CheckContext{TownRoot: tmpDir}
+	claudePath := filepath.Join(tmpDir, "CLAUDE.md")
+	if err := os.WriteFile(claudePath, []byte("# Gas Town\n\nRun `gt prime` for full context.\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	check := NewTownCLAUDEmdCheck()
+	result := check.Run(ctx)
+	if result.Status != StatusWarning || len(check.missingSections) != 2 {
+		t.Fatalf("Run() = %v with %d missing sections, want warning with 2", result.Status, len(check.missingSections))
+	}
+	if err := check.Fix(ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	data, err := os.ReadFile(claudePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.Count(string(data), "## Dolt Server — Operational Awareness"); got != 1 {
+		t.Fatalf("Dolt Server section count = %d, want 1", got)
+	}
+}
+
 func TestTownCLAUDEmdCheck_Fix_Idempotent(t *testing.T) {
 	tmpDir := t.TempDir()
 	ctx := &CheckContext{TownRoot: tmpDir}
