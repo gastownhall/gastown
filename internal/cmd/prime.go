@@ -592,75 +592,30 @@ func runPrimeExternalCommand(workDir, name string, args ...string) (bytes.Buffer
 	return stdout, stderr, cmd.Run()
 }
 
-// memoryTypeLabels maps type keys to human-readable section headers for prime injection.
-var memoryTypeLabels = map[string]string{
-	"feedback":  "Behavioral Rules (from user feedback)",
-	"user":      "User Context",
-	"project":   "Project Context",
-	"reference": "Reference Links",
-	"general":   "General",
-}
-
-// runMemoryInject loads memories from beads kv and outputs them during prime.
-// Memories are grouped by type and ordered by priority (feedback first).
+// runMemoryInject loads memories from the beads memory store (bd memories)
+// and outputs them during prime. Memories are untyped and listed by key order.
 func runMemoryInject(workDir string) {
-	kvs, err := bdKvListJSONForPrime(workDir)
+	stdout, _, err := runPrimeExternalCommand(workDir, "bd", "memories", "--json")
 	if err != nil {
-		return // Silently skip if kv list fails
+		return // Silently skip if memories list fails
 	}
 
-	// Group memories by type
-	type mem struct {
-		shortKey string
-		value    string
-	}
-	grouped := make(map[string][]mem)
-
-	for k, v := range kvs {
-		if !strings.HasPrefix(k, memoryKeyPrefix) {
-			continue
-		}
-		memType, shortKey := parseMemoryKey(k)
-		grouped[memType] = append(grouped[memType], mem{shortKey: shortKey, value: v})
-	}
-
-	if len(grouped) == 0 {
+	mems, err := parseBdMemoriesJSON(stdout.Bytes())
+	if err != nil || len(mems) == 0 {
 		return
 	}
 
-	// Sort each group by key
-	for t := range grouped {
-		sort.Slice(grouped[t], func(i, j int) bool {
-			return grouped[t][i].shortKey < grouped[t][j].shortKey
-		})
+	keys := make([]string, 0, len(mems))
+	for k := range mems {
+		keys = append(keys, k)
 	}
+	sort.Strings(keys)
 
 	fmt.Println()
 	fmt.Println("# Agent Memories")
-
-	for _, t := range memoryTypeOrder {
-		mems, ok := grouped[t]
-		if !ok || len(mems) == 0 {
-			continue
-		}
-		label := memoryTypeLabels[t]
-		if label == "" {
-			label = t
-		}
-		fmt.Printf("\n## %s\n\n", label)
-		for _, m := range mems {
-			fmt.Printf("- **%s**: %s\n", m.shortKey, m.value)
-		}
+	for _, k := range keys {
+		fmt.Printf("- **%s**: %s\n", k, mems[k])
 	}
-}
-
-func bdKvListJSONForPrime(workDir string) (map[string]string, error) {
-	stdout, _, err := runPrimeExternalCommand(workDir, "bd", "kv", "list", "--json")
-	if err != nil {
-		return nil, err
-	}
-
-	return parseBdKvListJSON(stdout.Bytes())
 }
 
 // runMailCheckInject runs `gt mail check --inject` and outputs the result.

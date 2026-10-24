@@ -100,145 +100,110 @@ func TestSanitizeKey(t *testing.T) {
 	}
 }
 
-func TestParseMemoryKey(t *testing.T) {
+func TestNormalizeMemoryKey(t *testing.T) {
 	tests := []struct {
-		name     string
-		kvKey    string
-		wantType string
-		wantKey  string
+		name string
+		key  string
+		want string
 	}{
 		{
-			name:     "typed feedback key",
-			kvKey:    "memory.feedback.dont-mock-db",
-			wantType: "feedback",
-			wantKey:  "dont-mock-db",
+			name: "plain key",
+			key:  "refinery-worktree",
+			want: "refinery-worktree",
 		},
 		{
-			name:     "typed project key",
-			kvKey:    "memory.project.merge-freeze",
-			wantType: "project",
-			wantKey:  "merge-freeze",
+			name: "legacy memory prefix",
+			key:  "memory.refinery-worktree",
+			want: "refinery-worktree",
 		},
 		{
-			name:     "typed user key",
-			kvKey:    "memory.user.senior-go-dev",
-			wantType: "user",
-			wantKey:  "senior-go-dev",
+			name: "legacy typed kv key",
+			key:  "memory.feedback.dont-mock-db",
+			want: "feedback-dont-mock-db",
 		},
 		{
-			name:     "typed reference key",
-			kvKey:    "memory.reference.grafana-dashboard",
-			wantType: "reference",
-			wantKey:  "grafana-dashboard",
+			name: "legacy type slash key",
+			key:  "feedback/dont-mock-db",
+			want: "dont-mock-db",
 		},
 		{
-			name:     "typed general key",
-			kvKey:    "memory.general.some-insight",
-			wantType: "general",
-			wantKey:  "some-insight",
+			name: "legacy slash key with memory prefix",
+			key:  "memory.feedback/dont-mock-db",
+			want: "dont-mock-db",
 		},
 		{
-			name:     "legacy untyped key",
-			kvKey:    "memory.refinery-worktree",
-			wantType: "general",
-			wantKey:  "refinery-worktree",
+			name: "empty",
+			key:  "",
+			want: "",
 		},
 		{
-			name:     "legacy key with dots in slug",
-			kvKey:    "memory.hooks-package-structure",
-			wantType: "general",
-			wantKey:  "hooks-package-structure",
-		},
-		{
-			name:     "unknown type treated as legacy",
-			kvKey:    "memory.banana.split",
-			wantType: "general",
-			wantKey:  "banana.split",
-		},
-		{
-			name:     "typed key with hyphens in value",
-			kvKey:    "memory.feedback.always-use-race-flag",
-			wantType: "feedback",
-			wantKey:  "always-use-race-flag",
+			name: "prefix only",
+			key:  "memory.",
+			want: "",
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			gotType, gotKey := parseMemoryKey(tt.kvKey)
-			if gotType != tt.wantType {
-				t.Errorf("parseMemoryKey(%q) type = %q, want %q", tt.kvKey, gotType, tt.wantType)
-			}
-			if gotKey != tt.wantKey {
-				t.Errorf("parseMemoryKey(%q) key = %q, want %q", tt.kvKey, gotKey, tt.wantKey)
+			got := normalizeMemoryKey(tt.key)
+			if got != tt.want {
+				t.Errorf("normalizeMemoryKey(%q) = %q, want %q", tt.key, got, tt.want)
 			}
 		})
 	}
 }
 
-func TestMemTypeRank(t *testing.T) {
-	// feedback should come before general
-	if memTypeRank("feedback") >= memTypeRank("general") {
-		t.Error("feedback should rank before general")
-	}
-	// user should come before project
-	if memTypeRank("user") >= memTypeRank("project") {
-		t.Error("user should rank before project")
-	}
-	// unknown types should sort last
-	if memTypeRank("unknown") <= memTypeRank("general") {
-		t.Error("unknown type should rank after general")
-	}
-}
-
-func TestParseBdKvListJSON(t *testing.T) {
-	got, err := parseBdKvListJSON([]byte(`{
-		"memory.project.note":"keep me",
-		"memory.project.empty":"",
-		"memory.project.count":12,
-		"memory.project.enabled":true,
-		"memory.project.tags":["one"],
-		"memory.project.config":{"nested":"value"},
-		"schema_version":1,
-		"other":"keep string kvs",
+func TestParseBdMemoriesJSON(t *testing.T) {
+	got, err := parseBdMemoriesJSON([]byte(`{
+		"refinery-worktree":"Refinery uses worktree, cannot checkout main",
+		"empty-mem":"",
+		"count":12,
 		"enabled":true,
 		"tags":["one"],
 		"config":{"nested":"value"},
-		"memory.project.null":null
+		"null-mem":null,
+		"schema_version":1
 	}`))
 	if err != nil {
-		t.Fatalf("parseBdKvListJSON() error = %v", err)
+		t.Fatalf("parseBdMemoriesJSON() error = %v", err)
 	}
 
 	want := map[string]string{
-		"memory.project.note":    "keep me",
-		"memory.project.empty":   "",
-		"memory.project.count":   "12",
-		"memory.project.enabled": "true",
-		"memory.project.tags":    `["one"]`,
-		"memory.project.config":  `{"nested":"value"}`,
-		"other":                  "keep string kvs",
+		"refinery-worktree": "Refinery uses worktree, cannot checkout main",
+		"empty-mem":         "",
+		"count":             "12",
+		"enabled":           "true",
+		"tags":              `["one"]`,
+		"config":            `{"nested":"value"}`,
 	}
 	if len(got) != len(want) {
-		t.Fatalf("parseBdKvListJSON() returned %d entries, want %d: %#v", len(got), len(want), got)
+		t.Fatalf("parseBdMemoriesJSON() returned %d entries, want %d: %#v", len(got), len(want), got)
 	}
 	for k, wantValue := range want {
 		if got[k] != wantValue {
-			t.Errorf("parseBdKvListJSON()[%q] = %q, want %q", k, got[k], wantValue)
+			t.Errorf("parseBdMemoriesJSON()[%q] = %q, want %q", k, got[k], wantValue)
 		}
 	}
-	if _, ok := got["memory.project.null"]; ok {
-		t.Error("parseBdKvListJSON() kept null memory value")
+	if _, ok := got["null-mem"]; ok {
+		t.Error("parseBdMemoriesJSON() kept null memory value")
 	}
-	for _, k := range []string{"schema_version", "enabled", "tags", "config"} {
-		if _, ok := got[k]; ok {
-			t.Errorf("parseBdKvListJSON() kept non-memory non-string value for %q", k)
-		}
+	if _, ok := got["schema_version"]; ok {
+		t.Error("parseBdMemoriesJSON() kept schema_version")
 	}
 }
 
-func TestParseBdKvListJSONMalformed(t *testing.T) {
-	if _, err := parseBdKvListJSON([]byte(`{"memory.project.note":`)); err == nil {
-		t.Fatal("parseBdKvListJSON() error = nil, want malformed JSON error")
+func TestParseBdMemoriesJSONEmptyStore(t *testing.T) {
+	got, err := parseBdMemoriesJSON([]byte(`{"schema_version":1}`))
+	if err != nil {
+		t.Fatalf("parseBdMemoriesJSON() error = %v", err)
+	}
+	if len(got) != 0 {
+		t.Errorf("parseBdMemoriesJSON() on empty store returned %d entries, want 0: %#v", len(got), got)
+	}
+}
+
+func TestParseBdMemoriesJSONMalformed(t *testing.T) {
+	if _, err := parseBdMemoriesJSON([]byte(`{"refinery-worktree":`)); err == nil {
+		t.Fatal("parseBdMemoriesJSON() error = nil, want malformed JSON error")
 	}
 }
