@@ -188,10 +188,16 @@ func runMailRead(cmd *cobra.Command, args []string) error {
 	// Mark as read when viewed (adds "read" label, does not close/archive).
 	// Handoff messages are preserved via the hook mechanism, so marking
 	// read here is safe — hooked mail is found via gt hook, not the inbox.
-	if err := mailbox.MarkReadOnly(msgID); err != nil {
-		// Non-fatal: message was retrieved, just couldn't mark
-		style.PrintWarning("could not mark message as read: %v", err)
+	markReadSucceeded := false
+	if !msg.Read {
+		if err := mailbox.MarkReadOnly(msgID); err != nil {
+			// Non-fatal: message was retrieved, just couldn't mark
+			style.PrintWarning("could not mark message as read: %v", err)
+		} else {
+			markReadSucceeded = true
+		}
 	}
+	deliveryAckNeedsRetry := shouldRetryDeliveryAck(msg, !msg.Read, markReadSucceeded)
 
 	// JSON output
 	if mailReadJSON {
@@ -200,9 +206,10 @@ func runMailRead(cmd *cobra.Command, args []string) error {
 		if err := enc.Encode(msg); err != nil {
 			return err
 		}
-		// Ack after output so JSON reflects accurate read-time state.
-		if ackErr := mailbox.AcknowledgeDeliveries(address, []*mail.Message{msg}); ackErr != nil {
-			fmt.Fprintf(os.Stderr, "gt mail read: delivery ack failed: %v\n", ackErr)
+		if deliveryAckNeedsRetry {
+			if ackErr := mailbox.AcknowledgeDeliveries(address, []*mail.Message{msg}); ackErr != nil {
+				fmt.Fprintf(os.Stderr, "gt mail read: delivery ack failed: %v\n", ackErr)
+			}
 		}
 		return nil
 	}
@@ -236,13 +243,20 @@ func runMailRead(cmd *cobra.Command, args []string) error {
 	if msg.Body != "" {
 		fmt.Printf("\n%s\n", msg.Body)
 	}
-
-	// Ack after output (non-fatal).
-	if ackErr := mailbox.AcknowledgeDeliveries(address, []*mail.Message{msg}); ackErr != nil {
-		fmt.Fprintf(os.Stderr, "gt mail read: delivery ack failed: %v\n", ackErr)
+	if deliveryAckNeedsRetry {
+		if ackErr := mailbox.AcknowledgeDeliveries(address, []*mail.Message{msg}); ackErr != nil {
+			fmt.Fprintf(os.Stderr, "gt mail read: delivery ack failed: %v\n", ackErr)
+		}
 	}
 
 	return nil
+}
+
+// shouldRetryDeliveryAck avoids a duplicate ack after MarkReadOnly succeeds,
+// while preserving convergence for already-read pending messages and transient
+// MarkReadOnly failures.
+func shouldRetryDeliveryAck(msg *mail.Message, markReadAttempted, markReadSucceeded bool) bool {
+	return msg.DeliveryState == mail.DeliveryStatePending && (!markReadAttempted || !markReadSucceeded)
 }
 
 func runMailPeek(cmd *cobra.Command, args []string) error {
