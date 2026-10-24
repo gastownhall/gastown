@@ -111,6 +111,10 @@ const (
 	// DirMayor is the directory containing mayor configuration and state.
 	DirMayor = "mayor"
 
+	// DirTownEvents is the town-level directory holding native event channels
+	// (<town>/events/<channel>/*.event). It is infrastructure, not a rig.
+	DirTownEvents = "events"
+
 	// DirPolecats is the directory containing polecat worktrees.
 	DirPolecats = "polecats"
 
@@ -363,6 +367,14 @@ func RoleEmoji(role string) string {
 var SupportedShells = []string{"bash", "zsh", "sh", "fish", "tcsh", "ksh", "pwsh", "powershell"}
 
 // Path helpers construct common paths.
+
+// IsTownInfraDir reports whether name is a reserved town-level directory that
+// is not a rig, even though it may contain rig-like subdirectories (for
+// example events/witness and events/refinery). Rig discovery that scans the
+// town root must skip these.
+func IsTownInfraDir(name string) bool {
+	return name == DirTownEvents
+}
 
 // MayorRigsPath returns the path to rigs.json within a town root.
 func MayorRigsPath(townRoot string) string {
