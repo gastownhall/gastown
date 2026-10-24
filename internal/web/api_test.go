@@ -1446,6 +1446,7 @@ func TestPaneCurrentCommandIsAgent(t *testing.T) {
 		{"opencode", true},
 		{"cursor-agent", true},
 		{"copilot", true},
+		{"grok", true},
 		{"agent", true},
 		{"bash", false},
 		{"", false},

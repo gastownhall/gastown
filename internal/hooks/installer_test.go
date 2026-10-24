@@ -693,6 +693,117 @@ func TestInstallForRole_CodexRoleAware(t *testing.T) {
 	}
 }
 
+func TestInstallForRole_GrokRoleAware(t *testing.T) {
+	dir := t.TempDir()
+	err := InstallForRole("grok", dir, dir, "polecat", ".grok/hooks", "gastown.json", false)
+	if err != nil {
+		t.Fatalf("InstallForRole(grok, polecat): %v", err)
+	}
+
+	got, _ := os.ReadFile(filepath.Join(dir, ".grok/hooks", "gastown.json"))
+	want, err := resolveAndSubstitute("grok", "hooks-autonomous.json", "polecat")
+	if err != nil {
+		t.Fatalf("resolveAndSubstitute: %v", err)
+	}
+	if string(got) != string(want) {
+		t.Error("grok autonomous: content mismatch")
+	}
+	content := string(got)
+	for _, needle := range []string{
+		"prime --hook",
+		"mail check --inject",
+		"tap guard pr-workflow",
+		"run_terminal_command|Bash",
+		"*witness*",
+		"polecat-stop-check",
+		"costs record",
+	} {
+		if !strings.Contains(content, needle) {
+			t.Errorf("grok autonomous template missing %q", needle)
+		}
+	}
+
+	dir2 := t.TempDir()
+	err = InstallForRole("grok", dir2, dir2, "crew", ".grok/hooks", "gastown.json", false)
+	if err != nil {
+		t.Fatalf("InstallForRole(grok, crew): %v", err)
+	}
+
+	got, _ = os.ReadFile(filepath.Join(dir2, ".grok/hooks", "gastown.json"))
+	want, err = resolveAndSubstitute("grok", "hooks-interactive.json", "crew")
+	if err != nil {
+		t.Fatalf("resolveAndSubstitute: %v", err)
+	}
+	if string(got) != string(want) {
+		t.Error("grok interactive: content mismatch")
+	}
+	if strings.Contains(string(got), "*witness*") {
+		t.Error("grok interactive: UserPromptSubmit should not skip witness/refinery roles")
+	}
+	if strings.Contains(string(got), "polecat-stop-check") {
+		t.Error("grok interactive: crew Stop hook should not auto-run polecat-stop-check")
+	}
+}
+
+func TestNeedsUpgrade_GrokAutonomousMissingPolecatStopCheck(t *testing.T) {
+	stale := []byte(`{
+  "hooks": {
+    "UserPromptSubmit": [{"matcher": "", "hooks": [{"type": "command", "command": "case \"${GT_ROLE:-}\" in *witness*|*refinery*|deacon*|*boot*) exit 0 ;; *) gt mail check --inject ;; esac"}]}],
+    "Stop": [{"matcher": "", "hooks": [{"type": "command", "command": "gt costs record &"}]}]
+  }
+}`)
+	if !needsUpgrade(stale) {
+		t.Fatal("autonomous grok hooks with costs record but no polecat-stop-check should upgrade")
+	}
+
+	fresh := []byte(`{
+  "hooks": {
+    "UserPromptSubmit": [{"matcher": "", "hooks": [{"type": "command", "command": "case \"${GT_ROLE:-}\" in *witness*) exit 0 ;; *) gt mail check --inject ;; esac"}]}],
+    "Stop": [{"matcher": "", "hooks": [{"type": "command", "command": "gt tap polecat-stop-check"}]}]
+  }
+}`)
+	if needsUpgrade(fresh) {
+		t.Fatal("autonomous grok hooks that already include polecat-stop-check should not upgrade")
+	}
+
+	interactive := []byte(`{
+  "hooks": {
+    "UserPromptSubmit": [{"matcher": "", "hooks": [{"type": "command", "command": "gt mail check --inject"}]}],
+    "Stop": [{"matcher": "", "hooks": [{"type": "command", "command": "gt costs record &"}]}]
+  }
+}`)
+	if needsUpgrade(interactive) {
+		t.Fatal("interactive grok hooks must not be treated as stale autonomous polecat hooks")
+	}
+}
+
+func TestInstallForRole_GrokAutonomousUpgradesStopCheck(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, ".grok/hooks", "gastown.json")
+	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+		t.Fatal(err)
+	}
+	stale := []byte(`{
+  "hooks": {
+    "UserPromptSubmit": [{"matcher": "", "hooks": [{"type": "command", "command": "case \"${GT_ROLE:-}\" in *witness*|*refinery*|deacon*|*boot*) exit 0 ;; *) gt mail check --inject ;; esac"}]}],
+    "Stop": [{"matcher": "", "hooks": [{"type": "command", "command": "gt costs record &"}]}]
+  }
+}`)
+	if err := os.WriteFile(path, stale, 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := InstallForRole("grok", dir, dir, "polecat", ".grok/hooks", "gastown.json", false); err != nil {
+		t.Fatalf("InstallForRole: %v", err)
+	}
+	got, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(got), "polecat-stop-check") {
+		t.Fatalf("upgraded grok autonomous hooks missing polecat-stop-check:\n%s", got)
+	}
+}
+
 func TestInstallForRole_CopilotRoleAware(t *testing.T) {
 	// Copilot uses gastown-autonomous.json / gastown-interactive.json naming
 	dir := t.TempDir()
