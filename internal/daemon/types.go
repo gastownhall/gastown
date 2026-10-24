@@ -130,6 +130,7 @@ type PatrolsConfig struct {
 	ScheduledMaintenance   *ScheduledMaintenanceConfig    `json:"scheduled_maintenance,omitempty"`
 	MainBranchTest         *MainBranchTestConfig          `json:"main_branch_test,omitempty"`
 	QuotaDog               *QuotaDogConfig                `json:"quota_dog,omitempty"`
+	WallRecovery           *WallRecoveryConfig            `json:"wall_recovery,omitempty"`
 	RestartTracker         *RestartTrackerConfig          `json:"restart_tracker,omitempty"`
 }
 
@@ -301,6 +302,16 @@ func IsPatrolEnabled(config *DaemonPatrolConfig, patrol string) bool {
 			return false
 		}
 		return config.Patrols.MainBranchTest.Enabled
+	}
+	if patrol == "wall_recovery" {
+		// Absent config means ENABLED. This patrol repairs a SILENT failure: a
+		// walled agent looks exactly like an idle one, so if it is off nothing
+		// reports that it is off. Defaulting it to disabled would recreate the
+		// fourteen-hour outage it exists to prevent.
+		if config == nil || config.Patrols == nil || config.Patrols.WallRecovery == nil {
+			return true
+		}
+		return config.Patrols.WallRecovery.Enabled
 	}
 	if patrol == "quota_dog" {
 		if config == nil || config.Patrols == nil || config.Patrols.QuotaDog == nil {
