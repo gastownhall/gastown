@@ -2887,3 +2887,81 @@ func TestValidateCommandBinary(t *testing.T) {
 		})
 	}
 }
+
+// TestGetSessionActivity_AdvancesWithOutput is the regression test for gt-czb.
+//
+// GetSessionActivity used to read tmux's #{session_activity}, which is stamped
+// when the session is created and never moves again. Every caller comparing it
+// against a staleness threshold therefore classified busy, long-lived agent
+// sessions as idle forever. Activity must track real pane output.
+func TestGetSessionActivity_AdvancesWithOutput(t *testing.T) {
+	tm := newTestTmux(t)
+	sessionName := "gt-test-activity-advances"
+
+	_ = tm.KillSession(sessionName)
+	if err := tm.NewSession(sessionName, ""); err != nil {
+		t.Fatalf("NewSession: %v", err)
+	}
+	defer func() { _ = tm.KillSession(sessionName) }()
+
+	createdUnix, err := tm.GetSessionCreatedUnix(sessionName)
+	if err != nil {
+		t.Fatalf("GetSessionCreatedUnix: %v", err)
+	}
+	created := time.Unix(createdUnix, 0)
+
+	// tmux timestamps have one-second resolution, so keep producing output until
+	// the clock has moved past the creation second.
+	deadline := time.Now().Add(15 * time.Second)
+	var activity time.Time
+	for time.Now().Before(deadline) {
+		if _, err := tm.run("send-keys", "-t", sessionName, "echo gt-czb-activity-probe", "Enter"); err != nil {
+			t.Fatalf("send-keys: %v", err)
+		}
+		time.Sleep(500 * time.Millisecond)
+		activity, err = tm.GetSessionActivity(sessionName)
+		if err != nil {
+			t.Fatalf("GetSessionActivity: %v", err)
+		}
+		if activity.After(created) {
+			return
+		}
+	}
+
+	t.Errorf("GetSessionActivity = %v, still not later than session creation %v after "+
+		"repeated output: a frozen activity clock makes every busy session look idle (gt-czb)",
+		activity, created)
+}
+
+// TestDetectStartupDialog_NoDialog verifies the interlock that guards blind
+// keystroke injection: a session sitting at an ordinary shell prompt must not
+// be reported as showing a startup dialog (gt-czb).
+func TestDetectStartupDialog_NoDialog(t *testing.T) {
+	tm := newTestTmux(t)
+	sessionName := "gt-test-dialog-probe"
+
+	_ = tm.KillSession(sessionName)
+	if err := tm.NewSession(sessionName, ""); err != nil {
+		t.Fatalf("NewSession: %v", err)
+	}
+	defer func() { _ = tm.KillSession(sessionName) }()
+
+	reason, found, err := tm.DetectStartupDialog(sessionName)
+	if err != nil {
+		t.Fatalf("DetectStartupDialog: %v", err)
+	}
+	if found {
+		t.Errorf("DetectStartupDialog found %q on a plain shell session, want no dialog", reason)
+	}
+}
+
+// TestDetectStartupDialog_NonexistentSession ensures the interlock reports an
+// error rather than silently returning "no dialog" when it cannot see the pane.
+// Callers must be able to distinguish "confirmed no dialog" from "could not look".
+func TestDetectStartupDialog_NonexistentSession(t *testing.T) {
+	tm := newTestTmux(t)
+
+	if _, _, err := tm.DetectStartupDialog("nonexistent-session-xyz-12345"); err == nil {
+		t.Error("DetectStartupDialog on nonexistent session should return an error")
+	}
+}

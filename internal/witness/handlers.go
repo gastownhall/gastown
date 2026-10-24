@@ -2217,11 +2217,42 @@ func handleZombieRestart(bd *BdCli, workDir, rigName, polecatName, hookBead, cle
 // nukes them before they finish starting up. See GH#2036.
 const SpawnGracePeriod = 5 * time.Minute
 
+// startupHeartbeatBootWindow is how long after session creation a heartbeat may
+// be written and still be attributable to the session manager's spawn-time
+// touch. A heartbeat newer than this proves the agent ran a gt command of its
+// own, which means it cleared any startup dialog. See gt-czb.
+const startupHeartbeatBootWindow = 30 * time.Second
+
+// heartbeatRulesOutStartupStall reports whether a polecat's heartbeat file is
+// enough on its own to clear it of being stalled at startup.
+//
+// Two independent reasons it can be:
+//
+//   - A fresh v2 heartbeat (gt-3vr5): the agent reported in recently, so it is
+//     alive and making progress.
+//   - Any heartbeat written well after session creation (gt-czb): gt only
+//     touches the heartbeat when the agent runs a gt command, so a stale
+//     heartbeat says nothing about whether the agent is busy — an agent
+//     heads-down editing files or running tests is stale almost all the time.
+//     What the file does prove is which side of startup the agent is on. A
+//     session parked on a trust dialog never runs a gt command, so its only
+//     heartbeat is the one the session manager wrote at spawn. A later one
+//     means startup was cleared, and a *startup* stall is no longer possible.
+func heartbeatRulesOutStartupStall(hb *polecat.SessionHeartbeat, sessionStart, now time.Time) bool {
+	if hb == nil {
+		return false
+	}
+	if hb.IsV2() && now.Sub(hb.Timestamp) < polecat.SessionHeartbeatStaleThreshold {
+		return true
+	}
+	return hb.Timestamp.After(sessionStart.Add(startupHeartbeatBootWindow))
+}
+
 // StalledResult represents a single stalled polecat detection.
 type StalledResult struct {
 	PolecatName   string // e.g., "alpha"
-	StallType     string // "startup-stall", "unknown-prompt"
-	Action        string // "auto-dismissed", "escalated"
+	StallType     string // "startup-stall[: reason]", "suspected-stall", "unknown-prompt"
+	Action        string // "auto-dismissed", "escalated", "reported"
 	AgentState    string // Agent state from beads (e.g., "idle", "working")
 	HasHookedWork bool   // Whether this polecat has hooked work assigned
 	Error         error
@@ -2239,15 +2270,19 @@ type DetectStalledPolecatsResult struct {
 // Unlike zombie detection which looks for dead sessions/agents, this targets
 // alive-but-stuck agents that will never make progress without intervention.
 //
-// Detection uses structured tmux signals (session creation time + last activity)
-// rather than screen-scraping pane content. A session is considered stalled when:
+// Screening uses structured tmux signals (session creation time + last window
+// activity). A session is a stall *suspect* when:
 //   - It is older than StartupStallThreshold (90s)
 //   - Its last tmux activity is older than StartupActivityGrace (60s)
+//   - It has no fresh heartbeat, and no heartbeat proving it cleared startup
 //
-// When a startup stall is detected, DismissStartupDialogsBlind is called to
-// send blind key sequences that dismiss known blocking dialogs (workspace trust,
-// bypass permissions) without screen-scraping pane content. This avoids coupling
-// to third-party TUI strings that can change with any Claude Code update.
+// Screening alone never triggers remediation. Every suspect's pane is checked
+// for an actual blocking dialog first; only a confirmed dialog reaches
+// DismissStartupDialogsBlind, because that call injects raw keystrokes into a
+// live agent TUI. Suspects with no dialog on screen are reported, not touched.
+// See gt-czb: both timer signals have failed open in the field, and the
+// "harmless keystrokes" argument for blind injection holds only while the
+// detector is correct.
 func DetectStalledPolecats(workDir, rigName string) *DetectStalledPolecatsResult {
 	result := &DetectStalledPolecatsResult{}
 
@@ -2296,26 +2331,23 @@ func DetectStalledPolecats(workDir, rigName string) *DetectStalledPolecatsResult
 			continue // Dead agent — zombie detection handles this
 		}
 
-		// Heartbeat v2 check (gt-3vr5): if the agent has a fresh heartbeat,
-		// it's alive and making progress — skip stall detection entirely.
-		// This replaces tmux activity scraping for v2 agents.
-		if hb := polecat.ReadSessionHeartbeat(townRoot, sessionName); hb != nil && hb.IsV2() {
-			if time.Since(hb.Timestamp) < polecat.SessionHeartbeatStaleThreshold {
-				continue // Fresh v2 heartbeat — agent is alive, not stalled
-			}
-		}
-
-		// Legacy: Use structured signals to detect startup stalls:
-		// session_created (age) + session_activity (last output).
+		// Use structured signals to detect startup stalls:
+		// session_created (age) + last window activity (last output).
 		createdUnix, err := t.GetSessionCreatedUnix(sessionName)
 		if err != nil {
 			result.Errors = append(result.Errors,
 				fmt.Errorf("getting session created time for %s: %w", sessionName, err))
 			continue
 		}
-		sessionAge := now.Sub(time.Unix(createdUnix, 0))
+		sessionStart := time.Unix(createdUnix, 0)
+		sessionAge := now.Sub(sessionStart)
 		if sessionAge < stallThreshold {
 			continue // Too young — still in normal startup
+		}
+
+		hb := polecat.ReadSessionHeartbeat(townRoot, sessionName)
+		if heartbeatRulesOutStartupStall(hb, sessionStart, now) {
+			continue
 		}
 
 		activity, err := t.GetSessionActivity(sessionName)
@@ -2329,18 +2361,34 @@ func DetectStalledPolecats(workDir, rigName string) *DetectStalledPolecatsResult
 			continue // Recent activity — agent is making progress
 		}
 
-		// Session is old enough and has no recent activity: startup stall.
-		// Send blind key sequences to dismiss any startup dialogs without
-		// screen-scraping pane content (avoids coupling to third-party TUI strings).
+		// Session is old enough and has no recent activity. That is a *suspicion*,
+		// not a verdict: remediation here injects raw keystrokes into a live agent
+		// TUI, so it requires positive evidence that the pane really is parked on a
+		// startup dialog before it fires (gt-czb). Without that evidence the stall
+		// is reported for a human or the witness to look at, and nothing is sent.
 		stalled := StalledResult{
 			PolecatName: polecatName,
 			StallType:   "startup-stall",
 		}
-		if err := t.DismissStartupDialogsBlind(sessionName); err != nil {
-			stalled.Action = "escalated"
-			stalled.Error = fmt.Errorf("blind dismiss failed: %w", err)
-		} else {
-			stalled.Action = "auto-dismissed"
+		reason, atDialog, err := t.DetectStartupDialog(sessionName)
+		switch {
+		case err != nil:
+			stalled.StallType = "suspected-stall"
+			stalled.Action = "reported"
+			stalled.Error = fmt.Errorf("confirming startup dialog: %w", err)
+		case !atDialog:
+			// No dialog on screen — the timers are stale but the agent is not
+			// stuck at startup. Never inject keys on this path.
+			stalled.StallType = "suspected-stall"
+			stalled.Action = "reported"
+		default:
+			stalled.StallType = "startup-stall: " + reason
+			if err := t.DismissStartupDialogsBlind(sessionName); err != nil {
+				stalled.Action = "escalated"
+				stalled.Error = fmt.Errorf("blind dismiss failed: %w", err)
+			} else {
+				stalled.Action = "auto-dismissed"
+			}
 		}
 		result.Stalled = append(result.Stalled, stalled)
 	}
