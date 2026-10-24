@@ -498,7 +498,12 @@ func runPolecatList(cmd *cobra.Command, args []string) error {
 			fmt.Fprintf(os.Stderr, "warning: failed to list polecats in %s: %v\n", r.Name, err)
 			continue
 		}
-		agents, agentErr := bd.ListAgentBeads()
+		// Agent beads live in the TOWN database even though their IDs carry the
+		// rig prefix. Listing them through the rig-scoped wrapper returns zero
+		// rows, so every polecat renders with empty agent fields and an absent
+		// cleanup_status — town-wide NEEDS_RECOVERY regardless of real state
+		// (gt-ets). ForAgentBead re-roots the query at the town DB.
+		agents, agentErr := bd.ForAgentBead().ListAgentBeads()
 		if agentErr != nil {
 			fmt.Fprintf(os.Stderr, "warning: failed to list agent beads in %s: %v\n", r.Name, agentErr)
 			agents = nil
@@ -1240,7 +1245,14 @@ func applyGitStateToWorkstateInput(input *polecat.WorkstateInput, worktreePath s
 		input.GitCheckFailedReason = recoveryGitStateBlocker(worktreePath, gitState, gitErr)
 		return
 	}
-	if gitState == nil || gitState.Clean {
+	if gitState == nil {
+		return
+	}
+	// Live git facts were gathered for this worktree, so an agent bead that
+	// never had cleanup_status written can be judged on observed state rather
+	// than on the absence of the field (gt-ets).
+	input.GitStateKnown = true
+	if gitState.Clean {
 		return
 	}
 	if gitState.UnpushedCommits > 0 {
