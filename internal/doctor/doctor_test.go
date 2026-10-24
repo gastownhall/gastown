@@ -332,6 +332,21 @@ func TestDoctor_Fix(t *testing.T) {
 	}
 }
 
+func TestDoctor_FixStreamingReportsFixFailure(t *testing.T) {
+	d := NewDoctor()
+	check := newMockCheck("broken-fix", StatusWarning)
+	check.fixable = true
+	check.fixError = fmt.Errorf("permission denied")
+	d.Register(check)
+
+	var buf bytes.Buffer
+	report := d.FixStreaming(&CheckContext{TownRoot: "/test"}, &buf, 0)
+	report.PrintSummaryOnly(&buf, false, 0)
+	if got := buf.String(); !strings.Contains(got, "Fix failed: permission denied") {
+		t.Fatalf("streaming doctor hid fix error:\n%s", got)
+	}
+}
+
 func TestBaseCheck(t *testing.T) {
 	b := &BaseCheck{
 		CheckName:        "test",
