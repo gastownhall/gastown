@@ -136,12 +136,16 @@ Directory structure:
 For work that should be owned by the target rig:
 
 ```bash
-# Create issue in target rig
-bd create --repo beads "Fix authentication bug"
+# Create issue in target rig.
+# NOTE: --repo does NOT select the database. Run bd from inside the target
+# rig's clone so its workspace and prefix resolve, otherwise the bead lands
+# in the town DB with an hq- prefix.
+cd ~/gt/beads/mayor/rig
+bd create "Fix authentication bug"     # -> be-*  (not --repo beads)
 
 # Create convoy and sling to target rig
-gt convoy create "Auth fix" bd-xyz
-gt sling bd-xyz beads
+gt convoy create "Auth fix" be-xyz
+gt sling be-xyz beads
 ```
 
 ### When to Use Which

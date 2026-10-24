@@ -209,6 +209,22 @@ go here by default. But if you discover bugs/issues in OTHER projects:
 | `gt` CLI (gas town tool) | **gastown** | `bd create --repo gastown "..."` |
 | Cross-rig coordination | **HQ** | `bd create --repo hq "..."` |
 
+
+🚨 **`bd create --repo <rig>` DOES NOT FILE IN THAT RIG.** Run from a rig's own
+agent directory, `--repo` is ignored for *placement* and the bead is created in
+the town DB with an `hq-` prefix — the exact misfile you are trying to avoid.
+`--repo` only selects a workspace, never the database. To file in another rig,
+`cd` into that rig's clone first, so its workspace and prefix resolve:
+
+```bash
+cd {{ .TownRoot }}/gastown/mayor/rig && bd create "..."   # yields gt-*
+cd {{ .TownRoot }}/beads/mayor/rig  && bd create "..."   # yields be-*
+```
+
+Read-side prefix routing (`bd show gt-*`) works from anywhere; the bug is
+create-side only.
+
+
 **The test**: "Which repo would the fix be committed to?"
 
 ## Gotchas when Filing Beads

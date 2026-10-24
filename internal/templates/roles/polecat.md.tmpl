@@ -340,6 +340,22 @@ bd close <id> --reason="no-changes: <explanation>"  # Close without code changes
 bd create --title="Found bug" --type=bug --priority=2    # File discovered work
 bd create --title="Need feature" --type=task             # File task
 bd create --repo beads "bd CLI bug"                      # File in another rig
+
+
+🚨 **`bd create --repo <rig>` DOES NOT FILE IN THAT RIG.** Run from a rig's own
+agent directory, `--repo` is ignored for *placement* and the bead is created in
+the town DB with an `hq-` prefix — the exact misfile you are trying to avoid.
+`--repo` only selects a workspace, never the database. To file in another rig,
+`cd` into that rig's clone first, so its workspace and prefix resolve:
+
+```bash
+cd {{ .TownRoot }}/gastown/mayor/rig && bd create "..."   # yields gt-*
+cd {{ .TownRoot }}/beads/mayor/rig  && bd create "..."   # yields be-*
+```
+
+Read-side prefix routing (`bd show gt-*`) works from anywhere; the bug is
+create-side only.
+
 ```
 
 **Valid statuses:** `open`, `in_progress`, `blocked`, `deferred`, `closed`, `pinned`, `hooked`
