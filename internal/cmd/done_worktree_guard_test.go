@@ -296,6 +296,15 @@ func TestIsDoneCommand(t *testing.T) {
 	if isDoneCommand(root) {
 		t.Fatal("root command should not be detected as done")
 	}
+	// Nested "done" subcommands (e.g. `gt dog done`) have their own lifecycle
+	// semantics and must not trip the polecat worktree guard (hq-jq0g).
+	dog := &cobra.Command{Use: "dog"}
+	dogDone := &cobra.Command{Use: "done"}
+	dog.AddCommand(dogDone)
+	root.AddCommand(dog)
+	if isDoneCommand(dogDone) {
+		t.Fatal("nested dog done command should not be detected as top-level done")
+	}
 }
 
 func TestPersistentPreRunDoneRejectsBeforeRegistryFallback(t *testing.T) {
