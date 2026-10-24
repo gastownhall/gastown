@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -17,6 +18,7 @@ import (
 	"github.com/steveyegge/gastown/internal/mail"
 	"github.com/steveyegge/gastown/internal/mayor"
 	"github.com/steveyegge/gastown/internal/nudge"
+	"github.com/steveyegge/gastown/internal/opencodeserver"
 	"github.com/steveyegge/gastown/internal/session"
 	"github.com/steveyegge/gastown/internal/style"
 	"github.com/steveyegge/gastown/internal/telemetry"
@@ -35,6 +37,40 @@ func hasACPSessionByName(townRoot, sessionName string) bool {
 	}
 
 	return false
+}
+
+func hasOpenCodeServerSession(townRoot, sessionName string) bool {
+	if townRoot == "" || sessionName == "" {
+		return false
+	}
+	t := tmux.NewTmux()
+	if agent, err := t.GetEnvironment(sessionName, "GT_AGENT"); err == nil && agent != "" {
+		rigPath := ""
+		if rigName, rigErr := t.GetEnvironment(sessionName, "GT_RIG"); rigErr == nil && rigName != "" {
+			rigPath = filepath.Join(townRoot, rigName)
+		}
+		if config.AgentManagesNudgeQueue(townRoot, rigPath, agent) {
+			return true
+		}
+	}
+	return hasActiveOpenCodeServerSession(townRoot, sessionName)
+}
+
+func hasActiveOpenCodeServerSession(townRoot, sessionName string) bool {
+	if townRoot == "" || sessionName == "" {
+		return false
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	_, active := opencodeserver.ActiveState(ctx, townRoot, sessionName)
+	return active
+}
+
+func nudgeDeliveryMode(townRoot, sessionName, requested string) string {
+	if hasACPSessionByName(townRoot, sessionName) || hasOpenCodeServerSession(townRoot, sessionName) {
+		return NudgeModeQueue
+	}
+	return requested
 }
 
 var (
@@ -171,13 +207,15 @@ func deliverNudge(t *tmux.Tmux, sessionName, message, sender string) error {
 	}
 
 	townRoot, _ := workspace.FindFromCwd()
+	if townRoot == "" {
+		if envRoot, envErr := t.GetEnvironment(sessionName, "GT_ROOT"); envErr == nil {
+			townRoot = envRoot
+		}
+	}
 
 	// Use the requested mode, but force queue mode for ACP sessions.
 	// ACP agents don't have tmux panes to send-keys to.
-	mode := nudgeModeFlag
-	if hasACPSessionByName(townRoot, sessionName) {
-		mode = NudgeModeQueue
-	}
+	mode := nudgeDeliveryMode(townRoot, sessionName, nudgeModeFlag)
 
 	// For direct tmux delivery, prefix with sender attribution.
 	// Queue-based delivery stores Sender as a separate field and

@@ -9,6 +9,36 @@ import (
 	"time"
 )
 
+func TestBuildPromptRecognizesFullPathProviders(t *testing.T) {
+	tests := []struct {
+		provider string
+		flag     string
+	}{
+		{provider: "opencode", flag: "--prompt"},
+		{provider: "gemini", flag: "-i"},
+		{provider: "copilot", flag: "-i"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.provider, func(t *testing.T) {
+			command := filepath.Join("tools", tt.provider+".exe")
+			runtimeConfig := &RuntimeConfig{
+				Provider:   "generic",
+				Command:    command,
+				Args:       []string{},
+				PromptMode: "arg",
+			}
+			args := runtimeConfig.BuildArgsWithPrompt("start here")
+			if len(args) != 3 || args[0] != command || args[1] != tt.flag || args[2] != "start here" {
+				t.Fatalf("BuildArgsWithPrompt = %v", args)
+			}
+			built := runtimeConfig.BuildCommandWithPrompt("start here")
+			if !strings.Contains(built, " "+tt.flag+" ") {
+				t.Fatalf("BuildCommandWithPrompt = %q, missing %s", built, tt.flag)
+			}
+		})
+	}
+}
+
 // --- ParseDurationOrDefault ---
 
 func TestParseDurationOrDefault(t *testing.T) {

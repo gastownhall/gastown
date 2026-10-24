@@ -12,6 +12,7 @@ import (
 
 	"github.com/steveyegge/gastown/internal/beads"
 	"github.com/steveyegge/gastown/internal/config"
+	"github.com/steveyegge/gastown/internal/constants"
 	"github.com/steveyegge/gastown/internal/session"
 )
 
@@ -572,5 +573,83 @@ func TestGetStartCommand_ClaudeAgentFallsThrough(t *testing.T) {
 	// path adds beacon injection and model flags.
 	if startCmd == "exec claude --dangerously-skip-permissions" {
 		t.Errorf("getStartCommand returned literal TOML start_command verbatim — beacon injection was skipped: %q", startCmd)
+	}
+}
+
+func TestGetStartCommandPreservesOpenCodeWorkerSession(t *testing.T) {
+	townRoot := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(townRoot, "mayor"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	d := &Daemon{
+		config: &Config{TownRoot: townRoot},
+		logger: log.New(io.Discard, "", 0),
+	}
+	parsed := &ParsedIdentity{RoleType: constants.RoleCrew, RigName: "gastown", AgentName: "alice"}
+	command := d.getStartCommand(nil, parsed, "gt-crew-alice", string(config.AgentOpenCodeServer))
+
+	if !strings.Contains(command, "opencode-worker") {
+		t.Fatalf("restart command = %q, want OpenCode worker", command)
+	}
+	if !strings.Contains(command, "GT_SESSION") || !strings.Contains(command, "gt-crew-alice") {
+		t.Fatalf("restart command lost GT_SESSION: %q", command)
+	}
+	if !strings.Contains(command, "GT_AGENT") || !strings.Contains(command, string(config.AgentOpenCodeServer)) {
+		t.Fatalf("restart command lost effective agent: %q", command)
+	}
+	if !strings.Contains(command, "OPENCODE_PERMISSION") {
+		t.Fatalf("restart command lost OpenCode runtime environment: %q", command)
+	}
+}
+
+func TestGetWorkDirUsesCanonicalStructuredWorkerDirectories(t *testing.T) {
+	townRoot := t.TempDir()
+	d := &Daemon{config: &Config{TownRoot: townRoot}, logger: log.New(io.Discard, "", 0)}
+
+	nestedPolecat := filepath.Join(townRoot, "gastown", "polecats", "furiosa", "gastown")
+	if err := os.MkdirAll(nestedPolecat, 0755); err != nil {
+		t.Fatal(err)
+	}
+	polecatRole := &beads.RoleConfig{WorkDirPattern: "{town}/{rig}/polecats/{name}"}
+	if got := d.getWorkDir(polecatRole, &ParsedIdentity{RoleType: constants.RolePolecat, RigName: "gastown", AgentName: "furiosa"}); got != nestedPolecat {
+		t.Fatalf("polecat work dir = %q, want %q", got, nestedPolecat)
+	}
+
+	deaconDir := filepath.Join(townRoot, "deacon")
+	deaconRole := &beads.RoleConfig{WorkDirPattern: "{town}"}
+	if got := d.getWorkDir(deaconRole, &ParsedIdentity{RoleType: constants.RoleDeacon}); got != deaconDir {
+		t.Fatalf("deacon work dir = %q, want %q", got, deaconDir)
+	}
+	if got := d.getWorkDir(nil, &ParsedIdentity{RoleType: constants.RoleDeacon}); got != deaconDir {
+		t.Fatalf("fallback deacon work dir = %q, want %q", got, deaconDir)
+	}
+}
+
+func TestGetStartCommandUsesCapturedOpenCodeOverrides(t *testing.T) {
+	townRoot := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(townRoot, "mayor"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("GT_OPENCODE_MODEL", "daemon/model")
+	d := &Daemon{config: &Config{TownRoot: townRoot}, logger: log.New(io.Discard, "", 0)}
+	parsed := &ParsedIdentity{RoleType: constants.RoleCrew, RigName: "gastown", AgentName: "alice"}
+	command := d.getStartCommandWithOverrides(nil, parsed, "gt-crew-alice", string(config.AgentOpenCodeServer), map[string]string{
+		"GT_OPENCODE_MODEL": "session/model",
+	})
+	if !strings.Contains(command, "session/model") || strings.Contains(command, "daemon/model") {
+		t.Fatalf("restart command did not preserve captured override: %q", command)
+	}
+}
+
+func TestApplyRuntimeOverridesWins(t *testing.T) {
+	envVars := map[string]string{
+		"GT_OPENCODE_MODEL": "daemon/model",
+		"GT_AGENT":          "opencode-server",
+	}
+	applyRuntimeOverrides(envVars, map[string]string{
+		"GT_OPENCODE_MODEL": "session/model",
+	})
+	if envVars["GT_OPENCODE_MODEL"] != "session/model" {
+		t.Fatalf("GT_OPENCODE_MODEL = %q, want captured session override", envVars["GT_OPENCODE_MODEL"])
 	}
 }

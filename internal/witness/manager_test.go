@@ -81,15 +81,17 @@ func TestBuildWitnessStartCommand_UsesRoleConfig(t *testing.T) {
 
 func TestBuildWitnessStartCommand_DefaultsToRuntime(t *testing.T) {
 	t.Parallel()
-	got, err := buildWitnessStartCommand("/town/rig", "gastown", "/town", "", "", nil, "")
+	townRoot := t.TempDir()
+	got, err := buildWitnessStartCommand(filepath.Join(townRoot, "rig"), "gastown", townRoot, "", "", nil, "")
 	if err != nil {
 		t.Fatalf("buildWitnessStartCommand: %v", err)
 	}
+	got = witnessStartupScriptOrCommand(t, townRoot, got)
 
-	if !strings.Contains(got, "GT_ROLE=gastown/witness") {
+	if !strings.Contains(got, "GT_ROLE") || !strings.Contains(got, "gastown/witness") {
 		t.Errorf("expected GT_ROLE=gastown/witness in command, got %q", got)
 	}
-	if !strings.Contains(got, "BD_ACTOR=gastown/witness") {
+	if !strings.Contains(got, "BD_ACTOR") || !strings.Contains(got, "gastown/witness") {
 		t.Errorf("expected BD_ACTOR=gastown/witness in command, got %q", got)
 	}
 }
@@ -125,30 +127,47 @@ func TestRoleConfigEnvVars_NilConfig(t *testing.T) {
 
 func TestBuildWitnessStartCommand_IncludesConfigDir(t *testing.T) {
 	t.Parallel()
-	got, err := buildWitnessStartCommand("/town/rig", "gastown", "/town", "", "", nil, "/home/user/.claude-accounts/work")
+	townRoot := t.TempDir()
+	got, err := buildWitnessStartCommand(filepath.Join(townRoot, "rig"), "gastown", townRoot, "", "", nil, "/home/user/.claude-accounts/work")
 	if err != nil {
 		t.Fatalf("buildWitnessStartCommand: %v", err)
 	}
+	got = witnessStartupScriptOrCommand(t, townRoot, got)
 
-	if !strings.Contains(got, "CLAUDE_CONFIG_DIR=/home/user/.claude-accounts/work") {
+	if !strings.Contains(got, "CLAUDE_CONFIG_DIR") || !strings.Contains(got, "/home/user/.claude-accounts/work") {
 		t.Errorf("expected CLAUDE_CONFIG_DIR in command, got %q", got)
 	}
 }
 
 func TestBuildWitnessStartCommand_AgentOverrideWins(t *testing.T) {
 	t.Parallel()
+	townRoot := t.TempDir()
 	roleCfg := &beads.RoleConfig{
 		StartCommand: "exec run --role {role}",
 	}
 
-	got, err := buildWitnessStartCommand("/town/rig", "gastown", "/town", "", "codex", roleCfg, "")
+	got, err := buildWitnessStartCommand(filepath.Join(townRoot, "rig"), "gastown", townRoot, "", "codex", roleCfg, "")
 	if err != nil {
 		t.Fatalf("buildWitnessStartCommand: %v", err)
 	}
+	got = witnessStartupScriptOrCommand(t, townRoot, got)
 	if strings.Contains(got, "exec run") {
 		t.Fatalf("expected agent override to bypass role start_command, got %q", got)
 	}
-	if !strings.Contains(got, "GT_ROLE=gastown/witness") {
+	if !strings.Contains(got, "GT_ROLE") || !strings.Contains(got, "gastown/witness") {
 		t.Errorf("expected GT_ROLE=gastown/witness in command, got %q", got)
 	}
+}
+
+func witnessStartupScriptOrCommand(t *testing.T, townRoot, command string) string {
+	t.Helper()
+	scriptPath := filepath.Join(townRoot, "daemon", "scripts", "gastown-witness-startup.ps1")
+	data, err := os.ReadFile(scriptPath)
+	if os.IsNotExist(err) {
+		return command
+	}
+	if err != nil {
+		t.Fatalf("read witness startup script: %v", err)
+	}
+	return string(data)
 }

@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"syscall"
 	"time"
 
@@ -69,6 +70,9 @@ func runNudgePoller(cmd *cobra.Command, args []string) error {
 	if exists, _ := t.HasSession(sessionName); !exists {
 		return fmt.Errorf("session %q not found", sessionName)
 	}
+	if hasOpenCodeServerSession(townRoot, sessionName) {
+		return nil
+	}
 
 	// Resolve nudge options once at startup: if the target agent uses Escape
 	// as cancel (e.g., Gemini CLI), skip the Escape keystroke during delivery
@@ -78,6 +82,13 @@ func runNudgePoller(cmd *cobra.Command, args []string) error {
 	hasPromptDetection := false
 	if name, err := t.GetEnvironment(sessionName, "GT_AGENT"); err == nil && name != "" {
 		agentName = name
+		rigPath := ""
+		if rigName, rigErr := t.GetEnvironment(sessionName, "GT_RIG"); rigErr == nil && rigName != "" {
+			rigPath = filepath.Join(townRoot, rigName)
+		}
+		if config.AgentManagesNudgeQueue(townRoot, rigPath, agentName) {
+			return nil
+		}
 		if preset := config.GetAgentPresetByName(agentName); preset != nil {
 			hasPromptDetection = preset.ReadyPromptPrefix != ""
 			if preset.EscapeCancelsRequest {
@@ -102,6 +113,9 @@ func runNudgePoller(cmd *cobra.Command, args []string) error {
 			// Check if session still exists.
 			if exists, _ := t.HasSession(sessionName); !exists {
 				return nil // session gone, exit
+			}
+			if hasOpenCodeServerSession(townRoot, sessionName) {
+				return nil
 			}
 
 			// Check if there are queued nudges.

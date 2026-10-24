@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/steveyegge/gastown/internal/config"
@@ -30,6 +31,7 @@ type tmuxOps interface {
 	NewSessionWithCommandAndEnv(name, workDir, command string, env map[string]string) error
 	SetRemainOnExit(pane string, on bool) error
 	SetEnvironment(session, key, value string) error
+	GetEnvironment(session, key string) (string, error)
 	GetPaneID(session string) (string, error)
 	ConfigureGasTownSession(session string, theme *tmux.Theme, rig, worker, role string) error
 	WaitForCommand(session string, excludeCommands []string, timeout time.Duration) error
@@ -84,6 +86,14 @@ func (m *Manager) startNudgePoller(sessionID string) {
 	}
 }
 
+func (m *Manager) reconcileNudgePoller(sessionID string, runtimeConfig *config.RuntimeConfig) {
+	if runtimeConfig != nil && runtimeConfig.ManagesNudgeQueue {
+		m.stopNudgePoller(sessionID)
+		return
+	}
+	m.startNudgePoller(sessionID)
+}
+
 func (m *Manager) stopNudgePoller(sessionID string) {
 	if m.stopPoller == nil {
 		return
@@ -102,10 +112,23 @@ func (m *Manager) Start(agentOverride string) error {
 
 	// Check if session already exists
 	running, _ := t.HasSession(sessionID)
+	effectiveAgent := strings.TrimSpace(agentOverride)
+	if running {
+		if current, err := t.GetEnvironment(sessionID, "GT_AGENT"); err == nil {
+			if current = strings.TrimSpace(current); current != "" {
+				effectiveAgent = current
+			}
+		}
+	}
+	deaconDir := m.deaconDir()
 	if running {
 		// Session exists - check if agent is actually running (healthy vs zombie)
 		if t.IsAgentAlive(sessionID) {
-			m.startNudgePoller(sessionID)
+			var runtimeConfig *config.RuntimeConfig
+			if effectiveAgent != "" {
+				runtimeConfig, _, _ = config.ResolveAgentConfigWithOverride(m.townRoot, "", effectiveAgent)
+			}
+			m.reconcileNudgePoller(sessionID, runtimeConfig)
 			return ErrAlreadyRunning
 		}
 
@@ -118,15 +141,23 @@ func (m *Manager) Start(agentOverride string) error {
 			return fmt.Errorf("killing zombie session: %w", err)
 		}
 	}
+	var runtimeConfig *config.RuntimeConfig
+	if effectiveAgent != "" {
+		var err error
+		runtimeConfig, _, err = config.ResolveAgentConfigWithOverride(m.townRoot, "", effectiveAgent)
+		if err != nil {
+			return fmt.Errorf("resolving deacon agent %s: %w", effectiveAgent, err)
+		}
+	} else {
+		runtimeConfig = config.ResolveRoleAgentConfig("deacon", m.townRoot, "")
+	}
 
 	// Ensure deacon directory exists
-	deaconDir := m.deaconDir()
 	if err := os.MkdirAll(deaconDir, 0755); err != nil {
 		return fmt.Errorf("creating deacon directory: %w", err)
 	}
 
 	// Ensure runtime settings exist in deaconDir where session runs.
-	runtimeConfig := config.ResolveRoleAgentConfig("deacon", m.townRoot, deaconDir)
 	if err := runtime.EnsureSettingsForRole(deaconDir, deaconDir, "deacon", runtimeConfig); err != nil {
 		return fmt.Errorf("ensuring runtime settings: %w", err)
 	}
@@ -142,7 +173,7 @@ func (m *Manager) Start(agentOverride string) error {
 		Prompt:      initialPrompt,
 		Topic:       "patrol",
 		SessionName: sessionID,
-	}, "", initialPrompt, agentOverride)
+	}, "", initialPrompt, effectiveAgent)
 	if err != nil {
 		return fmt.Errorf("building startup command: %w", err)
 	}
@@ -153,7 +184,7 @@ func (m *Manager) Start(agentOverride string) error {
 	envVars := config.AgentEnv(config.AgentEnvConfig{
 		Role:        "deacon",
 		TownRoot:    m.townRoot,
-		Agent:       agentOverride,
+		Agent:       effectiveAgent,
 		SessionName: sessionID,
 	})
 	envVars = session.MergeRuntimeLivenessEnv(envVars, runtimeConfig)
@@ -203,7 +234,7 @@ func (m *Manager) Start(agentOverride string) error {
 
 	// Accept startup dialogs (workspace trust + bypass permissions) if they appear.
 	_ = t.AcceptStartupDialogs(sessionID)
-	m.startNudgePoller(sessionID)
+	m.reconcileNudgePoller(sessionID, runtimeConfig)
 
 	time.Sleep(constants.ShutdownNotifyDelay)
 

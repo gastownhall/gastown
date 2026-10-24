@@ -20,12 +20,10 @@ import (
 	"strconv"
 	"strings"
 	"sync"
-	"syscall"
 	"time"
 
 	"github.com/fsnotify/fsnotify"
 	"github.com/steveyegge/gastown/internal/constants"
-	"github.com/steveyegge/gastown/internal/util"
 )
 
 // Poller tuning defaults (overridable via flags or tests).
@@ -94,7 +92,7 @@ func buildPollerCommand(gtBin, townRoot, session string) *exec.Cmd {
 	cmd.Dir = townRoot
 	cmd.Stdout = nil // discard
 	cmd.Stderr = nil // discard
-	util.SetDetachedProcessGroup(cmd)
+	cmd.SysProcAttr = detachedProcAttr()
 	return cmd
 }
 
@@ -128,12 +126,17 @@ func StopPoller(townRoot, session string) error {
 		return nil
 	}
 
-	// Send SIGTERM for graceful shutdown.
-	if err := proc.Signal(syscall.SIGTERM); err != nil {
-		_ = os.Remove(pidPath)
-		return fmt.Errorf("sending SIGTERM to poller (pid %d): %w", pid, err)
+	if err := terminateProcess(proc); err != nil && pollerProcessAlive(pid) {
+		return fmt.Errorf("terminating poller (pid %d): %w", pid, err)
 	}
 
+	deadline := time.Now().Add(2 * time.Second)
+	for pollerProcessAlive(pid) && time.Now().Before(deadline) {
+		time.Sleep(25 * time.Millisecond)
+	}
+	if pollerProcessAlive(pid) {
+		return fmt.Errorf("poller (pid %d) did not stop", pid)
+	}
 	_ = os.Remove(pidPath)
 	return nil
 }

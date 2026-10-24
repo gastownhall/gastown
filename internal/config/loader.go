@@ -82,13 +82,16 @@ func SaveTownConfig(path string, config *TownConfig) error {
 }
 
 // LoadRigsConfig loads and validates a rigs registry file.
-// Retries once on read/parse errors to tolerate the brief window during which a
-// concurrent non-atomic writer could leave the file truncated. With
-// SaveRigsConfig now using atomic write-then-rename this is belt-and-suspenders
-// against older versions that may still be writing the file.
+// Retries transient read/parse errors, including a brief Windows not-found or
+// sharing window during atomic replacement and truncated writes from older
+// Gas Town versions.
 func LoadRigsConfig(path string) (*RigsConfig, error) {
+	return loadRigsConfig(path, os.ReadFile)
+}
+
+func loadRigsConfig(path string, readFile func(string) ([]byte, error)) (*RigsConfig, error) {
 	readAndParse := func() (*RigsConfig, error) {
-		data, err := os.ReadFile(path) //nolint:gosec // G304: path is constructed internally, not from user input
+		data, err := readFile(path)
 		if err != nil {
 			if os.IsNotExist(err) {
 				return nil, fmt.Errorf("%w: %s", ErrNotFound, path)
@@ -108,9 +111,16 @@ func LoadRigsConfig(path string) (*RigsConfig, error) {
 		return &config, nil
 	}
 
-	cfg, err := readAndParse()
-	if err != nil && !errors.Is(err, ErrNotFound) {
+	var cfg *RigsConfig
+	var err error
+	for attempt := 0; attempt < 3; attempt++ {
 		cfg, err = readAndParse()
+		if err == nil {
+			return cfg, nil
+		}
+		if attempt < 2 {
+			time.Sleep(time.Duration(attempt+1) * 5 * time.Millisecond)
+		}
 	}
 	return cfg, err
 }
@@ -1866,11 +1876,12 @@ func fillRuntimeDefaults(rc *RuntimeConfig) *RuntimeConfig {
 
 	// Create result with scalar fields (strings are immutable in Go)
 	result := &RuntimeConfig{
-		Provider:      rc.Provider,
-		Command:       rc.Command,
-		InitialPrompt: rc.InitialPrompt,
-		PromptMode:    rc.PromptMode,
-		ResolvedAgent: rc.ResolvedAgent,
+		Provider:          rc.Provider,
+		Command:           rc.Command,
+		InitialPrompt:     rc.InitialPrompt,
+		PromptMode:        rc.PromptMode,
+		ResolvedAgent:     rc.ResolvedAgent,
+		ManagesNudgeQueue: rc.ManagesNudgeQueue,
 	}
 
 	// Deep copy Args slice to avoid sharing backing array
@@ -1988,6 +1999,9 @@ func fillRuntimeDefaults(rc *RuntimeConfig) *RuntimeConfig {
 	// Auto-fill PromptMode from preset.
 	if result.PromptMode == "" && preset != nil && preset.PromptMode != "" {
 		result.PromptMode = preset.PromptMode
+	}
+	if preset != nil && preset.ManagesNudgeQueue {
+		result.ManagesNudgeQueue = true
 	}
 
 	// Auto-fill Instructions defaults from preset.
@@ -2137,6 +2151,21 @@ func GetRuntimeCommandWithPromptAndAgentOverride(rigPath, prompt, agentOverride 
 		return "", err
 	}
 	return rc.BuildCommandWithPrompt(prompt), nil
+}
+
+// AgentManagesNudgeQueue resolves built-in and custom agent aliases to decide
+// whether the runtime owns structured queue delivery.
+func AgentManagesNudgeQueue(townRoot, rigPath, agent string) bool {
+	agent = strings.TrimSpace(agent)
+	if agent == "" {
+		return false
+	}
+	runtimeConfig, _, err := ResolveAgentConfigWithOverride(townRoot, rigPath, agent)
+	if err == nil && runtimeConfig != nil {
+		return runtimeConfig.ManagesNudgeQueue
+	}
+	preset := GetAgentPresetByName(agent)
+	return preset != nil && preset.ManagesNudgeQueue
 }
 
 // findTownRootFromCwd locates the town root by walking up from cwd.
@@ -2304,16 +2333,7 @@ func BuildStartupCommand(envVars map[string]string, rigPath, prompt string) stri
 			scriptLines = append(scriptLines, fmt.Sprintf("$env:%s=%s", k, psQuote(resolvedEnv[k])))
 		}
 
-		var agentCmd string
-		if len(rc.ExecWrapper) > 0 {
-			agentCmd = strings.Join(rc.ExecWrapper, " ") + " "
-		}
-		if prompt != "" {
-			agentCmd += "& " + rc.BuildCommandWithPrompt(prompt)
-		} else {
-			agentCmd += "& " + rc.BuildCommand()
-		}
-		scriptLines = append(scriptLines, agentCmd)
+		scriptLines = append(scriptLines, powerShellRuntimeCommand(rc, prompt))
 
 		// Write script to temp file in town's daemon dir
 		townRoot := resolvedEnv["GT_ROOT"]
@@ -2560,16 +2580,7 @@ func BuildStartupCommandWithAgentOverride(envVars map[string]string, rigPath, pr
 			scriptLines = append(scriptLines, fmt.Sprintf("$env:%s=%s", k, psQuote(resolvedEnv[k])))
 		}
 
-		var agentCmd string
-		if len(rc.ExecWrapper) > 0 {
-			agentCmd = strings.Join(rc.ExecWrapper, " ") + " "
-		}
-		if prompt != "" {
-			agentCmd += "& " + rc.BuildCommandWithPrompt(prompt)
-		} else {
-			agentCmd += "& " + rc.BuildCommand()
-		}
-		scriptLines = append(scriptLines, agentCmd)
+		scriptLines = append(scriptLines, powerShellRuntimeCommand(rc, prompt))
 
 		townRoot := resolvedEnv["GT_ROOT"]
 		if townRoot == "" {
@@ -2613,6 +2624,93 @@ func BuildStartupCommandWithAgentOverride(envVars map[string]string, rigPath, pr
 	}
 
 	return cmd, nil
+}
+
+func powerShellInvocation(command string) string {
+	if strings.HasPrefix(strings.TrimSpace(command), "& ") {
+		return command
+	}
+	return "& " + command
+}
+
+func powerShellRuntimeCommand(runtimeConfig *RuntimeConfig, prompt string) string {
+	if len(runtimeConfig.ExecWrapper) == 0 {
+		command := runtimeConfig.BuildCommand()
+		if prompt != "" {
+			command = runtimeConfig.BuildCommandWithPrompt(prompt)
+		}
+		return powerShellInvocation(command)
+	}
+
+	argv := append([]string(nil), runtimeConfig.ExecWrapper...)
+	argv = append(argv, runtimeConfig.BuildArgsWithPrompt(prompt)...)
+	escapedArgs := make([]string, 0, len(argv)-1)
+	for _, arg := range argv[1:] {
+		escapedArgs = append(escapedArgs, escapeWindowsArg(arg))
+	}
+	return strings.Join([]string{
+		"$__gtStartInfo=New-Object System.Diagnostics.ProcessStartInfo",
+		"$__gtStartInfo.FileName=" + psQuote(argv[0]),
+		"$__gtStartInfo.Arguments=" + psQuote(strings.Join(escapedArgs, " ")),
+		"$__gtStartInfo.UseShellExecute=$false",
+		"$__gtProcess=[System.Diagnostics.Process]::Start($__gtStartInfo)",
+		"if ($null -eq $__gtProcess) { exit 1 }",
+		"$__gtProcess.WaitForExit()",
+		"exit $__gtProcess.ExitCode",
+	}, "\n")
+}
+
+// escapeWindowsArg follows the quoting rules consumed by CommandLineToArgvW.
+// It is used with ProcessStartInfo.Arguments to bypass WinPS 5.1's lossy native
+// argument binder.
+func escapeWindowsArg(arg string) string {
+	if arg == "" {
+		return `""`
+	}
+	needsBackslash := false
+	hasSpace := false
+	for i := 0; i < len(arg); i++ {
+		switch arg[i] {
+		case '"', '\\':
+			needsBackslash = true
+		case ' ', '\t':
+			hasSpace = true
+		}
+	}
+	if !needsBackslash && !hasSpace {
+		return arg
+	}
+	if !needsBackslash {
+		return `"` + arg + `"`
+	}
+
+	var result strings.Builder
+	if hasSpace {
+		result.WriteByte('"')
+	}
+	slashes := 0
+	for i := 0; i < len(arg); i++ {
+		c := arg[i]
+		switch c {
+		case '\\':
+			slashes++
+		case '"':
+			for ; slashes > 0; slashes-- {
+				result.WriteByte('\\')
+			}
+			result.WriteByte('\\')
+		default:
+			slashes = 0
+		}
+		result.WriteByte(c)
+	}
+	if hasSpace {
+		for ; slashes > 0; slashes-- {
+			result.WriteByte('\\')
+		}
+		result.WriteByte('"')
+	}
+	return result.String()
 }
 
 // BuildStartupCommandFromConfig builds a startup command from a complete AgentEnvConfig.

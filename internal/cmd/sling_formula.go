@@ -15,6 +15,7 @@ import (
 	"github.com/steveyegge/gastown/internal/cli"
 	"github.com/steveyegge/gastown/internal/events"
 	"github.com/steveyegge/gastown/internal/formula"
+	"github.com/steveyegge/gastown/internal/nudge"
 	"github.com/steveyegge/gastown/internal/style"
 	"github.com/steveyegge/gastown/internal/telemetry"
 	"github.com/steveyegge/gastown/internal/tmux"
@@ -592,9 +593,22 @@ func runSlingFormula(ctx context.Context, args []string) (err error) {
 	}
 
 	t := tmux.NewTmux()
-	if err := t.NudgePane(targetPane, prompt); err != nil {
+	sessionName, resolveErr := resolveSessionFromPane(targetPane)
+	var nudgeErr error
+	if resolveErr != nil {
+		nudgeErr = resolveErr
+	} else if hasOpenCodeServerSession(townRoot, sessionName) {
+		nudgeErr = nudge.Enqueue(townRoot, sessionName, nudge.QueuedNudge{
+			Sender:   "sling",
+			Message:  prompt,
+			Priority: nudge.PriorityNormal,
+		})
+	} else {
+		nudgeErr = t.NudgePane(targetPane, prompt)
+	}
+	if nudgeErr != nil {
 		// Graceful fallback for no-tmux mode
-		fmt.Printf("%s Could not nudge (no tmux?): %v\n", style.Dim.Render("○"), err)
+		fmt.Printf("%s Could not nudge (no tmux?): %v\n", style.Dim.Render("○"), nudgeErr)
 		fmt.Printf("  Agent will discover work via gt prime / bd show\n")
 	} else {
 		fmt.Printf("%s Nudged to start\n", style.Bold.Render("▶"))

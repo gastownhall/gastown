@@ -715,7 +715,15 @@ func (m *Manager) Start(name string, opts StartOptions) error {
 	// Ensure runtime settings exist in the shared crew parent directory.
 	// Settings are passed to Claude Code via --settings flag.
 	townRoot := filepath.Dir(m.rig.Path)
-	runtimeConfig := config.ResolveWorkerAgentConfig(name, townRoot, m.rig.Path)
+	var runtimeConfig *config.RuntimeConfig
+	if opts.AgentOverride != "" {
+		runtimeConfig, _, err = config.ResolveAgentConfigWithOverride(townRoot, m.rig.Path, opts.AgentOverride)
+		if err != nil {
+			return fmt.Errorf("resolving agent config for %s: %w", opts.AgentOverride, err)
+		}
+	} else {
+		runtimeConfig = config.ResolveWorkerAgentConfig(name, townRoot, m.rig.Path)
+	}
 	crewSettingsDir := config.RoleSettingsDir("crew", m.rig.Path)
 	if err := runtime.EnsureSettingsForRole(crewSettingsDir, worker.ClonePath, "crew", runtimeConfig); err != nil {
 		return fmt.Errorf("ensuring runtime settings: %w", err)
@@ -889,16 +897,23 @@ func (m *Manager) Start(name string, opts StartOptions) error {
 			_ = t.AcceptStartupDialogs(sessionID)
 		}
 
-		// Start background nudge-queue poller for ALL agents (gt-dgf).
+		// Start a background nudge-queue poller unless the runtime owns queue
+		// delivery through a structured transport (for example OpenCode HTTP).
 		// Claude drains its queue via UserPromptSubmit hook, but that hook only
 		// fires when the agent submits a prompt. Idle agents (waiting at prompt
 		// for work) never submit, so queued nudges deadlock: agent waits for
 		// nudge, nudge waits for agent input. The poller breaks this cycle by
 		// polling every 10s and delivering when idle. Drain() is atomic so the
 		// poller and UserPromptSubmit hook coexist safely.
-		if _, pollerErr := nudge.StartPoller(townRoot, sessionID); pollerErr != nil {
-			// Non-fatal — nudges may be delayed but the agent still works.
-			style.PrintWarning("could not start nudge poller for %s: %v", name, pollerErr)
+		if runtimeConfig.ManagesNudgeQueue {
+			if pollerErr := nudge.StopPoller(townRoot, sessionID); pollerErr != nil {
+				style.PrintWarning("could not stop stale nudge poller for %s: %v", name, pollerErr)
+			}
+		} else {
+			if _, pollerErr := nudge.StartPoller(townRoot, sessionID); pollerErr != nil {
+				// Non-fatal — nudges may be delayed but the agent still works.
+				style.PrintWarning("could not start nudge poller for %s: %v", name, pollerErr)
+			}
 		}
 	}
 

@@ -132,7 +132,7 @@ switch ($cmd) {
   default { exit 0 }
 }
 `
-		cmdScript := "@echo off\r\npwsh -NoProfile -NoLogo -File \"" + psPath + "\" %*\r\n"
+		cmdScript := "@echo off\r\npowershell.exe -NoProfile -NoLogo -ExecutionPolicy Bypass -File \"" + psPath + "\" %*\r\n"
 		if err := os.WriteFile(psPath, []byte(psScript), 0644); err != nil {
 			t.Fatalf("write mock bd.ps1: %v", err)
 		}
@@ -2356,7 +2356,7 @@ switch ($cmd) {
   default { exit 0 }
 }
 `
-		cmdScript := "@echo off\r\npwsh -NoProfile -NoLogo -File \"" + psPath + "\" %*\r\n"
+		cmdScript := "@echo off\r\npowershell.exe -NoProfile -NoLogo -ExecutionPolicy Bypass -File \"" + psPath + "\" %*\r\n"
 		if err := os.WriteFile(psPath, []byte(psScript), 0644); err != nil {
 			t.Fatalf("write mock bd.ps1: %v", err)
 		}

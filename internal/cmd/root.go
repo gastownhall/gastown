@@ -43,56 +43,58 @@ across distributed teams of AI agents working on shared codebases.`, cmdName)
 // Commands that don't require beads to be installed/checked.
 // These commands should work even when bd is missing or outdated.
 var beadsExemptCommands = map[string]bool{
-	"version":       true,
-	"help":          true,
-	"completion":    true,
-	"crew":          true,
-	"polecat":       true,
-	"witness":       true,
-	"refinery":      true,
-	"status":        true,
-	"status-line":   true,
-	"mail":          true,
-	"hook":          true,
-	"prime":         true,
-	"nudge":         true,
-	"seance":        true,
-	"doctor":        true,
-	"dolt":          true,
-	"handoff":       true,
-	"costs":         true,
-	"feed":          true,
-	"rig":           true,
-	"scheduler":     true,
-	"config":        true,
-	"install":       true,
-	"tap":           true,
-	"dnd":           true,
-	"estop":         true, // E-stop must work when Dolt is down
-	"thaw":          true, // Thaw must work when Dolt is down
-	"signal":        true, // Hook signal handlers must be fast, handle beads internally
-	"metrics":       true, // Metrics reads local JSONL, no beads needed
-	"krc":           true, // KRC doesn't require beads
-	"run-migration": true, // Migration orchestrator handles its own beads checks
-	"health":        true, // Health check doesn't require beads
-	"upgrade":       true, // Post-install migration orchestrator
-	"heartbeat":     true, // Heartbeat state update — must be fast and dependency-free
+	"version":         true,
+	"help":            true,
+	"completion":      true,
+	"crew":            true,
+	"polecat":         true,
+	"witness":         true,
+	"refinery":        true,
+	"status":          true,
+	"status-line":     true,
+	"mail":            true,
+	"hook":            true,
+	"prime":           true,
+	"nudge":           true,
+	"seance":          true,
+	"doctor":          true,
+	"dolt":            true,
+	"handoff":         true,
+	"costs":           true,
+	"feed":            true,
+	"rig":             true,
+	"scheduler":       true,
+	"config":          true,
+	"install":         true,
+	"tap":             true,
+	"dnd":             true,
+	"estop":           true, // E-stop must work when Dolt is down
+	"thaw":            true, // Thaw must work when Dolt is down
+	"signal":          true, // Hook signal handlers must be fast, handle beads internally
+	"metrics":         true, // Metrics reads local JSONL, no beads needed
+	"krc":             true, // KRC doesn't require beads
+	"run-migration":   true, // Migration orchestrator handles its own beads checks
+	"health":          true, // Health check doesn't require beads
+	"upgrade":         true, // Post-install migration orchestrator
+	"heartbeat":       true, // Heartbeat state update — must be fast and dependency-free
+	"opencode-worker": true, // Internal worker transport handles its own prerequisites
 }
 
 // Commands exempt from the town root branch warning.
 // These are commands that help fix the problem or are diagnostic.
 var branchCheckExemptCommands = map[string]bool{
-	"version":     true,
-	"help":        true,
-	"completion":  true,
-	"doctor":      true, // Used to fix the problem
-	"status-line": true, // tmux hot path; never run git freshness checks here
-	"estop":       true, // Emergency stop must always work
-	"thaw":        true, // Thaw must always work
-	"install":     true, // Initial setup
-	"git-init":    true, // Git setup
-	"upgrade":     true, // Post-install migration
-	"scheduler":   true, // Daemon hot path; scheduler handles beads internally
+	"version":         true,
+	"help":            true,
+	"completion":      true,
+	"doctor":          true, // Used to fix the problem
+	"status-line":     true, // tmux hot path; never run git freshness checks here
+	"estop":           true, // Emergency stop must always work
+	"thaw":            true, // Thaw must always work
+	"install":         true, // Initial setup
+	"git-init":        true, // Git setup
+	"upgrade":         true, // Post-install migration
+	"scheduler":       true, // Daemon hot path; scheduler handles beads internally
+	"opencode-worker": true,
 }
 
 // persistentPreRun runs before every command.

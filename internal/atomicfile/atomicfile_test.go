@@ -212,17 +212,23 @@ func TestWriteFileConcurrent(t *testing.T) {
 
 	const numWriters = 10
 	var wg sync.WaitGroup
+	errs := make([]error, numWriters)
 	wg.Add(numWriters)
 
 	for i := 0; i < numWriters; i++ {
 		go func(n int) {
 			defer wg.Done()
 			data := []byte(string(rune('A' + n)))
-			_ = WriteFile(testFile, data, 0644)
+			errs[n] = WriteFile(testFile, data, 0644)
 		}(i)
 	}
 
 	wg.Wait()
+	for i, err := range errs {
+		if err != nil {
+			t.Fatalf("writer %d: %v", i, err)
+		}
+	}
 
 	content, err := os.ReadFile(testFile)
 	if err != nil {
@@ -494,15 +500,10 @@ func TestWriteFileConcurrentIntegrity(t *testing.T) {
 
 	wg.Wait()
 
-	anySuccess := false
-	for _, err := range errs {
-		if err == nil {
-			anySuccess = true
-			break
+	for i, err := range errs {
+		if err != nil {
+			t.Fatalf("writer %d: %v", i, err)
 		}
-	}
-	if !anySuccess {
-		t.Fatal("All concurrent writes failed")
 	}
 
 	content, err := os.ReadFile(testFile)

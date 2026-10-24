@@ -266,9 +266,126 @@ func TestBuildRestartCommand_MergesAgentPresetEnv(t *testing.T) {
 	}
 }
 
+func TestBuildRestartCommandPreservesGasTownSession(t *testing.T) {
+	setupHandoffTestRegistry(t)
+	townRoot := t.TempDir()
+	rigPath := filepath.Join(townRoot, "gastown")
+	crewDir := filepath.Join(rigPath, "crew", "alice")
+	if err := os.MkdirAll(filepath.Join(townRoot, "mayor"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(townRoot, "mayor", "town.json"), []byte(`{"name":"gastown"}`), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(crewDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	runOpenCodeGit(t, crewDir, "init")
+	runOpenCodeGit(t, crewDir, "config", "user.email", "test@example.com")
+	runOpenCodeGit(t, crewDir, "config", "user.name", "Gas Town Test")
+	if err := os.WriteFile(filepath.Join(crewDir, "README.md"), []byte("test\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	runOpenCodeGit(t, crewDir, "add", "README.md")
+	runOpenCodeGit(t, crewDir, "commit", "-m", "initial")
+	runOpenCodeGit(t, crewDir, "checkout", "-b", "feature/handoff")
+	if err := config.SaveTownSettings(config.TownSettingsPath(townRoot), config.NewTownSettings()); err != nil {
+		t.Fatal(err)
+	}
+	if err := config.SaveRigSettings(config.RigSettingsPath(rigPath), config.NewRigSettings()); err != nil {
+		t.Fatal(err)
+	}
+
+	originalDir, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chdir(originalDir) })
+	if err := os.Chdir(crewDir); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("GT_ROOT", townRoot)
+	t.Setenv("GT_TOWN_ROOT", townRoot)
+	t.Setenv("GT_AGENT", string(config.AgentOpenCodeServer))
+	t.Setenv("GT_OPENCODE_COMMAND", "custom-opencode")
+	t.Setenv("GT_OPENCODE_AGENT", "review")
+	t.Setenv("GT_OPENCODE_MODEL", "provider/model")
+	t.Setenv("GT_OPENCODE_VARIANT", "high")
+
+	command, err := buildRestartCommand("gt-crew-alice")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(command, "GT_SESSION") || !strings.Contains(command, "gt-crew-alice") {
+		t.Fatalf("restart command lost Gas Town session: %q", command)
+	}
+	if !strings.Contains(command, "GT_BRANCH") || !strings.Contains(command, "feature/handoff") {
+		t.Fatalf("restart command lost work key: %q", command)
+	}
+	for _, value := range []string{"custom-opencode", "review", "provider/model", "high"} {
+		if !strings.Contains(command, value) {
+			t.Fatalf("restart command lost OpenCode override %q: %q", value, command)
+		}
+	}
+
+	runOpenCodeGit(t, crewDir, "checkout", "--detach")
+	revisionCmd := exec.Command("git", "-C", crewDir, "rev-parse", "HEAD")
+	revisionBytes, err := revisionCmd.Output()
+	if err != nil {
+		t.Fatal(err)
+	}
+	revision := strings.TrimSpace(string(revisionBytes))
+	command, err = buildRestartCommand("gt-crew-alice")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(command, "GT_BRANCH") || !strings.Contains(command, revision) {
+		t.Fatalf("detached handoff did not use commit SHA %q: %q", revision, command)
+	}
+
+	t.Setenv("GT_AGENT", "claude")
+	t.Setenv("GT_PROCESS_NAMES", "caller-process")
+	t.Setenv("GT_OPENCODE_MODEL", "caller/model")
+	command, err = buildRestartCommandWithOpts("gt-crew-alice", buildRestartCommandOpts{Environment: map[string]string{
+		"GT_AGENT":          string(config.AgentOpenCodeServer),
+		"GT_PROCESS_NAMES":  "target-process",
+		"GT_OPENCODE_MODEL": "target/model",
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{string(config.AgentOpenCodeServer), "target-process", "target/model"} {
+		if !strings.Contains(command, want) {
+			t.Fatalf("remote restart lost target value %q: %q", want, command)
+		}
+	}
+	for _, unwanted := range []string{"caller-process", "caller/model"} {
+		if strings.Contains(command, unwanted) {
+			t.Fatalf("remote restart leaked caller value %q: %q", unwanted, command)
+		}
+	}
+}
+
+func TestSessionWorkDirUsesNestedPolecatWorktree(t *testing.T) {
+	setupHandoffTestRegistry(t)
+	townRoot := t.TempDir()
+	want := filepath.Join(townRoot, "gastown", "polecats", "furiosa", "gastown")
+	if err := os.MkdirAll(want, 0755); err != nil {
+		t.Fatal(err)
+	}
+	got, err := sessionWorkDir("gt-furiosa", townRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != want {
+		t.Fatalf("sessionWorkDir = %q, want %q", got, want)
+	}
+}
+
 func TestBuildRestartCommand_ClearsBDTargetSelectors(t *testing.T) {
 	setupHandoffTestRegistry(t)
 
+	townRoot := t.TempDir()
 	origCwd, _ := os.Getwd()
 	origGTAgent := os.Getenv("GT_AGENT")
 	origTownRoot := os.Getenv("GT_TOWN_ROOT")
@@ -280,7 +397,6 @@ func TestBuildRestartCommand_ClearsBDTargetSelectors(t *testing.T) {
 		_ = os.Setenv("GT_ROOT", origRoot)
 	})
 
-	townRoot := t.TempDir()
 	rigPath := filepath.Join(townRoot, "gastown")
 	witnessDir := filepath.Join(rigPath, "witness")
 	if err := os.MkdirAll(filepath.Join(townRoot, "mayor"), 0755); err != nil {
@@ -339,9 +455,9 @@ func TestBuildRestartCommand_ClearsBDTargetSelectors(t *testing.T) {
 			t.Fatalf("restart command leaked stale bd selector value %q: %q", stale, cmd)
 		}
 	}
-	for _, want := range []string{"GT_DOLT_PORT=1555", "GT_DOLT_HOST=agent-host"} {
-		if !strings.Contains(cmd, want) {
-			t.Fatalf("restart command missing preserved connection env %q: %q", want, cmd)
+	for key, value := range map[string]string{"GT_DOLT_PORT": "1555", "GT_DOLT_HOST": "agent-host"} {
+		if !strings.Contains(cmd, key) || !strings.Contains(cmd, value) {
+			t.Fatalf("restart command missing preserved connection env %s=%s: %q", key, value, cmd)
 		}
 	}
 }

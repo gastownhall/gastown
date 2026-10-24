@@ -11,8 +11,10 @@ package nudge
 
 import (
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -46,7 +48,7 @@ const (
 	MaxQueueDepth = 50
 
 	// staleClaimThreshold is how long a .claimed file must be untouched
-	// before Drain considers it orphaned (from a crashed drainer) and removes it.
+	// before Drain considers it orphaned (from a crashed drainer) and restores it.
 	staleClaimThreshold = 5 * time.Minute
 )
 
@@ -141,15 +143,61 @@ func Enqueue(townRoot, session string, nudge QueuedNudge) error {
 // Existing timestamps are preserved so FIFO ordering remains stable relative to
 // one another; only expired nudges are skipped.
 func Requeue(townRoot, session string, nudges []QueuedNudge) error {
+	var requeueErr error
 	for _, n := range nudges {
 		if !n.ExpiresAt.IsZero() && time.Now().After(n.ExpiresAt) {
 			continue
 		}
 		if err := Enqueue(townRoot, session, n); err != nil {
-			return err
+			requeueErr = errors.Join(requeueErr, err)
 		}
 	}
-	return nil
+	return requeueErr
+}
+
+type claimedNudge struct {
+	originalPath string
+	claimPath    string
+}
+
+// ClaimedNudges keeps queue files durably leased until the caller either
+// commits successful delivery or releases them for another attempt.
+type ClaimedNudges struct {
+	Nudges  []QueuedNudge
+	claims  []claimedNudge
+	message string
+}
+
+func (c *ClaimedNudges) MessageID() string {
+	return c.message
+}
+
+func (c *ClaimedNudges) Commit() error {
+	var commitErr error
+	remaining := c.claims[:0]
+	for _, claim := range c.claims {
+		if err := os.Remove(claim.claimPath); err != nil && !os.IsNotExist(err) {
+			commitErr = errors.Join(commitErr, err)
+			remaining = append(remaining, claim)
+		}
+	}
+	c.claims = remaining
+	return commitErr
+}
+
+func (c *ClaimedNudges) Release() error {
+	var releaseErr error
+	remaining := c.claims[:0]
+	for _, claim := range c.claims {
+		if err := os.Rename(claim.claimPath, claim.originalPath); err != nil {
+			if !os.IsNotExist(err) {
+				releaseErr = errors.Join(releaseErr, err)
+				remaining = append(remaining, claim)
+			}
+		}
+	}
+	c.claims = remaining
+	return releaseErr
 }
 
 // Drain reads and removes all queued nudges for a session, returning them
@@ -161,13 +209,23 @@ func Requeue(townRoot, session string, nudges []QueuedNudge) error {
 //
 // Expired nudges (past ExpiresAt) are silently discarded during drain.
 // Orphaned .claimed files from crashed drainers are swept if older than 5 minutes.
-func Drain(townRoot, session string) ([]QueuedNudge, error) {
+func Claim(townRoot, session string) (*ClaimedNudges, error) {
+	return claimNudges(townRoot, session, 0)
+}
+
+// ClaimOne leases the oldest deliverable nudge. A single-file claim gives the
+// HTTP worker a stable idempotency key even when new nudges arrive mid-retry.
+func ClaimOne(townRoot, session string) (*ClaimedNudges, error) {
+	return claimNudges(townRoot, session, 1)
+}
+
+func claimNudges(townRoot, session string, limit int) (*ClaimedNudges, error) {
 	dir := queueDir(townRoot, session)
 
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return nil, nil
+			return &ClaimedNudges{}, nil
 		}
 		return nil, fmt.Errorf("reading nudge queue: %w", err)
 	}
@@ -179,6 +237,7 @@ func Drain(townRoot, session string) ([]QueuedNudge, error) {
 	// it (which would permanently drop the nudge).
 	staleThreshold := nudgeConfig(townRoot).StaleClaimThresholdD()
 	now := time.Now()
+	restoredClaim := false
 	for _, entry := range entries {
 		if !strings.Contains(entry.Name(), ".claimed") {
 			continue
@@ -194,10 +253,16 @@ func Drain(townRoot, session string) ([]QueuedNudge, error) {
 			claimedIdx := strings.Index(name, ".claimed")
 			restoredPath := filepath.Join(dir, name[:claimedIdx])
 			if err := os.Rename(orphanPath, restoredPath); err != nil {
-				// Rename failed — remove as last resort to prevent infinite accumulation
 				fmt.Fprintf(os.Stderr, "Warning: failed to requeue orphaned claim %s: %v\n", entry.Name(), err)
-				_ = os.Remove(orphanPath)
+			} else {
+				restoredClaim = true
 			}
+		}
+	}
+	if restoredClaim {
+		entries, err = os.ReadDir(dir)
+		if err != nil {
+			return nil, fmt.Errorf("rereading nudge queue after restoring claims: %w", err)
 		}
 	}
 
@@ -206,7 +271,8 @@ func Drain(townRoot, session string) ([]QueuedNudge, error) {
 		return entries[i].Name() < entries[j].Name()
 	})
 
-	var nudges []QueuedNudge
+	batch := &ClaimedNudges{}
+	hash := sha256.New()
 	for _, entry := range entries {
 		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".json") {
 			continue
@@ -226,6 +292,11 @@ func Drain(townRoot, session string) ([]QueuedNudge, error) {
 		claimPath := path + ".claimed." + randomSuffix()
 		if err := os.Rename(path, claimPath); err != nil {
 			// Another Drain got it first, or file was already removed
+			continue
+		}
+		claimTime := time.Now()
+		if err := os.Chtimes(claimPath, claimTime, claimTime); err != nil {
+			_ = os.Rename(claimPath, path)
 			continue
 		}
 
@@ -267,15 +338,31 @@ func Drain(townRoot, session string) ([]QueuedNudge, error) {
 			continue
 		}
 
-		nudges = append(nudges, n)
-
-		// Remove the claimed file after successful processing
-		if rmErr := os.Remove(claimPath); rmErr != nil {
-			fmt.Fprintf(os.Stderr, "Warning: failed to remove processed claim %s: %v\n", entry.Name(), rmErr)
+		batch.Nudges = append(batch.Nudges, n)
+		batch.claims = append(batch.claims, claimedNudge{originalPath: path, claimPath: claimPath})
+		_, _ = hash.Write([]byte(entry.Name()))
+		_, _ = hash.Write([]byte{0})
+		if limit > 0 && len(batch.Nudges) >= limit {
+			break
 		}
 	}
 
-	return nudges, nil
+	if len(batch.claims) > 0 {
+		sum := hash.Sum(nil)
+		batch.message = "msg_gt_" + hex.EncodeToString(sum[:16])
+	}
+	return batch, nil
+}
+
+func Drain(townRoot, session string) ([]QueuedNudge, error) {
+	batch, err := Claim(townRoot, session)
+	if err != nil {
+		return nil, err
+	}
+	if err := batch.Commit(); err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: failed to remove processed nudge claims: %v\n", err)
+	}
+	return batch.Nudges, nil
 }
 
 // Pending returns the count of queued nudges for a session without draining.
