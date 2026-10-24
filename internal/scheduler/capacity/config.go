@@ -10,9 +10,10 @@ import "time"
 // API rate limits, memory, and CPU are shared resources across all rigs.
 //
 // Behavior is driven entirely by MaxPolecats:
-//   -1 (default): direct dispatch — gt sling works as before, near-zero overhead
-//    0:           direct dispatch (same as -1)
-//    N > 0:       deferred dispatch — labels/metadata applied, daemon dispatches
+//
+//	-1 (default): direct dispatch — gt sling works as before, near-zero overhead
+//	 0:           direct dispatch (same as -1)
+//	 N > 0:       deferred dispatch — labels/metadata applied, daemon dispatches
 type SchedulerConfig struct {
 	// MaxPolecats is the max concurrent polecats across ALL rigs.
 	// Includes both scheduler-dispatched and directly-slung polecats.
@@ -28,6 +29,16 @@ type SchedulerConfig struct {
 	// SpawnDelay is the delay between spawns to prevent Dolt lock contention.
 	// Default: "0s".
 	SpawnDelay string `json:"spawn_delay,omitempty"`
+
+	// LoadSentinelFile is an optional path to a host-load sentinel file.
+	// While the file exists, NEW polecat admissions are refused (running
+	// polecats are untouched); the file's first line is reported as the
+	// reason. This is the hook for external resource governors (thermal
+	// guards, load monitors) to pause scale-up: capacity control is
+	// host-wide, and the host knows things the scheduler cannot (see the
+	// package comment above about memory and CPU being shared resources).
+	// Relative paths are resolved against the town root. Empty = disabled.
+	LoadSentinelFile string `json:"load_sentinel_file,omitempty"`
 }
 
 // DefaultSchedulerConfig returns a SchedulerConfig with sensible defaults.
