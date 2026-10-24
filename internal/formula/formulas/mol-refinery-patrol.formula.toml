@@ -108,7 +108,7 @@ When `await-event` outputs `EFFORT: full`, run all steps thoroughly (normal mode
 
 The goal: idle cycles should burn ~10% of the tokens a full patrol uses."""
 formula = "mol-refinery-patrol"
-version = 16
+version = 17
 
 [vars]
 [vars.wisp_type]
@@ -187,11 +187,43 @@ default = "gt"
 id = "inbox-check"
 title = "Check refinery mail"
 description = """
-First, clean up wisps from previous cycles (closed wisps + abandoned wisps):
-```bash
-bd mol wisp gc --closed --force
-bd mol wisp gc --age 1h --force
-```
+REMOVED (si-e90, 2026-07-27): this step used to run
+`bd mol wisp gc --closed --force` and `bd mol wisp gc --age 1h --force`.
+BOTH LEGS ARE GONE. DO NOT RESTORE THEM, AND DO NOT "FIX" THIS BY ADDING A FLAG.
+
+WHY NO FLAG WORKS. gc offers exactly one content filter, `--exclude-type`, matching
+ISSUE TYPE. Merge-request wisps are issue_type `task` carrying label
+`gt:merge-request`, and gc cannot filter on labels at all. So:
+
+  LEG INVERSION   the same flag DISCRIMINATES on one leg and DISABLES the other
+                  closed leg, hq   shields ~1.9k, still collects ~3.2k    works
+                  age leg, hq      excludes 17962 of 17991 open -> 29     dead
+  RIG INVERSION   and it is rig-dependent on the SAME leg
+                  hq closed        5106 -> 3186 collected                 works
+                  silicon closed      4 ->    0 collected                 vacuous
+
+No setting is safe on both legs, and none behaves the same in two rigs.
+`--exclude-type merge-request` is accepted silently and protects NOTHING (verified
+2026-07-26: it deleted the MR wisp it was written to save).
+
+WHY IT MATTERED. A processed MR is a CLOSED wisp whose close_reason is the merge
+lane's only record of what merged, what was refused, and why. In silicon ALL closed
+wisps are that trail (4 of 4), so `--closed --force` here had a 100% protected-row
+hit rate — no collateral, it selected exactly the thing it must not touch.
+
+WHAT REPLACED IT. Wisp cleanup is now a deliberate, reviewed, squash-first operation
+where the count is visible BEFORE the delete: si-8q1h. An unattended per-cycle
+`--force` deletion whose blast radius (17,959 rows in hq) is invisible at the moment
+it runs is the wrong shape for a step called "clean up wisps from previous cycles".
+
+IF A gc STEP EVER REAPPEARS HERE — most likely via `gt upgrade` reinstalling the
+binary defaults, which ship all sites bare (3x bare gc, 0x exclude-type) — RUN THE
+GUARD BEFORE THE NEXT PATROL. The procedure is deliberately NOT in this file — a
+reinstall overwrites this file and would delete the instruction along with the fix
+(se-7yu). The control lives in the setup repo:
+    setup/docs/05-provisioning-guards.md
+Narrowing ever becomes possible only if gc grows `--exclude-label`: si-1vxl, which is
+the same piece of work as si-fsi4.
 
 Then check mail for MERGE_READY submissions, escalations, and messages.
 
