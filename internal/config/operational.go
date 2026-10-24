@@ -109,6 +109,7 @@ const (
 const (
 	DefaultWitnessStartupStallThreshold  = 90 * time.Second
 	DefaultWitnessStartupActivityGrace   = 60 * time.Second
+	DefaultWitnessStartupDismissWindow   = 10 * time.Minute
 	DefaultWitnessMaxBeadRespawns        = 3
 	DefaultWitnessDoneIntentStuckTimeout    = 60 * time.Second
 	DefaultWitnessDoneIntentRecentGrace     = 30 * time.Second
@@ -718,6 +719,14 @@ func (wt *WitnessThresholds) StartupActivityGraceD() time.Duration {
 		return ParseDurationOrDefault(wt.StartupActivityGrace, DefaultWitnessStartupActivityGrace)
 	}
 	return DefaultWitnessStartupActivityGrace
+}
+
+// StartupDismissWindowD returns the configured or default startup dismiss window.
+func (wt *WitnessThresholds) StartupDismissWindowD() time.Duration {
+	if wt != nil {
+		return ParseDurationOrDefault(wt.StartupDismissWindow, DefaultWitnessStartupDismissWindow)
+	}
+	return DefaultWitnessStartupDismissWindow
 }
 
 // MaxBeadRespawnsV returns the configured or default max bead respawns.

@@ -2189,9 +2189,11 @@ func (t *Tmux) AcceptBypassPermissionsWarning(session string) error {
 //  1. Workspace trust dialog — Enter (option 1 "Yes, I trust this folder" is pre-selected)
 //  2. Bypass permissions warning — Down+Enter (select "Yes, I accept" then confirm)
 //
-// Safe to call on sessions where no dialog is showing: Enter sends a blank input
-// to an idle Claude prompt (harmless for a stalled session), and Down+Enter either
-// does nothing or sends another blank input.
+// Only harmless on a session that is genuinely stalled at startup: on an idle
+// Claude prompt, Enter sends a blank input and Down+Enter does little. On a
+// session that is actually working, the keys can submit queued input or pick
+// an option in a permission prompt or menu, so callers must bound how often
+// and when they use it (see witness.DetectStalledPolecats).
 //
 // This is intended for remediation of stalled sessions detected via structured
 // signals (session age + activity). For startup-time dialog handling where
@@ -2368,6 +2370,42 @@ func (t *Tmux) GetSessionActivity(session string) (time.Time, error) {
 		return time.Time{}, fmt.Errorf("parsing session activity: %w", err)
 	}
 	return time.Unix(timestamp, 0), nil
+}
+
+// GetOutputActivity returns the last time the session's agent window showed
+// any activity, including pane output. It is the later of #{session_activity}
+// and #{window_activity} for the first window (where the agent runs).
+//
+// Prefer this over GetSessionActivity when judging whether an agent is making
+// progress: session_activity only advances on client input, so a detached
+// session that is busily producing output still looks idle by that measure,
+// while window_activity advances whenever a pane in the window writes output.
+func (t *Tmux) GetOutputActivity(session string) (time.Time, error) {
+	out, err := t.run("display-message", "-t", session+":^", "-p", "#{session_activity} #{window_activity}")
+	if err != nil {
+		return time.Time{}, err
+	}
+	return parseLatestActivity(out)
+}
+
+// parseLatestActivity returns the latest unix timestamp among the
+// whitespace-separated fields of out. Fields that are not integers (e.g. an
+// unsupported format variable left empty or unexpanded) are ignored.
+func parseLatestActivity(out string) (time.Time, error) {
+	var latest int64
+	for _, field := range strings.Fields(out) {
+		ts, err := strconv.ParseInt(field, 10, 64)
+		if err != nil {
+			continue
+		}
+		if ts > latest {
+			latest = ts
+		}
+	}
+	if latest == 0 {
+		return time.Time{}, fmt.Errorf("parsing activity: no timestamp in %q", strings.TrimSpace(out))
+	}
+	return time.Unix(latest, 0), nil
 }
 
 // ZombieStatus describes the liveness state of a tmux agent session.

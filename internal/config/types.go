@@ -482,6 +482,11 @@ type WitnessThresholds struct {
 	// old enough to be past startup is considered stalled (default "60s").
 	StartupActivityGrace string `json:"startup_activity_grace,omitempty"`
 
+	// StartupDismissWindow is the max session age at which a stalled session is
+	// still treated as stuck at startup and blind-dismissed (default "10m").
+	// Older sessions are past startup, so silence there is not a startup stall.
+	StartupDismissWindow string `json:"startup_dismiss_window,omitempty"`
+
 	// MaxBeadRespawns is the threshold above which a bead respawn is blocked
 	// and escalated to mayor instead of re-dispatched (default 3).
 	MaxBeadRespawns *int `json:"max_bead_respawns,omitempty"`
