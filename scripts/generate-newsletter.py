@@ -156,7 +156,7 @@ def get_previous_version() -> tuple[str, datetime]:
 def get_commits_since(since_date: datetime) -> list[dict]:
     """Get git commits since the given date."""
     result = subprocess.run(
-        ["git", "log", f"--since={since_date.strftime('%Y-%m-%d')}", "--oneline", "--format=%h|%s|%an|%ai"],
+        ["git", "log", f"--since={since_date.strftime('%Y-%m-%dT%H:%M:%S')}", "--oneline", "--format=%h|%s|%an|%ai"],
         capture_output=True,
         text=True
     )
