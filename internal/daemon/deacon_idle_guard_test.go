@@ -74,6 +74,7 @@ func TestCheckDeaconHeartbeat_IdleGuard(t *testing.T) {
 		stores           map[string]beadsdk.Storage
 		wantNudgeLog     bool
 		wantIdleGuardLog bool
+		wantRestartLog   bool
 		desc             string
 	}{
 		{
@@ -121,14 +122,28 @@ func TestCheckDeaconHeartbeat_IdleGuard(t *testing.T) {
 			desc:             "Nudge must fire conservatively when work state is unknown",
 		},
 		{
-			name:         "very stale: heartbeat >= 20 min — escalation path, no nudge",
+			name:         "very stale + idle: heartbeat >= 20 min, no work — must NOT be killed",
 			heartbeatAge: 21 * time.Minute,
 			stores: map[string]beadsdk.Storage{
 				"hq": &searchStorage{results: map[string][]*beadsdk.Issue{}},
 			},
 			wantNudgeLog:     false,
+			wantIdleGuardLog: true,
+			wantRestartLog:   false,
+			desc:             "Idle guard must cover the kill tier too: an idle Deacon crosses 20min by having nothing to do, and restarting it destroys a healthy session for no gain",
+		},
+		{
+			name:         "very stale + active work: heartbeat >= 20 min, in_progress — genuinely stuck, restart",
+			heartbeatAge: 21 * time.Minute,
+			stores: map[string]beadsdk.Storage{
+				"hq": &searchStorage{results: map[string][]*beadsdk.Issue{
+					"in_progress": {{ID: "sc-stuck"}},
+				}},
+			},
+			wantNudgeLog:     false,
 			wantIdleGuardLog: false,
-			desc:             "Very stale heartbeat takes escalation path, not nudge path; idle guard not reached",
+			wantRestartLog:   true,
+			desc:             "A Deacon holding in-flight work past the kill threshold is genuinely stuck and must still be restarted",
 		},
 	}
 
@@ -156,7 +171,7 @@ func TestCheckDeaconHeartbeat_IdleGuard(t *testing.T) {
 
 			logOutput := logBuf.String()
 
-			hasIdleGuardLog := strings.Contains(logOutput, "nudge skipped")
+			hasIdleGuardLog := strings.Contains(logOutput, "idle, not stuck")
 			if hasIdleGuardLog != tc.wantIdleGuardLog {
 				t.Errorf("%s\nidle guard log present=%v, want=%v\nlog:\n%s",
 					tc.desc, hasIdleGuardLog, tc.wantIdleGuardLog, logOutput)
@@ -166,6 +181,12 @@ func TestCheckDeaconHeartbeat_IdleGuard(t *testing.T) {
 			if hasNudgeLog != tc.wantNudgeLog {
 				t.Errorf("%s\nnudge log present=%v, want=%v\nlog:\n%s",
 					tc.desc, hasNudgeLog, tc.wantNudgeLog, logOutput)
+			}
+
+			hasRestartLog := strings.Contains(logOutput, "STUCK DEACON: heartbeat stale")
+			if hasRestartLog != tc.wantRestartLog {
+				t.Errorf("%s\nrestart log present=%v, want=%v\nlog:\n%s",
+					tc.desc, hasRestartLog, tc.wantRestartLog, logOutput)
 			}
 		})
 	}
