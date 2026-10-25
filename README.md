@@ -504,11 +504,15 @@ gt feed                     # Real-time activity feed (TUI)
 gt feed --problems          # Start in problems view (stuck agent detection)
 ```
 
-**Built-in agent presets**: `claude`, `gemini`, `codex`, `kiro`, `cursor`, `auggie`, `amp`, `opencode`, `copilot`, `pi`, `omp`
+**Built-in agent presets**: `claude`, `gemini`, `codex`, `kiro`, `cursor`, `auggie`, `amp`, `opencode`, `copilot`, `pi`, `omp`, `grok`
 
 The `kiro` preset launches `kiro-cli chat --trust-all-tools`, supports Kiro's
 documented `--resume` / `--resume-id` session flags, and does not install Kiro
 hooks or `.kiro` project files.
+
+The `grok` preset launches the Grok Build CLI (`grok --always-approve --trust --no-leader`),
+installs hooks in `.grok/hooks/gastown.json`, and is not the `groq-compound` preset
+(Claude CLI proxied to Groq's API).
 
 ### Convoy (Work Tracking)
 
