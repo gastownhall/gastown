@@ -20,6 +20,7 @@ import (
 	"github.com/steveyegge/gastown/internal/constants"
 	"github.com/steveyegge/gastown/internal/daemon"
 	"github.com/steveyegge/gastown/internal/formula"
+	"github.com/steveyegge/gastown/internal/nudge"
 	rigpkg "github.com/steveyegge/gastown/internal/rig"
 	"github.com/steveyegge/gastown/internal/session"
 	"github.com/steveyegge/gastown/internal/style"
@@ -697,7 +698,7 @@ func storeFieldsInBeadFromTownRoot(townRoot, beadID string, updates beadFieldUpd
 
 // injectStartPrompt sends a prompt to the target pane to start working.
 // Uses the reliable nudge pattern: literal mode + 500ms debounce + separate Enter.
-func injectStartPrompt(pane, beadID, subject, args string) error {
+func injectStartPrompt(townRoot, pane, beadID, subject, args string) error {
 	if pane == "" {
 		return fmt.Errorf("no target pane")
 	}
@@ -724,6 +725,17 @@ func injectStartPrompt(pane, beadID, subject, args string) error {
 
 	// Use the reliable nudge pattern (same as gt nudge / tmux.NudgeSession)
 	t := tmux.NewTmux()
+	sessionName, err := resolveSessionFromPane(pane)
+	if err != nil {
+		return err
+	}
+	if hasOpenCodeServerSession(townRoot, sessionName) {
+		return nudge.Enqueue(townRoot, sessionName, nudge.QueuedNudge{
+			Sender:   "sling",
+			Message:  prompt,
+			Priority: nudge.PriorityNormal,
+		})
+	}
 	return t.NudgePane(pane, prompt)
 }
 
@@ -732,20 +744,32 @@ func injectStartPrompt(pane, beadID, subject, args string) error {
 // - "%9" (pane ID) - need to query tmux for session
 // - "gt-rig-name:0.0" (session:window.pane) - extract session name
 func getSessionFromPane(pane string) string {
+	sessionName, _ := resolveSessionFromPane(pane)
+	return sessionName
+}
+
+func resolveSessionFromPane(pane string) (string, error) {
+	if strings.TrimSpace(pane) == "" {
+		return "", fmt.Errorf("resolving target session: empty pane target")
+	}
 	if strings.HasPrefix(pane, "%") {
 		// Pane ID format - query tmux for the session
 		cmd := tmux.BuildCommand("display-message", "-t", pane, "-p", "#{session_name}")
 		out, err := cmd.Output()
 		if err != nil {
-			return ""
+			return "", fmt.Errorf("resolving target session from pane %s: %w", pane, err)
 		}
-		return strings.TrimSpace(string(out))
+		sessionName := strings.TrimSpace(string(out))
+		if sessionName == "" {
+			return "", fmt.Errorf("resolving target session from pane %s: empty tmux response", pane)
+		}
+		return sessionName, nil
 	}
 	// Session:window.pane format - extract session name
 	if idx := strings.Index(pane, ":"); idx > 0 {
-		return pane[:idx]
+		return pane[:idx], nil
 	}
-	return pane
+	return pane, nil
 }
 
 // ensureAgentReady waits for an agent to be ready before nudging an existing session.

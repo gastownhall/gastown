@@ -1220,7 +1220,19 @@ fi
 printf 'unexpected gh args: %s\n' "$*" >&2
 exit 1
 `
-	if err := os.WriteFile(path, []byte(script), 0755); err != nil {
+	mode := os.FileMode(0755)
+	if runtime.GOOS == "windows" {
+		path += ".cmd"
+		script = "@echo off\r\n" +
+			"if \"%~1\"==\"pr\" if \"%~2\"==\"list\" (\r\n" +
+			"  echo []\r\n" +
+			"  exit /b 0\r\n" +
+			")\r\n" +
+			"echo unexpected gh args: %* 1>&2\r\n" +
+			"exit /b 1\r\n"
+		mode = 0644
+	}
+	if err := os.WriteFile(path, []byte(script), mode); err != nil {
 		t.Fatalf("write fake gh: %v", err)
 	}
 	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))

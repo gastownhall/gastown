@@ -23,6 +23,15 @@ var IdentityEnvVars = []string{
 	"GT_SESSION", "GT_AGENT", "BD_ACTOR", "GIT_AUTHOR_NAME", "BEADS_AGENT_NAME",
 }
 
+// OpenCodeOverrideEnvVars configure the native OpenCode server worker and must
+// survive tmux startup, daemon restarts, and self-handoffs.
+var OpenCodeOverrideEnvVars = []string{
+	"GT_OPENCODE_COMMAND",
+	"GT_OPENCODE_AGENT",
+	"GT_OPENCODE_MODEL",
+	"GT_OPENCODE_VARIANT",
+}
+
 var bdTargetSelectorEnvVars = []string{
 	"BEADS_DIR",
 	"BEADS_DB",
@@ -194,6 +203,11 @@ func AgentEnv(cfg AgentEnvConfig) map[string]string {
 	// IsAgentAlive and waitForPolecatReady use the correct process names.
 	if cfg.Agent != "" {
 		env["GT_AGENT"] = cfg.Agent
+	}
+	for _, name := range OpenCodeOverrideEnvVars {
+		if value, ok := os.LookupEnv(name); ok {
+			env[name] = value
+		}
 	}
 
 	// Disable bd's per-repo JSONL auto-backup for all Gas Town agents.

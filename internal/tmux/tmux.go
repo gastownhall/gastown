@@ -19,6 +19,8 @@ import (
 
 	"github.com/steveyegge/gastown/internal/config"
 	"github.com/steveyegge/gastown/internal/constants"
+	"github.com/steveyegge/gastown/internal/nudge"
+	"github.com/steveyegge/gastown/internal/opencodestate"
 	"github.com/steveyegge/gastown/internal/telemetry"
 )
 
@@ -1697,7 +1699,7 @@ func (t *Tmux) sendKeysLiteralWithRetry(target, text string, timeout time.Durati
 // queue up and execute one at a time. This prevents garbled input when
 // SessionStart hooks and nudges arrive simultaneously.
 func (t *Tmux) NudgeSession(session, message string) error {
-	return t.NudgeSessionWithOpts(session, message, NudgeOpts{})
+	return t.NudgeSessionWithOpts(session, message, NudgeOpts{TownRoot: t.sessionTownRoot(session)})
 }
 
 // NudgeOpts controls optional behavior for nudge delivery.
@@ -1775,6 +1777,17 @@ func isTmuxIndex(value string) bool {
 // NudgeSessionWithOpts is like NudgeSession but accepts delivery options.
 // See NudgeOpts for available options.
 func (t *Tmux) NudgeSessionWithOpts(session, message string, opts NudgeOpts) error {
+	if opts.TownRoot == "" {
+		opts.TownRoot = t.sessionTownRoot(session)
+	}
+	if opts.TownRoot != "" && t.isStructuredNudgeSession(opts.TownRoot, session) {
+		return nudge.Enqueue(opts.TownRoot, session, nudge.QueuedNudge{
+			Sender:   "system",
+			Message:  message,
+			Priority: nudge.PriorityNormal,
+		})
+	}
+
 	// Cross-process lock: serialize nudges across OS processes via flock(2).
 	// Each `gt nudge` CLI invocation is a separate process, so the in-process
 	// channel semaphore below provides no cross-process protection. Without
@@ -1884,6 +1897,32 @@ func (t *Tmux) NudgeSessionWithOpts(session, message string, opts NudgeOpts) err
 	// delivered nudge. Targeting the resolved pane wakes the correct window.
 	t.WakePaneIfDetached(target)
 	return nil
+}
+
+func (t *Tmux) sessionTownRoot(session string) string {
+	if townRoot, err := t.GetEnvironment(session, "GT_ROOT"); err == nil && townRoot != "" {
+		return townRoot
+	}
+	if townRoot := os.Getenv("GT_ROOT"); townRoot != "" {
+		return townRoot
+	}
+	return os.Getenv("GT_TOWN_ROOT")
+}
+
+func (t *Tmux) isStructuredNudgeSession(townRoot, session string) bool {
+	if agent, err := t.GetEnvironment(session, "GT_AGENT"); err == nil && agent != "" {
+		rigPath := ""
+		if rigName, rigErr := t.GetEnvironment(session, "GT_RIG"); rigErr == nil && rigName != "" {
+			rigPath = filepath.Join(townRoot, rigName)
+		}
+		if config.AgentManagesNudgeQueue(townRoot, rigPath, agent) {
+			return true
+		}
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	_, active := opencodestate.Active(ctx, townRoot, session)
+	return active
 }
 
 // NudgePane sends a message to a specific pane reliably.

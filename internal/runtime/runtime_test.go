@@ -2,6 +2,8 @@ package runtime
 
 import (
 	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -290,6 +292,31 @@ func TestEnsureSettingsForRole_OpenCodeUsesWorkDir(t *testing.T) {
 	}
 	if _, err := os.Stat(workDir + "/plugins/gastown.js"); err != nil {
 		t.Error("OpenCode plugin should be in workDir")
+	}
+}
+
+func TestEnsureSettingsForRole_OpenCodeServerPresetInstallsPlugin(t *testing.T) {
+	settingsDir := t.TempDir()
+	workDir := t.TempDir()
+	rc := config.RuntimeConfigFromPreset(config.AgentOpenCodeServer)
+	if rc == nil {
+		t.Fatal("RuntimeConfigFromPreset(opencode-server) returned nil")
+	}
+
+	if err := EnsureSettingsForRole(settingsDir, workDir, "crew", rc); err != nil {
+		t.Fatalf("EnsureSettingsForRole() error = %v", err)
+	}
+
+	pluginPath := filepath.Join(workDir, ".opencode", "plugins", "gastown.js")
+	content, err := os.ReadFile(pluginPath)
+	if err != nil {
+		t.Fatalf("reading installed OpenCode plugin: %v", err)
+	}
+	if !strings.Contains(string(content), "Bun.spawn(options)") {
+		t.Fatal("installed OpenCode plugin does not use cross-platform process execution")
+	}
+	if _, err := os.Stat(filepath.Join(settingsDir, ".opencode", "plugins", "gastown.js")); !os.IsNotExist(err) {
+		t.Fatal("OpenCode plugin should be installed in workDir, not settingsDir")
 	}
 }
 

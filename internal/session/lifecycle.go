@@ -13,6 +13,7 @@ import (
 	"github.com/steveyegge/gastown/internal/config"
 	"github.com/steveyegge/gastown/internal/constants"
 	"github.com/steveyegge/gastown/internal/git"
+	"github.com/steveyegge/gastown/internal/nudge"
 	"github.com/steveyegge/gastown/internal/runtime"
 	"github.com/steveyegge/gastown/internal/telemetry"
 	"github.com/steveyegge/gastown/internal/tmux"
@@ -297,6 +298,11 @@ func StartSession(t *tmux.Tmux, cfg SessionConfig) (_ *StartResult, retErr error
 	// 14. Track PID for defense-in-depth orphan cleanup.
 	if cfg.TrackPID && cfg.TownRoot != "" {
 		_ = TrackSessionPID(cfg.TownRoot, cfg.SessionID, t)
+	}
+	if runtimeConfig.ManagesNudgeQueue && cfg.TownRoot != "" {
+		if err := nudge.StopPoller(cfg.TownRoot, cfg.SessionID); err != nil {
+			fmt.Fprintf(os.Stderr, "warning: could not stop stale nudge poller for %s: %v\n", cfg.SessionID, err)
+		}
 	}
 
 	// 14. Stream agent conversation events to VictoriaLogs (opt-in).

@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -22,6 +23,22 @@ func TestAgentEnv_Mayor(t *testing.T) {
 	assertEnv(t, env, "NODE_OPTIONS", "")                 // cleared to prevent debugger inheritance
 	assertEnv(t, env, "CLAUDECODE", "")                   // cleared to prevent nested session detection
 	assertNotSet(t, env, "GT_RIG")
+}
+
+func TestAgentEnvPropagatesOpenCodeOverrides(t *testing.T) {
+	want := map[string]string{
+		"GT_OPENCODE_COMMAND": "custom-opencode",
+		"GT_OPENCODE_AGENT":   "review",
+		"GT_OPENCODE_MODEL":   "provider/model",
+		"GT_OPENCODE_VARIANT": "high",
+	}
+	for key, value := range want {
+		t.Setenv(key, value)
+	}
+	env := AgentEnv(AgentEnvConfig{Role: "crew", Rig: "gastown", AgentName: "alice"})
+	for key, value := range want {
+		assertEnv(t, env, key, value)
+	}
 }
 
 func TestAgentEnv_Witness(t *testing.T) {
@@ -463,19 +480,22 @@ func TestShellQuote(t *testing.T) {
 func TestExportPrefix(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
-		name     string
-		env      map[string]string
-		expected string
+		name        string
+		env         map[string]string
+		wantPOSIX   string
+		wantWindows string
 	}{
 		{
-			name:     "empty",
-			env:      map[string]string{},
-			expected: "",
+			name:        "empty",
+			env:         map[string]string{},
+			wantPOSIX:   "",
+			wantWindows: "",
 		},
 		{
-			name:     "single var",
-			env:      map[string]string{"FOO": "bar"},
-			expected: "export FOO=bar && ",
+			name:        "single var",
+			env:         map[string]string{"FOO": "bar"},
+			wantPOSIX:   "export FOO=bar && ",
+			wantWindows: "$env:FOO='bar'; ",
 		},
 		{
 			name: "multiple vars sorted",
@@ -484,14 +504,16 @@ func TestExportPrefix(t *testing.T) {
 				"AAA": "first",
 				"MMM": "middle",
 			},
-			expected: "export AAA=first MMM=middle ZZZ=last && ",
+			wantPOSIX:   "export AAA=first MMM=middle ZZZ=last && ",
+			wantWindows: "$env:AAA='first'; $env:MMM='middle'; $env:ZZZ='last'; ",
 		},
 		{
 			name: "JSON value is quoted",
 			env: map[string]string{
 				"OPENCODE_PERMISSION": `{"*":"allow"}`,
 			},
-			expected: `export OPENCODE_PERMISSION='{"*":"allow"}' && `,
+			wantPOSIX:   `export OPENCODE_PERMISSION='{"*":"allow"}' && `,
+			wantWindows: `$env:OPENCODE_PERMISSION='{"*":"allow"}'; `,
 		},
 		{
 			name: "mixed simple and complex values",
@@ -500,15 +522,20 @@ func TestExportPrefix(t *testing.T) {
 				"COMPLEX": `{"key":"val"}`,
 				"GT_ROLE": "polecat",
 			},
-			expected: `export COMPLEX='{"key":"val"}' GT_ROLE=polecat SIMPLE=value && `,
+			wantPOSIX:   `export COMPLEX='{"key":"val"}' GT_ROLE=polecat SIMPLE=value && `,
+			wantWindows: `$env:COMPLEX='{"key":"val"}'; $env:GT_ROLE='polecat'; $env:SIMPLE='value'; `,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			want := tt.wantPOSIX
+			if runtime.GOOS == "windows" {
+				want = tt.wantWindows
+			}
 			result := ExportPrefix(tt.env)
-			if result != tt.expected {
-				t.Errorf("ExportPrefix() = %q, want %q", result, tt.expected)
+			if result != want {
+				t.Errorf("ExportPrefix() = %q, want %q", result, want)
 			}
 		})
 	}
@@ -517,40 +544,48 @@ func TestExportPrefix(t *testing.T) {
 func TestBuildStartupCommandWithEnv(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
-		name     string
-		env      map[string]string
-		agentCmd string
-		prompt   string
-		expected string
+		name        string
+		env         map[string]string
+		agentCmd    string
+		prompt      string
+		wantPOSIX   string
+		wantWindows string
 	}{
 		{
-			name:     "no env no prompt",
-			env:      map[string]string{},
-			agentCmd: "claude",
-			prompt:   "",
-			expected: "claude",
+			name:        "no env no prompt",
+			env:         map[string]string{},
+			agentCmd:    "claude",
+			prompt:      "",
+			wantPOSIX:   "claude",
+			wantWindows: "claude",
 		},
 		{
-			name:     "env no prompt",
-			env:      map[string]string{"GT_ROLE": "polecat"},
-			agentCmd: "claude",
-			prompt:   "",
-			expected: "export GT_ROLE=polecat && claude",
+			name:        "env no prompt",
+			env:         map[string]string{"GT_ROLE": "polecat"},
+			agentCmd:    "claude",
+			prompt:      "",
+			wantPOSIX:   "export GT_ROLE=polecat && claude",
+			wantWindows: "$env:GT_ROLE='polecat'; claude",
 		},
 		{
-			name:     "env with prompt",
-			env:      map[string]string{"GT_ROLE": "polecat"},
-			agentCmd: "claude",
-			prompt:   "gt prime",
-			expected: `export GT_ROLE=polecat && claude "gt prime"`,
+			name:        "env with prompt",
+			env:         map[string]string{"GT_ROLE": "polecat"},
+			agentCmd:    "claude",
+			prompt:      "gt prime",
+			wantPOSIX:   `export GT_ROLE=polecat && claude "gt prime"`,
+			wantWindows: `$env:GT_ROLE='polecat'; claude "gt prime"`,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			want := tt.wantPOSIX
+			if runtime.GOOS == "windows" {
+				want = tt.wantWindows
+			}
 			result := BuildStartupCommandWithEnv(tt.env, tt.agentCmd, tt.prompt)
-			if result != tt.expected {
-				t.Errorf("BuildStartupCommandWithEnv() = %q, want %q", result, tt.expected)
+			if result != want {
+				t.Errorf("BuildStartupCommandWithEnv() = %q, want %q", result, want)
 			}
 		})
 	}
@@ -1016,6 +1051,9 @@ func TestBuildStartupCommandWithEnv_IncludesNodeOptions(t *testing.T) {
 	}
 	result := BuildStartupCommandWithEnv(env, "claude", "")
 	expected := "export GT_ROLE=polecat NODE_OPTIONS= && claude"
+	if runtime.GOOS == "windows" {
+		expected = "$env:GT_ROLE='polecat'; $env:NODE_OPTIONS=''; claude"
+	}
 	if result != expected {
 		t.Errorf("BuildStartupCommandWithEnv() = %q, want %q", result, expected)
 	}

@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"time"
 
@@ -15,6 +16,7 @@ import (
 	"github.com/steveyegge/gastown/internal/config"
 	"github.com/steveyegge/gastown/internal/constants"
 	gtgit "github.com/steveyegge/gastown/internal/git"
+	"github.com/steveyegge/gastown/internal/nudge"
 	"github.com/steveyegge/gastown/internal/refinery"
 	"github.com/steveyegge/gastown/internal/rig"
 	"github.com/steveyegge/gastown/internal/session"
@@ -196,6 +198,18 @@ func (d *Daemon) executeLifecycleAction(request *LifecycleRequest) error {
 		return nil
 
 	case ActionCycle, ActionRestart:
+		agentOverride := ""
+		runtimeOverrides := make(map[string]string)
+		if running {
+			if agent, envErr := d.tmux.GetEnvironment(sessionName, "GT_AGENT"); envErr == nil {
+				agentOverride = strings.TrimSpace(agent)
+			}
+			for _, name := range config.OpenCodeOverrideEnvVars {
+				if value, envErr := d.tmux.GetEnvironment(sessionName, name); envErr == nil {
+					runtimeOverrides[name] = value
+				}
+			}
+		}
 		if running {
 			// Kill the session first - use KillSessionWithProcesses to prevent orphan processes.
 			if err := d.tmux.KillSessionWithProcesses(sessionName); err != nil {
@@ -208,7 +222,7 @@ func (d *Daemon) executeLifecycleAction(request *LifecycleRequest) error {
 		}
 
 		// Restart the session
-		if err := d.restartSession(sessionName, request.From); err != nil {
+		if err := d.restartSession(sessionName, request.From, agentOverride, runtimeOverrides); err != nil {
 			return fmt.Errorf("restarting session: %w", err)
 		}
 		d.logger.Printf("Restarted session %s", sessionName)
@@ -340,7 +354,7 @@ func (d *Daemon) identityToSession(identity string) string {
 
 // restartSession starts a new session for the given agent.
 // Uses role config if available, falls back to hardcoded defaults.
-func (d *Daemon) restartSession(sessionName, identity string) error {
+func (d *Daemon) restartSession(sessionName, identity, agentOverride string, runtimeOverrides map[string]string) error {
 	// Get role config for this identity
 	roleConfig, parsed, err := d.getRoleConfigForIdentity(identity)
 	if err != nil {
@@ -383,7 +397,10 @@ func (d *Daemon) restartSession(sessionName, identity string) error {
 	// NewSessionWithCommand (command as initial pane process). This eliminates
 	// the race condition in the old EnsureSessionFresh + SendKeys pattern where
 	// the shell might not be ready to receive keystrokes, producing empty windows.
-	startCmd := d.getStartCommand(roleConfig, parsed)
+	startCmd := d.getStartCommandWithOverrides(roleConfig, parsed, sessionName, agentOverride, runtimeOverrides)
+	if startCmd == "" {
+		return fmt.Errorf("building lifecycle start command for %s", identity)
+	}
 
 	// Build core identity env vars to pass via -e flags. The startup command
 	// already embeds these via PrependEnv, but -e flags provide defense-in-depth:
@@ -391,11 +408,10 @@ func (d *Daemon) restartSession(sessionName, identity string) error {
 	// global env values (e.g., BD_ACTOR=daemon inherited from the daemon process).
 	// Without this, a polecat session restarted by the daemon could inherit
 	// BD_ACTOR=daemon and have gt done reject it with "you are daemon" (gt-xyr).
-	rigPath := ""
-	if parsed != nil && parsed.RigName != "" {
-		rigPath = filepath.Join(d.config.TownRoot, parsed.RigName)
+	rc, err := d.resolveLifecycleRuntime(parsed, agentOverride)
+	if err != nil {
+		return err
 	}
-	rc := config.ResolveRoleAgentConfig(parsed.RoleType, d.config.TownRoot, rigPath)
 	var sessionIDEnv string
 	if rc.Session != nil {
 		sessionIDEnv = rc.Session.SessionIDEnv
@@ -406,7 +422,17 @@ func (d *Daemon) restartSession(sessionName, identity string) error {
 		AgentName:    parsed.AgentName,
 		TownRoot:     d.config.TownRoot,
 		SessionIDEnv: sessionIDEnv,
+		Agent:        agentOverride,
+		SessionName:  sessionName,
 	})
+	envVars = session.MergeRuntimeLivenessEnv(envVars, rc)
+	for key, value := range rc.Env {
+		envVars[key] = value
+	}
+	applyRuntimeOverrides(envVars, runtimeOverrides)
+	if workKey, workKeyErr := gtgit.NewGit(workDir).WorkKey(); workKeyErr == nil && workKey != "" {
+		envVars["GT_BRANCH"] = workKey
+	}
 	config.SanitizeAgentEnv(envVars, map[string]string{})
 
 	// Create session with command as initial process (replaces EnsureSessionFresh + SendKeys).
@@ -421,7 +447,7 @@ func (d *Daemon) restartSession(sessionName, identity string) error {
 	}
 
 	// Set environment variables in tmux session table (for debugging/monitoring tools).
-	d.setSessionEnvironment(sessionName, roleConfig, parsed)
+	d.setSessionEnvironment(sessionName, roleConfig, parsed, rc, agentOverride, runtimeOverrides)
 
 	// Apply theme (non-fatal: theming failure doesn't affect operation)
 	d.applySessionTheme(sessionName, parsed)
@@ -431,6 +457,11 @@ func (d *Daemon) restartSession(sessionName, identity string) error {
 		// Non-fatal - Claude might still start
 	}
 	_ = d.tmux.AcceptStartupDialogs(sessionName)
+	if rc.ManagesNudgeQueue {
+		if pollerErr := nudge.StopPoller(d.config.TownRoot, sessionName); pollerErr != nil {
+			d.logger.Printf("Could not stop stale nudge poller for %s: %v", sessionName, pollerErr)
+		}
+	}
 	time.Sleep(constants.ShutdownNotifyDelay)
 
 	return nil
@@ -441,7 +472,20 @@ func (d *Daemon) restartSession(sessionName, identity string) error {
 func (d *Daemon) getWorkDir(config *beads.RoleConfig, parsed *ParsedIdentity) string {
 	// If role config has work_dir_pattern, use it
 	if config != nil && config.WorkDirPattern != "" {
-		return beads.ExpandRolePattern(config.WorkDirPattern, d.config.TownRoot, parsed.RigName, parsed.AgentName, parsed.RoleType, session.PrefixFor(parsed.RigName))
+		configured := beads.ExpandRolePattern(config.WorkDirPattern, d.config.TownRoot, parsed.RigName, parsed.AgentName, parsed.RoleType, session.PrefixFor(parsed.RigName))
+		if parsed.RoleType == constants.RoleDeacon && filepath.Clean(configured) == filepath.Clean(d.config.TownRoot) {
+			return filepath.Join(d.config.TownRoot, "deacon")
+		}
+		if parsed.RoleType == constants.RolePolecat {
+			parent := filepath.Join(d.config.TownRoot, parsed.RigName, "polecats", parsed.AgentName)
+			nested := filepath.Join(parent, parsed.RigName)
+			if filepath.Clean(configured) == filepath.Clean(parent) {
+				if info, err := os.Stat(nested); err == nil && info.IsDir() {
+					return nested
+				}
+			}
+		}
+		return configured
 	}
 
 	// Fallback: use default patterns based on role type
@@ -449,7 +493,7 @@ func (d *Daemon) getWorkDir(config *beads.RoleConfig, parsed *ParsedIdentity) st
 	case constants.RoleMayor:
 		return d.config.TownRoot
 	case constants.RoleDeacon:
-		return d.config.TownRoot
+		return filepath.Join(d.config.TownRoot, "deacon")
 	case constants.RoleWitness:
 		return filepath.Join(d.config.TownRoot, parsed.RigName)
 	case constants.RoleRefinery:
@@ -497,18 +541,29 @@ func isBuiltinClaudeStartCommand(cmd string) bool {
 // getStartCommand determines the startup command for an agent.
 // Uses role config if available, then role-based agent selection, then hardcoded defaults.
 // Includes beacon + role-specific instructions in the CLI prompt.
-func (d *Daemon) getStartCommand(roleConfig *beads.RoleConfig, parsed *ParsedIdentity) string {
+func (d *Daemon) getStartCommand(roleConfig *beads.RoleConfig, parsed *ParsedIdentity, restart ...string) string {
+	sessionName := ""
+	agentOverride := ""
+	if len(restart) > 0 {
+		sessionName = restart[0]
+	}
+	if len(restart) > 1 {
+		agentOverride = restart[1]
+	}
+	return d.getStartCommandWithOverrides(roleConfig, parsed, sessionName, agentOverride, nil)
+}
+
+func (d *Daemon) getStartCommandWithOverrides(roleConfig *beads.RoleConfig, parsed *ParsedIdentity, sessionName, agentOverride string, runtimeOverrides map[string]string) string {
+	runtimeConfig, resolveErr := d.resolveLifecycleRuntime(parsed, agentOverride)
+	if resolveErr != nil {
+		return ""
+	}
 	// Role config start_command: only use when the resolved agent is Claude.
 	// Built-in role TOMLs hardcode "exec claude ..." which bypasses the
 	// declarative agent resolution system. Fall through to agent resolution
 	// so non-Claude agents (copilot, codex, etc.) get the correct command.
 	if roleConfig != nil && roleConfig.StartCommand != "" {
-		rigPath := ""
-		if parsed != nil && parsed.RigName != "" {
-			rigPath = filepath.Join(d.config.TownRoot, parsed.RigName)
-		}
-		rc := config.ResolveRoleAgentConfig(parsed.RoleType, d.config.TownRoot, rigPath)
-		if !config.IsResolvedAgentClaude(rc) {
+		if !config.IsResolvedAgentClaude(runtimeConfig) {
 			// Non-Claude agent: skip TOML start_command entirely (GH#2417).
 			// Built-in role TOMLs hardcode "exec claude ..." which is wrong
 			// for non-Claude agents. Fall through to BuildStartupCommandFromConfig
@@ -527,14 +582,6 @@ func (d *Daemon) getStartCommand(roleConfig *beads.RoleConfig, parsed *ParsedIde
 		// Claude agent with built-in start_command: fall through to
 		// BuildStartupCommandFromConfig for proper model flag resolution.
 	}
-
-	rigPath := ""
-	if parsed != nil && parsed.RigName != "" {
-		rigPath = filepath.Join(d.config.TownRoot, parsed.RigName)
-	}
-
-	// Use role-based agent resolution for per-role model selection
-	runtimeConfig := config.ResolveRoleAgentConfig(parsed.RoleType, d.config.TownRoot, rigPath)
 
 	// Build recipient for beacon using non-path format to prevent LLMs
 	// from misinterpreting the recipient as a filesystem path.
@@ -564,14 +611,48 @@ func (d *Daemon) getStartCommand(roleConfig *beads.RoleConfig, parsed *ParsedIde
 		AgentName:    parsed.AgentName,
 		TownRoot:     d.config.TownRoot,
 		SessionIDEnv: sessionIDEnv,
+		Agent:        agentOverride,
+		SessionName:  sessionName,
 	})
+	envVars = session.MergeRuntimeLivenessEnv(envVars, runtimeConfig)
+	for key, value := range runtimeConfig.Env {
+		envVars[key] = value
+	}
+	for key, value := range runtimeOverrides {
+		envVars[key] = value
+	}
 	config.SanitizeAgentEnv(envVars, map[string]string{})
-	return config.PrependEnv("exec "+runtimeConfig.BuildCommandWithPrompt(prompt), envVars)
+	runtimeCommand := runtimeConfig.BuildCommandWithPrompt(prompt)
+	if runtime.GOOS != "windows" {
+		runtimeCommand = "exec " + runtimeCommand
+	}
+	return config.PrependEnv(runtimeCommand, envVars)
+}
+
+func (d *Daemon) resolveLifecycleRuntime(parsed *ParsedIdentity, agentOverride string) (*config.RuntimeConfig, error) {
+	if parsed == nil {
+		return nil, fmt.Errorf("lifecycle identity is required")
+	}
+	rigPath := ""
+	if parsed != nil && parsed.RigName != "" {
+		rigPath = filepath.Join(d.config.TownRoot, parsed.RigName)
+	}
+	if agentOverride != "" {
+		runtimeConfig, _, err := config.ResolveAgentConfigWithOverride(d.config.TownRoot, rigPath, agentOverride)
+		if err != nil {
+			return nil, fmt.Errorf("resolving lifecycle agent %s: %w", agentOverride, err)
+		}
+		return runtimeConfig, nil
+	}
+	if parsed.RoleType == constants.RoleCrew && parsed.AgentName != "" {
+		return config.ResolveWorkerAgentConfig(parsed.AgentName, d.config.TownRoot, rigPath), nil
+	}
+	return config.ResolveRoleAgentConfig(parsed.RoleType, d.config.TownRoot, rigPath), nil
 }
 
 // setSessionEnvironment sets environment variables for the tmux session.
 // Uses centralized AgentEnv for consistency, plus custom env vars from role config if available.
-func (d *Daemon) setSessionEnvironment(sessionName string, roleConfig *beads.RoleConfig, parsed *ParsedIdentity) {
+func (d *Daemon) setSessionEnvironment(sessionName string, roleConfig *beads.RoleConfig, parsed *ParsedIdentity, runtimeConfig *config.RuntimeConfig, agentOverride string, runtimeOverrides map[string]string) {
 	// Resolve CLAUDE_CONFIG_DIR from accounts.json so daemon-restarted sessions
 	// use the correct account. Mirrors the crew startup path (start.go).
 	accountsPath := constants.MayorAccountsPath(d.config.TownRoot)
@@ -588,7 +669,10 @@ func (d *Daemon) setSessionEnvironment(sessionName string, roleConfig *beads.Rol
 		TownRoot:         d.config.TownRoot,
 		RuntimeConfigDir: runtimeConfigDir,
 		SessionName:      sessionName,
+		Agent:            agentOverride,
 	})
+	envVars = session.MergeRuntimeLivenessEnv(envVars, runtimeConfig)
+	applyRuntimeOverrides(envVars, runtimeOverrides)
 	for k, v := range envVars {
 		_ = d.tmux.SetEnvironment(sessionName, k, v)
 	}
@@ -609,6 +693,12 @@ func (d *Daemon) setSessionEnvironment(sessionName string, roleConfig *beads.Rol
 			expanded := beads.ExpandRolePattern(v, d.config.TownRoot, parsed.RigName, parsed.AgentName, parsed.RoleType, session.PrefixFor(parsed.RigName))
 			_ = d.tmux.SetEnvironment(sessionName, k, expanded)
 		}
+	}
+}
+
+func applyRuntimeOverrides(envVars, runtimeOverrides map[string]string) {
+	for key, value := range runtimeOverrides {
+		envVars[key] = value
 	}
 }
 

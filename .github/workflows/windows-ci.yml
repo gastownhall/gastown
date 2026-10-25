@@ -47,3 +47,11 @@ jobs:
       - name: Vet
         shell: msys2 {0}
         run: go vet ./...
+
+      - name: Windows filesystem and transport tests
+        shell: msys2 {0}
+        run: go test ./internal/atomicfile ./internal/config ./internal/opencodeserver ./internal/opencodestate ./internal/nudge -count=1
+
+      - name: Windows refinery branch cleanup tests
+        shell: msys2 {0}
+        run: go test ./internal/refinery -run '^(TestHandleMRInfoSuccess_VerifiedHeadLeaseDeletesRemoteBranch|TestDoMergeDirectPreservesSubmittedHeadForPostMergeProof|TestHandleMRInfoSuccess_RemoteLeaseFailurePreservesLocalBranch)$' -count=1

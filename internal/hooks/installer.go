@@ -84,6 +84,7 @@ func needsUpgrade(content []byte) bool {
 	if bytes.Contains(content, []byte(`Gas Town OpenCode plugin`)) {
 		return bytes.Contains(content, []byte(`captureRun("gt prime")`)) ||
 			bytes.Contains(content, []byte("$`gt prime`")) ||
+			bytes.Contains(content, []byte("return await $`/bin/sh -lc ${cmd}`.cwd(directory).text();")) ||
 			!bytes.Contains(content, []byte(`prime --hook`))
 	}
 	return false

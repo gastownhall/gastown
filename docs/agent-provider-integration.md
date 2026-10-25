@@ -349,40 +349,62 @@ install a plugin file instead of a settings.json.
 Reference: `internal/hooks/templates/opencode/gastown.js`
 
 ```javascript
-export const GasTown = async ({ $, directory }) => {
-  const role = (process.env.GT_ROLE || "").toLowerCase();
-  const autonomousRoles = new Set(["polecat", "witness", "refinery", "deacon"]);
+export const GasTown = async ({ directory }) => {
+  const gtBin = process.env.GT_BIN || "gt";
+  const primePromises = new Map();
 
-  const run = async (cmd) => {
-    try {
-      await $`/bin/sh -lc ${cmd}`.cwd(directory);
-    } catch (err) {
-      console.error(`[gastown] ${cmd} failed`, err?.message || err);
-    }
+  const run = async (args, env = {}) => {
+    const child = Bun.spawn({
+      cmd: [gtBin, ...args],
+      cwd: directory,
+      env: { ...process.env, ...env },
+      stdout: "pipe",
+      stderr: "pipe",
+      timeout: 10_000,
+    });
+    const [stdout, stderr, code] = await Promise.all([
+      new Response(child.stdout).text(),
+      new Response(child.stderr).text(),
+      child.exited,
+    ]);
+    if (code !== 0) throw new Error(stderr || `gt exited with code ${code}`);
+    return stdout;
   };
 
-  const injectContext = async () => {
-    await run("gt prime");
-    if (autonomousRoles.has(role)) {
-      await run("gt mail check --inject");
-    }
+  const prime = (source, sessionID) => {
+    const promise = run(["prime", "--hook"], {
+      GT_HOOK_SOURCE: source,
+      GT_SESSION_ID: sessionID,
+    });
+    primePromises.set(sessionID, promise);
+    return promise;
   };
 
   return {
     event: async ({ event }) => {
-      if (event?.type === "session.created") {
-        await injectContext();
+      const sessionID = event?.properties?.sessionID || event?.properties?.info?.id || "";
+      if (event?.type === "session.created" && !primePromises.has(sessionID)) {
+        prime("startup", sessionID);
       }
-      if (event?.type === "session.compacted") {
-        await injectContext();
-      }
+      if (event?.type === "session.compacted") prime("compact", sessionID);
+      if (event?.type === "session.deleted") primePromises.delete(sessionID);
+    },
+    "experimental.chat.system.transform": async (input, output) => {
+      const sessionID = input?.sessionID || "";
+      const context = await (primePromises.get(sessionID) || prime("startup", sessionID));
+      if (context) output.system.push(context);
     },
   };
 };
 ```
 
-The key commands are the same (`gt prime`, `gt mail check --inject`). The
-delivery mechanism adapts to the agent's plugin API.
+Pass commands as an argv array instead of invoking `/bin/sh`; this keeps the
+plugin portable to Windows and avoids shell interpolation. `gt prime --hook`
+handles startup context and role-appropriate mail injection.
+
+Do not pass an OpenCode `ses_*` ID to `gt costs record --session`; that command
+currently records Claude transcript costs for a Gas Town tmux session. OpenCode
+cost telemetry needs a dedicated adapter.
 
 ### Pattern C: Informational hooks (instructions file)
 
@@ -533,6 +555,24 @@ Current agent capabilities at a glance:
 | Auggie | No | `--resume` (flag) | No | No | arg | auggie |
 | AMP | No | `threads continue` (subcmd) | No | No | arg | amp |
 | OpenCode | Yes (plugin JS) | No | `run` subcmd | No | none | opencode, node, bun |
+| OpenCode Server | Yes (plugin JS) | Same work key | Native HTTP worker | No | arg | gt, opencode, node, bun |
+
+### Native OpenCode Server Worker
+
+Gas Town also ships the opt-in `opencode-server` preset. It supervises the
+worker in tmux, but readiness, status, startup prompts, and nudges use
+OpenCode's authenticated HTTP API instead of TUI screen scraping and
+`send-keys`. The current adapter is pinned to OpenCode 1.18.16 or newer 1.x and
+fails closed on unsupported API generations.
+
+```bash
+gt sling <bead-id> <rig> --agent opencode-server
+```
+
+Set `GT_OPENCODE_MODEL=provider/model` and optionally
+`GT_OPENCODE_VARIANT=<variant>` to override OpenCode's configured defaults.
+This transport keeps model prose separate from Gas Town completion evidence;
+beads, commits, tests, CI, and merge state remain authoritative.
 
 ---
 
@@ -703,8 +743,11 @@ Create `~/gt/settings/agents.json` (or add to existing):
 ### Step 2: Test basic launch (5 minutes)
 
 ```bash
-# Set your agent as default for a rig
-gt config set agent your-agent --rig <rigname>
+# Set your agent as the town default
+gt config default-agent your-agent
+
+# For one rig, set "agent": "your-agent" in
+# <town>/<rig>/settings/config.json
 
 # Or test with a one-off override
 gt crew start jack --agent your-agent

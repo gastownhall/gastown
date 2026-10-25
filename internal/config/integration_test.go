@@ -58,6 +58,7 @@ func TestRigLevelCustomAgentIntegration(t *testing.T) {
 	// Test 2: Verify BuildPolecatStartupCommand includes the custom agent
 	t.Run("BuildPolecatStartupCommand uses custom agent", func(t *testing.T) {
 		cmd := BuildPolecatStartupCommand(rigName, "test-polecat", rigPath, "")
+		cmd = startupCommandBody(t, cmd)
 
 		if !strings.Contains(cmd, stubAgentPath) {
 			t.Errorf("Expected command to contain stub agent path %q, got: %s", stubAgentPath, cmd)
@@ -68,11 +69,11 @@ func TestRigLevelCustomAgentIntegration(t *testing.T) {
 		}
 
 		// Verify environment variables are set (GT_ROLE is compound format)
-		if !strings.Contains(cmd, "GT_ROLE=testrig/polecats/test-polecat") {
+		if !strings.Contains(cmd, startupEnvAssignment("GT_ROLE", "testrig/polecats/test-polecat")) {
 			t.Errorf("Expected GT_ROLE=testrig/polecats/test-polecat in command, got: %s", cmd)
 		}
 
-		if !strings.Contains(cmd, "GT_POLECAT=test-polecat") {
+		if !strings.Contains(cmd, startupEnvAssignment("GT_POLECAT", "test-polecat")) {
 			t.Errorf("Expected GT_POLECAT=test-polecat in command, got: %s", cmd)
 		}
 	})

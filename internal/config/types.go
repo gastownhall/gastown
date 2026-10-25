@@ -778,6 +778,10 @@ type RuntimeConfig struct {
 	// Produces: exec env VAR=val ... exitbox run --profile=gastown-polecat -- claude ...
 	ExecWrapper []string `json:"exec_wrapper,omitempty"`
 
+	// ManagesNudgeQueue is copied from the resolved agent preset. It marks
+	// runtimes that deliver queued nudges without the tmux poller.
+	ManagesNudgeQueue bool `json:"-"`
+
 	// ResolvedAgent is the agent name that was resolved during config lookup.
 	// Set by ResolveRoleAgentConfig / resolveAgentConfigInternal so that
 	// BuildStartupCommand can export GT_AGENT for process detection.
@@ -845,7 +849,7 @@ func DefaultRuntimeConfig() *RuntimeConfig {
 func (rc *RuntimeConfig) BuildCommand() string {
 	resolved := normalizeRuntimeConfig(rc)
 
-	cmd := resolved.Command
+	cmd := quoteCommandForShell(resolved.Command)
 	args := resolved.Args
 
 	// Combine command and args, quoting any that contain shell metacharacters
@@ -888,19 +892,16 @@ func (rc *RuntimeConfig) BuildCommandWithPrompt(prompt string) string {
 	// OpenCode requires --prompt flag for initial prompt in interactive mode.
 	// Positional argument causes opencode to exit immediately.
 	// Match both "opencode" and full paths like "/home/user/.opencode/bin/opencode".
-	if resolved.Command == "opencode" || filepath.Base(resolved.Command) == "opencode" {
+	switch runtimeCommandName(resolved.Command) {
+	case "opencode":
 		return base + " --prompt " + quoteForShell(p)
-	}
-
-	// Copilot requires -i flag for initial prompt in interactive mode.
-	if resolved.Command == "copilot" || filepath.Base(resolved.Command) == "copilot" {
+	case "copilot":
+		// Copilot requires -i flag for initial prompt in interactive mode.
 		return base + " -i " + quoteForShell(p)
-	}
-
-	// Gemini requires -i (--prompt-interactive) to auto-execute the prompt
-	// while staying in interactive mode. Positional args populate the input
-	// field but don't execute, and -p runs headless (exits after completion).
-	if resolved.Command == "gemini" || filepath.Base(resolved.Command) == "gemini" {
+	case "gemini":
+		// Gemini requires -i (--prompt-interactive) to auto-execute the prompt
+		// while staying in interactive mode. Positional args populate the input
+		// field but don't execute, and -p runs headless (exits after completion).
 		return base + " -i " + quoteForShell(p)
 	}
 
@@ -919,7 +920,7 @@ func (rc *RuntimeConfig) BuildArgsWithPrompt(prompt string) []string {
 	}
 
 	if p != "" && resolved.PromptMode != "none" {
-		switch resolved.Command {
+		switch runtimeCommandName(resolved.Command) {
 		case "opencode":
 			args = append(args, "--prompt", p)
 		case "copilot", "gemini":
@@ -932,6 +933,11 @@ func (rc *RuntimeConfig) BuildArgsWithPrompt(prompt string) []string {
 	}
 
 	return args
+}
+
+func runtimeCommandName(command string) string {
+	base := filepath.Base(command)
+	return strings.ToLower(strings.TrimSuffix(base, filepath.Ext(base)))
 }
 
 func normalizeRuntimeConfig(rc *RuntimeConfig) *RuntimeConfig {
@@ -1106,6 +1112,19 @@ func resolveClaudePath() string {
 	return "claude"
 }
 
+func resolveGTPath() string {
+	if current, err := os.Executable(); err == nil {
+		base := strings.TrimSuffix(filepath.Base(current), filepath.Ext(current))
+		if base == "gt" || base == "gts" {
+			return current
+		}
+	}
+	if path, err := exec.LookPath("gt"); err == nil {
+		return path
+	}
+	return "gt"
+}
+
 func defaultRuntimeArgs(provider string) []string {
 	if preset := GetAgentPresetByName(provider); preset != nil && preset.Args != nil {
 		return append([]string(nil), preset.Args...) // copy to avoid mutation
@@ -1208,6 +1227,16 @@ func quoteForShell(s string) string {
 	escaped = strings.ReplaceAll(escaped, "`", "\\`")
 	escaped = strings.ReplaceAll(escaped, "$", `\$`)
 	return `"` + escaped + `"`
+}
+
+func quoteCommandForShell(s string) string {
+	if runtime.GOOS == "windows" {
+		if ShellQuote(s) == s {
+			return s
+		}
+		return "& " + psQuote(s)
+	}
+	return ShellQuote(s)
 }
 
 // ThemeConfig represents tmux theme settings for a rig.
