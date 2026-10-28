@@ -117,6 +117,31 @@ func findActivePatrol(cfg PatrolConfig) (patrolID, patrolLine string, found bool
 	return "", "", false, nil
 }
 
+// findPatrolForReport finds the newest patrol that can receive a cycle report.
+// Unlike findActivePatrol, this lookup intentionally does not inspect children
+// or clean up patrols: a legitimately completed patrol has no open children,
+// and the report command must be able to summarize and close that root itself.
+func findPatrolForReport(cfg PatrolConfig) (patrolID, patrolLine string, found bool, err error) {
+	b := cfg.Beads
+	if b == nil {
+		b = beads.New(cfg.BeadsDir)
+	}
+
+	hookedBeads, listErr := listAssignedActiveWorkAcrossStatuses(b, cfg.Assignee)
+	if listErr != nil {
+		return "", "", false, fmt.Errorf("listing reportable patrol work: %w", listErr)
+	}
+
+	// listAssignedActiveWorkAcrossStatuses returns newest work first, so the
+	// first matching root is the current patrol when stale roots also exist.
+	for _, bead := range hookedBeads {
+		if strings.HasPrefix(bead.Title, cfg.PatrolMolName) {
+			return bead.ID, formatBeadLine(bead), true, nil
+		}
+	}
+	return "", "", false, nil
+}
+
 // checkHasOpenChildren returns true if the given parent has any children
 // that are not in closed status (i.e., open or in_progress).
 // Returns an error if the child listing fails, so the caller can avoid
