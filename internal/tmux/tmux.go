@@ -2014,7 +2014,12 @@ func (t *Tmux) AcceptWorkspaceTrustDialog(session string) error {
 		// Codex trust screens include a leading ">" banner line, so prompt
 		// detection alone would exit too early.
 		if containsWorkspaceTrustDialog(content) {
-			// Dialog found — accept it (option 1 is pre-selected, just press Enter)
+			// Claude Code >= 2.1.25x pre-selects "No, exit"; move to the trust option first.
+			if trustDialogSelectsExit(content) {
+				_, _ = t.run("send-keys", "-t", session, "Down")
+				time.Sleep(150 * time.Millisecond)
+			}
+			// Accept the (now) selected trust option.
 			if _, err := t.run("send-keys", "-t", session, "Enter"); err != nil {
 				return err
 			}
@@ -2035,6 +2040,13 @@ func (t *Tmux) AcceptWorkspaceTrustDialog(session string) error {
 
 	// Timeout — no dialog detected, safe to proceed
 	return nil
+}
+
+// trustDialogSelectsExit reports whether the Claude Code trust dialog has
+// "No, exit" as the highlighted option. Claude Code 2.1.25x pre-selects it,
+// so Enter alone would quit the agent; callers press Down first.
+func trustDialogSelectsExit(content string) bool {
+	return strings.Contains(content, "❯ No, exit") || strings.Contains(content, "> No, exit")
 }
 
 func containsWorkspaceTrustDialog(content string) bool {
