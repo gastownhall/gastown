@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/steveyegge/gastown/internal/config"
 	"github.com/steveyegge/gastown/internal/git"
 	"github.com/steveyegge/gastown/internal/rig"
 )
@@ -1018,4 +1019,35 @@ func TestManagerAddClearsStalePushURLOnSync(t *testing.T) {
 func runCmd(name string, args ...string) error {
 	cmd := exec.Command(name, args...)
 	return cmd.Run()
+}
+
+// TestResumeAgentNameResolvesTownAlias checks that `gt crew start --agent
+// <alias> --resume` maps a town agent alias (e.g. "opus" -> claude) to its
+// underlying preset instead of rejecting it as an agent without resume support.
+func TestResumeAgentNameResolvesTownAlias(t *testing.T) {
+	townRoot := t.TempDir()
+	rigPath := filepath.Join(townRoot, "testrig")
+	ts := config.NewTownSettings()
+	ts.DefaultAgent = "opus"
+	ts.Agents = map[string]*config.RuntimeConfig{
+		"opus":   {Command: "claude", Args: []string{"--model", "opus"}},
+		"sonnet": {Provider: "claude", Command: "claude", Args: []string{"--model", "sonnet"}},
+	}
+	if err := config.SaveTownSettings(config.TownSettingsPath(townRoot), ts); err != nil {
+		t.Fatalf("SaveTownSettings: %v", err)
+	}
+
+	for _, override := range []string{"", "opus", "sonnet", "claude"} {
+		agentName, err := resumeAgentName("max", townRoot, rigPath, override)
+		if err != nil {
+			t.Fatalf("resumeAgentName(override=%q): %v", override, err)
+		}
+		got, err := buildResumeArgs(agentName, "abc123")
+		if err != nil {
+			t.Fatalf("override=%q: buildResumeArgs(%q): %v", override, agentName, err)
+		}
+		if got != "--resume abc123" {
+			t.Errorf("override=%q: resume args = %q, want %q", override, got, "--resume abc123")
+		}
+	}
 }
