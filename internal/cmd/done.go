@@ -77,6 +77,22 @@ const (
 	ExitDeferred  = "DEFERRED"
 )
 
+// gitDetachedHeadName is the literal branch name CurrentBranch reports on a
+// detached HEAD (git rev-parse --abbrev-ref HEAD prints "HEAD", exit 0). The
+// git package uses the same sentinel in StashListForBranch / UnpushedCommits.
+const gitDetachedHeadName = "HEAD"
+
+// errIfDetachedHead refuses gt done when the current branch resolves to the
+// detached-HEAD sentinel. Recording it as branch: and pushing it would create
+// refs/heads/HEAD on the remote, corrupting origin/HEAD in every clone that
+// fetches it. See #4629.
+func errIfDetachedHead(branch string) error {
+	if branch == gitDetachedHeadName {
+		return fmt.Errorf("cannot run gt done from a detached HEAD (HEAD is not on a branch); check out a branch first")
+	}
+	return nil
+}
+
 func doneContaminationBaseRef(defaultBranch, explicitTarget string) string {
 	targetBranch := defaultBranch
 	if explicitTarget != "" {
@@ -700,6 +716,10 @@ func runDone(cmd *cobra.Command, args []string) (retErr error) {
 	branch, err := g.CurrentBranch()
 	if err != nil {
 		return fmt.Errorf("getting current branch: %w", err)
+	}
+	// Refuse a detached HEAD before any wisp/push side effects (see #4629).
+	if err := errIfDetachedHead(branch); err != nil {
+		return err
 	}
 
 	// Auto-detect cleanup status if not explicitly provided
