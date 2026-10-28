@@ -1331,3 +1331,75 @@ func TestMarshalConfig(t *testing.T) {
 		t.Errorf("round-trip lost SessionStart hooks")
 	}
 }
+
+// newTownWithEventChannels creates a town with one real rig plus the native
+// event channel directories (events/witness, events/refinery).
+func newTownWithEventChannels(t *testing.T, rigNames ...string) string {
+	t.Helper()
+	tmpDir := t.TempDir()
+	for _, name := range rigNames {
+		os.MkdirAll(filepath.Join(tmpDir, name, "crew", "alice"), 0755)
+		os.MkdirAll(filepath.Join(tmpDir, name, "witness"), 0755)
+		os.MkdirAll(filepath.Join(tmpDir, name, "refinery"), 0755)
+		os.MkdirAll(filepath.Join(tmpDir, name, "polecats"), 0755)
+	}
+	for _, channel := range []string{"witness", "refinery"} {
+		dir := filepath.Join(tmpDir, "events", channel)
+		if err := os.MkdirAll(dir, 0755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, "1700000000000000000-1.event"), []byte(`{}`), 0644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return tmpDir
+}
+
+func TestDiscover_SkipsTownEventsDir(t *testing.T) {
+	tests := []struct {
+		name string
+		rigs []string
+	}{
+		{"single rig", []string{"testrig"}},
+		{"rig with confusable name", []string{"testrig", "events2", "eventsrig"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			townRoot := newTownWithEventChannels(t, tt.rigs...)
+
+			targets, err := DiscoverTargets(townRoot)
+			if err != nil {
+				t.Fatalf("DiscoverTargets failed: %v", err)
+			}
+			targetRigs := map[string]bool{}
+			for _, tgt := range targets {
+				if tgt.Rig == "events" || strings.HasPrefix(tgt.Key, "events/") {
+					t.Errorf("DiscoverTargets returned events dir target: %s", tgt.Key)
+				}
+				if tgt.Rig != "" {
+					targetRigs[tgt.Rig] = true
+				}
+			}
+
+			locations, err := DiscoverRoleLocations(townRoot)
+			if err != nil {
+				t.Fatalf("DiscoverRoleLocations failed: %v", err)
+			}
+			locRigs := map[string]bool{}
+			for _, loc := range locations {
+				if loc.Rig == "events" {
+					t.Errorf("DiscoverRoleLocations returned events dir: %s", loc.Dir)
+				}
+				if loc.Rig != "" {
+					locRigs[loc.Rig] = true
+				}
+			}
+
+			for _, want := range tt.rigs {
+				if !targetRigs[want] || !locRigs[want] {
+					t.Errorf("real rig %q not discovered (targets=%v locations=%v)", want, targetRigs, locRigs)
+				}
+			}
+		})
+	}
+}
