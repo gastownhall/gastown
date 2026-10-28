@@ -164,10 +164,19 @@ func (r *Resolver) validateAgentAddress(address string) error {
 		}
 	}
 
-	// Check agent beads if available
+	// Check agent beads if available.
+	//
+	// Keep the error. A failed lookup is NOT evidence that the agent is absent,
+	// and silently discarding it here is how a beads-layer fault gets reported
+	// as "no matching agent" — a check whose failure mode is an empty result
+	// cannot tell "not there" from "I never looked". If the workspace fallback
+	// below also misses, the message says which of the two happened.
+	var beadsErr error
 	if r.beads != nil {
 		agents, err := r.beads.ListAgentBeads()
-		if err == nil {
+		if err != nil {
+			beadsErr = err
+		} else {
 			for id := range agents {
 				addr := AgentBeadIDToAddress(id)
 				if addr != "" && normalizeAddress(addr) == normalized {
@@ -204,6 +213,14 @@ func (r *Resolver) validateAgentAddress(address string) error {
 		}
 	}
 
+	if beadsErr != nil {
+		return fmt.Errorf("%w: %s (agent-bead lookup FAILED: %v; the workspace fallback found nothing either, "+
+			"so this may be an infrastructure fault rather than a missing agent)", ErrUnknownRecipient, address, beadsErr)
+	}
+	if r.townRoot == "" {
+		return fmt.Errorf("%w: %s (no town root, so no workspace could be checked — "+
+			"this is a caller error, not a missing agent)", ErrUnknownRecipient, address)
+	}
 	return fmt.Errorf("%w: %s (no matching agent or workspace found)", ErrUnknownRecipient, address)
 }
 
