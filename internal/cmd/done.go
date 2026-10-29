@@ -2415,8 +2415,34 @@ doneStateUpdate:
 
 	// Completion metadata (exit_type, MR ID, branch) remains on the agent bead
 	// for audit purposes and anomaly detection by witness patrol.
+	// A DEFERRED exit is not a stuck agent.
+	//
+	// This used to read `exitType != ExitCompleted`, so DEFERRED and ESCALATED
+	// both wrote agent_state=stuck. StateStuck means "the polecat has explicitly
+	// signalled it needs assistance" (polecat/types.go), and it is not idle or
+	// done, so DecideWorkstate gives it NeedsRecovery with CountsTowardCapacity
+	// true. The polecat then holds a capacity slot indefinitely, however clean it
+	// is, until someone reclaims it by hand.
+	//
+	// Observed live: a polecat that exited DEFERRED read agent_state=stuck,
+	// cleanup_status=clean, git-state clean / 0 unpushed / SAFE_TO_NUKE, and held
+	// a slot with nothing at risk. `--reconcile-cleanup` cannot reach it, because
+	// cleanup_status was already correct and there was nothing to rewrite. That
+	// makes deferrals a slow capacity leak with no remedy in the tooling.
+	//
+	// DEFERRED means "work paused, issue still open", and the BEAD carries that:
+	// this same function deliberately leaves a deferred hook bead open rather than
+	// closing it, and a polecat's branch survives its removal. The work is
+	// preserved in the places that preserve work. The SANDBOX has nothing pending,
+	// so conflating "this work needs attention later" with "this sandbox needs
+	// recovery" costs a slot and buys nothing.
+	//
+	// ESCALATED still becomes stuck, deliberately. That exit means a human may
+	// need to look at what the agent was doing, and AgentState.ProtectsFromCleanup
+	// keeps a stuck polecat from being reaped as stale -- which is exactly the
+	// property an escalation wants and a deferral does not.
 	doneState := string(beads.AgentStateDone)
-	if exitType != ExitCompleted {
+	if exitType == ExitEscalated {
 		doneState = "stuck"
 	}
 	// Use UpdateAgentState to sync both column and description (gt-ulom).
