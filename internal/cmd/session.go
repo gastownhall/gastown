@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
+	"github.com/steveyegge/gastown/internal/agentaddr"
 	"github.com/steveyegge/gastown/internal/config"
 	"github.com/steveyegge/gastown/internal/git"
 	"github.com/steveyegge/gastown/internal/polecat"
@@ -252,7 +253,22 @@ func newSessionHealthReport(session string, status tmux.ZombieStatus, maxInactiv
 
 // parseAddress parses "rig/polecat" format.
 // If no "/" is present, attempts to infer rig from current directory.
+//
+// The canonical worker forms ("rig/polecats/name", "rig/crew/name") are
+// recognised through agentaddr, so the address a bead stores is also the
+// address these commands accept (gt-cw1). Anything else keeps the historic
+// split-on-first-slash behaviour, which callers rely on for rig-level roles
+// such as "gastown/witness".
 func parseAddress(addr string) (rigName, polecatName string, err error) {
+	if parsed, ok := agentaddr.Parse(addr); ok {
+		switch parsed.Role {
+		case agentaddr.RolePolecat, agentaddr.RoleCrew:
+			if parsed.Rig != "" && parsed.Name != "" {
+				return parsed.Rig, parsed.Name, nil
+			}
+		}
+	}
+
 	parts := strings.SplitN(addr, "/", 2)
 	if len(parts) == 2 && parts[0] != "" && parts[1] != "" {
 		return parts[0], parts[1], nil

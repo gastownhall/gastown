@@ -1275,7 +1275,7 @@ func hookBeadWithRetryWithTownRoot(beadID, targetAgent, hookDir, townRoot string
 
 	var lastErr error
 	for attempt := 1; attempt <= maxRetries; attempt++ {
-		out, err := BdCmd("update", beadID, "--status=hooked", "--assignee="+targetAgent).
+		out, err := BdCmd("update", beadID, "--status=hooked", assigneeFlag(targetAgent)).
 			Dir(hookDir).
 			WithAutoCommit().
 			CombinedOutput()
