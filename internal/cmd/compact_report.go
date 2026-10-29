@@ -690,10 +690,15 @@ func findExistingCompactReport(dateStr string) (string, error) {
 func findExistingWeeklyRollup(weekStart, weekEnd string) (string, error) {
 	expectedTitle := fmt.Sprintf("Weekly Compaction Rollup %s to %s", weekStart, weekEnd)
 
+	// Rollup audit beads are auto-closed on creation (createWeeklyRollupBead),
+	// and bd list defaults to open-only, so the lookup must filter on closed
+	// status or it will never find prior rollups and the weekly digest will
+	// re-fire on every patrol cycle (hq-jvyr).
 	listCmd := exec.Command("bd", "list",
 		"--type=event",
+		"--status=closed",
 		"--json",
-		"--limit=20",
+		"--limit=50",
 	)
 	listOutput, err := listCmd.Output()
 	if err != nil {
