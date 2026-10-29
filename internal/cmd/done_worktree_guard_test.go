@@ -296,6 +296,34 @@ func TestIsDoneCommand(t *testing.T) {
 	if isDoneCommand(root) {
 		t.Fatal("root command should not be detected as done")
 	}
+
+	// Regression (gt-rwip, cc9aecb1): the ancestor-walk form of isDoneCommand
+	// matched ANY command named "done" in the chain, so `gt dog done` was
+	// routed through the polecat-only worktree resolution and failed with
+	// "gt done is for polecats only (BD_ACTOR=dog)" — dogs could not return
+	// to kennel. Only the top-level `gt done` must match.
+	dog := &cobra.Command{Use: "dog"}
+	dogDone := &cobra.Command{Use: "done [name]"}
+	dog.AddCommand(dogDone)
+	root.AddCommand(dog)
+	if isDoneCommand(dogDone) {
+		t.Fatal("dog done subcommand must not be detected as top-level done")
+	}
+	if isDoneCommand(dog) {
+		t.Fatal("dog command must not be detected as done")
+	}
+}
+
+func TestIsDoneInvocation(t *testing.T) {
+	if !isDoneInvocation([]string{"done"}) {
+		t.Fatal("gt done should be detected as a done invocation")
+	}
+	if isDoneInvocation([]string{"dog", "done"}) {
+		t.Fatal("gt dog done must not be detected as a top-level done invocation (gt-rwip regression)")
+	}
+	if isDoneInvocation([]string{"dog"}) {
+		t.Fatal("gt dog should not be detected as a done invocation")
+	}
 }
 
 func TestPersistentPreRunDoneRejectsBeforeRegistryFallback(t *testing.T) {
@@ -315,7 +343,12 @@ func TestPersistentPreRunDoneRejectsBeforeRegistryFallback(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = os.Chdir(origDir) })
 
+	// Model the real tree (root -> done): a bare command without a parent is
+	// not reachable by any real invocation, and isDoneCommand now keys off the
+	// top-level position.
+	root := &cobra.Command{Use: "gt"}
 	done := &cobra.Command{Use: "done"}
+	root.AddCommand(done)
 	err = persistentPreRun(done, nil)
 	if err == nil || !strings.Contains(err.Error(), "assigned polecat worktree") {
 		t.Fatalf("persistentPreRun error = %v, want assigned worktree rejection", err)
