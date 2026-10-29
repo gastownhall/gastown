@@ -33,6 +33,7 @@ func runCmd(timeout time.Duration, name string, args ...string) (*bytes.Buffer, 
 	defer cancel()
 
 	cmd := exec.CommandContext(ctx, name, args...)
+	configureWebCommand(cmd)
 	var stdout bytes.Buffer
 	cmd.Stdout = &stdout
 
@@ -74,6 +75,7 @@ func (f *LiveConvoyFetcher) runBdCmd(beadsDir string, args ...string) (*bytes.Bu
 		bin = "bd"
 	}
 	cmd := exec.CommandContext(ctx, bin, args...)
+	configureWebCommand(cmd)
 	cmd.Dir = beadsDir
 	var stdout bytes.Buffer
 	cmd.Stdout = &stdout
