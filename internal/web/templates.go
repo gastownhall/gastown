@@ -32,6 +32,8 @@ type ConvoyData struct {
 	Summary     *DashboardSummary
 	Expand      string // Panel to show fullscreen (from ?expand=name)
 	CSRFToken   string // Token for CSRF protection on POST requests
+
+	EmbedParentOrigin string // Explicit server-configured trusted Canvas origin
 }
 
 // RigRow represents a registered rig in the dashboard.
@@ -205,6 +207,7 @@ type ConvoyRow struct {
 	Completed     int
 	Total         int
 	ProgressPct   int      // 0-100, computed from Completed/Total
+	UnknownBeads  int      // Tracked issues whose cross-rig details are unavailable
 	ReadyBeads    int      // open beads with no assignee (available to pick up)
 	InProgress    int      // beads currently being worked on
 	Assignees     []string // unique assignees across tracked issues
@@ -232,7 +235,7 @@ func LoadTemplates() (*template.Template, error) {
 		"dogStateClass":      dogStateClass,
 		"queueStatusClass":   queueStatusClass,
 		"polecatStatusClass": polecatStatusClass,
-		"activityTypeClass": activityTypeClass,
+		"activityTypeClass":  activityTypeClass,
 		"contains": func(s, substr string) bool {
 			return strings.Contains(s, substr)
 		},

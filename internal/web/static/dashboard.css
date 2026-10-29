@@ -3768,3 +3768,7 @@
         .sling-dropdown-item + .sling-dropdown-item {
             border-top: 1px solid var(--border);
         }
+
+/* Bead navigation inherits the standalone dashboard typography. */
+.bead-link { font: inherit; color: inherit; background: none; border: 0; padding: 0; cursor: pointer; text-decoration: underline; text-underline-offset: 3px; }
+.bead-link:focus-visible { outline: 2px solid currentColor; outline-offset: 3px; }
