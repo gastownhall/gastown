@@ -12,7 +12,8 @@
 <body>
     <div class="dashboard" id="dashboard-main" hx-get="/" hx-trigger="sse:dashboard-update, every 30s [!window.pauseRefresh && !window.sseConnected]" hx-swap="morph:outerHTML" hx-ext="morph">
         <header>
-            <pre class="ascii-title">  __  __    __   _____ __  _   _  __  _    ___ __  __  _ _____ ___  __  _      ______ __  _ _____ ___ ___ 
+            <h1 class="title-text">Gas Town Control Center</h1>
+            <pre class="ascii-title" role="img" aria-label="Gas Town Control Center">  __  __    __   _____ __  _   _  __  _    ___ __  __  _ _____ ___  __  _      ______ __  _ _____ ___ ___ 
  / _]/  \ /' _| |_   _/__\| | | ||  \| |  / _//__\|  \| |_   _| _ \/__\| |    / _/ __|  \| |_   _| __| _ \
 | [/\ /\ |`._`.   | || \/ | 'V' || | ' | | \_| \/ | | ' | | | | v / \/ | |_  | \_| _|| | ' | | | | _|| v /
  \__/_||_||___/   |_| \__/!_/ \_!|_|\__|  \__/\__/|_|\__| |_| |_|_\\__/|___|  \__/___|_|\__| |_| |___|_|_\</pre>
@@ -896,7 +897,7 @@
                     </div>
                     <div id="ready-work-list">
                         <div class="section-header">
-                            <h4>Ready Across Rigs</h4>
+                            <h3>Ready Across Rigs</h3>
                             <span id="ready-count" class="count">0</span>
                         </div>
                         <div id="ready-loading" class="loading-state">Loading ready work...</div>
