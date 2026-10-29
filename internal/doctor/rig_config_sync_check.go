@@ -251,10 +251,11 @@ func (c *RigConfigSyncCheck) Run(ctx *CheckContext) *CheckResult {
 			}
 		}
 
-		// Check if rig identity bead exists
+		// Check if rig identity bead exists. Rig identity beads live in the town
+		// database despite carrying the rig prefix — see beads.NewRigBeadStore.
 		if configPrefix != "" {
-			rigBeadID := fmt.Sprintf("%s-rig-%s", configPrefix, rigName)
-			if !c.rigBeadExists(rigBeadID, rigPath, beadsDir) {
+			rigBeadID := beads.RigBeadIDWithPrefix(configPrefix, rigName)
+			if !c.rigBeadExists(ctx.TownRoot, rigBeadID) {
 				c.missingRigBeads = append(c.missingRigBeads, rigBeadInfo{
 					rigName: rigName,
 					prefix:  configPrefix,
@@ -523,11 +524,8 @@ func (c *RigConfigSyncCheck) Fix(ctx *CheckContext) error {
 	}
 
 	// Fix missing rig identity beads
+	bd := beads.NewRigBeadStore(ctx.TownRoot)
 	for _, info := range c.missingRigBeads {
-		rigPath := filepath.Join(ctx.TownRoot, info.rigName)
-		beadsDir := doltserver.FindRigBeadsDir(ctx.TownRoot, info.rigName)
-
-		bd := beads.NewWithBeadsDir(rigPath, beadsDir)
 		fields := &beads.RigFields{
 			Repo:   info.gitURL,
 			Prefix: info.prefix,
@@ -537,13 +535,9 @@ func (c *RigConfigSyncCheck) Fix(ctx *CheckContext) error {
 		if _, err := bd.CreateRigBead(info.rigName, fields); err != nil {
 			return fmt.Errorf("could not create rig bead for %s: %w", info.rigName, err)
 		}
-
-		// Add status:docked label if the rig should be docked
-		rigBeadID := fmt.Sprintf("%s-rig-%s", info.prefix, info.rigName)
-		cmd := exec.Command("bd", "label", rigBeadID, "--add", "status:docked")
-		cmd.Dir = rigPath
-		cmd.Env = append(stripEnvPrefixes(os.Environ(), "BEADS_DIR="), "BEADS_DIR="+beadsDir)
-		_ = cmd.Run() // Best effort - ignore errors
+		// No status label is applied here: a rig whose identity bead went
+		// missing is not thereby docked, and stamping status:docked on repair
+		// would stop the daemon supervising it (gt-gf6). Use 'gt rig dock'.
 	}
 
 	return nil
@@ -567,16 +561,7 @@ func (c *RigConfigSyncCheck) doltDatabaseExists(ctx *CheckContext, dbName string
 }
 
 // rigBeadExists checks if a rig identity bead exists.
-func (c *RigConfigSyncCheck) rigBeadExists(rigBeadID, rigPath, beadsDir string) bool {
-	// Try to show the bead using bd
-	cmd := exec.Command("bd", "show", rigBeadID, "--json")
-	cmd.Dir = rigPath
-	cmd.Env = append(stripEnvPrefixes(os.Environ(), "BEADS_DIR="), "BEADS_DIR="+beadsDir)
-	output, err := cmd.CombinedOutput()
-	if err != nil {
-		return false
-	}
-
-	// Check if the output contains the bead ID
-	return strings.Contains(string(output), rigBeadID)
+func (c *RigConfigSyncCheck) rigBeadExists(townRoot, rigBeadID string) bool {
+	_, err := beads.NewRigBeadStore(townRoot).Show(rigBeadID)
+	return err == nil
 }
