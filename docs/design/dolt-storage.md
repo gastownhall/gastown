@@ -53,6 +53,39 @@ connects to localhost and fails.
 Per-workspace override: set `dolt.host` in a rig's `.beads/config.yaml`.
 This takes priority over the env var for that specific workspace.
 
+### Listener Timeouts
+
+`GT_DOLT_READ_TIMEOUT_MS` and `GT_DOLT_WRITE_TIMEOUT_MS` control the generated
+Dolt listener's `read_timeout_millis` and `write_timeout_millis`, respectively.
+They apply when Gas Town starts a local Dolt server; they do not reconfigure a
+running or remote server. Do not hand-edit `config.yaml`: Gas Town regenerates
+it at server startup.
+
+Each setting independently uses the first nonempty value from the process
+environment, then `<townRoot>/daemon/daemon.env`. Surrounding whitespace is
+ignored; empty values quietly fall through to the next source or the startup
+path's default. To persist overrides when the launching process does not inherit
+your shell environment, put plain, unquoted `KEY=value` lines in `daemon.env`
+(without `export` or inline comments), for example:
+
+```dotenv
+GT_DOLT_READ_TIMEOUT_MS=28800000
+GT_DOLT_WRITE_TIMEOUT_MS=28800000
+```
+
+Values must be nonnegative decimal integers in milliseconds that fit both the
+platform's Go `int` and Dolt's `time.Duration` after conversion. Zero omits the
+corresponding YAML field, selecting Dolt's own default; it does not disable
+timeouts. A negative, malformed, or overflowing value emits a warning and uses
+the startup path's safe default. An invalid process value does **not** fall back
+to the durable file.
+
+`gt dolt start` retains five-minute read/write defaults. The daemon's direct
+launcher retains its thirty-second defaults. Longer limits can accommodate
+long-running queries or migrations, but delay cleanup of abandoned connections.
+These listener settings are separate from the idle-session `GT_DOLT_WAIT_TIMEOUT`
+setting, which is measured in seconds.
+
 ## Commands
 
 ```bash
