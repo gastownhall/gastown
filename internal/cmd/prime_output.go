@@ -448,16 +448,17 @@ func outputCommandQuickReference(ctx RoleContext) {
 // outputContextFile reads and displays the CONTEXT.md file from the town root.
 // This provides a simple plugin point for operators to inject custom instructions
 // that all agents (including polecats) will see during priming.
-func outputContextFile(ctx RoleContext) {
-	contextPath := filepath.Join(ctx.TownRoot, "CONTEXT.md")
-	data, err := os.ReadFile(contextPath)
-	if err != nil {
-		explain(true, "CONTEXT.md: not found at "+contextPath)
-		return
+func outputContextFile(ctx RoleContext) error {
+	workDir := ""
+	if ctx.Role == RolePolecat || ctx.Role == RoleCrew || ctx.Role == RoleRefinery {
+		workDir = ctx.WorkDir
 	}
-	explain(true, "CONTEXT.md: found at "+contextPath+", injecting contents")
-	fmt.Println()
-	fmt.Print(string(data))
+	data, err := renderOperatorContext(ctx.TownRoot, workDir)
+	if err != nil {
+		return err
+	}
+	fmt.Print(data)
+	return nil
 }
 
 // outputHandoffContent reads and displays the pinned handoff bead for the role.
