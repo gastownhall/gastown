@@ -2,6 +2,7 @@ package beads
 
 import (
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -431,6 +432,145 @@ case "${1:-}" in
       *gt-other*) echo 'other rig should not be hydrated' >&2; exit 7 ;;
     esac
     printf '%s\n' '[{"id":"gt-current","title":"Merge: gt-source","description":"branch: polecat/test/gt-source@abc\ntarget: main\nsource_issue: gt-source\nrig: gastown\n","status":"open","priority":1,"created_at":"2026-06-29T00:00:00Z","updated_at":"2026-06-29T00:00:00Z","ephemeral":true,"labels":["gt:merge-request"]}]'
+    exit 0
+    ;;
+  *)
+    printf '%s\n' '[]'
+    exit 0
+    ;;
+esac
+`
+	if err := os.WriteFile(filepath.Join(binDir, "bd"), []byte(script), 0755); err != nil {
+		t.Fatalf("write bd stub: %v", err)
+	}
+	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+}
+
+// TestVerifyMRInRigQueueDetectsMisfiledMR reproduces the gt-6sg failure in the
+// shape it actually occurs in: the MR bead is created for real (not --dry-run,
+// which short-circuits before the DB-init path and therefore succeeds exactly
+// where the real call fails), the create returns an ID, a Show read-back finds
+// the bead — and the rig's own queue is still empty, because the bead landed in
+// a different store than the one the Refinery reads.
+//
+// Both pre-existing guards pass on this input: the ID carries the rig's own
+// "gt-" prefix, and the read-back resolves. Only the queue check catches it.
+func TestVerifyMRInRigQueueDetectsMisfiledMR(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("test uses Unix shell script mock for bd")
+	}
+	installMisfiledMRBDStub(t, false)
+
+	b := New(t.TempDir())
+
+	// The real create path: bd create returns a genuine MR bead with an ID.
+	mr, err := b.Create(CreateOptions{
+		Title:     "Merge: gt-source",
+		Labels:    []string{"gt:merge-request"},
+		Priority:  1,
+		Ephemeral: true,
+	})
+	if err != nil {
+		t.Fatalf("Create() error = %v, want a successful create", err)
+	}
+	if mr.ID != "gt-wisp-misfiled" {
+		t.Fatalf("Create() ID = %q, want gt-wisp-misfiled", mr.ID)
+	}
+
+	// The old guards are satisfied, which is precisely the problem.
+	if got, err := b.Show(mr.ID); err != nil || got == nil {
+		t.Fatalf("Show(%q) = %v, %v; the read-back guard is expected to PASS here", mr.ID, got, err)
+	}
+
+	err = b.VerifyMRInRigQueue("gastown", mr.ID)
+	if err == nil {
+		t.Fatal("VerifyMRInRigQueue() = nil, want an error: the MR is absent from the rig's queue")
+	}
+	if !errors.Is(err, ErrMRNotInRigQueue) {
+		t.Fatalf("VerifyMRInRigQueue() error = %v, want ErrMRNotInRigQueue", err)
+	}
+	if !strings.Contains(err.Error(), mr.ID) {
+		t.Errorf("VerifyMRInRigQueue() error = %q, want it to name the MR %q", err, mr.ID)
+	}
+}
+
+// TestVerifyMRInRigQueueAcceptsQueuedMR is the positive control: the same real
+// create path, but the rig's queue does contain the MR.
+func TestVerifyMRInRigQueueAcceptsQueuedMR(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("test uses Unix shell script mock for bd")
+	}
+	installMisfiledMRBDStub(t, true)
+
+	b := New(t.TempDir())
+	mr, err := b.Create(CreateOptions{
+		Title:     "Merge: gt-source",
+		Labels:    []string{"gt:merge-request"},
+		Priority:  1,
+		Ephemeral: true,
+	})
+	if err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+	if err := b.VerifyMRInRigQueue("gastown", mr.ID); err != nil {
+		t.Fatalf("VerifyMRInRigQueue() error = %v, want nil for a queued MR", err)
+	}
+}
+
+// TestVerifyMRInRigQueueRejectsEmptyID guards the degenerate input: an empty ID
+// must not be treated as "found".
+func TestVerifyMRInRigQueueRejectsEmptyID(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("test uses Unix shell script mock for bd")
+	}
+	installMisfiledMRBDStub(t, true)
+
+	b := New(t.TempDir())
+	if err := b.VerifyMRInRigQueue("gastown", ""); !errors.Is(err, ErrMRNotInRigQueue) {
+		t.Fatalf("VerifyMRInRigQueue(\"\") error = %v, want ErrMRNotInRigQueue", err)
+	}
+}
+
+// installMisfiledMRBDStub installs a bd stub whose create genuinely succeeds and
+// whose show resolves the created bead. When queued is false the rig's queue
+// query comes back empty — the gastown store-split behaviour observed on gt-6sg,
+// where every create landed in the embedded contributor store while the Refinery
+// read the rig's server database.
+func installMisfiledMRBDStub(t *testing.T, queued bool) {
+	t.Helper()
+	ResetBdAllowStaleCacheForTest()
+	t.Cleanup(ResetBdAllowStaleCacheForTest)
+
+	mrJSON := `{"id":"gt-wisp-misfiled","title":"Merge: gt-source","description":"branch: polecat/test/gt-source@abc\ntarget: main\nsource_issue: gt-source\nrig: gastown\n","status":"open","priority":1,"assignee":"","created_at":"2026-09-04T00:00:00Z","updated_at":"2026-09-04T00:00:00Z","created_by":"tester","labels_csv":"gt:merge-request"}`
+	sqlRows := `[]`
+	if queued {
+		sqlRows = `[` + mrJSON + `]`
+	}
+
+	binDir := t.TempDir()
+	script := `#!/bin/sh
+if [ "${1:-}" = "--allow-stale" ]; then
+  if [ "${2:-}" = "version" ]; then
+    echo "Error: unknown flag: --allow-stale" >&2
+    exit 0
+  fi
+  shift
+fi
+case "${1:-}" in
+  create)
+    printf '%s\n' '{"id":"gt-wisp-misfiled","title":"Merge: gt-source","status":"open","priority":1,"ephemeral":true,"labels":["gt:merge-request"]}'
+    exit 0
+    ;;
+  show)
+    printf '%s\n' '[{"id":"gt-wisp-misfiled","title":"Merge: gt-source","status":"open","priority":1,"labels":["gt:merge-request"]}]'
+    exit 0
+    ;;
+  list)
+    printf '%s\n' '[]'
+    exit 0
+    ;;
+  sql)
+    printf '%s\n' '` + sqlRows + `'
     exit 0
     ;;
   *)

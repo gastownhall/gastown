@@ -2,6 +2,8 @@
 package beads
 
 import (
+	"errors"
+	"fmt"
 	"strings"
 )
 
@@ -115,4 +117,52 @@ func (b *Beads) FindOpenMRsForIssue(issueID string) ([]*Issue, error) {
 func MatchesMRSourceIssue(description, issueID string) bool {
 	needle := "source_issue: " + issueID + "\n"
 	return strings.Contains(description, needle)
+}
+
+// ErrMRNotInRigQueue reports that a merge-request bead was created and is
+// readable, but is not present in the rig's own merge-queue view.
+var ErrMRNotInRigQueue = errors.New("merge request is not visible in the rig's merge queue")
+
+// VerifyMRInRigQueue confirms that mrID is visible in the rig's own merge-queue
+// view — the same query the Refinery runs to pick up work (see runMQList).
+//
+// This exists because neither of the older guards can detect a misfiled MR:
+//
+//   - ValidateRigPrefix compares only the bead's ID prefix. A town whose rig
+//     store and contributor store share a prefix (gastown: both "gt-") passes
+//     that check no matter which store the bead landed in.
+//   - A plain Show read-back succeeds too, because bd resolves reads across
+//     repos.additional and happily finds the bead in the contributor store.
+//
+// So an MR can be created, be readable, pass both guards, and still be invisible
+// to the Refinery — which on a merge-queue rig is silent work loss: the branch is
+// pushed, the polecat reports COMPLETED, and nothing is ever queued to merge it
+// (gt-6sg). Presence in the queue view is the only check that reflects what the
+// Refinery will actually see, so it is the one worth gating completion on.
+func (b *Beads) VerifyMRInRigQueue(rigName, mrID string) error {
+	if mrID == "" {
+		return fmt.Errorf("%w: empty merge request ID", ErrMRNotInRigQueue)
+	}
+
+	issues, err := b.ListMergeRequests(ListOptions{
+		Status:   "all",
+		Label:    "gt:merge-request",
+		Priority: -1,
+		Rig:      rigName,
+	})
+	if err != nil {
+		// An unreadable queue is not proof the MR is missing. Report the failure
+		// so callers can surface it rather than silently treating it as absent.
+		return fmt.Errorf("querying rig %q merge queue: %w", rigName, err)
+	}
+
+	for _, issue := range issues {
+		if issue != nil && issue.ID == mrID {
+			return nil
+		}
+	}
+
+	return fmt.Errorf("%w: %s was created and is readable, but rig %q's queue does not contain it — "+
+		"the bead most likely landed in a different store than the one the Refinery reads",
+		ErrMRNotInRigQueue, mrID, rigName)
 }
