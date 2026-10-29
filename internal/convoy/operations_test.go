@@ -11,6 +11,7 @@ import (
 	"time"
 
 	beadsdk "github.com/steveyegge/beads"
+	"github.com/steveyegge/gastown/internal/workflow"
 )
 
 func TestExtractIssueID(t *testing.T) {
@@ -1791,5 +1792,68 @@ exit 0
 	logStr := string(logData)
 	if !strings.Contains(logStr, "nudge") || !strings.Contains(logStr, "gastown/witness") {
 		t.Errorf("expected gt nudge gastown/witness in log, got: %q\nlogger output: %v", logStr, logged)
+	}
+}
+
+// TestFeedNextReadyIssue_SkipsGatedWaiting (R25): the event-driven feeder
+// leaves an open, unassigned item labelled gtb:waiting: alone and feeds the
+// next ready issue instead.
+func TestFeedNextReadyIssue_SkipsGatedWaiting(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("skipping on windows")
+	}
+	store, cleanup := setupTestStore(t)
+	defer cleanup()
+	ctx := context.Background()
+	now := time.Now().UTC()
+
+	convoy := &beadsdk.Issue{ID: "test-convoyw", Title: "C", Status: beadsdk.StatusOpen, Priority: 2, IssueType: beadsdk.TypeTask, CreatedAt: now, UpdatedAt: now}
+	waiting := &beadsdk.Issue{ID: "test-waiting1", Title: "Waiting", Status: beadsdk.StatusOpen, Priority: 1, IssueType: beadsdk.TypeTask, CreatedAt: now, UpdatedAt: now}
+	ready := &beadsdk.Issue{ID: "test-ready2", Title: "Ready", Status: beadsdk.StatusOpen, Priority: 2, IssueType: beadsdk.TypeTask, CreatedAt: now, UpdatedAt: now}
+	for _, iss := range []*beadsdk.Issue{convoy, waiting, ready} {
+		if err := store.CreateIssue(ctx, iss, "test"); err != nil {
+			t.Fatalf("CreateIssue %s: %v", iss.ID, err)
+		}
+	}
+	for _, l := range []string{"gtb:wf:task", "gtb:waiting:approve spec"} {
+		if err := store.AddLabel(ctx, waiting.ID, l, "test"); err != nil {
+			t.Fatalf("AddLabel: %v", err)
+		}
+	}
+	for _, id := range []string{waiting.ID, ready.ID} {
+		if err := store.AddDependency(ctx, &beadsdk.Dependency{IssueID: convoy.ID, DependsOnID: id, Type: beadsdk.DependencyType("tracks"), CreatedAt: now, CreatedBy: "test"}, "test"); err != nil {
+			t.Fatalf("AddDependency %s: %v", id, err)
+		}
+	}
+
+	townRoot := setupTownRoot(t)
+	gtPath, logPath := makeGTStub(t, 0)
+	logger, _ := makeLogger()
+	feedNextReadyIssue(ctx, store, townRoot, convoy.ID, "test", logger, gtPath, func(string) bool { return false }, nil)
+
+	logData, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatalf("gt stub was not called: %v", err)
+	}
+	logStr := string(logData)
+	if strings.Contains(logStr, waiting.ID) {
+		t.Errorf("waiting gated item dispatched: %q", logStr)
+	}
+	if !strings.Contains(logStr, "sling test-ready2 testrig --no-boot") {
+		t.Errorf("ready issue not dispatched: %q", logStr)
+	}
+}
+
+// TestFetchCrossRigBeadStatus_CarriesLabels (R25): the bd show fallback for
+// cross-rig tracked issues keeps labels, so the feeder sees gtb:waiting:.
+func TestFetchCrossRigBeadStatus_CarriesLabels(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("skipping on windows")
+	}
+	townRoot, _ := setupTownRootWithCrossRig(t, 0, `[{"id":"oag-abc","status":"open","assignee":"","priority":2,"issue_type":"task","labels":["gtb:waiting:approve spec"]}]`)
+	result := fetchCrossRigBeadStatus(townRoot, []string{"oag-abc"})
+	got := result["oag-abc"]
+	if got == nil || !workflow.HasWaitingLabel(got.Labels) {
+		t.Fatalf("labels lost: %+v", got)
 	}
 }

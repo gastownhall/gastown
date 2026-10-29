@@ -108,7 +108,7 @@ When `await-event` outputs `EFFORT: full`, run all steps thoroughly (normal mode
 
 The goal: idle cycles should burn ~10% of the tokens a full patrol uses."""
 formula = "mol-refinery-patrol"
-version = 16
+version = 18
 
 [vars]
 [vars.wisp_type]
@@ -337,6 +337,23 @@ Pick next branch from queue. Rehearse an ancestry-preserving merge against the M
 
 Resolve `<merge-target>` using the **Target Resolution Rule** above.
 Do NOT hardcode `main` unless `main` is actually the resolved MR target.
+
+**Step 0.25: Gated workflow merge gate (gtb items)**
+
+Before any merge rehearsal or merge, run the gated-workflow merge gate:
+
+```bash
+GATE_JSON=$(gt mq gate <rig> <mr-id> --json); GATE_EXIT=$?
+```
+
+- Exit 0: continue (gated item ready, or MR not gated). For a gated item,
+  `head_sha` is the head to merge — it now carries the version bump commit.
+- Exit 3: CI pending. Leave the MR open, skip to loop-check (requeue).
+- Exit 5: CI failed. The item went back to execute and the MR was rejected;
+  treat it as rejected and skip to loop-check. Do NOT merge.
+- Exit 1: leave the MR open, skip to loop-check. Do NOT merge. Exception: if
+  `reason` says there is no open PR, create the PR for the branch as in
+  merge-push Step 1 (pr), then re-run the gate.
 
 **Step 0.5: Verify branch still exists (race-condition guard)**
 
@@ -624,7 +641,17 @@ send MERGED only after `gt mq post-merge` succeeds.
 
 Determine `<merge-target>` using the **Target Resolution Rule** above.
 
-**If merge_strategy = "direct" (default):**
+**Gate first (both strategies):** re-run `gt mq gate <rig> <mr-bead-id> --json`
+immediately before merging. Merge only on exit 0. On exit 3 requeue (leave the
+MR open, skip to loop-check); on exit 5 the item went back to execute — treat
+as rejected; on exit 1 do not merge. `gt mq post-merge` refuses a gated MR that
+did not pass the gate.
+
+**If merge_strategy = "direct" (default):** this path is NEVER used for a gated
+item. A gated item (one whose source issue is a gtb workflow item) always takes
+the PR path below: `gtb mq gate`, then `gh pr merge`, then `gt mq post-merge`,
+never a direct `git merge` or push to the target, even when merge_strategy is
+"direct". Direct merge applies only to non-gated MRs.
 
 ```bash
 git checkout <merge-target>

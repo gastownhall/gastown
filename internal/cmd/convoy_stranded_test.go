@@ -4,6 +4,8 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/steveyegge/gastown/internal/beads"
 )
 
 func TestIsReadyIssue_BlockingAndStatus(t *testing.T) {
@@ -197,5 +199,31 @@ func TestIsSlingableBead(t *testing.T) {
 				t.Fatalf("isSlingableBead(%q) = %v, want %v", tc.beadID, got, tc.want)
 			}
 		})
+	}
+}
+
+// TestIsReadyIssue_GatedWaiting (R25): an open, unassigned gated item that
+// waits on a human (gtb:waiting:<reason>) is not stranded work; the same
+// item without the label is.
+func TestIsReadyIssue_GatedWaiting(t *testing.T) {
+	waiting := trackedIssueInfo{ID: "gt-abc", Status: "open", Labels: []string{"gtb:wf:task", "gtb:waiting:approve spec"}}
+	if isReadyIssue(waiting, nil) {
+		t.Error("waiting gated item reported ready")
+	}
+	notWaiting := trackedIssueInfo{ID: "gt-abc", Status: "open", Labels: []string{"gtb:wf:task"}}
+	if !isReadyIssue(notWaiting, nil) {
+		t.Error("gated item without a wait not ready")
+	}
+}
+
+// TestApplyFreshIssueDetails_CarriesWaitingLabel (R25): the stranded scan's
+// tracked issues carry the bead labels from bd show (getTrackedIssues ->
+// applyFreshIssueDetails), so isReadyIssue can see gtb:waiting:.
+func TestApplyFreshIssueDetails_CarriesWaitingLabel(t *testing.T) {
+	dep := trackedDependency{ID: "gt-abc"}
+	applyFreshIssueDetails(&dep, issueToDetails(&beads.Issue{ID: "gt-abc", Status: "open", Labels: []string{"gtb:waiting:approve spec"}}))
+	info := trackedIssueInfo{ID: dep.ID, Status: dep.Status, Labels: dep.Labels}
+	if isReadyIssue(info, nil) {
+		t.Errorf("labels not propagated: %+v", info)
 	}
 }

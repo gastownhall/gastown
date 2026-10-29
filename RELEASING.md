@@ -7,7 +7,6 @@
 | **GitHub Release** | GoReleaser via Actions on tag push | Yes |
 | **Homebrew tap** (`gastownhall/gastown`) | Actions writes an asset-based formula after archives upload | Yes |
 | **Homebrew core** (if listed) | Homebrew bot detects new release | Yes (24-48h delay) |
-| **npm** (`@gastown/gt`) | Actions workflow, OIDC trusted publishing | Yes (when org is set up) |
 
 ## How to Release
 
@@ -59,7 +58,6 @@ The `release.yml` workflow triggers automatically:
    shipped reporting 0.12.1.
 2. **goreleaser** job builds binaries for all platforms and creates the GitHub Release
 3. **update-homebrew-formula** job writes an asset-based formula to `gastownhall/homebrew-gastown` when tap credentials are configured
-4. **publish-npm** job publishes to npm (best-effort, `continue-on-error: true`)
 
 Manual dispatch is only for rerunning a release from a `v*` tag. Publishing jobs are guarded to skip branch refs.
 
@@ -115,38 +113,6 @@ brew info gastown    # Check version
 brew upgrade gastown # Upgrade if installed
 ```
 
-## npm (`@gastown/gt`)
-
-### How it works
-
-The workflow uses **OIDC trusted publishing** (npm provenance). No NPM_TOKEN
-secret is needed — the `id-token: write` permission on the job generates a
-short-lived OIDC token that npm trusts because the GitHub repo is linked to
-the npm package.
-
-### Prerequisites
-
-The `@gastown` npm organization must exist and be linked to this repo:
-
-1. Go to https://www.npmjs.com and create (or join) the `@gastown` org
-2. Under org settings, enable "Require 2FA" and configure trusted publishing
-3. Link `gastownhall/gastown` as a trusted publisher for `@gastown/gt`
-
-### Current status (as of 2026-03-06)
-
-The `@gastown` npm org was secured by a community member (Ivan Casco Valero,
-ivan@ivancasco.com) to prevent scope squatting. Ownership transfer is pending.
-Until the org is transferred, npm publish will fail gracefully without blocking
-the release (`continue-on-error: true` in the workflow).
-
-### Verifying
-
-```bash
-npm view @gastown/gt version
-npm install -g @gastown/gt
-gt version
-```
-
 ## Files Updated During Release
 
 | File | What changes |
@@ -154,7 +120,6 @@ gt version
 | `CHANGELOG.md` | New version section with date |
 | `internal/cmd/info.go` | `versionChanges` entry for `gt info --whats-new` |
 | `internal/cmd/version.go` | `Version` constant |
-| `npm-package/package.json` | `version` field |
 | `flake.nix` | version + vendorHash (only if `nix` is in PATH) |
 | `gastownhall/homebrew-gastown/Formula/gastown.rb` | asset URLs + `sha256` updated by release workflow |
 
@@ -164,11 +129,6 @@ gt version
 
 The workflow rejects `go.mod` files with `replace` directives (they break
 `go install`). Remove the replace directive and commit before tagging.
-
-### npm publish returns 404
-
-The `@gastown` npm org doesn't exist or you don't have publish access.
-See the npm section above. The release still succeeds — npm is best-effort.
 
 ### Homebrew shows old version after a release
 

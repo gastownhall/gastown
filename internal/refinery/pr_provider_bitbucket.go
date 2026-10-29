@@ -45,3 +45,13 @@ func (p *bitbucketPRProvider) MergePR(pr *git.PullRequestInfo, method string) (s
 	}
 	return "", fmt.Errorf("bitbucket PR merge is disabled until the provider supports submitted-head conditional merge for PR #%d", prNumber)
 }
+
+// ChecksPassed is not supported for Bitbucket yet: the provider has no
+// build-status client. Returning an error makes gated merges fail closed.
+func (p *bitbucketPRProvider) ChecksPassed(pr *git.PullRequestInfo) (bool, bool, error) {
+	prNumber := 0
+	if pr != nil {
+		prNumber = pr.Number
+	}
+	return false, false, fmt.Errorf("bitbucket CI status checks are not supported (PR #%d); gated merges need vcs_provider=github", prNumber)
+}

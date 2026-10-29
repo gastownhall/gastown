@@ -2517,6 +2517,13 @@ func (g *Git) DiffStat(rangeSpec string) (string, error) {
 	return g.run("diff", "--stat", rangeSpec)
 }
 
+// DiffNumStat returns the --numstat output (added<TAB>deleted<TAB>path per
+// file, "-" counts for binary files) for a diff range such as
+// "main...feature". It is the machine-readable form of DiffStat.
+func (g *Git) DiffNumStat(rangeSpec string) (string, error) {
+	return g.run("diff", "--numstat", rangeSpec)
+}
+
 // For example, CommitsAhead("main", "feature") returns how many commits
 // are on feature that are not on main.
 func (g *Git) CommitsAhead(base, branch string) (int, error) {

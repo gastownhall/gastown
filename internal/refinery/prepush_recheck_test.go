@@ -36,6 +36,10 @@ func (p *prepushPRProvider) IsPRApproved(*gitpkg.PullRequestInfo) (bool, error) 
 	return true, nil
 }
 
+func (p *prepushPRProvider) ChecksPassed(*gitpkg.PullRequestInfo) (bool, bool, error) {
+	return true, false, nil
+}
+
 func (p *prepushPRProvider) MergePR(*gitpkg.PullRequestInfo, string) (string, error) {
 	p.mergeCalled = true
 	return "deadbeef", nil

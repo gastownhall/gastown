@@ -27,6 +27,7 @@ import (
 	"github.com/steveyegge/gastown/internal/style"
 	"github.com/steveyegge/gastown/internal/tmux"
 	"github.com/steveyegge/gastown/internal/tui/convoy"
+	"github.com/steveyegge/gastown/internal/workflow"
 	"github.com/steveyegge/gastown/internal/workspace"
 )
 
@@ -1696,6 +1697,7 @@ func findStrandedConvoys(townBeads string) ([]strandedConvoyInfo, error) {
 // - status = "open" AND (no assignee OR assignee session is dead)
 // - OR status = "in_progress"/"hooked" AND assignee session is dead (orphaned molecule)
 // - AND not blocked (cross-rig-aware from issue details)
+// - AND not a gated workflow item waiting on a human (gtb:waiting: label)
 // scheduledSet is a pre-computed set of bead IDs with open sling contexts (from areScheduled).
 func isReadyIssue(t trackedIssueInfo, scheduledSet map[string]bool) bool {
 	status := strings.TrimSpace(t.Status)
@@ -1717,6 +1719,12 @@ func isReadyIssue(t trackedIssueInfo, scheduledSet map[string]bool) bool {
 
 	// Scheduled beads are not stranded — they're waiting for dispatch capacity.
 	if scheduledSet[t.ID] {
+		return false
+	}
+
+	// A gated workflow item waiting on a human is not stranded: re-slinging
+	// it would only spawn polecats that wait too (R25).
+	if workflow.HasWaitingLabel(t.Labels) {
 		return false
 	}
 

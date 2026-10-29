@@ -664,6 +664,29 @@ type WorkflowConfig struct {
 	// DefaultFormula is the formula to use when `gt formula run` is called without arguments.
 	// If empty, no default is set and a formula name must be provided.
 	DefaultFormula string `json:"default_formula,omitempty"`
+
+	// Gated configures gtb's gated work-item workflow (spec, plan, TDD, check,
+	// review gates). Nil means the gated workflow is not configured.
+	Gated *GatedWorkflow `json:"gated,omitempty"`
+}
+
+// GatedWorkflow is the per-rig configuration of gtb's gated workflow.
+type GatedWorkflow struct {
+	// Enabled turns the gated workflow on for this rig.
+	Enabled bool `json:"enabled"`
+	// CheckCommands are the shell commands the check step runs, in order.
+	CheckCommands []string `json:"check_commands,omitempty"`
+	// CheckCommandsApprovedSHA is the sha256 of CheckCommands joined with "\n"
+	// at the time a human approved them; any edit to CheckCommands voids it.
+	CheckCommandsApprovedSHA string `json:"check_commands_approved_sha,omitempty"`
+	// VersionFiles are repo-relative files whose version must be bumped.
+	VersionFiles []string `json:"version_files,omitempty"`
+	// MaxFixFiles caps the files a fix item may touch (default 5).
+	MaxFixFiles int `json:"max_fix_files,omitempty"`
+	// MaxFixRounds caps fix rounds after a failed check or review (default 3).
+	MaxFixRounds int `json:"max_fix_rounds,omitempty"`
+	// MaxPlanLoops caps plan revision loops (default 3).
+	MaxPlanLoops int `json:"max_plan_loops,omitempty"`
 }
 
 // RigSettings represents per-rig behavioral configuration (settings/config.json).

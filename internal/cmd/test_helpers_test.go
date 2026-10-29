@@ -52,7 +52,7 @@ func buildGT(t *testing.T) string {
 	tmpBinary := filepath.Join(tmpDir, binaryName)
 	// Must set BuiltProperly=1 via ldflags, otherwise binary refuses to run
 	ldflags := "-X github.com/steveyegge/gastown/internal/cmd.BuiltProperly=1"
-	cmd := exec.Command("go", "build", "-ldflags", ldflags, "-o", tmpBinary, "./cmd/gt")
+	cmd := exec.Command("go", "build", "-ldflags", ldflags, "-o", tmpBinary, "./cmd/gtb")
 	cmd.Dir = projectRoot
 	if output, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("failed to build gt: %v\nOutput: %s", err, output)

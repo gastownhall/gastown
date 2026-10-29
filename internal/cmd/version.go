@@ -47,11 +47,11 @@ and the git revision the binary was built from (if available).`,
 		branch := resolveBranch()
 
 		if commit != "" && branch != "" {
-			fmt.Printf("gt version %s (%s: %s@%s)\n", Version, Build, branch, version.ShortCommit(commit))
+			fmt.Printf("gtb version %s (%s: %s@%s)\n", Version, Build, branch, version.ShortCommit(commit))
 		} else if commit != "" {
-			fmt.Printf("gt version %s (%s: %s)\n", Version, Build, version.ShortCommit(commit))
+			fmt.Printf("gtb version %s (%s: %s)\n", Version, Build, version.ShortCommit(commit))
 		} else {
-			fmt.Printf("gt version %s (%s)\n", Version, Build)
+			fmt.Printf("gtb version %s (%s)\n", Version, Build)
 		}
 
 		if versionVerbose {
