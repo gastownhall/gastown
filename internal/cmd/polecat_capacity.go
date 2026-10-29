@@ -213,7 +213,25 @@ func polecatCapacitySnapshotForTownNoCleanup(townRoot string) (polecatCapacitySn
 		}
 
 		rigBeads := beads.New(rigPath)
-		agents, err := rigBeads.ListAgentBeads()
+		// Agent beads live in the TOWN database, not the rig's. ForAgentBead() is
+		// what routes there (beads.go:613, townRoot/.beads), and this call site
+		// omitted it: it listed the RIG db, found no ap-<prefix>-polecat-<name>
+		// entries, and every polecat came back with nil fields.
+		//
+		// A map miss is not an error, it is a nil, so nothing reported a fault.
+		// nil fields leave CleanupStatus empty, an empty CleanupStatus reads as
+		// "cleanup_status=<missing>", missing reads as danger, and danger holds a
+		// capacity slot. Every polecat is equally invisible to this query, so the
+		// false holds scale with the fleet: after a full drain, holds == pool size,
+		// and with scheduler.max_polecats at or below the pool the rig hard-stops
+		// with beads ready and nothing working.
+		//
+		// The self-reports were never missing. They exist, they say clean, and they
+		// are current -- checked live on 2026-09-10, when all five held slots while
+		// their town-db beads read agent_state=done, cleanup_status=clean, with the
+		// branch of the work they had just finished. check-recovery disagreed all
+		// night because it measures the worktree directly and was telling the truth.
+		agents, err := rigBeads.ForAgentBead().ListAgentBeads()
 		if err != nil {
 			return snapshot, fmt.Errorf("listing agent beads for %s capacity: %w", rigName, err)
 		}
