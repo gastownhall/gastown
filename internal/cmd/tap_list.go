@@ -61,6 +61,14 @@ func runTapList(cmd *cobra.Command, args []string) error {
 			matchers:    []string{"Bash(sudo *)", "Bash(apt install*)", "Bash(dnf install*)", "Bash(brew install*)", "Bash(rm -rf /*)", "Bash(git push --force*)", "Bash(git push -f*)"},
 			implemented: true,
 		},
+		{
+			name:        "broad-search",
+			kind:        "guard",
+			description: "Block a repo-root recursive search that would stall on the .env permission prompt",
+			event:       "PreToolUse",
+			matchers:    []string{"Bash(grep*)", "Bash(rg*)", "Bash(find*)"},
+			implemented: true,
+		},
 	}
 
 	// Try to load registry for additional handlers
