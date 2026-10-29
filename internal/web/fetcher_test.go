@@ -576,7 +576,7 @@ esac
 	})
 }
 
-func TestFetchConvoysBreakerBacksOffAfterBdFailures(t *testing.T) {
+func TestFetchConvoysBreakerBacksOffAfterCommandFailures(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("shell-based command test")
 	}
@@ -604,26 +604,26 @@ exit 0
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			bdPath := filepath.Join(t.TempDir(), "bd")
-			if err := os.WriteFile(bdPath, []byte(tt.script), 0o755); err != nil {
-				t.Fatalf("write fake bd: %v", err)
+			gtPath := filepath.Join(t.TempDir(), "gt")
+			if err := os.WriteFile(gtPath, []byte(tt.script), 0o755); err != nil {
+				t.Fatalf("write fake gt: %v", err)
 			}
 
-			f := &LiveConvoyFetcher{townRoot: t.TempDir(), cmdTimeout: 5 * time.Second, bdBin: bdPath}
+			f := &LiveConvoyFetcher{townRoot: t.TempDir(), cmdTimeout: 5 * time.Second, gtBin: gtPath}
 			if _, err := f.FetchConvoys(); err == nil {
 				t.Fatal("expected first FetchConvoys call to fail")
 			}
 
-			if _, err := f.FetchConvoys(); err != nil {
-				t.Fatalf("expected immediate retry to be backed off silently, got: %v", err)
+			if _, err := f.FetchConvoys(); err == nil {
+				t.Fatal("backoff must report unavailable data")
 			}
 
-			countBytes, err := os.ReadFile(bdPath + ".count")
+			countBytes, err := os.ReadFile(gtPath + ".count")
 			if err != nil {
-				t.Fatalf("read fake bd call count: %v", err)
+				t.Fatalf("read fake gt call count: %v", err)
 			}
 			if got := len(countBytes); got != 1 {
-				t.Fatalf("fake bd calls = %d, want 1", got)
+				t.Fatalf("fake gt calls = %d, want 1", got)
 			}
 		})
 	}
@@ -634,18 +634,18 @@ func TestFetchConvoysBreakerPreventsConcurrentStampede(t *testing.T) {
 		t.Skip("shell-based command test")
 	}
 
-	bdPath := filepath.Join(t.TempDir(), "bd")
+	gtPath := filepath.Join(t.TempDir(), "gt")
 	script := `#!/bin/sh
 printf x >> "$0.count"
 sleep 0.2
 printf '{invalid'
 exit 0
 `
-	if err := os.WriteFile(bdPath, []byte(script), 0o755); err != nil {
-		t.Fatalf("write fake bd: %v", err)
+	if err := os.WriteFile(gtPath, []byte(script), 0o755); err != nil {
+		t.Fatalf("write fake gt: %v", err)
 	}
 
-	f := &LiveConvoyFetcher{townRoot: t.TempDir(), cmdTimeout: 5 * time.Second, bdBin: bdPath}
+	f := &LiveConvoyFetcher{townRoot: t.TempDir(), cmdTimeout: 5 * time.Second, gtBin: gtPath}
 	start := make(chan struct{})
 	var wg sync.WaitGroup
 	errCh := make(chan error, 8)
@@ -669,16 +669,16 @@ exit 0
 			errCount++
 		}
 	}
-	if errCount != 1 {
-		t.Fatalf("FetchConvoys errors = %d, want 1; backed-off callers should return nil", errCount)
+	if errCount != 8 {
+		t.Fatalf("FetchConvoys errors = %d, want 8; backoff must report unavailable data", errCount)
 	}
 
-	countBytes, err := os.ReadFile(bdPath + ".count")
+	countBytes, err := os.ReadFile(gtPath + ".count")
 	if err != nil {
-		t.Fatalf("read fake bd call count: %v", err)
+		t.Fatalf("read fake gt call count: %v", err)
 	}
 	if got := len(countBytes); got != 1 {
-		t.Fatalf("fake bd calls = %d, want 1", got)
+		t.Fatalf("fake gt calls = %d, want 1", got)
 	}
 }
 

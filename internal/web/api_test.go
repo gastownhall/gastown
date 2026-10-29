@@ -7,7 +7,9 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -877,6 +879,27 @@ func TestAPIHandler_SSE_ContentType(t *testing.T) {
 	body := w.Body.String()
 	if !strings.Contains(body, "event: connected") {
 		t.Error("SSE response should contain initial 'connected' event")
+	}
+}
+
+func TestHashDashboardPartsIsIndependentOfCompletionOrder(t *testing.T) {
+	first := hashDashboardParts([]string{"status:stable", "hooks:stable", "mail:stable"})
+	second := hashDashboardParts([]string{"mail:stable", "status:stable", "hooks:stable"})
+
+	if first != second {
+		t.Fatalf("dashboard hash changed with command completion order: %q != %q", first, second)
+	}
+}
+
+func TestConfigureWebCommandInstallsProcessTreeCancellation(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("process-group cancellation is Unix-specific")
+	}
+
+	cmd := exec.Command("true")
+	configureWebCommand(cmd)
+	if cmd.Cancel == nil {
+		t.Fatal("web subprocess has no process-group cancellation hook")
 	}
 }
 
