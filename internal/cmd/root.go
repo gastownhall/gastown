@@ -189,13 +189,26 @@ func isRoleCommand(cmd *cobra.Command) bool {
 	return false
 }
 
+// isDoneCommand reports whether cmd is the TOP-LEVEL `gt done`, the polecat
+// session-completion command whose ownership gate lives in persistentPreRun.
+//
+// It used to walk the whole ancestor chain and return true for ANY command named
+// "done" anywhere in the tree. `gt dog done` ends in a command named "done", so
+// dogs were run through a gate that demands BD_ACTOR=<rig>/polecats/<name> and
+// were told "gt done is for polecats only (BD_ACTOR=dog)". Both dogs in the pack
+// hit it on the same day, completed their molecule work, and could not return to
+// idle: alpha and bravo were left showing "working" with their hooks cleared and
+// their parent molecules closed.
+//
+// The gate is correct and belongs where it is; only its predicate was too wide.
+// A command matches only if it is named "done" AND its parent is the root, so
+// sibling `<group> done` commands are unaffected.
 func isDoneCommand(cmd *cobra.Command) bool {
-	for c := cmd; c != nil; c = c.Parent() {
-		if c.Name() == "done" {
-			return true
-		}
+	if cmd == nil || cmd.Name() != "done" {
+		return false
 	}
-	return false
+	parent := cmd.Parent()
+	return parent != nil && !parent.HasParent()
 }
 
 // initCLITheme initializes the CLI color theme based on settings and environment.
