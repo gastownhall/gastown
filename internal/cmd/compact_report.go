@@ -30,10 +30,11 @@ var beadIDLine = regexp.MustCompile(`(?m)^\s*([a-z][a-z0-9-]*-[a-z0-9]+)\s*$`)
 //
 // This guards against `bd` emitting startup warnings before the ID — see
 // gastown issue: "Fix compact_report.go beadID capture (corrupts on stdout
-// warnings)". Without this, a noisy stdout poisons `beadID`, the subsequent
-// `bd close <beadID>` silently fails, the audit bead stays open, and the
-// daily-digest idempotency check (filtered by status=closed) never matches —
-// producing one duplicate digest mail per patrol cycle.
+// warnings)". Without this, a noisy stdout poisons `beadID` and the subsequent
+// `bd close <beadID>` fails, leaving the audit bead open. The idempotency
+// checks are status-agnostic so an open audit bead still suppresses the next
+// digest, but a permanently-open audit record is still wrong, so the close
+// failure is surfaced rather than swallowed.
 func extractBeadID(output string) (string, error) {
 	matches := beadIDLine.FindAllStringSubmatch(output, -1)
 	if len(matches) == 0 {
@@ -70,6 +71,13 @@ var wispCategoryMap = map[string]string{
 var categoryOrder = []string{"Heartbeats", "Patrols", "Errors", "Untyped"}
 
 const zeroPatrolReportingGap = "0 eligible patrol wisps in the report query/window (patrol health not assessed)"
+
+// Event categories stamped onto the audit beads. The idempotency checks match
+// on these, so creation and lookup must stay in sync.
+const (
+	compactionEventKind       = "wisp.compaction"
+	weeklyCompactionEventKind = "wisp.compaction.weekly"
+)
 
 // categoryStats tracks per-category compaction statistics.
 type categoryStats struct {
@@ -394,7 +402,7 @@ func createCompactReportBead(report *compactReport, markdown string) (string, er
 		"create",
 		"--type=event",
 		"--title=" + title,
-		"--event-category=wisp.compaction",
+		"--event-category=" + compactionEventKind,
 		"--event-payload=" + string(payloadJSON),
 		"--description=" + markdown,
 		"--silent",
@@ -411,9 +419,9 @@ func createCompactReportBead(report *compactReport, markdown string) (string, er
 		return "", fmt.Errorf("parsing report bead id: %w", err)
 	}
 
-	// Auto-close (audit record, not work). Surface failures: if close fails,
-	// the bead stays open and findExistingCompactReport (filter status=closed)
-	// will never match, causing the digest to re-fire every patrol cycle.
+	// Auto-close (audit record, not work). Surface failures: a close that
+	// silently fails leaves an open audit bead behind, which is how the
+	// duplicate-digest bug was originally masked.
 	closeCmd := exec.Command("bd", "close", beadID, "--reason=daily compaction report")
 	if out, err := closeCmd.CombinedOutput(); err != nil {
 		return "", fmt.Errorf("auto-closing report bead %s: %w\nOutput: %s", beadID, err, string(out))
@@ -653,32 +661,73 @@ func formatWeeklyRollup(rollup *weeklyRollup) string {
 	return sb.String()
 }
 
-// findExistingCompactReport checks if a compaction digest already exists for the given date.
-// Returns the bead ID if found, empty string if not found.
-func findExistingCompactReport(dateStr string) (string, error) {
-	expectedTitle := fmt.Sprintf("Compaction Report %s", dateStr)
+// compactEventBead is the subset of an event bead needed by the idempotency checks.
+type compactEventBead struct {
+	ID        string `json:"id"`
+	Title     string `json:"title"`
+	Status    string `json:"status"`
+	EventKind string `json:"event_kind"`
+	Payload   string `json:"payload"`
+}
 
+// listCompactEventBeads returns every event bead regardless of status.
+//
+// Both idempotency checks must be status-agnostic. An audit bead is created
+// open and auto-closed a moment later, and that close can fail to stick (older
+// `gt` binaries did not treat the failure as fatal, leaving permanently-open
+// audit beads behind). A status-filtered query cannot see the beads on the
+// other side of the filter, so the check misses them and the digest re-fires
+// on every patrol cycle — one duplicate mail plus one duplicate permanent bead
+// each time. `--limit=0` (unlimited) matters for the same reason: report beads
+// accumulate one per day forever, so any fixed cap eventually pages today's
+// entry out of the result set and silently breaks the check.
+func listCompactEventBeads() ([]compactEventBead, error) {
 	listCmd := exec.Command("bd", "list",
 		"--type=event",
-		"--status=closed",
+		"--status=all",
 		"--json",
-		"--limit=50",
+		"--limit=0",
 	)
 	listOutput, err := listCmd.Output()
 	if err != nil {
-		return "", err
+		return nil, err
 	}
 
-	var events []struct {
-		ID    string `json:"id"`
-		Title string `json:"title"`
-	}
+	var events []compactEventBead
 	if err := json.Unmarshal(extractJSONArray(listOutput), &events); err != nil {
+		return nil, err
+	}
+	return events, nil
+}
+
+// findExistingCompactReport checks if a compaction digest already exists for the given date.
+// Returns the bead ID if found, empty string if not found.
+//
+// Matching is status-agnostic (see listCompactEventBeads) and falls back to the
+// wisp.compaction event payload so a title-format change cannot silently
+// disable the check.
+func findExistingCompactReport(dateStr string) (string, error) {
+	expectedTitle := fmt.Sprintf("Compaction Report %s", dateStr)
+
+	events, err := listCompactEventBeads()
+	if err != nil {
 		return "", err
 	}
 
 	for _, evt := range events {
 		if evt.Title == expectedTitle {
+			return evt.ID, nil
+		}
+		if evt.EventKind != compactionEventKind || evt.Payload == "" {
+			continue
+		}
+		var payload struct {
+			Date string `json:"date"`
+		}
+		if err := json.Unmarshal([]byte(evt.Payload), &payload); err != nil {
+			continue
+		}
+		if payload.Date == dateStr {
 			return evt.ID, nil
 		}
 	}
@@ -690,26 +739,26 @@ func findExistingCompactReport(dateStr string) (string, error) {
 func findExistingWeeklyRollup(weekStart, weekEnd string) (string, error) {
 	expectedTitle := fmt.Sprintf("Weekly Compaction Rollup %s to %s", weekStart, weekEnd)
 
-	listCmd := exec.Command("bd", "list",
-		"--type=event",
-		"--json",
-		"--limit=20",
-	)
-	listOutput, err := listCmd.Output()
+	events, err := listCompactEventBeads()
 	if err != nil {
-		return "", err
-	}
-
-	var events []struct {
-		ID    string `json:"id"`
-		Title string `json:"title"`
-	}
-	if err := json.Unmarshal(extractJSONArray(listOutput), &events); err != nil {
 		return "", err
 	}
 
 	for _, evt := range events {
 		if evt.Title == expectedTitle {
+			return evt.ID, nil
+		}
+		if evt.EventKind != weeklyCompactionEventKind || evt.Payload == "" {
+			continue
+		}
+		var payload struct {
+			WeekStart string `json:"week_start"`
+			WeekEnd   string `json:"week_end"`
+		}
+		if err := json.Unmarshal([]byte(evt.Payload), &payload); err != nil {
+			continue
+		}
+		if payload.WeekStart == weekStart && payload.WeekEnd == weekEnd {
 			return evt.ID, nil
 		}
 	}
@@ -738,7 +787,7 @@ func createWeeklyRollupBead(rollup *weeklyRollup, markdown string) (string, erro
 		"create",
 		"--type=event",
 		"--title=" + title,
-		"--event-category=wisp.compaction.weekly",
+		"--event-category=" + weeklyCompactionEventKind,
 		"--event-payload=" + string(payloadJSON),
 		"--description=" + markdown,
 		"--silent",

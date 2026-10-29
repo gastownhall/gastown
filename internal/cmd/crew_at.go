@@ -248,6 +248,16 @@ func runCrewAt(cmd *cobra.Command, args []string) error {
 		if runtimeConfig.Session != nil && runtimeConfig.Session.ConfigDirEnv != "" && claudeConfigDir != "" {
 			startupCmd = config.PrependEnv(startupCmd, map[string]string{runtimeConfig.Session.ConfigDirEnv: claudeConfigDir})
 		}
+		// Credential preflight, on the spawn path only. A dead OAuth token does
+		// not make Claude Code exit — it drops into the interactive onboarding
+		// flow and parks there, passing every liveness check while never
+		// reaching a prompt (hq-ac0). Attaching to an already-healthy session is
+		// deliberately not gated: that is how an operator re-authenticates.
+		if warning, err := config.PreflightAgentAuth(runtimeConfig, claudeConfigDir); err != nil {
+			return fmt.Errorf("credential preflight for %s: %w", name, err)
+		} else if warning != "" {
+			style.PrintWarning("%s", warning)
+		}
 		// Note: Don't call KillPaneProcesses here - this is a NEW session with just
 		// a fresh shell. Killing it would destroy the pane before we can respawn.
 		// KillPaneProcesses is only needed when restarting in an EXISTING session
@@ -316,6 +326,13 @@ func runCrewAt(cmd *cobra.Command, args []string) error {
 			// Prepend config dir env if available
 			if runtimeConfig.Session != nil && runtimeConfig.Session.ConfigDirEnv != "" && claudeConfigDir != "" {
 				startupCmd = config.PrependEnv(startupCmd, map[string]string{runtimeConfig.Session.ConfigDirEnv: claudeConfigDir})
+			}
+			// Credential preflight before respawning: restarting into a dead
+			// token just replaces a dead agent with a parked one (hq-ac0).
+			if warning, err := config.PreflightAgentAuth(runtimeConfig, claudeConfigDir); err != nil {
+				return fmt.Errorf("credential preflight for %s: %w", name, err)
+			} else if warning != "" {
+				style.PrintWarning("%s", warning)
 			}
 			// Kill all processes in the pane before respawning to prevent orphan leaks
 			// RespawnPane's -k flag only sends SIGHUP which Claude/Node may ignore

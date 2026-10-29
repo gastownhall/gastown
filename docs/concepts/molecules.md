@@ -110,6 +110,32 @@ through each step in order.
 **Heuristic**: If you would curse losing the progress after a crash, set `pour = true`.
 High frequency + cheap steps = inline (default). Low frequency + expensive steps = pour.
 
+### "0 steps" is not a bug
+
+A root-only wisp legitimately has no child rows, so anything that counts child
+rows reports zero. That is the design working, not a lost pour. Confirm with:
+
+```bash
+bd mol wisp <formula> --dry-run
+# Dry run: would create wisp with 1 issue (root only) from proto <formula>
+#   Note: N child step(s) skipped — set pour=true in formula to materialize them
+```
+
+Code that consumes a molecule must therefore read steps from the formula, never
+from child rows:
+
+- `gt mol progress` / `gt mol dag` resolve the formula behind a childless root
+  (from its `attached_formula:` field, or from the root title, which `bd mol wisp`
+  sets to the formula name) and render the declared checklist. They report no
+  per-step state, because none exists.
+- The daemon's dog molecules (`internal/daemon/dog_molecule.go`) accumulate step
+  outcomes in memory and write a summary onto the root wisp when the cycle closes,
+  instead of closing per-step child wisps.
+
+Do **not** fix a "0 steps" report by setting `pour = true` on a high-frequency
+formula. `mol-dog-doctor` alone runs every 5 minutes with 13 steps; materializing
+those steps would recreate the ~3.7k wisps/day flood that root-only removed.
+
 ## Patrol Workflow
 
 Patrol agents (Deacon, Witness, Refinery) cycle through patrol formulas:

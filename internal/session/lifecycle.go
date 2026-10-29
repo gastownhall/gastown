@@ -168,6 +168,17 @@ func StartSession(t *tmux.Tmux, cfg SessionConfig) (_ *StartResult, retErr error
 		runtimeConfig = rc
 	}
 
+	// Credential preflight. A dead OAuth token does not make Claude Code
+	// exit — it drops into the interactive onboarding flow and parks there.
+	// The tmux session exists and the process runs, so every liveness check
+	// passes while the agent never reaches a prompt and never heartbeats
+	// (hq-ac0). Refuse to spawn instead of creating a silent zombie.
+	if warning, err := config.PreflightAgentAuth(runtimeConfig, cfg.RuntimeConfigDir); err != nil {
+		return nil, fmt.Errorf("credential preflight for %s: %w", cfg.Role, err)
+	} else if warning != "" {
+		fmt.Printf("warning: %s\n", warning)
+	}
+
 	// 2. Ensure settings/plugins exist for the agent.
 	settingsDir := config.RoleSettingsDir(cfg.Role, cfg.RigPath)
 	if settingsDir == "" {
@@ -408,21 +419,16 @@ func MergeRuntimeLivenessEnv(envVars map[string]string, runtimeConfig *config.Ru
 	}
 
 	if _, hasProcessNames := envVars["GT_PROCESS_NAMES"]; !hasProcessNames {
-		agentForLookup := runtimeConfig.ResolvedAgent
-		commandForLookup := runtimeConfig.Command
-		argsForLookup := runtimeConfig.Args
-		if existing, ok := envVars["GT_AGENT"]; ok && existing != "" {
-			agentForLookup = existing
-			// When GT_AGENT was set by AgentOverride (differs from the
-			// workspace-resolved agent), the runtimeConfig.Command/Args
-			// belong to the workspace agent, not the override. Pass empty
-			// command so ResolveProcessNames uses the preset's own command.
-			if existing != runtimeConfig.ResolvedAgent {
-				commandForLookup = ""
-				argsForLookup = nil
-			}
+		// Default: resolve from the populated RuntimeConfig, so a wrapper
+		// command (a launcher script that execs the real binary) never becomes
+		// the only name liveness checks look for (hq-io5).
+		processNames := config.RuntimeProcessNames(runtimeConfig)
+		if existing, ok := envVars["GT_AGENT"]; ok && existing != "" && existing != runtimeConfig.ResolvedAgent {
+			// GT_AGENT was set by AgentOverride, so runtimeConfig belongs to
+			// the workspace agent, not the override. Pass empty command so
+			// ResolveProcessNames uses the override preset's own command.
+			processNames = config.ResolveProcessNames(existing, "")
 		}
-		processNames := config.ResolveProcessNames(agentForLookup, commandForLookup, argsForLookup...)
 		if len(processNames) > 0 {
 			envVars["GT_PROCESS_NAMES"] = strings.Join(processNames, ",")
 		}

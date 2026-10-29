@@ -54,6 +54,7 @@ func (d *Daemon) handleDogs() {
 
 	d.cleanupStuckDogs(mgr, sm)
 	d.detectStaleWorkingDogs(mgr, sm, opCfg)
+	d.recoverStrandedDogs(mgr, sm)
 	d.reapIdleDogs(mgr, sm, opCfg)
 	d.dispatchPlugins(mgr, sm, rigsConfig)
 }
@@ -76,7 +77,9 @@ func (d *Daemon) handleDogsCleanupOnly() {
 	d.cleanupStuckDogs(mgr, sm)
 	d.detectStaleWorkingDogs(mgr, sm, opCfg)
 	d.reapIdleDogs(mgr, sm, opCfg)
-	// Skip dispatchPlugins — under pressure
+	// Skip recoverStrandedDogs and dispatchPlugins — both spawn sessions, and
+	// we are under pressure. Stranded work is still visible via
+	// `gt dog health-check`, and recovery resumes on the next unpressured tick.
 }
 
 // cleanupStuckDogs finds dogs in state=working whose tmux session or agent
@@ -174,6 +177,82 @@ func (d *Daemon) detectStaleWorkingDogs(mgr *dog.Manager, sm *dog.SessionManager
 		}
 
 		d.clearDogWorkIfMatches(mgr, dg, "stale working")
+	}
+}
+
+// newHookedWorkFinder builds the hooked-work source used by stranded detection.
+// Overridable in tests so they need no live beads database.
+var newHookedWorkFinder = func(townRoot string) dog.HookedWorkFinder {
+	return dog.NewBeadsHookedWorkFinder(townRoot)
+}
+
+// startDogSession starts (or reuses) a dog's session.
+// Overridable in tests so they need no live agent.
+var startDogSession = func(sm *dog.SessionManager, name string, opts dog.SessionStartOptions) error {
+	_, err := sm.EnsureRunning(name, opts)
+	return err
+}
+
+// recoverStrandedDogs restarts dogs that are idle with no live session while
+// still holding hooked work.
+//
+// Dog session start is deferred and non-durable: a halt between hooking a wisp
+// and spawning the session drops the spawn permanently. The dog then reports
+// idle and healthy while its work never runs, and no other lifecycle phase
+// reconciles hook state against session state — cleanupStuckDogs and
+// detectStaleWorkingDogs both require state=working (hq-xgq).
+//
+// This runs every heartbeat, including the first one after the daemon comes up
+// with the town, so a restart repairs its own stranded dispatches.
+func (d *Daemon) recoverStrandedDogs(mgr *dog.Manager, sm *dog.SessionManager) {
+	dogs, err := mgr.List()
+	if err != nil {
+		d.logger.Printf("Handler: failed to list dogs for stranded check: %v", err)
+		return
+	}
+
+	finder := newHookedWorkFinder(d.config.TownRoot)
+	for _, dg := range dogs {
+		if dg.State != dog.StateIdle {
+			continue
+		}
+
+		running, err := sm.IsRunning(dg.Name)
+		if err != nil {
+			d.logger.Printf("Handler: error checking session for idle dog %s: %v", dg.Name, err)
+			continue
+		}
+		if running {
+			// Idle with a live session is the orphan case, reaped elsewhere.
+			continue
+		}
+
+		work, err := finder.HookedWork(dg.Name)
+		if err != nil {
+			d.logger.Printf("Handler: error checking hooked work for dog %s: %v", dg.Name, err)
+			continue
+		}
+		if work == nil {
+			continue
+		}
+
+		d.logger.Printf("Handler: dog %s is stranded (idle, no session, %s still hooked), restarting session",
+			dg.Name, work.ID)
+
+		assigned, err := mgr.AssignWorkIfIdle(dg.Name, work.ID)
+		if err != nil {
+			d.logger.Printf("Handler: failed to claim stranded work %s for dog %s: %v", work.ID, dg.Name, err)
+			continue
+		}
+
+		if err := startDogSession(sm, dg.Name, dog.SessionStartOptions{WorkDesc: work.ID}); err != nil {
+			d.logger.Printf("Handler: failed to restart stranded dog %s (%s): %v", dg.Name, work.ID, err)
+			// Roll back the claim so the dog does not sit in state=working with
+			// no session, which the next tick would report as a zombie.
+			if _, clearErr := mgr.ClearWorkIfMatches(dg.Name, work.ID, assigned.WorkStartedAt); clearErr != nil {
+				d.logger.Printf("Handler: failed to roll back stranded claim for dog %s: %v", dg.Name, clearErr)
+			}
+		}
 	}
 }
 

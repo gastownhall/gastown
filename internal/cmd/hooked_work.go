@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/steveyegge/gastown/internal/beads"
+	"github.com/steveyegge/gastown/internal/session"
 )
 
 // listBeadsAcrossTables lists matching durable issues and ephemeral wisps.
@@ -39,17 +40,22 @@ func listBeadsAcrossTables(b *beads.Beads, opts beads.ListOptions) ([]*beads.Iss
 }
 
 func listAssignedActiveWork(b *beads.Beads, assignee string) ([]*beads.Issue, error) {
+	aliases := assigneeAliases(assignee)
 	for _, status := range activeWorkStatuses() {
-		beadsForStatus, err := listBeadsAcrossTables(b, beads.ListOptions{
-			Status:   status,
-			Assignee: assignee,
-			Priority: -1,
-		})
-		if err != nil {
-			return nil, err
+		var beadsForStatus []*beads.Issue
+		for _, alias := range aliases {
+			beadsForAlias, err := listBeadsAcrossTables(b, beads.ListOptions{
+				Status:   status,
+				Assignee: alias,
+				Priority: -1,
+			})
+			if err != nil {
+				return nil, err
+			}
+			beadsForStatus = append(beadsForStatus, beadsForAlias...)
 		}
 		if len(beadsForStatus) > 0 {
-			return beadsForStatus, nil
+			return mergeBeadLists(beadsForStatus, nil), nil
 		}
 	}
 	return nil, nil
@@ -57,18 +63,43 @@ func listAssignedActiveWork(b *beads.Beads, assignee string) ([]*beads.Issue, er
 
 func listAssignedActiveWorkAcrossStatuses(b *beads.Beads, assignee string) ([]*beads.Issue, error) {
 	var assigned []*beads.Issue
-	for _, status := range activeWorkStatuses() {
-		beadsForStatus, err := listBeadsAcrossTables(b, beads.ListOptions{
-			Status:   status,
-			Assignee: assignee,
-			Priority: -1,
-		})
-		if err != nil {
-			return nil, err
+	for _, alias := range assigneeAliases(assignee) {
+		for _, status := range activeWorkStatuses() {
+			beadsForStatus, err := listBeadsAcrossTables(b, beads.ListOptions{
+				Status:   status,
+				Assignee: alias,
+				Priority: -1,
+			})
+			if err != nil {
+				return nil, err
+			}
+			assigned = append(assigned, beadsForStatus...)
 		}
-		assigned = append(assigned, beadsForStatus...)
 	}
 	return mergeBeadLists(assigned, nil), nil
+}
+
+// assigneeAliases returns every spelling under which work for an agent may be
+// recorded in the assignee column.
+//
+// Town-level agents (mayor, deacon) are written two ways depending on which
+// code path created the bead: the patrol constructors pin the bare name
+// ("deacon"), while sling pins the canonical trailing-slash form ("deacon/",
+// see canonicalAssigneeAddress). A reader that matches only one spelling
+// cannot see work created by the other path — which made patrol wisps created
+// by the documented `gt sling mol-deacon-patrol deacon` recovery unreportable
+// (hq-12a). Every other role has a single spelling, so it aliases to itself
+// and costs no extra queries.
+func assigneeAliases(assignee string) []string {
+	base := strings.TrimSuffix(assignee, "/")
+	switch base {
+	case string(session.RoleMayor), string(session.RoleDeacon):
+		if assignee == base {
+			return []string{base, base + "/"}
+		}
+		return []string{assignee, base}
+	}
+	return []string{assignee}
 }
 
 func listChildrenAcrossTables(b *beads.Beads, parentID string) ([]*beads.Issue, error) {

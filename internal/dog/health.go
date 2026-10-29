@@ -19,22 +19,32 @@ type sessionChecker interface {
 type DogHealthResult struct {
 	Name           string        `json:"name"`
 	State          State         `json:"state"`
-	SessionStatus  string        `json:"session_status"`           // from ZombieStatus.String()
-	WorkDuration   time.Duration `json:"work_duration,omitempty"`  // how long current work has been running
+	SessionStatus  string        `json:"session_status"`          // from ZombieStatus.String()
+	WorkDuration   time.Duration `json:"work_duration,omitempty"` // how long current work has been running
 	NeedsAttention bool          `json:"needs_attention"`
 	AutoCleared    bool          `json:"auto_cleared,omitempty"`
 	Recommendation string        `json:"recommendation,omitempty"`
+	HookedWork     string        `json:"hooked_work,omitempty"` // bead still on the dog's hook
+	CheckError     string        `json:"check_error,omitempty"` // a sub-check failed; result is partial
 }
 
 // HealthChecker performs health checks on dogs in the kennel.
 type HealthChecker struct {
 	mgr     *Manager
 	checker sessionChecker
+	hooked  HookedWorkFinder
 }
 
 // NewHealthChecker creates a HealthChecker.
 func NewHealthChecker(mgr *Manager, checker sessionChecker) *HealthChecker {
 	return &HealthChecker{mgr: mgr, checker: checker}
+}
+
+// WithHookedWorkFinder attaches a hooked-work source, enabling stranded-dog
+// detection. Without one, the stranded check is skipped.
+func (hc *HealthChecker) WithHookedWorkFinder(f HookedWorkFinder) *HealthChecker {
+	hc.hooked = f
+	return hc
 }
 
 // dogSessionName returns the tmux session name for a dog.
@@ -120,10 +130,43 @@ func (hc *HealthChecker) Check(d *Dog, maxInactivity time.Duration, autoClear bo
 			}
 		} else {
 			result.SessionStatus = "none"
+			hc.checkStranded(d, &result)
 		}
 	}
 
 	return result
+}
+
+// checkStranded reports a dog that is idle with no session while still holding
+// hooked work. It is the mirror of the orphan case: orphan is a session with no
+// work, stranded is work with no session. A town halt between hooking a wisp
+// and spawning the dog session drops the spawn, so the work never runs while
+// the dog reports idle and healthy (hq-xgq).
+//
+// Never auto-cleared: unhooking would discard real work, so this is reported
+// and the Deacon decides (same treatment as hung).
+func (hc *HealthChecker) checkStranded(d *Dog, result *DogHealthResult) {
+	if hc.hooked == nil {
+		return
+	}
+
+	work, err := hc.hooked.HookedWork(d.Name)
+	if err != nil {
+		// Graceful degradation: a beads outage must not fail the whole check,
+		// but the caller should know this dog was not fully checked.
+		result.CheckError = "stranded check failed: " + err.Error()
+		return
+	}
+	if work == nil {
+		return
+	}
+
+	result.SessionStatus = "stranded"
+	result.HookedWork = work.ID
+	result.NeedsAttention = true
+	result.Recommendation = fmt.Sprintf(
+		"stranded: dog idle with no session but %s is still hooked (run: gt dog call %s)",
+		work.ID, d.Name)
 }
 
 // CheckAll performs health checks on all dogs.
