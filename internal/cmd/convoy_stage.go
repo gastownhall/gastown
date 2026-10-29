@@ -1601,12 +1601,12 @@ func bdListChildrenViaDeps(parentID string) ([]bdShowResult, error) {
 // in routes.jsonl. Returns empty string if the prefix is not found or if the
 // workspace cannot be resolved.
 func rigFromBeadID(beadID string) string {
-	prefix := beads.ExtractPrefix(beadID)
-	if prefix == "" {
-		return ""
-	}
 	townRoot, err := workspace.FindFromCwd()
 	if err != nil {
+		return ""
+	}
+	prefix := beads.ResolvePrefixForID(townRoot, beadID)
+	if prefix == "" {
 		return ""
 	}
 	return beads.GetRigNameForPrefix(townRoot, prefix)
@@ -1617,12 +1617,12 @@ func rigFromBeadID(beadID string) string {
 // commands like `bd list --parent=` which only search the local database.
 // Returns empty string if the prefix or workspace cannot be resolved.
 func beadsDirForID(beadID string) string {
-	prefix := beads.ExtractPrefix(beadID)
-	if prefix == "" {
-		return ""
-	}
 	townRoot, err := workspace.FindFromCwd()
 	if err != nil {
+		return ""
+	}
+	prefix := beads.ResolvePrefixForID(townRoot, beadID)
+	if prefix == "" {
 		return ""
 	}
 	rigPath := beads.GetRigPathForPrefix(townRoot, prefix)

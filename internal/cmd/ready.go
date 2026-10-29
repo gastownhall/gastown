@@ -485,7 +485,7 @@ func filterReadyIssuesByRoute(townRoot, source string, issues []*beads.Issue) []
 }
 
 func readyIssueRoutesToSource(townRoot, source, issueID string) bool {
-	prefix := beads.ExtractPrefix(issueID)
+	prefix := beads.ResolvePrefixForID(townRoot, issueID)
 	if prefix == "" {
 		return false
 	}
