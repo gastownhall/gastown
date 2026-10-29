@@ -959,7 +959,10 @@ func runMoleculeCurrent(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("not in a beads workspace: %w", err)
 	}
 
-	b := beads.New(workDir)
+	// Handoff beads live in the town database but carry rig prefixes, so prefix
+	// routing sends lookups to the rig database where they do not exist.
+	// ForAgentBead re-roots at the town beads dir and disables routing.
+	b := beads.New(workDir).ForAgentBead()
 
 	// Extract role from target for handoff bead lookup
 	role := extractRoleFromIdentity(target)
