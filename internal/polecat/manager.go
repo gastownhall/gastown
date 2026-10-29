@@ -2754,6 +2754,24 @@ func (m *Manager) loadFromBeads(name string) (*Polecat, error) {
 	sessionRunning, sessionStale := m.polecatSessionState(name)
 	sessionDead := m.tmux != nil && (!sessionRunning || sessionStale)
 
+	// A live session is not a working agent. Before reporting "working" below,
+	// ask for evidence of progress: an agent whose pane has gone silent, or whose
+	// pane carries a provider error that refuses every prompt, is blocked (hq-3l8r).
+	blockedReason := ""
+	if m.tmux != nil && !sessionDead {
+		blockedReason = SessionBlockedReason(m.tmux, session.PolecatSessionName(session.PrefixFor(m.rig.Name), name))
+	}
+	workState := func() State {
+		switch {
+		case sessionDead:
+			return StateStalled
+		case blockedReason != "":
+			return StateBlocked
+		default:
+			return StateWorking
+		}
+	}
+
 	// Primary source: the work bead itself (status=hooked + assignee).
 	// This is the direct-tracking model introduced in hq-l6mm5.
 	hookedBeads, hookedErr := m.beads.List(beads.ListOptions{
@@ -2762,14 +2780,10 @@ func (m *Manager) loadFromBeads(name string) (*Polecat, error) {
 		Priority: -1,
 	})
 	if hookedErr == nil && len(hookedBeads) > 0 {
-		state := StateWorking
-		if sessionDead {
-			state = StateStalled
-		}
 		return &Polecat{
 			Name:      name,
 			Rig:       m.rig.Name,
-			State:     state,
+			State:     workState(),
 			ClonePath: clonePath,
 			Branch:    branchName,
 			Issue:     hookedBeads[0].ID,
@@ -2784,14 +2798,10 @@ func (m *Manager) loadFromBeads(name string) (*Polecat, error) {
 	if agentErr == nil && fields != nil && fields.HookBead != "" {
 		if hookIssue, err := m.beads.Show(fields.HookBead); err == nil &&
 			isCurrentHookedIssueForAssignee(hookIssue, assignee) {
-			state := StateWorking
-			if sessionDead {
-				state = StateStalled
-			}
 			return &Polecat{
 				Name:      name,
 				Rig:       m.rig.Name,
-				State:     state,
+				State:     workState(),
 				ClonePath: clonePath,
 				Branch:    branchName,
 				Issue:     fields.HookBead,
@@ -2805,10 +2815,8 @@ func (m *Manager) loadFromBeads(name string) (*Polecat, error) {
 	if beadsErr != nil {
 		// If beads query fails, cross-check tmux session state.
 		// Avoid synthesizing working with no issue when we cannot verify active work.
-		state := StateWorking
-		if sessionDead {
-			state = StateStalled
-		} else if sessionRunning {
+		state := workState()
+		if !sessionDead && sessionRunning {
 			state = StateReviewNeeded
 		}
 		return &Polecat{
@@ -2838,10 +2846,7 @@ func (m *Manager) loadFromBeads(name string) (*Polecat, error) {
 
 	state := agentState
 	if issueID != "" {
-		state = StateWorking
-		if sessionDead {
-			state = StateStalled
-		}
+		state = workState()
 	} else if agentState == StateIdle && sessionRunning && !sessionStale && !m.getCleanupStatusFromBead(name).IsSafe() {
 		state = StateReviewNeeded
 	}

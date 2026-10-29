@@ -261,7 +261,7 @@ Returns the count of reaped wisps. Use --dry-run to preview.`,
 				continue
 			}
 
-			result, err := reaper.Reap(db, dbName, maxAge, reaperDryRun)
+			result, err := reaper.Reap(db, dbName, maxAge, reaperDryRun, false)
 			db.Close()
 			if err != nil {
 				fmt.Fprintf(os.Stderr, "%s: reap error: %v\n", dbName, err)
@@ -544,7 +544,7 @@ Normally the daemon dispatches a Dog to execute the mol-dog-reaper formula.`,
 			}
 
 			// Reap
-			reapResult, err := reaper.Reap(db, dbName, maxAge, reaperDryRun)
+			reapResult, err := reaper.Reap(db, dbName, maxAge, reaperDryRun, false)
 			if err != nil {
 				fmt.Printf("%s: reap error: %v\n", dbName, err)
 			} else {

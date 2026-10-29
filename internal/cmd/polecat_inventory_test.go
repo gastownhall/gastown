@@ -196,3 +196,93 @@ func TestPolecatNameFromAssignee(t *testing.T) {
 		}
 	}
 }
+
+// stubPolecatBlockedProbe replaces the tmux probe for the duration of a test.
+func stubPolecatBlockedProbe(t *testing.T, reason string) {
+	t.Helper()
+	prev := probePolecatBlocked
+	probePolecatBlocked = func(string) string { return reason }
+	t.Cleanup(func() { probePolecatBlocked = prev })
+}
+
+// TestBuildPolecatInventoryItemReportsBlockedNotWorking is the regression test
+// for hq-3l8r. Three rho polecats held hooked work with live tmux sessions and a
+// dead Codex token; `gt polecat list` called all three "working" for six hours
+// while 972 commits piled up unpushed across 32 worktrees.
+//
+// The registry derived "working" from `tmux list-sessions` name presence alone
+// (polecat_inventory.go), so the two rows below differ in exactly one input: the
+// evidence-of-progress probe. Everything else — the hooked bead, the assignee,
+// the agent fields, the live session — is identical, which is what makes this a
+// proof rather than a demonstration. Revert the probe call and "blocked" becomes
+// "working" here, exactly as it did in production.
+func TestBuildPolecatInventoryItemReportsBlockedNotWorking(t *testing.T) {
+	setupPolecatTestRegistry(t)
+	sessions := newPolecatSessionSet([]string{"gt-obsidian"})
+	fields := &beads.AgentFields{AgentState: string(beads.AgentStateIdle), CleanupStatus: string(polecat.CleanupClean)}
+	work := &beads.Issue{ID: "gt-4di", Status: string(beads.IssueStatusHooked), Assignee: "gastown/polecats/obsidian"}
+
+	// Control: session live, probe sees progress → working (unchanged behaviour).
+	stubPolecatBlockedProbe(t, "")
+	working := buildPolecatInventoryItem("gastown", "obsidian", fields, work, sessions)
+	if working.State != polecat.StateWorking {
+		t.Fatalf("progressing polecat state = %q, want %q", working.State, polecat.StateWorking)
+	}
+	if working.Disposition.Verdict != polecat.WorkstateVerdictWorking {
+		t.Fatalf("progressing polecat verdict = %q, want %q", working.Disposition.Verdict, polecat.WorkstateVerdictWorking)
+	}
+
+	// Same live session, same hooked bead, no evidence of progress → blocked.
+	stubPolecatBlockedProbe(t, "provider error: access token could not be refreshed")
+	blocked := buildPolecatInventoryItem("gastown", "obsidian", fields, work, sessions)
+	if blocked.State == polecat.StateWorking {
+		t.Fatal("polecat with a live session but no evidence of progress reported as working; a session that exists is not a session that works (hq-3l8r)")
+	}
+	if blocked.State != polecat.StateBlocked {
+		t.Fatalf("blocked polecat state = %q, want %q", blocked.State, polecat.StateBlocked)
+	}
+	if blocked.Disposition.Verdict == polecat.WorkstateVerdictWorking {
+		t.Fatalf("blocked polecat verdict = %q, want anything but %q", blocked.Disposition.Verdict, polecat.WorkstateVerdictWorking)
+	}
+	// The operator must be able to read the cause off the row, not just the state.
+	if !strings.Contains(strings.Join(blocked.Disposition.Blockers, " "), "access token could not be refreshed") {
+		t.Fatalf("blockers = %v, want the probe's reason surfaced", blocked.Disposition.Blockers)
+	}
+	// The slot stays occupied: blocked work is not free capacity.
+	if !blocked.Disposition.CountsTowardCapacity {
+		t.Fatal("blocked polecat freed its capacity slot; the work is still on its hook")
+	}
+
+	// And the list layer must not promote it back to working.
+	if got := effectivePolecatState(PolecatListItem{
+		State:                blocked.State,
+		Issue:                blocked.Issue,
+		SessionRunning:       blocked.SessionRunning,
+		CountsTowardCapacity: blocked.Disposition.CountsTowardCapacity,
+	}); got != polecat.StateBlocked {
+		t.Fatalf("effectivePolecatState(blocked) = %q, want %q", got, polecat.StateBlocked)
+	}
+}
+
+// TestBuildPolecatInventoryItemDoesNotProbeDeadSessions keeps "no session" as
+// stalled rather than blocked: the two have different remedies (respawn vs.
+// unblock the agent) and collapsing them loses that.
+func TestBuildPolecatInventoryItemDoesNotProbeDeadSessions(t *testing.T) {
+	setupPolecatTestRegistry(t)
+	probed := false
+	prev := probePolecatBlocked
+	probePolecatBlocked = func(string) string { probed = true; return "should not be consulted" }
+	t.Cleanup(func() { probePolecatBlocked = prev })
+
+	item := buildPolecatInventoryItem("gastown", "gone",
+		&beads.AgentFields{AgentState: string(beads.AgentStateIdle), CleanupStatus: string(polecat.CleanupClean)},
+		&beads.Issue{ID: "gt-4di", Status: string(beads.IssueStatusHooked), Assignee: "gastown/polecats/gone"},
+		newPolecatSessionSet(nil))
+
+	if probed {
+		t.Error("probed tmux for a polecat with no session; wasted work")
+	}
+	if item.State != polecat.StateStalled {
+		t.Fatalf("sessionless polecat state = %q, want %q", item.State, polecat.StateStalled)
+	}
+}
