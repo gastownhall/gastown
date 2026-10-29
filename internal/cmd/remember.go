@@ -6,7 +6,6 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
-	"os"
 	"os/exec"
 	"strings"
 
@@ -14,29 +13,13 @@ import (
 	"github.com/steveyegge/gastown/internal/style"
 )
 
-const memoryKeyPrefix = "memory."
-
-// validMemoryTypes are the recognized memory type categories.
-// Typed memories are stored as memory.<type>.<key> in the kv store.
-// Legacy untyped memories (memory.<key>) are treated as "general".
-var validMemoryTypes = map[string]string{
-	"feedback":  "Guidance or corrections from users — behavioral rules for future work",
-	"project":   "Ongoing work context, goals, deadlines, decisions",
-	"user":      "Info about the user's role, preferences, expertise",
-	"reference": "Pointers to external resources (URLs, tools, dashboards)",
-	"general":   "Uncategorized memories (default)",
-}
-
-// memoryTypeOrder defines the injection priority during gt prime.
-// Feedback first (behavioral corrections), then user context, then the rest.
-var memoryTypeOrder = []string{"feedback", "user", "project", "reference", "general"}
-
 var rememberKey string
 var rememberType string
 
 func init() {
 	rememberCmd.Flags().StringVar(&rememberKey, "key", "", "Explicit key slug (default: auto-generated from content)")
-	rememberCmd.Flags().StringVar(&rememberType, "type", "", "Memory type: feedback, project, user, reference (default: general)")
+	rememberCmd.Flags().StringVar(&rememberType, "type", "", "Deprecated no-op: bd memories are untyped")
+	_ = rememberCmd.Flags().MarkDeprecated("type", "bd memories are untyped; the type is ignored")
 	rememberCmd.GroupID = GroupWork
 	rootCmd.AddCommand(rememberCmd)
 }
@@ -44,24 +27,21 @@ func init() {
 var rememberCmd = &cobra.Command{
 	Use:   `remember "insight"`,
 	Short: "Store a persistent memory",
-	Long: `Store a persistent memory in the beads key-value store.
+	Long: `Store a persistent memory in the beads memory store (bd remember).
 
 Memories persist across sessions and are injected during gt prime.
-This replaces filesystem-based MEMORY.md with bead-backed storage.
+They are managed by bd's first-class memory system, so they can also
+be inspected and edited directly with:
+  bd remember, bd recall, bd memories, bd forget
 
 The key is auto-generated from the content if not specified.
 Use --key to provide an explicit slug for easy retrieval.
 
-Memory types help organize memories and prioritize injection:
-  feedback   Guidance or corrections from users
-  project    Ongoing work context, goals, deadlines
-  user       Info about the user's role and preferences
-  reference  Pointers to external resources
+--type is deprecated and ignored: bd memories are untyped.
 
 Examples:
   gt remember "Refinery uses worktree, cannot checkout main"
-  gt remember --type feedback "Don't mock the database in integration tests"
-  gt remember --type user --key senior-go-dev "User has 10 years Go experience"
+  gt remember --key senior-go-dev "User has 10 years Go experience"
   gt remember --key refinery-worktree "Refinery uses worktree, cannot checkout main"`,
 	Args: cobra.ExactArgs(1),
 	RunE: runRemember,
@@ -73,17 +53,6 @@ func runRemember(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("memory content cannot be empty")
 	}
 
-	// Validate --type if provided
-	memType := strings.ToLower(strings.TrimSpace(rememberType))
-	if memType != "" {
-		if _, ok := validMemoryTypes[memType]; !ok {
-			return fmt.Errorf("invalid memory type %q — valid types: feedback, project, user, reference", memType)
-		}
-	}
-	if memType == "" {
-		memType = "general"
-	}
-
 	key := rememberKey
 	if key == "" {
 		key = autoKey(content)
@@ -91,46 +60,30 @@ func runRemember(cmd *cobra.Command, args []string) error {
 
 	// Sanitize key: lowercase, hyphens instead of spaces, strip dots
 	key = sanitizeKey(key)
-
-	fullKey := memoryKeyPrefix + memType + "." + key
-
-	// Check if key already exists
-	existing, _ := bdKvGet(fullKey)
-	verb := "Stored"
-	if existing != "" {
-		verb = "Updated"
+	if key == "" {
+		key = autoKey(content)
 	}
 
-	if err := bdKvSet(fullKey, content); err != nil {
+	var out, errOut bytes.Buffer
+	bdCmd := exec.Command("bd", "remember", content, "--key", key)
+	bdCmd.Stdout = &out
+	bdCmd.Stderr = &errOut
+	if err := bdCmd.Run(); err != nil {
+		if msg := strings.TrimSpace(errOut.String()); msg != "" {
+			return fmt.Errorf("storing memory: %s", msg)
+		}
+		if msg := strings.TrimSpace(out.String()); msg != "" {
+			return fmt.Errorf("storing memory: %s", msg)
+		}
 		return fmt.Errorf("storing memory: %w", err)
 	}
 
-	displayKey := key
-	if memType != "general" {
-		displayKey = memType + "/" + key
+	verb := "Stored"
+	if strings.HasPrefix(strings.TrimSpace(out.String()), "Updated") {
+		verb = "Updated"
 	}
-	fmt.Printf("%s %s memory: %s\n", style.Success.Render("✓"), verb, style.Bold.Render(displayKey))
+	fmt.Printf("%s %s memory: %s\n", style.Success.Render("✓"), verb, style.Bold.Render(key))
 	return nil
-}
-
-// parseMemoryKey extracts the type and short key from a full kv key.
-// Handles both typed keys (memory.<type>.<key>) and legacy keys (memory.<key>).
-func parseMemoryKey(kvKey string) (memType, shortKey string) {
-	rest := strings.TrimPrefix(kvKey, memoryKeyPrefix)
-	if rest == "" {
-		return "general", ""
-	}
-
-	// Check if first segment is a known type
-	if dotIdx := strings.Index(rest, "."); dotIdx > 0 {
-		candidate := rest[:dotIdx]
-		if _, ok := validMemoryTypes[candidate]; ok {
-			return candidate, rest[dotIdx+1:]
-		}
-	}
-
-	// Legacy untyped memory
-	return "general", rest
 }
 
 // autoKey generates a short key from content using first few meaningful words.
@@ -192,68 +145,42 @@ func sanitizeKey(key string) string {
 	return key
 }
 
-// bdKvSet calls bd kv set <key> <value>.
-func bdKvSet(key, value string) error {
-	cmd := exec.Command("bd", "kv", "set", key, value)
-	cmd.Stderr = os.Stderr
-	return cmd.Run()
-}
-
-// bdKvGet calls bd kv get <key> and returns the value.
-func bdKvGet(key string) (string, error) {
-	cmd := exec.Command("bd", "kv", "get", key)
-	out, err := cmd.Output()
-	if err != nil {
-		return "", err
-	}
-	return strings.TrimSpace(string(out)), nil
-}
-
-// bdKvClear calls bd kv clear <key>.
-func bdKvClear(key string) error {
-	cmd := exec.Command("bd", "kv", "clear", key)
-	cmd.Stderr = os.Stderr
-	return cmd.Run()
-}
-
-// parseBdKvListJSON parses bd kv list --json output into displayable string values.
-func parseBdKvListJSON(data []byte) (map[string]string, error) {
-	var raw map[string]json.RawMessage
-	if err := json.Unmarshal(data, &raw); err != nil {
-		return nil, fmt.Errorf("parsing kv list: %w", err)
-	}
-
-	kvs := make(map[string]string, len(raw))
-	for k, v := range raw {
-		var s *string
-		if err := json.Unmarshal(v, &s); err == nil {
-			if s != nil {
-				kvs[k] = *s
-			}
-			continue
-		}
-
-		if !strings.HasPrefix(k, memoryKeyPrefix) {
-			continue
-		}
-
-		// Keep non-string memory values visible without promoting bd metadata.
-		var compact bytes.Buffer
-		if err := json.Compact(&compact, v); err != nil {
-			continue
-		}
-		kvs[k] = compact.String()
-	}
-	return kvs, nil
-}
-
-// bdKvListJSON calls bd kv list --json and returns the parsed string values.
-func bdKvListJSON() (map[string]string, error) {
-	cmd := exec.Command("bd", "kv", "list", "--json")
+// bdMemoriesJSON calls bd memories --json and returns key -> content.
+func bdMemoriesJSON() (map[string]string, error) {
+	cmd := exec.Command("bd", "memories", "--json")
 	out, err := cmd.Output()
 	if err != nil {
 		return nil, err
 	}
 
-	return parseBdKvListJSON(out)
+	return parseBdMemoriesJSON(out)
+}
+
+// parseBdMemoriesJSON parses bd memories --json output: a flat map of
+// key -> content plus a schema_version entry.
+func parseBdMemoriesJSON(data []byte) (map[string]string, error) {
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return nil, fmt.Errorf("parsing memories: %w", err)
+	}
+
+	mems := make(map[string]string, len(raw))
+	for k, v := range raw {
+		if k == "schema_version" || bytes.Equal(v, []byte("null")) {
+			continue
+		}
+
+		var s string
+		if err := json.Unmarshal(v, &s); err == nil {
+			mems[k] = s
+			continue
+		}
+
+		// Keep non-string values visible without dropping them.
+		var compact bytes.Buffer
+		if err := json.Compact(&compact, v); err == nil {
+			mems[k] = compact.String()
+		}
+	}
+	return mems, nil
 }
