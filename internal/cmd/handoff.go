@@ -919,7 +919,7 @@ func buildRestartCommandWithOpts(sessionName string, opts buildRestartCommandOpt
 		}
 		agentEnv = runtimeConfig.Env
 		envMap["GT_ROLE"] = gtRole
-		envMap["BD_ACTOR"] = gtRole
+		envMap["BD_ACTOR"] = config.BDActorForRole(gtRole)
 		envMap["GIT_AUTHOR_NAME"] = gtRole
 		if runtimeConfig.Session != nil && runtimeConfig.Session.SessionIDEnv != "" {
 			envMap["GT_SESSION_ID_ENV"] = runtimeConfig.Session.SessionIDEnv

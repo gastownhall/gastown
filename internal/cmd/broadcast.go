@@ -3,6 +3,7 @@ package cmd
 import (
 	"fmt"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -76,7 +77,7 @@ func runBroadcast(cmd *cobra.Command, args []string) error {
 		}
 
 		// Skip self to avoid interrupting own session
-		if sender != "" && formatAgentName(agent) == sender {
+		if sender != "" && formatAgentName(agent) == strings.TrimSuffix(sender, "/") {
 			continue
 		}
 
