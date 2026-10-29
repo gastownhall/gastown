@@ -219,8 +219,12 @@ func runDailyDigest() error {
 }
 
 // listReportWisps includes infrastructure wisps that the default bd list view
-// hides. This is intentionally separate from listWisps, whose result drives
-// mutating compaction decisions and must retain its existing scope.
+// hides — the same --include-infra scope listWisps (compact.go) now uses for
+// the actual compaction pass, kept as a separate function only because the
+// report path formats/aggregates differently, not because the query scope
+// still diverges (see gastown#4869; scopes were split by #4473 for reporting
+// only, which left compaction itself scanning an empty set on any infra-heavy
+// town).
 func listReportWisps(bd *beads.Beads) ([]*compactIssue, error) {
 	out, err := bd.Run("list", "--include-infra", "--json", "--all", "-n", "0")
 	if err != nil {
