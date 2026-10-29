@@ -298,6 +298,58 @@ func TestIsDoneCommand(t *testing.T) {
 	}
 }
 
+// Subcommands named "done" under a parent other than root are their own
+// commands, not `gt done`. Guarding them made `gt dog done` fail with
+// "gt done is for polecats only", leaving completed dog work unable to signal.
+func TestIsDoneCommandIgnoresNestedDoneSubcommands(t *testing.T) {
+	for _, parentName := range []string{"dog", "wl", "molecule"} {
+		t.Run(parentName, func(t *testing.T) {
+			root := &cobra.Command{Use: "gt"}
+			parent := &cobra.Command{Use: parentName}
+			nested := &cobra.Command{Use: "done"}
+			root.AddCommand(parent)
+			parent.AddCommand(nested)
+			if isDoneCommand(nested) {
+				t.Fatalf("gt %s done should not be treated as gt done", parentName)
+			}
+		})
+	}
+}
+
+// The guard must still cover subcommands hanging off the real `gt done`.
+func TestIsDoneCommandCoversDoneSubcommands(t *testing.T) {
+	root := &cobra.Command{Use: "gt"}
+	done := &cobra.Command{Use: "done"}
+	sub := &cobra.Command{Use: "resume"}
+	root.AddCommand(done)
+	done.AddCommand(sub)
+	if !isDoneCommand(sub) {
+		t.Fatal("subcommand of gt done should be detected")
+	}
+}
+
+// The real command tree is the thing that regressed; assert against it directly.
+func TestIsDoneCommandRealTree(t *testing.T) {
+	realDone, _, err := rootCmd.Find([]string{"done"})
+	if err != nil {
+		t.Fatalf("find gt done: %v", err)
+	}
+	if !isDoneCommand(realDone) {
+		t.Fatal("gt done should be detected in the real command tree")
+	}
+
+	dogDone, _, err := rootCmd.Find([]string{"dog", "done"})
+	if err != nil {
+		t.Fatalf("find gt dog done: %v", err)
+	}
+	if dogDone.Name() != "done" || dogDone.Parent() == nil || dogDone.Parent().Name() != "dog" {
+		t.Fatalf("resolved %q, want the dog done subcommand", dogDone.CommandPath())
+	}
+	if isDoneCommand(dogDone) {
+		t.Fatal("gt dog done should not be treated as gt done")
+	}
+}
+
 func TestPersistentPreRunDoneRejectsBeforeRegistryFallback(t *testing.T) {
 	townRoot, _ := setupDoneGuardWorktree(t, "nested", "shiny")
 	initDoneGuardGitRepo(t, townRoot)
@@ -315,7 +367,11 @@ func TestPersistentPreRunDoneRejectsBeforeRegistryFallback(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = os.Chdir(origDir) })
 
+	// Attach to a root the way cobra dispatch does: the guard applies to the
+	// top-level `gt done`, not to any command that happens to be named "done".
+	guardRoot := &cobra.Command{Use: "gt"}
 	done := &cobra.Command{Use: "done"}
+	guardRoot.AddCommand(done)
 	err = persistentPreRun(done, nil)
 	if err == nil || !strings.Contains(err.Error(), "assigned polecat worktree") {
 		t.Fatalf("persistentPreRun error = %v, want assigned worktree rejection", err)
