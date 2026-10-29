@@ -213,7 +213,10 @@ func polecatCapacitySnapshotForTownNoCleanup(townRoot string) (polecatCapacitySn
 		}
 
 		rigBeads := beads.New(rigPath)
-		agents, err := rigBeads.ListAgentBeads()
+		// Agent beads live in the town DB despite their rig prefix; a
+		// rig-scoped list returns nothing and every slot is counted as
+		// recovery-blocked (gt-ets).
+		agents, err := rigBeads.ForAgentBead().ListAgentBeads()
 		if err != nil {
 			return snapshot, fmt.Errorf("listing agent beads for %s capacity: %w", rigName, err)
 		}
