@@ -14,6 +14,8 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/steveyegge/gastown/internal/beads"
 )
 
 func TestValidateDBName(t *testing.T) {
@@ -822,4 +824,60 @@ func assertOpsContainInOrder(t *testing.T, ops []string, want ...string) {
 		}
 	}
 	t.Fatalf("ops missing ordered sequence %v in %v", want[next:], ops)
+}
+
+// TestAutoCloseProtectedLabelsMatchBeads pins the AutoClose protected-label
+// exclusion to beads.ProtectedIssueLabels(). The reaper deliberately avoids
+// importing internal/beads at runtime, so the SQL carries its own copy of the
+// list; this test is what keeps the two from drifting apart.
+//
+// Regression for gastownhall/gastown#4630: gt:agent was missing from the SQL
+// list, so agent registry beads (whose heartbeats write labels, never
+// issues.updated_at) were auto-closed as stale after 7 days.
+func TestAutoCloseProtectedLabelsMatchBeads(t *testing.T) {
+	data, err := os.ReadFile("reaper.go")
+	if err != nil {
+		t.Fatalf("read reaper.go: %v", err)
+	}
+	autoCloseBody := sourceBetween(t, string(data), "func AutoClose(", "// batchDeleteRows")
+
+	const marker = "WHERE l.label IN ("
+	start := strings.Index(autoCloseBody, marker)
+	if start == -1 {
+		t.Fatalf("AutoClose has no protected-label exclusion (%q)", marker)
+	}
+	rest := autoCloseBody[start+len(marker):]
+	end := strings.Index(rest, ")")
+	if end == -1 {
+		t.Fatal("AutoClose protected-label IN list is not closed")
+	}
+
+	inSQL := map[string]bool{}
+	for _, raw := range strings.Split(rest[:end], ",") {
+		label := strings.Trim(strings.TrimSpace(raw), "'")
+		if label == "" {
+			t.Fatalf("empty entry in AutoClose protected-label list: %q", rest[:end])
+		}
+		inSQL[label] = true
+	}
+
+	inBeads := map[string]bool{}
+	for _, label := range beads.ProtectedIssueLabels() {
+		inBeads[label] = true
+	}
+
+	for label := range inBeads {
+		if !inSQL[label] {
+			t.Errorf("AutoClose SQL is missing protected label %q from beads.ProtectedIssueLabels()", label)
+		}
+	}
+	for label := range inSQL {
+		if !inBeads[label] {
+			t.Errorf("AutoClose SQL protects %q, which beads.ProtectedIssueLabels() does not list", label)
+		}
+	}
+
+	if !inSQL["gt:agent"] {
+		t.Error("AutoClose must exclude gt:agent registry beads (#4630)")
+	}
 }

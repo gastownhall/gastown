@@ -716,8 +716,14 @@ func purgeOldMail(db *sql.DB, dbName string, mailDeleteAge time.Duration, dryRun
 }
 
 // AutoClose closes issues that have been open with no updates past staleAge.
-// Excludes P0/P1 priority, epics, hooked/pinned issues, standing-order labels,
-// and issues with active dependencies.
+// Excludes P0/P1 priority, epics, hooked/pinned issues, protected labels
+// (standing orders, keep, role, rig, and agent registry beads), and issues
+// with active dependencies.
+//
+// The protected-label list below must match beads.ProtectedIssueLabels();
+// TestAutoCloseProtectedLabelsMatchBeads pins that. Agent beads in particular
+// must stay out: heartbeats write labels, not issues.updated_at, so a live
+// agent looks stale forever (gastownhall/gastown#4630).
 func AutoClose(db *sql.DB, dbName string, staleAge time.Duration, dryRun bool) (*AutoCloseResult, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), DefaultQueryTimeout)
 	defer cancel()
@@ -738,7 +744,7 @@ func AutoClose(db *sql.DB, dbName string, staleAge time.Duration, dryRun bool) (
 		AND i.issue_type NOT IN ('epic', 'convoy')
 		AND i.id NOT IN (
 			SELECT DISTINCT l.issue_id FROM `+"`%s`"+`.labels l
-			WHERE l.label IN ('gt:standing-orders', 'gt:keep', 'gt:role', 'gt:rig')
+			WHERE l.label IN ('gt:standing-orders', 'gt:keep', 'gt:role', 'gt:rig', 'gt:agent')
 		)
 		AND i.id NOT IN (
 			SELECT DISTINCT d.issue_id FROM `+"`%s`"+`.dependencies d

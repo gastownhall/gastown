@@ -5469,3 +5469,122 @@ func TestResolveBdSubprocessTimeout(t *testing.T) {
 		})
 	}
 }
+
+func TestProtectedIssueLabel(t *testing.T) {
+	tests := []struct {
+		label string
+		want  bool
+	}{
+		{label: "gt:standing-orders", want: true},
+		{label: "gt:keep", want: true},
+		{label: "gt:role", want: true},
+		{label: "gt:rig", want: true},
+		// Agent registry beads are identified by label (see IsAgentBead) and
+		// heartbeat via labels, so they never bump updated_at. They must be
+		// protected or AutoClose treats a live agent as stale (#4630).
+		{label: "gt:agent", want: true},
+		// Normalization: case and surrounding whitespace are ignored.
+		{label: "GT:AGENT", want: true},
+		{label: "  gt:keep\n", want: true},
+		// Other gt:* labels are not protection markers.
+		{label: "gt:wisp", want: false},
+		{label: "gt:merge-request", want: false},
+		{label: "gt:queue", want: false},
+		{label: "gt:convoy", want: false},
+		{label: "priority-high", want: false},
+		{label: "", want: false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.label, func(t *testing.T) {
+			if got := ProtectedIssueLabel(tt.label); got != tt.want {
+				t.Errorf("ProtectedIssueLabel(%q) = %v, want %v", tt.label, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestProtectedIssueLabelsAgreesWithPredicate(t *testing.T) {
+	labels := ProtectedIssueLabels()
+	if len(labels) == 0 {
+		t.Fatal("ProtectedIssueLabels() returned no labels")
+	}
+	for _, label := range labels {
+		if !ProtectedIssueLabel(label) {
+			t.Errorf("ProtectedIssueLabel(%q) = false for a label in ProtectedIssueLabels()", label)
+		}
+	}
+
+	// The returned slice must be a copy: mutating it must not change the predicate.
+	labels[0] = "mutated"
+	if !ProtectedIssueLabel(ProtectedIssueLabels()[0]) {
+		t.Error("ProtectedIssueLabels() exposed internal state to the caller")
+	}
+}
+
+func TestIsProtectedBead(t *testing.T) {
+	tests := []struct {
+		name  string
+		issue *Issue
+		want  bool
+	}{
+		{
+			name:  "nil issue",
+			issue: nil,
+			want:  false,
+		},
+		{
+			name: "ordinary task",
+			issue: &Issue{
+				ID:     "gt-abc123",
+				Type:   "task",
+				Labels: []string{"priority-high"},
+			},
+			want: false,
+		},
+		{
+			name: "standing orders",
+			issue: &Issue{
+				ID:     "hq-standing",
+				Type:   "task",
+				Labels: []string{"gt:standing-orders"},
+			},
+			want: true,
+		},
+		{
+			name: "agent registry bead identified by label",
+			issue: &Issue{
+				ID:     "gt-gastown-witness",
+				Type:   "task",
+				Labels: []string{"gt:agent"},
+			},
+			want: true,
+		},
+		{
+			name: "agent registry bead with heartbeat labels",
+			issue: &Issue{
+				ID:     "hq-deacon",
+				Type:   "task",
+				Labels: []string{"heartbeat:1700000000", "idle:3", "gt:agent"},
+			},
+			want: true,
+		},
+		{
+			name: "legacy agent type without label is not label-protected",
+			issue: &Issue{
+				ID:     "gt-gastown-polecat-toast",
+				Type:   "agent",
+				Labels: []string{},
+			},
+			want: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := IsProtectedBead(tt.issue); got != tt.want {
+				t.Errorf("IsProtectedBead() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
