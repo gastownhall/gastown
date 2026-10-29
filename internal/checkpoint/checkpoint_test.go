@@ -3,7 +3,9 @@ package checkpoint
 import (
 	"encoding/json"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"reflect"
 	"testing"
 	"time"
 )
@@ -394,5 +396,51 @@ func TestCheckpointJSONRoundtrip(t *testing.T) {
 	}
 	if len(loaded.ModifiedFiles) != len(original.ModifiedFiles) {
 		t.Errorf("ModifiedFiles length mismatch")
+	}
+}
+
+func TestCaptureModifiedFiles(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		file   string
+		staged bool
+	}{
+		{name: "unstaged", file: "alpha.txt"},
+		{name: "single-character", file: "a"},
+		{name: "staged", file: "alpha.txt", staged: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			git := func(args ...string) {
+				t.Helper()
+				cmd := exec.Command("git", args...)
+				cmd.Dir = dir
+				if out, err := cmd.CombinedOutput(); err != nil {
+					t.Fatalf("git %v: %v: %s", args, err, out)
+				}
+			}
+			git("init", "-q")
+			git("config", "user.name", "Checkpoint Test")
+			git("config", "user.email", "checkpoint@example.invalid")
+			path := filepath.Join(dir, tc.file)
+			if err := os.WriteFile(path, []byte("before\n"), 0600); err != nil {
+				t.Fatal(err)
+			}
+			git("add", "--", tc.file)
+			git("-c", "core.hooksPath="+t.TempDir(), "commit", "-qm", "initial", "--no-gpg-sign")
+			if err := os.WriteFile(path, []byte("after\n"), 0600); err != nil {
+				t.Fatal(err)
+			}
+			if tc.staged {
+				git("add", "--", tc.file)
+			}
+			cp, err := Capture(dir)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if want := []string{tc.file}; !reflect.DeepEqual(cp.ModifiedFiles, want) {
+				t.Errorf("ModifiedFiles = %q, want %q", cp.ModifiedFiles, want)
+			}
+		})
 	}
 }
