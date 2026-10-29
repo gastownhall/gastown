@@ -977,9 +977,10 @@ func nudgeRefinery(rigName, message string) {
 
 	// Emit a file event so the refinery's await-event unblocks instantly.
 	// This is the programmatic bridge between mq submit and the event system.
+	// The channel is rig-scoped so cross-rig refineries never poll the same dir.
 	townRoot, _ := workspace.FindFromCwd()
 	if townRoot != "" {
-		_, _ = channelevents.EmitToTown(townRoot, "refinery", "MQ_SUBMIT", []string{
+		_, _ = channelevents.EmitToTown(townRoot, channelevents.Scoped(rigName, "refinery"), "MQ_SUBMIT", []string{
 			"source=sling",
 			"message=" + message,
 		})
