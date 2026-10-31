@@ -306,6 +306,13 @@ const (
 	// MolRefineryPatrol is the refinery patrol formula name.
 	MolRefineryPatrol = "mol-refinery-patrol"
 
+	// UnsetRigSentinel is the default value of the `rig` var in every rig-scoped
+	// patrol formula. It exists so that a formula parses standalone, but it is
+	// never a usable rig name: a rendered patrol description still containing it
+	// proves the minting caller never supplied the rig, and the wisp must be
+	// refused rather than cooked (dbt-as8).
+	UnsetRigSentinel = "UNSET_RIG"
+
 	// MolDogReaper is the wisp reaper dog formula name.
 	MolDogReaper = "mol-dog-reaper"
 

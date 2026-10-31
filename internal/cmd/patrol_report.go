@@ -69,6 +69,10 @@ func runPatrolReport(cmd *cobra.Command, args []string) error {
 			PatrolMolName: constants.MolWitnessPatrol,
 			BeadsDir:      roleInfo.TownRoot,
 			Assignee:      roleInfo.Rig + "/witness",
+			// `gt patrol report` mints the NEXT cycle's wisp, so omitting these
+			// left every cycle after session start carrying UNSET_RIG while the
+			// one hooked by `gt prime` looked clean (dbt-as8).
+			ExtraVars: buildWitnessPatrolVars(roleInfo),
 		}
 	case RoleRefinery:
 		cfg = PatrolConfig{

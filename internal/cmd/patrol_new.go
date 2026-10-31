@@ -62,6 +62,10 @@ func runPatrolNew(cmd *cobra.Command, args []string) error {
 			PatrolMolName: constants.MolWitnessPatrol,
 			BeadsDir:      roleInfo.TownRoot,
 			Assignee:      roleInfo.Rig + "/witness",
+			// Without rig/prefix the formula's {{rig}} falls back to its
+			// UNSET_RIG default and the minted wisp instructs the witness to
+			// resolve its agent bead in a rig that does not exist (dbt-as8).
+			ExtraVars: buildWitnessPatrolVars(roleInfo),
 		}
 	case RoleRefinery:
 		cfg = PatrolConfig{
