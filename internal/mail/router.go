@@ -301,42 +301,28 @@ func parseGroupAddress(address string) *ParsedGroup {
 		return nil
 	}
 
-	// Remove @ prefix
-	group := strings.TrimPrefix(address, "@")
+	// [si-zgo] Derived from GroupVocabulary (groups.go) — the single owner of this set. This
+	// function used to carry its own switch, which is how `@crew` came to be advertised by the
+	// directory and rejected here: two hand-written copies of one vocabulary, drifted.
+	name, qualifier := splitGroupAddress(address)
 
-	// Special cases that don't require parsing
-	switch group {
-	case "overseer":
-		return &ParsedGroup{Type: GroupTypeOverseer, Original: address}
-	case "town":
-		return &ParsedGroup{Type: GroupTypeTown, Original: address}
-	case "witnesses":
-		return &ParsedGroup{Type: GroupTypeRole, RoleType: constants.RoleWitness, Original: address}
-	case "dogs":
-		return &ParsedGroup{Type: GroupTypeRole, RoleType: "dog", Original: address}
-	case "refineries":
-		return &ParsedGroup{Type: GroupTypeRole, RoleType: constants.RoleRefinery, Original: address}
-	case "deacons":
-		return &ParsedGroup{Type: GroupTypeRole, RoleType: constants.RoleDeacon, Original: address}
+	spec, ok := lookupGroup(name)
+	if !ok {
+		return nil // not in the vocabulary
 	}
 
-	// Parse patterns with slashes: @rig/<name>, @crew/<rig>, @polecats/<rig>
-	parts := strings.SplitN(group, "/", 2)
-	if len(parts) != 2 || parts[1] == "" {
-		return nil // Invalid format
+	// Arity is enforced in BOTH directions. A missing qualifier on an arity-1 group is the
+	// original bare-`@crew` defect; a supplied qualifier on an arity-0 group ("@town/x") was
+	// silently accepted-then-dropped before, which is the same class pointing the other way.
+	if (spec.Arity() == 1) != (qualifier != "") {
+		return nil
 	}
 
-	prefix, qualifier := parts[0], parts[1]
-
-	switch prefix {
-	case "rig":
-		return &ParsedGroup{Type: GroupTypeRig, Rig: qualifier, Original: address}
-	case constants.RoleCrew:
-		return &ParsedGroup{Type: GroupTypeRigRole, RoleType: constants.RoleCrew, Rig: qualifier, Original: address}
-	case "polecats":
-		return &ParsedGroup{Type: GroupTypeRigRole, RoleType: constants.RolePolecat, Rig: qualifier, Original: address}
-	default:
-		return nil // Unknown group type
+	return &ParsedGroup{
+		Type:     spec.Type,
+		RoleType: spec.RoleType,
+		Rig:      qualifier,
+		Original: address,
 	}
 }
 
