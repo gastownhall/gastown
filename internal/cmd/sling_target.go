@@ -14,6 +14,9 @@ import (
 // spawnPolecatForSling is a seam for tests. Production uses SpawnPolecatForSling.
 var spawnPolecatForSling = SpawnPolecatForSling
 
+// resumePolecatForSlingFn is a seam for tests. Production uses ResumePolecatForSling.
+var resumePolecatForSlingFn = ResumePolecatForSling
+
 // resolveTargetAgentFn is a seam for tests. Production uses resolveTargetAgent.
 var resolveTargetAgentFn = resolveTargetAgent
 
@@ -261,7 +264,7 @@ func resolveTarget(target string, opts ResolveTargetOptions) (*ResolvedTarget, e
 	// resolve here, getting their pane for nudge delivery (gt-in7b).
 	agentID, pane, workDir, err := resolveTargetAgentFn(target)
 	if err != nil {
-		if rigName, ok := missingPolecatTargetRig(target, opts.Create, opts.TownRoot); ok {
+		if rigName, polecatName, ok := polecatTargetRigAndName(target, opts.Create, opts.TownRoot); ok {
 			if opts.BeadID != "" && !opts.Force {
 				if err := checkCrossRigGuard(opts.BeadID, rigName+"/polecats/_", opts.TownRoot); err != nil {
 					return nil, err
@@ -271,6 +274,39 @@ func resolveTarget(target string, opts ResolveTargetOptions) (*ResolvedTarget, e
 				if err := verifyBeadExistsInTargetRigDatabase(opts.BeadID, rigName, opts.TownRoot); err != nil {
 					return nil, err
 				}
+			}
+			// The named polecat may still exist on disk with its worktree and its
+			// branch — an idle polecat keeps both, it has only lost its tmux
+			// session. Reattach to it rather than replacing it (si-n7vl). Spawning
+			// a fresh polecat here is what left --branch as the only way back onto
+			// the original work, and naming a branch is what collided two worktrees
+			// onto one ref (si-d6kw).
+			if polecatName != "" {
+				resumeOpts := SlingSpawnOptions{
+					TownRoot:      opts.TownRoot,
+					Force:         opts.Force,
+					Account:       opts.Account,
+					Create:        opts.Create,
+					HookBead:      opts.HookBead,
+					Agent:         opts.Agent,
+					BaseBranch:    opts.BaseBranch,
+					ResumeBranch:  opts.ResumeBranch,
+					SkipAdmission: opts.SkipPolecatAdmission,
+				}
+				resumeInfo, resumeErr := resumePolecatForSlingFn(rigName, polecatName, resumeOpts)
+				if resumeErr == nil {
+					result.Agent = resumeInfo.AgentID()
+					result.NewPolecatInfo = resumeInfo
+					result.WorkDir = resumeInfo.ClonePath
+					result.HookSetAtomically = opts.HookBead != ""
+					if !opts.NoBoot {
+						wakeRigAgents(rigName)
+					}
+					return result, nil
+				}
+				// Fall through to a fresh polecat, but say why: a silent
+				// substitution is how "resume keeper" became "here is toast".
+				fmt.Printf("Cannot resume polecat '%s': %v\n", polecatName, resumeErr)
 			}
 			fmt.Printf("Target polecat has no active session, spawning fresh polecat in rig '%s'...\n", rigName)
 			spawnOpts := SlingSpawnOptions{
@@ -320,25 +356,40 @@ func resolveTarget(target string, opts ResolveTargetOptions) (*ResolvedTarget, e
 	return result, nil
 }
 
-func missingPolecatTargetRig(target string, allowShorthand bool, townRoot string) (string, bool) {
-	if isPolecatTarget(target) {
-		parts := strings.Split(target, "/")
-		return parts[0], true
-	}
-	if !allowShorthand {
-		return "", false
-	}
+// polecatTargetRigAndName resolves a sling target that names a specific polecat
+// to its rig and polecat name. It accepts the explicit "rig/polecats/name" form
+// and the "rig/name" shorthand.
+//
+// The NAME matters, not just the rig: the caller uses it to resume that
+// polecat's own worktree. Returning only the rig is what forced the dead-polecat
+// fallback to spawn a fresh polecat instead (si-n7vl).
+//
+// allowShorthand comes from --create. An EXISTING polecat resolves by shorthand
+// whether or not it was passed — --create means "make one that does not exist",
+// and this one does. Requiring it there is what made `gt sling <bead>
+// silicon/keeper` fail with a raw "getting pane for si-keeper: exit status 1"
+// for exactly the idle polecats an operator is trying to recover.
+func polecatTargetRigAndName(target string, allowShorthand bool, townRoot string) (string, string, bool) {
 	parts := strings.Split(target, "/")
+	if isPolecatTarget(target) {
+		return parts[0], parts[2], true
+	}
 	if len(parts) != 2 || knownRoles[strings.ToLower(parts[1])] {
-		return "", false
+		return "", "", false
 	}
 	if townRoot == "" {
 		townRoot = detectTownRootFromCwd()
 	}
 	if townRoot != "" {
 		if info, err := os.Stat(filepath.Join(townRoot, parts[0], "crew", parts[1])); err == nil && info.IsDir() {
-			return "", false
+			return "", "", false
+		}
+		if info, err := os.Stat(filepath.Join(townRoot, parts[0], "polecats", parts[1])); err == nil && info.IsDir() {
+			return parts[0], parts[1], true
 		}
 	}
-	return parts[0], true
+	if !allowShorthand {
+		return "", "", false
+	}
+	return parts[0], parts[1], true
 }
