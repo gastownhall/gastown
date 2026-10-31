@@ -246,6 +246,24 @@ func runPrime(cmd *cobra.Command, args []string) (retErr error) {
 }
 
 func ensureRoleWorktreeIntegrity(cwd, townRoot string, role Role) error {
+	// The canonical Witness home is intentionally clone-free. Do not search
+	// upward and accidentally validate a customer/town repository ancestor.
+	// Legacy witness/rig workdirs still flow through strict validation below.
+	cleanCWD := filepath.Clean(cwd)
+	if role == RoleWitness &&
+		filepath.Base(cleanCWD) == "witness" &&
+		filepath.Dir(filepath.Dir(cleanCWD)) == filepath.Clean(townRoot) {
+		rootGit := filepath.Join(cleanCWD, ".git")
+		if _, err := os.Lstat(rootGit); err == nil {
+			return fmt.Errorf(
+				"invalid Witness layout: %s is a misplaced product worktree; canonical witness/ must be clone-free (legacy Git belongs at witness/rig/.git)\nRemediation: preserve any product changes, remove the misplaced root worktree, then run `gt doctor`",
+				rootGit,
+			)
+		} else if !os.IsNotExist(err) {
+			return fmt.Errorf("inspect canonical Witness Git marker %s: %w", rootGit, err)
+		}
+		return nil
+	}
 	if err := worktreeintegrity.Validate(cwd, worktreeintegrity.IntegrityOptions{
 		TownRoot: townRoot,
 		Require:  roleRequiresWorktreeIntegrity(role),

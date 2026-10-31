@@ -746,6 +746,28 @@ func DiscoverWorktrees(roleDir string) []string {
 	return dirs
 }
 
+// DiscoverWorktreesForRole resolves hook installation workdirs without treating
+// arbitrary directories inside singleton role homes as managed worktrees.
+//
+// A clone-free Witness works directly in witness/. Legacy Witnesses work in
+// witness/rig/. In either case, customer repositories that the Witness happens
+// to create beneath its home are not Gas Town hook targets. Multi-slot roles
+// retain the normal direct/nested worktree discovery behavior.
+func DiscoverWorktreesForRole(roleDir, role string) []string {
+	if role == "witness" {
+		legacyDir := filepath.Join(roleDir, "rig")
+		if isGitWorktreeRoot(legacyDir) {
+			return []string{legacyDir}
+		}
+		if info, err := os.Stat(roleDir); err == nil && info.IsDir() {
+			return []string{roleDir}
+		}
+		return nil
+	}
+
+	return DiscoverWorktrees(roleDir)
+}
+
 func nestedWorktreeRoots(parent string) []string {
 	entries, err := os.ReadDir(parent)
 	if err != nil {

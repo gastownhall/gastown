@@ -9,9 +9,9 @@ import (
 
 func TestParseRecoveredBeadSubject(t *testing.T) {
 	tests := []struct {
-		subject  string
-		wantID   string
-		wantOK   bool
+		subject string
+		wantID  string
+		wantOK  bool
 	}{
 		{"RECOVERED_BEAD gt-abc123", "gt-abc123", true},
 		{"RECOVERED_BEAD bd-xyz", "bd-xyz", true},
@@ -254,6 +254,59 @@ func TestLoadModelEscalationConfig(t *testing.T) {
 			t.Errorf("expected ToAgent=claude, got %q", cfg.Rules[0].ToAgent)
 		}
 	})
+
+	t.Run("loads bounded local first policy", func(t *testing.T) {
+		dir := t.TempDir()
+		gastown := filepath.Join(dir, ".gastown")
+		if err := os.MkdirAll(gastown, 0755); err != nil {
+			t.Fatal(err)
+		}
+		content := `{
+			"type":"model-escalation","version":2,"enabled":true,"rules":[],
+			"recovery":{
+				"nudge_after":"15m","local_restart_after":"30m","go_escalate_after":"60m",
+				"max_local_restarts":1,"max_go_attempts":1,
+				"break_glass":{"enabled":true,"scope":"infrastructure-only",
+					"agents":["claude","codex"],"max_attempts_per_agent":1,
+					"timeout":"10m","automatic":true,
+					"tier_policy":{
+						"claude":{"max_attempts":1,"timeout":"10m","mode":"automatic"},
+						"codex":{"max_attempts":1,"timeout":"10m","mode":"automatic"}
+					}}
+			}
+		}`
+		if err := os.WriteFile(filepath.Join(gastown, "model-escalation.json"), []byte(content), 0600); err != nil {
+			t.Fatal(err)
+		}
+		cfg, err := LoadModelEscalationConfig(dir)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if cfg.Recovery == nil || cfg.Recovery.GoEscalateAfter != "60m" {
+			t.Fatalf("recovery policy = %#v", cfg.Recovery)
+		}
+	})
+
+	t.Run("rejects product scoped break glass", func(t *testing.T) {
+		dir := t.TempDir()
+		gastown := filepath.Join(dir, ".gastown")
+		if err := os.MkdirAll(gastown, 0755); err != nil {
+			t.Fatal(err)
+		}
+		content := `{"enabled":true,"rules":[],"recovery":{"break_glass":{
+			"enabled":true,"scope":"all-work","agents":["claude","codex"],
+			"max_attempts_per_agent":1,"timeout":"10m",
+			"tier_policy":{
+				"claude":{"max_attempts":1,"timeout":"10m","mode":"automatic"},
+				"codex":{"max_attempts":1,"timeout":"10m","mode":"automatic"}
+			}}}}`
+		if err := os.WriteFile(filepath.Join(gastown, "model-escalation.json"), []byte(content), 0600); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := LoadModelEscalationConfig(dir); err == nil {
+			t.Fatal("expected unsafe break-glass policy to be rejected")
+		}
+	})
 }
 
 func TestResolveAgentForRedispatch(t *testing.T) {
@@ -316,6 +369,35 @@ func TestResolveAgentForRedispatch_NoConfig(t *testing.T) {
 	got := resolveAgentForRedispatch(t.TempDir(), "myrig", state)
 	if got != "" {
 		t.Errorf("expected empty agent when no config, got %q", got)
+	}
+}
+
+func TestResolveAgentForRedispatch_EnforcesFromAgent(t *testing.T) {
+	townDir := t.TempDir()
+	rigName := "myrig"
+	rigProjectDir := filepath.Join(townDir, rigName, "refinery", "rig", ".gastown")
+	if err := os.MkdirAll(rigProjectDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	configContent := `{
+		"type": "model-escalation",
+		"version": 1,
+		"enabled": true,
+		"rules": [{
+			"from_agent": "opencode-local",
+			"to_agent": "opencode-go",
+			"promote_after_failures": 1
+		}]
+	}`
+	if err := os.WriteFile(filepath.Join(rigProjectDir, "model-escalation.json"), []byte(configContent), 0600); err != nil {
+		t.Fatal(err)
+	}
+	state := &BeadRedispatchState{BeadID: "gt-test"}
+	if got := resolveAgentForRedispatch(townDir, rigName, state, "opencode-local"); got != "opencode-go" {
+		t.Fatalf("local failure target = %q, want opencode-go", got)
+	}
+	if got := resolveAgentForRedispatch(townDir, rigName, state, "opencode-go"); got != "" {
+		t.Fatalf("hosted failure must not match local rule, got %q", got)
 	}
 }
 

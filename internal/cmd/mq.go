@@ -9,6 +9,7 @@ import (
 
 	"github.com/spf13/cobra"
 	"github.com/steveyegge/gastown/internal/config"
+	"github.com/steveyegge/gastown/internal/deacon"
 	"github.com/steveyegge/gastown/internal/git"
 	"github.com/steveyegge/gastown/internal/refinery"
 	"github.com/steveyegge/gastown/internal/rig"
@@ -575,6 +576,17 @@ func runMQPostMerge(_ *cobra.Command, args []string) error {
 
 	if branchCleanup.LocalDeleted {
 		fmt.Printf("  %s Deleted local branch: %s\n", style.Success.Render("✓"), mr.Branch)
+	}
+
+	if result.SourceIssueID != "" {
+		townRoot := filepath.Dir(r.Path)
+		if resolved, resolveErr := deacon.ResolveValidationIncidents(
+			townRoot, "", rigName, result.SourceIssueID, "pre-merge",
+		); resolveErr != nil {
+			fmt.Printf("  %s Could not resolve validation incident: %v\n", style.Dim.Render("○"), resolveErr)
+		} else if resolved > 0 {
+			fmt.Printf("  %s Resolved %d validation incident(s)\n", style.Success.Render("✓"), resolved)
+		}
 	}
 
 	return nil

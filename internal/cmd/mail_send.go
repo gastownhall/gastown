@@ -32,7 +32,13 @@ func runMailSend(cmd *cobra.Command, args []string) error {
 
 	var to string
 
-	if mailSendSelf {
+	humanTarget, humanRoute, err := resolveHumanMailTarget(args)
+	if err != nil {
+		return err
+	}
+	if humanRoute {
+		to = humanTarget
+	} else if mailSendSelf {
 		// Auto-detect identity from cwd
 		cwd, err := os.Getwd()
 		if err != nil {
@@ -245,6 +251,19 @@ func runMailSend(cmd *cobra.Command, args []string) error {
 	}
 
 	return nil
+}
+
+func resolveHumanMailTarget(args []string) (target string, handled bool, err error) {
+	if !mailSendHuman {
+		return "", false, nil
+	}
+	if mailSendSelf || mailTo != "" || len(args) > 0 {
+		return "", true, fmt.Errorf("--human cannot be combined with an address, --to, or --self")
+	}
+	// Recovery alerts must survive session restarts and wisp collection.
+	mailPermanent = true
+	mailUrgent = true
+	return "overseer", true, nil
 }
 
 // generateThreadID creates a random thread ID for new message threads.

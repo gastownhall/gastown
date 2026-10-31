@@ -329,6 +329,47 @@ func TestFindOwnedDoltTestServerCandidatesFromPS(t *testing.T) {
 	}
 }
 
+func TestStaleOwnedTestServersRequiresMatchingMetadataAndDeadParent(t *testing.T) {
+	root := t.TempDir()
+	config := DefaultConfig(root)
+	if err := os.MkdirAll(config.DataDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	metadata := TestServerOwnerMetadata{
+		PID:       4242,
+		ParentPID: 3131,
+		TownRoot:  root,
+		DataDir:   config.DataDir,
+		Owner:     "go-test",
+		StartedAt: time.Now().UTC(),
+	}
+	data, err := json.Marshal(metadata)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(testServerOwnerMetadataPath(config.DataDir), data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	ps := "4242 dolt sql-server --config " + filepath.Join(config.DataDir, "config.yaml")
+
+	if got := staleOwnedTestServersFromPS(ps, func(pid int) bool { return pid == 3131 }); len(got) != 0 {
+		t.Fatalf("live parent reported stale: %+v", got)
+	}
+	got := staleOwnedTestServersFromPS(ps, func(int) bool { return false })
+	if len(got) != 1 || got[0].PID != 4242 {
+		t.Fatalf("dead-parent result = %+v, want PID 4242", got)
+	}
+
+	metadata.PID = 9999
+	data, _ = json.Marshal(metadata)
+	if err := os.WriteFile(testServerOwnerMetadataPath(config.DataDir), data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if got := staleOwnedTestServersFromPS(ps, func(int) bool { return false }); len(got) != 0 {
+		t.Fatalf("mismatched metadata was trusted: %+v", got)
+	}
+}
+
 func TestReapOwnedTestServersRefusesNonTempRoot(t *testing.T) {
 	if _, err := ReapOwnedTestServers(string(filepath.Separator)); err == nil {
 		t.Fatal("expected non-temp root to be rejected")

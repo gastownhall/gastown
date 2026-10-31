@@ -1,14 +1,48 @@
 package daemon
 
 import (
+	"bytes"
 	"log"
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/steveyegge/gastown/internal/wisp"
 )
+
+func TestEnsureRigWispConfigs_CreatesMissingAndPreservesExisting(t *testing.T) {
+	townRoot := t.TempDir()
+	mayorDir := filepath.Join(townRoot, "mayor")
+	if err := os.MkdirAll(mayorDir, 0o755); err != nil {
+		t.Fatalf("mkdir mayor dir: %v", err)
+	}
+	rigsJSON := `{"rigs":{"alpha":{},"beta":{}}}`
+	if err := os.WriteFile(filepath.Join(mayorDir, "rigs.json"), []byte(rigsJSON), 0o644); err != nil {
+		t.Fatalf("write rigs.json: %v", err)
+	}
+	if err := wisp.NewConfig(townRoot, "beta").Set("status", "parked"); err != nil {
+		t.Fatalf("set beta parked: %v", err)
+	}
+
+	var logs bytes.Buffer
+	d := &Daemon{
+		config: &Config{TownRoot: townRoot},
+		logger: log.New(&logs, "", 0),
+	}
+	d.ensureRigWispConfigs()
+
+	if _, err := os.Stat(wisp.NewConfig(townRoot, "alpha").ConfigPath()); err != nil {
+		t.Fatalf("alpha config was not created: %v", err)
+	}
+	if got := wisp.NewConfig(townRoot, "beta").GetString("status"); got != "parked" {
+		t.Fatalf("beta status = %q, want parked", got)
+	}
+	if strings.Contains(logs.String(), "no wisp config") {
+		t.Fatalf("unexpected repeated missing-config warning: %s", logs.String())
+	}
+}
 
 // Regression test for gt-arz:
 // getPatrolRigs should filter parked/docked rigs at list-building time.

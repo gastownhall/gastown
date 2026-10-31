@@ -82,7 +82,7 @@ Then use await-signal with exponential backoff to wait for activity:
 
 ```bash
 gt mol step await-signal --agent-bead "$YOUR_AGENT_BEAD" \
-  --backoff-base 30s --backoff-mult 2 --backoff-max 5m
+  --backoff-base 30s --backoff-mult 2 --backoff-max 15m
 ```
 
 This command:
