@@ -73,6 +73,13 @@ func polecatSessionKey(rigName, polecatName string) string {
 	return rigName + polecatSessionKeySep + polecatName
 }
 
+// loadPolecatAgentBeads returns the agent beads for a rig's polecats. Agent
+// beads live in the town DB by design (see beads.ForAgentBead), so this reads
+// through ForAgentBead rather than the rig DB the rig path resolves to.
+func loadPolecatAgentBeads(rigPath string) (map[string]*beads.Issue, error) {
+	return beads.New(rigPath).ForAgentBead().ListAgentBeads()
+}
+
 func buildPolecatInventoryItem(rigName, polecatName string, fields *beads.AgentFields, activeWork *beads.Issue, sessions polecatSessionSet) polecatInventoryItem {
 	return buildPolecatInventoryItemFromEvidence(rigName, polecatName, fields, assessPolecatAssignedIssueWork(activeWork), sessions)
 }

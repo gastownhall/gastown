@@ -213,7 +213,7 @@ func polecatCapacitySnapshotForTownNoCleanup(townRoot string) (polecatCapacitySn
 		}
 
 		rigBeads := beads.New(rigPath)
-		agents, err := rigBeads.ListAgentBeads()
+		agents, err := loadPolecatAgentBeads(rigPath)
 		if err != nil {
 			return snapshot, fmt.Errorf("listing agent beads for %s capacity: %w", rigName, err)
 		}

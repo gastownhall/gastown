@@ -94,7 +94,7 @@ type agentStateResult struct {
 func runAgentState(cmd *cobra.Command, args []string) error {
 	agentBead := args[0]
 
-	beadsDir, err := resolveAgentTrackingBeadsDir()
+	beadsDir, err := resolveAgentStateBeadsDir(agentBead)
 	if err != nil {
 		return fmt.Errorf("not in a beads workspace: %w", err)
 	}
@@ -111,6 +111,33 @@ func runAgentState(cmd *cobra.Command, args []string) error {
 
 	// Query mode
 	return queryAgentState(agentBead, beadsDir)
+}
+
+// resolveAgentStateBeadsDir picks the DB that holds agentBead. Agent beads
+// live in the town DB by design (see beads.ForAgentBead), so that is the
+// default, whatever the cwd is. A rig-local bead with the same ID is still
+// used when the cwd's rig DB has it, so a rig that keeps one keeps working.
+func resolveAgentStateBeadsDir(agentBead string) (string, error) {
+	trackingDir, err := resolveAgentTrackingBeadsDir()
+	if err != nil {
+		return "", err
+	}
+	cwd, err := os.Getwd()
+	if err != nil {
+		return "", fmt.Errorf("getting working directory: %w", err)
+	}
+	townRoot := beads.FindTownRoot(cwd)
+	if townRoot == "" {
+		return trackingDir, nil
+	}
+	townBeadsDir := beads.ResolveBeadsDir(beads.GetTownBeadsPath(townRoot))
+	if filepath.Clean(trackingDir) == filepath.Clean(townBeadsDir) {
+		return townBeadsDir, nil
+	}
+	if _, err := getAllAgentLabels(agentBead, trackingDir); err == nil {
+		return trackingDir, nil
+	}
+	return townBeadsDir, nil
 }
 
 // queryAgentState retrieves and displays labels from an agent bead.
