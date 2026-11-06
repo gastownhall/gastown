@@ -272,3 +272,88 @@ func assertUpdatesWentTo(t *testing.T, logPath, wantBeadsDir string) {
 		}
 	}
 }
+
+// awaitEventGlobalsForTest sets the await-event flags for a short run against
+// one agent bead, and restores them afterwards.
+func awaitEventGlobalsForTest(t *testing.T, agentBead string) {
+	t.Helper()
+	oldChannel, oldTimeout, oldBase, oldMult, oldMax := awaitEventChannel, awaitEventTimeout, awaitEventBackoffBase, awaitEventBackoffMult, awaitEventBackoffMax
+	oldQuiet, oldAgent, oldCleanup, oldCtx, oldJSON := awaitEventQuiet, awaitEventAgentBead, awaitEventCleanup, awaitEventContextCheckInterval, moleculeJSON
+	t.Cleanup(func() {
+		awaitEventChannel, awaitEventTimeout, awaitEventBackoffBase, awaitEventBackoffMult, awaitEventBackoffMax = oldChannel, oldTimeout, oldBase, oldMult, oldMax
+		awaitEventQuiet, awaitEventAgentBead, awaitEventCleanup, awaitEventContextCheckInterval, moleculeJSON = oldQuiet, oldAgent, oldCleanup, oldCtx, oldJSON
+	})
+	awaitEventChannel = "test"
+	awaitEventTimeout = "80ms"
+	awaitEventBackoffBase = ""
+	awaitEventBackoffMult = 2
+	awaitEventBackoffMax = ""
+	awaitEventQuiet = true
+	awaitEventAgentBead = agentBead
+	awaitEventCleanup = false
+	awaitEventContextCheckInterval = ""
+	moleculeJSON = false
+}
+
+// awaitSignalGlobalsForTest sets the await-signal flags for a short run against
+// one agent bead, and restores them afterwards.
+func awaitSignalGlobalsForTest(t *testing.T, agentBead string) {
+	t.Helper()
+	oldTimeout, oldBase, oldMult, oldMax := awaitSignalTimeout, awaitSignalBackoffBase, awaitSignalBackoffMult, awaitSignalBackoffMax
+	oldQuiet, oldAgent, oldJSON := awaitSignalQuiet, awaitSignalAgentBead, moleculeJSON
+	t.Cleanup(func() {
+		awaitSignalTimeout, awaitSignalBackoffBase, awaitSignalBackoffMult, awaitSignalBackoffMax = oldTimeout, oldBase, oldMult, oldMax
+		awaitSignalQuiet, awaitSignalAgentBead, moleculeJSON = oldQuiet, oldAgent, oldJSON
+	})
+	awaitSignalTimeout = "1ms"
+	awaitSignalBackoffBase = ""
+	awaitSignalBackoffMult = 2
+	awaitSignalBackoffMax = ""
+	awaitSignalQuiet = true
+	awaitSignalAgentBead = agentBead
+	moleculeJSON = false
+}
+
+func TestAwaitEventFromRigFolderPersistsOnTownBead(t *testing.T) {
+	f := setupTownBeadsFixture(t, "["+testRefineryJSON+"]", testEmptyJSON)
+	chdirForTest(t, f.rigPath)
+	awaitEventGlobalsForTest(t, "gp-greenplace-refinery")
+
+	if err := runMoleculeAwaitEvent(nil, nil); err != nil {
+		t.Fatalf("runMoleculeAwaitEvent() error = %v", err)
+	}
+	assertUpdatesWentTo(t, f.logPath, f.townBeads)
+}
+
+func TestAwaitEventFromTownRootPersistsOnTownBead(t *testing.T) {
+	f := setupTownBeadsFixture(t, "["+testRefineryJSON+"]", testEmptyJSON)
+	chdirForTest(t, f.townRoot)
+	awaitEventGlobalsForTest(t, "gp-greenplace-refinery")
+
+	if err := runMoleculeAwaitEvent(nil, nil); err != nil {
+		t.Fatalf("runMoleculeAwaitEvent() error = %v", err)
+	}
+	assertUpdatesWentTo(t, f.logPath, f.townBeads)
+}
+
+func TestAwaitSignalFromRigFolderPersistsOnTownBead(t *testing.T) {
+	f := setupTownBeadsFixture(t, "["+testRefineryJSON+"]", testEmptyJSON)
+	chdirForTest(t, f.rigPath)
+	awaitSignalGlobalsForTest(t, "gp-greenplace-refinery")
+
+	if err := runMoleculeAwaitSignal(nil, nil); err != nil {
+		t.Fatalf("runMoleculeAwaitSignal() error = %v", err)
+	}
+	assertUpdatesWentTo(t, f.logPath, f.townBeads)
+}
+
+func TestAwaitSignalFromTownRootPersistsOnTownBead(t *testing.T) {
+	f := setupTownBeadsFixture(t, "["+testRefineryJSON+"]", testEmptyJSON)
+	chdirForTest(t, f.townRoot)
+	awaitSignalGlobalsForTest(t, "gp-greenplace-refinery")
+
+	if err := runMoleculeAwaitSignal(nil, nil); err != nil {
+		t.Fatalf("runMoleculeAwaitSignal() error = %v", err)
+	}
+	assertUpdatesWentTo(t, f.logPath, f.townBeads)
+}

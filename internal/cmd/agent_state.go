@@ -131,7 +131,7 @@ func resolveAgentStateBeadsDir(agentBead string) (string, error) {
 		return trackingDir, nil
 	}
 	townBeadsDir := beads.ResolveBeadsDir(beads.GetTownBeadsPath(townRoot))
-	if filepath.Clean(trackingDir) == filepath.Clean(townBeadsDir) {
+	if agentBead == "" || filepath.Clean(trackingDir) == filepath.Clean(townBeadsDir) {
 		return townBeadsDir, nil
 	}
 	if _, err := getAllAgentLabels(agentBead, trackingDir); err == nil {

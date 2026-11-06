@@ -310,7 +310,10 @@ func TestBackoffWindowResumption(t *testing.T) {
 	}
 }
 
-func TestRunMoleculeAwaitSignalAgentBeadUsesCwdRigBeadsDirWhenBeadsDirPointsTown(t *testing.T) {
+// The agent bead is in the rig DB here, so the rig DB is used even though
+// BEADS_DIR points at the town. A town-only bead goes to town instead; see
+// TestAwaitSignalFromRigFolderPersistsOnTownBead.
+func TestRunMoleculeAwaitSignalRigBeadWhenRigDBHasIt(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("uses a POSIX shell fake bd")
 	}

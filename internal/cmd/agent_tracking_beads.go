@@ -33,10 +33,13 @@ func findCwdBeadsWorkDir() (string, error) {
 	return "", fmt.Errorf("no .beads directory found")
 }
 
-// resolveAgentTrackingBeadsDir resolves the bead database used for agent state.
-// Agent tracking follows the agent's current rig, so cwd-local redirects must
-// win over an inherited town-level BEADS_DIR. The env-first resolver remains a
-// fallback for contexts that do not have a cwd-local .beads directory.
+// resolveAgentTrackingBeadsDir resolves the cwd's own beads database (its rig
+// DB, or the town DB at the town root). This is the rig-local candidate for
+// agent-bead lookups, so cwd-local redirects win over an inherited town-level
+// BEADS_DIR. It is not where agent beads live: those are in the town DB, and
+// callers choose between the two with resolveAgentStateBeadsDir.
+// The env-first resolver remains a fallback for contexts that do not have a
+// cwd-local .beads directory.
 func resolveAgentTrackingBeadsDir() (string, error) {
 	workDir, err := findCwdBeadsWorkDir()
 	if err != nil {
