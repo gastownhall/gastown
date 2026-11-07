@@ -139,7 +139,11 @@ func (dm *dogMol) close() {
 	// Close any step wisps that were never explicitly closed/failed.
 	dm.closeRemainingSteps()
 
-	if err := dm.closeWisp(dm.rootID); err != nil {
+	// --force: closeRemainingSteps() is a best-effort pass over known status
+	// values; if it missed an open child (e.g. an unrecognized status), bd
+	// would otherwise refuse to close the root with "N open child issue(s)",
+	// leaving an unclosable, leaked root wisp (gt#4958).
+	if err := dm.closeWisp(dm.rootID, "--force"); err != nil {
 		dm.logger.Printf("dog_molecule: close root %s failed after %d attempts (non-fatal): %v", dm.rootID, dogCloseMaxAttempts, err)
 	}
 }
