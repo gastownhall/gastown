@@ -189,6 +189,7 @@ func queryPatrolDigests(targetDate time.Time) ([]PatrolCycleEntry, error) {
 	listCmd := exec.Command("bd", "list",
 		"--status=closed",
 		"--label=digest",
+		"--include-ephemeral", // Patrol digests are created as ephemeral (gt#4951)
 		"--json",
 		"--limit=0", // Get all
 	)
