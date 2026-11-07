@@ -463,6 +463,55 @@ func TestClosedMoleculeStepReapBehavior(t *testing.T) {
 	}
 }
 
+// TestReapExcludesHookedMoleculeRoot proves that a molecule root wisp that is
+// currently hooked (status='hooked', issue_type='molecule') is never selected
+// for age-based reaping, even once it is older than maxAge — it represents a
+// live, persistent patrol molecule, not abandoned work (gt#4964). An
+// otherwise-identical mail wisp, and a molecule root that is not hooked, are
+// still reaped as before.
+func TestReapExcludesHookedMoleculeRoot(t *testing.T) {
+	now := time.Now().UTC()
+	state := &fakeReaperState{
+		wisps: map[string]*fakeWisp{
+			"hooked-patrol-molecule": {id: "hooked-patrol-molecule", status: "hooked", issueType: "molecule", createdAt: now.Add(-48 * time.Hour)},
+			"stale-mail-wisp":        {id: "stale-mail-wisp", status: "hooked", issueType: "mail", createdAt: now.Add(-48 * time.Hour)},
+			"stale-open-molecule":    {id: "stale-open-molecule", status: "open", issueType: "molecule", createdAt: now.Add(-48 * time.Hour)},
+		},
+		deps: []fakeDep{},
+		ops:  map[int][]string{},
+	}
+	db := openFakeReaperDB(t, state)
+	t.Cleanup(func() { _ = db.Close() })
+
+	maxAge := 24 * time.Hour
+
+	dryRun, err := Reap(db, "testdb", maxAge, true)
+	if err != nil {
+		t.Fatalf("dry-run Reap: %v", err)
+	}
+	if dryRun.Reaped != 2 {
+		t.Fatalf("dry-run Reaped = %d, want 2 (hooked molecule root must be excluded)", dryRun.Reaped)
+	}
+
+	realRun, err := Reap(db, "testdb", maxAge, false)
+	if err != nil {
+		t.Fatalf("real Reap: %v", err)
+	}
+	if realRun.Reaped != 2 {
+		t.Fatalf("real Reaped = %d, want 2 (hooked molecule root must be excluded)", realRun.Reaped)
+	}
+
+	if got := state.status("hooked-patrol-molecule"); got != "hooked" {
+		t.Fatalf("hooked-patrol-molecule status = %q, want hooked (must survive reaping)", got)
+	}
+	if got := state.status("stale-mail-wisp"); got != "closed" {
+		t.Fatalf("stale-mail-wisp status = %q, want closed (non-molecule wisps still reaped)", got)
+	}
+	if got := state.status("stale-open-molecule"); got != "closed" {
+		t.Fatalf("stale-open-molecule status = %q, want closed (non-hooked molecule roots still reaped)", got)
+	}
+}
+
 var fakeReaperDriverID uint64
 
 func openFakeReaperDB(t *testing.T, state *fakeReaperState) *sql.DB {
@@ -579,6 +628,9 @@ func (s *fakeReaperState) staleCandidatesLocked(cutoff time.Time, excludeMolecul
 	var ids []string
 	for id, w := range s.wisps {
 		if !isOpenWispStatus(w.status) || w.issueType == "agent" || !w.createdAt.Before(cutoff) {
+			continue
+		}
+		if w.status == "hooked" && w.issueType == "molecule" {
 			continue
 		}
 		if s.hasOpenParentLocked(id) {
@@ -795,6 +847,7 @@ func validateStaleWispQuery(query string) error {
 		"w.created_at < ?",
 		"open_parent.issue_id IS NULL",
 		"closed_molecule_step.issue_id IS NULL",
+		"NOT (w.status = 'hooked' AND w.issue_type = 'molecule')",
 	)
 }
 
