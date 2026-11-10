@@ -723,10 +723,16 @@ func TestClearIssueWithoutAssignment(t *testing.T) {
 // ephemerally via SessionStart hook (gt prime) to prevent leaking internal
 // architecture into project repos.
 
-func TestAddWithOptions_HasAgentsMD(t *testing.T) {
-	// This test verifies that AGENTS.md exists in polecat worktrees after creation.
-	// AGENTS.md is critical for polecats to "land the plane" properly.
+// newSpawnFixture builds the minimal rig directory structure AddWithOptions
+// needs to create a real worktree, and points CLAUDE_CONFIG_DIR at a temp dir
+// so provisioning never touches the developer's real ~/.claude.json. Returns
+// the manager, the committed AGENTS.md content, and the Claude config dir.
+func newSpawnFixture(t *testing.T) (*Manager, []byte, string) {
+	t.Helper()
 	installMockBd(t)
+
+	claudeConfigDir := t.TempDir()
+	t.Setenv("CLAUDE_CONFIG_DIR", claudeConfigDir)
 
 	root := t.TempDir()
 
@@ -793,6 +799,13 @@ func TestAddWithOptions_HasAgentsMD(t *testing.T) {
 		Path: root,
 	}
 	m := NewManager(r, git.NewGit(root), nil)
+	return m, agentsMDContent, claudeConfigDir
+}
+
+func TestAddWithOptions_HasAgentsMD(t *testing.T) {
+	// This test verifies that AGENTS.md exists in polecat worktrees after creation.
+	// AGENTS.md is critical for polecats to "land the plane" properly.
+	m, agentsMDContent, _ := newSpawnFixture(t)
 
 	// Create polecat via AddWithOptions
 	polecat, err := m.AddWithOptions("TestAgent", AddOptions{})
@@ -815,6 +828,43 @@ func TestAddWithOptions_HasAgentsMD(t *testing.T) {
 	wantContent := strings.ReplaceAll(string(agentsMDContent), "\r\n", "\n")
 	if gotContent != wantContent {
 		t.Errorf("AGENTS.md content = %q, want %q", gotContent, wantContent)
+	}
+}
+
+func TestAddWithOptions_PreapprovesClaudeProjectTrust(t *testing.T) {
+	// Claude Code keys its startup trust dialogs (folder trust, CLAUDE.md
+	// external includes) off per-project entries in .claude.json. A fresh
+	// polecat worktree is a brand-new project path, so without pre-seeding
+	// the session stalls on an interactive prompt no settings.json can bypass.
+	m, _, claudeConfigDir := newSpawnFixture(t)
+
+	polecat, err := m.AddWithOptions("TestAgent", AddOptions{})
+	if err != nil {
+		t.Fatalf("AddWithOptions: %v", err)
+	}
+
+	data, err := os.ReadFile(filepath.Join(claudeConfigDir, ".claude.json"))
+	if err != nil {
+		t.Fatalf("reading seeded .claude.json: %v", err)
+	}
+	var doc struct {
+		Projects map[string]map[string]any `json:"projects"`
+	}
+	if err := json.Unmarshal(data, &doc); err != nil {
+		t.Fatalf("parsing seeded .claude.json: %v", err)
+	}
+	entry, ok := doc.Projects[polecat.ClonePath]
+	if !ok {
+		t.Fatalf("no project entry for %s in %v", polecat.ClonePath, doc.Projects)
+	}
+	for _, flag := range []string{
+		"hasTrustDialogAccepted",
+		"hasClaudeMdExternalIncludesApproved",
+		"hasClaudeMdExternalIncludesWarningShown",
+	} {
+		if v, _ := entry[flag].(bool); !v {
+			t.Errorf("%s = %v, want true", flag, entry[flag])
+		}
 	}
 }
 

@@ -393,6 +393,15 @@ func (m *SessionManager) Start(polecat string, opts SessionStartOptions) error {
 		return fmt.Errorf("ensuring runtime settings: %w", err)
 	}
 
+	// Pre-approve Claude Code's per-directory trust dialogs for the workdir
+	// before launching the session: they are keyed per project path in
+	// ~/.claude.json, so settings.json bypassPermissions cannot suppress them
+	// and an unattended polecat would stall on the prompt. Covers worktrees
+	// created before this safeguard existed (spawn paths also seed it).
+	if err := runtime.PreapproveProjectTrustForRuntime(runtimeConfig, workDir); err != nil {
+		style.PrintWarning("could not pre-approve Claude project trust: %v", err)
+	}
+
 	// Get fallback info to determine beacon content based on agent capabilities.
 	// Non-hook agents need "Run gt prime" in beacon; work instructions come as delayed nudge.
 	fallbackInfo := runtime.GetStartupFallbackInfo(runtimeConfig)
