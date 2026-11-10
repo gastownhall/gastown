@@ -712,7 +712,7 @@ func gatherStatus() (TownStatus, error) {
 		go func() {
 			defer beadsWg.Done()
 			townBeadsClient := beads.New(townBeadsPath)
-			townAgentBeads, _ := townBeadsClient.ListAgentBeads()
+			townAgentBeads, _ := townBeadsClient.ListAgentBeadsLocal()
 			mergeAgentBeads(townAgentBeads)
 
 			// Fetch hook beads from town beads
@@ -742,7 +742,7 @@ func gatherStatus() (TownStatus, error) {
 				defer beadsWg.Done()
 				rigBeadsPath := filepath.Join(r.Path, "mayor", "rig")
 				rigBeads := beads.New(rigBeadsPath)
-				rigAgentBeads, _ := rigBeads.ListAgentBeads()
+				rigAgentBeads, _ := rigBeads.ListAgentBeadsLocal()
 				if rigAgentBeads == nil {
 					return
 				}
