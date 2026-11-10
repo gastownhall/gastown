@@ -16,7 +16,12 @@ import (
 
 // MinBeadsVersion is the minimum compatible beads version for this Gas Town release.
 // Update this when Gas Town requires new beads features.
-const MinBeadsVersion = "0.57.0"
+// Must stay in lockstep with the github.com/steveyegge/beads module version in
+// go.mod: gt's in-process store and the bd CLI share one database, so a version
+// skew in either direction reintroduces the depends_on_id schema breakage
+// (hq-mtm — SDK v1.0.5 against a bd v1.3.4 database broke wisp compaction, the
+// reaper, convoy's ready_issues view, and polecat session startup town-wide).
+const MinBeadsVersion = "1.3.4"
 
 // BeadsInstallPath is the go install path for beads.
 const BeadsInstallPath = "github.com/steveyegge/beads/cmd/bd@latest"
