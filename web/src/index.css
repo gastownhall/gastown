@@ -1,0 +1,35 @@
+@import "tailwindcss";
+
+@layer base {
+  :root {
+    color-scheme: light dark;
+  }
+  html,
+  body,
+  #root {
+    height: 100%;
+  }
+  body {
+    font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  }
+}
+
+/* Rendered artifact markdown (sanitized HTML from components/Markdown). */
+@layer components {
+  .markdown {
+    @apply text-sm leading-relaxed;
+  }
+  .markdown h1 { @apply mt-4 mb-2 text-xl font-semibold first:mt-0; }
+  .markdown h2 { @apply mt-4 mb-2 text-lg font-semibold first:mt-0; }
+  .markdown h3 { @apply mt-3 mb-1 font-semibold; }
+  .markdown p { @apply my-2; }
+  .markdown ul { @apply my-2 list-disc pl-6; }
+  .markdown ol { @apply my-2 list-decimal pl-6; }
+  .markdown a { @apply text-teal-700 underline dark:text-teal-400; }
+  .markdown code { @apply rounded bg-zinc-100 px-1 font-mono text-[0.85em] dark:bg-zinc-800; }
+  .markdown pre { @apply my-2 overflow-x-auto rounded bg-zinc-950 p-3 text-zinc-100; }
+  .markdown pre code { @apply bg-transparent p-0; }
+  .markdown blockquote { @apply my-2 border-l-4 border-zinc-300 pl-3 text-zinc-600 dark:border-zinc-700 dark:text-zinc-400; }
+  .markdown table { @apply my-2 border-collapse; }
+  .markdown th, .markdown td { @apply border border-zinc-300 px-2 py-1 dark:border-zinc-700; }
+}

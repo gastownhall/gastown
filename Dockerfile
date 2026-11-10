@@ -23,8 +23,11 @@ RUN apt-get update && apt-get install -y \
     vim \
     && rm -rf /var/lib/apt/lists/* /var/cache/apt/archives/*
 
-# Install Go from official tarball (apt golang-go is too old)
+# Install Go from official tarball (apt golang-go is too old). The base image
+# may already ship a different Go in /usr/local/go; extracting over it mixes
+# the two standard libraries, so remove it first.
 RUN ARCH=$(dpkg --print-architecture) && \
+    rm -rf /usr/local/go && \
     curl -fsSL "https://go.dev/dl/go${GO_VERSION}.linux-${ARCH}.tar.gz" | tar -C /usr/local -xz
 ENV PATH="/app/gastown:/usr/local/go/bin:/home/agent/go/bin:${PATH}"
 
@@ -47,7 +50,8 @@ USER agent
 
 COPY --chown=agent:agent . /app/gastown
 
-RUN cd /app/gastown && make build
+# make build produces gtb; keep a gt symlink for scripts that still call gt.
+RUN cd /app/gastown && make build && ln -sfn gtb gt
 
 COPY --chown=agent:agent docker-entrypoint.sh /app/docker-entrypoint.sh
 RUN chmod +x /app/docker-entrypoint.sh

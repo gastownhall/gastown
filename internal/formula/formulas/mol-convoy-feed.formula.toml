@@ -74,6 +74,7 @@ An issue is "ready" if ALL of these are true:
 - status = "open" (NOT in_progress, closed, or hooked)
 - not in blocked list (check: bd blocked --json)
 - assignee is empty OR assignee session is dead
+- no label starts with `gtb:waiting:` (a gated item waiting on a human; never sling it)
 
 Check blocked status:
 ```bash

@@ -27,7 +27,6 @@
   "npm": {
     "enabled": true,
     "managerFilePatterns": [
-      "/npm-package/package.json/",
       "/gt-model-eval/package.json/"
     ]
   },

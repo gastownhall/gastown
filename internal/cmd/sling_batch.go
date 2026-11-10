@@ -69,18 +69,19 @@ func runBatchSling(beadIDs []string, rigName string, townBeadsDir string) error 
 		}
 	}
 
-	// Issue #288: Auto-apply formula for batch sling (resolved via flags)
-	formulaName := resolveFormula(slingFormula, slingHookRawBead, filepath.Dir(townBeadsDir), rigName)
+	// Issue #288: Auto-apply formula for batch sling (resolved via flags).
+	// Resolved per bead (R23): a gated workflow item gets its step formula.
+	formulaFor, formulaOrder := batchFormulas(beadIDs, filepath.Dir(townBeadsDir), rigName)
 
 	if slingDryRun {
 		fmt.Printf("%s Batch slinging %d beads to rig '%s':\n", style.Bold.Render("🎯"), len(beadIDs), rigName)
-		if formulaName != "" {
-			fmt.Printf("  Would cook %s formula once\n", formulaName)
+		if len(formulaOrder) > 0 {
+			fmt.Printf("  Would cook %s formula once\n", strings.Join(formulaOrder, ", "))
 		} else {
 			fmt.Printf("  Would hook raw beads (no formula)\n")
 		}
 		for _, beadID := range beadIDs {
-			if formulaName != "" {
+			if formulaName := formulaFor[beadID]; formulaName != "" {
 				fmt.Printf("  Would spawn polecat and apply %s to: %s\n", formulaName, beadID)
 			} else {
 				fmt.Printf("  Would spawn polecat and hook raw: %s\n", beadID)
@@ -95,17 +96,16 @@ func runBatchSling(beadIDs []string, rigName string, townBeadsDir string) error 
 		fmt.Printf("  Spawn batch size: %d (spawns N, pauses, spawns N more)\n", slingMaxConcurrent)
 	}
 
-	// Cook formula once before the loop for efficiency
-	formulaCooked := false
-
-	// Pre-cook formula before the loop (batch optimization: cook once, instantiate many)
-	if formulaName != "" {
+	// Pre-cook each distinct formula once before the loop (batch
+	// optimization: cook once, instantiate many).
+	formulaCooked := map[string]bool{}
+	for _, formulaName := range formulaOrder {
 		workDir := beads.ResolveHookDir(townRoot, beadIDs[0], "")
 		if err := CookFormula(formulaName, workDir, townRoot); err != nil {
 			fmt.Printf("  %s Could not pre-cook formula %s: %v\n", style.Dim.Render("Warning:"), formulaName, err)
 			// Fall back: each executeSling call will try to cook individually
 		} else {
-			formulaCooked = true
+			formulaCooked[formulaName] = true
 		}
 	}
 
@@ -148,7 +148,7 @@ func runBatchSling(beadIDs []string, rigName string, townBeadsDir string) error 
 
 		params := SlingParams{
 			BeadID:           beadID,
-			FormulaName:      formulaName,
+			FormulaName:      formulaFor[beadID],
 			RigName:          rigName,
 			Args:             slingArgs,
 			Vars:             slingVars,
@@ -164,7 +164,7 @@ func runBatchSling(beadIDs []string, rigName string, townBeadsDir string) error 
 			HookRawBead:      slingHookRawBead,
 			NoBoot:           slingNoBoot,
 			Mode:             slingMode,
-			SkipCook:         formulaCooked,
+			SkipCook:         formulaCooked[formulaFor[beadID]],
 			FormulaFailFatal: false, // Batch: warn + hook raw on formula failure
 			CallerContext:    "batch-sling",
 			TownRoot:         townRoot,
@@ -377,4 +377,23 @@ func closeConvoy(convoyID, reason string) {
 	} else {
 		fmt.Printf("  %s Closed convoy %s\n", style.Dim.Render("○"), convoyID)
 	}
+}
+
+// batchFormulas resolves the formula for each bead of a batch sling with its
+// own ID (R23), so a gated workflow item gets its gtb-<kind>-<step> formula
+// while other beads keep the batch's formula. It returns the per-bead map and
+// the distinct non-empty formulas in first-seen order (each is cooked once).
+func batchFormulas(beadIDs []string, townRoot, rigName string) (map[string]string, []string) {
+	formulaFor := make(map[string]string, len(beadIDs))
+	seen := map[string]bool{}
+	var order []string
+	for _, beadID := range beadIDs {
+		name := resolveFormula(slingFormula, slingHookRawBead, townRoot, rigName, beadID)
+		formulaFor[beadID] = name
+		if name != "" && !seen[name] {
+			seen[name] = true
+			order = append(order, name)
+		}
+	}
+	return formulaFor, order
 }

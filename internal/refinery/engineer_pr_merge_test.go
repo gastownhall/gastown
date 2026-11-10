@@ -32,6 +32,10 @@ func (p *recordingPRProvider) IsPRApproved(*gitpkg.PullRequestInfo) (bool, error
 	return true, nil
 }
 
+func (p *recordingPRProvider) ChecksPassed(*gitpkg.PullRequestInfo) (bool, bool, error) {
+	return true, false, nil
+}
+
 func (p *recordingPRProvider) MergePR(_ *gitpkg.PullRequestInfo, method string) (string, error) {
 	p.mergeMethod = method
 	if p.mergeFunc != nil {

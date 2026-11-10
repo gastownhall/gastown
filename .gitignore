@@ -1,4 +1,5 @@
 # Binaries
+/gtb
 /gt
 /gt-proxy-server
 /gt-proxy-client
@@ -99,3 +100,7 @@ docs/fork-info/
 
 # Gas Town (added by gt)
 GEMINI.md
+
+# Built dashboard (make web); only the .keep placeholder is tracked.
+internal/server/dist/*
+!internal/server/dist/.keep

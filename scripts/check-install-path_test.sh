@@ -23,9 +23,9 @@ setup_bins() {
   BREW_DIR="$TMPDIR/usr/local/bin"
   OTHER_DIR="$TMPDIR/usr/bin"
   mkdir -p "$INSTALL_DIR" "$BREW_DIR" "$OTHER_DIR"
-  printf '#!/usr/bin/env sh\nexit 0\n' > "$INSTALL_DIR/gt"
-  printf '#!/usr/bin/env sh\nexit 0\n' > "$BREW_DIR/gt"
-  chmod +x "$INSTALL_DIR/gt" "$BREW_DIR/gt"
+  printf '#!/usr/bin/env sh\nexit 0\n' > "$INSTALL_DIR/gtb"
+  printf '#!/usr/bin/env sh\nexit 0\n' > "$BREW_DIR/gtb"
+  chmod +x "$INSTALL_DIR/gtb" "$BREW_DIR/gtb"
 }
 
 run_check() {
@@ -51,7 +51,7 @@ assert_warns() {
   local test_name="$1"
   local output="$2"
   local expected="$3"
-  if [[ "$output" == *"Warning: gt resolves to $expected, not $INSTALL_DIR/gt"* ]] && \
+  if [[ "$output" == *"Warning: gtb resolves to $expected, not $INSTALL_DIR/gtb"* ]] && \
      [[ "$output" == *"export PATH=\"$INSTALL_DIR:\$PATH\""* ]]; then
     echo "  PASS: $test_name"
     PASS=$((PASS + 1))
@@ -76,7 +76,7 @@ cleanup
 
 setup_bins
 output="$(run_check "$BREW_DIR:$INSTALL_DIR:$OTHER_DIR:$SYSTEM_PATH")"
-assert_warns "warns when earlier Homebrew-style gt shadows install" "$output" "$BREW_DIR/gt"
+assert_warns "warns when earlier Homebrew-style gtb shadows install" "$output" "$BREW_DIR/gtb"
 cleanup
 
 echo "Results: $PASS passed, $FAIL failed"

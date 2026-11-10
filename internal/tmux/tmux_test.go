@@ -2887,3 +2887,14 @@ func TestValidateCommandBinary(t *testing.T) {
 		})
 	}
 }
+
+// R38: the joined capture passes -J so wrapped lines come back whole.
+func TestCapturePaneArgs(t *testing.T) {
+	got := strings.Join(capturePaneArgs("s1", 200, true), " ")
+	if got != "capture-pane -p -J -t s1 -S -200" {
+		t.Fatalf("joined args = %q", got)
+	}
+	if got := strings.Join(capturePaneArgs("s1", 30, false), " "); got != "capture-pane -p -t s1 -S -30" {
+		t.Fatalf("plain args = %q", got)
+	}
+}

@@ -67,8 +67,14 @@ RUN for i in 1 2 3; do \
 COPY . .
 
 # Build gt binary
-RUN go build -ldflags "-X github.com/steveyegge/gastown/internal/cmd.BuiltProperly=1" -o /usr/local/bin/gt ./cmd/gt
+RUN go build -ldflags "-X github.com/steveyegge/gastown/internal/cmd.BuiltProperly=1" -o /usr/local/bin/gtb ./cmd/gtb \
+    && ln -s gtb /usr/local/bin/gt
 
-# Run e2e tests (all TestInstall* functions from install_integration_test.go)
+# Run e2e tests. The default selects the TestInstall* functions from
+# install_integration_test.go; override with --build-arg E2E_TEST_RUN=... and
+# E2E_TEST_PKGS=... (see the test-e2e-container make target).
 # Note: Using -count=1 to disable test caching, -parallel 1 for sequential execution
-CMD ["go", "test", "-tags=e2e", "-timeout=5m", "-v", "-count=1", "-parallel", "1", "-run", "TestInstall", "./internal/cmd/..."]
+ARG E2E_TEST_RUN=TestInstall
+ARG E2E_TEST_PKGS=./internal/cmd/...
+ENV E2E_TEST_RUN=${E2E_TEST_RUN} E2E_TEST_PKGS=${E2E_TEST_PKGS}
+CMD sh -c 'exec go test -tags=e2e -timeout=5m -v -count=1 -parallel 1 -run "$E2E_TEST_RUN" $E2E_TEST_PKGS'

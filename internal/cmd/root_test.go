@@ -248,3 +248,24 @@ func TestPersistentPreRunMalformedAgentRegistry(t *testing.T) {
 		t.Fatalf("GetProcessNames(claude) after malformed registry = %v, want builtin [node claude ...]", got)
 	}
 }
+
+func TestRootCommandName_DefaultsToGtb(t *testing.T) {
+	origUse := rootCmd.Use
+	origLong := rootCmd.Long
+	t.Cleanup(func() {
+		rootCmd.Use = origUse
+		rootCmd.Long = origLong
+	})
+
+	t.Setenv("GT_COMMAND", "")
+	applyRootCommandName()
+	if rootCmd.Use != "gtb" {
+		t.Errorf("with GT_COMMAND unset, rootCmd.Use = %q, want %q", rootCmd.Use, "gtb")
+	}
+
+	t.Setenv("GT_COMMAND", "gt")
+	applyRootCommandName()
+	if rootCmd.Use != "gt" {
+		t.Errorf("with GT_COMMAND=gt, rootCmd.Use = %q, want %q", rootCmd.Use, "gt")
+	}
+}

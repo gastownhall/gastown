@@ -124,6 +124,9 @@ beads_hq/
 # =============================================================================
 **/.runtime/
 
+# gtb workflow artifacts and run logs (kept outside repos, never tracked)
+**/.gtb/
+
 # =============================================================================
 # Rig .beads symlinks (point to ignored mayor/rig/.beads, recreated on setup)
 # =============================================================================

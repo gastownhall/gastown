@@ -1,0 +1,219 @@
+# gtb server on k3s: namespace gtb, gtb.nhaboc.com -> host nginx -> NodePort 30881.
+# One StatefulSet (gtb-server) holding the SQLite store at /data/gtb.db.
+# IMAGE_TAG is set by scripts/gtb-deploy.sh.
+#
+# The old Gas Town town (StatefulSets gtb and gtb-dolt, PVs gtb-data and
+# gtb-dolt-data, NetworkPolicies allow-dolt and allow-gtb) is no longer in
+# this manifest. `kubectl apply` does not delete it; the deploy script prints
+# the delete commands for the maintainer to run once the new server is up.
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: gtb
+---
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: gtb-server-data
+  labels:
+    app: gtb-server
+spec:
+  accessModes:
+  - ReadWriteOnce
+  capacity:
+    storage: 10Gi
+  local:
+    path: "/var/lib/gtb/server"
+  nodeAffinity:
+    required:
+      nodeSelectorTerms:
+      - matchExpressions:
+        - key: kubernetes.io/hostname
+          operator: In
+          values:
+          - beboc
+  persistentVolumeReclaimPolicy: Retain
+  storageClassName: gtb-server-local
+  # Reserve this PV for the StatefulSet's claim (volumeClaimTemplate "data").
+  claimRef:
+    namespace: gtb
+    name: data-gtb-server-0
+---
+apiVersion: v1
+kind: Service
+metadata:
+  labels:
+    app: gtb-server
+  name: gtb
+  namespace: gtb
+spec:
+  type: NodePort
+  externalTrafficPolicy: Cluster
+  ports:
+  - name: http
+    nodePort: 30881
+    port: 8080
+    targetPort: http
+  selector:
+    app: gtb-server
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  labels:
+    app: gtb-server
+  name: gtb-server
+  namespace: gtb
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: gtb-server
+  serviceName: gtb
+  template:
+    metadata:
+      labels:
+        app: gtb-server
+    spec:
+      automountServiceAccountToken: false
+      enableServiceLinks: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
+      terminationGracePeriodSeconds: 30
+      containers:
+      - name: gtb-server
+        image: 127.0.0.1:30082/gtb:IMAGE_TAG
+        imagePullPolicy: IfNotPresent
+        args:
+        - server
+        - --listen
+        - ":8080"
+        - --data
+        - /data
+        - --public-url
+        - https://gtb.nhaboc.com
+        env:
+        # Host nginx on beboc (node IP), the SNAT of NodePort traffic
+        # (externalTrafficPolicy Cluster: pod CIDR / node IP), and loopback.
+        - name: GTB_TRUSTED_PROXIES
+          value: 192.168.2.3/32,10.42.0.0/16,127.0.0.1/32
+        # Optional: when unset the server generates a token on first start
+        # and prints it once to the pod log.
+        - name: GTB_ADMIN_TOKEN
+          valueFrom:
+            secretKeyRef:
+              name: gtb-server
+              key: GTB_ADMIN_TOKEN
+              optional: true
+        ports:
+        - containerPort: 8080
+          name: http
+        startupProbe:
+          httpGet:
+            path: /health
+            port: http
+          periodSeconds: 5
+          failureThreshold: 30
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: http
+          periodSeconds: 10
+          timeoutSeconds: 3
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: http
+          periodSeconds: 30
+          timeoutSeconds: 5
+        resources:
+          requests:
+            cpu: 50m
+            memory: 64Mi
+          limits:
+            cpu: "1"
+            memory: 512Mi
+        securityContext:
+          runAsNonRoot: true
+          runAsUser: 1000
+          runAsGroup: 1000
+          readOnlyRootFilesystem: true
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop:
+            - ALL
+        volumeMounts:
+        - mountPath: /data
+          name: data
+        # SQLite may spill temp files; the root filesystem is read-only.
+        - mountPath: /tmp
+          name: tmp
+      volumes:
+      - name: tmp
+        emptyDir:
+          sizeLimit: 256Mi
+  volumeClaimTemplates:
+  - metadata:
+      name: data
+    spec:
+      accessModes:
+      - ReadWriteOnce
+      resources:
+        requests:
+          storage: 10Gi
+      storageClassName: gtb-server-local
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny
+  namespace: gtb
+spec:
+  podSelector: {}
+  policyTypes:
+  - Ingress
+  - Egress
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-dns
+  namespace: gtb
+spec:
+  podSelector: {}
+  policyTypes:
+  - Egress
+  egress:
+  - ports:
+    - port: 53
+      protocol: UDP
+    - port: 53
+      protocol: TCP
+    to:
+    - namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: kube-system
+---
+# Ingress on 8080 from anywhere (NodePort traffic arrives SNATed). No egress
+# beyond DNS (allow-dns): the server makes no outbound calls.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-gtb-server
+  namespace: gtb
+spec:
+  podSelector:
+    matchLabels:
+      app: gtb-server
+  policyTypes:
+  - Ingress
+  ingress:
+  - ports:
+    - port: 8080
+      protocol: TCP

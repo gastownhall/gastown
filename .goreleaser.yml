@@ -1,4 +1,4 @@
-# GoReleaser configuration for Gas Town (gt)
+# GoReleaser configuration for gtb
 # See https://goreleaser.com for documentation
 
 version: 2
@@ -9,115 +9,51 @@ before:
     - go mod tidy
 
 builds:
-  - id: gt-linux-amd64
-    main: ./cmd/gt
-    binary: gt
+  - id: gtb
+    main: ./cmd/gtb
+    binary: gtb
     env:
       - CGO_ENABLED=1
     goos:
       - linux
-    goarch:
-      - amd64
-    ldflags:
-      - -s -w
-      - -X github.com/steveyegge/gastown/internal/cmd.Version={{.Version}}
-      - -X github.com/steveyegge/gastown/internal/cmd.Build={{.ShortCommit}}
-      - -X github.com/steveyegge/gastown/internal/cmd.Commit={{.Commit}}
-      - -X github.com/steveyegge/gastown/internal/cmd.Branch={{.Branch}}
-
-  - id: gt-linux-arm64
-    main: ./cmd/gt
-    binary: gt
-    env:
-      - CGO_ENABLED=1
-      - CC=aarch64-linux-gnu-gcc
-      - CXX=aarch64-linux-gnu-g++
-    goos:
-      - linux
-    goarch:
-      - arm64
-    ldflags:
-      - -s -w
-      - -X github.com/steveyegge/gastown/internal/cmd.Version={{.Version}}
-      - -X github.com/steveyegge/gastown/internal/cmd.Build={{.ShortCommit}}
-      - -X github.com/steveyegge/gastown/internal/cmd.Commit={{.Commit}}
-      - -X github.com/steveyegge/gastown/internal/cmd.Branch={{.Branch}}
-
-  - id: gt-darwin-amd64
-    main: ./cmd/gt
-    binary: gt
-    env:
-      - CGO_ENABLED=1
-    goos:
       - darwin
     goarch:
       - amd64
-    ldflags:
-      - -s -w
-      - -X github.com/steveyegge/gastown/internal/cmd.Version={{.Version}}
-      - -X github.com/steveyegge/gastown/internal/cmd.Build={{.ShortCommit}}
-      - -X github.com/steveyegge/gastown/internal/cmd.Commit={{.Commit}}
-      - -X github.com/steveyegge/gastown/internal/cmd.Branch={{.Branch}}
-
-  - id: gt-darwin-arm64
-    main: ./cmd/gt
-    binary: gt
-    env:
-      - CGO_ENABLED=1
-    goos:
-      - darwin
-    goarch:
       - arm64
+    overrides:
+      # linux/arm64 cross-compiles CGO with the aarch64 toolchain.
+      - goos: linux
+        goarch: arm64
+        env:
+          - CGO_ENABLED=1
+          - CC=aarch64-linux-gnu-gcc
+          - CXX=aarch64-linux-gnu-g++
+      # darwin builds are CGO-free: the gms_pure_go tag switches go-mysql-server
+      # to its pure-Go regex engine, so no ICU library is needed. This keeps
+      # darwin cross-compilation from Linux working without a clang/osxcross toolchain.
+      - goos: darwin
+        goarch: amd64
+        env:
+          - CGO_ENABLED=0
+        flags:
+          - -tags=gms_pure_go
+      - goos: darwin
+        goarch: arm64
+        env:
+          - CGO_ENABLED=0
+        flags:
+          - -tags=gms_pure_go
     ldflags:
       - -s -w
       - -X github.com/steveyegge/gastown/internal/cmd.Version={{.Version}}
       - -X github.com/steveyegge/gastown/internal/cmd.Build={{.ShortCommit}}
       - -X github.com/steveyegge/gastown/internal/cmd.Commit={{.Commit}}
       - -X github.com/steveyegge/gastown/internal/cmd.Branch={{.Branch}}
-
-  - id: gt-windows-amd64
-    main: ./cmd/gt
-    binary: gt
-    env:
-      - CGO_ENABLED=1
-      - CC=x86_64-w64-mingw32-gcc
-      - CXX=x86_64-w64-mingw32-g++
-    goos:
-      - windows
-    goarch:
-      - amd64
-    ldflags:
-      - -s -w
-      - -X github.com/steveyegge/gastown/internal/cmd.Version={{.Version}}
-      - -X github.com/steveyegge/gastown/internal/cmd.Build={{.ShortCommit}}
-      - -X github.com/steveyegge/gastown/internal/cmd.Commit={{.Commit}}
-      - -X github.com/steveyegge/gastown/internal/cmd.Branch={{.Branch}}
-      - -buildmode=exe
-
-  - id: gt-freebsd-amd64
-    main: ./cmd/gt
-    binary: gt
-    env:
-      - CGO_ENABLED=0
-    goos:
-      - freebsd
-    goarch:
-      - amd64
-    ldflags:
-      - -s -w
-      - -X github.com/steveyegge/gastown/internal/cmd.Version={{.Version}}
-      - -X github.com/steveyegge/gastown/internal/cmd.Build={{.ShortCommit}}
-      - -X github.com/steveyegge/gastown/internal/cmd.Commit={{.Commit}}
-      - -X github.com/steveyegge/gastown/internal/cmd.Branch={{.Branch}}
-
 
 archives:
-  - id: gt-archive
+  - id: gtb-archive
     formats: [tar.gz]
     name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
-    format_overrides:
-      - goos: windows
-        formats: [zip]
     files:
       - LICENSE
       - README.md
@@ -150,31 +86,20 @@ changelog:
 
 release:
   github:
-    owner: gastownhall
-    name: gastown
+    owner: baovo15
+    name: gtb
   draft: false
   prerelease: auto
   replace_existing_artifacts: true
   name_template: "v{{.Version}}"
   header: |
-    ## Gas Town v{{.Version}}
+    ## gtb v{{.Version}}
 
-    Pre-compiled binaries for Linux, macOS (Intel & Apple Silicon), and Windows.
+    Pre-compiled `gtb` binaries for Linux and macOS (amd64 & arm64).
 
     ### Installation
 
-    **Homebrew (macOS/Linux):**
-    ```bash
-    brew install gastown
-    ```
-
-    **npm (Node.js):**
-    ```bash
-    npm install -g @gastown/gt
-    ```
-
-    **Manual Install:**
-    Download the appropriate binary for your platform below, extract it, and place it in your PATH.
+    Download the archive for your platform below, verify it against `checksums.txt`, extract it, and place `gtb` in your PATH.
 
 # Announce the release
 announce:

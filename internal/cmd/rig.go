@@ -576,6 +576,9 @@ func runRigAdd(cmd *cobra.Command, args []string) error {
 		DefaultBranch:  rigAddBranch,
 		CloneFilter:    rigAddFilter,
 		SparseCheckout: rigAddSparseCheckout,
+		// Refuse tbb-managed repos on the fresh clone; AddRig removes the
+		// partial rig directory and never registers it.
+		ValidateCheckout: rejectTbbRepo,
 	})
 	if err != nil {
 		return fmt.Errorf("adding rig: %w", err)
@@ -1153,6 +1156,12 @@ func runRigAdopt(_ *cobra.Command, args []string) error {
 	rigAddUpstreamURL = strings.TrimSpace(rigAddUpstreamURL)
 	if rigAddUpstreamURL != "" && !isGitRemoteURL(rigAddUpstreamURL) {
 		return fmt.Errorf("invalid upstream URL %q: expected a remote URL (e.g. https://, git@host:, ssh://, s3://, file:///abs/path)", rigAddUpstreamURL)
+	}
+
+	// Refuse tbb-managed repos before registering anything. The adopted
+	// directory is left untouched: it belongs to the user.
+	if err := rejectTbbRig(filepath.Join(townRoot, name)); err != nil {
+		return fmt.Errorf("adopting rig: %w", err)
 	}
 
 	// Register the existing rig

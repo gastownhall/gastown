@@ -1,4 +1,27 @@
-# Gas Town
+# gtb
+
+gtb is a machine agent plus a server dashboard for coordinating AI coding agents across your machines. Design: [docs/superpowers/specs/2026-10-22-gtb-reshape-design.md](docs/superpowers/specs/2026-10-22-gtb-reshape-design.md).
+
+## Install
+
+Download the archive for your platform (linux or darwin, amd64 or arm64) from the GitHub release, verify it against `checksums.txt`, extract it, and put `gtb` on your PATH.
+
+```bash
+gtb version
+```
+
+## Quickstart
+
+```bash
+gtb install ~/gtb
+gtb join https://gtb.nhaboc.com --code <code>
+gtb rig add <name> <url>
+gtb item new task "Describe the work"
+```
+
+---
+
+# Gas Town (upstream)
 
 **Multi-agent orchestration system for Claude Code, GitHub Copilot, and other AI agents with persistent work tracking**
 

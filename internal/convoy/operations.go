@@ -14,6 +14,7 @@ import (
 	beadsdk "github.com/steveyegge/beads"
 	"github.com/steveyegge/gastown/internal/beads"
 	"github.com/steveyegge/gastown/internal/util"
+	"github.com/steveyegge/gastown/internal/workflow"
 )
 
 // CheckConvoysForIssue finds any convoys tracking the given issue and triggers
@@ -149,11 +150,12 @@ func runConvoyCheck(ctx context.Context, townRoot, convoyID, gtPath string) erro
 
 // trackedIssue holds basic info about an issue tracked by a convoy.
 type trackedIssue struct {
-	ID        string `json:"id"`
-	Status    string `json:"status"`
-	Assignee  string `json:"assignee"`
-	Priority  int    `json:"priority"`
-	IssueType string `json:"issue_type"`
+	ID        string   `json:"id"`
+	Status    string   `json:"status"`
+	Assignee  string   `json:"assignee"`
+	Priority  int      `json:"priority"`
+	IssueType string   `json:"issue_type"`
+	Labels    []string `json:"labels,omitempty"`
 }
 
 // slingableTypes are bead types that can be dispatched via gt sling.
@@ -275,8 +277,9 @@ func isIssueBlocked(ctx context.Context, store beadsdk.Storage, issueID string, 
 }
 
 // feedNextReadyIssue finds the next ready issue in a convoy and dispatches it
-// via gt sling. A ready issue is one that is open, with no assignee, and not
-// blocked by unclosed dependencies. This provides reactive (event-driven)
+// via gt sling. A ready issue is one that is open, with no assignee, not a
+// gated workflow item waiting on a human, and not blocked by unclosed
+// dependencies. This provides reactive (event-driven)
 // convoy feeding instead of waiting for polling-based patrol cycles.
 //
 // Only one issue is dispatched per call. When that issue completes, the
@@ -307,6 +310,12 @@ func feedNextReadyIssue(ctx context.Context, store beadsdk.Storage, townRoot, co
 	// Find the first ready issue (open, no assignee, not blocked).
 	for _, issue := range tracked {
 		if issue.Status != "open" || issue.Assignee != "" {
+			continue
+		}
+
+		// A gated workflow item waiting on a human is not ready (R25).
+		if workflow.HasWaitingLabel(issue.Labels) {
+			logger("%s: convoy %s: %s waits on a human, skipping", caller, convoyID, issue.ID)
 			continue
 		}
 
@@ -366,6 +375,7 @@ func getConvoyTrackedIssues(ctx context.Context, store beadsdk.Storage, convoyID
 		assignee  string
 		priority  int
 		issueType string
+		labels    []string
 	}
 	metaByID := make(map[string]depMeta)
 	for _, d := range deps {
@@ -377,6 +387,7 @@ func getConvoyTrackedIssues(ctx context.Context, store beadsdk.Storage, convoyID
 				assignee:  d.Assignee,
 				priority:  d.Priority,
 				issueType: string(d.IssueType),
+				labels:    d.Labels,
 			}
 		}
 	}
@@ -431,11 +442,13 @@ func getConvoyTrackedIssues(ctx context.Context, store beadsdk.Storage, convoyID
 			t.Assignee = fresh.Assignee
 			t.Priority = fresh.Priority
 			t.IssueType = string(fresh.IssueType)
+			t.Labels = fresh.Labels
 		} else if meta, ok := metaByID[id]; ok {
 			t.Status = meta.status
 			t.Assignee = meta.assignee
 			t.Priority = meta.priority
 			t.IssueType = meta.issueType
+			t.Labels = meta.labels
 		}
 		result = append(result, t)
 	}
@@ -499,11 +512,12 @@ func fetchCrossRigBeadStatus(townRoot string, ids []string) map[string]*beadsdk.
 		}
 
 		var items []struct {
-			ID       string `json:"id"`
-			Status   string `json:"status"`
-			Assignee string `json:"assignee"`
-			Priority int    `json:"priority"`
-			Type     string `json:"issue_type"`
+			ID       string   `json:"id"`
+			Status   string   `json:"status"`
+			Assignee string   `json:"assignee"`
+			Priority int      `json:"priority"`
+			Type     string   `json:"issue_type"`
+			Labels   []string `json:"labels"`
 		}
 		if err := json.Unmarshal(out, &items); err != nil {
 			continue
@@ -515,6 +529,7 @@ func fetchCrossRigBeadStatus(townRoot string, ids []string) map[string]*beadsdk.
 				Assignee:  item.Assignee,
 				Priority:  item.Priority,
 				IssueType: beadsdk.IssueType(item.Type),
+				Labels:    item.Labels,
 			}
 		}
 	}

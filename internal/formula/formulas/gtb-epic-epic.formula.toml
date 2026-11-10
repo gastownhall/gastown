@@ -1,0 +1,82 @@
+description = """
+Gated workflow: epic step `epic`.
+
+Write the epic.
+
+You work one step of a gated item. gtb owns the item's state and evidence:
+you write the step's artifact or produce its evidence, ask gtb to advance,
+and leave through `gtb done`. Approvals are human-only: when a gate waits for
+an approval, a human approves this; you do not.
+
+## Variables
+
+| Variable | Source | Description |
+|----------|--------|-------------|
+| issue | hook_bead | The gated item ID you are assigned |"""
+formula = "gtb-epic-epic"
+version = 1
+
+[[steps]]
+id = "load-context"
+title = "Load the item"
+description = """
+```bash
+gtb item show {{issue}} --json
+```
+Check that `.step` is `epic`. If it is not, stop and run `gtb done --status ESCALATED`.
+Note `.artifact_path` (the current step's artifact, empty when the step has
+none), `.gate.reasons` and `.waiting_for_human`.
+
+Run the git-dependent commands (`gtb red`, `gtb green`, `gtb check`) from
+your polecat worktree; gtb refuses any other checkout."""
+
+[[steps]]
+id = "work"
+title = "Write epic.md"
+needs = ["load-context"]
+description = """
+Write the artifact at the `.artifact_path` from `gtb item show {{issue}} --json`. Keep its frontmatter (`id`, `kind`); `status:` is ignored by approval hashes.
+
+epic.md states the goal and the acceptance criteria, one per line starting
+with its label:
+```
+AC1 <criterion>
+AC2 <criterion>
+```
+
+The artifact must then be approved at its current content: a human approves this; you do not. Any edit after approval needs a new approval."""
+
+[[steps]]
+id = "advance"
+title = "Advance the item"
+needs = ["work"]
+description = """
+```bash
+gtb advance {{issue}}
+```
+- Exit 0: the item moved to its next step.
+- Exit 3: the gate refused and printed `- <reason>` lines. If it also printed
+  `waiting for: <x>`, the gate needs a human; a human approves this; you do
+  not. Otherwise fix each reason and run `gtb advance {{issue}}` again.
+- Exit 4: another actor advanced the item; re-run `gtb item show {{issue}} --json`."""
+
+[[steps]]
+id = "done"
+title = "Leave through gtb done"
+needs = ["advance"]
+description = """
+Commit your work, then, whether `gtb advance` exited 0 or exited 3 with a
+`waiting for:` line:
+```bash
+gtb done
+```
+gtb done submits a merge request only at the merge step. At every other step
+it records any human wait, releases the item for its next step and retires
+this session; the next step is slung to a fresh polecat on the same branch.
+If advance exited 3 without a `waiting for:` line and you cannot fix the
+reasons, run `gtb done --status ESCALATED` instead."""
+
+[vars]
+[vars.issue]
+description = "The gated item ID assigned to this polecat"
+required = true

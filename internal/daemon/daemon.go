@@ -21,6 +21,7 @@ import (
 
 	"github.com/gofrs/flock"
 	beadsdk "github.com/steveyegge/beads"
+	"github.com/steveyegge/gastown/internal/agentlink"
 	"github.com/steveyegge/gastown/internal/beads"
 	"github.com/steveyegge/gastown/internal/boot"
 	agentconfig "github.com/steveyegge/gastown/internal/config"
@@ -97,6 +98,9 @@ type Daemon struct {
 	// Nil when telemetry is disabled (GT_OTEL_METRICS_URL / GT_OTEL_LOGS_URL not set).
 	otelProvider *telemetry.Provider
 	metrics      *daemonMetrics
+
+	// agentlink is the machine link to the gtb server (see agentlink.go).
+	agentlinkState
 
 	// jsonlPushFailures tracks consecutive git push failures for JSONL backup.
 	// Only accessed from heartbeat loop goroutine - no sync needed.
@@ -720,6 +724,10 @@ func (d *Daemon) Run() (err error) {
 	// Note: PATCH-010 uses per-session hooks in deacon/manager.go (SetAutoRespawnHook).
 	// Global pane-died hooks don't fire reliably in tmux 3.2a, so we rely on the
 	// per-session approach which has been tested to work for continuous recovery.
+
+	// Machine link to the gtb server: only when the town has joined one
+	// (gtb join) and GTB_AGENTLINK is not 0. Cancelled with d.ctx.
+	d.startAgentLink(agentlink.Run)
 
 	// Initial heartbeat
 	d.heartbeat(state)

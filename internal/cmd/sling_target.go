@@ -231,6 +231,10 @@ func resolveTarget(target string, opts ResolveTargetOptions) (*ResolvedTarget, e
 			return result, nil
 		}
 		fmt.Printf("Target is rig '%s', spawning fresh polecat...\n", rigName)
+		resumeBranch, err := gatedResumeBranch(opts.TownRoot, rigName, firstNonEmpty(opts.BeadID, opts.HookBead), opts.ResumeBranch)
+		if err != nil {
+			return nil, err
+		}
 		spawnOpts := SlingSpawnOptions{
 			TownRoot:      opts.TownRoot,
 			Force:         opts.Force,
@@ -239,7 +243,7 @@ func resolveTarget(target string, opts ResolveTargetOptions) (*ResolvedTarget, e
 			HookBead:      opts.HookBead,
 			Agent:         opts.Agent,
 			BaseBranch:    opts.BaseBranch,
-			ResumeBranch:  opts.ResumeBranch,
+			ResumeBranch:  resumeBranch,
 			SkipAdmission: opts.SkipPolecatAdmission,
 		}
 		spawnInfo, err := spawnPolecatForSling(rigName, spawnOpts)
@@ -273,6 +277,10 @@ func resolveTarget(target string, opts ResolveTargetOptions) (*ResolvedTarget, e
 				}
 			}
 			fmt.Printf("Target polecat has no active session, spawning fresh polecat in rig '%s'...\n", rigName)
+			resumeBranch, err := gatedResumeBranch(opts.TownRoot, rigName, firstNonEmpty(opts.BeadID, opts.HookBead), opts.ResumeBranch)
+			if err != nil {
+				return nil, err
+			}
 			spawnOpts := SlingSpawnOptions{
 				TownRoot:      opts.TownRoot,
 				Force:         opts.Force,
@@ -281,7 +289,7 @@ func resolveTarget(target string, opts ResolveTargetOptions) (*ResolvedTarget, e
 				HookBead:      opts.HookBead,
 				Agent:         opts.Agent,
 				BaseBranch:    opts.BaseBranch,
-				ResumeBranch:  opts.ResumeBranch,
+				ResumeBranch:  resumeBranch,
 				SkipAdmission: opts.SkipPolecatAdmission,
 			}
 			spawnInfo, spawnErr := spawnPolecatForSling(rigName, spawnOpts)

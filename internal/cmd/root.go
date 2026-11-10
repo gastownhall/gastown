@@ -11,7 +11,6 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
-	"github.com/steveyegge/gastown/internal/cli"
 	"github.com/steveyegge/gastown/internal/config"
 	"github.com/steveyegge/gastown/internal/polecat"
 	"github.com/steveyegge/gastown/internal/session"
@@ -23,16 +22,46 @@ import (
 )
 
 var rootCmd = &cobra.Command{
-	Use:               "gt", // Updated in init() based on GT_COMMAND
+	Use:               defaultRootCommandName, // Updated in init() based on GT_COMMAND
 	Short:             "Gas Town - Multi-agent workspace manager",
 	Version:           Version,
 	Long:              "", // Updated in init() based on GT_COMMAND
 	PersistentPreRunE: persistentPreRun,
 }
 
+// defaultRootCommandName is the root command name when GT_COMMAND is unset.
+const defaultRootCommandName = "gtb"
+
 func init() {
-	// Update command name based on GT_COMMAND env var
-	cmdName := cli.Name()
+	applyRootCommandName()
+	applyUpstreamFeatureVisibility()
+}
+
+// upstreamFeaturesEnabled reports whether upstream Gas Town features that gtb
+// does not use (wasteland/DoltHub federation, the mTLS polecat proxy) should
+// be surfaced. Only GTB_UPSTREAM_FEATURES=1 enables them (spec §9).
+func upstreamFeaturesEnabled() bool {
+	return os.Getenv("GTB_UPSTREAM_FEATURES") == "1"
+}
+
+// applyUpstreamFeatureVisibility hides upstream-only commands from help unless
+// upstreamFeaturesEnabled. The commands stay registered and runnable; only
+// their visibility changes. proxy-subcmds is internal plumbing for
+// gt-proxy-server and was already hidden upstream, so it stays hidden either
+// way.
+func applyUpstreamFeatureVisibility() {
+	wlCmd.Hidden = !upstreamFeaturesEnabled()
+	proxySubcmdsCmd.Hidden = true
+}
+
+// applyRootCommandName sets the root command name from the GT_COMMAND env
+// var, defaulting to "gtb". It reads the env directly rather than cli.Name(),
+// whose cached default is still "gt".
+func applyRootCommandName() {
+	cmdName := os.Getenv("GT_COMMAND")
+	if cmdName == "" {
+		cmdName = defaultRootCommandName
+	}
 	rootCmd.Use = cmdName
 	rootCmd.Long = fmt.Sprintf(`Gas Town (%s) manages multi-agent workspaces called rigs.
 
@@ -77,6 +106,7 @@ var beadsExemptCommands = map[string]bool{
 	"health":        true, // Health check doesn't require beads
 	"upgrade":       true, // Post-install migration orchestrator
 	"heartbeat":     true, // Heartbeat state update — must be fast and dependency-free
+	"server":        true, // gtb server runs in a pod with no town or beads
 }
 
 // Commands exempt from the town root branch warning.
@@ -93,6 +123,7 @@ var branchCheckExemptCommands = map[string]bool{
 	"git-init":    true, // Git setup
 	"upgrade":     true, // Post-install migration
 	"scheduler":   true, // Daemon hot path; scheduler handles beads internally
+	"server":      true, // gtb server runs in a pod with no town
 }
 
 // persistentPreRun runs before every command.

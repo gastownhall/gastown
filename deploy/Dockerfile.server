@@ -1,0 +1,50 @@
+# gtb server image: the dashboard API + embedded web UI, nothing else.
+#   docker build --platform linux/amd64 -f deploy/Dockerfile.server \
+#     --build-arg VERSION=$(git describe --tags --always) --build-arg COMMIT=$(git rev-parse --short HEAD) .
+# The build context is filtered by deploy/Dockerfile.server.dockerignore
+# (BuildKit picks it over the root .dockerignore for this Dockerfile).
+
+# web/bun.lock is lockfileVersion 2 (written by bun 1.4.x); bun 1.3.x rejects
+# it ("Unknown lockfile version"), so the web stage pins the bun that wrote it.
+ARG BUN_VERSION=1.4.2
+
+# 1. Web UI (same steps as `make web`).
+FROM oven/bun:${BUN_VERSION} AS web
+WORKDIR /src/web
+COPY web/package.json web/bun.lock ./
+RUN bun install --frozen-lockfile
+COPY web/ ./
+RUN bun run build
+
+# 2. gtb binary (same flags as `make build`; CGO + ICU for go-icu-regex).
+FROM golang:1.26.10-bookworm AS build
+RUN apt-get update && apt-get install -y --no-install-recommends libicu-dev \
+    && rm -rf /var/lib/apt/lists/*
+WORKDIR /src
+COPY go.mod go.sum ./
+RUN go mod download
+COPY . .
+RUN rm -rf internal/server/dist && mkdir -p internal/server/dist && touch internal/server/dist/.keep
+COPY --from=web /src/web/dist/ internal/server/dist/
+ARG VERSION=dev
+ARG COMMIT=unknown
+RUN BUILD_TIME=$(date -u +%Y-%m-%dT%H:%M:%SZ) && \
+    CGO_ENABLED=1 go build -trimpath -ldflags "-s -w \
+      -X github.com/steveyegge/gastown/internal/cmd.Version=${VERSION} \
+      -X github.com/steveyegge/gastown/internal/cmd.Commit=${COMMIT} \
+      -X github.com/steveyegge/gastown/internal/cmd.BuildTime=${BUILD_TIME} \
+      -X github.com/steveyegge/gastown/internal/cmd.BuiltProperly=1" \
+      -o /out/gtb ./cmd/gtb
+
+# 3. Runtime. libicu72 is bookworm's ICU, matching libicu-dev in stage 2.
+FROM debian:bookworm-slim
+RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates libicu72 \
+    && rm -rf /var/lib/apt/lists/* \
+    && groupadd -g 1000 gtb && useradd -u 1000 -g 1000 -d /data -M -s /usr/sbin/nologin gtb \
+    && mkdir -p /data && chown 1000:1000 /data
+COPY --from=build /out/gtb /usr/local/bin/gtb
+USER 1000:1000
+EXPOSE 8080
+VOLUME ["/data"]
+ENTRYPOINT ["gtb"]
+CMD ["server", "--listen", ":8080", "--data", "/data"]

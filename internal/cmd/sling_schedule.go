@@ -1,7 +1,9 @@
 package cmd
 
 import (
+	"errors"
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 	"time"
@@ -10,9 +12,12 @@ import (
 	"github.com/steveyegge/gastown/internal/beads"
 	"github.com/steveyegge/gastown/internal/config"
 	"github.com/steveyegge/gastown/internal/events"
+	"github.com/steveyegge/gastown/internal/formula"
+	"github.com/steveyegge/gastown/internal/git"
 	"github.com/steveyegge/gastown/internal/rig"
 	"github.com/steveyegge/gastown/internal/scheduler/capacity"
 	"github.com/steveyegge/gastown/internal/style"
+	"github.com/steveyegge/gastown/internal/workflow"
 	"github.com/steveyegge/gastown/internal/workspace"
 )
 
@@ -239,7 +244,7 @@ func runBatchSchedule(beadIDs []string, rigName, townRoot string) error {
 
 	successCount := 0
 	for _, beadID := range beadIDs {
-		formula := resolveFormula(slingFormula, slingHookRawBead, townRoot, rigName)
+		formula := resolveFormula(slingFormula, slingHookRawBead, townRoot, rigName, beadID)
 		err := scheduleBead(beadID, rigName, ScheduleOptions{
 			Formula:      formula,
 			Args:         slingArgs,
@@ -284,20 +289,27 @@ func resolveRigForBead(townRoot, beadID string) string {
 // resolveFormula determines the formula name from user flags and rig settings.
 // Resolution order:
 //  1. Explicit --formula flag
-//  2. Rig property layers (wisp → bead → system default "mol-polecat-work")
-//  3. Rig settings file (workflow.default_formula in settings/config.json)
-//  4. Hardcoded fallback "mol-polecat-work"
+//  2. Gated workflow item: when the rig has workflow.gated.enabled and bead
+//     itemID carries gtb:wf:<kind>, the step formula gtb-<kind>-<step> (step
+//     from the gtb:step: label), if that formula exists. Any lookup error or
+//     missing label falls through to the layers below.
+//  3. Rig property layers (wisp → bead → system default "mol-polecat-work")
+//  4. Rig settings file (workflow.default_formula in settings/config.json)
+//  5. Hardcoded fallback "mol-polecat-work"
 //
 // The property layers are the primary mechanism, supporting:
 //
 //	gt rig config set <rig> default_formula mol-evolve         # wisp layer
 //	gt rig config set <rig> default_formula mol-evolve --global # bead layer
-func resolveFormula(explicit string, hookRawBead bool, townRoot, rigName string) string {
+func resolveFormula(explicit string, hookRawBead bool, townRoot, rigName, itemID string) string {
 	if hookRawBead {
 		return ""
 	}
 	if explicit != "" {
 		return explicit
+	}
+	if name := gatedStepFormula(townRoot, rigName, itemID); name != "" {
+		return name
 	}
 	// Check rig property layers: wisp → bead → system default (issue gt-y18).
 	if townRoot != "" && rigName != "" {
@@ -317,6 +329,112 @@ func resolveFormula(explicit string, hookRawBead bool, townRoot, rigName string)
 		}
 	}
 	return "mol-polecat-work"
+}
+
+// gatedStepFormula returns gtb-<kind>-<step> for a gated workflow item in a
+// gated rig, or "" when the rig is not gated, the bead cannot be read, it is
+// not a workflow item, or its step has no formula (merge, epic tasks).
+func gatedStepFormula(townRoot, rigName, itemID string) string {
+	if townRoot == "" || rigName == "" || itemID == "" {
+		return ""
+	}
+	rigPath := filepath.Join(townRoot, rigName)
+	cfg, err := workflow.LoadConfig(rigPath)
+	if err != nil || !cfg.Enabled {
+		return ""
+	}
+	it, err := workflow.NewBeadsItems(beads.New(rigPath)).Get(itemID)
+	if err != nil || it.Kind == "" || it.Step == "" {
+		return ""
+	}
+	name := fmt.Sprintf("gtb-%s-%s", it.Kind, it.Step)
+	if _, err := formula.ResolveFormulaContent(name, townRoot, rigName); err != nil {
+		return ""
+	}
+	return name
+}
+
+// gatedResumeBranch returns the branch a polecat spawned for beadID must
+// resume (R20: a gated item keeps one branch for its whole life). For a gated
+// workflow item already bound to a branch (Item.Branch, recorded by
+// bindGatedItemBranch) it returns that branch, after checking it still
+// exists in the rig's repo base (.repo.git or mayor/rig, local or
+// origin/<branch>) or on origin; a missing branch is an error, never a fresh
+// branch. Otherwise it returns resume unchanged (the first sling creates the
+// branch). A bead that is not a workflow item, or a rig that is not gated,
+// is unaffected; any other lookup error is returned.
+func gatedResumeBranch(townRoot, rigName, beadID, resume string) (string, error) {
+	if townRoot == "" || rigName == "" || beadID == "" {
+		return resume, nil
+	}
+	rigPath := filepath.Join(townRoot, rigName)
+	cfg, err := workflow.LoadConfig(rigPath)
+	if err != nil || !cfg.Enabled {
+		return resume, nil
+	}
+	it, err := workflow.NewBeadsItems(beads.New(rigPath)).Get(beadID)
+	if errors.Is(err, workflow.ErrItemNotFound) {
+		return resume, nil
+	}
+	if err != nil {
+		return "", fmt.Errorf("gated item %s: %w", beadID, err)
+	}
+	if it.Branch == "" {
+		return resume, nil
+	}
+	if resume != "" && resume != it.Branch {
+		return "", fmt.Errorf("item %s is bound to branch %s; --branch %s conflicts", beadID, it.Branch, resume)
+	}
+	if !gatedBranchExists(rigPath, it.Branch) {
+		return "", fmt.Errorf("item %s branch %s is missing", beadID, it.Branch)
+	}
+	fmt.Printf("%s Gated item %s resumes branch %s\n", style.Bold.Render("→"), beadID, it.Branch)
+	return it.Branch, nil
+}
+
+// gatedBranchExists reports whether branch exists in the rig's repo base
+// (the bare .repo.git, else mayor/rig) as a local or origin tracking ref, or
+// on origin itself.
+func gatedBranchExists(rigPath, branch string) bool {
+	var g *git.Git
+	if fi, err := os.Stat(filepath.Join(rigPath, ".repo.git")); err == nil && fi.IsDir() {
+		g = git.NewGitWithDir(filepath.Join(rigPath, ".repo.git"), "")
+	} else if fi, err := os.Stat(filepath.Join(rigPath, "mayor", "rig")); err == nil && fi.IsDir() {
+		g = git.NewGit(filepath.Join(rigPath, "mayor", "rig"))
+	} else {
+		return false
+	}
+	for _, ref := range []string{"refs/heads/" + branch, "refs/remotes/origin/" + branch} {
+		if ok, err := g.RefExists(ref); err == nil && ok {
+			return true
+		}
+	}
+	ok, err := g.RemoteBranchExists("origin", branch)
+	return err == nil && ok
+}
+
+// bindGatedItemBranch records gtb:branch:<branch> on a gated workflow item
+// slung to a fresh polecat (R19), so the git-dependent workflow commands only
+// accept that polecat's worktree. Non-gated rigs and non-workflow beads are
+// left alone; failures are warnings (sling has already spawned the polecat).
+func bindGatedItemBranch(townRoot, rigName, beadID, branch string) {
+	if townRoot == "" || rigName == "" || beadID == "" || branch == "" {
+		return
+	}
+	rigPath := filepath.Join(townRoot, rigName)
+	cfg, err := workflow.LoadConfig(rigPath)
+	if err != nil || !cfg.Enabled {
+		return
+	}
+	items := workflow.NewBeadsItems(beads.New(rigPath))
+	if _, err := items.Get(beadID); err != nil {
+		return // not a workflow item
+	}
+	if err := items.SetBranch(beadID, branch); err != nil {
+		fmt.Printf("%s Could not bind %s to branch %s: %v\n", style.Dim.Render("Warning:"), beadID, branch, err)
+		return
+	}
+	fmt.Printf("%s Bound gated item %s to branch %s\n", style.Bold.Render("✓"), beadID, branch)
 }
 
 // areScheduled returns a set of bead IDs that have open sling contexts.

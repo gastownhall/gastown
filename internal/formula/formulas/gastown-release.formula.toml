@@ -217,7 +217,6 @@ Update all component versions atomically.
 
 This updates:
 - internal/cmd/version.go - CLI version constant
-- npm-package/package.json - npm package version
 - CHANGELOG.md - Creates [{{version}}] header with date
 
 Review the changes shown by the script.
@@ -237,10 +236,9 @@ Confirm all versions match {{version}}.
 
 ```bash
 grep 'Version = ' internal/cmd/version.go
-grep '"version"' npm-package/package.json | head -1
 ```
 
-Both should show {{version}}.
+It should show {{version}}.
 
 ## On mismatch:
 Do NOT proceed. Either the bump script failed or there's a bug.
@@ -263,7 +261,6 @@ git commit -m "chore: Bump version to {{version}}"
 Review the commit to ensure all expected files are included:
 - internal/cmd/version.go
 - internal/cmd/info.go
-- npm-package/package.json
 - CHANGELOG.md
 """
 

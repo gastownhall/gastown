@@ -464,7 +464,7 @@ func runSling(cmd *cobra.Command, args []string) (retErr error) {
 				}
 			}
 			beadID := args[0]
-			formula := resolveFormula(slingFormula, slingHookRawBead, townRoot, rigName)
+			formula := resolveFormula(slingFormula, slingHookRawBead, townRoot, rigName, beadID)
 			return scheduleBead(beadID, rigName, ScheduleOptions{
 				Formula:      formula,
 				Args:         slingArgs,
@@ -500,7 +500,7 @@ func runSling(cmd *cobra.Command, args []string) (retErr error) {
 	if len(args) == 1 {
 		idType, err := detectSchedulerIDType(args[0])
 		if err == nil && idType != "task" {
-			formula := resolveFormula(slingFormula, slingHookRawBead, townRoot, "")
+			formula := resolveFormula(slingFormula, slingHookRawBead, townRoot, "", "")
 
 			switch idType {
 			case "convoy":
@@ -883,7 +883,7 @@ func runSling(cmd *cobra.Command, args []string) (retErr error) {
 		if parts := strings.SplitN(targetAgent, "/", 2); len(parts) >= 1 {
 			targetRig = parts[0]
 		}
-		formulaName = resolveFormula(slingFormula, false, townRoot, targetRig)
+		formulaName = resolveFormula(slingFormula, false, townRoot, targetRig, beadID)
 		if slingFormula != "" {
 			fmt.Printf("  Applying %s for polecat work...\n", formulaName)
 		} else {
@@ -1099,6 +1099,7 @@ func runSling(cmd *cobra.Command, args []string) (retErr error) {
 	// This ensures polecat sees the molecule when gt prime runs on session start.
 	freshlySpawned := newPolecatInfo != nil
 	if freshlySpawned {
+		bindGatedItemBranch(townRoot, newPolecatInfo.RigName, beadID, newPolecatInfo.Branch)
 		pane, err := newPolecatInfo.StartSession()
 		if err != nil {
 			// Rollback: session failed, clean up zombie artifacts (worktree, hooked bead).

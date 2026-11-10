@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 )
 
@@ -980,5 +981,60 @@ func TestGetEmbeddedFormulaContent(t *testing.T) {
 	_, err = GetEmbeddedFormulaContent("nonexistent-formula")
 	if err == nil {
 		t.Error("expected error for non-existent formula")
+	}
+}
+
+// gtbStepFormulas are the gated workflow step formulas sling resolves to
+// (gtb-<kind>-<step>). Merge (refinery) and epic tasks (waits for children)
+// have none.
+var gtbStepFormulas = []string{
+	"gtb-task-spec", "gtb-task-plan", "gtb-task-execute", "gtb-task-verify", "gtb-task-review",
+	"gtb-fix-report", "gtb-fix-reproduce", "gtb-fix-rca", "gtb-fix-fix", "gtb-fix-verify",
+	"gtb-epic-epic", "gtb-epic-breakdown", "gtb-epic-verification",
+}
+
+// TestEmbeddedFormulas_IncludeGtbSteps: every gtb step formula is embedded,
+// parses, names itself, runs gtb advance and plain gtb done (also at a human
+// wait, R22), and never tells the agent to run gtb approve.
+func TestEmbeddedFormulas_IncludeGtbSteps(t *testing.T) {
+	if len(gtbStepFormulas) != 13 {
+		t.Fatalf("want 13 gtb step formulas, have %d", len(gtbStepFormulas))
+	}
+	for _, name := range gtbStepFormulas {
+		data, err := GetEmbeddedFormulaContent(name)
+		if err != nil {
+			t.Errorf("%s: %v", name, err)
+			continue
+		}
+		f, err := Parse(data)
+		if err != nil {
+			t.Errorf("%s: Parse: %v", name, err)
+			continue
+		}
+		if f.Name != name || f.Version != 1 || len(f.Steps) == 0 || f.Description == "" {
+			t.Errorf("%s: formula=%q version=%d steps=%d", name, f.Name, f.Version, len(f.Steps))
+		}
+		text := string(data)
+		for _, want := range []string{"gtb item show {{issue}} --json", "gtb advance {{issue}}", "gtb done\n", "waiting for:", "a human approves this; you do not"} {
+			if !strings.Contains(text, want) {
+				t.Errorf("%s: missing %q", name, want)
+			}
+		}
+		if strings.Contains(text, "gtb approve ") || strings.Contains(text, "gt approve") {
+			t.Errorf("%s: must not tell the agent to run gtb approve", name)
+		}
+		// R22: a human wait ends with plain gtb done (self-clean), never DEFERRED.
+		if strings.Contains(text, "--status DEFERRED") {
+			t.Errorf("%s: must use plain gtb done at a human wait, not --status DEFERRED", name)
+		}
+	}
+	review, _ := GetEmbeddedFormulaContent("gtb-task-review")
+	if !strings.Contains(string(review), "bump: patch|minor|major") {
+		t.Error("gtb-task-review must tell the agent to set bump: patch|minor|major")
+	}
+	for _, name := range []string{"gtb-task-merge", "gtb-fix-merge", "gtb-epic-tasks"} {
+		if _, err := GetEmbeddedFormulaContent(name); err == nil {
+			t.Errorf("%s must not exist", name)
+		}
 	}
 }

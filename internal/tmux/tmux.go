@@ -2613,7 +2613,21 @@ func (t *Tmux) FindSessionByWorkDir(targetDir string, processNames []string) ([]
 
 // CapturePane captures the visible content of a pane.
 func (t *Tmux) CapturePane(session string, lines int) (string, error) {
-	return t.run("capture-pane", "-p", "-t", session, "-S", fmt.Sprintf("-%d", lines))
+	return t.run(capturePaneArgs(session, lines, false)...)
+}
+
+// CapturePaneJoined is CapturePane with -J: wrapped lines are joined, so a
+// long line comes back whole (needed before redacting secrets in it).
+func (t *Tmux) CapturePaneJoined(session string, lines int) (string, error) {
+	return t.run(capturePaneArgs(session, lines, true)...)
+}
+
+func capturePaneArgs(session string, lines int, join bool) []string {
+	args := []string{"capture-pane", "-p"}
+	if join {
+		args = append(args, "-J")
+	}
+	return append(args, "-t", session, "-S", fmt.Sprintf("-%d", lines))
 }
 
 // CapturePaneAll captures all scrollback history.

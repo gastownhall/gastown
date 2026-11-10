@@ -271,6 +271,12 @@ type AddRigOptions struct {
 	SkipDoltCheck  bool     // Skip Dolt server availability check (for tests with mocked beads)
 	CloneFilter    string   // Git clone filter spec (e.g. "blob:none", "tree:0") for partial clones
 	SparseCheckout []string // Sparse checkout paths (cone mode); empty means no sparse checkout
+
+	// ValidateCheckout, if set, is called with the fresh mayor working clone
+	// (full checkout, before any sparse checkout is applied) and before the rig
+	// is registered. A non-nil error aborts AddRig and removes the partial rig
+	// directory, so the add can be retried.
+	ValidateCheckout func(checkoutDir string) error
 }
 
 func resolveLocalRepo(path, gitURL string) (string, string) {
@@ -547,6 +553,12 @@ func (m *Manager) AddRig(opts AddRigOptions) (*Rig, error) {
 		_ = os.RemoveAll(mayorRigPath)
 		if err := m.git.CloneBranch(opts.GitURL, mayorRigPath, defaultBranch); err != nil {
 			return nil, fmt.Errorf("cloning for mayor: %w", err)
+		}
+	}
+
+	if opts.ValidateCheckout != nil {
+		if err := opts.ValidateCheckout(mayorRigPath); err != nil {
+			return nil, err
 		}
 	}
 
