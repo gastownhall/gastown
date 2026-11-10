@@ -799,7 +799,12 @@ func runDone(cmd *cobra.Command, args []string) (retErr error) {
 
 			// Stage all changes (git add -A), then unstage overlay/runtime files (gt-p35)
 			// and any deletions of tracked files (gt-pvx safety: never commit deletions).
-			if addErr := g.Add("-A"); addErr != nil {
+			// si-9wu1: stageForAutosave refuses an armed index BEFORE it stages
+			// anything. The refusal and the staging live in one function so the
+			// ordering cannot be got wrong by editing a call site.
+			if addErr := stageForAutosave(g, cwd, branch); errors.Is(addErr, errAutosaveRefused) {
+				return addErr
+			} else if addErr != nil {
 				style.PrintWarning("auto-commit: git add failed: %v — uncommitted work may be at risk", addErr)
 			} else {
 				// Unstage Gas Town overlay files that git add -A picked up.
