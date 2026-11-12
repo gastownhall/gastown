@@ -150,10 +150,22 @@ func runMailSend(cmd *cobra.Command, args []string) error {
 		msg.ThreadID = generateThreadID()
 	}
 
-	// Use address resolver for new address types
-	townRoot, _ := workspace.FindFromCwd()
-	b := beads.New(townRoot)
-	resolver := mail.NewResolver(b, townRoot)
+	// Use address resolver for new address types.
+	//
+	// Reuse workDir rather than re-deriving the town root. workDir comes from
+	// findMailWorkDir() -> workspace.FindFromCwdOrError(), which honors
+	// GT_TOWN_ROOT / GT_ROOT and was already error-checked above; the previous
+	// call here was workspace.FindFromCwd(), which does NOT read those env vars
+	// and reports "not found" as an empty string with a nil error.
+	//
+	// So one command derived the town root twice, by two functions with
+	// different behavior, and discarded the error from the weaker one. With
+	// GT_ROOT set — which it is in every agent session — this made the resolver
+	// see townRoot == "", which disables BOTH of validateAgentAddress's
+	// acceptance paths and reports every live rig agent as "unknown recipient"
+	// in a quarter of a second.
+	b := beads.New(workDir)
+	resolver := mail.NewResolver(b, workDir)
 
 	recipients, err := resolver.Resolve(to)
 	if err != nil {
