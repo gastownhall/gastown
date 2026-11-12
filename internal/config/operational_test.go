@@ -470,6 +470,25 @@ func TestPressureThresholds_NilReceiver(t *testing.T) {
 	}
 }
 
+func TestBootAutoSpawn_DefaultAndOverride(t *testing.T) {
+	t.Parallel()
+
+	var nilThresholds *DaemonThresholds
+	if !nilThresholds.BootAutoSpawnV() {
+		t.Fatal("nil daemon thresholds should enable automatic Boot spawning")
+	}
+
+	disabled := false
+	if (&DaemonThresholds{BootAutoSpawn: &disabled}).BootAutoSpawnV() {
+		t.Fatal("boot_auto_spawn=false should disable automatic Boot spawning")
+	}
+
+	enabled := true
+	if !(&DaemonThresholds{BootAutoSpawn: &enabled}).BootAutoSpawnV() {
+		t.Fatal("boot_auto_spawn=true should enable automatic Boot spawning")
+	}
+}
+
 func TestPressureThresholds_JSON(t *testing.T) {
 	t.Parallel()
 

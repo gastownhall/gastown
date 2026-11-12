@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"syscall"
@@ -63,17 +64,39 @@ func init() {
 
 // TownStatus represents the overall status of the workspace.
 type TownStatus struct {
-	Name     string         `json:"name"`
-	Location string         `json:"location"`
-	Overseer *OverseerInfo  `json:"overseer,omitempty"` // Human operator
-	DND      *DNDInfo       `json:"dnd,omitempty"`      // Current agent DND status
-	Daemon   *ServiceInfo   `json:"daemon,omitempty"`   // Daemon status
-	Dolt     *DoltInfo      `json:"dolt,omitempty"`     // Dolt server status
-	Tmux     *TmuxInfo      `json:"tmux,omitempty"`     // Tmux server status
-	ACP      *ServiceInfo   `json:"acp,omitempty"`      // ACP mayor status
-	Agents   []AgentRuntime `json:"agents"`             // Global agents (Mayor, Deacon)
-	Rigs     []RigStatus    `json:"rigs"`
-	Summary  StatusSum      `json:"summary"`
+	Name               string                    `json:"name"`
+	Location           string                    `json:"location"`
+	Overseer           *OverseerInfo             `json:"overseer,omitempty"` // Human operator
+	DND                *DNDInfo                  `json:"dnd,omitempty"`      // Current agent DND status
+	Daemon             *ServiceInfo              `json:"daemon,omitempty"`   // Daemon status
+	Dolt               *DoltInfo                 `json:"dolt,omitempty"`     // Dolt server status
+	Tmux               *TmuxInfo                 `json:"tmux,omitempty"`     // Tmux server status
+	ACP                *ServiceInfo              `json:"acp,omitempty"`      // ACP mayor status
+	Agents             []AgentRuntime            `json:"agents"`             // Global agents (Mayor, Deacon)
+	Rigs               []RigStatus               `json:"rigs"`
+	Summary            StatusSum                 `json:"summary"`
+	ModelCrashRecovery *ModelCrashRecoveryStatus `json:"model_crash_recovery,omitempty"`
+}
+
+// ModelCrashRecoveryStatus is additive durable recovery visibility for
+// confirmed local-model crashes and exhausted supervisor actions.
+type ModelCrashRecoveryStatus struct {
+	Confirmed           int                        `json:"confirmed"`
+	Exhausted           int                        `json:"exhausted"`
+	Incidents           []ModelCrashStatusIncident `json:"incidents,omitempty"`
+	WatchdogUnavailable bool                       `json:"watchdog_unavailable,omitempty"`
+	WatchdogError       string                     `json:"watchdog_error,omitempty"`
+	Error               string                     `json:"error,omitempty"`
+}
+
+// ModelCrashStatusIncident is the status-safe projection of one durable
+// supervisor incident.
+type ModelCrashStatusIncident struct {
+	Identity          string `json:"identity"`
+	SessionName       string `json:"session_name"`
+	IncidentID        string `json:"incident_id"`
+	RecoveryAction    string `json:"recovery_action"`
+	RecoveryExhausted bool   `json:"recovery_exhausted"`
 }
 
 // ServiceInfo represents a background service status.
@@ -133,7 +156,7 @@ type AgentRuntime struct {
 	NotificationLevel string `json:"notification_level,omitempty"` // Notification level (verbose, normal, muted)
 	UnreadMail        int    `json:"unread_mail"`                  // Number of unread messages
 	FirstSubject      string `json:"first_subject,omitempty"`      // Subject of first unread message
-	AgentAlias        string `json:"agent_alias,omitempty"`        // Configured agent name (e.g., "opus-46", "pi")
+	AgentAlias        string `json:"agent_alias,omitempty"`        // Effective running agent, or configured agent when stopped
 	AgentInfo         string `json:"agent_info,omitempty"`         // Runtime summary (e.g., "claude/opus", "pi/kimi-k2p5")
 }
 
@@ -179,10 +202,18 @@ type StatusSum struct {
 	ActiveHooks   int `json:"active_hooks"`
 }
 
-// resolveAgentDisplay inspects the actual running process in the tmux session
-// to determine what runtime and model are being used. Falls back to config
-// when the session isn't running.
-func resolveAgentDisplay(townRoot string, townSettings *config.TownSettings, role string, sessionName string, running bool) (alias, info string) {
+var statusSessionEnvironment = func(sessionName, key string) (string, error) {
+	return tmux.NewTmux().GetEnvironment(sessionName, key)
+}
+
+var statusRuntimeDetector = detectRuntimeFromSession
+
+// resolveAgentDisplay reports the effective runtime for a running session and
+// the effective configured runtime for a stopped agent. GT_AGENT is set from
+// the final runtime config (including --agent overrides), so it is more
+// authoritative than the workspace default and works on platforms without
+// /proc process inspection.
+func resolveAgentDisplay(townRoot, rigPath, role, agentName, sessionName string, running bool) (alias, info string) {
 	// Map legacy role names to config role names
 	configRole := role
 	switch role {
@@ -192,12 +223,18 @@ func resolveAgentDisplay(townRoot string, townSettings *config.TownSettings, rol
 		configRole = constants.RoleDeacon
 	}
 
-	// Get alias from config
-	if townSettings != nil {
-		alias = townSettings.RoleAgents[configRole]
-		if alias == "" {
-			alias = townSettings.DefaultAgent
+	var configuredRuntime *config.RuntimeConfig
+	if (configRole == constants.RolePolecat || configRole == constants.RoleCrew) && agentName != "" {
+		configuredRuntime = config.ResolveWorkerAgentConfig(agentName, townRoot, rigPath)
+		if configuredRuntime != nil {
+			alias = configuredRuntime.ResolvedAgent
 		}
+	}
+	if configuredRuntime == nil {
+		configuredRuntime = config.ResolveRoleAgentConfig(configRole, townRoot, rigPath)
+	}
+	if alias == "" {
+		alias, _ = config.ResolveRoleAgentName(configRole, townRoot, rigPath)
 	}
 
 	// If mayor is in ACP mode, use the ACP agent name instead
@@ -207,24 +244,45 @@ func resolveAgentDisplay(townRoot string, townSettings *config.TownSettings, rol
 		}
 	}
 
-	// If session is running, inspect the actual process
+	// A running session records the final selected alias, including recovery
+	// overrides such as opencode-go.
 	if running && sessionName != "" {
-		if detected := detectRuntimeFromSession(sessionName); detected != "" {
+		if activeAlias, err := statusSessionEnvironment(sessionName, "GT_AGENT"); err == nil && activeAlias != "" {
+			alias = activeAlias
+			if content, envErr := statusSessionEnvironment(sessionName, "OPENCODE_CONFIG_CONTENT"); envErr == nil {
+				info = openCodeModelInfo(content)
+			}
+			if info == "" {
+				if activeRuntime, _, resolveErr := config.ResolveAgentConfigWithOverride(townRoot, rigPath, activeAlias); resolveErr == nil {
+					info = buildInfoFromConfig(activeRuntime)
+				}
+			}
+		}
+		if detected := statusRuntimeDetector(sessionName); detected != "" && info == "" {
 			info = detected
-			return alias, info
 		}
 	}
 
 	// Fall back to config-based display
-	if townSettings != nil && alias != "" {
-		rc := townSettings.Agents[alias]
-		if rc != nil {
-			info = buildInfoFromConfig(rc)
-		} else {
-			info = alias
-		}
+	if info == "" && configuredRuntime != nil {
+		info = buildInfoFromConfig(configuredRuntime)
+	}
+	if info == "" {
+		info = alias
 	}
 	return alias, info
+}
+
+// openCodeModelInfo extracts only the non-sensitive model identifier from
+// OPENCODE_CONFIG_CONTENT. The full session configuration is never exposed.
+func openCodeModelInfo(content string) string {
+	var cfg struct {
+		Model string `json:"model"`
+	}
+	if err := json.Unmarshal([]byte(content), &cfg); err != nil {
+		return ""
+	}
+	return strings.TrimSpace(cfg.Model)
 }
 
 // detectRuntimeFromSession inspects the actual process tree in a tmux session
@@ -429,6 +487,11 @@ func readPiDefaults() string {
 
 // buildInfoFromConfig builds display info from a RuntimeConfig (fallback when not running).
 func buildInfoFromConfig(rc *config.RuntimeConfig) string {
+	if content := rc.Env["OPENCODE_CONFIG_CONTENT"]; content != "" {
+		if model := openCodeModelInfo(content); model != "" {
+			return model
+		}
+	}
 	if rc.Command == "" {
 		return "claude"
 	}
@@ -638,9 +701,6 @@ func gatherStatus() (TownStatus, error) {
 		rigsConfig = &config.RigsConfig{Rigs: make(map[string]config.RigEntry)}
 	}
 
-	// Load town settings for agent display info
-	townSettings, _ := config.LoadOrCreateTownSettings(config.TownSettingsPath(townRoot))
-
 	// Create rig manager
 	g := git.NewGit(townRoot)
 	mgr := rig.NewManager(townRoot, rigsConfig, g)
@@ -678,6 +738,10 @@ func gatherStatus() (TownStatus, error) {
 	rigs, err := mgr.DiscoverRigs()
 	if err != nil {
 		return TownStatus{}, fmt.Errorf("discovering rigs: %w", err)
+	}
+	rigPaths := make(map[string]string, len(rigs))
+	for _, r := range rigs {
+		rigPaths[r.Name] = r.Path
 	}
 
 	// Pre-fetch agent beads across all rig-specific beads DBs. If another status
@@ -797,11 +861,12 @@ func gatherStatus() (TownStatus, error) {
 
 	// Build status - parallel fetch global agents and rigs
 	status := TownStatus{
-		Name:     townConfig.Name,
-		Location: townRoot,
-		Overseer: overseerInfo,
-		DND:      detectCurrentDNDStatus(townRoot),
-		Rigs:     make([]RigStatus, len(rigs)),
+		Name:               townConfig.Name,
+		Location:           townRoot,
+		Overseer:           overseerInfo,
+		DND:                detectCurrentDNDStatus(townRoot),
+		Rigs:               make([]RigStatus, len(rigs)),
+		ModelCrashRecovery: loadModelCrashRecoveryStatus(townRoot),
 	}
 
 	// Daemon status
@@ -936,8 +1001,8 @@ func gatherStatus() (TownStatus, error) {
 			rigWg.Wait()
 
 			activeHooks := 0
-			for _, hook := range rs.Hooks {
-				if hook.HasWork {
+			for _, agent := range rs.Agents {
+				if agent.HasWork {
 					activeHooks++
 				}
 			}
@@ -948,18 +1013,20 @@ func gatherStatus() (TownStatus, error) {
 	}
 
 	wg.Wait()
+	applyRecoveryAgentStates(townRoot, &status)
 
 	// Enrich agents with runtime info — inspect actual running processes
 	for i := range status.Agents {
 		a := &status.Agents[i]
-		alias, info := resolveAgentDisplay(townRoot, townSettings, a.Role, a.Session, a.Running)
+		alias, info := resolveAgentDisplay(townRoot, "", a.Role, a.Name, a.Session, a.Running)
 		a.AgentAlias = alias
 		a.AgentInfo = info
 	}
 	for i := range status.Rigs {
+		rigPath := rigPaths[status.Rigs[i].Name]
 		for j := range status.Rigs[i].Agents {
 			a := &status.Rigs[i].Agents[j]
-			alias, info := resolveAgentDisplay(townRoot, townSettings, a.Role, a.Session, a.Running)
+			alias, info := resolveAgentDisplay(townRoot, rigPath, a.Role, a.Name, a.Session, a.Running)
 			a.AgentAlias = alias
 			a.AgentInfo = info
 		}
@@ -980,6 +1047,85 @@ func gatherStatus() (TownStatus, error) {
 	status.Summary.RigCount = len(rigs)
 
 	return status, nil
+}
+
+func applyRecoveryAgentStates(townRoot string, status *TownStatus) {
+	incidents, err := daemon.LoadModelCrashRecoveryIncidents(townRoot)
+	if err != nil {
+		return
+	}
+	bySession := make(map[string]daemon.ModelCrashRecoveryIncident, len(incidents))
+	for _, incident := range incidents {
+		bySession[incident.SessionName] = incident
+	}
+	apply := func(agent *AgentRuntime) {
+		incident, ok := bySession[agent.Session]
+		if !ok {
+			return
+		}
+		if strings.Contains(incident.RecoveryAction, "pending") ||
+			strings.Contains(incident.RecoveryAction, "restart") ||
+			strings.Contains(incident.RecoveryAction, "continuation") ||
+			strings.Contains(incident.RecoveryAction, "probe") {
+			agent.State = "recovering"
+			return
+		}
+		switch incident.Kind {
+		case "session-stall":
+			agent.State = "stalled"
+		case "session-fatal", "":
+			agent.State = "crashed"
+		}
+	}
+	for i := range status.Agents {
+		apply(&status.Agents[i])
+	}
+	for i := range status.Rigs {
+		for j := range status.Rigs[i].Agents {
+			apply(&status.Rigs[i].Agents[j])
+		}
+	}
+}
+
+func loadModelCrashRecoveryStatus(townRoot string) *ModelCrashRecoveryStatus {
+	if !daemon.IsModelCrashRecoveryProvisioned(townRoot) {
+		return nil
+	}
+	recovery := &ModelCrashRecoveryStatus{}
+	if err := daemon.ValidateModelCrashWatchdog(townRoot, time.Now()); err != nil {
+		recovery.WatchdogUnavailable = true
+		recovery.WatchdogError = err.Error()
+	}
+	incidents, err := daemon.LoadModelCrashRecoveryIncidents(townRoot)
+	if err != nil {
+		recovery.Error = err.Error()
+		return recovery
+	}
+	for _, incident := range incidents {
+		if !incident.Confirmed && !incident.RecoveryExhausted {
+			continue
+		}
+		if incident.Confirmed {
+			recovery.Confirmed++
+		}
+		if incident.RecoveryExhausted {
+			recovery.Exhausted++
+		}
+		recovery.Incidents = append(recovery.Incidents, ModelCrashStatusIncident{
+			Identity:          incident.Identity,
+			SessionName:       incident.SessionName,
+			IncidentID:        incident.IncidentID,
+			RecoveryAction:    incident.RecoveryAction,
+			RecoveryExhausted: incident.RecoveryExhausted,
+		})
+	}
+	if len(recovery.Incidents) == 0 && !recovery.WatchdogUnavailable {
+		return nil
+	}
+	sort.Slice(recovery.Incidents, func(i, j int) bool {
+		return recovery.Incidents[i].Identity < recovery.Incidents[j].Identity
+	})
+	return recovery
 }
 
 func outputStatusJSON(status TownStatus) error {
@@ -1069,6 +1215,27 @@ func outputStatusText(w io.Writer, status TownStatus) error {
 			}
 		}
 		fmt.Fprintf(w, "%s\n", strings.Join(parts, "  "))
+		fmt.Fprintln(w)
+	}
+
+	if recovery := status.ModelCrashRecovery; recovery != nil {
+		fmt.Fprintf(w, "%s %s", style.Warning.Render("⚠"),
+			style.Bold.Render("Model crash recovery:"))
+		if recovery.WatchdogUnavailable {
+			fmt.Fprintf(w, " %s", style.Warning.Render("watchdog unavailable: "+recovery.WatchdogError))
+		}
+		fmt.Fprintln(w)
+		if recovery.Error != "" {
+			fmt.Fprintf(w, "   %s\n", style.Warning.Render("state unreadable: "+recovery.Error))
+		} else {
+			fmt.Fprintf(w, "   %d confirmed, %d exhausted\n",
+				recovery.Confirmed, recovery.Exhausted)
+			for _, incident := range recovery.Incidents {
+				fmt.Fprintf(w, "   %s incident=%s action=%s exhausted=%t\n",
+					incident.Identity, incident.IncidentID,
+					incident.RecoveryAction, incident.RecoveryExhausted)
+			}
+		}
 		fmt.Fprintln(w)
 	}
 

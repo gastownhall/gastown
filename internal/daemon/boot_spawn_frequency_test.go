@@ -105,6 +105,50 @@ func TestEnsureBootRunning_DoesNotSpawnEveryTick(t *testing.T) {
 	}
 }
 
+func TestEnsureBootRunning_AutoSpawnDisabled(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("skipping on Windows — fake tmux requires bash")
+	}
+	townRoot := t.TempDir()
+	settingsDir := filepath.Join(townRoot, "settings")
+	if err := os.MkdirAll(settingsDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	settings := `{
+		"type": "town-settings",
+		"version": 1,
+		"operational": {"daemon": {"boot_auto_spawn": false}}
+	}`
+	if err := os.WriteFile(filepath.Join(settingsDir, "config.json"), []byte(settings), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	fakeBinDir := t.TempDir()
+	tmuxLog := filepath.Join(t.TempDir(), "tmux.log")
+	if err := os.WriteFile(tmuxLog, []byte{}, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	writeFakeTmux(t, fakeBinDir)
+	t.Setenv("PATH", fakeBinDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	t.Setenv("TMUX_LOG", tmuxLog)
+	t.Setenv("GT_DEGRADED", "false")
+
+	d := &Daemon{
+		config: &Config{TownRoot: townRoot},
+		logger: log.New(io.Discard, "", 0),
+		tmux:   tmux.NewTmux(),
+	}
+	d.ensureBootRunning()
+
+	data, err := os.ReadFile(tmuxLog)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(data), "new-session ") {
+		t.Fatalf("automatic Boot spawned despite boot_auto_spawn=false:\n%s", data)
+	}
+}
+
 // Regression test for gt-qu883c:
 // daemon should suppress Boot spawns when Boot's last action was "nothing" (deacon healthy).
 func TestEnsureBootRunning_SuppressesWhenDeaconHealthy(t *testing.T) {

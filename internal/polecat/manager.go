@@ -1132,12 +1132,24 @@ func (m *Manager) RemoveWithOptions(name string, force, nuclear, selfNuke bool) 
 	}
 	defer func() { _ = fl.Unlock() }()
 
-	return m.removeWithOptionsLocked(name, force, nuclear, selfNuke)
+	return m.removeWithOptionsLocked(name, force, nuclear, selfNuke, false)
 }
 
-func (m *Manager) removeWithOptionsLocked(name string, force, nuclear, selfNuke bool) error {
+func (m *Manager) removeWithOptionsLocked(name string, force, nuclear, selfNuke, skipRecoveryCheck bool) error {
 	if !m.exists(name) {
 		return ErrPolecatNotFound
+	}
+
+	current, err := m.loadFromBeads(name)
+	if err != nil {
+		return err
+	}
+
+	// Enforce recovery verdict before any destructive teardown.
+	if !force && !nuclear && !skipRecoveryCheck {
+		if decision := m.WorkstateDispositionForPolecat(name, current.State, current.Issue); decision.Verdict == WorkstateVerdictNeedsRecovery {
+			return fmt.Errorf("%w: %s (use --force to override, risks data loss)", ErrPolecatNeedsRecovery, decision.Reason)
+		}
 	}
 
 	// Clone path is where the git worktree lives (new or old structure)
@@ -1399,7 +1411,7 @@ func (m *Manager) ReclaimBrokenIdlePolecat(name string) (retErr error) {
 		return fmt.Errorf("not safe to reclaim: %s", blocker)
 	}
 
-	return m.removeWithOptionsLocked(name, false, false, false)
+	return m.removeWithOptionsLocked(name, false, false, false, true)
 }
 
 // verifyRemovalComplete checks that polecat directories were actually removed.

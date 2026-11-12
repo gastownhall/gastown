@@ -101,8 +101,10 @@ check-install-path:
 
 install: check-up-to-date build
 	@mkdir -p $(INSTALL_DIR)
-	@rm -f $(INSTALL_DIR)/$(BINARY)
-	@cp $(BUILD_DIR)/$(BINARY) $(INSTALL_DIR)/$(BINARY)
+	@tmp="$(INSTALL_DIR)/.$(BINARY).install.$$$$"; \
+		cp $(BUILD_DIR)/$(BINARY) "$$tmp" && \
+		chmod 755 "$$tmp" && \
+		mv -f "$$tmp" $(INSTALL_DIR)/$(BINARY)
 	@# Nuke any stale go-install binaries that shadow the canonical location
 	@for bad in $(HOME)/go/bin/$(BINARY) $(HOME)/bin/$(BINARY); do \
 		if [ -f "$$bad" ]; then \
