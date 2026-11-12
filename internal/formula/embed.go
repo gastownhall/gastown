@@ -5,9 +5,13 @@ import (
 	"embed"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
+
+	"github.com/steveyegge/gastown/internal/beads"
 )
 
 // Formulas live in internal/formula/formulas/ (source of truth).
@@ -44,33 +48,59 @@ type HealthReport struct {
 	Error     int // file could not be read (e.g. permission denied)
 }
 
+// ErrFormulaNotFound marks a named formula lookup miss across disk and embedded tiers.
+var ErrFormulaNotFound = errors.New("formula not found")
+
 // ResolveFormulaContent resolves formula content using the three-tier precedence
 // defined in docs/design/formula-resolution.md: rig > town > embedded.
 //
-// Tier 1 (rig): townRoot/rigName/.beads/formulas/<name>.formula.toml
+// Tier 1 (rig): route-resolved rig .beads/formulas, then legacy direct rig path
 // Tier 2 (town): townRoot/.beads/formulas/<name>.formula.toml
 // Tier 3 (embedded): compiled into the binary
 //
 // Either townRoot or rigName may be empty; those tiers are skipped.
 func ResolveFormulaContent(name, townRoot, rigName string) ([]byte, error) {
-	filename := name
-	if !hasFormulaSuffix(filename) {
-		filename = filename + ".formula.toml"
+	filename, err := formulaFilename(name)
+	if err != nil {
+		return nil, err
+	}
+
+	paths := make([]string, 0, 3)
+	seen := make(map[string]struct{})
+	addPath := func(path string) {
+		if path == "" {
+			return
+		}
+		if _, ok := seen[path]; ok {
+			return
+		}
+		seen[path] = struct{}{}
+		paths = append(paths, path)
 	}
 
 	// Tier 1: rig-level (most specific)
 	if townRoot != "" && rigName != "" {
-		path := filepath.Join(townRoot, rigName, ".beads", "formulas", filename)
-		if content, err := os.ReadFile(path); err == nil {
-			return content, nil
+		if err := validateFormulaPathComponent("rig", rigName); err != nil {
+			return nil, err
 		}
+		if rigDir := beads.GetRigDirForName(townRoot, rigName); rigDir != "" {
+			addPath(filepath.Join(beads.ResolveBeadsDir(rigDir), "formulas", filename))
+		}
+		addPath(filepath.Join(townRoot, rigName, ".beads", "formulas", filename))
 	}
 
 	// Tier 2: town-level
 	if townRoot != "" {
-		path := filepath.Join(townRoot, ".beads", "formulas", filename)
-		if content, err := os.ReadFile(path); err == nil {
+		addPath(filepath.Join(townRoot, ".beads", "formulas", filename))
+	}
+
+	for _, path := range paths {
+		content, err := os.ReadFile(path)
+		if err == nil {
 			return content, nil
+		}
+		if !os.IsNotExist(err) {
+			return nil, fmt.Errorf("reading formula %s: %w", path, err)
 		}
 	}
 
@@ -83,15 +113,32 @@ func ResolveFormulaContent(name, townRoot, rigName string) ([]byte, error) {
 // Returns the content bytes, or an error if the formula is not found.
 func GetEmbeddedFormulaContent(name string) ([]byte, error) {
 	// Normalize: ensure the filename has the correct suffix
-	filename := name
-	if !hasFormulaSuffix(filename) {
-		filename = filename + ".formula.toml"
+	filename, err := formulaFilename(name)
+	if err != nil {
+		return nil, err
 	}
 	content, err := formulasFS.ReadFile("formulas/" + filename)
 	if err != nil {
-		return nil, fmt.Errorf("embedded formula %q not found: %w", name, err)
+		return nil, fmt.Errorf("%w: embedded formula %q: %v", ErrFormulaNotFound, name, err)
 	}
 	return content, nil
+}
+
+func formulaFilename(name string) (string, error) {
+	if err := validateFormulaPathComponent("formula", name); err != nil {
+		return "", err
+	}
+	if hasFormulaSuffix(name) {
+		return name, nil
+	}
+	return name + ".formula.toml", nil
+}
+
+func validateFormulaPathComponent(kind, value string) error {
+	if value == "" || filepath.IsAbs(value) || strings.Contains(value, "..") || strings.Contains(value, "/") || strings.Contains(value, "\\") {
+		return fmt.Errorf("invalid %s name %q", kind, value)
+	}
+	return nil
 }
 
 // hasFormulaSuffix checks if a name already has a formula file suffix.
