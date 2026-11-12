@@ -32,6 +32,29 @@ import (
 	"github.com/steveyegge/gastown/internal/util"
 )
 
+// resumeBranchError wraps a failure to attach a worktree to a resume branch.
+//
+// The refusal case gets an actionable message on purpose. si-d6kw's own
+// post-mortem found that the operator reached for the unsafe option because the
+// safe one failed with a bare "exit status 1" — a defect that manufactures
+// pressure toward the dangerous path. A refusal that does not say what to do
+// instead recreates exactly that.
+func resumeBranchError(resumeBranch string, err error) error {
+	var held *git.BranchHeldError
+	if errors.As(err, &held) {
+		return fmt.Errorf("refusing to resume %s: it is checked out by a live worktree at %s\n\n"+
+			"Two worktrees on one branch is not a warning, it is data loss: a commit in either\n"+
+			"appears in the other as a delta to re-commit, and the auto-save commits that delta\n"+
+			"with no agent acting (si-d6kw).\n\n"+
+			"Instead:\n"+
+			"  - sling to the worker that already holds the branch, or\n"+
+			"  - let a fresh polecat branch be minted (drop --branch) and rebase, or\n"+
+			"  - if that worktree is genuinely finished, retire it first, then retry",
+			resumeBranch, held.Path)
+	}
+	return fmt.Errorf("creating worktree on existing branch %s: %w", resumeBranch, err)
+}
+
 // Retry constants for Dolt operations (matching hook update pattern in sling.go).
 // Configurable via operational.polecat in settings/config.json.
 const (
@@ -766,14 +789,15 @@ func (m *Manager) addWithOptionsLocked(name string, opts AddOptions, polecatDir 
 
 	if opts.ResumeBranch != "" {
 		// Resume an existing branch (gh#3602). Make sure we have the latest tip
-		// for the named branch, then attach the worktree directly. WorktreeAddExistingForce
-		// handles the case where another worktree previously had this branch checked out.
+		// for the named branch, then attach the worktree directly. Safe, not
+		// Force: a worktree PREVIOUSLY on this branch is pruned and resumed, but
+		// one that still holds it is refused (si-d6kw).
 		if err := repoGit.FetchBranch("origin", opts.ResumeBranch); err != nil {
 			style.PrintWarning("could not fetch resume branch %s: %v", opts.ResumeBranch, err)
 		}
-		if err := repoGit.WorktreeAddExistingForce(clonePath, opts.ResumeBranch); err != nil {
+		if err := repoGit.WorktreeAddExistingSafe(clonePath, opts.ResumeBranch); err != nil {
 			cleanupOnError()
-			return nil, fmt.Errorf("creating worktree on existing branch %s: %w", opts.ResumeBranch, err)
+			return nil, resumeBranchError(opts.ResumeBranch, err)
 		}
 		worktreeCreated = true
 	} else {
@@ -964,15 +988,17 @@ func (m *Manager) AddWithOptions(name string, opts AddOptions) (_ *Polecat, retE
 
 	if opts.ResumeBranch != "" {
 		// Resume an existing branch (gh#3602): attach the worktree directly to the
-		// named branch. WorktreeAddExistingForce tolerates the branch being checked
-		// out elsewhere (stale worktree), and the explicit fetch ensures we have
-		// the latest tip before checkout.
+		// named branch. WorktreeAddExistingSafe tolerates a STALE worktree record
+		// for the branch — which is what "tolerates the branch being checked out
+		// elsewhere" was always meant to cover — and refuses a live holder, which
+		// --force could not tell apart (si-d6kw). The explicit fetch ensures we
+		// have the latest tip before checkout.
 		if err := repoGit.FetchBranch("origin", opts.ResumeBranch); err != nil {
 			style.PrintWarning("could not fetch resume branch %s: %v", opts.ResumeBranch, err)
 		}
-		if err := repoGit.WorktreeAddExistingForce(clonePath, opts.ResumeBranch); err != nil {
+		if err := repoGit.WorktreeAddExistingSafe(clonePath, opts.ResumeBranch); err != nil {
 			cleanupOnError()
-			return nil, fmt.Errorf("creating worktree on existing branch %s: %w", opts.ResumeBranch, err)
+			return nil, resumeBranchError(opts.ResumeBranch, err)
 		}
 		worktreeCreated = true
 	} else {
@@ -1596,6 +1622,15 @@ func (m *Manager) RepairWorktreeWithOptions(name string, force bool, opts AddOpt
 	if opts.ResumeBranch != "" {
 		// Resume an existing branch: fetch and attach the temp worktree directly
 		// to the named branch instead of creating a fresh polecat/<name>/<bead>+<ts>.
+		//
+		// Deliberately still Force, unlike the two sling resume paths (si-d6kw).
+		// Repair rebuilds ONE polecat's own worktree and does not remove the old
+		// registration first, so the record most likely holding this branch is
+		// the very one being replaced — WorktreeAddExistingSafe would refuse and
+		// repair could never run. Note also that no production caller sets
+		// ResumeBranch here: RepairWorktree passes AddOptions{}. A future caller
+		// that does must remove the old worktree registration before this point,
+		// otherwise it inherits the two-worktrees-one-ref hazard.
 		if err := repoGit.FetchBranch("origin", opts.ResumeBranch); err != nil {
 			style.PrintWarning("could not fetch resume branch %s: %v", opts.ResumeBranch, err)
 		}
