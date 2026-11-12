@@ -345,7 +345,7 @@ func extractJSONArray(data []byte) []byte {
 	return data[idx:]
 }
 
-// promoteWisp makes a wisp permanent by setting --persistent and adding a comment.
+// promoteWisp makes a wisp permanent through Beads' canonical promotion path.
 func promoteWisp(bd *beads.Beads, w *compactIssue, reason string, result *compactResult) {
 	action := compactAction{ID: w.ID, Title: w.Title, Reason: reason, WispType: w.WispType}
 
@@ -358,15 +358,10 @@ func promoteWisp(bd *beads.Beads, w *compactIssue, reason string, result *compac
 		return
 	}
 
-	// bd update --persistent sets ephemeral=false
-	_, err := bd.Run("update", w.ID, "--persistent")
-	if err != nil {
+	if err := bd.PromoteWisp(w.ID, reason); err != nil {
 		result.Errors = append(result.Errors, fmt.Sprintf("promote %s: %v", w.ID, err))
 		return
 	}
-
-	// Add comment noting the promotion
-	_, _ = bd.Run("comments", "add", w.ID, fmt.Sprintf("Promoted from Level 0: %s", reason))
 
 	result.Promoted = append(result.Promoted, action)
 
