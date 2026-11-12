@@ -48,13 +48,48 @@ fi
 log "Installing prerequisites..."
 
 # Update package manager
-if [[ "$OS" == "debian" || "$OS" == "ubuntu" ]]; then
+if [[ "$OS" == "ubuntu" ]]; then
+    # The Ubuntu archive has no git fixed for CVE-2026-105437; the git-core PPA does.
+    sudo apt-get update -qq
+    sudo apt-get install -y -qq software-properties-common
+    sudo add-apt-repository -y ppa:git-core/ppa
+    sudo apt-get update -qq
+    sudo apt-get install -y -qq git tmux curl
+elif [[ "$OS" == "debian" ]]; then
     sudo apt-get update -qq
     sudo apt-get install -y -qq git tmux curl
 elif [[ "$OS" == "fedora" || "$OS" == "centos" || "$OS" == "rhel" ]]; then
     sudo dnf install -y git tmux curl
+    # dnf install leaves a preinstalled git alone; pull any newer security build.
+    sudo dnf upgrade -y --refresh git
 else
     warn "Unknown OS, assuming deps are installed"
+fi
+
+# git_is_fixed VERSION: succeeds if VERSION carries the CVE-2026-105437 fix
+# (2.50.2, 2.51.3, 2.52.1, 2.53.1, 2.54.1, 2.55.1, 2.56.1, or 2.57+).
+git_is_fixed() {
+    local major minor patch
+    IFS=. read -r major minor patch _ <<< "$1"
+    patch=${patch%%[!0-9]*}
+    patch=${patch:-0}
+    if (( major > 2 || (major == 2 && minor >= 57) )); then
+        return 0
+    fi
+    (( major < 2 || minor < 50 )) && return 1
+    local -A fixed_patch=([50]=2 [51]=3 [52]=1 [53]=1 [54]=1 [55]=1 [56]=1)
+    (( patch >= ${fixed_patch[$minor]} ))
+}
+
+if command -v git &> /dev/null; then
+    GIT_VERSION=$(git --version | awk '{print $3}')
+    if git_is_fixed "$GIT_VERSION"; then
+        check "git $GIT_VERSION (fixed for CVE-2026-105437)"
+    else
+        warn "git $GIT_VERSION is vulnerable to CVE-2026-105437 (need 2.56.1+ or a fixed maint release); no fixed package is available from the enabled repos yet"
+    fi
+else
+    fail "git is not installed"
 fi
 
 # Install Go 1.26.10+ (earlier releases trust the compromised eMudhra intermediates)

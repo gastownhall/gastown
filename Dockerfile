@@ -7,6 +7,22 @@ ARG DOLT_VERSION=2.6.0
 
 USER root
 
+# The base image (Ubuntu 26.04) ships git 2.53.0, which is vulnerable to
+# CVE-2026-105437 and has no fixed build in the Ubuntu archive. Pull git from
+# the git-core PPA (signing key F911AB184317630C59970973E363C90F8F1B6217,
+# committed in docker/git-core-ppa.asc). The PPA keeps only its newest build,
+# so assert a version floor below instead of pinning an exact version.
+ARG GIT_MIN_VERSION=1:2.56.1
+COPY docker/git-core-ppa.asc /etc/apt/keyrings/git-core-ppa.asc
+RUN . /etc/os-release && \
+    printf '%s\n' \
+      'Types: deb' \
+      'URIs: https://ppa.launchpadcontent.net/git-core/ppa/ubuntu' \
+      "Suites: ${VERSION_CODENAME}" \
+      'Components: main' \
+      'Signed-By: /etc/apt/keyrings/git-core-ppa.asc' \
+      > /etc/apt/sources.list.d/git-core-ppa.sources
+
 # Install system dependencies
 RUN apt-get update && apt-get install -y \
     build-essential \
@@ -21,6 +37,10 @@ RUN apt-get update && apt-get install -y \
     netcat-openbsd \
     tini \
     vim \
+    && GIT_PKG_VERSION="$(dpkg-query -W -f='${Version}' git)" \
+    && echo "git package version: ${GIT_PKG_VERSION}" \
+    && dpkg --compare-versions "${GIT_PKG_VERSION}" ge "${GIT_MIN_VERSION}" \
+    && git --version \
     && rm -rf /var/lib/apt/lists/* /var/cache/apt/archives/*
 
 # Install Go from official tarball (apt golang-go is too old). The base image

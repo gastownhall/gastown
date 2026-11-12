@@ -16,8 +16,9 @@ ARG BD_VERSION=v0.57.0
 
 # Install dependencies including CGO build requirements for beads daemon
 # procps and lsof are required by gt dolt start for process verification
+# git>=2.54.1-r0 is the Alpine 3.24 build fixing CVE-2026-105437
 RUN apk add --no-cache \
-    git \
+    'git>=2.54.1-r0' \
     bash \
     sqlite \
     build-base \
