@@ -12,7 +12,7 @@ Native source installs require these host tools. Homebrew and Docker installs pr
 
 | Tool | Version | Check | Install |
 |------|---------|-------|---------|
-| **Go** | 1.26.10+ | `go version` | See [golang.org](https://go.dev/doc/install) |
+| **Go** | 1.26.11+ | `go version` | See [golang.org](https://go.dev/doc/install) |
 | **Git** | 2.20+ | `git --version` | See below |
 | **sqlite3** | any | `sqlite3 --version` | Usually pre-installed on macOS; Linux packages are commonly named `sqlite3` |
 | **ICU4C dev headers** | varies | `pkg-config --modversion icu-uc`, `dpkg -l libicu-dev`, `rpm -q libicu-devel`, or `brew --prefix icu4c` | Source builds need Debian/Ubuntu `libicu-dev`, Fedora/RHEL `libicu-devel` with `pkgconf-pkg-config`, macOS `icu4c`, or native Windows MSYS2 ICU/toolchain/pkg-config packages |
@@ -61,8 +61,8 @@ sudo apt update
 sudo apt install -y git sqlite3 libicu-dev
 
 # Install Go (apt version may be outdated, use official installer)
-wget https://go.dev/dl/go1.26.10.linux-amd64.tar.gz
-sudo rm -rf /usr/local/go && sudo tar -C /usr/local -xzf go1.26.10.linux-amd64.tar.gz
+wget https://go.dev/dl/go1.26.11.linux-amd64.tar.gz
+sudo rm -rf /usr/local/go && sudo tar -C /usr/local -xzf go1.26.11.linux-amd64.tar.gz
 echo 'export PATH=/usr/local/go/bin:$HOME/go/bin:$PATH' >> ~/.bashrc
 source ~/.bashrc
 
@@ -79,7 +79,7 @@ sudo apt install -y tmux
 ```bash
 # Required
 sudo dnf install -y git sqlite libicu-devel pkgconf-pkg-config
-# Install Go 1.26.10+ from your distro if available, otherwise use the official Go installer.
+# Install Go 1.26.11+ from your distro if available, otherwise use the official Go installer.
 # Install Dolt: see https://github.com/dolthub/dolt?tab=readme-ov-file#installation
 # Docker setup only: install Docker Engine with the Compose plugin.
 
@@ -104,7 +104,7 @@ Use WSL or another Linux environment for tmux-backed workflows. Native Windows s
 
 ```bash
 # Check all prerequisites
-go version        # Should show go1.26.10 or higher
+go version        # Should show go1.26.11 or higher
 git --version     # Should show 2.20 or higher
 dolt version      # Should show 2.6.0 or higher
 tmux -V           # (Optional) Should show 3.0 or higher

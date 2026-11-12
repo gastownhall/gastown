@@ -2,7 +2,7 @@ module github.com/steveyegge/gastown/plugins/dolt-snapshots
 
 go 1.23
 
-toolchain go1.26.10
+toolchain go1.26.11
 
 require github.com/go-sql-driver/mysql v1.9.3
 

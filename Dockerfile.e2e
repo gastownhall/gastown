@@ -9,7 +9,7 @@
 #   docker build -f Dockerfile.e2e -t gastown-test .
 #   docker run --rm gastown-test
 
-FROM golang:1.27-alpine
+FROM golang:1.27.4-alpine3.24@sha256:0a5f7fe796599ff487605987432e7619ae45beeb2fba4c2ce0b907879932aebf
 
 ARG DOLT_VERSION=2.6.0
 ARG BD_VERSION=v0.57.0
