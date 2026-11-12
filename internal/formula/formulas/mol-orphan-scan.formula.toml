@@ -33,7 +33,7 @@ This is infrastructure work. You:
 Orphan scanning requires multi-rig access and may need to interact with
 multiple Witnesses. Dogs have the cross-rig worktrees needed for this."""
 formula = "mol-orphan-scan"
-version = 2
+version = 3
 
 [squash]
 trigger = "on_complete"
@@ -83,30 +83,52 @@ bd show <issue-id>
 # Get assignee field
 ```
 
-**3. Check if assignee session exists:**
+**3. Check whether the assignee owns the issue coherently:**
 
 Parse the assignee field to extract rig and polecat name:
 - Assignee format: `<rig>/polecats/<name>` (e.g., `nrpk/polecats/rust`)
 - Extract: rig and name from the path
 
 ```bash
-# Check session liveness using gt session status (handles prefix derivation)
-gt session status <rig>/<name> --json | jq -r '.running' | grep -q true && echo ALIVE || echo DEAD
+# Polecats: collect lifecycle, hook, session, branch, and timestamp evidence together.
+gt polecat status <rig>/<name> --json
 ```
+
+A polecat is healthy for this issue only when all of these are true:
+- `session_running` is `true`
+- `state` is `working`
+- `issue` exactly equals the in_progress issue being checked
+
+Session existence alone is not proof of ownership. In particular,
+`state=review-needed` with an absent, null, or different `issue` is orphaned,
+recoverable work even while the tmux session exists. Likewise, `state=working`
+for a different issue is an ownership mismatch and must be flagged.
 
 If the assignee is NOT a polecat (e.g., witness, refinery), use:
 ```bash
 gt session status <rig>/<role> --json | jq -r '.running' | grep -q true && echo ALIVE || echo DEAD
 ```
 
-**4. Identify orphans:**
+**4. Treat timestamps as diagnostic evidence only:**
+
+`created_at`, `last_activity`, and bead update timestamps may be absent, null,
+empty, or the Go zero/default value (`0001-01-01...`). Report these as
+`age unknown`; never treat a zero/default timestamp as fresh activity or as a
+reason to suppress an ownership mismatch. Do not compute an age from it.
+
+**5. Identify orphans:**
 - Issue in_progress + assignee session dead = orphan
 - Issue in_progress + no assignee = orphan
+- Issue in_progress + polecat not `working` = orphaned ownership mismatch
+- Issue in_progress + polecat `issue` absent or different = orphaned ownership mismatch
 
 Record each orphan with:
 - Issue ID
 - Last assignee (if any)
-- How long orphaned (last update timestamp)
+- Polecat state, reported issue, and session state
+- Branch and clone path (when present)
+- How long orphaned, or `age unknown` for missing/zero/default timestamps
+- Recovery action (`RESET`, `REASSIGN`, `RECOVER`, or `ESCALATE`)
 
 **Exit criteria:** Orphaned issues identified."""
 
@@ -183,6 +205,7 @@ Classify orphans by severity and determine action.
 |------|----------|----------------|
 | Issue in_progress, no work done | Low | Reset to open |
 | Issue in_progress, work in progress | Medium | Check branch, reassign |
+| Issue in_progress, live review-needed polecat with no/mismatched issue | Medium | Preserve branch, recover/reassign |
 | Molecule mid-execution | Medium | Resume or restart |
 | Wisp with content | Low | Squash or burn |
 | Wisp empty | None | Delete |
@@ -190,10 +213,18 @@ Classify orphans by severity and determine action.
 **2. Check for data loss:**
 For issues/molecules with possible work:
 ```bash
-# Check for branch with work
-git branch -a | grep <polecat-or-issue>
-git log --oneline <branch>
+# Re-read the polecat status and inspect its existing branch without deleting it.
+gt polecat status <rig>/<polecat> --json
+gt polecat check-recovery <rig>/<polecat> --json
+git -C <clone_path> rev-parse HEAD
+git -C <clone_path> rev-list --left-right --count origin/<default-branch>...HEAD
 ```
+
+If the branch is ahead, dirty, unpushed, or its safety is unknown, classify the
+orphan as `RECOVER`. Record the branch name, full HEAD SHA, ahead/behind counts,
+and the concrete next action (for example, "resume/reassign from preserved
+branch at <sha>"). A live `review-needed` session does not make the issue
+healthy and does not make the branch disposable.
 
 **3. Categorize for action:**
 - RESET: Return to open status for normal dispatch
@@ -227,11 +258,16 @@ gt mail send <rig>/witness -s "Orphan needs assignment: <issue>" \
 **3. RECOVER orphans:**
 ```bash
 # For issues with work on branch:
-# - Preserve the branch
-# - Create recovery note
+# - Preserve the existing branch and exact HEAD commit in place
+# - Create a recovery note before changing issue ownership
 bd update <issue> --status=open \
-  --note="Recovery: work exists on branch <branch>"
+  --notes="Recovery: resume/reassign preserved branch <branch> at <full-head-sha>; ahead=<n> behind=<n>; polecat_state=<state>; reported_issue=<issue-or-none>"
 ```
+
+Never run `gt polecat nuke`, `git branch -d`, `git branch -D`, or any cleanup
+that removes a polecat worktree/branch while it contains recoverable or unknown
+work. The orphan scan reports and preserves such work; a later recovery owner
+decides how to land it.
 
 **4. ESCALATE orphans:**
 ```bash
@@ -277,7 +313,7 @@ Create summary report of orphan scan and actions.
 
 ### Details
 {{#each orphan}}
-- {{type}} {{id}}: {{action}} - {{reason}}
+- {{type}} {{id}}: {{action}} - {{reason}}; recovery: {{recovery_action}}
 {{/each}}
 ```
 
@@ -358,6 +394,10 @@ default = ""
 
 [vars.reason]
 description = "Reason for orphan cleanup action (computed during execution)"
+default = ""
+
+[vars.recovery_action]
+description = "Concrete recovery action, including preserved branch and commit when applicable"
 default = ""
 
 [vars.reassign_count]
