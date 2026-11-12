@@ -97,7 +97,8 @@ func TestConvoyFeedWorkflow_Integration(t *testing.T) {
 // Deacon's dogs) can pass variable validation for wisp creation.
 //
 // Dog formulas are special because they're invoked via:
-//   gt sling mol-<name> deacon/dogs/<dog> --var convoy=<id>
+//
+//	gt sling mol-<name> deacon/dogs/<dog> --var convoy=<id>
 //
 // The wisp creation validates that all template variables are either:
 // - Provided via --var flags, OR
@@ -143,6 +144,29 @@ func TestAllDogFormulas_CanBeWisped(t *testing.T) {
 				t.Log("Warning: formula has no required input variables")
 			}
 		})
+	}
+}
+
+func TestOrphanScanScopeDefaultsToTown(t *testing.T) {
+	data, err := os.ReadFile(filepath.Join("formulas", "mol-orphan-scan.formula.toml"))
+	if err != nil {
+		t.Fatalf("Read mol-orphan-scan formula: %v", err)
+	}
+
+	f, err := Parse(data)
+	if err != nil {
+		t.Fatalf("Parse mol-orphan-scan formula: %v", err)
+	}
+
+	scope, ok := f.Vars["scope"]
+	if !ok {
+		t.Fatal("Missing scope variable")
+	}
+	if scope.Required {
+		t.Error("scope must be optional when it has a default")
+	}
+	if scope.Default != "town" {
+		t.Errorf("scope default = %q, want town", scope.Default)
 	}
 }
 
