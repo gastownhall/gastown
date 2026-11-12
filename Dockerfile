@@ -27,7 +27,9 @@ RUN apt-get update && apt-get install -y \
     vim \
     && rm -rf /var/lib/apt/lists/* /var/cache/apt/archives/*
 
-# Install Go from official tarball (apt golang-go is too old)
+# Install Go from official tarball (apt golang-go is too old). The base image
+# ships its own Go in /usr/local/go; remove it first, as the official install
+# instructions require, so the two releases' files never mix in one GOROOT.
 RUN ARCH=$(dpkg --print-architecture) && \
     case "${ARCH}" in \
       amd64) GO_SHA256="${GO_SHA256_AMD64}" ;; \
@@ -36,6 +38,7 @@ RUN ARCH=$(dpkg --print-architecture) && \
     esac && \
     curl -fsSL -o /tmp/go.tar.gz "https://go.dev/dl/go${GO_VERSION}.linux-${ARCH}.tar.gz" && \
     echo "${GO_SHA256}  /tmp/go.tar.gz" | sha256sum -c - && \
+    rm -rf /usr/local/go && \
     tar -C /usr/local -xzf /tmp/go.tar.gz && \
     rm -f /tmp/go.tar.gz
 ENV PATH="/app/gastown:/usr/local/go/bin:/home/agent/go/bin:${PATH}"
