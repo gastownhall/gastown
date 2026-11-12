@@ -92,8 +92,9 @@ else
     fail "git is not installed"
 fi
 
-# Install Go 1.26.10+ (earlier releases trust the compromised eMudhra intermediates)
-GO_MIN_VERSION=1.26.10
+# Install Go 1.26.11+ (earlier releases trust the compromised eMudhra intermediates
+# or miss the net/http MaxBytesReader fix, GO-2026-6859)
+GO_MIN_VERSION=1.26.11
 if command -v go &> /dev/null; then
     GO_VERSION=$(go version | grep -oP 'go\K[0-9]+\.[0-9]+(\.[0-9]+)?')
     if [[ "$(printf '%s\n' "$GO_MIN_VERSION" "$GO_VERSION" | sort -V | head -1)" == "$GO_MIN_VERSION" ]]; then

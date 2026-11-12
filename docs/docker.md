@@ -64,7 +64,7 @@ A single `apt-get install` adds the tooling Gas Town uses at runtime: `build-ess
 
 ### Language runtimes and gt dependencies
 
-Go installs from the official tarball because the Debian-packaged version lags. The Go version is controlled by `ARG GO_VERSION` (currently `1.26.10`). The Dockerfile detects the host architecture at build time, which lets the same Dockerfile produce working images on amd64 and arm64. The architecture-detection change came from commit `ac4b65d1`.
+Go installs from the official tarball because the Debian-packaged version lags. The Go version is controlled by `ARG GO_VERSION` (currently `1.26.11`). The Dockerfile detects the host architecture at build time, which lets the same Dockerfile produce working images on amd64 and arm64. The architecture-detection change came from commit `ac4b65d1`.
 
 `bd` and `dolt` install via the upstream `curl | bash` install scripts. In this image, the scripts place binaries in `/usr/local/bin`, which remains on `$PATH` for the `agent` user.
 

@@ -2,7 +2,11 @@
 # docker build -t gastown:latest -f Dockerfile .
 FROM docker/sandbox-templates:claude-code
 
-ARG GO_VERSION=1.26.10
+ARG GO_VERSION=1.26.11
+# sha256 of the official go${GO_VERSION}.linux-<arch>.tar.gz (https://go.dev/dl/?mode=json).
+# Update these together with GO_VERSION.
+ARG GO_SHA256_AMD64=9849f4e04ee35303714e34fbc3ac8ab44ea3e448a95aa182f91e3b9b79c710ec
+ARG GO_SHA256_ARM64=6c2f29b458b5add0835f18b776f69c8881a6d88428f1484a6da55755e620757e
 ARG DOLT_VERSION=2.6.0
 
 USER root
@@ -46,8 +50,16 @@ RUN apt-get update && apt-get install -y \
 # Install Go from official tarball (apt golang-go is too old). The base image
 # ships its own Go in /usr/local/go; remove it so the two trees do not mix.
 RUN ARCH=$(dpkg --print-architecture) && \
+    case "${ARCH}" in \
+      amd64) GO_SHA256="${GO_SHA256_AMD64}" ;; \
+      arm64) GO_SHA256="${GO_SHA256_ARM64}" ;; \
+      *) echo "unsupported architecture for Go tarball: ${ARCH}" >&2; exit 1 ;; \
+    esac && \
+    curl -fsSL -o /tmp/go.tar.gz "https://go.dev/dl/go${GO_VERSION}.linux-${ARCH}.tar.gz" && \
+    echo "${GO_SHA256}  /tmp/go.tar.gz" | sha256sum -c - && \
     rm -rf /usr/local/go && \
-    curl -fsSL "https://go.dev/dl/go${GO_VERSION}.linux-${ARCH}.tar.gz" | tar -C /usr/local -xz
+    tar -C /usr/local -xzf /tmp/go.tar.gz && \
+    rm -f /tmp/go.tar.gz
 ENV PATH="/app/gastown:/usr/local/go/bin:/home/agent/go/bin:${PATH}"
 
 # Install beads (bd) and dolt
