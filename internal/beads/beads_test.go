@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"runtime"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -2003,40 +2004,32 @@ func TestSearchOptions(t *testing.T) {
 	}
 }
 
-// Integration test that runs against real bd if available
+// Integration test that runs against real bd on the disposable package server.
 func TestIntegration(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping integration test in short mode")
 	}
 
-	// Find a beads repo (use current directory if it has .beads)
-	cwd, err := os.Getwd()
-	if err != nil {
-		t.Fatal(err)
+	port, err := strconv.Atoi(os.Getenv("GT_DOLT_PORT"))
+	if err != nil || port <= 0 {
+		t.Fatalf("disposable GT_DOLT_PORT is unavailable: %q", os.Getenv("GT_DOLT_PORT"))
 	}
-
-	dir := cwd
-	for {
-		if _, err := os.Stat(filepath.Join(dir, ".beads")); err == nil {
-			break
-		}
-		parent := filepath.Dir(dir)
-		if parent == dir {
-			t.Skip("no .beads directory found in path")
-		}
-		dir = parent
+	workDir := t.TempDir()
+	gitInit := exec.Command("git", "init", "--quiet", "--initial-branch=main")
+	gitInit.Dir = workDir
+	if output, err := gitInit.CombinedOutput(); err != nil {
+		t.Fatalf("initialize disposable git repository: %v\n%s", err, output)
 	}
-
-	// Resolve the actual beads directory (following redirect if present)
-	// In multi-worktree setups, worktrees have .beads/redirect pointing to
-	// the canonical beads location (e.g., mayor/rig/.beads)
-	beadsDir := ResolveBeadsDir(dir)
-	doltPath := filepath.Join(beadsDir, "dolt")
-	if _, err := os.Stat(doltPath); os.IsNotExist(err) {
-		t.Skip("no dolt database found")
+	initCmd := exec.Command("bd", "init", "--prefix", fmt.Sprintf("bi%d", os.Getpid()),
+		"--quiet", "--server", "--server-port", strconv.Itoa(port))
+	initCmd.Dir = workDir
+	if output, err := initCmd.CombinedOutput(); err != nil {
+		t.Fatalf("initialize disposable beads database: %v\n%s", err, output)
 	}
-
-	b := New(dir)
+	b := New(workDir)
+	if _, err := b.Create(CreateOptions{Title: "integration fixture", Type: "task"}); err != nil {
+		t.Fatalf("create disposable integration fixture: %v", err)
+	}
 
 	// Test List
 	t.Run("List", func(t *testing.T) {
@@ -5375,6 +5368,9 @@ printf 'unknown\n'
 	t.Setenv("GT_DOLT_DATA", "/home/coder/gt/.dolt-data")
 	t.Setenv("BEADS_DOLT_DATA_DIR", "/home/coder/gt/.dolt-data")
 	t.Setenv("BEADS_DOLT_HOST", "127.0.0.1")
+	// TestMain pins GT_DOLT_HOST to the disposable package server. Clear it
+	// here so this test continues to exercise metadata-derived host routing.
+	t.Setenv("GT_DOLT_HOST", "")
 	t.Setenv("GT_DOLT_PORT", "")
 	t.Setenv("BEADS_DOLT_PORT", "3307")
 	t.Setenv("BEADS_DOLT_SERVER_HOST", "127.0.0.1")
