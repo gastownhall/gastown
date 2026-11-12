@@ -66,6 +66,8 @@ A single `apt-get install` adds the tooling Gas Town uses at runtime: `build-ess
 
 Go installs from the official tarball because the Debian-packaged version lags. The Go version is controlled by `ARG GO_VERSION` (currently `1.26.11`). The Dockerfile detects the host architecture at build time, which lets the same Dockerfile produce working images on amd64 and arm64. The architecture-detection change came from commit `ac4b65d1`.
 
+Before extracting, the build checks the tarball against the official sha256 for that architecture, `ARG GO_SHA256_AMD64` or `ARG GO_SHA256_ARM64` (listed at `https://go.dev/dl/?mode=json`). It fails on a mismatch or on any other architecture, so change the checksums together with `GO_VERSION`, whether you edit the defaults or pass `--build-arg`. The build then deletes the Go that the base image ships in `/usr/local/go` before extracting, so files from two Go releases never mix in one `GOROOT`.
+
 `bd` and `dolt` install via the upstream `curl | bash` install scripts. In this image, the scripts place binaries in `/usr/local/bin`, which remains on `$PATH` for the `agent` user.
 
 The image-level `ENV PATH` prepends `/app/gastown` (where the freshly built `gt` binary lives), `/usr/local/go/bin`, and `/home/agent/go/bin`. The shell profile snippets in `/etc/profile.d/gastown.sh` and `/etc/zsh/zshenv` only re-prepend `/app/gastown` so interactive bash and zsh sessions keep `/app/gastown/gt` ahead of any other `gt` without duplicating every image-level path entry.
