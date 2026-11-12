@@ -300,6 +300,43 @@ func (b *Beads) DetachMolecule(pinnedBeadID string) (*Issue, error) {
 	return b.Show(pinnedBeadID)
 }
 
+// RepairMissingMolecule removes workflow state for an attachment whose wisp was
+// already deleted, while preserving completion routing such as no_merge,
+// review_only, convoy ownership, and merge strategy. This prevents recovery
+// from accidentally rerunning or enqueueing external-PR work.
+func (b *Beads) RepairMissingMolecule(beadID string) (*Issue, error) {
+	unlock, err := b.lockBead(beadID)
+	if err != nil {
+		return nil, fmt.Errorf("acquiring bead lock: %w", err)
+	}
+	defer unlock()
+
+	issue, err := b.Show(beadID)
+	if err != nil {
+		return nil, fmt.Errorf("fetching bead: %w", err)
+	}
+	fields := ParseAttachmentFields(issue)
+	if fields == nil || fields.AttachedMolecule == "" {
+		return issue, nil
+	}
+
+	clearMissingMoleculeFields(fields)
+	newDesc := SetAttachmentFields(issue, fields)
+	if err := b.Update(beadID, UpdateOptions{Description: &newDesc}); err != nil {
+		return nil, fmt.Errorf("repairing missing molecule metadata: %w", err)
+	}
+	return b.Show(beadID)
+}
+
+func clearMissingMoleculeFields(fields *AttachmentFields) {
+	fields.AttachedMolecule = ""
+	fields.AttachedFormula = ""
+	fields.AttachedAt = ""
+	fields.AttachedArgs = ""
+	fields.AttachedVars = nil
+	fields.FormulaVars = ""
+}
+
 // GetAttachment returns the attachment fields from a pinned bead.
 // Returns nil if no molecule is attached.
 func (b *Beads) GetAttachment(pinnedBeadID string) (*AttachmentFields, error) {
