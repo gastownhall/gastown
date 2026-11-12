@@ -1,0 +1,257 @@
+{
+  "schema_version": "pr-sheriff-evidence/v1",
+  "policy_version": "pr-sheriff-policy/v1.1",
+  "generated_at": "2026-07-08T20:45:00Z",
+  "run_id": "gt-77sw-pr4426-replacement",
+  "subject": {
+    "forge": "github",
+    "repo_id": "gastownhall/gastown",
+    "default_branch": "main",
+    "change_type": "pull_request",
+    "change_id": "4448",
+    "url": "https://github.com/gastownhall/gastown/pull/4448",
+    "title": "fix(formula): converge formula root resolution",
+    "author": "Bella-Giraffety",
+    "author_tier": "trusted",
+    "draft": false,
+    "base_ref": "main",
+    "base_sha": "68320ca2298faafe25f27cfcb8f31ecd6eb1873a",
+    "head_ref": "Bella-Giraffety:polecat/institute/gt-77sw+58feae",
+    "head_sha": "c61598022c76eae9895ecf4d0296af43e3d7f44a",
+    "diff_summary": {
+      "additions": 607,
+      "deletions": 189,
+      "changed_files": 6,
+      "paths": [
+        "internal/cmd/formula.go",
+        "internal/cmd/formula_test.go",
+        "internal/cmd/synthesis.go",
+        "internal/cmd/synthesis_test.go",
+        "internal/formula/embed.go",
+        "internal/formula/embed_test.go"
+      ]
+    }
+  },
+  "repo_policy": {
+    "label_aliases": [],
+    "feature_kind_values": ["feature", "enhancement"],
+    "merge_ready_status_values": ["review-approved", "merge-ready"],
+    "approver_roles": ["maintainer", "owner", "mayor"],
+    "evidence_locations": ["local_report", "beads_notes", "pr_thread", "ci_log"],
+    "baseline_checks": ["Test", "Lint", "Integration Tests", "Windows Smoke Test"],
+    "no_verification_reasons": []
+  },
+  "action_plan": {
+    "id": "action-plan-gt-77sw",
+    "mode": "replacement_pr",
+    "proposed_action_ref": "action-plan-gt-77sw",
+    "summary": "Carry forward PR #4426 on current upstream/main, preserve PR #4426/#4334 attribution, and make a narrow cleanup-first fixup for the Sheriff blockers: constrain synthesis formula_path, preserve embedded not-found errors, remove hardcoded synthesis rig fallback, and validate side-effectful explicit rig targets.",
+    "created_at": "2026-07-08T20:10:00Z"
+  },
+  "labels": {
+    "observed": [
+      {"name": "status/reviewing", "family": "status", "semantic_value": "reviewing"},
+      {"name": "priority/p2", "family": "priority", "semantic_value": "p2"},
+      {"name": "kind/bug", "family": "kind", "semantic_value": "bug"}
+    ],
+    "status": "reviewing",
+    "priority": "p2",
+    "kind": "bug",
+    "snapshot_artifact_ref": "label-snapshot-pr4448"
+  },
+  "artifacts": [
+    {"id": "label-snapshot-pr4448", "kind": "label_snapshot", "uri": "https://github.com/gastownhall/gastown/pull/4448", "actor": "github", "created_at": "2026-07-08T20:42:00Z", "digest": null, "summary": "Replacement PR #4448 labels: status/reviewing, priority/p2, kind/bug. Auto-added status/needs-triage was removed to restore exactly one semantic status."},
+    {"id": "original-pr-4426", "kind": "pull_request_snapshot", "uri": "https://github.com/gastownhall/gastown/pull/4426", "actor": "github", "created_at": "2026-07-08T20:07:00Z", "digest": null, "summary": "Original PR #4426 by Bella-Giraffety/mirelurk is open at b0467e95, labels kind/bug priority/p2 status/reviewing, CI green, no reviews; research found code-level blockers."},
+    {"id": "original-pr-4334", "kind": "pull_request_snapshot", "uri": "https://github.com/gastownhall/gastown/pull/4334", "actor": "github", "created_at": "2026-07-08T20:07:00Z", "digest": null, "summary": "PR #4334 by Anthony Wong / antiwong is the accepted bug-fix intent carried forward by #4426; it remains open until replacement lands."},
+    {"id": "replacement-pr-4448", "kind": "pull_request_snapshot", "uri": "https://github.com/gastownhall/gastown/pull/4448", "actor": "github", "created_at": "2026-07-08T20:42:00Z", "digest": null, "summary": "Replacement PR #4448 targets gastownhall/gastown main at head c61598022, mergeable clean, CI green, no reviews, status/reviewing."},
+    {"id": "verification-local", "kind": "verification_log", "uri": "file:pr-sheriff-evidence/gt-77sw-pr4426-replacement/evidence.json#verification.focused_checks", "actor": "gastown/polecats/institute", "created_at": "2026-07-08T20:20:00Z", "digest": null, "summary": "Focused internal/formula and internal/cmd tests passed with CGO_ENABLED=0; CGO_ENABLED=0 go build ./cmd/gt passed."},
+    {"id": "verification-ci", "kind": "ci_log", "uri": "https://github.com/gastownhall/gastown/actions/runs/28973324222", "actor": "github-actions", "created_at": "2026-07-08T20:40:00Z", "digest": null, "summary": "PR #4448 CI checks passed: Test, Lint, Integration Tests, Windows Smoke Test, reject guards; Block Internal PRs skipped."},
+    {"id": "blocker-scan", "kind": "blocker_scan", "uri": "file:pr-sheriff-evidence/gt-77sw-pr4426-replacement/evidence.json#blocker_scan", "actor": "gastown/polecats/institute", "created_at": "2026-07-08T20:42:00Z", "digest": null, "summary": "Labels, PR comments, reviews, CI, Codecov comment, Beads notes, and independent reviews scanned. No unresolved code/security blockers remain; merge path remains blocked by status/review gate."},
+    {"id": "checker-output", "kind": "checker_output", "uri": "file:pr-sheriff-evidence/gt-77sw-pr4426-replacement/checker.txt", "actor": "gt-pr-sheriff-check", "created_at": "2026-07-08T20:45:00Z", "digest": null, "summary": "Checker output for final non-merge/defer evidence."},
+    {"id": "research-R01", "kind": "research_report", "uri": "beads:gt-77sw#R01-problem-validity", "actor": "R01-problem-validity", "created_at": "2026-07-08T20:07:00Z", "digest": null, "summary": "Problem is valid; old synthesis lookup missed GT_TOWN_ROOT-only town formulas and PR #4426 converges lookup through shared resolver."},
+    {"id": "research-R02", "kind": "research_report", "uri": "beads:gt-77sw#R02-resolver-tiers", "actor": "R02-resolver-tiers", "created_at": "2026-07-08T20:07:00Z", "digest": null, "summary": "ResolveFormulaContent tier ordering is rig, town, embedded; route-resolved rig lookup is correct, with minor docs residual only."},
+    {"id": "research-R03", "kind": "research_report", "uri": "beads:gt-77sw#R03-formula-run", "actor": "R03-formula-run", "created_at": "2026-07-08T20:07:00Z", "digest": null, "summary": "Formula run convergence is sound but explicit --rig existence was a blocker before fixup."},
+    {"id": "research-R04", "kind": "research_report", "uri": "beads:gt-77sw#R04-synthesis", "actor": "R04-synthesis", "created_at": "2026-07-08T20:07:00Z", "digest": null, "summary": "Synthesis formula loading is converged; legacy formula-only metadata without Rig is a nonblocking caveat."},
+    {"id": "research-R05", "kind": "research_report", "uri": "beads:gt-77sw#R05-security-paths", "actor": "R05-security-paths", "created_at": "2026-07-08T20:07:00Z", "digest": null, "summary": "FormulaPath arbitrary local ParseFile bypass was a security blocker before fixup."},
+    {"id": "research-R06", "kind": "research_report", "uri": "beads:gt-77sw#R06-tests", "actor": "R06-tests", "created_at": "2026-07-08T20:07:00Z", "digest": null, "summary": "Tests cover route precedence, GT_TOWN_ROOT, explicit path precedence, rig validation, and fallback behavior; no blocking test gap after fixup."},
+    {"id": "research-R07", "kind": "research_report", "uri": "beads:gt-77sw#R07-current-main", "actor": "R07-current-main", "created_at": "2026-07-08T20:07:00Z", "digest": null, "summary": "PR applies cleanly to current upstream/main with low stale-base risk."},
+    {"id": "research-R08", "kind": "research_report", "uri": "beads:gt-77sw#R08-labels-checks", "actor": "R08-labels-checks", "created_at": "2026-07-08T20:07:00Z", "digest": null, "summary": "Original PR #4426 has exactly one semantic label family each but status/reviewing and no reviews block merge path."},
+    {"id": "research-R09", "kind": "research_report", "uri": "beads:gt-77sw#R09-attribution", "actor": "R09-attribution", "created_at": "2026-07-08T20:07:00Z", "digest": null, "summary": "PR #4426 preserves #4334 attribution with Co-authored-by trailer; original remains open until replacement lands."},
+    {"id": "research-R10", "kind": "research_report", "uri": "beads:gt-77sw#R10-cleanup-convergence", "actor": "R10-cleanup-convergence", "created_at": "2026-07-08T20:07:00Z", "digest": null, "summary": "Change collapses duplicate formula lookup helpers into one shared resolver and is cleanup-first."},
+    {"id": "research-R11", "kind": "research_report", "uri": "beads:gt-77sw#R11-cli-docs", "actor": "R11-cli-docs", "created_at": "2026-07-08T20:07:00Z", "digest": null, "summary": "CLI help/docs are consistent with gt list/show delegation and named formula execution resolution."},
+    {"id": "research-R12", "kind": "research_report", "uri": "beads:gt-77sw#R12-embedded-errors", "actor": "R12-embedded-errors", "created_at": "2026-07-08T20:07:00Z", "digest": null, "summary": "Embedded miss wrapping lost fs.ErrNotExist before fixup; now preserves both sentinel and underlying error."},
+    {"id": "research-R13", "kind": "research_report", "uri": "beads:gt-77sw#R13-workspace-env", "actor": "R13-workspace-env", "created_at": "2026-07-08T20:07:00Z", "digest": null, "summary": "Synthesis target rig hardcoded gastown fallback was a blocker before fixup; now resolved through metadata/current/auto-infer."},
+    {"id": "research-R14", "kind": "research_report", "uri": "beads:gt-77sw#R14-cross-platform", "actor": "R14-cross-platform", "created_at": "2026-07-08T20:07:00Z", "digest": null, "summary": "Path validation handles Unix/Windows separators; Windows smoke CI is relevant and passed on replacement."},
+    {"id": "research-R15", "kind": "research_report", "uri": "beads:gt-77sw#R15-architecture", "actor": "R15-architecture", "created_at": "2026-07-08T20:07:00Z", "digest": null, "summary": "Architecture risk is low; formula package now depends on existing beads route helpers without runtime hacks."},
+    {"id": "pre-P01", "kind": "pre_implementation_review", "uri": "beads:gt-77sw#P01", "actor": "P01", "created_at": "2026-07-08T20:11:00Z", "digest": null, "summary": "Approved fixup plan; suggested resolving target rig once and constraining FormulaPath."},
+    {"id": "pre-P02", "kind": "pre_implementation_review", "uri": "beads:gt-77sw#P02", "actor": "P02", "created_at": "2026-07-08T20:11:00Z", "digest": null, "summary": "Approved with symlink-cleaned formula_path containment and invalid ConvoyMeta.Rig failure."},
+    {"id": "pre-P03", "kind": "pre_implementation_review", "uri": "beads:gt-77sw#P03", "actor": "P03", "created_at": "2026-07-08T20:11:00Z", "digest": null, "summary": "Approved minimal plan to stop unsafe formula_path bypass and preserve errors.Is behavior."},
+    {"id": "pre-P04", "kind": "pre_implementation_review", "uri": "beads:gt-77sw#P04", "actor": "P04", "created_at": "2026-07-08T20:11:00Z", "digest": null, "summary": "Approved replacement/fixup plan and preferred deleting or constraining FormulaPath rather than adding allowlist bandaids."},
+    {"id": "pre-P05", "kind": "pre_implementation_review", "uri": "beads:gt-77sw#P05", "actor": "P05", "created_at": "2026-07-08T20:11:00Z", "digest": null, "summary": "Approved with focused tests for unsafe paths, unknown rigs, fallback removal, and error wrapping."},
+    {"id": "post-Q01", "kind": "post_implementation_review", "uri": "beads:gt-77sw#Q01-security", "actor": "Q01-security", "created_at": "2026-07-08T20:25:00Z", "digest": null, "summary": "Approved final head security/path containment; no arbitrary .beads/.dolt/local-file parse leakage."},
+    {"id": "post-Q02", "kind": "post_implementation_review", "uri": "beads:gt-77sw#Q02-rig-resolution", "actor": "Q02-rig-resolution", "created_at": "2026-07-08T20:25:00Z", "digest": null, "summary": "Approved explicit rig resolution, no hardcoded gastown fallback, and registered-rig validation before side effects."},
+    {"id": "post-Q03", "kind": "post_implementation_review", "uri": "beads:gt-77sw#Q03-errors-tests", "actor": "Q03-errors-tests", "created_at": "2026-07-08T20:25:00Z", "digest": null, "summary": "Approved embedded error wrapping and focused test coverage for implemented blockers."},
+    {"id": "post-Q04", "kind": "post_implementation_review", "uri": "beads:gt-77sw#Q04-minimality", "actor": "Q04-minimality", "created_at": "2026-07-08T20:25:00Z", "digest": null, "summary": "Approved minimal cleanup-first scope, no unrelated rewrites, and attribution preservation."},
+    {"id": "post-Q05b", "kind": "post_implementation_review", "uri": "beads:gt-77sw#Q05b-verification-refresh", "actor": "Q05b-verification-refresh", "created_at": "2026-07-08T20:42:00Z", "digest": null, "summary": "Approved replacement PR #4448 state after branch push, CI green, labels fixed, and final blockers narrowed to merge-status/review gate."}
+  ],
+  "implementation": {
+    "code_changed_by_sheriff": true,
+    "mode": "replacement_pr",
+    "first_code_change_at": "2026-07-08T20:13:00Z",
+    "modified_paths": [
+      "internal/cmd/formula.go",
+      "internal/cmd/formula_test.go",
+      "internal/cmd/synthesis.go",
+      "internal/cmd/synthesis_test.go",
+      "internal/formula/embed.go",
+      "internal/formula/embed_test.go"
+    ],
+    "commits": [
+      "5e4baac4fb94d80a7340e4d652d23d4f3c9383a7",
+      "662d73ff658dde20f67032c2672be9104eef9571",
+      "0b4c01a36e567bce55c2d5c9dfb211942337c3e5",
+      "afc73703d61c60f35306a1de8381438bf38d2b8a",
+      "c61598022c76eae9895ecf4d0296af43e3d7f44a"
+    ]
+  },
+  "evidence": {
+    "research_legs": [
+      {"id": "R01", "independence_key": "R01-problem-validity", "artifact_ref": "research-R01", "completed_at": "2026-07-08T20:07:00Z", "actor": "researcher-R01", "lens": "problem validity and solution fit", "summary": "Problem valid; #4426 converges named formula lookup through shared resolver."},
+      {"id": "R02", "independence_key": "R02-resolver-tiers", "artifact_ref": "research-R02", "completed_at": "2026-07-08T20:07:00Z", "actor": "researcher-R02", "lens": "resolver tiers", "summary": "Rig/town/embedded ordering and route-resolved rig lookup are correct."},
+      {"id": "R03", "independence_key": "R03-formula-run", "artifact_ref": "research-R03", "completed_at": "2026-07-08T20:07:00Z", "actor": "researcher-R03", "lens": "formula run", "summary": "Explicit --rig existence gap identified and fixed."},
+      {"id": "R04", "independence_key": "R04-synthesis", "artifact_ref": "research-R04", "completed_at": "2026-07-08T20:07:00Z", "actor": "researcher-R04", "lens": "synthesis formula load", "summary": "Synthesis named formula load convergence is sound."},
+      {"id": "R05", "independence_key": "R05-security-paths", "artifact_ref": "research-R05", "completed_at": "2026-07-08T20:07:00Z", "actor": "researcher-R05", "lens": "security path traversal", "summary": "FormulaPath bypass identified and fixed by formula-root containment."},
+      {"id": "R06", "independence_key": "R06-tests", "artifact_ref": "research-R06", "completed_at": "2026-07-08T20:07:00Z", "actor": "researcher-R06", "lens": "tests", "summary": "Focused tests cover relevant formula resolution edges."},
+      {"id": "R07", "independence_key": "R07-current-main", "artifact_ref": "research-R07", "completed_at": "2026-07-08T20:07:00Z", "actor": "researcher-R07", "lens": "current main", "summary": "Change applies cleanly to current upstream/main."},
+      {"id": "R08", "independence_key": "R08-labels-checks", "artifact_ref": "research-R08", "completed_at": "2026-07-08T20:07:00Z", "actor": "researcher-R08", "lens": "labels checks blockers", "summary": "Original #4426 merge path blocked by status/reviewing and no approvals."},
+      {"id": "R09", "independence_key": "R09-attribution", "artifact_ref": "research-R09", "completed_at": "2026-07-08T20:07:00Z", "actor": "researcher-R09", "lens": "attribution", "summary": "Attribution and superseded closure sequencing are correct."},
+      {"id": "R10", "independence_key": "R10-cleanup-convergence", "artifact_ref": "research-R10", "completed_at": "2026-07-08T20:07:00Z", "actor": "researcher-R10", "lens": "cleanup convergence", "summary": "Change collapses duplicate lookup helpers into shared resolver."},
+      {"id": "R11", "independence_key": "R11-cli-docs", "artifact_ref": "research-R11", "completed_at": "2026-07-08T20:07:00Z", "actor": "researcher-R11", "lens": "CLI docs", "summary": "Help text aligns with delegated bd list/show and named execution behavior."},
+      {"id": "R12", "independence_key": "R12-embedded-errors", "artifact_ref": "research-R12", "completed_at": "2026-07-08T20:07:00Z", "actor": "researcher-R12", "lens": "embedded errors", "summary": "Embedded error wrapping regression identified and fixed."},
+      {"id": "R13", "independence_key": "R13-workspace-env", "artifact_ref": "research-R13", "completed_at": "2026-07-08T20:07:00Z", "actor": "researcher-R13", "lens": "workspace env", "summary": "Synthesis hardcoded gastown fallback identified and fixed."},
+      {"id": "R14", "independence_key": "R14-cross-platform", "artifact_ref": "research-R14", "completed_at": "2026-07-08T20:07:00Z", "actor": "researcher-R14", "lens": "cross platform", "summary": "Path validation covers slash/backslash and Windows smoke CI passed."},
+      {"id": "R15", "independence_key": "R15-architecture", "artifact_ref": "research-R15", "completed_at": "2026-07-08T20:07:00Z", "actor": "researcher-R15", "lens": "architecture integration", "summary": "Architecture change is scoped and uses existing beads route helpers."}
+    ],
+    "pre_implementation_reviews": [
+      {"id": "P01", "independence_key": "P01", "artifact_ref": "pre-P01", "reviewed_action_ref": "action-plan-gt-77sw", "completed_at": "2026-07-08T20:11:00Z", "actor": "pre-reviewer-P01", "verdict": "approve", "summary": "Approved target-rig resolution and FormulaPath constraints."},
+      {"id": "P02", "independence_key": "P02", "artifact_ref": "pre-P02", "reviewed_action_ref": "action-plan-gt-77sw", "completed_at": "2026-07-08T20:11:00Z", "actor": "pre-reviewer-P02", "verdict": "approve", "summary": "Approved symlink-cleaned formula_path containment and rig validation."},
+      {"id": "P03", "independence_key": "P03", "artifact_ref": "pre-P03", "reviewed_action_ref": "action-plan-gt-77sw", "completed_at": "2026-07-08T20:11:00Z", "actor": "pre-reviewer-P03", "verdict": "approve", "summary": "Approved minimal fixup for unsafe path bypass and error wrapping."},
+      {"id": "P04", "independence_key": "P04", "artifact_ref": "pre-P04", "reviewed_action_ref": "action-plan-gt-77sw", "completed_at": "2026-07-08T20:11:00Z", "actor": "pre-reviewer-P04", "verdict": "approve", "summary": "Approved replacement/fixup plan as cleanup-first."},
+      {"id": "P05", "independence_key": "P05", "artifact_ref": "pre-P05", "reviewed_action_ref": "action-plan-gt-77sw", "completed_at": "2026-07-08T20:11:00Z", "actor": "pre-reviewer-P05", "verdict": "approve", "summary": "Approved with focused tests for all blockers."}
+    ],
+    "post_implementation_reviews": [
+      {"id": "Q01", "independence_key": "Q01-security", "artifact_ref": "post-Q01", "reviewed_action_ref": "action-plan-gt-77sw", "reviewed_head_sha": "c61598022c76eae9895ecf4d0296af43e3d7f44a", "completed_at": "2026-07-08T20:25:00Z", "actor": "post-reviewer-Q01", "verdict": "approve", "summary": "Approved final security/path containment."},
+      {"id": "Q02", "independence_key": "Q02-rig-resolution", "artifact_ref": "post-Q02", "reviewed_action_ref": "action-plan-gt-77sw", "reviewed_head_sha": "c61598022c76eae9895ecf4d0296af43e3d7f44a", "completed_at": "2026-07-08T20:25:00Z", "actor": "post-reviewer-Q02", "verdict": "approve", "summary": "Approved final rig resolution behavior."},
+      {"id": "Q03", "independence_key": "Q03-errors-tests", "artifact_ref": "post-Q03", "reviewed_action_ref": "action-plan-gt-77sw", "reviewed_head_sha": "c61598022c76eae9895ecf4d0296af43e3d7f44a", "completed_at": "2026-07-08T20:25:00Z", "actor": "post-reviewer-Q03", "verdict": "approve", "summary": "Approved final error wrapping and test coverage."},
+      {"id": "Q04", "independence_key": "Q04-minimality", "artifact_ref": "post-Q04", "reviewed_action_ref": "action-plan-gt-77sw", "reviewed_head_sha": "c61598022c76eae9895ecf4d0296af43e3d7f44a", "completed_at": "2026-07-08T20:25:00Z", "actor": "post-reviewer-Q04", "verdict": "approve", "summary": "Approved minimal cleanup-first final diff and attribution preservation."},
+      {"id": "Q05b", "independence_key": "Q05b-verification-refresh", "artifact_ref": "post-Q05b", "reviewed_action_ref": "action-plan-gt-77sw", "reviewed_head_sha": "c61598022c76eae9895ecf4d0296af43e3d7f44a", "completed_at": "2026-07-08T20:42:00Z", "actor": "post-reviewer-Q05b", "verdict": "approve", "summary": "Approved replacement PR state after CI green; remaining merge blocker is status/review gate."}
+    ]
+  },
+  "cleanup_first": {
+    "assessment": "convergent",
+    "rationale": "Replacement collapses duplicated formula search helpers into shared rig/town/embedded resolution, removes the hardcoded synthesis rig fallback, constrains explicit formula paths, and avoids workaround layers.",
+    "prohibited_patterns": [
+      {"kind": "bandaid", "present": false, "exception_reason": "none", "evidence_ref": "post-Q04"},
+      {"kind": "workaround_layer", "present": false, "exception_reason": "none", "evidence_ref": "post-Q04"},
+      {"kind": "compatibility_shim", "present": false, "exception_reason": "none", "evidence_ref": "post-Q04"},
+      {"kind": "patch_on_patch", "present": false, "exception_reason": "none", "evidence_ref": "post-Q04"},
+      {"kind": "scope_creep", "present": false, "exception_reason": "none", "evidence_ref": "post-Q04"}
+    ]
+  },
+  "enhancement_approval": {
+    "required": false,
+    "required_reason": null,
+    "approved": false,
+    "approver": null,
+    "approver_role": null,
+    "approval_ref": null,
+    "approved_at": null
+  },
+  "verification": {
+    "focused_checks": [
+      {"name": "diff-check", "command_or_check": "git diff --check", "outcome": "pass", "artifact_ref": "verification-local", "reason": "No whitespace or conflict marker issues."},
+      {"name": "formula-focused-tests", "command_or_check": "CGO_ENABLED=0 go test ./internal/formula -run 'TestResolveFormulaContent|TestGetEmbeddedFormulaContent' -count=1", "outcome": "pass", "artifact_ref": "verification-local", "reason": "Focused resolver and embedded formula tests passed."},
+      {"name": "cmd-focused-tests", "command_or_check": "CGO_ENABLED=0 go test ./internal/cmd -run 'TestLoadSynthesisFormula|TestResolveSynthesisTargetRig|TestValidateFormulaRunRigName|TestResolveRegisteredRig|TestConvoyMeta|TestExpandOutputPath|TestLegOutput' -count=1", "outcome": "pass", "artifact_ref": "verification-local", "reason": "Focused formula run and synthesis command tests passed."},
+      {"name": "build", "command_or_check": "CGO_ENABLED=0 go build ./cmd/gt", "outcome": "pass", "artifact_ref": "verification-local", "reason": "gt CLI builds locally with CGO disabled."}
+    ],
+    "ci_checks": [
+      {"name": "Test", "outcome": "pass", "run_url": "https://github.com/gastownhall/gastown/actions/runs/28973324222/job/85974195437", "base_outcome": "unknown", "head_outcome": "pass", "unrelated_to_change": false, "artifact_ref": "verification-ci", "reason": "PR #4448 CI Test passed."},
+      {"name": "Lint", "outcome": "pass", "run_url": "https://github.com/gastownhall/gastown/actions/runs/28973324222/job/85974195410", "base_outcome": "unknown", "head_outcome": "pass", "unrelated_to_change": false, "artifact_ref": "verification-ci", "reason": "PR #4448 CI Lint passed."},
+      {"name": "Integration Tests", "outcome": "pass", "run_url": "https://github.com/gastownhall/gastown/actions/runs/28973324222/job/85974195453", "base_outcome": "unknown", "head_outcome": "pass", "unrelated_to_change": false, "artifact_ref": "verification-ci", "reason": "PR #4448 CI Integration Tests passed."},
+      {"name": "Windows Smoke Test", "outcome": "pass", "run_url": "https://github.com/gastownhall/gastown/actions/runs/28973323995/job/85974194539", "base_outcome": "unknown", "head_outcome": "pass", "unrelated_to_change": false, "artifact_ref": "verification-ci", "reason": "PR #4448 Windows Smoke Test passed."},
+      {"name": "Reject go.mod replace directives", "outcome": "pass", "run_url": "https://github.com/gastownhall/gastown/actions/runs/28973324222/job/85974195430", "base_outcome": "unknown", "head_outcome": "pass", "unrelated_to_change": false, "artifact_ref": "verification-ci", "reason": "Guard passed."},
+      {"name": "Reject issues.jsonl", "outcome": "pass", "run_url": "https://github.com/gastownhall/gastown/actions/runs/28973324222/job/85974195427", "base_outcome": "unknown", "head_outcome": "pass", "unrelated_to_change": false, "artifact_ref": "verification-ci", "reason": "Guard passed."}
+    ]
+  },
+  "baseline_red_waiver": {
+    "requested": false,
+    "approved": false,
+    "approved_by": null,
+    "approver_role": null,
+    "approved_at": null,
+    "approval_ref": null,
+    "failing_checks": [],
+    "unrelated_rationale": "",
+    "evidence_refs": []
+  },
+  "replacement_flow": {
+    "required": true,
+    "mode": "replacement_pr",
+    "state": "ready",
+    "original_change_url": "https://github.com/gastownhall/gastown/pull/4426",
+    "replacement_change_url": "https://github.com/gastownhall/gastown/pull/4448",
+    "replacement_branch": "Bella-Giraffety:polecat/institute/gt-77sw+58feae",
+    "replacement_commit_refs": [
+      "5e4baac4fb94d80a7340e4d652d23d4f3c9383a7",
+      "662d73ff658dde20f67032c2672be9104eef9571",
+      "0b4c01a36e567bce55c2d5c9dfb211942337c3e5",
+      "afc73703d61c60f35306a1de8381438bf38d2b8a",
+      "c61598022c76eae9895ecf4d0296af43e3d7f44a"
+    ],
+    "original_author": "Bella-Giraffety",
+    "evidence_reuse": {
+      "reused_artifact_refs": ["original-pr-4426", "original-pr-4334", "research-R09"],
+      "fresh_artifact_refs": ["replacement-pr-4448", "verification-local", "verification-ci", "post-Q01", "post-Q02", "post-Q03", "post-Q04", "post-Q05b"],
+      "rationale": "PR #4426 commits were cherry-picked onto current upstream/main to preserve attribution; final fixup and verification are fresh on PR #4448 head."
+    },
+    "attribution": {
+      "required": true,
+      "required_reason": "Replacement carries forward PR #4426 and original PR #4334 accepted bug-fix intent.",
+      "preserved": true,
+      "method": "comment_credit",
+      "artifact_refs": ["original-pr-4426", "original-pr-4334", "replacement-pr-4448"]
+    },
+    "superseded_closure": {
+      "required": true,
+      "state": "deferred_until_replacement_merge",
+      "closure_intent_ref": "replacement-pr-4448",
+      "replacement_merge_ref": null,
+      "closure_ref": null
+    }
+  },
+  "blocker_scan": {
+    "scanned_sources": ["labels", "pr_comments", "review_comments", "ci_checks", "codecov_comment", "beads_notes", "local_reviews"],
+    "unresolved_blockers_found": false,
+    "blocker_refs": [],
+    "resolution_refs": ["post-Q01", "post-Q02", "post-Q03", "post-Q04", "post-Q05b", "verification-local", "verification-ci"],
+    "scanned_at": "2026-07-08T20:42:00Z",
+    "summary": "Original #4426 blockers were fixed in replacement #4448. Replacement has no unresolved code/security/test blockers; Codecov low patch coverage comment is non-blocking and all tests successful. Merge remains policy-blocked by status/review gate, recorded in final."
+  },
+  "gates": [],
+  "final": {
+    "verdict": "defer_human_review",
+    "decision_valid": true,
+    "merge_path_allowed": false,
+    "blocking_gates": ["merge_status"],
+    "target_change_url": "https://github.com/gastownhall/gastown/pull/4448",
+    "target_head_sha": "c61598022c76eae9895ecf4d0296af43e3d7f44a",
+    "decided_by": "gastown/polecats/institute",
+    "decided_at": "2026-07-08T20:45:00Z",
+    "reason": "Replacement PR #4448 is current-main, cleanup-first, attribution-safe, and CI green, but status is still status/reviewing and no maintainer review/approval exists. Do not merge or close originals until maintainers promote/approve and replacement lands.",
+    "required_actions": [
+      "Maintainer review/approval required before any merge path.",
+      "Promote status to review-approved or merge-ready only after policy approval.",
+      "After #4448 lands, close #4426 and #4334 as superseded with replacement merge evidence."
+    ]
+  }
+}
