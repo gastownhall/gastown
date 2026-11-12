@@ -93,6 +93,12 @@ type Daemon struct {
 	// Restart tracking with exponential backoff to prevent crash loops
 	restartTracker *RestartTracker
 
+	// deaconCrashLoopLogged tracks whether the deacon crash-loop guard has
+	// already been logged, so transitions are logged once instead of every
+	// heartbeat cycle (op-r9fx: 16k+ repeated skip lines over six weeks).
+	// Only accessed from heartbeat loop goroutine - no sync needed.
+	deaconCrashLoopLogged bool
+
 	// telemetry exports metrics and logs to VictoriaMetrics / VictoriaLogs.
 	// Nil when telemetry is disabled (GT_OTEL_METRICS_URL / GT_OTEL_LOGS_URL not set).
 	otelProvider *telemetry.Provider
@@ -1466,7 +1472,7 @@ func (d *Daemon) ensureDeaconRunning() {
 	// Check restart tracker for backoff/crash loop
 	if d.restartTracker != nil {
 		if d.restartTracker.IsInCrashLoop(agentID) {
-			d.logger.Printf("Deacon is in crash loop, skipping restart (use 'gt daemon clear-backoff deacon' to reset)")
+			d.logDeaconCrashLoopTransition(true)
 			return
 		}
 		if !d.restartTracker.CanRestart(agentID) {
@@ -1513,6 +1519,21 @@ func (d *Daemon) deaconGracePeriod() time.Duration {
 	return d.loadOperationalConfig().GetDaemonConfig().DeaconGracePeriodD()
 }
 
+// logDeaconCrashLoopTransition logs deacon crash-loop guard state changes
+// exactly once per transition instead of on every heartbeat cycle (op-r9fx:
+// the per-cycle skip line produced 16k+ log lines over six weeks).
+func (d *Daemon) logDeaconCrashLoopTransition(active bool) {
+	if active == d.deaconCrashLoopLogged {
+		return
+	}
+	d.deaconCrashLoopLogged = active
+	if active {
+		d.logger.Printf("Deacon entered crash-loop state: auto-restarts and heartbeat kill check suspended (clears after sustained healthy heartbeats, on crash-loop expiry, or via 'gt daemon clear-backoff deacon')")
+	} else {
+		d.logger.Printf("Deacon crash-loop state cleared: heartbeat supervision resumed")
+	}
+}
+
 // checkDeaconHeartbeat checks if the Deacon is making progress.
 // This is a belt-and-suspenders fallback in case Boot doesn't detect stuck states.
 // Uses the heartbeat file that the Deacon updates on each patrol cycle.
@@ -1523,16 +1544,32 @@ func (d *Daemon) deaconGracePeriod() time.Duration {
 // - Grace period only applies if heartbeat is from BEFORE we started Deacon
 // - If heartbeat is from AFTER start but stale, Deacon is stuck
 func (d *Daemon) checkDeaconHeartbeat() {
+	// Always read heartbeat first (PATCH-005)
+	hb := deacon.ReadHeartbeat(d.config.TownRoot)
+
 	// Respect crash-loop guard: if the restart tracker says Deacon is in a
 	// crash loop, do not kill the session — the guard is deliberately holding
 	// off restarts to break the cycle. (Fixes #2086)
+	//
+	// The guard is not a life sentence (op-r9fx). A fresh heartbeat means the
+	// Deacon is alive and patrolling (e.g. it was revived manually), so record
+	// success: once the tracker's StabilityPeriod has passed since the last
+	// restart attempt, that clears the crash-loop state and normal heartbeat
+	// supervision resumes. A Deacon that stays dead is covered by the
+	// tracker's CrashLoopExpiry instead.
 	if d.restartTracker != nil && d.restartTracker.IsInCrashLoop("deacon") {
-		d.logger.Printf("Deacon is in crash-loop state, skipping heartbeat kill check")
-		return
+		if hb != nil && hb.IsFresh() {
+			d.restartTracker.RecordSuccess("deacon")
+		}
+		if d.restartTracker.IsInCrashLoop("deacon") {
+			d.logDeaconCrashLoopTransition(true)
+			return
+		}
+		if err := d.restartTracker.Save(); err != nil {
+			d.logger.Printf("Warning: failed to save restart state: %v", err)
+		}
 	}
-
-	// Always read heartbeat first (PATCH-005)
-	hb := deacon.ReadHeartbeat(d.config.TownRoot)
+	d.logDeaconCrashLoopTransition(false)
 
 	sessionName := d.getDeaconSessionName()
 

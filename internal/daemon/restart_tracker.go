@@ -27,6 +27,15 @@ type RestartTrackerConfig struct {
 	// CrashLoopCount is how many restarts within the window trigger crash-loop state (default 5).
 	CrashLoopCount int `json:"crash_loop_count,omitempty"`
 
+	// CrashLoopExpiry is how long crash-loop state holds before the daemon is
+	// allowed to attempt restarts again (default 1h). Crash-loop state must
+	// decay: while it is set the daemon performs no restarts, so RecordRestart's
+	// stability reset can never fire, and without an expiry the flag is
+	// permanent — the deacon heartbeat kill check stayed disabled for six weeks
+	// on a stale flag (op-r9fx). One retry per expiry period is cheap; a truly
+	// still-broken agent re-enters crash loop after CrashLoopCount failures.
+	CrashLoopExpiry time.Duration `json:"crash_loop_expiry,omitempty"`
+
 	// StabilityPeriod is how long an agent must run without restarting
 	// before its backoff resets (default 30m).
 	StabilityPeriod time.Duration `json:"stability_period,omitempty"`
@@ -48,6 +57,7 @@ func DefaultRestartTrackerConfig() RestartTrackerConfig {
 		BackoffMultiplier: 2.0,
 		CrashLoopWindow:   15 * time.Minute,
 		CrashLoopCount:    5,
+		CrashLoopExpiry:   time.Hour,
 		StabilityPeriod:   30 * time.Minute,
 		PauseBackoff:      60 * time.Second,
 	}
@@ -70,6 +80,9 @@ func (c RestartTrackerConfig) withDefaults() RestartTrackerConfig {
 	}
 	if c.CrashLoopCount <= 0 {
 		c.CrashLoopCount = d.CrashLoopCount
+	}
+	if c.CrashLoopExpiry <= 0 {
+		c.CrashLoopExpiry = d.CrashLoopExpiry
 	}
 	if c.StabilityPeriod <= 0 {
 		c.StabilityPeriod = d.StabilityPeriod
@@ -157,7 +170,7 @@ func (rt *RestartTracker) CanRestart(agentID string) bool {
 	}
 
 	// Check if in crash loop
-	if !info.CrashLoopSince.IsZero() {
+	if rt.crashLoopActive(info) {
 		return false
 	}
 
@@ -249,6 +262,7 @@ func (rt *RestartTracker) RecordSuccess(agentID string) {
 }
 
 // IsInCrashLoop returns true if the agent is detected as crash-looping.
+// Crash-loop state expires after CrashLoopExpiry (see crashLoopActive).
 func (rt *RestartTracker) IsInCrashLoop(agentID string) bool {
 	rt.mu.RLock()
 	defer rt.mu.RUnlock()
@@ -257,7 +271,18 @@ func (rt *RestartTracker) IsInCrashLoop(agentID string) bool {
 	if !exists {
 		return false
 	}
-	return !info.CrashLoopSince.IsZero()
+	return rt.crashLoopActive(info)
+}
+
+// crashLoopActive reports whether info's crash-loop state is set and has not
+// yet expired. Expiry is evaluated lazily on read; the stale CrashLoopSince
+// field itself is cleaned up by RecordRestart's stability reset on the next
+// restart attempt. Callers must hold rt.mu.
+func (rt *RestartTracker) crashLoopActive(info *AgentRestartInfo) bool {
+	if info.CrashLoopSince.IsZero() {
+		return false
+	}
+	return time.Since(info.CrashLoopSince) < rt.config.CrashLoopExpiry
 }
 
 // GetBackoffRemaining returns how long until the agent can be restarted.
