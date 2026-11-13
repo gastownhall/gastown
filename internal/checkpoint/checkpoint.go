@@ -127,7 +127,8 @@ func Capture(polecatDir string) (*Checkpoint, error) {
 	util.SetDetachedProcessGroup(cmd)
 	output, err := cmd.Output()
 	if err == nil {
-		lines := strings.Split(strings.TrimSpace(string(output)), "\n")
+		// Preserve the leading status column for unstaged changes.
+		lines := strings.Split(strings.TrimRight(string(output), "\n"), "\n")
 		for _, line := range lines {
 			if len(line) > 3 {
 				// Format: XY filename
