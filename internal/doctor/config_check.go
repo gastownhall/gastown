@@ -571,7 +571,8 @@ func findAllRigs(townRoot string) []string {
 		}
 		// Skip non-rig directories
 		name := entry.Name()
-		if name == "mayor" || name == ".beads" || strings.HasPrefix(name, ".") {
+		if name == "mayor" || name == ".beads" || strings.HasPrefix(name, ".") ||
+			constants.IsTownInfraDir(name) {
 			continue
 		}
 

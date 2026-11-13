@@ -13,6 +13,7 @@ import (
 	"strings"
 
 	"github.com/steveyegge/gastown/internal/atomicfile"
+	"github.com/steveyegge/gastown/internal/constants"
 )
 
 // HookEntry represents a single hook matcher with its associated hooks.
@@ -592,7 +593,8 @@ func DiscoverTargets(townRoot string) ([]Target, error) {
 
 	for _, entry := range entries {
 		if !entry.IsDir() || entry.Name() == "mayor" || entry.Name() == "deacon" ||
-			entry.Name() == ".beads" || strings.HasPrefix(entry.Name(), ".") {
+			entry.Name() == ".beads" || strings.HasPrefix(entry.Name(), ".") ||
+			constants.IsTownInfraDir(entry.Name()) {
 			continue
 		}
 
@@ -686,7 +688,8 @@ func DiscoverRoleLocations(townRoot string) ([]RoleLocation, error) {
 
 	for _, entry := range entries {
 		if !entry.IsDir() || entry.Name() == "mayor" || entry.Name() == "deacon" ||
-			entry.Name() == ".beads" || strings.HasPrefix(entry.Name(), ".") {
+			entry.Name() == ".beads" || strings.HasPrefix(entry.Name(), ".") ||
+			constants.IsTownInfraDir(entry.Name()) {
 			continue
 		}
 

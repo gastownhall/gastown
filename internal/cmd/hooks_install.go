@@ -165,7 +165,8 @@ func determineTargets(townRoot, role string, allRigs bool, allowedRoles []string
 			return nil, err
 		}
 		for _, e := range entries {
-			if e.IsDir() && !strings.HasPrefix(e.Name(), ".") && e.Name() != "mayor" && e.Name() != "deacon" && e.Name() != "hooks" {
+			if e.IsDir() && !strings.HasPrefix(e.Name(), ".") && e.Name() != "mayor" && e.Name() != "deacon" && e.Name() != "hooks" &&
+				!constants.IsTownInfraDir(e.Name()) {
 				rigs = append(rigs, e.Name())
 			}
 		}

@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/steveyegge/gastown/internal/config"
+	"github.com/steveyegge/gastown/internal/constants"
 	"github.com/steveyegge/gastown/internal/runtime"
 	"github.com/steveyegge/gastown/internal/session"
 	"github.com/steveyegge/gastown/internal/style"
@@ -288,7 +289,8 @@ func (c *ClaudeSettingsCheck) findSettingsFiles(townRoot string) []staleSettings
 
 		// Skip known non-rig directories
 		if rigName == "mayor" || rigName == "deacon" || rigName == "daemon" ||
-			rigName == ".git" || rigName == "docs" || rigName[0] == '.' {
+			rigName == ".git" || rigName == "docs" || rigName[0] == '.' ||
+			constants.IsTownInfraDir(rigName) {
 			continue
 		}
 
