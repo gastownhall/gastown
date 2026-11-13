@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/steveyegge/gastown/internal/beads"
+	"github.com/steveyegge/gastown/internal/config"
 	"github.com/steveyegge/gastown/internal/rig"
 	"github.com/steveyegge/gastown/internal/testutil"
 )
@@ -332,8 +333,39 @@ func setupEngineerTerminalCloseTest(t *testing.T, activeMR string) (*Engineer, *
 	return e, b, mrIssue, agentIssue, srcIssue
 }
 
+func writeEngineerSettingsConfig(t *testing.T, rigPath string, cfg map[string]interface{}) string {
+	t.Helper()
+
+	settingsPath := config.RigSettingsPath(rigPath)
+	if err := os.MkdirAll(filepath.Dir(settingsPath), 0755); err != nil {
+		t.Fatalf("mkdir settings dir: %v", err)
+	}
+	data, err := json.MarshalIndent(cfg, "", "  ")
+	if err != nil {
+		t.Fatalf("marshal settings config: %v", err)
+	}
+	if err := os.WriteFile(settingsPath, data, 0644); err != nil {
+		t.Fatalf("write settings config: %v", err)
+	}
+	return settingsPath
+}
+
+func writeEngineerRootConfig(t *testing.T, rigPath string, cfg map[string]interface{}) string {
+	t.Helper()
+
+	rootPath := filepath.Join(rigPath, "config.json")
+	data, err := json.MarshalIndent(cfg, "", "  ")
+	if err != nil {
+		t.Fatalf("marshal root config: %v", err)
+	}
+	if err := os.WriteFile(rootPath, data, 0644); err != nil {
+		t.Fatalf("write root config: %v", err)
+	}
+	return rootPath
+}
+
 func TestEngineer_LoadConfig_NoFile(t *testing.T) {
-	// Create a temp directory without config.json
+	// Create a temp directory without settings/config.json
 	tmpDir, err := os.MkdirTemp("", "engineer-test-*")
 	if err != nil {
 		t.Fatal(err)
@@ -359,15 +391,15 @@ func TestEngineer_LoadConfig_NoFile(t *testing.T) {
 }
 
 func TestEngineer_LoadConfig_WithMergeQueue(t *testing.T) {
-	// Create a temp directory with config.json
+	// Create a temp directory with settings/config.json
 	tmpDir, err := os.MkdirTemp("", "engineer-test-*")
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer os.RemoveAll(tmpDir)
 
-	// Write config file
-	config := map[string]interface{}{
+	// Write settings file
+	settings := map[string]interface{}{
 		"type":    "rig",
 		"version": 1,
 		"name":    "test-rig",
@@ -380,11 +412,7 @@ func TestEngineer_LoadConfig_WithMergeQueue(t *testing.T) {
 			"stale_claim_timeout": "1h",
 		},
 	}
-
-	data, _ := json.MarshalIndent(config, "", "  ")
-	if err := os.WriteFile(filepath.Join(tmpDir, "config.json"), data, 0644); err != nil {
-		t.Fatal(err)
-	}
+	writeEngineerSettingsConfig(t, tmpDir, settings)
 
 	r := &rig.Rig{
 		Name: "test-rig",
@@ -424,6 +452,56 @@ func TestEngineer_LoadConfig_WithMergeQueue(t *testing.T) {
 	}
 }
 
+func TestEngineer_LoadConfig_IgnoresRigRootConfig(t *testing.T) {
+	tmpDir := t.TempDir()
+	writeEngineerRootConfig(t, tmpDir, map[string]interface{}{
+		"merge_queue": map[string]interface{}{
+			"max_concurrent": 9,
+			"on_conflict":    "auto_rebase",
+		},
+	})
+
+	e := NewEngineer(&rig.Rig{Name: "test-rig", Path: tmpDir})
+	if err := e.LoadConfig(); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if e.config.MaxConcurrent != 1 {
+		t.Errorf("MaxConcurrent = %d, want default 1", e.config.MaxConcurrent)
+	}
+	if e.config.OnConflict != "assign_back" {
+		t.Errorf("OnConflict = %q, want default assign_back", e.config.OnConflict)
+	}
+}
+
+func TestEngineer_LoadConfig_SettingsConfigWinsOverRigRootConfig(t *testing.T) {
+	tmpDir := t.TempDir()
+	writeEngineerRootConfig(t, tmpDir, map[string]interface{}{
+		"merge_queue": map[string]interface{}{
+			"max_concurrent": 9,
+			"on_conflict":    "auto_rebase",
+		},
+	})
+	writeEngineerSettingsConfig(t, tmpDir, map[string]interface{}{
+		"merge_queue": map[string]interface{}{
+			"max_concurrent": 3,
+			"on_conflict":    "assign_back",
+		},
+	})
+
+	e := NewEngineer(&rig.Rig{Name: "test-rig", Path: tmpDir})
+	if err := e.LoadConfig(); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if e.config.MaxConcurrent != 3 {
+		t.Errorf("MaxConcurrent = %d, want settings value 3", e.config.MaxConcurrent)
+	}
+	if e.config.OnConflict != "assign_back" {
+		t.Errorf("OnConflict = %q, want settings value assign_back", e.config.OnConflict)
+	}
+}
+
 func TestEngineer_LoadConfig_AutoPushDisabled(t *testing.T) {
 	tmpDir, err := os.MkdirTemp("", "engineer-test-*")
 	if err != nil {
@@ -431,7 +509,7 @@ func TestEngineer_LoadConfig_AutoPushDisabled(t *testing.T) {
 	}
 	defer os.RemoveAll(tmpDir)
 
-	config := map[string]interface{}{
+	settings := map[string]interface{}{
 		"type":    "rig",
 		"version": 1,
 		"name":    "test-rig",
@@ -439,11 +517,7 @@ func TestEngineer_LoadConfig_AutoPushDisabled(t *testing.T) {
 			"auto_push": false,
 		},
 	}
-
-	data, _ := json.MarshalIndent(config, "", "  ")
-	if err := os.WriteFile(filepath.Join(tmpDir, "config.json"), data, 0644); err != nil {
-		t.Fatal(err)
-	}
+	writeEngineerSettingsConfig(t, tmpDir, settings)
 
 	r := &rig.Rig{
 		Name: "test-rig",
@@ -461,24 +535,20 @@ func TestEngineer_LoadConfig_AutoPushDisabled(t *testing.T) {
 }
 
 func TestEngineer_LoadConfig_NoMergeQueueSection(t *testing.T) {
-	// Create a temp directory with config.json without merge_queue
+	// Create a temp directory with settings/config.json without merge_queue
 	tmpDir, err := os.MkdirTemp("", "engineer-test-*")
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer os.RemoveAll(tmpDir)
 
-	// Write config file without merge_queue
-	config := map[string]interface{}{
+	// Write settings file without merge_queue
+	settings := map[string]interface{}{
 		"type":    "rig",
 		"version": 1,
 		"name":    "test-rig",
 	}
-
-	data, _ := json.MarshalIndent(config, "", "  ")
-	if err := os.WriteFile(filepath.Join(tmpDir, "config.json"), data, 0644); err != nil {
-		t.Fatal(err)
-	}
+	writeEngineerSettingsConfig(t, tmpDir, settings)
 
 	r := &rig.Rig{
 		Name: "test-rig",
@@ -504,16 +574,12 @@ func TestEngineer_LoadConfig_InvalidPollInterval(t *testing.T) {
 	}
 	defer os.RemoveAll(tmpDir)
 
-	config := map[string]interface{}{
+	settings := map[string]interface{}{
 		"merge_queue": map[string]interface{}{
 			"poll_interval": "not-a-duration",
 		},
 	}
-
-	data, _ := json.MarshalIndent(config, "", "  ")
-	if err := os.WriteFile(filepath.Join(tmpDir, "config.json"), data, 0644); err != nil {
-		t.Fatal(err)
-	}
+	writeEngineerSettingsConfig(t, tmpDir, settings)
 
 	r := &rig.Rig{
 		Name: "test-rig",
@@ -546,16 +612,12 @@ func TestEngineer_LoadConfig_InvalidStaleClaimTimeout(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			config := map[string]interface{}{
+			settings := map[string]interface{}{
 				"merge_queue": map[string]interface{}{
 					"stale_claim_timeout": tt.timeout,
 				},
 			}
-
-			data, _ := json.MarshalIndent(config, "", "  ")
-			if err := os.WriteFile(filepath.Join(tmpDir, "config.json"), data, 0644); err != nil {
-				t.Fatal(err)
-			}
+			writeEngineerSettingsConfig(t, tmpDir, settings)
 
 			r := &rig.Rig{
 				Name: "test-rig",
@@ -601,7 +663,7 @@ func TestEngineer_LoadConfig_WithGates(t *testing.T) {
 	}
 	defer os.RemoveAll(tmpDir)
 
-	config := map[string]interface{}{
+	settings := map[string]interface{}{
 		"merge_queue": map[string]interface{}{
 			"gates": map[string]interface{}{
 				"test": map[string]interface{}{
@@ -619,11 +681,7 @@ func TestEngineer_LoadConfig_WithGates(t *testing.T) {
 			"gates_parallel": true,
 		},
 	}
-
-	data, _ := json.MarshalIndent(config, "", "  ")
-	if err := os.WriteFile(filepath.Join(tmpDir, "config.json"), data, 0644); err != nil {
-		t.Fatal(err)
-	}
+	writeEngineerSettingsConfig(t, tmpDir, settings)
 
 	r := &rig.Rig{Name: "test-rig", Path: tmpDir}
 	e := NewEngineer(r)
@@ -669,7 +727,7 @@ func TestEngineer_LoadConfig_GateInvalidTimeout(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			config := map[string]interface{}{
+			settings := map[string]interface{}{
 				"merge_queue": map[string]interface{}{
 					"gates": map[string]interface{}{
 						"bad": map[string]interface{}{
@@ -679,11 +737,7 @@ func TestEngineer_LoadConfig_GateInvalidTimeout(t *testing.T) {
 					},
 				},
 			}
-
-			data, _ := json.MarshalIndent(config, "", "  ")
-			if err := os.WriteFile(filepath.Join(tmpDir, "config.json"), data, 0644); err != nil {
-				t.Fatal(err)
-			}
+			writeEngineerSettingsConfig(t, tmpDir, settings)
 
 			r := &rig.Rig{Name: "test-rig", Path: tmpDir}
 			e := NewEngineer(r)
@@ -699,7 +753,7 @@ func TestEngineer_LoadConfig_GateInvalidTimeout(t *testing.T) {
 func TestEngineer_LoadConfig_GatePhase(t *testing.T) {
 	tmpDir := t.TempDir()
 
-	config := map[string]interface{}{
+	settings := map[string]interface{}{
 		"merge_queue": map[string]interface{}{
 			"gates": map[string]interface{}{
 				"lint": map[string]interface{}{
@@ -716,11 +770,7 @@ func TestEngineer_LoadConfig_GatePhase(t *testing.T) {
 			},
 		},
 	}
-
-	data, _ := json.MarshalIndent(config, "", "  ")
-	if err := os.WriteFile(filepath.Join(tmpDir, "config.json"), data, 0644); err != nil {
-		t.Fatal(err)
-	}
+	writeEngineerSettingsConfig(t, tmpDir, settings)
 
 	r := &rig.Rig{Name: "test-rig", Path: tmpDir}
 	e := NewEngineer(r)
@@ -744,7 +794,7 @@ func TestEngineer_LoadConfig_GatePhase(t *testing.T) {
 func TestEngineer_LoadConfig_GateInvalidPhase(t *testing.T) {
 	tmpDir := t.TempDir()
 
-	config := map[string]interface{}{
+	settings := map[string]interface{}{
 		"merge_queue": map[string]interface{}{
 			"gates": map[string]interface{}{
 				"bad": map[string]interface{}{
@@ -754,11 +804,7 @@ func TestEngineer_LoadConfig_GateInvalidPhase(t *testing.T) {
 			},
 		},
 	}
-
-	data, _ := json.MarshalIndent(config, "", "  ")
-	if err := os.WriteFile(filepath.Join(tmpDir, "config.json"), data, 0644); err != nil {
-		t.Fatal(err)
-	}
+	writeEngineerSettingsConfig(t, tmpDir, settings)
 
 	r := &rig.Rig{Name: "test-rig", Path: tmpDir}
 	e := NewEngineer(r)
