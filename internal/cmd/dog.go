@@ -27,6 +27,7 @@ var (
 	dogForce      bool
 	dogRemoveAll  bool
 	dogCallAll    bool
+	dogDoneWork   string
 
 	// Dispatch flags
 	dogDispatchPlugin string
@@ -256,6 +257,7 @@ Examples:
 func init() {
 	// List flags
 	dogListCmd.Flags().BoolVar(&dogListJSON, "json", false, "Output as JSON")
+	dogDoneCmd.Flags().StringVar(&dogDoneWork, "work", "", "Expected work ID (prevents clearing a newer assignment)")
 
 	// Remove flags
 	dogRemoveCmd.Flags().BoolVarP(&dogForce, "force", "f", false, "Force removal even if working")
@@ -685,8 +687,16 @@ func runDogDone(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 
-	if err := mgr.ClearWork(name); err != nil {
-		return fmt.Errorf("clearing work for dog %s: %w", name, err)
+	cleared, err := clearDogWorkForCompletion(mgr, d, dogDoneWork)
+	if err != nil {
+		return fmt.Errorf("clearing completed work for dog %s: %w", name, err)
+	}
+	if !cleared {
+		if dogDoneWork == "" {
+			return fmt.Errorf("dog %s has active work; rerun with --work <assigned-work-id> so completion cannot clear a newer assignment", name)
+		}
+		fmt.Printf("Dog %s assignment changed while completing %s; preserving current work\n", name, dogDoneWork)
+		return nil
 	}
 
 	fmt.Printf("✓ Dog %s returned to kennel (idle)\n", name)
@@ -719,6 +729,19 @@ func runDogDone(cmd *cobra.Command, args []string) error {
 	time.Sleep(4 * time.Second)
 
 	return nil
+}
+
+// clearDogWorkForCompletion atomically clears only the assignment that invoked
+// completion. A dispatcher may already have installed the next hook by the
+// time an old dog session exits; that newer assignment must remain working.
+func clearDogWorkForCompletion(mgr *dog.Manager, d *dog.Dog, expectedWork string) (bool, error) {
+	if expectedWork == "" {
+		return false, nil
+	}
+	if d.Work != expectedWork {
+		return false, nil
+	}
+	return mgr.ClearWorkIfMatches(d.Name, expectedWork, d.WorkStartedAt)
 }
 
 func splitPathComponents(path string) []string {
