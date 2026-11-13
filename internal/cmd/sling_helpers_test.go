@@ -110,9 +110,26 @@ func TestWakeRigAgentsDoesNotNudgeRefinery(t *testing.T) {
 func TestNudgeRefineryNoOpWithoutLog(t *testing.T) {
 	// Ensure test log is NOT set so we exercise the real tmux path
 	t.Setenv("GT_TEST_NUDGE_LOG", "")
+	townRoot := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(townRoot, "mayor"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(townRoot, "mayor", "town.json"), []byte("{}"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(townRoot)
 
 	// Should not panic even though no tmux session exists
 	nudgeRefinery("nonexistent-rig", "test message")
+
+	eventDir := filepath.Join(townRoot, "events", "refinery", "nonexistent-rig")
+	entries, err := os.ReadDir(eventDir)
+	if err != nil {
+		t.Fatalf("reading rig-scoped refinery events: %v", err)
+	}
+	if len(entries) != 1 || !strings.HasSuffix(entries[0].Name(), ".event") {
+		t.Fatalf("rig-scoped refinery events = %v, want one .event file", entries)
+	}
 }
 
 func TestIsDeferredBead(t *testing.T) {
