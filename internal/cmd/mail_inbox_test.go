@@ -81,3 +81,29 @@ func TestLoadInboxSnapshotPropagatesListError(t *testing.T) {
 		t.Fatalf("List calls = %d, want 1", box.calls)
 	}
 }
+
+func TestShouldRetryDeliveryAck(t *testing.T) {
+	tests := []struct {
+		name              string
+		read              bool
+		deliveryState     string
+		markReadAttempted bool
+		markReadSucceeded bool
+		want              bool
+	}{
+		{name: "unread pending mark succeeded", deliveryState: mail.DeliveryStatePending, markReadAttempted: true, markReadSucceeded: true, want: false},
+		{name: "unread pending mark failed", deliveryState: mail.DeliveryStatePending, markReadAttempted: true, want: true},
+		{name: "read pending", read: true, deliveryState: mail.DeliveryStatePending, want: true},
+		{name: "read acked", read: true, deliveryState: mail.DeliveryStateAcked, want: false},
+		{name: "legacy delivery state", read: true, want: false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			msg := &mail.Message{Read: tt.read, DeliveryState: tt.deliveryState}
+			if got := shouldRetryDeliveryAck(msg, tt.markReadAttempted, tt.markReadSucceeded); got != tt.want {
+				t.Fatalf("shouldRetryDeliveryAck() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
