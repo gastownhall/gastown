@@ -1,8 +1,11 @@
 package cmd
 
 import (
+	"os"
+	"runtime"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestExtractPatrolRole(t *testing.T) {
@@ -234,5 +237,57 @@ func TestBuildStepAudit(t *testing.T) {
 				t.Errorf("buildStepAudit() = %q, want to contain %q", got, tt.wantContain)
 			}
 		})
+	}
+}
+
+// TestQueryPatrolDigests_IncludesEphemeral is a regression test for gt#4951:
+// patrol digest beads are created with Ephemeral: true (see
+// molecule_lifecycle.go), but `bd list` hides ephemeral rows unless
+// --include-ephemeral is passed. Without that flag, queryPatrolDigests's own
+// `if !issue.Ephemeral { continue }` filter can never match anything, so the
+// daily digest silently never gets produced. This stubs `bd` to log its argv
+// and return one ephemeral digest row plus one non-ephemeral decoy row, and
+// asserts both that the flag is passed and that the filter behaves correctly.
+func TestQueryPatrolDigests_IncludesEphemeral(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("posix bd stub")
+	}
+
+	binDir := t.TempDir()
+	logFile := binDir + "/bd.log"
+	writeBDStub(t, binDir, `#!/usr/bin/env sh
+echo "$*" >> "$BD_STUB_LOG"
+cat <<'JSON'
+[
+  {"id":"gt-digest-1","title":"Digest: mol-deacon-patrol","description":"ephemeral digest","status":"closed","created_at":"2026-01-15T10:00:00Z","closed_at":"2026-01-15T10:05:00Z","ephemeral":true},
+  {"id":"gt-digest-2","title":"Digest: mol-witness-patrol","description":"should be filtered out","status":"closed","created_at":"2026-01-15T10:00:00Z","closed_at":"2026-01-15T10:05:00Z","ephemeral":false}
+]
+JSON
+`, "")
+	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	t.Setenv("BD_STUB_LOG", logFile)
+
+	targetDate := time.Date(2026, 1, 15, 0, 0, 0, 0, time.UTC)
+	digests, err := queryPatrolDigests(targetDate)
+	if err != nil {
+		t.Fatalf("queryPatrolDigests: %v", err)
+	}
+
+	logData, err := os.ReadFile(logFile)
+	if err != nil {
+		t.Fatalf("read bd stub log: %v", err)
+	}
+	if !strings.Contains(string(logData), "--include-ephemeral") {
+		t.Fatalf("bd list invocation missing --include-ephemeral, got args: %s", logData)
+	}
+
+	if len(digests) != 1 {
+		t.Fatalf("got %d digests, want 1 (non-ephemeral decoy must be filtered): %+v", len(digests), digests)
+	}
+	if digests[0].ID != "gt-digest-1" {
+		t.Errorf("digest ID = %q, want %q", digests[0].ID, "gt-digest-1")
+	}
+	if digests[0].Role != "deacon" {
+		t.Errorf("digest Role = %q, want %q", digests[0].Role, "deacon")
 	}
 }
