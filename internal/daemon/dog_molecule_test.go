@@ -1,7 +1,14 @@
 package daemon
 
 import (
+	"fmt"
+	"io"
+	"log"
+	"os"
+	"path/filepath"
 	"reflect"
+	"runtime"
+	"strings"
 	"testing"
 )
 
@@ -196,4 +203,81 @@ func TestDogMolGracefulDegradation(t *testing.T) {
 	dm.closeStep("scan")
 	dm.failStep("scan", "test failure")
 	dm.close()
+}
+
+// TestDogMolCloseForcesRootWithLeftoverOpenChild proves the fix for gt#4958:
+// if closeRemainingSteps() misses an open child (e.g. a status value it
+// doesn't recognize), close() must still succeed in closing the root wisp by
+// passing --force to `bd close`. Before the fix, the root close command had
+// no --force flag, so bd would refuse with "N open child issue(s)" and the
+// root would leak forever.
+func TestDogMolCloseForcesRootWithLeftoverOpenChild(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("test uses Unix shell script mock")
+	}
+
+	rootID := "root-id"
+	binDir := t.TempDir()
+	closeLog := filepath.Join(t.TempDir(), "root-close.log")
+	fakeBd := filepath.Join(binDir, "bd")
+
+	// The fake bd:
+	//   - `show <rootID> --children --json` reports a child with a status
+	//     ("blocked") that closeRemainingSteps() does not treat as
+	//     open/hooked/in_progress, simulating the edge case where the
+	//     backstop misses a still-open child.
+	//   - `close <rootID> ...` only succeeds if --force is among the args;
+	//     otherwise it mimics bd's real refusal to close a root with open
+	//     children and exits non-zero.
+	script := fmt.Sprintf(`#!/bin/sh
+case "$1" in
+  show)
+    printf '{"%s":[{"id":"child-1","title":"Mystery","status":"blocked"}]}\n' %q
+    ;;
+  close)
+    id="$2"
+    shift 2
+    force=0
+    for a in "$@"; do
+      if [ "$a" = "--force" ] || [ "$a" = "-f" ]; then
+        force=1
+      fi
+    done
+    if [ "$id" = %q ]; then
+      if [ "$force" = "1" ]; then
+        printf 'closed %%s\n' "$id" > %q
+        exit 0
+      fi
+      echo "bd: refusing to close $id: 1 open child issue(s)" >&2
+      exit 1
+    fi
+    exit 0
+    ;;
+  *)
+    exit 0
+    ;;
+esac
+`, rootID, rootID, rootID, closeLog)
+
+	if err := os.WriteFile(fakeBd, []byte(script), 0o755); err != nil {
+		t.Fatalf("write fake bd: %v", err)
+	}
+
+	dm := &dogMol{
+		rootID:   rootID,
+		stepIDs:  make(map[string]string),
+		bdPath:   fakeBd,
+		townRoot: t.TempDir(),
+		logger:   log.New(io.Discard, "", 0),
+	}
+
+	dm.close()
+
+	data, err := os.ReadFile(closeLog)
+	if err != nil {
+		t.Fatalf("root close was not recorded (close() did not force-close the root despite a leftover open child): %v", err)
+	}
+	if got := strings.TrimSpace(string(data)); got != "closed "+rootID {
+		t.Fatalf("unexpected close log contents: %q", got)
+	}
 }
