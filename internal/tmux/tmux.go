@@ -2014,7 +2014,15 @@ func (t *Tmux) AcceptWorkspaceTrustDialog(session string) error {
 		// Codex trust screens include a leading ">" banner line, so prompt
 		// detection alone would exit too early.
 		if containsWorkspaceTrustDialog(content) {
-			// Dialog found — accept it (option 1 is pre-selected, just press Enter)
+			// Move the selection onto the affirmative option before confirming.
+			// Do NOT assume the first option is affirmative: Claude Code's trust
+			// dialog pre-selects "No, exit", so a bare Enter tells the agent to
+			// quit and the session dies seconds after it was created.
+			for i := 0; i < trustDialogDownPresses(content); i++ {
+				if _, err := t.run("send-keys", "-t", session, "Down"); err != nil {
+					return err
+				}
+			}
 			if _, err := t.run("send-keys", "-t", session, "Enter"); err != nil {
 				return err
 			}
@@ -2035,6 +2043,84 @@ func (t *Tmux) AcceptWorkspaceTrustDialog(session string) error {
 
 	// Timeout — no dialog detected, safe to proceed
 	return nil
+}
+
+// trustDialogSelectionMarkers are the glyphs a TUI uses to mark the currently
+// highlighted option.
+var trustDialogSelectionMarkers = []string{"\u276f", "\u25b6", "\u2192", "*", ">"}
+
+// trustDialogAffirmativeHints identify the option that grants trust. Matching on
+// text rather than ordinal position keeps this correct if the agent reorders its
+// options, which is exactly the assumption that broke before.
+var trustDialogAffirmativeHints = []string{
+	"yes, i trust",
+	"yes, proceed",
+	"trust this folder",
+	"trust the files",
+	"yes, trust",
+}
+
+// trustDialogOptionLines returns the option lines of a trust dialog in display
+// order, along with the index of the currently selected one (-1 if unknown).
+func trustDialogOptionLines(content string) ([]string, int) {
+	var options []string
+	selected := -1
+	for _, raw := range strings.Split(content, "\n") {
+		line := strings.TrimSpace(raw)
+		if line == "" {
+			continue
+		}
+		marked := false
+		for _, marker := range trustDialogSelectionMarkers {
+			if strings.HasPrefix(line, marker) {
+				line = strings.TrimSpace(strings.TrimPrefix(line, marker))
+				marked = true
+				break
+			}
+		}
+		lower := strings.ToLower(line)
+		// An option line either grants trust or declines it.
+		isOption := false
+		for _, hint := range trustDialogAffirmativeHints {
+			if strings.Contains(lower, hint) {
+				isOption = true
+				break
+			}
+		}
+		if !isOption && (strings.HasPrefix(lower, "no,") || strings.HasPrefix(lower, "no ") || lower == "no") {
+			isOption = true
+		}
+		if !isOption {
+			continue
+		}
+		if marked {
+			selected = len(options)
+		}
+		options = append(options, lower)
+	}
+	return options, selected
+}
+
+// trustDialogDownPresses reports how many Down keypresses move the selection
+// from its current position onto the affirmative option. It returns 0 when the
+// affirmative option is already selected, or when the dialog cannot be parsed —
+// in which case the caller falls back to confirming whatever is selected.
+func trustDialogDownPresses(content string) int {
+	options, selected := trustDialogOptionLines(content)
+	if len(options) == 0 || selected < 0 {
+		return 0
+	}
+	for i, opt := range options {
+		for _, hint := range trustDialogAffirmativeHints {
+			if strings.Contains(opt, hint) {
+				if i <= selected {
+					return 0
+				}
+				return i - selected
+			}
+		}
+	}
+	return 0
 }
 
 func containsWorkspaceTrustDialog(content string) bool {
