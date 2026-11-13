@@ -294,14 +294,20 @@ func runHook(_ *cobra.Command, args []string) error {
 
 	b := beads.New(workDir)
 
-	// Check for existing hooked bead for this agent
-	existingPinned, err := b.List(beads.ListOptions{
-		Status:   beads.StatusHooked,
-		Assignee: agentID,
-		Priority: -1,
-	})
-	if err != nil {
-		return fmt.Errorf("checking existing hooked beads: %w", err)
+	// Check for existing hooked bead for this agent. Match every assignee
+	// form in the store: legacy rows for town-level agents carry a trailing
+	// slash (hq-p9l).
+	var existingPinned []*beads.Issue
+	for _, form := range assigneeQueryForms(agentID) {
+		rows, err := b.List(beads.ListOptions{
+			Status:   beads.StatusHooked,
+			Assignee: form,
+			Priority: -1,
+		})
+		if err != nil {
+			return fmt.Errorf("checking existing hooked beads: %w", err)
+		}
+		existingPinned = append(existingPinned, rows...)
 	}
 
 	// If there's an existing hooked bead, check if we can auto-replace
@@ -357,7 +363,7 @@ func runHook(_ *cobra.Command, args []string) error {
 	}
 
 	if hookDryRun {
-		fmt.Printf("Would run: bd update %s --status=hooked --assignee=%s\n", beadID, agentID)
+		fmt.Printf("Would run: bd update %s --status=hooked --assignee=%s\n", beadID, beadAssignee(agentID))
 		if hookSubject != "" {
 			fmt.Printf("  subject (for handoff mail): %s\n", hookSubject)
 		}
@@ -377,7 +383,7 @@ func runHook(_ *cobra.Command, args []string) error {
 	const hookBackoffMax = 10 * time.Second
 	var lastHookErr error
 	for attempt := 1; attempt <= hookMaxRetries; attempt++ {
-		if err := BdCmd("update", beadID, "--status=hooked", "--assignee="+agentID).
+		if err := BdCmd("update", beadID, "--status=hooked", "--assignee="+beadAssignee(agentID)).
 			Dir(resolveBeadDir(beadID)).
 			StripBeadsDir().
 			WithAutoCommit().

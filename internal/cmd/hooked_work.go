@@ -38,15 +38,41 @@ func listBeadsAcrossTables(b *beads.Beads, opts beads.ListOptions) ([]*beads.Iss
 	return merged, nil
 }
 
+// beadAssignee returns the canonical bead-assignee form of an agent address:
+// the address without any trailing slash. Town-level agents are addressed as
+// "mayor/" / "deacon/" in the mail system, but bd compares a hooked bead's
+// assignee against BD_ACTOR ("mayor", "deacon") on close, so assignees must
+// be stored in the bare form (hq-p9l).
+func beadAssignee(agentAddress string) string {
+	return strings.TrimSuffix(agentAddress, "/")
+}
+
+// assigneeQueryForms returns every assignee form that may exist in the store
+// for an agent address. Town-level agents accumulated rows in two forms: the
+// bare name (patrol spawn, BD_ACTOR) and the trailing-slash mail-address form
+// (older sling/hook writes). Queries must match both or hooked work turns
+// invisible to half the readers (hq-p9l).
+func assigneeQueryForms(agentAddress string) []string {
+	bare := beadAssignee(agentAddress)
+	if bare == "mayor" || bare == "deacon" {
+		return []string{bare, bare + "/"}
+	}
+	return []string{bare}
+}
+
 func listAssignedActiveWork(b *beads.Beads, assignee string) ([]*beads.Issue, error) {
 	for _, status := range activeWorkStatuses() {
-		beadsForStatus, err := listBeadsAcrossTables(b, beads.ListOptions{
-			Status:   status,
-			Assignee: assignee,
-			Priority: -1,
-		})
-		if err != nil {
-			return nil, err
+		var beadsForStatus []*beads.Issue
+		for _, form := range assigneeQueryForms(assignee) {
+			rows, err := listBeadsAcrossTables(b, beads.ListOptions{
+				Status:   status,
+				Assignee: form,
+				Priority: -1,
+			})
+			if err != nil {
+				return nil, err
+			}
+			beadsForStatus = mergeBeadLists(beadsForStatus, rows)
 		}
 		if len(beadsForStatus) > 0 {
 			return beadsForStatus, nil
@@ -58,15 +84,17 @@ func listAssignedActiveWork(b *beads.Beads, assignee string) ([]*beads.Issue, er
 func listAssignedActiveWorkAcrossStatuses(b *beads.Beads, assignee string) ([]*beads.Issue, error) {
 	var assigned []*beads.Issue
 	for _, status := range activeWorkStatuses() {
-		beadsForStatus, err := listBeadsAcrossTables(b, beads.ListOptions{
-			Status:   status,
-			Assignee: assignee,
-			Priority: -1,
-		})
-		if err != nil {
-			return nil, err
+		for _, form := range assigneeQueryForms(assignee) {
+			beadsForStatus, err := listBeadsAcrossTables(b, beads.ListOptions{
+				Status:   status,
+				Assignee: form,
+				Priority: -1,
+			})
+			if err != nil {
+				return nil, err
+			}
+			assigned = append(assigned, beadsForStatus...)
 		}
-		assigned = append(assigned, beadsForStatus...)
 	}
 	return mergeBeadLists(assigned, nil), nil
 }

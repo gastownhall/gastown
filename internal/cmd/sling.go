@@ -924,9 +924,9 @@ func runSling(cmd *cobra.Command, args []string) (retErr error) {
 			fmt.Printf("Would instantiate formula %s:\n", formulaName)
 			fmt.Printf("  1. bd cook %s\n", formulaName)
 			fmt.Printf("  2. bd mol bond %s %s --json --ephemeral --var feature=\"%s\" --var issue=\"%s\"\n", formulaName, beadID, info.Title, beadID)
-			fmt.Printf("  3. bd update %s --status=hooked --assignee=%s\n", beadID, targetAgent)
+			fmt.Printf("  3. bd update %s --status=hooked --assignee=%s\n", beadID, beadAssignee(targetAgent))
 		} else {
-			fmt.Printf("Would run: bd update %s --status=hooked --assignee=%s\n", beadID, targetAgent)
+			fmt.Printf("Would run: bd update %s --status=hooked --assignee=%s\n", beadID, beadAssignee(targetAgent))
 		}
 		if slingSubject != "" {
 			fmt.Printf("  subject (in nudge): %s\n", slingSubject)
@@ -1277,7 +1277,7 @@ func restorePinnedBead(townRoot, beadID, assignee string) {
 		return
 	}
 	dir := beads.ResolveHookDir(townRoot, beadID, "")
-	if err := BdCmd("update", beadID, "--status=pinned", "--assignee="+assignee).
+	if err := BdCmd("update", beadID, "--status=pinned", "--assignee="+beadAssignee(assignee)).
 		Dir(dir).
 		WithAutoCommit().
 		Run(); err != nil {
