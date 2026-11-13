@@ -189,13 +189,14 @@ func isRoleCommand(cmd *cobra.Command) bool {
 	return false
 }
 
+// isDoneCommand reports whether cmd is the root-level `gt done` (the
+// polecat completion command). It must NOT match `done` subcommands of
+// other roles — `gt dog done`, `gt wl done`, `gt molecule step done` —
+// which have their own semantics and identities; routing them through
+// the polecat-only worktree guard breaks their sign-off (#4587, #4676,
+// #4690).
 func isDoneCommand(cmd *cobra.Command) bool {
-	for c := cmd; c != nil; c = c.Parent() {
-		if c.Name() == "done" {
-			return true
-		}
-	}
-	return false
+	return cmd.Name() == "done" && cmd.Parent() != nil && !cmd.Parent().HasParent()
 }
 
 // initCLITheme initializes the CLI color theme based on settings and environment.
