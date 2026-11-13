@@ -891,21 +891,26 @@ func TestShouldNudgeRefinery(t *testing.T) {
 		name     string
 		exitType string
 		mrID     string
+		mrFailed bool
 		want     bool
 	}{
-		{"completed with MR nudges", ExitCompleted, "gt-abc123", true},
-		{"completed without MR does not nudge", ExitCompleted, "", false},
-		{"deferred without MR does not nudge", ExitDeferred, "", false},
-		{"deferred with stray MR does not nudge", ExitDeferred, "gt-abc123", false},
-		{"escalated without MR does not nudge", ExitEscalated, "", false},
-		{"escalated with stray MR does not nudge", ExitEscalated, "gt-abc123", false},
+		{"completed with MR nudges", ExitCompleted, "gt-abc123", false, true},
+		{"completed without MR does not nudge", ExitCompleted, "", false, false},
+		{"deferred without MR does not nudge", ExitDeferred, "", false, false},
+		{"deferred with stray MR does not nudge", ExitDeferred, "gt-abc123", false, false},
+		{"escalated without MR does not nudge", ExitEscalated, "", false, false},
+		{"escalated with stray MR does not nudge", ExitEscalated, "gt-abc123", false, false},
+		// gt-6sg: an MR that was created but never landed in the rig's queue
+		// leaves mrID populated. Waking the refinery for it sends it looking
+		// for work its queue cannot see.
+		{"completed with unqueued MR does not nudge", ExitCompleted, "gt-abc123", true, false},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := shouldNudgeRefinery(tt.exitType, tt.mrID); got != tt.want {
-				t.Errorf("shouldNudgeRefinery(%q, %q) = %v, want %v",
-					tt.exitType, tt.mrID, got, tt.want)
+			if got := shouldNudgeRefinery(tt.exitType, tt.mrID, tt.mrFailed); got != tt.want {
+				t.Errorf("shouldNudgeRefinery(%q, %q, %v) = %v, want %v",
+					tt.exitType, tt.mrID, tt.mrFailed, got, tt.want)
 			}
 		})
 	}
@@ -2232,5 +2237,39 @@ func testRunGit(t *testing.T, dir string, args ...string) {
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		t.Fatalf("git %v in %s: %v\n%s", args, dir, err, out)
+	}
+}
+
+// TestReportedExitType locks in the gt-6sg invariant: gt done must not report
+// COMPLETED when the work never reached the merge queue. On a merge-queue rig
+// that report is what turns a failed MR submission into silent work loss — the
+// branch is pushed, the Witness is told the polecat completed, and nothing is
+// queued to merge it. ESCALATED and DEFERRED already describe a non-completion
+// and must pass through untouched.
+func TestReportedExitType(t *testing.T) {
+	tests := []struct {
+		name       string
+		exitType   string
+		pushFailed bool
+		mrFailed   bool
+		want       string
+	}{
+		{"clean completion stays COMPLETED", ExitCompleted, false, false, ExitCompleted},
+		{"failed MR degrades to INCOMPLETE", ExitCompleted, false, true, ExitIncomplete},
+		{"failed push degrades to INCOMPLETE", ExitCompleted, true, false, ExitIncomplete},
+		{"both failed degrades to INCOMPLETE", ExitCompleted, true, true, ExitIncomplete},
+		{"escalated passes through", ExitEscalated, false, false, ExitEscalated},
+		{"escalated with failed MR passes through", ExitEscalated, false, true, ExitEscalated},
+		{"deferred passes through", ExitDeferred, false, false, ExitDeferred},
+		{"deferred with failed push passes through", ExitDeferred, true, false, ExitDeferred},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := reportedExitType(tt.exitType, tt.pushFailed, tt.mrFailed); got != tt.want {
+				t.Errorf("reportedExitType(%q, %v, %v) = %q, want %q",
+					tt.exitType, tt.pushFailed, tt.mrFailed, got, tt.want)
+			}
+		})
 	}
 }
