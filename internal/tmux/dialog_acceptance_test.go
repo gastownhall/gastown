@@ -344,3 +344,56 @@ func TestDismissStartupDialogsBlind_InvalidSession(t *testing.T) {
 		t.Error("expected error for nonexistent session, got nil")
 	}
 }
+
+// TestTrustDialogAcceptKeys_NoExitPreselected verifies that when the trust
+// dialog pre-selects "No, exit" (Claude Code 2.x default), the key sequence
+// moves the selection down to "Yes, I trust this folder" before confirming.
+// A bare Enter here would confirm "No, exit" and kill the agent (the gt up
+// refinery-start hang).
+func TestTrustDialogAcceptKeys_NoExitPreselected(t *testing.T) {
+	content := ` Accessing workspace:
+ /Users/tboerner/gt/source/refinery/rig
+ Quick safety check: Is this a project you created or one you trust?
+ Claude Code'll be able to read, edit, and execute files here.
+ ❯ No, exit
+   Yes, I trust this folder
+ Enter to confirm · Esc to cancel`
+
+	got := trustDialogAcceptKeys(content)
+	want := []string{"Down", "Enter"}
+	if len(got) != len(want) {
+		t.Fatalf("trustDialogAcceptKeys = %v, want %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("trustDialogAcceptKeys = %v, want %v", got, want)
+		}
+	}
+}
+
+// TestTrustDialogAcceptKeys_TrustPreselected verifies that when the trust
+// option is already selected, a bare Enter confirms it.
+func TestTrustDialogAcceptKeys_TrustPreselected(t *testing.T) {
+	content := ` Quick safety check: Is this a project you created or one you trust?
+ ❯ Yes, I trust this folder
+   No, exit
+ Enter to confirm · Esc to cancel`
+
+	got := trustDialogAcceptKeys(content)
+	if len(got) != 1 || got[0] != "Enter" {
+		t.Fatalf("trustDialogAcceptKeys = %v, want [Enter]", got)
+	}
+}
+
+// TestTrustDialogAcceptKeys_NoSelectionMarker verifies dialogs without a
+// visible selection marker (Codex, older Claude) keep the legacy behavior:
+// the continue option is pre-selected, so Enter confirms.
+func TestTrustDialogAcceptKeys_NoSelectionMarker(t *testing.T) {
+	content := `> You are in /tmp/demo
+Do you trust the contents of this directory?`
+
+	got := trustDialogAcceptKeys(content)
+	if len(got) != 1 || got[0] != "Enter" {
+		t.Fatalf("trustDialogAcceptKeys = %v, want [Enter]", got)
+	}
+}

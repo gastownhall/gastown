@@ -2014,9 +2014,17 @@ func (t *Tmux) AcceptWorkspaceTrustDialog(session string) error {
 		// Codex trust screens include a leading ">" banner line, so prompt
 		// detection alone would exit too early.
 		if containsWorkspaceTrustDialog(content) {
-			// Dialog found — accept it (option 1 is pre-selected, just press Enter)
-			if _, err := t.run("send-keys", "-t", session, "Enter"); err != nil {
-				return err
+			// Dialog found — accept it. Claude Code ≥ 2.x pre-selects
+			// "No, exit", so a bare Enter would make the agent quit and the
+			// session die; trustDialogAcceptKeys moves the selection to the
+			// trust option first when the pane shows that layout.
+			for _, key := range trustDialogAcceptKeys(content) {
+				if _, err := t.run("send-keys", "-t", session, key); err != nil {
+					return err
+				}
+				// Let the TUI re-render between keys (matches the
+				// AcceptBypassPermissionsWarning Down→Enter delay).
+				time.Sleep(200 * time.Millisecond)
 			}
 			// Wait for dialog to dismiss before proceeding
 			time.Sleep(500 * time.Millisecond)
@@ -2035,6 +2043,32 @@ func (t *Tmux) AcceptWorkspaceTrustDialog(session string) error {
 
 	// Timeout — no dialog detected, safe to proceed
 	return nil
+}
+
+// trustDialogAcceptKeys returns the key sequence that accepts a workspace
+// trust dialog given the current pane content. Claude Code ≥ 2.x highlights
+// "❯ No, exit" by default, so Enter alone would confirm the rejection and
+// terminate the agent; that layout needs Down to reach "Yes, I trust this
+// folder" before Enter. Dialogs with no visible selection marker, or with the
+// trust option already selected (Codex, older Claude), confirm with Enter.
+func trustDialogAcceptKeys(content string) []string {
+	selected := strings.ToLower(selectedDialogOption(content))
+	if strings.HasPrefix(selected, "no") || strings.Contains(selected, "exit") {
+		return []string{"Down", "Enter"}
+	}
+	return []string{"Enter"}
+}
+
+// selectedDialogOption returns the text of the option line the "❯" selection
+// marker points at, or "" when no marker is visible.
+func selectedDialogOption(content string) string {
+	for _, line := range strings.Split(content, "\n") {
+		trimmed := strings.TrimSpace(line)
+		if rest, ok := strings.CutPrefix(trimmed, "❯"); ok {
+			return strings.TrimSpace(rest)
+		}
+	}
+	return ""
 }
 
 func containsWorkspaceTrustDialog(content string) bool {
