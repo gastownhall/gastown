@@ -298,10 +298,27 @@ func (d *Daemon) dispatchPlugins(mgr *dog.Manager, sm *dog.SessionManager, rigsC
 		}
 
 		// Assign work and start session.
+		//
+		// Capture LastActive BEFORE assigning: if this dispatch fails we restore
+		// it, because a dispatch that never started an agent is not activity. See
+		// Manager.RollbackWork — stamping "now" on every failed attempt is what
+		// blinded both age-based stuck detectors in hq-bcowvq.
+		priorLastActive := idleDog.LastActive
 		workDesc := fmt.Sprintf("plugin:%s", p.Name)
-		if err := mgr.AssignWork(idleDog.Name, workDesc); err != nil {
+		assigned, err := mgr.AssignWorkIfIdle(idleDog.Name, workDesc)
+		if err != nil {
 			d.logger.Printf("Handler: failed to assign work to dog %s: %v", idleDog.Name, err)
 			continue
+		}
+		rollback := func(reason string) {
+			restored, err := mgr.RollbackWork(idleDog.Name, workDesc, assigned.WorkStartedAt, priorLastActive)
+			if err != nil {
+				d.logger.Printf("Handler: failed to roll back work after %s for dog %s: %v", reason, idleDog.Name, err)
+				return
+			}
+			if !restored {
+				d.logger.Printf("Handler: skipped rollback after %s for dog %s: work assignment changed", reason, idleDog.Name)
+			}
 		}
 
 		// Send mail with plugin instructions BEFORE starting the session
@@ -317,9 +334,7 @@ func (d *Daemon) dispatchPlugins(mgr *dog.Manager, sm *dog.SessionManager, rigsC
 		if err := router.Send(msg); err != nil {
 			d.logger.Printf("Handler: failed to send mail to dog %s: %v", idleDog.Name, err)
 			// Roll back assignment — no point starting a session without instructions.
-			if clearErr := mgr.ClearWork(idleDog.Name); clearErr != nil {
-				d.logger.Printf("Handler: failed to clear work after mail failure for dog %s: %v", idleDog.Name, clearErr)
-			}
+			rollback("mail failure")
 			continue
 		}
 
@@ -328,9 +343,7 @@ func (d *Daemon) dispatchPlugins(mgr *dog.Manager, sm *dog.SessionManager, rigsC
 		}); err != nil {
 			d.logger.Printf("Handler: failed to start session for dog %s: %v", idleDog.Name, err)
 			// Roll back assignment on session start failure.
-			if clearErr := mgr.ClearWork(idleDog.Name); clearErr != nil {
-				d.logger.Printf("Handler: failed to clear work after start failure for dog %s: %v", idleDog.Name, clearErr)
-			}
+			rollback("start failure")
 			continue
 		}
 
