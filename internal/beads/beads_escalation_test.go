@@ -3,6 +3,7 @@ package beads
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -368,6 +369,10 @@ func TestBumpSeverity(t *testing.T) {
 // flag values, which broke `gt escalate` for any escalation containing the
 // structured YAML metadata block (severity, reason, escalated_by, etc.).
 func TestCreateEscalationBead_PassesDescriptionViaStdin(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("test uses Unix shell script mock for bd")
+	}
+
 	stubDir := t.TempDir()
 	argsPath := filepath.Join(stubDir, "args.txt")
 	stdinPath := filepath.Join(stubDir, "stdin.txt")

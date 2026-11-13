@@ -84,6 +84,10 @@ func BdSupportsAllowStaleWithEnv(env []string) bool {
 	var combinedOut bytes.Buffer
 	cmd.Stdout = &combinedOut
 	cmd.Stderr = &combinedOut
+	// On Windows, cancellation kills only the direct child (e.g. cmd.exe for a
+	// bd.bat/bd.cmd shim); a grandchild that inherited the output pipe keeps
+	// Wait blocked until it exits. Bound that so the timeout actually holds.
+	cmd.WaitDelay = bdAllowStaleProbeTimeout
 	err = cmd.Run()
 	// bd v0.60+ exits 0 even on unknown flags, printing the error to stderr.
 	// Check output for "unknown flag" to detect lack of support. Treat probe
