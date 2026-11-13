@@ -2234,3 +2234,16 @@ func testRunGit(t *testing.T, dir string, args ...string) {
 		t.Fatalf("git %v in %s: %v\n%s", args, dir, err, out)
 	}
 }
+
+func TestErrIfDetachedHead(t *testing.T) {
+	// The detached-HEAD sentinel that CurrentBranch reports must be refused.
+	if err := errIfDetachedHead(gitDetachedHeadName); err == nil {
+		t.Fatalf("errIfDetachedHead(%q) = nil, want error", gitDetachedHeadName)
+	}
+	// Real branch names must pass through.
+	for _, branch := range []string{"main", "fix/issue-4629", "polecat/slit/hy-f1vw"} {
+		if err := errIfDetachedHead(branch); err != nil {
+			t.Errorf("errIfDetachedHead(%q) = %v, want nil", branch, err)
+		}
+	}
+}

@@ -1077,10 +1077,35 @@ func normalizeGitRemoteURL(raw string) string {
 	return strings.ToLower(strings.TrimSuffix(s, "/"))
 }
 
+// reservedRefNames are git pseudo-refs that must never be pushed as a branch:
+// creating e.g. refs/heads/HEAD on the remote de-symbolifies refs/remotes/origin/HEAD
+// in every clone on its next fetch, silently repointing the "default branch" idiom
+// (diff/merge-base/CI) at whatever commit was pushed — with no error. See #4629.
+var reservedRefNames = map[string]bool{
+	"HEAD":       true,
+	"FETCH_HEAD": true,
+	"ORIG_HEAD":  true,
+	"MERGE_HEAD": true,
+}
+
+// refuseReservedRefPush rejects a push whose destination ref is a git pseudo-ref.
+// It is a backstop: a detached-HEAD "gt done" resolves the branch to the literal
+// "HEAD" and would otherwise push refs/heads/HEAD. See #4629.
+func refuseReservedRefPush(refspec string) error {
+	destination := pushDestinationBranch(refspec)
+	if reservedRefNames[destination] {
+		return fmt.Errorf("refusing to push to reserved ref %q: this is almost always a detached-HEAD accident and would corrupt origin/HEAD in every clone that fetches it (no refs were pushed)", destination)
+	}
+	return nil
+}
+
 // Push pushes to the remote branch with a timeout to prevent indefinite hangs
 // when the remote is unreachable.
 func (g *Git) Push(remote, branch string, force bool) error {
 	if err := g.RefuseForkBackedDefaultPush(remote, branch, g.RemoteDefaultBranch()); err != nil {
+		return err
+	}
+	if err := refuseReservedRefPush(branch); err != nil {
 		return err
 	}
 	args := []string{"push", remote, branch}
@@ -1096,6 +1121,9 @@ func (g *Git) Push(remote, branch string, force bool) error {
 // pre-push hook checks to allow integration branch content landing on main.
 func (g *Git) PushWithEnv(remote, branch string, force bool, env []string) error {
 	if err := g.RefuseForkBackedDefaultPush(remote, branch, g.RemoteDefaultBranch()); err != nil {
+		return err
+	}
+	if err := refuseReservedRefPush(branch); err != nil {
 		return err
 	}
 	args := []string{"push", remote, branch}

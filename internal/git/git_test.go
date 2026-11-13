@@ -3820,3 +3820,67 @@ func TestBranchPushedToRemote_NoPushURL(t *testing.T) {
 		t.Errorf("BranchPushedToRemote unpushed = %d, want >= 1", unpushed)
 	}
 }
+
+func TestRefuseReservedRefPush(t *testing.T) {
+	// Reserved destination refs must be refused regardless of refspec spelling.
+	refused := []string{
+		"HEAD",
+		"HEAD:HEAD",
+		"refs/heads/HEAD",
+		"feature:HEAD",
+		"feature:refs/heads/HEAD",
+		"+HEAD:HEAD",
+		"FETCH_HEAD",
+		"ORIG_HEAD",
+		"src:MERGE_HEAD",
+	}
+	for _, refspec := range refused {
+		if err := refuseReservedRefPush(refspec); err == nil {
+			t.Errorf("refuseReservedRefPush(%q) = nil, want refusal", refspec)
+		}
+	}
+
+	// Ordinary branches (including ones that merely contain a reserved name) are allowed.
+	allowed := []string{
+		"main",
+		"feature/HEAD-fix",
+		"polecat/slit/hy-f1vw",
+		"feature:main",
+		"refs/heads/develop",
+	}
+	for _, refspec := range allowed {
+		if err := refuseReservedRefPush(refspec); err != nil {
+			t.Errorf("refuseReservedRefPush(%q) = %v, want nil", refspec, err)
+		}
+	}
+}
+
+// TestPushRefusesDetachedHeadRefspec pins #4629: a detached-HEAD push resolves
+// the branch to the literal "HEAD" and pushes it. The fully-qualified refspec
+// "HEAD:refs/heads/HEAD" is accepted by git (unlike the ambiguous "HEAD:HEAD"),
+// so without the guard it would create refs/heads/HEAD on the remote and
+// de-symbolify origin/HEAD in every clone that fetches it. Push must refuse.
+func TestPushRefusesDetachedHeadRefspec(t *testing.T) {
+	localDir, remoteDir, _ := initTestRepoWithRemote(t)
+	g := NewGit(localDir)
+
+	// Detach HEAD onto the current commit.
+	detach := exec.Command("git", "checkout", "--detach", "HEAD")
+	detach.Dir = localDir
+	if out, err := detach.CombinedOutput(); err != nil {
+		t.Fatalf("git checkout --detach: %v\n%s", err, out)
+	}
+
+	if err := g.Push("origin", "HEAD:refs/heads/HEAD", false); err == nil {
+		t.Fatal("Push(origin, HEAD:refs/heads/HEAD) returned nil, want refusal")
+	}
+
+	ls := exec.Command("git", "ls-remote", "--heads", remoteDir)
+	out, err := ls.Output()
+	if err != nil {
+		t.Fatalf("git ls-remote: %v", err)
+	}
+	if strings.Contains(string(out), "refs/heads/HEAD") {
+		t.Fatalf("remote gained refs/heads/HEAD after refused push:\n%s", out)
+	}
+}
