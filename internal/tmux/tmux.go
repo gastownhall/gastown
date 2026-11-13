@@ -48,6 +48,14 @@ var (
 	ErrIdleTimeout        = errors.New("agent not idle before timeout")
 )
 
+// IsSessionGone reports whether err means the target session no longer exists —
+// either the session itself is absent or the whole tmux server is down. Callers
+// use this to tell "the thing I was watching disappeared" apart from "the thing
+// I was watching is in a bad state", two conditions that need opposite handling.
+func IsSessionGone(err error) bool {
+	return errors.Is(err, ErrSessionNotFound) || errors.Is(err, ErrNoServer)
+}
+
 // validateSessionName checks that a session name contains only safe characters.
 // Returns ErrInvalidSessionName if the name contains dots, colons, or other
 // characters that cause tmux to silently fail or produce cryptic errors.
@@ -266,8 +274,19 @@ func (t *Tmux) wrapError(err error, stderr string, args []string) error {
 	if strings.Contains(stderr, "duplicate session") {
 		return ErrSessionExists
 	}
+	// tmux reports a missing target differently depending on the command's
+	// target type: session-scoped commands (has-session) say "can't find
+	// session", while pane-scoped ones (capture-pane, send-keys) say "can't
+	// find pane" and window-scoped ones say "can't find window". All three mean
+	// the same thing to a caller that passed a session name — the session is
+	// gone — so they must classify identically. Leaving the pane/window variants
+	// unclassified made a vanished session indistinguishable from a genuine tmux
+	// failure, which is how a dead agent session got reported as "startup
+	// blocked" for 42 days (hq-bcowvq).
 	if strings.Contains(stderr, "session not found") ||
-		strings.Contains(stderr, "can't find session") {
+		strings.Contains(stderr, "can't find session") ||
+		strings.Contains(stderr, "can't find pane") ||
+		strings.Contains(stderr, "can't find window") {
 		return ErrSessionNotFound
 	}
 
@@ -1973,12 +1992,20 @@ func (t *Tmux) AcceptStartupDialogs(session string) error {
 // CheckStartupBlocked fails fast when a known interactive startup modal is
 // still visible after dialog acceptance. These modals block automated sessions
 // from receiving or acting on the bootstrap prompt.
+//
+// A vanished session is NOT a blocking dialog: the returned error wraps
+// ErrSessionNotFound so callers can report the real condition (the session died,
+// most likely because the agent command exited) instead of sending an operator
+// hunting for a modal that was never there.
 func (t *Tmux) CheckStartupBlocked(session string) error {
 	deadline := time.Now().Add(constants.DialogPollTimeout)
 	var blocker string
 	for {
 		content, err := t.CapturePane(session, 80)
 		if err != nil {
+			if IsSessionGone(err) {
+				return fmt.Errorf("session %s vanished during startup: %w", session, err)
+			}
 			return err
 		}
 		current, ok := containsBlockingStartupDialog(content)
@@ -2006,6 +2033,11 @@ func (t *Tmux) AcceptWorkspaceTrustDialog(session string) error {
 	for time.Now().Before(deadline) {
 		content, err := t.CapturePane(session, 30)
 		if err != nil {
+			// A gone session will never render a dialog. Returning now surfaces
+			// the real failure instead of burning the whole poll timeout.
+			if IsSessionGone(err) {
+				return err
+			}
 			time.Sleep(constants.DialogPollInterval)
 			continue
 		}
@@ -2152,6 +2184,11 @@ func (t *Tmux) AcceptBypassPermissionsWarning(session string) error {
 	for time.Now().Before(deadline) {
 		content, err := t.CapturePane(session, 30)
 		if err != nil {
+			// A gone session will never render a dialog — see
+			// AcceptWorkspaceTrustDialog.
+			if IsSessionGone(err) {
+				return err
+			}
 			time.Sleep(constants.DialogPollInterval)
 			continue
 		}

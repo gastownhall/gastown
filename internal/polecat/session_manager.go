@@ -54,6 +54,16 @@ func NewSessionManager(t *tmux.Tmux, r *rig.Rig) *SessionManager {
 	}
 }
 
+// startupFailure names the condition behind a failed CheckStartupBlocked: a
+// vanished session means the agent command exited, not that a modal is blocking
+// startup. See session.startupFailure.
+func startupFailure(sessionID string, err error) error {
+	if tmux.IsSessionGone(err) {
+		return fmt.Errorf("session %s died during startup (agent command may have failed): %w", sessionID, err)
+	}
+	return fmt.Errorf("startup blocked: %w", err)
+}
+
 // SessionStartOptions configures polecat session startup.
 type SessionStartOptions struct {
 	// WorkDir overrides the default working directory (polecat clone dir).
@@ -512,7 +522,7 @@ func (m *SessionManager) Start(polecat string, opts SessionStartOptions) error {
 	debugSession("AcceptStartupDialogs", m.tmux.AcceptStartupDialogs(sessionID))
 	if err := m.tmux.CheckStartupBlocked(sessionID); err != nil {
 		_ = m.tmux.KillSessionWithProcesses(sessionID)
-		return fmt.Errorf("startup blocked: %w", err)
+		return startupFailure(sessionID, err)
 	}
 
 	// Wait for runtime to be fully ready at the prompt (not just started).
@@ -521,7 +531,7 @@ func (m *SessionManager) Start(polecat string, opts SessionStartOptions) error {
 	debugSession("WaitForRuntimeReady", m.tmux.WaitForRuntimeReady(sessionID, runtimeConfig, constants.ClaudeStartTimeout))
 	if err := m.tmux.CheckStartupBlocked(sessionID); err != nil {
 		_ = m.tmux.KillSessionWithProcesses(sessionID)
-		return fmt.Errorf("startup blocked: %w", err)
+		return startupFailure(sessionID, err)
 	}
 
 	// Handle fallback nudges for non-hook agents.
