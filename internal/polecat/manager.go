@@ -839,6 +839,14 @@ func (m *Manager) addWithOptionsLocked(name string, opts AddOptions, polecatDir 
 		style.PrintWarning("could not install runtime settings: %v", err)
 	}
 
+	// Pre-approve Claude Code's per-directory trust dialogs (folder trust,
+	// CLAUDE.md external includes) for the fresh worktree — they are keyed in
+	// ~/.claude.json, so settings.json bypassPermissions cannot suppress them
+	// and an unattended polecat would stall on the prompt.
+	if err := runtime.PreapproveProjectTrustForRuntime(runtimeConfig, clonePath); err != nil {
+		style.PrintWarning("could not pre-approve Claude project trust: %v", err)
+	}
+
 	if err := rig.RunSetupHooks(m.rig.Path, clonePath); err != nil {
 		style.PrintWarning("could not run setup hooks: %v", err)
 	}
@@ -1060,6 +1068,14 @@ func (m *Manager) AddWithOptions(name string, opts AddOptions) (_ *Polecat, retE
 	if err := runtime.EnsureSettingsForRole(polecatSettingsDir, clonePath, "polecat", runtimeConfig); err != nil {
 		// Non-fatal - log warning but continue
 		style.PrintWarning("could not install runtime settings: %v", err)
+	}
+
+	// Pre-approve Claude Code's per-directory trust dialogs (folder trust,
+	// CLAUDE.md external includes) for the fresh worktree — they are keyed in
+	// ~/.claude.json, so settings.json bypassPermissions cannot suppress them
+	// and an unattended polecat would stall on the prompt.
+	if err := runtime.PreapproveProjectTrustForRuntime(runtimeConfig, clonePath); err != nil {
+		style.PrintWarning("could not pre-approve Claude project trust: %v", err)
 	}
 
 	// Run setup hooks from .runtime/setup-hooks/.
