@@ -269,13 +269,19 @@ func applyFormulaVars(text string, varMap map[string]string) string {
 // extractFormulaVar extracts a specific key's value from a newline-separated
 // key=value string (as stored in AttachmentFields.FormulaVars).
 // Returns "" if the key is not found.
+//
+// When a key appears more than once, the LAST value wins, matching how the
+// vars are rendered (buildFormulaVarMap, attachmentFormulaVars). gt sling puts
+// rig defaults first and overrides after them, e.g. base_branch=main from the
+// rig config followed by base_branch=<--base-branch value> (hq-7eqm).
 func extractFormulaVar(formulaVars, key string) string {
+	value := ""
 	for _, line := range strings.Split(formulaVars, "\n") {
 		if k, v, ok := strings.Cut(strings.TrimSpace(line), "="); ok && k == key {
-			return v
+			value = v
 		}
 	}
-	return ""
+	return value
 }
 
 // truncateDescription truncates a multi-line description to a single line summary.
