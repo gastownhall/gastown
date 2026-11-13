@@ -2,13 +2,16 @@ package cmd
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"github.com/spf13/cobra"
 	"github.com/steveyegge/gastown/internal/beads"
+	"github.com/steveyegge/gastown/internal/config"
 	"github.com/steveyegge/gastown/internal/scheduler/capacity"
 	"github.com/steveyegge/gastown/internal/session"
 	"github.com/steveyegge/gastown/internal/style"
@@ -423,19 +426,32 @@ func scheduledBeadInfoFromWork(ctxTitle string, fields *capacity.SlingContextFie
 }
 
 // beadsSearchDirs returns directories to scan for scheduled beads:
-// the town root plus any rig directories that have a .beads/ subdirectory.
+// the town root plus every registered rig's beads dirs.
+//
+// Sling contexts are only ever created in HQ or a target rig's beads dir
+// (GH#3468), so only registered rigs (mayor/rigs.json) are scanned.
+// Unregistered directories that happen to contain a .beads workspace (e.g.
+// abandoned legacy-era workspaces left in the town root) must not be
+// included: context scans fail closed, so a single permanently-unreadable
+// workspace would otherwise disable the whole scheduler (hq-ndiy).
 func beadsSearchDirs(townRoot string) ([]string, error) {
 	dirs := []string{townRoot}
 	seen := map[string]bool{townRoot: true}
-	entries, err := os.ReadDir(townRoot)
+	rigsConfig, err := config.LoadRigsConfig(filepath.Join(townRoot, "mayor", "rigs.json"))
 	if err != nil {
+		if errors.Is(err, config.ErrNotFound) {
+			// No rigs registered yet: HQ only.
+			return dirs, nil
+		}
 		return nil, fmt.Errorf("discovering scheduler beads search dirs: %w", err)
 	}
-	for _, e := range entries {
-		if !e.IsDir() || strings.HasPrefix(e.Name(), ".") || e.Name() == "mayor" || e.Name() == "settings" {
-			continue
-		}
-		rigDir := filepath.Join(townRoot, e.Name())
+	names := make([]string, 0, len(rigsConfig.Rigs))
+	for name := range rigsConfig.Rigs {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	for _, name := range names {
+		rigDir := filepath.Join(townRoot, name)
 		beadsDir := filepath.Join(rigDir, ".beads")
 		if _, err := os.Stat(beadsDir); err == nil && !seen[rigDir] {
 			dirs = append(dirs, rigDir)
