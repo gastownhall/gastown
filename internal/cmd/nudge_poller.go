@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"os/signal"
@@ -130,7 +131,14 @@ func runNudgePoller(cmd *cobra.Command, args []string) error {
 			formatted := nudge.FormatForInjection(drained)
 			if err := t.NudgeSessionWithOpts(sessionName, formatted, nudgeOpts); err != nil {
 				fmt.Fprintf(os.Stderr, "nudge-poller: injection error for %s: %v\n", sessionName, err)
-				requeueDrainedNudges(townRoot, sessionName, "nudge-poller", drained)
+				// An unverified submit means the text was typed and Enter was sent;
+				// TUIs such as Grok queue input while a turn runs, so the probe
+				// cannot see it leave the composer. Requeueing here retyped the
+				// same nudges every poll interval (hundreds of copies queued in
+				// the agent). Only requeue when delivery itself failed.
+				if !errors.Is(err, tmux.ErrSubmitNotVerified) {
+					requeueDrainedNudges(townRoot, sessionName, "nudge-poller", drained)
+				}
 			}
 		}
 	}
