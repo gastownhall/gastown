@@ -457,7 +457,7 @@ func extractIssueID(id string) string {
 // rigForIssue determines the rig name for an issue based on its ID prefix.
 // Uses the beads routes to map prefixes to rigs.
 func rigForIssue(townRoot, issueID string) string {
-	prefix := beads.ExtractPrefix(issueID)
+	prefix := beads.ResolvePrefixForID(townRoot, issueID)
 	if prefix == "" {
 		return ""
 	}
@@ -477,7 +477,7 @@ func fetchCrossRigBeadStatus(townRoot string, ids []string) map[string]*beadsdk.
 	// Group IDs by prefix
 	byPrefix := make(map[string][]string)
 	for _, id := range ids {
-		prefix := beads.ExtractPrefix(id)
+		prefix := beads.ResolvePrefixForID(townRoot, id)
 		if prefix != "" {
 			byPrefix[prefix] = append(byPrefix[prefix], id)
 		}
@@ -541,7 +541,7 @@ func FireCrossRigDepNotifications(ctx context.Context, closedIssueID, townRoot s
 	}
 
 	// Determine the home store of the closed issue so we can skip it.
-	closedPrefix := beads.ExtractPrefix(closedIssueID)
+	closedPrefix := beads.ResolvePrefixForID(townRoot, closedIssueID)
 	if closedPrefix == "" {
 		return
 	}
@@ -579,7 +579,7 @@ func FireCrossRigDepNotifications(ctx context.Context, closedIssueID, townRoot s
 
 			// Determine the rig for the dependent issue.
 			depID := extractIssueID(dep.ID)
-			depPrefix := beads.ExtractPrefix(depID)
+			depPrefix := beads.ResolvePrefixForID(townRoot, depID)
 			if depPrefix == "" {
 				continue
 			}

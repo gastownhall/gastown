@@ -65,7 +65,7 @@ func ResolveRoutingTarget(townRoot, beadID, fallbackDir string) string {
 	}
 
 	// Extract prefix from bead ID (e.g., "gt-gastown-polecat-Toast" -> "gt-")
-	prefix := ExtractPrefix(beadID)
+	prefix := ResolvePrefixForID(townRoot, beadID)
 	if prefix == "" {
 		return fallbackDir
 	}

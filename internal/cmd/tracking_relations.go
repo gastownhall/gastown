@@ -87,7 +87,7 @@ func trackingDependsOnID(townRoot, issueID string) string {
 		return issueID
 	}
 
-	prefix := beads.ExtractPrefix(issueID)
+	prefix := beads.ResolvePrefixForID(townRoot, issueID)
 	if prefix == "" {
 		return issueID
 	}

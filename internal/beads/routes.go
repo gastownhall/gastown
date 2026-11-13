@@ -262,6 +262,43 @@ func ExtractPrefix(beadID string) string {
 	return beadID[:idx+1]
 }
 
+// resolvePrefixFromRoutes returns the longest configured route prefix matching
+// beadID. Route order is intentionally irrelevant when prefixes overlap.
+func resolvePrefixFromRoutes(routes []Route, beadID string) string {
+	if beadID == "" {
+		return ExtractPrefix(beadID)
+	}
+
+	var best string
+	for _, route := range routes {
+		if route.Prefix != "" && strings.HasPrefix(beadID, route.Prefix) && len(route.Prefix) > len(best) {
+			best = route.Prefix
+		}
+	}
+	if best != "" {
+		return best
+	}
+	return ExtractPrefix(beadID)
+}
+
+// ResolvePrefixForID resolves the configured route prefix for a bead ID.
+// Routes may contain hyphens themselves, so a bead ID can match more than one
+// configured prefix. The longest matching route wins regardless of route-file
+// order. When route context is unavailable or no configured route matches, the
+// lexical prefix is returned to preserve callers' existing fallback behavior.
+func ResolvePrefixForID(townRoot, beadID string) string {
+	if townRoot == "" || beadID == "" {
+		return ExtractPrefix(beadID)
+	}
+
+	routes, err := LoadRoutes(filepath.Join(townRoot, ".beads"))
+	if err != nil || routes == nil {
+		return ExtractPrefix(beadID)
+	}
+
+	return resolvePrefixFromRoutes(routes, beadID)
+}
+
 // GetRigPathForPrefix returns the rig path for a given bead ID prefix.
 // The townRoot should be the Gas Town root directory (e.g., ~/gt).
 // Returns the full absolute path to the rig directory, or empty string if not found.
@@ -481,11 +518,9 @@ func GetRigNameForPrefix(townRoot, prefix string) string {
 // rig via routes.jsonl, the resolved rig's beads directory is returned.
 // Returns currentBeadsDir if no routing is needed or prefix can't be resolved.
 func ResolveBeadsDirForID(currentBeadsDir, beadID string) string {
-	prefix := ExtractPrefix(beadID)
-	if prefix == "" {
+	if currentBeadsDir == "" {
 		return currentBeadsDir
 	}
-
 	routesBeadsDir := currentBeadsDir
 	routes, err := LoadRoutes(routesBeadsDir)
 	if (err != nil || routes == nil) && currentBeadsDir != "" {
@@ -498,6 +533,10 @@ func ResolveBeadsDirForID(currentBeadsDir, beadID string) string {
 		}
 	}
 	if err != nil || routes == nil {
+		return currentBeadsDir
+	}
+	prefix := resolvePrefixFromRoutes(routes, beadID)
+	if prefix == "" {
 		return currentBeadsDir
 	}
 
@@ -525,8 +564,8 @@ func ResolveBeadsDirForID(currentBeadsDir, beadID string) string {
 // typically indicates the bd create routing resolved to the town-level database
 // instead of the rig's database. Callers should log the warning and continue.
 func ValidateRigPrefix(townRoot, rigName, beadID string) error {
-	expectedPrefix := GetPrefixForRig(townRoot, rigName)           // e.g., "gt"
-	actualPrefix := strings.TrimSuffix(ExtractPrefix(beadID), "-") // e.g., "gt"
+	expectedPrefix := GetPrefixForRig(townRoot, rigName)                          // e.g., "gt"
+	actualPrefix := strings.TrimSuffix(ResolvePrefixForID(townRoot, beadID), "-") // e.g., "gt"
 	if actualPrefix == "" {
 		return nil // Can't determine prefix — not an error
 	}
@@ -543,7 +582,7 @@ func ValidateRigPrefix(townRoot, rigName, beadID string) error {
 // a fallback if prefix resolution fails.
 func ResolveHookDir(townRoot, beadID, hookWorkDir string) string {
 	// Always try prefix resolution first - bd update needs the actual rig dir
-	prefix := ExtractPrefix(beadID)
+	prefix := ResolvePrefixForID(townRoot, beadID)
 	if rigPath := GetRigPathForPrefix(townRoot, prefix); rigPath != "" {
 		return rigPath
 	}
