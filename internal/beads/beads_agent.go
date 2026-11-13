@@ -704,10 +704,28 @@ func (b *Beads) GetAgentBead(id string) (*Issue, *AgentFields, error) {
 // ListAgentBeads returns all agent beads in a single query.
 // Returns a map of agent bead ID to Issue.
 //
+// Agent beads live in the town database (see ForAgentBead), so this routes
+// there like CreateAgentBead/GetAgentBead do. A rig-bound wrapper listing its
+// own store instead caused the hq-abv split-brain: spawn wrote the identity to
+// the town store while roster readers (gt polecat identity list, capacity,
+// dispatch) listed the rig store and reported the polecat as missing.
+// Use ListAgentBeadsLocal to scan the bound store without routing.
+//
 // Queries both the issues table (authoritative metadata source) and the
 // wisps table (fallback existence source). Issues take precedence for duplicate
 // IDs so labels/type are preserved for doctor validation.
 func (b *Beads) ListAgentBeads() (map[string]*Issue, error) {
+	if target := b.agentBeadTarget(); target != b {
+		return target.ListAgentBeads()
+	}
+	return b.ListAgentBeadsLocal()
+}
+
+// ListAgentBeadsLocal returns all agent beads in the store this wrapper is
+// bound to, without agent-bead routing. Doctor and status scans use it to
+// inspect a specific database (town and each rig) — for example to find agent
+// beads stranded in a rig store where the routed readers no longer look.
+func (b *Beads) ListAgentBeadsLocal() (map[string]*Issue, error) {
 	// Query issues table first. Issues include labels and type metadata used by
 	// doctor checks (for example, validating gt:agent labels).
 	// Agent beads are type=agent (infrastructure), hidden by bd list default filter.

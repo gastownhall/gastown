@@ -161,7 +161,7 @@ func (c *StaleAgentBeadsCheck) Run(ctx *CheckContext) *CheckResult {
 	// gt rig remove but its agent beads in the town database are not cleaned up.
 	townBeadsPath := beads.GetTownBeadsPath(ctx.TownRoot)
 	townBd := beads.New(townBeadsPath)
-	if townAgents, err := townBd.ListAgentBeads(); err == nil {
+	if townAgents, err := townBd.ListAgentBeadsLocal(); err == nil {
 		for id, issue := range townAgents {
 			// Skip closed/non-active beads
 			if issue.Status != "open" && issue.Status != "in_progress" && issue.Status != "hooked" {

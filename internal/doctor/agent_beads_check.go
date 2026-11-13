@@ -88,7 +88,7 @@ func (c *AgentBeadsCheck) Run(ctx *CheckContext) *CheckResult {
 	// Load global agents from town beads
 	townBeadsPath := beads.GetTownBeadsPath(ctx.TownRoot)
 	townBd := beads.New(townBeadsPath)
-	if townAgents, err := townBd.ListAgentBeads(); err == nil {
+	if townAgents, err := townBd.ListAgentBeadsLocal(); err == nil {
 		for id, issue := range townAgents {
 			allAgentBeads[id] = issue
 		}
@@ -103,7 +103,7 @@ func (c *AgentBeadsCheck) Run(ctx *CheckContext) *CheckResult {
 	for _, info := range prefixToRig {
 		rigBeadsPath := filepath.Join(ctx.TownRoot, info.beadsPath)
 		bd := beads.New(rigBeadsPath)
-		if rigAgents, err := bd.ListAgentBeads(); err == nil {
+		if rigAgents, err := bd.ListAgentBeadsLocal(); err == nil {
 			for id, issue := range rigAgents {
 				allAgentBeads[id] = issue
 			}
@@ -226,7 +226,7 @@ func (c *AgentBeadsCheck) Fix(ctx *CheckContext) error {
 	townBd := beads.New(townBeadsPath)
 
 	// Load existing town agent beads
-	if townAgents, err := townBd.ListAgentBeads(); err == nil {
+	if townAgents, err := townBd.ListAgentBeadsLocal(); err == nil {
 		for id, issue := range townAgents {
 			allAgentBeads[id] = issue
 		}
@@ -361,7 +361,7 @@ func (c *AgentBeadsCheck) Fix(ctx *CheckContext) error {
 	for _, info := range prefixToRig {
 		rigBeadsPath := filepath.Join(ctx.TownRoot, info.beadsPath)
 		bd := beads.New(rigBeadsPath)
-		if rigAgents, err := bd.ListAgentBeads(); err == nil {
+		if rigAgents, err := bd.ListAgentBeadsLocal(); err == nil {
 			for id, issue := range rigAgents {
 				allAgentBeads[id] = issue
 			}
