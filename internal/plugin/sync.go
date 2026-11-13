@@ -12,16 +12,25 @@ import (
 
 // SyncResult records the outcome of a plugin sync operation.
 type SyncResult struct {
-	Copied  []string // plugin names that were copied/updated
-	Removed []string // plugin names that were removed (clean mode)
-	Skipped []string // plugin names that were already up-to-date
-	Errors  []string // errors encountered
+	Copied   []string         // plugin names that were copied/updated
+	Removed  []string         // plugin names that were removed (clean mode)
+	Skipped  []string         // plugin names that were already up-to-date
+	Disabled []DisabledPlugin // plugins skipped because they are disabled town-wide
+	Errors   []string         // errors encountered
 }
 
 // SyncPlugins copies plugin directories from source to target.
 // If clean is true, removes plugins from target that don't exist in source.
-func SyncPlugins(sourceDir, targetDir string, clean bool) (*SyncResult, error) {
+//
+// Plugins named in <townRoot>/.disabled-plugins/ are never copied. A stale
+// marker (one left behind for a plugin that was later re-enabled) must not
+// escalate into deleting a live plugin, so a disabled plugin already present in
+// the target is left alone, including in clean mode: the guard withholds
+// updates, it never removes. Pass an empty townRoot to sync without the
+// skip-list (tests only; every production caller has a town root).
+func SyncPlugins(townRoot, sourceDir, targetDir string, clean bool) (*SyncResult, error) {
 	result := &SyncResult{}
+	disabled := LoadDisabledPlugins(townRoot)
 
 	srcInfo, err := os.Stat(sourceDir)
 	if err != nil {
@@ -48,6 +57,15 @@ func SyncPlugins(sourceDir, targetDir string, clean bool) (*SyncResult, error) {
 		pluginMD := filepath.Join(sourceDir, entry.Name(), "plugin.md")
 		if _, err := os.Stat(pluginMD); err != nil {
 			continue // Not a plugin directory
+		}
+		if d, ok := disabled[entry.Name()]; ok {
+			// Disabled town-wide: do not copy. Still count it as present in
+			// the source so clean mode below leaves any existing copy in
+			// place rather than deleting it.
+			d.Installed = isInstalled(targetDir, entry.Name())
+			result.Disabled = append(result.Disabled, d)
+			srcPlugins[entry.Name()] = true
+			continue
 		}
 		srcPlugins[entry.Name()] = true
 
@@ -86,6 +104,14 @@ func SyncPlugins(sourceDir, targetDir string, clean bool) (*SyncResult, error) {
 	}
 
 	return result, nil
+}
+
+// isInstalled reports whether the runtime already has a plugin by this name.
+// A skip-list entry for an installed plugin is a contradiction worth surfacing:
+// the marker says the town disabled it, the runtime says it is running.
+func isInstalled(targetDir, name string) bool {
+	info, err := os.Stat(filepath.Join(targetDir, name))
+	return err == nil && info.IsDir()
 }
 
 // dirsMatch checks if two plugin directories have identical contents.
@@ -256,11 +282,12 @@ func hasPlugins(dir string) bool {
 
 // DriftReport describes differences between source and runtime plugins.
 type DriftReport struct {
-	Source  string       `json:"source"`
-	Target string       `json:"target"`
-	Drifted []DriftEntry `json:"drifted,omitempty"`
-	Missing []string     `json:"missing,omitempty"` // in source but not target
-	Extra   []string     `json:"extra,omitempty"`   // in target but not source
+	Source   string           `json:"source"`
+	Target   string           `json:"target"`
+	Drifted  []DriftEntry     `json:"drifted,omitempty"`
+	Missing  []string         `json:"missing,omitempty"`  // in source but not target
+	Extra    []string         `json:"extra,omitempty"`    // in target but not source
+	Disabled []DisabledPlugin `json:"disabled,omitempty"` // in source but disabled town-wide
 }
 
 // DriftEntry describes a single plugin that differs between source and runtime.
@@ -271,11 +298,16 @@ type DriftEntry struct {
 }
 
 // DetectDrift compares plugin directories between source and target.
-func DetectDrift(sourceDir, targetDir string) (*DriftReport, error) {
+//
+// Plugins disabled in <townRoot>/.disabled-plugins/ are reported under Disabled
+// rather than as drift, so a drift check does not demand a fix that SyncPlugins
+// deliberately refuses to perform.
+func DetectDrift(townRoot, sourceDir, targetDir string) (*DriftReport, error) {
 	report := &DriftReport{
 		Source: sourceDir,
 		Target: targetDir,
 	}
+	disabled := LoadDisabledPlugins(townRoot)
 
 	srcEntries, err := os.ReadDir(sourceDir)
 	if err != nil {
@@ -296,6 +328,15 @@ func DetectDrift(sourceDir, targetDir string) (*DriftReport, error) {
 			continue
 		}
 		if _, err := os.Stat(filepath.Join(sourceDir, entry.Name(), "plugin.md")); err != nil {
+			continue
+		}
+		if d, ok := disabled[entry.Name()]; ok {
+			// Not drift: sync will refuse to copy this. Drop it from
+			// tgtPlugins so an already-installed copy is not reported as
+			// Extra either — clean mode leaves it alone.
+			d.Installed = tgtPlugins[entry.Name()]
+			report.Disabled = append(report.Disabled, d)
+			delete(tgtPlugins, entry.Name())
 			continue
 		}
 
