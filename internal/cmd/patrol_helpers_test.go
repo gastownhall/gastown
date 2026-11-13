@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"context"
 	"crypto/rand"
 	"database/sql"
 	"encoding/hex"
@@ -14,8 +15,10 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	_ "github.com/go-sql-driver/mysql"
+	beadsdk "github.com/steveyegge/beads"
 	"github.com/steveyegge/gastown/internal/beads"
 	"github.com/steveyegge/gastown/internal/config"
 	"github.com/steveyegge/gastown/internal/constants"
@@ -801,6 +804,126 @@ echo stdin:%stdin% >> %BD_STUB_LOG%
 }
 
 // --- Patrol discovery tests (findActivePatrol) ---
+
+type patrolReportLookupStore struct {
+	beadsdk.Storage
+	issues    []*beadsdk.Issue
+	closedIDs []string
+}
+
+func (s *patrolReportLookupStore) SearchIssues(_ context.Context, _ string, filter beadsdk.IssueFilter) ([]*beadsdk.Issue, error) {
+	var matches []*beadsdk.Issue
+	for _, issue := range s.issues {
+		if filter.Status != nil && issue.Status != *filter.Status {
+			continue
+		}
+		if filter.Assignee != nil && issue.Assignee != *filter.Assignee {
+			continue
+		}
+		if filter.SkipWisps && issue.Ephemeral {
+			continue
+		}
+		if filter.Ephemeral != nil && issue.Ephemeral != *filter.Ephemeral {
+			continue
+		}
+		if filter.ParentID != nil && !hasTestParent(issue, *filter.ParentID) {
+			continue
+		}
+		matches = append(matches, issue)
+	}
+	return matches, nil
+}
+
+func (s *patrolReportLookupStore) CloseIssue(_ context.Context, id, _, _, _ string) error {
+	s.closedIDs = append(s.closedIDs, id)
+	return nil
+}
+
+func hasTestParent(issue *beadsdk.Issue, parentID string) bool {
+	for _, dep := range issue.Dependencies {
+		if dep.Type == beadsdk.DepParentChild && dep.DependsOnID == parentID {
+			return true
+		}
+	}
+	return false
+}
+
+func TestFindPatrolForReportReturnsCompletedPatrolWithoutCleanup(t *testing.T) {
+	now := time.Now().UTC()
+	assignee := "testrig/witness"
+	molName := "mol-test-patrol"
+	currentID := "gt-current"
+	store := &patrolReportLookupStore{issues: []*beadsdk.Issue{
+		{
+			ID:        "gt-unrelated",
+			Title:     "some-other-work",
+			Status:    beadsdk.Status(beads.StatusHooked),
+			Assignee:  assignee,
+			CreatedAt: now.Add(time.Minute),
+			UpdatedAt: now.Add(time.Minute),
+			Ephemeral: true,
+		},
+		{
+			ID:        "gt-old",
+			Title:     molName + " (wisp)",
+			Status:    beadsdk.Status(beads.StatusHooked),
+			Assignee:  assignee,
+			CreatedAt: now.Add(-time.Hour),
+			UpdatedAt: now.Add(-time.Hour),
+			Ephemeral: true,
+		},
+		{
+			ID:        currentID,
+			Title:     molName + " (wisp)",
+			Status:    beadsdk.Status(beads.StatusHooked),
+			Assignee:  assignee,
+			CreatedAt: now,
+			UpdatedAt: now,
+			Ephemeral: true,
+		},
+		{
+			ID:        "gt-current-step",
+			Title:     "final-step",
+			Status:    beadsdk.StatusClosed,
+			CreatedAt: now,
+			UpdatedAt: now,
+			Ephemeral: true,
+			Dependencies: []*beadsdk.Dependency{{
+				IssueID:     "gt-current-step",
+				DependsOnID: currentID,
+				Type:        beadsdk.DepParentChild,
+			}},
+		},
+	}}
+
+	b := beads.NewWithStore(t.TempDir(), store)
+	hasOpen, err := checkHasOpenChildren(b, currentID)
+	if err != nil {
+		t.Fatalf("checkHasOpenChildren error: %v", err)
+	}
+	if hasOpen {
+		t.Fatal("fixture must represent a completed patrol with no open children")
+	}
+
+	patrolID, _, found, err := findPatrolForReport(PatrolConfig{
+		PatrolMolName: molName,
+		BeadsDir:      t.TempDir(),
+		Assignee:      assignee,
+		Beads:         b,
+	})
+	if err != nil {
+		t.Fatalf("findPatrolForReport error: %v", err)
+	}
+	if !found {
+		t.Fatal("expected the just-completed patrol to remain reportable")
+	}
+	if patrolID != currentID {
+		t.Fatalf("patrolID = %q, want newest matching patrol %q", patrolID, currentID)
+	}
+	if len(store.closedIDs) != 0 {
+		t.Fatalf("report lookup closed patrols %v; lookup must be non-destructive", store.closedIDs)
+	}
+}
 
 func requireBd(t *testing.T) {
 	t.Helper()

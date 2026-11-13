@@ -82,8 +82,10 @@ func runPatrolReport(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("unsupported role for patrol report: %q", roleName)
 	}
 
-	// Find the active patrol
-	patrolID, _, hasPatrol, findErr := findActivePatrol(cfg)
+	// Find the patrol to report without using child status as a liveness signal.
+	// A completed patrol has no open children but must remain available here so
+	// this command can record its summary and close it with the correct reason.
+	patrolID, _, hasPatrol, findErr := findPatrolForReport(cfg)
 	if findErr != nil {
 		return fmt.Errorf("finding active patrol: %w", findErr)
 	}
