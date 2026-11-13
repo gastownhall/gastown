@@ -93,6 +93,10 @@ type Daemon struct {
 	// Restart tracking with exponential backoff to prevent crash loops
 	restartTracker *RestartTracker
 
+	// witnessStalls rate-limits nudges and alerts for witnesses that are alive
+	// but not advancing their hooked work (gt-o57).
+	witnessStalls *stallTracker
+
 	// telemetry exports metrics and logs to VictoriaMetrics / VictoriaLogs.
 	// Nil when telemetry is disabled (GT_OTEL_METRICS_URL / GT_OTEL_LOGS_URL not set).
 	otelProvider *telemetry.Provider
@@ -392,6 +396,7 @@ func New(config *Config) (*Daemon, error) {
 		gtPath:          gtPath,
 		bdPath:          bdPath,
 		restartTracker:  restartTracker,
+		witnessStalls:   newStallTracker(),
 		otelProvider:    otelProvider,
 		metrics:         dm,
 		rigPool:         newRigWorkerPool(0, 0, logger), // defaults: 10 workers, 30s timeout
@@ -1781,8 +1786,12 @@ func (d *Daemon) ensureWitnessRunning(rigName string) {
 
 	if err := mgr.Start(false, "", nil); err != nil {
 		if err == witness.ErrAlreadyRunning {
-			// Already running - this is the expected case
-			d.logger.Printf("Witness for %s already running, skipping spawn", rigName)
+			// A session exists — but that alone says nothing about whether the
+			// witness is working. Ask about work progress before standing down
+			// (gt-o57): keying the guard on session existence protected frozen
+			// witnesses while respawning crashed ones, preferring the worse
+			// failure mode.
+			d.handleRunningWitness(rigName, session.WitnessSessionName(session.PrefixFor(rigName)))
 			return
 		}
 		d.logger.Printf("Error starting witness for %s: %v", rigName, err)
