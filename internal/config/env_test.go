@@ -15,7 +15,7 @@ func TestAgentEnv_Mayor(t *testing.T) {
 	})
 
 	assertEnv(t, env, "GT_ROLE", "mayor")
-	assertEnv(t, env, "BD_ACTOR", "mayor")
+	assertEnv(t, env, "BD_ACTOR", "mayor/")
 	assertEnv(t, env, "GIT_AUTHOR_NAME", "mayor")
 	assertEnv(t, env, "GT_ROOT", "/town")
 	assertEnv(t, env, "GIT_CEILING_DIRECTORIES", "/town") // prevents git walking to umbrella
@@ -98,7 +98,7 @@ func TestAgentEnv_Deacon(t *testing.T) {
 	})
 
 	assertEnv(t, env, "GT_ROLE", "deacon")
-	assertEnv(t, env, "BD_ACTOR", "deacon")
+	assertEnv(t, env, "BD_ACTOR", "deacon/")
 	assertEnv(t, env, "GIT_AUTHOR_NAME", "deacon")
 	assertEnv(t, env, "GT_ROOT", "/town")
 	assertNotSet(t, env, "GT_RIG")
@@ -1712,4 +1712,19 @@ func TestAgentEnv_EffortLevel(t *testing.T) {
 			t.Error("CLAUDE_CODE_EFFORT_LEVEL should always be set")
 		}
 	})
+}
+
+func TestBDActorForRole(t *testing.T) {
+	t.Parallel()
+	for role, want := range map[string]string{
+		"mayor":               "mayor/",
+		"deacon":              "deacon/",
+		"gastown/witness":     "gastown/witness",
+		"gastown/polecats/nx": "gastown/polecats/nx",
+		"gastown/crew/jane":   "gastown/crew/jane",
+	} {
+		if got := BDActorForRole(role); got != want {
+			t.Errorf("BDActorForRole(%q) = %q, want %q", role, got, want)
+		}
+	}
 }
