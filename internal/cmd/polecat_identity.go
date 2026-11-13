@@ -269,8 +269,9 @@ func runPolecatIdentityList(cmd *cobra.Command, args []string) error {
 	}
 
 	// Get all agent beads
+	// Agent beads live in the town DB despite their rig prefix (gt-ets).
 	bd := beads.New(r.Path)
-	agentBeads, err := bd.ListAgentBeads()
+	agentBeads, err := bd.ForAgentBead().ListAgentBeads()
 	if err != nil {
 		return fmt.Errorf("listing agent beads: %w", err)
 	}

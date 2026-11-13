@@ -1054,6 +1054,9 @@ func slotOpenDecision(workDir, townRoot, rigName, polecatName, exitType string) 
 	} else {
 		input.GitCheckFailed = true
 	}
+	// The git predicates above were actually evaluated here (failures recorded
+	// in GitCheckFailed), so a missing cleanup_status can be settled by them.
+	input.GitStateKnown = true
 	gitSafe := !input.GitCheckFailed && !input.GitDirty && input.StashCount == 0 && input.UnpushedCommits == 0
 	activeMRSafe := true
 	sourceTerminal := fields != nil && issueID != "" && witnessIssueTerminal(rigBeads, issueID)

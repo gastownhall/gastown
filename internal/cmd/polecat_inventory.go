@@ -88,6 +88,12 @@ func buildPolecatInventoryItemFromEvidence(rigName, polecatName string, fields *
 	}
 
 	input := polecat.WorkstateInput{State: polecat.StateIdle}
+	// No agent bead means no evidence about this polecat at all. Fail closed,
+	// but say why: reporting the empty cleanup_status instead hid a whole rig's
+	// worth of agent beads being read from the wrong database (gt-ets).
+	if fields == nil {
+		input.AgentBeadMissing = true
+	}
 	if fields != nil {
 		item.CleanupStatus = strings.TrimSpace(fields.CleanupStatus)
 		item.ActiveMR = strings.TrimSpace(fields.ActiveMR)

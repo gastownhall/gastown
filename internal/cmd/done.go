@@ -118,12 +118,38 @@ var newDoneSessionKiller = func() doneSessionKiller {
 
 var updateAgentStateOnDoneFn = updateAgentStateOnDone
 
-func updateAgentStateAfterSubmission(cwd, townRoot, exitType, issueID string, pushFailed, mrFailed bool) error {
+var recordObservedCleanupStatusFn = recordObservedCleanupStatus
+
+func updateAgentStateAfterSubmission(cwd, townRoot, exitType, issueID, agentBeadID string, pushFailed, mrFailed bool) error {
 	if !shouldUpdateAgentStateOnDone(pushFailed, mrFailed) {
 		style.PrintWarning("skipping agent cleanup because push or MR submission failed")
+		// The lifecycle update is skipped on purpose so Witness can recover the
+		// still-open work, but cleanup_status is an observation of the worktree,
+		// not a lifecycle decision. Skipping it too leaves the field permanently
+		// absent, and an absent cleanup_status blocks reuse forever — the polecat
+		// is then held out of service by an unwritten field rather than by any
+		// real risk (gt-ets).
+		recordObservedCleanupStatusFn(cwd, agentBeadID)
 		return nil
 	}
 	return updateAgentStateOnDoneFn(cwd, townRoot, exitType, issueID)
+}
+
+// recordObservedCleanupStatus writes the observed git cleanup status to the
+// agent bead without touching hook_bead or agent_state. Best-effort: gt done
+// must finish even when the bead write fails.
+func recordObservedCleanupStatus(cwd, agentBeadID string) {
+	if agentBeadID == "" {
+		return
+	}
+	status := parseCleanupStatus(doneCleanupStatus)
+	if status == polecat.CleanupUnknown {
+		return
+	}
+	// Agent beads live in the town DB despite their rig prefix.
+	if err := beads.New(cwd).ForAgentBead().UpdateAgentCleanupStatus(agentBeadID, string(status)); err != nil {
+		style.PrintWarning("could not record cleanup_status on agent bead %s: %v", agentBeadID, err)
+	}
 }
 
 func resolveDonePolecatWorktree() (donePolecatWorktree, error) {
@@ -1923,7 +1949,7 @@ notifyWitness:
 
 	// Update agent bead state (ZFC: self-report completion). If push/MR failed,
 	// keep the hook intact so Witness can recover the still-open work.
-	if err := updateAgentStateAfterSubmission(cwd, townRoot, exitType, issueID, pushFailed, mrFailed); err != nil {
+	if err := updateAgentStateAfterSubmission(cwd, townRoot, exitType, issueID, agentBeadID, pushFailed, mrFailed); err != nil {
 		return err
 	}
 

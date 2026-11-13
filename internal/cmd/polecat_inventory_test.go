@@ -196,3 +196,71 @@ func TestPolecatNameFromAssignee(t *testing.T) {
 		}
 	}
 }
+
+// gt-ets: when the agent bead can't be read, the inventory must say so rather
+// than report the resulting empty cleanup_status as the defect. Blaming
+// cleanup_status hid every polecat's agent bead being read from the rig
+// database instead of the town database — six polecats rendered identically
+// as "cleanup_status=<missing>" while three of them had it written as clean.
+func TestBuildPolecatInventoryItemMissingAgentBeadNamesItself(t *testing.T) {
+	setupPolecatTestRegistry(t)
+	sessions := newPolecatSessionSet(nil)
+
+	item := buildPolecatInventoryItem("gastown", "ghost", nil, nil, sessions)
+
+	if item.Disposition.Reusable {
+		t.Fatal("a polecat with no readable agent bead must not be reusable")
+	}
+	if item.Disposition.Reason != "agent-bead-missing" {
+		t.Fatalf("reason = %q, want %q", item.Disposition.Reason, "agent-bead-missing")
+	}
+	for _, blocker := range item.Disposition.Blockers {
+		if strings.Contains(blocker, "cleanup_status") {
+			t.Fatalf("blockers = %v, want no cleanup_status blocker when the bead itself is missing", item.Disposition.Blockers)
+		}
+	}
+}
+
+// A readable agent bead reporting cleanup_status=clean must stay reusable, and
+// must not be dragged down by the missing-bead blocker.
+func TestBuildPolecatInventoryItemCleanAgentBeadIsReusable(t *testing.T) {
+	setupPolecatTestRegistry(t)
+	sessions := newPolecatSessionSet(nil)
+
+	fields := &beads.AgentFields{
+		RoleType:      "polecat",
+		Rig:           "gastown",
+		AgentState:    "idle",
+		CleanupStatus: "clean",
+		Branch:        "polecat/obsidian/gt-cw1",
+	}
+	item := buildPolecatInventoryItem("gastown", "obsidian", fields, nil, sessions)
+
+	if !item.Disposition.Reusable {
+		t.Fatalf("clean idle polecat not reusable: reason=%q blockers=%v", item.Disposition.Reason, item.Disposition.Blockers)
+	}
+}
+
+// mr_failed on the agent bead is a real blocker and must survive: it is the
+// blocker that a rig-scoped (empty) agent bead read was masking.
+func TestBuildPolecatInventoryItemSurfacesMRFailed(t *testing.T) {
+	setupPolecatTestRegistry(t)
+	sessions := newPolecatSessionSet(nil)
+
+	fields := &beads.AgentFields{
+		RoleType:      "polecat",
+		Rig:           "gastown",
+		AgentState:    "idle",
+		CleanupStatus: "clean",
+		Branch:        "polecat/jasper/gt-cw1",
+		MRFailed:      true,
+	}
+	item := buildPolecatInventoryItem("gastown", "jasper", fields, nil, sessions)
+
+	if item.Disposition.Reusable {
+		t.Fatal("polecat with mr_failed=true must not be reusable")
+	}
+	if item.Disposition.Reason != "mr-failed" {
+		t.Fatalf("reason = %q, want %q", item.Disposition.Reason, "mr-failed")
+	}
+}

@@ -13,10 +13,21 @@ const (
 // WorkstateInput contains the lifecycle, git, and merge-queue facts needed to
 // classify a polecat consistently across list, recovery, witness, and capacity.
 type WorkstateInput struct {
-	State                          State
-	HookBead                       string
-	CleanupStatus                  CleanupStatus
-	IgnoreCleanupStatus            bool
+	State    State
+	HookBead string
+	// AgentBeadMissing records that the polecat's agent bead could not be read
+	// at all. Every other field is then a zero value rather than an
+	// observation, so the classifier must say so instead of blaming whichever
+	// predicate happens to be empty.
+	AgentBeadMissing    bool
+	CleanupStatus       CleanupStatus
+	IgnoreCleanupStatus bool
+	// GitStateKnown records that the caller gathered live git facts for this
+	// polecat, so GitCheckFailed/GitDirty/StashCount/UnpushedCommits carry
+	// evidence rather than zero values. Callers that cannot inspect the
+	// worktree must leave it false: an absent cleanup_status only stops
+	// blocking when a clean tree has been positively observed.
+	GitStateKnown                  bool
 	PartialSpawnWithoutDurableHook bool
 	PushFailed                     bool
 	MRFailed                       bool
@@ -101,6 +112,12 @@ func DecideWorkstate(in WorkstateInput) WorkstateDisposition {
 		capacityBlocked = capacityBlocked || countsTowardCapacity
 	}
 
+	// Checked first so its reason wins: when the agent bead is unreadable the
+	// remaining fields carry no evidence, and reporting a downstream predicate
+	// (an empty cleanup_status, say) sends recovery after the wrong defect.
+	if in.AgentBeadMissing {
+		block("agent-bead-missing", "agent_bead=<not found>", true)
+	}
 	if in.HookBead != "" && !in.PartialSpawnWithoutDurableHook {
 		block("hook-still-set", "has work on hook ("+in.HookBead+")", true)
 	}
@@ -113,7 +130,14 @@ func DecideWorkstate(in WorkstateInput) WorkstateDisposition {
 	if in.ActiveWorkBlocker != "" {
 		block("active-work", in.ActiveWorkBlocker, in.ActiveWorkCountsTowardCapacity)
 	}
-	if !in.IgnoreCleanupStatus && !in.CleanupStatus.IsSafe() {
+	// An absent or unknown cleanup_status is ambiguous, not dangerous. Failing
+	// closed on it is right only while nothing else proves the worktree safe;
+	// when the caller has actually looked at git and found a clean tree, that
+	// positive evidence settles the ambiguity. Without this, a field that is
+	// simply never written strands a polecat permanently (gt-ets). Absence
+	// plus an unknown or dirty tree still blocks, and a KNOWN-unsafe status
+	// (has_uncommitted/has_stash/has_unpushed) always blocks regardless of git.
+	if !in.IgnoreCleanupStatus && !in.CleanupStatus.IsSafe() && !cleanupAbsenceResolvedByGit(in) {
 		reason := "cleanup-" + string(in.CleanupStatus)
 		blocker := "cleanup_status=" + string(in.CleanupStatus)
 		if in.CleanupStatus == "" {
@@ -198,6 +222,20 @@ func DecideWorkstate(in WorkstateInput) WorkstateDisposition {
 		d.ReuseStatus = "idle-clean"
 	}
 	return d
+}
+
+// cleanupAbsenceResolvedByGit reports whether a missing or unknown
+// cleanup_status is answered by directly observed git state. It deliberately
+// requires GitStateKnown: a caller that never ran the git checks presents the
+// same zero values as a clean worktree, and must keep failing closed.
+func cleanupAbsenceResolvedByGit(in WorkstateInput) bool {
+	if in.CleanupStatus != "" && in.CleanupStatus != CleanupUnknown {
+		return false
+	}
+	if !in.GitStateKnown || in.GitCheckFailed {
+		return false
+	}
+	return !in.GitDirty && in.StashCount == 0 && in.UnpushedCommits == 0
 }
 
 // CanIgnoreStaleCleanupStatus returns true when a dirty persisted
