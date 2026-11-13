@@ -10,6 +10,7 @@ import (
 
 	"github.com/spf13/cobra"
 	"github.com/steveyegge/gastown/internal/beads"
+	"github.com/steveyegge/gastown/internal/doltserver"
 )
 
 var (
@@ -78,7 +79,7 @@ func runAgentsResolve(cmd *cobra.Command, _ []string) error {
 		return err
 	}
 
-	candidates, err := findAgentBeadCandidates(cwd, currentBeadsDir)
+	candidates, err := findAgentBeadCandidates(cwd, currentBeadsDir, rig)
 	if err != nil {
 		return err
 	}
@@ -108,10 +109,6 @@ func runAgentsResolve(cmd *cobra.Command, _ []string) error {
 		}
 		return fmt.Errorf("%s", message)
 	}
-	if rig != "" && agentBeadSourceIsTown(match.Source) && !agentsResolveJSON {
-		return fmt.Errorf("agent bead %s was found only in %s; patrol await/state commands require a rig-local agent bead", match.ID, match.Source)
-	}
-
 	if agentsResolveJSON {
 		return json.NewEncoder(cmd.OutOrStdout()).Encode(agentsResolveResult{
 			ID:       match.ID,
@@ -125,30 +122,43 @@ func runAgentsResolve(cmd *cobra.Command, _ []string) error {
 	return nil
 }
 
-func findAgentBeadCandidates(cwd, currentBeadsDir string) ([]agentBeadCandidate, error) {
-	var candidates []agentBeadCandidate
-
-	rigCandidates, err := loadAgentBeadsFromDir(currentBeadsDir, agentSourceRigIssues, agentSourceRigWisps)
-	if err != nil {
-		return nil, err
-	}
-	candidates = append(candidates, rigCandidates...)
-
+// findAgentBeadCandidates gathers agent-bead candidates for a role lookup.
+//
+// Agent beads live in the town DB by design (see beads.ForAgentBead), so the
+// town DB is always searched and its beads are labelled town-*. A rig-local
+// bead, if the rig's DB has one, is searched too and ranks ahead of town beads.
+// The rig DB is the cwd's, or the --rig DB when run from the town root.
+func findAgentBeadCandidates(cwd, currentBeadsDir, rig string) ([]agentBeadCandidate, error) {
 	townRoot := beads.FindTownRoot(cwd)
 	if townRoot == "" {
-		return candidates, nil
+		return loadAgentBeadsFromDir(currentBeadsDir, agentSourceRigIssues, agentSourceRigWisps)
 	}
 	townBeadsDir := beads.ResolveBeadsDir(beads.GetTownBeadsPath(townRoot))
-	if townBeadsDir == "" || filepath.Clean(townBeadsDir) == filepath.Clean(currentBeadsDir) {
-		return candidates, nil
+
+	rigBeadsDir := currentBeadsDir
+	if rig != "" && filepath.Clean(currentBeadsDir) == filepath.Clean(townBeadsDir) {
+		rigBeadsDir = beads.ResolveBeadsDir(doltserver.FindRigBeadsDir(townRoot, rig))
+	}
+
+	var candidates []agentBeadCandidate
+	if filepath.Clean(rigBeadsDir) != filepath.Clean(townBeadsDir) && dirExists(rigBeadsDir) {
+		rigCandidates, err := loadAgentBeadsFromDir(rigBeadsDir, agentSourceRigIssues, agentSourceRigWisps)
+		if err != nil {
+			return nil, err
+		}
+		candidates = append(candidates, rigCandidates...)
 	}
 
 	townCandidates, err := loadAgentBeadsFromDir(townBeadsDir, agentSourceTownIssues, agentSourceTownWisps)
 	if err != nil {
 		return nil, err
 	}
-	candidates = append(candidates, townCandidates...)
-	return candidates, nil
+	return append(candidates, townCandidates...), nil
+}
+
+func dirExists(path string) bool {
+	info, err := os.Stat(path)
+	return err == nil && info.IsDir()
 }
 
 func loadAgentBeadsFromDir(beadsDir string, issueSource, wispSource agentBeadSource) ([]agentBeadCandidate, error) {
@@ -271,8 +281,4 @@ func agentBeadSourceRank(source agentBeadSource) int {
 	default:
 		return 99
 	}
-}
-
-func agentBeadSourceIsTown(source agentBeadSource) bool {
-	return source == agentSourceTownWisps || source == agentSourceTownIssues
 }
