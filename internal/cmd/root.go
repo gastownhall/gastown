@@ -189,9 +189,13 @@ func isRoleCommand(cmd *cobra.Command) bool {
 	return false
 }
 
+// isDoneCommand reports whether cmd is the top-level `gt done` command.
+// It must not match subcommands of other commands that happen to be named
+// "done" (e.g. `gt dog done`), which have their own lifecycle semantics and
+// must not be subjected to the polecat worktree ownership guard (hq-jq0g).
 func isDoneCommand(cmd *cobra.Command) bool {
 	for c := cmd; c != nil; c = c.Parent() {
-		if c.Name() == "done" {
+		if c.Name() == "done" && c.Parent() != nil && c.Parent() == c.Root() {
 			return true
 		}
 	}
