@@ -302,11 +302,18 @@ func cleanOrphanedWispDeps(bd *beads.Beads, result *compactResult) {
 	}
 }
 
-// listWisps queries all ephemeral issues from the database.
+// listWisps queries all ephemeral issues from the database, including
+// infrastructure-scoped ones (patrol, agent, and other type=agent/infra
+// wisps that `bd list` hides by default). Without --include-infra this
+// silently scans an empty or near-empty set on any town where most
+// ephemeral work is infra-scoped, so compaction never acts on it and wisps
+// accumulate without bound (gastown#4869) — the same default-hides-infra
+// gotcha already fixed for ListAgentBeads in internal/beads/beads_agent.go.
 // Returns extended issue structs with comment_count and wisp_type.
 func listWisps(bd *beads.Beads) ([]*compactIssue, error) {
-	// Use bd list --json --all to get wisps in all statuses, unlimited
-	out, err := bd.Run("list", "--json", "--all", "-n", "0")
+	// Use bd list --include-infra --json --all to get wisps in all statuses
+	// and scopes, unlimited.
+	out, err := bd.Run("list", "--include-infra", "--json", "--all", "-n", "0")
 	if err != nil {
 		return nil, err
 	}
