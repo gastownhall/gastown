@@ -398,6 +398,9 @@ func waitForEventsFile(ctx context.Context, eventsPath string) (*AwaitSignalResu
 		case <-ticker.C:
 			line, err := reader.ReadString('\n')
 			if err == nil && line != "" {
+				if isCeremonyFeedEvent(line) {
+					continue
+				}
 				return &AwaitSignalResult{
 					Reason: "signal",
 					Signal: strings.TrimRight(line, "\n"),
@@ -409,6 +412,26 @@ func waitForEventsFile(ctx context.Context, eventsPath string) (*AwaitSignalResu
 			}
 		}
 	}
+}
+
+// isCeremonyFeedEvent reports whether a feed line is daemon ceremony that must
+// not count as an activity signal. The daemon spawns a Boot agent for triage
+// every heartbeat (~3.5m), each emitting a session_start feed event; treating
+// those as signals meant an idle town's await-signal backoff never exceeded
+// ~3.5m and every patrol cycle ran at EFFORT: full (hq-uy5). Only Boot's own
+// session lifecycle is filtered — anything else Boot does (escalations, mail)
+// still wakes waiting agents. Unparseable lines keep the legacy
+// wake-on-anything behavior.
+func isCeremonyFeedEvent(line string) bool {
+	var ev struct {
+		Type  string `json:"type"`
+		Actor string `json:"actor"`
+	}
+	if err := json.Unmarshal([]byte(line), &ev); err != nil {
+		return false
+	}
+	return ev.Actor == "boot" &&
+		(ev.Type == events.TypeSessionStart || ev.Type == events.TypeSessionDeath)
 }
 
 // parseIntSimple parses a string to int without using strconv.

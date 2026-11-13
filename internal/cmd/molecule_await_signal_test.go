@@ -448,3 +448,98 @@ esac
 		}
 	}
 }
+
+func TestIsCeremonyFeedEvent(t *testing.T) {
+	cases := map[string]bool{
+		// Boot session lifecycle is daemon triage ceremony (~every 3.5m): it
+		// must not count as a signal or idle backoff never grows (hq-uy5).
+		`{"ts":"t","source":"gt","type":"session_start","actor":"boot","payload":{"role":"boot"}}`: true,
+		`{"ts":"t","source":"gt","type":"session_death","actor":"boot"}`:                           true,
+		// Anything boot does beyond its own lifecycle still wakes agents.
+		`{"ts":"t","type":"escalation_raised","actor":"boot"}`: false,
+		// Other actors' session lifecycle is real activity.
+		`{"ts":"t","type":"session_start","actor":"source/witness"}`: false,
+		`{"ts":"t","type":"sling","actor":"mayor"}`:                  false,
+		// Unparseable or empty lines keep the legacy wake-on-anything behavior.
+		`not json`: false,
+		``:         false,
+	}
+	for line, want := range cases {
+		if got := isCeremonyFeedEvent(line); got != want {
+			t.Errorf("isCeremonyFeedEvent(%q) = %v, want %v", line, got, want)
+		}
+	}
+}
+
+func TestWaitForEventsFile_SkipsBootCeremony(t *testing.T) {
+	// A boot session_start arriving first must be skipped; the later real
+	// event is the signal that wakes the waiter.
+	eventsPath := filepath.Join(t.TempDir(), ".events.jsonl")
+	if err := os.WriteFile(eventsPath, []byte(`{"ts":"old","type":"ignore"}`+"\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	bootLine := `{"ts":"new","source":"gt","type":"session_start","actor":"boot","payload":{"role":"boot"}}`
+	realLine := `{"ts":"new","source":"gt","type":"escalation_raised","actor":"source/witness"}`
+	go func() {
+		time.Sleep(300 * time.Millisecond)
+		f, err := os.OpenFile(eventsPath, os.O_APPEND|os.O_WRONLY, 0644)
+		if err != nil {
+			return
+		}
+		_, _ = f.WriteString(bootLine + "\n")
+		_ = f.Close()
+		time.Sleep(600 * time.Millisecond)
+		f, err = os.OpenFile(eventsPath, os.O_APPEND|os.O_WRONLY, 0644)
+		if err != nil {
+			return
+		}
+		_, _ = f.WriteString(realLine + "\n")
+		_ = f.Close()
+	}()
+
+	result, err := waitForEventsFile(ctx, eventsPath)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.Reason != "signal" {
+		t.Fatalf("expected reason 'signal', got %q", result.Reason)
+	}
+	if result.Signal != realLine {
+		t.Errorf("woke on %q, want the non-ceremony line %q", result.Signal, realLine)
+	}
+}
+
+func TestWaitForEventsFile_TimesOutOnOnlyBootCeremony(t *testing.T) {
+	// If the only feed activity is boot ceremony, the waiter should time out
+	// so the caller's idle backoff grows (abbreviated patrols on idle towns).
+	eventsPath := filepath.Join(t.TempDir(), ".events.jsonl")
+	if err := os.WriteFile(eventsPath, []byte(`{"ts":"old","type":"ignore"}`+"\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 1500*time.Millisecond)
+	defer cancel()
+
+	go func() {
+		time.Sleep(300 * time.Millisecond)
+		f, err := os.OpenFile(eventsPath, os.O_APPEND|os.O_WRONLY, 0644)
+		if err != nil {
+			return
+		}
+		defer f.Close()
+		_, _ = f.WriteString(`{"ts":"new","type":"session_start","actor":"boot"}` + "\n")
+		_, _ = f.WriteString(`{"ts":"new","type":"session_death","actor":"boot"}` + "\n")
+	}()
+
+	result, err := waitForEventsFile(ctx, eventsPath)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.Reason != "timeout" {
+		t.Errorf("expected reason 'timeout' (boot ceremony only), got %q with signal %q", result.Reason, result.Signal)
+	}
+}
