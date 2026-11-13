@@ -3,7 +3,7 @@ Standing patrol for open PR review feedback and failing CI checks.
 
 Scans all open PRs across rigs, identifies those needing attention (review
 feedback or failing CI), and dispatches polecat work beads for each finding.
-A dedup guard prevents re-slinging polecats for PRs that already have open beads.
+A dedup guard prevents re-slinging polecats for PRs that already have unclosed beads.
 
 ## Purpose
 
@@ -19,20 +19,32 @@ per rig, or configure a single instance to scan multiple repos.
 ## Dispatch Strategy
 
 For each actionable PR finding, the patrol:
-1. Checks for an existing open bead tagged with the PR number (dedup guard)
-2. If no existing bead, creates a new bead with PR context (URL, type, check names)
-3. Slings a polecat to the appropriate rig to address the finding
+1. Checks for an unclosed bead tagged with the PR number (dedup guard)
+2. If no existing bead, creates a new bead with PR context (URL, branch, type, check names)
+3. Slings a polecat onto the PR's head branch (`--branch <head> --no-merge`),
+   so the fix is pushed to the existing PR instead of a new branch
 
-One bead per PR item. If a bead already exists for that PR, it is skipped.
+One bead per PR. If an unclosed bead already exists for that PR, it is skipped.
 
 ## PR Actionability Criteria
 
 A PR is actionable if any of the following are true:
 - reviewDecision == "CHANGES_REQUESTED"
-- statusCheckRollup contains any check with state FAILURE or ERROR
-- Any unresolved review thread (requires additional gh api call)
+- statusCheckRollup contains a failed check (CheckRun conclusion FAILURE,
+  TIMED_OUT or STARTUP_FAILURE, or StatusContext state FAILURE or ERROR)
+- Any unresolved review thread (not yet checked by the steps below)
 
 Draft PRs are excluded from actionability by default.
+
+A change request only counts if it was submitted after the PR's head commit.
+Once a fix is pushed, the PR waits for re-review instead of being re-dispatched.
+
+## Scope
+
+By default only PRs authored by the `gh` user running the patrol are scanned
+(`author = "@me"`). In a shared repository, scanning every open PR would send
+polecats to push onto other people's branches. Set `author = ""` to scan all
+authors, and `head_prefix` (e.g. `polecat/`) to limit scope further.
 
 ## Variables
 
@@ -45,7 +57,9 @@ Draft PRs are excluded from actionability by default.
 | scan_interval_seconds | 300 | Seconds to sleep between patrol cycles |
 | exclude_drafts | true | Whether to skip draft PRs |
 | max_open_beads | 20 | Stop dispatching if this many open PR-patrol beads exist (safety valve) |
-| patrol_label | pr-feedback-patrol | Label applied to dispatched beads for dedup tracking |"""
+| patrol_label | pr-feedback-patrol | Label applied to dispatched beads for dedup tracking |
+| author | @me | Only scan PRs by this GitHub login (`@me` = the gh user); empty = all authors |
+| head_prefix | (empty) | Only scan PRs whose head branch starts with this prefix |"""
 
 formula = "mol-pr-feedback-patrol"
 version = 1
@@ -83,6 +97,14 @@ default = "20"
 description = "Label applied to dispatched beads used for dedup guard"
 default = "pr-feedback-patrol"
 
+[vars.author]
+description = "Only scan PRs authored by this GitHub login; @me = the gh user, empty = all authors"
+default = "@me"
+
+[vars.head_prefix]
+description = "Only scan PRs whose head branch starts with this prefix (empty = any branch)"
+default = ""
+
 [[steps]]
 id = "list-open-prs"
 title = "List open PRs with review and CI status"
@@ -95,17 +117,22 @@ gh pr list \
   --repo {{repo}} \
   --base {{base_branch}} \
   --state open \
-  --json number,title,url,reviewDecision,statusCheckRollup,isDraft,headRefName \
+  --json number,title,url,reviewDecision,statusCheckRollup,isDraft,headRefName,author,latestReviews \
   --limit 100 \
   > /tmp/open-prs.json
 ```
 
-**2. If exclude_drafts is true, filter out drafts:**
+**2. Apply scope filters (author, head branch prefix, drafts):**
 ```bash
-# Filter drafts client-side from /tmp/open-prs.json
-cat /tmp/open-prs.json | jq '[.[] | select(.isDraft == false)]' > /tmp/open-prs-filtered.json
+AUTHOR="{{author}}"
+if [ "$AUTHOR" = "@me" ]; then AUTHOR=$(gh api user --jq .login); fi
+jq --arg author "$AUTHOR" --arg prefix "{{head_prefix}}" --arg drafts "{{exclude_drafts}}" '[.[]
+  | select($author == "" or .author.login == $author)
+  | select(.headRefName | startswith($prefix))
+  | select($drafts != "true" or .isDraft == false)]' \
+  /tmp/open-prs.json > /tmp/open-prs-filtered.json
+: > /tmp/patrol-findings.tsv
 ```
-If exclude_drafts is false, use `open-prs.json` unfiltered.
 
 **3. Count and log:**
 ```bash
@@ -124,32 +151,35 @@ id = "check-review-status"
 title = "Filter PRs with review feedback needing response"
 needs = ["list-open-prs"]
 description = """
-Identify PRs where reviewers have requested changes.
+Identify PRs where reviewers have requested changes since the last push.
 
-**1. Extract PRs with CHANGES_REQUESTED:**
+**1. Extract PRs with a change request newer than the head commit:**
+A CHANGES_REQUESTED decision stays set until the reviewer re-reviews. If the
+request predates the head commit, a fix was already pushed and the PR is
+waiting for re-review, so it is not actionable. The head commit date is
+fetched per PR because adding `commits` to the bulk `gh pr list` query
+exceeds GitHub's GraphQL node limit.
 ```bash
-jq '[.[] | select(.reviewDecision == "CHANGES_REQUESTED")]' \
-  /tmp/open-prs-filtered.json \
-  > /tmp/prs-needs-review-response.json
+jq -c '.[] | select(.reviewDecision == "CHANGES_REQUESTED")' /tmp/open-prs-filtered.json |
+while read -r pr; do
+  HEAD_DATE=$(gh pr view "$(jq -r .number <<<"$pr")" --repo {{repo}} \
+    --json commits --jq '.commits[-1].committedDate')
+  jq -c --arg head "$HEAD_DATE" 'select([.latestReviews[]?
+    | select(.state == "CHANGES_REQUESTED" and .submittedAt > $head)] | length > 0)' <<<"$pr"
+done | jq -s . > /tmp/prs-needs-review-response.json
 
 REVIEW_COUNT=$(jq length /tmp/prs-needs-review-response.json)
-echo "PRs with CHANGES_REQUESTED: ${REVIEW_COUNT}"
+echo "PRs with new CHANGES_REQUESTED: ${REVIEW_COUNT}"
 ```
 
-**2. For each PR with CHANGES_REQUESTED, record the finding:**
+**2. Record one tab-separated finding per PR:**
+Fields are tab-separated because URLs and titles contain colons.
 ```bash
-jq -c '.[]' /tmp/prs-needs-review-response.json | while read pr; do
-  PR_NUM=$(echo "$pr" | jq -r '.number')
-  PR_URL=$(echo "$pr" | jq -r '.url')
-  PR_TITLE=$(echo "$pr" | jq -r '.title')
-  echo "review-feedback:${PR_NUM}:${PR_URL}:${PR_TITLE}" >> /tmp/patrol-findings.txt
-done
+jq -r '.[] | ["review-feedback", .number, .url, .headRefName, .title, ""] | @tsv' \
+  /tmp/prs-needs-review-response.json >> /tmp/patrol-findings.tsv
 ```
 
-**3. Initialize findings file if first step:**
-If /tmp/patrol-findings.txt does not exist, create it empty before appending.
-
-**Exit criteria:** /tmp/patrol-findings.txt has one line per PR needing review response.
+**Exit criteria:** /tmp/patrol-findings.tsv has one line per PR needing review response.
 """
 
 [[steps]]
@@ -159,34 +189,34 @@ needs = ["list-open-prs"]
 description = """
 Identify PRs where CI checks have failed or errored.
 
+statusCheckRollup mixes two shapes: CheckRun entries (GitHub Actions and
+other apps) report `conclusion`, while commit StatusContext entries report
+`state`. Both must be checked.
+
 **1. Extract PRs with failing checks:**
 ```bash
-jq '[.[] | select(
-  .statusCheckRollup != null and
-  (.statusCheckRollup | map(select(.state == "FAILURE" or .state == "ERROR")) | length > 0)
-)]' /tmp/open-prs-filtered.json > /tmp/prs-ci-failing.json
+FAILED='select(.conclusion == "FAILURE" or .conclusion == "TIMED_OUT"
+  or .conclusion == "STARTUP_FAILURE" or .state == "FAILURE" or .state == "ERROR")'
+jq "[.[] | select([.statusCheckRollup[]? | ${FAILED}] | length > 0)]" \
+  /tmp/open-prs-filtered.json > /tmp/prs-ci-failing.json
 
 CI_COUNT=$(jq length /tmp/prs-ci-failing.json)
 echo "PRs with failing CI: ${CI_COUNT}"
 ```
 
-**2. For each PR with failing CI, record which checks failed:**
+**2. Record one tab-separated finding per PR, with the failing check names:**
 ```bash
-jq -c '.[]' /tmp/prs-ci-failing.json | while read pr; do
-  PR_NUM=$(echo "$pr" | jq -r '.number')
-  PR_URL=$(echo "$pr" | jq -r '.url')
-  PR_TITLE=$(echo "$pr" | jq -r '.title')
-  FAILING_CHECKS=$(echo "$pr" | jq -r '[.statusCheckRollup[] | select(.state == "FAILURE" or .state == "ERROR") | .name] | join(", ")')
-  echo "ci-failure:${PR_NUM}:${PR_URL}:${PR_TITLE}:${FAILING_CHECKS}" >> /tmp/patrol-findings.txt
-done
+jq -r ".[] | [\"ci-failure\", .number, .url, .headRefName, .title,
+  ([.statusCheckRollup[] | ${FAILED} | (.name // .context)] | join(\", \"))] | @tsv" \
+  /tmp/prs-ci-failing.json >> /tmp/patrol-findings.tsv
 ```
 
 **3. Dedup findings:**
-A PR may appear in both review-feedback and ci-failure categories. That is fine —
-each creates a separate, distinctly-typed bead. The dedup guard (next step)
-checks for existing open beads by PR number AND type.
+A PR may appear in both review-feedback and ci-failure categories. The dedup
+guard (next step) allows one unclosed patrol bead per PR, so the polecat
+handling the first finding should address both.
 
-**Exit criteria:** /tmp/patrol-findings.txt contains all actionable PRs (review + CI).
+**Exit criteria:** /tmp/patrol-findings.tsv contains all actionable PRs (review + CI).
 """
 
 [[steps]]
@@ -194,83 +224,83 @@ id = "dispatch-work"
 title = "Dispatch polecats for each actionable PR finding"
 needs = ["check-review-status", "check-ci-status"]
 description = """
-For each finding in /tmp/patrol-findings.txt, create a work bead and sling a polecat.
+For each finding in /tmp/patrol-findings.tsv, create a work bead and sling a
+polecat onto the PR's existing head branch.
 
-**Safety valve — check open bead count first:**
+Beads count as outstanding until they are closed. Once slung, a bead is
+`hooked` or `in_progress`, not `open`, so counting only `--status open` would
+re-dispatch the same PR every cycle.
+
+**Safety valve — check outstanding bead count first:**
 ```bash
-OPEN_COUNT=$(bd list --label {{patrol_label}} --status open 2>/dev/null | wc -l || echo "0")
-if [ "$OPEN_COUNT" -ge {{max_open_beads}} ]; then
-  echo "Safety valve: ${OPEN_COUNT} open patrol beads already exist (max {{max_open_beads}}). Skipping dispatch."
+unclosed() { bd list "$@" --json 2>/dev/null | jq '[.[] | select(.status != "closed")] | length'; }
+
+OPEN_COUNT=$(unclosed --label "{{patrol_label}}")
+if [ "${OPEN_COUNT:-0}" -ge {{max_open_beads}} ]; then
+  echo "Safety valve: ${OPEN_COUNT} unclosed patrol beads already exist (max {{max_open_beads}}). Skipping dispatch."
   exit 0
 fi
 ```
 
 **For each finding:**
 ```bash
-while IFS=: read -r TYPE PR_NUM PR_URL PR_TITLE EXTRA; do
-  # Dedup guard: check for existing open bead for this PR + type
-  EXISTING=$(bd list --label "pr-num-${PR_NUM}" --label "{{patrol_label}}" --status open 2>/dev/null | wc -l || echo "0")
-  if [ "$EXISTING" -gt 0 ]; then
-    echo "Skipping PR #${PR_NUM} (${TYPE}): open bead already exists"
+while IFS=$'\t' read -r TYPE PR_NUM PR_URL HEAD_REF PR_TITLE EXTRA; do
+  [ -z "$TYPE" ] && continue
+
+  # Dedup guard: one unclosed patrol bead per PR
+  if [ "$(unclosed --label "{{patrol_label}}" --label "pr-num-${PR_NUM}")" -gt 0 ]; then
+    echo "Skipping PR #${PR_NUM} (${TYPE}): unclosed bead already exists"
     continue
   fi
 
-  # Construct bead body based on type
   if [ "$TYPE" = "review-feedback" ]; then
     TITLE="Address review feedback on PR #${PR_NUM}: ${PR_TITLE}"
-    BODY="## PR Review Feedback Needs Response
-
-PR: ${PR_URL}
-PR Number: #${PR_NUM}
-Type: Review feedback (CHANGES_REQUESTED)
-
-A reviewer has requested changes on this PR. Address the feedback and push
-an update, or respond to resolve the conversation.
-
-Dispatched by mol-pr-feedback-patrol."
+    WHAT="A reviewer has requested changes on this PR. Address the feedback,
+or reply with evidence where you disagree."
   elif [ "$TYPE" = "ci-failure" ]; then
     TITLE="Fix CI failure on PR #${PR_NUM}: ${PR_TITLE}"
-    BODY="## PR CI Checks Failing
-
-PR: ${PR_URL}
-PR Number: #${PR_NUM}
-Type: CI failure
-Failing checks: ${EXTRA}
-
-CI checks are failing on this PR. Investigate the failures, fix the code,
-and push an update.
-
-Dispatched by mol-pr-feedback-patrol."
+    WHAT="CI checks are failing on this PR: ${EXTRA}
+Investigate the failures and fix the code."
   else
     echo "Unknown finding type: ${TYPE} — skipping"
     continue
   fi
+  BODY="## PR needs attention
 
-  # Create the bead with dedup labels
-  BEAD_ID=$(bd create \
+PR: ${PR_URL}
+Branch: ${HEAD_REF}
+Type: ${TYPE}
+
+${WHAT}
+
+Push fixes to ${HEAD_REF} only. Do not open a new PR and do not merge.
+
+Dispatched by mol-pr-feedback-patrol."
+
+  BEAD_ID=$(bd create --silent \
     --title "$TITLE" \
     --type task \
     --priority 2 \
-    --label "{{patrol_label}}" \
-    --label "pr-num-${PR_NUM}" \
-    --description "$BODY" \
-    --format id 2>/dev/null)
-
+    --labels "{{patrol_label}},pr-num-${PR_NUM}" \
+    --description "$BODY")
   if [ -z "$BEAD_ID" ]; then
     echo "Failed to create bead for PR #${PR_NUM} (${TYPE})"
     continue
   fi
-
   echo "Created bead ${BEAD_ID} for PR #${PR_NUM} (${TYPE})"
 
-  # Sling a polecat to handle it
-  gt sling {{rig}} "$BEAD_ID" 2>/dev/null || echo "Warning: sling failed for ${BEAD_ID}"
-
-done < /tmp/patrol-findings.txt
+  # Resume on the PR's head branch so the fix lands in the existing PR.
+  # --branch rather than --pr: --pr resolves via 'gh pr view' in the cwd,
+  # which fails outside a git checkout with a GitHub remote.
+  if ! gt sling "$BEAD_ID" {{rig}} --branch "$HEAD_REF" --no-merge; then
+    echo "Sling failed for ${BEAD_ID}; closing it so the next cycle retries"
+    bd close "$BEAD_ID" --reason "mol-pr-feedback-patrol: sling failed" >/dev/null || true
+  fi
+done < /tmp/patrol-findings.tsv
 ```
 
 **Exit criteria:** All actionable PRs have either a newly created+slung bead, or were
-skipped because an open bead already exists.
+skipped because an unclosed bead already exists.
 """
 
 [[steps]]
@@ -292,7 +322,7 @@ gt mol step context-check 2>/dev/null || true
 ```bash
 rm -f /tmp/open-prs.json /tmp/open-prs-filtered.json
 rm -f /tmp/prs-needs-review-response.json /tmp/prs-ci-failing.json
-rm -f /tmp/patrol-findings.txt
+rm -f /tmp/patrol-findings.tsv
 ```
 
 **3. Sleep before next cycle:**
