@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
@@ -25,26 +26,26 @@ var (
 
 // HealthReport is the machine-readable output of gt health --json.
 type HealthReport struct {
-	Timestamp string              `json:"timestamp"`
-	Server    *ServerHealth       `json:"server"`
-	Databases []DatabaseHealth    `json:"databases"`
-	Pollution []PollutionRecord   `json:"pollution,omitempty"`
-	Backups   *BackupHealth       `json:"backups"`
-	Processes *ProcessHealth      `json:"processes"`
-	Orphans   []OrphanDB          `json:"orphans,omitempty"`
+	Timestamp string            `json:"timestamp"`
+	Server    *ServerHealth     `json:"server"`
+	Databases []DatabaseHealth  `json:"databases"`
+	Pollution []PollutionRecord `json:"pollution,omitempty"`
+	Backups   *BackupHealth     `json:"backups"`
+	Processes *ProcessHealth    `json:"processes"`
+	Orphans   []OrphanDB        `json:"orphans,omitempty"`
 }
 
 type ServerHealth struct {
-	Running            bool    `json:"running"`
-	PID                int     `json:"pid,omitempty"`
-	Port               int     `json:"port,omitempty"`
-	LatencyMs          int64   `json:"latency_ms,omitempty"`
-	Connections        int     `json:"connections,omitempty"`
-	MaxConnections     int     `json:"max_connections,omitempty"`
-	DiskUsageBytes     int64   `json:"disk_usage_bytes,omitempty"`
-	DiskUsageHuman     string  `json:"disk_usage_human,omitempty"`
-	LastCommitAgeSec   float64 `json:"last_commit_age_seconds,omitempty"`
-	LastCommitDB       string  `json:"last_commit_db,omitempty"`
+	Running          bool    `json:"running"`
+	PID              int     `json:"pid,omitempty"`
+	Port             int     `json:"port,omitempty"`
+	LatencyMs        int64   `json:"latency_ms,omitempty"`
+	Connections      int     `json:"connections,omitempty"`
+	MaxConnections   int     `json:"max_connections,omitempty"`
+	DiskUsageBytes   int64   `json:"disk_usage_bytes,omitempty"`
+	DiskUsageHuman   string  `json:"disk_usage_human,omitempty"`
+	LastCommitAgeSec float64 `json:"last_commit_age_seconds,omitempty"`
+	LastCommitDB     string  `json:"last_commit_db,omitempty"`
 }
 
 type DatabaseHealth struct {
@@ -67,9 +68,15 @@ type BackupHealth struct {
 	DoltFreshness  string `json:"dolt_freshness,omitempty"`
 	DoltAgeSeconds int    `json:"dolt_age_seconds,omitempty"`
 	DoltStale      bool   `json:"dolt_stale"`
-	JSONLFreshness string `json:"jsonl_freshness,omitempty"`
-	JSONLAgeSeconds int   `json:"jsonl_age_seconds,omitempty"`
-	JSONLStale     bool   `json:"jsonl_stale"`
+	// DoltPresent reports whether a Dolt backup was found at all. Without it,
+	// dolt_stale:false is ambiguous between "backed up recently" and "never
+	// backed up", which are opposite conditions.
+	DoltPresent     bool   `json:"dolt_present"`
+	JSONLFreshness  string `json:"jsonl_freshness,omitempty"`
+	JSONLAgeSeconds int    `json:"jsonl_age_seconds,omitempty"`
+	JSONLStale      bool   `json:"jsonl_stale"`
+	// JSONLPresent reports whether a JSONL archive was found at all.
+	JSONLPresent bool `json:"jsonl_present"`
 }
 
 type ProcessHealth struct {
@@ -177,8 +184,76 @@ func checkServerHealth(townRoot string) *ServerHealth {
 	return sh
 }
 
+// fallbackProductionDBs is the historical hardcoded list, used ONLY when
+// enumeration fails so that a broken query degrades to the old behaviour
+// rather than to reporting nothing.
+var fallbackProductionDBs = []string{"hq", "gt", "mo"}
+
+// systemDBs are server-internal databases that hold no town data.
+var systemDBs = map[string]bool{
+	"information_schema": true,
+	"mysql":              true,
+	"performance_schema": true,
+	"sys":                true,
+	"dolt":               true,
+	"dolt_cluster":       true,
+}
+
+// discoverProductionDBs returns the town databases that actually exist on the
+// server, sorted, excluding server-internal ones.
+//
+// This replaces a hardcoded {hq, gt, mo} list that was wrong in BOTH directions.
+//
+// Too many: a town with only 'hq' still had health open connections to 'gt' and
+// 'mo'. Every query failed with "database not found" and was swallowed by the
+// `_ =` assignments, so the absent databases were reported as healthy all-zero
+// rows — indistinguishable from real but empty ones. Each invocation also wrote
+// 44 "database not found" lines into dolt.log (22 per absent database), which
+// reached 2376 lines — 62% of that log — on one idle town in a day. dolt.log is
+// the first artifact the runbook says to capture when diagnosing a hung Dolt
+// server, so the noise degraded the diagnostic that matters most.
+//
+// Too few: every rig gets its own database, and none of them are named hq, gt
+// or mo. On a town with four rigs, health reported one database and silently
+// omitted the other four — so rig data had no health coverage at all, and the
+// omission was invisible because nothing said a database was missing.
+func discoverProductionDBs(port int) []string {
+	dsn := buildDoltDSN("root", port, "", dsnOpts{Timeout: "5s", ReadTimeout: "10s"})
+	db, err := sql.Open("mysql", dsn)
+	if err != nil {
+		return fallbackProductionDBs
+	}
+	defer db.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	rows, err := db.QueryContext(ctx, "SHOW DATABASES")
+	if err != nil {
+		return fallbackProductionDBs
+	}
+	defer rows.Close()
+
+	var found []string
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			return fallbackProductionDBs
+		}
+		if !systemDBs[name] {
+			found = append(found, name)
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return fallbackProductionDBs
+	}
+
+	sort.Strings(found)
+	return found
+}
+
 func checkDatabaseHealth(port int) []DatabaseHealth {
-	productionDBs := []string{"hq", "gt", "mo"}
+	productionDBs := discoverProductionDBs(port)
 	var results []DatabaseHealth
 
 	for _, dbName := range productionDBs {
@@ -219,7 +294,7 @@ func checkDatabaseHealth(port int) []DatabaseHealth {
 }
 
 func checkPollution(port int) []PollutionRecord {
-	productionDBs := []string{"hq", "gt", "mo"}
+	productionDBs := discoverProductionDBs(port)
 	var records []PollutionRecord
 
 	// Known pollution patterns to check in the issues table.
@@ -279,7 +354,20 @@ func checkPollution(port int) []PollutionRecord {
 }
 
 func checkBackupHealth(townRoot string) *BackupHealth {
-	bh := &BackupHealth{}
+	// A missing backup is STALE, not fresh.
+	//
+	// Both Stale fields used to be assigned only inside the "backup exists"
+	// branches, so a town with no backup at all reported dolt_stale:false and
+	// jsonl_stale:false — identical to a town backed up seconds ago. On
+	// 2026-08-09 a town ran a full day with zero backups on either leg (no
+	// Dolt backup ever taken, and the JSONL ticker skipping 14/14 firings on a
+	// missing archive dir) while health reported both legs not-stale
+	// throughout. Nobody could have noticed from health output, because the
+	// instrument reads the same whether it works or not.
+	//
+	// Defaulting to stale means the absent case is loud, and *Present
+	// disambiguates "no backup" from "old backup" without overloading a bool.
+	bh := &BackupHealth{DoltStale: true, JSONLStale: true}
 
 	// Dolt filesystem backup freshness.
 	backupDir := filepath.Join(townRoot, ".dolt-backup")
@@ -287,6 +375,7 @@ func checkBackupHealth(townRoot string) *BackupHealth {
 		newest := findNewestFile(backupDir)
 		if !newest.IsZero() {
 			age := time.Since(newest)
+			bh.DoltPresent = true
 			bh.DoltAgeSeconds = int(age.Seconds())
 			bh.DoltFreshness = age.Round(time.Second).String()
 			bh.DoltStale = age > 30*time.Minute
@@ -306,6 +395,7 @@ func checkBackupHealth(townRoot string) *BackupHealth {
 				commitTimeStr := strings.TrimSpace(string(output))
 				if commitTime, err := time.Parse("2006-01-02 15:04:05 -0700", commitTimeStr); err == nil {
 					age := time.Since(commitTime)
+					bh.JSONLPresent = true
 					bh.JSONLAgeSeconds = int(age.Seconds())
 					bh.JSONLFreshness = age.Round(time.Second).String()
 					bh.JSONLStale = age > 30*time.Minute
@@ -390,7 +480,7 @@ func printHealthReport(r *HealthReport) {
 		}
 		fmt.Printf("  %s Dolt filesystem: %s ago\n", icon, r.Backups.DoltFreshness)
 	} else {
-		fmt.Printf("  %s Dolt filesystem: not found\n", style.Dim.Render("○"))
+		fmt.Printf("  %s Dolt filesystem: NO BACKUP FOUND\n", style.Bold.Render("!"))
 	}
 	if r.Backups.JSONLFreshness != "" {
 		icon := style.Bold.Render("✓")
@@ -399,7 +489,7 @@ func printHealthReport(r *HealthReport) {
 		}
 		fmt.Printf("  %s JSONL git: %s ago\n", icon, r.Backups.JSONLFreshness)
 	} else {
-		fmt.Printf("  %s JSONL git: not found\n", style.Dim.Render("○"))
+		fmt.Printf("  %s JSONL git: NO BACKUP FOUND\n", style.Bold.Render("!"))
 	}
 
 	// 5. Processes
