@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/steveyegge/gastown/internal/beads"
+	"github.com/steveyegge/gastown/internal/formula"
 )
 
 const (
@@ -48,11 +49,12 @@ func (dm *dogMol) closeWisp(id string, extra ...string) error {
 // Graceful degradation: if bd fails, the dog still does its work — molecule
 // tracking is observability, not control flow.
 type dogMol struct {
-	rootID   string            // Root wisp ID (e.g., "gt-wisp-abc123"), empty if pour failed.
-	stepIDs  map[string]string // step slug -> wisp issue ID
-	bdPath   string
-	townRoot string
-	logger   interface{ Printf(string, ...interface{}) }
+	rootID      string            // Root wisp ID (e.g., "gt-wisp-abc123"), empty if pour failed.
+	stepIDs     map[string]string // step slug -> wisp issue ID
+	formulaName string            // Formula used to pour the molecule (e.g. "mol-dog-backup").
+	bdPath      string
+	townRoot    string
+	logger      interface{ Printf(string, ...interface{}) }
 }
 
 // pourDogMolecule creates an ephemeral wisp molecule from a formula.
@@ -60,10 +62,11 @@ type dogMol struct {
 // handle so the caller can proceed without error checking.
 func (d *Daemon) pourDogMolecule(formulaName string, vars map[string]string) *dogMol {
 	dm := &dogMol{
-		stepIDs:  make(map[string]string),
-		bdPath:   d.bdPath,
-		townRoot: d.config.TownRoot,
-		logger:   d.logger,
+		stepIDs:     make(map[string]string),
+		formulaName: formulaName,
+		bdPath:      d.bdPath,
+		townRoot:    d.config.TownRoot,
+		logger:      d.logger,
 	}
 
 	// Build args: bd mol wisp <formula> --var k=v ...
@@ -147,6 +150,15 @@ func (dm *dogMol) close() {
 // closeRemainingSteps queries all children of the root wisp and closes any that
 // are still open. This is the backstop that prevents step wisp leaks regardless
 // of whether individual callers remembered to close each step.
+//
+// Steps are force-closed. Molecule steps carry sequencing dependencies on their
+// predecessors, and `bd show --children` does not return them in dependency
+// order, so a plain close of a step whose predecessor is still open fails with
+// "blocked by open issues". That failure is deterministic — the retry in
+// closeWisp cannot clear it — so the step orphans as an OPEN wisp forever, which
+// is the dominant source of the patrol wisp leak (gt-92jh). Force is correct
+// here: this is end-of-lifecycle teardown of ephemeral observability wisps, and
+// gate satisfaction no longer carries meaning once the dog has finished.
 func (dm *dogMol) closeRemainingSteps() {
 	if dm.rootID == "" {
 		return
@@ -171,7 +183,7 @@ func (dm *dogMol) closeRemainingSteps() {
 		}
 		// Close any child that is still open/hooked/in_progress.
 		if child.Status == "open" || child.Status == "hooked" || child.Status == "in_progress" {
-			if err := dm.closeWisp(child.ID); err != nil {
+			if err := dm.closeWisp(child.ID, "--force"); err != nil {
 				dm.logger.Printf("dog_molecule: closeRemainingSteps: close %s failed after %d attempts: %v", child.ID, dogCloseMaxAttempts, err)
 			} else {
 				closed++
@@ -184,15 +196,29 @@ func (dm *dogMol) closeRemainingSteps() {
 }
 
 // discoverSteps lists children of the root wisp and maps step slugs to IDs.
-// Step titles in the formula are like "Scan databases for stale wisps" —
-// we match on the step ID embedded in the wisp title or metadata.
+// bd's wisp children carry no field identifying which formula step they came
+// from — only the step's title (verbatim from the formula) and description.
+// We resolve the formula that was poured and match children against its exact
+// step titles; this is unambiguous because titles are unique within a single
+// formula.
+//
+// If the formula cannot be resolved (unknown/custom formula), we fall back to
+// a keyword heuristic on the title. That heuristic previously ran
+// unconditionally and was the source of the dog-molecule step registration
+// bug (upstream #4142 residual): several dog formulas have step titles that
+// share substrings across steps (e.g. mol-dog-backup's "sync" step is titled
+// "Sync databases to backup remotes", which also contains "backup"), and a
+// switch checks keywords in a fixed order, so a title can match the wrong
+// case — or a case belonging to a step that was never even a candidate — and
+// the intended slug is left unregistered. Exact title matching against the
+// real formula removes the ambiguity entirely.
 func (dm *dogMol) discoverSteps() {
 	if dm.rootID == "" {
 		return
 	}
 
 	// Use bd show to get children. The mol wisp command creates child wisps
-	// whose titles include the step ID from the formula.
+	// whose titles are copied verbatim from the formula step's title.
 	out, err := dm.runBd("show", dm.rootID, "--children", "--json")
 	if err != nil {
 		dm.logger.Printf("dog_molecule: discover steps for %s failed: %v", dm.rootID, err)
@@ -205,10 +231,15 @@ func (dm *dogMol) discoverSteps() {
 		return
 	}
 
-	// Map known step slugs from each child's title. The wisp title typically starts
-	// with the step title from the formula.
+	stepIDsByTitle := formulaStepIDsByTitle(dm.formulaName, dm.townRoot)
+
 	for _, child := range children {
 		if child.ID == "" || child.Title == "" {
+			continue
+		}
+
+		if stepID, ok := stepIDsByTitle[strings.ToLower(strings.TrimSpace(child.Title))]; ok {
+			dm.stepIDs[stepID] = child.ID
 			continue
 		}
 
@@ -252,6 +283,35 @@ func (dm *dogMol) discoverSteps() {
 			dm.stepIDs["rotate"] = child.ID
 		}
 	}
+}
+
+// formulaStepIDsByTitle resolves formulaName to its formula definition and
+// returns a map of lowercased, trimmed step title -> step ID. Resolution
+// follows the same rig/town/embedded precedence bd itself pours wisps from
+// (formula.ResolveFormulaContent) rather than the embedded default alone, so
+// a town-level formula override still matches the titles bd actually used.
+// Returns nil if formulaName is empty or the formula cannot be resolved or
+// parsed, signaling callers to fall back to heuristic matching.
+func formulaStepIDsByTitle(formulaName, townRoot string) map[string]string {
+	if formulaName == "" {
+		return nil
+	}
+
+	content, err := formula.ResolveFormulaContent(formulaName, townRoot, "")
+	if err != nil {
+		return nil
+	}
+
+	f, err := formula.Parse(content)
+	if err != nil {
+		return nil
+	}
+
+	titles := make(map[string]string, len(f.Steps))
+	for _, step := range f.Steps {
+		titles[strings.ToLower(strings.TrimSpace(step.Title))] = step.ID
+	}
+	return titles
 }
 
 // childInfo holds fields from child wisp JSON used by discoverSteps and

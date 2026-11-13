@@ -97,9 +97,18 @@ func findActivePatrol(cfg PatrolConfig) (patrolID, patrolLine string, found bool
 		}
 	}
 
-	// Clean up stale patrols (capped at maxStalePurgePerRun)
+	// Clean up stale patrols (capped at maxStalePurgePerRun).
+	// Descendants must be FORCE-closed, same as burnPreviousPatrolWisps below:
+	// a plain close deterministically fails on a step whose predecessor is
+	// still open ("blocked by open issues"), and closing the root anyway would
+	// orphan those steps as parentless open wisps forever (gt-92jh). If
+	// descendants can't be closed, leave the root open rather than orphaning
+	// them — a live root is reachable and cleanable next cycle (gt-7lx3).
 	for _, id := range staleIDs {
-		closeDescendants(b, id)
+		if _, err := forceCloseDescendants(b, id); err != nil {
+			style.PrintWarning("could not close descendants of stale patrol %s (leaving root open): %v", id, err)
+			continue
+		}
 		if err := b.ForceCloseWithReason("stale patrol cleanup", id); err != nil {
 			style.PrintWarning("could not close stale patrol %s: %v", id, err)
 		}
@@ -172,8 +181,25 @@ func burnPreviousPatrolWisps(cfg PatrolConfig) {
 			continue
 		}
 
-		// Close all descendant wisps, then the root
-		closeDescendants(b, bead.ID)
+		// Force-close all descendant wisps, then the root.
+		//
+		// Descendants must be FORCE-closed. Molecule steps carry sequencing
+		// dependencies on their predecessors, so a plain close of a step whose
+		// predecessor is still open fails deterministically with "blocked by
+		// open issues". Burning the root anyway would leave those steps behind
+		// as parentless orphan wisps that stay open forever — invisible to
+		// `bd purge`/`gt compact`, which only touch closed beads (gt-92jh).
+		// Force is correct here: this is end-of-lifecycle teardown of a
+		// superseded patrol cycle, so gate satisfaction no longer carries
+		// meaning. This mirrors the dog-molecule teardown path.
+		//
+		// If descendants cannot be closed, leave the root open rather than
+		// orphaning them: a live root is reachable and burnable next cycle,
+		// parentless steps are not (gt-7lx3).
+		if _, err := forceCloseDescendants(b, bead.ID); err != nil {
+			style.PrintWarning("burn: could not close descendants of %s (leaving root open): %v", bead.ID, err)
+			continue
+		}
 		if err := b.ForceCloseWithReason("burned: replaced by new patrol cycle", bead.ID); err != nil {
 			style.PrintWarning("burn: could not close patrol %s: %v", bead.ID, err)
 			continue
