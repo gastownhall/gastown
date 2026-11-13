@@ -7,6 +7,7 @@ import (
 
 	"github.com/steveyegge/gastown/internal/beads"
 	"github.com/steveyegge/gastown/internal/polecat"
+	"github.com/steveyegge/gastown/internal/tmux"
 )
 
 const polecatSessionKeySep = "\x00"
@@ -23,7 +24,15 @@ type polecatInventoryItem struct {
 	Branch         string
 	SessionRunning bool
 	SessionName    string
+	BlockedReason  string
 	Disposition    polecat.WorkstateDisposition
+}
+
+// probePolecatBlocked reports why a live polecat session shows no evidence of
+// progress, or "" when it shows some. A package var so tests can drive the
+// verdict without a tmux server; production always probes real tmux.
+var probePolecatBlocked = func(sessionName string) string {
+	return polecat.SessionBlockedReason(tmux.NewTmux(), sessionName)
 }
 
 type polecatActiveWorkEvidence struct {
@@ -107,13 +116,22 @@ func buildPolecatInventoryItemFromEvidence(rigName, polecatName string, fields *
 		activeWorkEvidence = assessPolecatAgentStateWork(beads.AgentState(strings.TrimSpace(fields.AgentState)))
 	}
 
+	blockedReason := ""
 	if activeWorkEvidence.BlocksCleanup {
 		item.Issue = activeWorkEvidence.AssignedIssue
 		if activeWorkEvidence.RequiresRestart || activeWorkEvidence.CountsTowardCapacity {
-			if running {
-				item.State = polecat.StateWorking
-			} else {
+			switch {
+			case !running:
 				item.State = polecat.StateStalled
+			default:
+				// A session that EXISTS is not a session that WORKS. Ask for
+				// evidence of progress before claiming any (hq-3l8r).
+				blockedReason = probePolecatBlocked(sessionName)
+				if blockedReason != "" {
+					item.State = polecat.StateBlocked
+				} else {
+					item.State = polecat.StateWorking
+				}
 			}
 		} else if running && !polecat.CleanupStatus(item.CleanupStatus).IsSafe() {
 			item.State = polecat.StateReviewNeeded
@@ -135,6 +153,11 @@ func buildPolecatInventoryItemFromEvidence(rigName, polecatName string, fields *
 
 	input.State = item.State
 	item.Disposition = polecat.DecideWorkstate(input)
+	if blockedReason != "" {
+		item.BlockedReason = blockedReason
+		item.Disposition.Reason = "agent-blocked"
+		item.Disposition.Blockers = append(item.Disposition.Blockers, "agent_blocked="+blockedReason)
+	}
 	return item
 }
 

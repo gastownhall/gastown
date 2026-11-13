@@ -1745,6 +1745,33 @@ func (d *Daemon) hasPendingEvents(channel string) bool {
 	return false
 }
 
+// hasPendingMergeRequests checks if there are open merge requests in the queue for a rig.
+// Used to detect when refinery must spawn even with no event files present.
+func (d *Daemon) hasPendingMergeRequests(rigName string) bool {
+	r := &rig.Rig{
+		Name: rigName,
+		Path: filepath.Join(d.config.TownRoot, rigName),
+	}
+	b := beads.New(r.BeadsPath())
+
+	// Query for open merge requests. Empty Rig field means all rigs (not filtered).
+	// We pass the rigName to ensure we only count MRs for this specific rig.
+	opts := beads.ListOptions{
+		Label:    "gt:merge-request",
+		Priority: -1, // No priority filter
+		Status:   "open",
+		Rig:      rigName,
+	}
+
+	issues, err := b.ListMergeRequests(opts)
+	if err != nil {
+		// If query fails (beads unavailable, corrupted DB, etc), assume no MRs.
+		// The refinery will pick them up on the next event cycle if they exist.
+		return false
+	}
+	return len(issues) > 0
+}
+
 // ensureWitnessRunning ensures the witness for a specific rig is running.
 // Discover, don't track: uses Manager.Start() which checks tmux directly (gt-zecmc).
 func (d *Daemon) ensureWitnessRunning(rigName string) {
@@ -1842,7 +1869,8 @@ func (d *Daemon) ensureRefineryRunning(rigName string) {
 	// If a refinery session is already running, Start() returns ErrAlreadyRunning (cheap).
 	// But spawning a NEW session with an empty queue burns API credits for nothing.
 	// The refinery formula uses await-event internally, so it will wake when events appear.
-	if !d.hasPendingEvents("refinery") {
+	// Also check merge queue depth: a deep queue with no live session must spawn one.
+	if !d.hasPendingEvents("refinery") && !d.hasPendingMergeRequests(rigName) {
 		// Check if session already exists before skipping — let running sessions continue
 		r := &rig.Rig{
 			Name: rigName,
@@ -1850,7 +1878,7 @@ func (d *Daemon) ensureRefineryRunning(rigName string) {
 		}
 		mgr := refinery.NewManager(r)
 		if running, _ := mgr.IsRunning(); !running {
-			d.logger.Printf("No pending refinery events and no session running for %s, skipping spawn", rigName)
+			d.logger.Printf("No pending refinery events or merge requests and no session running for %s, skipping spawn", rigName)
 			return
 		}
 	}

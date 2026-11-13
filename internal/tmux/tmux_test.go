@@ -2846,10 +2846,46 @@ func TestCheckSessionHealth_ActivityCheck(t *testing.T) {
 		// sleep is not an agent process, so this is expected
 		t.Logf("Status with sleep process: %v (expected AgentDead since sleep != agent)", status)
 	}
+}
 
-	// With a very short maxInactivity, a recently-created session should be healthy
-	// (if the agent were actually running). This tests the activity threshold logic
-	// without needing a real Claude process.
+// TestCheckSessionHealth_HungAgent proves the maxInactivity arm actually fires.
+// The previous version of TestCheckSessionHealth_ActivityCheck ended in a comment
+// where the assertion should have been, so nothing in the tree proved AgentHung
+// was reachable — and every polecat caller passed 0, which skips the check
+// entirely. That gap is what let auth-blocked polecats report "working" (hq-3l8r).
+//
+// Red proof: the agent process is alive and the session is real in both halves,
+// so the ONLY thing separating healthy from hung is the inactivity bound being
+// compared against real tmux session_activity. Drop the comparison, or pass 0,
+// and the first half returns SessionHealthy and this test fails.
+func TestCheckSessionHealth_HungAgent(t *testing.T) {
+	tm := newTestTmux(t)
+	sessionName := fmt.Sprintf("gt-test-hung-%d", os.Getpid())
+	if err := tm.NewSessionWithCommand(sessionName, "", "sleep 60"); err != nil {
+		t.Fatalf("NewSession: %v", err)
+	}
+	defer tm.KillSession(sessionName)
+
+	// Declare 'sleep' as this session's agent so the process-liveness arm passes:
+	// the agent is unambiguously ALIVE for the whole test.
+	if err := tm.SetEnvironment(sessionName, "GT_PROCESS_NAMES", "sleep"); err != nil {
+		t.Fatalf("SetEnvironment: %v", err)
+	}
+	time.Sleep(300 * time.Millisecond)
+
+	if !tm.IsAgentAlive(sessionName) {
+		t.Skip("tmux did not report the declared pane process as alive; nothing to prove about hang detection")
+	}
+
+	// Any elapsed time counts as inactivity → hung, despite the live process.
+	if status := tm.CheckSessionHealth(sessionName, time.Nanosecond); status != AgentHung {
+		t.Errorf("CheckSessionHealth(live process, 1ns inactivity bound) = %v, want AgentHung", status)
+	}
+
+	// Same session, same live process, generous bound → healthy.
+	if status := tm.CheckSessionHealth(sessionName, time.Hour); status != SessionHealthy {
+		t.Errorf("CheckSessionHealth(live process, 1h inactivity bound) = %v, want SessionHealthy", status)
+	}
 }
 
 func TestValidateCommandBinary(t *testing.T) {
