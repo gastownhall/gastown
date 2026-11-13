@@ -2289,7 +2289,28 @@ func (m *Manager) FindIdlePolecat() (*Polecat, error) {
 		return nil, err
 	}
 	for _, p := range polecats {
-		if p.State == StateIdle && m.reuseDecisionForPolecat(p.Name, p.State).Reusable {
+		// StateDone counts, and excluding it is why the pool grew per dispatch.
+		//
+		// A polecat that finishes cleanly sits in StateDone until its cleanup
+		// transition lands, and that transition does not always arrive. Measured
+		// on alphaprime 2026-09-11: nine polecats read state=done with
+		// reusable=true and reuse_status=idle-preserved, and FindIdlePolecat
+		// selected none of them, so every dispatch allocated a fresh worktree.
+		// The pool went 11 -> 17 in an hour against a 30-directory ceiling.
+		//
+		// DecideWorkstate already made this distinction and this filter did not
+		// keep up: workstate.go:69 deliberately lets StateDone fall through to the
+		// real predicate checks "otherwise a merged/clean polecat gets
+		// NEEDS_RECOVERY with no blockers, disagreeing with git-state for no
+		// reason". The verdict layer learned that a done-and-clean polecat is fine;
+		// the selection layer was still asking only about idle.
+		//
+		// Safety is unchanged because it never rested on the state name: the
+		// Reusable verdict is what gates this, and it requires a clean worktree,
+		// no hook bead, and the merge queue satisfied. A genuine zombie -- done but
+		// dirty, or holding work -- fails that verdict and is still skipped.
+		if (p.State == StateIdle || p.State == StateDone) &&
+			m.reuseDecisionForPolecat(p.Name, p.State).Reusable {
 			return p, nil
 		}
 	}
