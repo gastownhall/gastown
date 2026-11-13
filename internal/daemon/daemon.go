@@ -1607,27 +1607,49 @@ func (d *Daemon) checkDeaconHeartbeat() {
 	// Two-tier response: nudge for stale (5-20 min), kill and restart
 	// only for very stale (>= 20 min). Kill threshold must be > backoff-max
 	// to avoid false positive kills during legitimate await-signal sleep.
+
+	// Idle guard, applied to BOTH tiers.
+	//
+	// This guard used to sit only on the nudge branch below, which inverted the
+	// escalation: an idle Deacon was protected from the harmless action (a
+	// nudge) and left exposed to the destructive one (kill and restart). The
+	// observed sequence on a real town, all with no work in flight:
+	//
+	//   09:40  stale  6m -> "nudge skipped: no active work in flight"
+	//   09:43  stale  9m -> skipped
+	//   09:47  stale 13m -> skipped
+	//   09:50  stale 16m -> skipped
+	//   09:53  stale 19m -> skipped
+	//   09:56  stale 22m -> STUCK DEACON: killing session
+	//
+	// Five deliberate deferrals, then a kill of a perfectly healthy session.
+	// The heartbeat file is only refreshed by an explicit call during an active
+	// turn, so a Deacon idle at a prompt goes stale by construction and crosses
+	// the 20 minute line by simply having nothing to do.
+	//
+	// If nothing is in flight there is no work being blocked, so there is
+	// nothing to rescue by restarting — and a restart destroys session context.
+	// Waiting costs nothing. hasActiveWork is conservative (returns true on
+	// store errors), so a genuinely stuck Deacon holding work is still killed.
+	if !d.hasActiveWork() {
+		d.logger.Printf("Deacon heartbeat stale (%s) but no work in flight - idle, not stuck; taking no action", age.Round(time.Minute))
+		return
+	}
+
 	if hb.IsVeryStale() {
 		// Stuck-agent-dog: kill and restart
 		d.logger.Printf("STUCK DEACON: heartbeat stale for %s, session %s needs restart", age.Round(time.Minute), sessionName)
 		d.restartStuckDeacon(sessionName, fmt.Sprintf("heartbeat stale for %s", age.Round(time.Minute)))
 	} else {
-		// Stale but not very stale (5-20 min) - nudge to wake up (unless idle).
+		// Stale but not very stale (5-20 min) - nudge to wake up.
 		//
-		// Idle guard: skip nudge if no beads are actively in flight.
-		// This mirrors the Boot idle guard (ensureBootRunning). When the Deacon's
-		// heartbeat has gone stale during an await-signal backoff sleep, sending a
-		// nudge interrupts the exponential backoff for no reason — the Deacon will
-		// wake naturally at its next timeout. Only nudge if work is actually in
-		// flight (in_progress or hooked) that the Deacon may need to act on.
-		// Conservative: on store errors hasActiveWork returns true, so nudge fires.
-		// See also: runtime/runtime.go:99-101 — session-started nudge was removed
-		// for the same reason (it interrupted the deacon's await-signal backoff).
-		if !d.hasActiveWork() {
-			d.logger.Println("Deacon nudge skipped: no active work in flight, await-signal will fire naturally")
-			return
-		}
-
+		// The idle guard that used to live here now runs above, before the
+		// tier split, so it covers the kill path too. Rationale unchanged:
+		// when the Deacon's heartbeat goes stale during an await-signal backoff
+		// sleep, nudging interrupts the exponential backoff for no reason — it
+		// will wake naturally at its next timeout. See also
+		// runtime/runtime.go:99-101, where the session-started nudge was
+		// removed for the same reason.
 		d.logger.Printf("Deacon stuck for %s - nudging session", age.Round(time.Minute))
 		if err := d.tmux.NudgeSession(sessionName, "HEALTH_CHECK: heartbeat stale, respond to confirm responsiveness"); err != nil {
 			d.logger.Printf("Error nudging stuck Deacon: %v", err)
