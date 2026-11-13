@@ -325,11 +325,12 @@ func Scan(db *sql.DB, dbName string, maxAge, purgeAge, mailDeleteAge, staleIssue
 
 	// Count reap candidates: open wisps past max_age with eligible parent status.
 	// Must match Reap() eligibility semantics exactly, including the exclusion of
-	// agent beads, otherwise scan can report candidates that reap will never close.
+	// agent beads and currently-hooked molecule roots, otherwise scan can report
+	// candidates that reap will never close.
 	// Uses LEFT JOIN anti-pattern instead of correlated EXISTS to avoid O(n*m) cost (gt-jd1z).
 	// Closed-molecule steps are counted separately above and excluded here so counts stay disjoint.
 	reapQuery := fmt.Sprintf(
-		"SELECT COUNT(*) FROM wisps w %s %s WHERE %s AND w.created_at < ? AND w.issue_type != 'agent' AND %s AND closed_molecule_step.issue_id IS NULL",
+		"SELECT COUNT(*) FROM wisps w %s %s WHERE %s AND w.created_at < ? AND w.issue_type != 'agent' AND NOT (w.status = 'hooked' AND w.issue_type = 'molecule') AND %s AND closed_molecule_step.issue_id IS NULL",
 		parentJoin, moleculeStepExcludeJoin, openWispStatusWhere, parentWhere)
 	if err := db.QueryRowContext(ctx, reapQuery, now.Add(-maxAge)).Scan(&result.ReapCandidates); err != nil {
 		return nil, fmt.Errorf("count reap candidates: %w", err)
@@ -421,8 +422,15 @@ func Reap(db *sql.DB, dbName string, maxAge time.Duration, dryRun bool) (*ReapRe
 	// identity and should not be closed by the wisp reaper regardless of age.
 	// Closed-molecule steps are closed immediately through a separate path, so stale
 	// max-age counts exclude them to keep dry-run and scan counts disjoint.
+	// Exclude currently-hooked molecule roots (status='hooked' AND issue_type='molecule')
+	// from age-based reaping — some roles (e.g. witness, refinery) run a single
+	// persistent patrol molecule that stays hooked for the lifetime of the agent's
+	// patrol cycle and can age past max_age while still representing live, active
+	// work. Just as the agent-bead exclusion above protects persistent identities,
+	// this one protects live work: a hooked molecule root is active patrol
+	// infrastructure, not abandoned work.
 	whereClause := fmt.Sprintf(
-		"%s AND w.created_at < ? AND w.issue_type != 'agent' AND %s AND closed_molecule_step.issue_id IS NULL", openWispStatusWhere, parentWhere)
+		"%s AND w.created_at < ? AND w.issue_type != 'agent' AND NOT (w.status = 'hooked' AND w.issue_type = 'molecule') AND %s AND closed_molecule_step.issue_id IS NULL", openWispStatusWhere, parentWhere)
 
 	result := &ReapResult{Database: dbName, DryRun: dryRun}
 
