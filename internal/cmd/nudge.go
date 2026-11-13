@@ -20,6 +20,7 @@ import (
 	"github.com/steveyegge/gastown/internal/session"
 	"github.com/steveyegge/gastown/internal/style"
 	"github.com/steveyegge/gastown/internal/telemetry"
+	"github.com/steveyegge/gastown/internal/testmode"
 	"github.com/steveyegge/gastown/internal/tmux"
 	"github.com/steveyegge/gastown/internal/workspace"
 )
@@ -167,6 +168,12 @@ func deliverNudge(t *tmux.Tmux, sessionName, message, sender string) error {
 			_, _ = f.WriteString(entry)
 			_ = f.Close()
 		}
+		return nil
+	}
+
+	// Inert in test binaries even when the log hook is unset (gt-dog).
+	// Clearing GT_TEST_NUDGE_LOG must never mean "deliver to live agents".
+	if testmode.Active() {
 		return nil
 	}
 

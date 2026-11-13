@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -9,7 +10,9 @@ import (
 	"testing"
 
 	"github.com/steveyegge/gastown/internal/beads"
+	"github.com/steveyegge/gastown/internal/channelevents"
 	"github.com/steveyegge/gastown/internal/session"
+	"github.com/steveyegge/gastown/internal/workspace"
 )
 
 func setupSlingTestRegistry(t *testing.T) {
@@ -105,14 +108,116 @@ func TestWakeRigAgentsDoesNotNudgeRefinery(t *testing.T) {
 }
 
 // TestNudgeRefineryNoOpWithoutLog verifies that nudgeRefinery doesn't panic
-// or error when called without the test log env var and without a real tmux session.
-// The tmux NudgeSession call should fail silently.
+// or error when the test log env var is unset.
+//
+// This test used to clear GT_TEST_NUDGE_LOG "to exercise the real tmux path",
+// which made every `go test ./internal/cmd/...` run emit a live MQ_SUBMIT
+// event into the town-global refinery channel and send real tmux keys
+// (gt-dog). Two things now prevent that, and this test asserts both:
+//
+//  1. nudgeRefinery is inert under testmode.Active(), so the side effects
+//     never start; and
+//  2. the town root is isolated to a temp dir, so even an unguarded emit
+//     could not reach production.
+//
+// The no-panic behaviour the test was written to check is still covered.
 func TestNudgeRefineryNoOpWithoutLog(t *testing.T) {
-	// Ensure test log is NOT set so we exercise the real tmux path
+	setupSlingTestRegistry(t)
+	townRoot := newIsolatedTownRoot(t)
+
+	// Ensure the log hook is NOT set: the inert-by-default guard, not the
+	// hook, is what must keep this call from touching shared state.
 	t.Setenv("GT_TEST_NUDGE_LOG", "")
 
-	// Should not panic even though no tmux session exists
+	// Should not panic even though no tmux session exists.
 	nudgeRefinery("nonexistent-rig", "test message")
+
+	assertNoEventsEmitted(t, townRoot)
+}
+
+// TestNudgeHelpersEmitNoEventsInTests is the regression test for gt-dog: the
+// nudge helpers must not write into any town's event channels when running
+// under the test suite, even with a fully-formed workspace reachable from the
+// working directory and no GT_TEST_NUDGE_LOG hook set.
+func TestNudgeHelpersEmitNoEventsInTests(t *testing.T) {
+	setupSlingTestRegistry(t)
+	townRoot := newIsolatedTownRoot(t)
+	t.Setenv("GT_TEST_NUDGE_LOG", "")
+
+	// Sanity check: the isolated town really is discoverable, so a missing
+	// guard would produce events here rather than silently finding nothing.
+	found, err := workspace.FindFromCwd()
+	if err != nil || found != townRoot {
+		t.Fatalf("workspace.FindFromCwd() = %q, %v; want %q — test fixture is not a discoverable town", found, err, townRoot)
+	}
+
+	nudgeRefinery("nonexistent-rig", "test message")
+	nudgeWitness("nonexistent-rig", "test message")
+
+	assertNoEventsEmitted(t, townRoot)
+}
+
+// TestEmitToTownRefusesLiveTownInTests covers the backstop: even if a caller
+// forgets the testmode guard, channelevents refuses to write into the town
+// root this test binary was launched from.
+func TestEmitToTownRefusesLiveTownInTests(t *testing.T) {
+	liveRoot, err := workspace.FindFromCwd()
+	if err != nil || liveRoot == "" {
+		t.Skip("skipping: not running inside a Gas Town workspace")
+	}
+
+	if _, err := channelevents.EmitToTown(liveRoot, "refinery", "MQ_SUBMIT", []string{"source=sling"}); !errors.Is(err, channelevents.ErrLiveTownInTest) {
+		t.Fatalf("EmitToTown(live town root) error = %v; want ErrLiveTownInTest", err)
+	}
+}
+
+// newIsolatedTownRoot creates a throwaway Gas Town workspace, makes it the
+// working directory, and clears the env vars that would otherwise let
+// workspace resolution escape to the real town. Returns the town root.
+func newIsolatedTownRoot(t *testing.T) string {
+	t.Helper()
+
+	townRoot := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(townRoot, "mayor"), 0755); err != nil {
+		t.Fatalf("creating mayor dir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(townRoot, workspace.PrimaryMarker), []byte("{}"), 0644); err != nil {
+		t.Fatalf("writing town marker: %v", err)
+	}
+
+	t.Setenv("GT_TOWN_ROOT", townRoot)
+	t.Setenv("GT_ROOT", townRoot)
+	t.Chdir(townRoot)
+
+	// t.TempDir() can hand back a symlinked path (/tmp -> /private/tmp on
+	// macOS); workspace.Find deliberately does not resolve symlinks, so
+	// compare against what the process actually sees.
+	cwd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("getting working directory: %v", err)
+	}
+	return cwd
+}
+
+// assertNoEventsEmitted fails if any channel event file exists under townRoot.
+func assertNoEventsEmitted(t *testing.T, townRoot string) {
+	t.Helper()
+
+	eventsDir := filepath.Join(townRoot, "events")
+	entries, err := os.ReadDir(eventsDir)
+	if os.IsNotExist(err) {
+		return
+	}
+	if err != nil {
+		t.Fatalf("reading %s: %v", eventsDir, err)
+	}
+	if len(entries) > 0 {
+		names := make([]string, 0, len(entries))
+		for _, e := range entries {
+			names = append(names, e.Name())
+		}
+		t.Fatalf("test emitted channel events into %s: %v", eventsDir, names)
+	}
 }
 
 func TestIsDeferredBead(t *testing.T) {
