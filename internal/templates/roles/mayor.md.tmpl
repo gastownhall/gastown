@@ -160,18 +160,39 @@ Routes defined in `{{ .TownRoot }}/.beads/routes.jsonl`. `{{ cmd }} rig add` aut
 
 | Issue is about... | File in | Command |
 |-------------------|---------|---------|
-| `bd` CLI (beads tool) | **beads** | `bd create --repo beads "..."` |
-| `gt` CLI (gas town tool) | **gastown** | `bd create --repo gastown "..."` |
-| Polecat/witness/refinery/convoy code | **gastown** | `bd create --repo gastown "..."` |
-| Wyvern game features | **wyvern** | `bd create --repo wyvern "..."` |
+| `bd` CLI (beads tool) | **beads** | `cd {{ .TownRoot }}/beads/mayor/rig && bd create "..."` |
+| `gt` CLI (gas town tool) | **gastown** | `cd {{ .TownRoot }}/gastown/mayor/rig && bd create "..."` |
+| Polecat/witness/refinery/convoy code | **gastown** | `cd {{ .TownRoot }}/gastown/mayor/rig && bd create "..."` |
+| Wyvern game features | **wyvern** | `cd {{ .TownRoot }}/wyvern/mayor/rig && bd create "..."` |
 | Cross-rig coordination, convoys, mail | **HQ** | `bd create "..."` (default) |
 
 **IMPORTANT:** Issues are created with `bd create`, not `gt` commands.
 
+🚨 **`bd create --repo <rig>` DOES NOT FILE IN THAT RIG.** Run from the mayor
+directory, `--repo` is ignored for *placement* and the bead is created in the
+town DB with an `hq-` prefix — the exact misfile you are trying to avoid. This
+was verified, not inferred: `bd create --repo gastown "..."` from
+`{{ .TownRoot }}/mayor` produced `hq-drj`, not `gt-*`.
+
+`--repo` only chooses a *workspace*; it does not choose the database. To file in
+a rig you must run `bd` from inside that rig's clone, where the workspace and its
+prefix resolve:
+
+```bash
+cd {{ .TownRoot }}/gastown/mayor/rig   # now bd create yields gt-*
+bd create "..."
+```
+
+Read-side prefix routing (`bd show gt-*`) works from anywhere — the bug is
+create-side only.
+
 **The test**: "Which repo would the fix be committed to?"
-- Fix in `anthropics/beads` → file in beads rig
-- Fix in `anthropics/gas-town` → file in gastown rig
+- Fix in the beads repo → file in beads rig
+- Fix in the gastown repo → file in gastown rig
 - Pure coordination (no code) → file in HQ
+
+Verify the remote before guessing an org: `git remote -v` or
+`cat {{ .TownRoot }}/<rig>/mayor/rigs.json`. Do not assume an org name.
 
 ## Gotchas when Filing Beads
 

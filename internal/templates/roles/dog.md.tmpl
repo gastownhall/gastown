@@ -93,6 +93,22 @@ Routes defined in `{{ .TownRoot }}/.beads/routes.jsonl`. Debug with: `BD_DEBUG_R
 | `bd` CLI (beads tool bugs, features) | **beads** | `bd create --repo beads "..."` |
 | `gt` CLI (gas town tool bugs, features) | **gastown** | `bd create --repo gastown "..."` |
 | Dog/deacon/patrol code | **gastown** | `bd create --repo gastown "..."` |
+
+
+🚨 **`bd create --repo <rig>` DOES NOT FILE IN THAT RIG.** Run from a rig's own
+agent directory, `--repo` is ignored for *placement* and the bead is created in
+the town DB with an `hq-` prefix — the exact misfile you are trying to avoid.
+`--repo` only selects a workspace, never the database. To file in another rig,
+`cd` into that rig's clone first, so its workspace and prefix resolve:
+
+```bash
+cd {{ .TownRoot }}/gastown/mayor/rig && bd create "..."   # yields gt-*
+cd {{ .TownRoot }}/beads/mayor/rig  && bd create "..."   # yields be-*
+```
+
+Read-side prefix routing (`bd show gt-*`) works from anywhere; the bug is
+create-side only.
+
 | Cross-rig coordination | **HQ** | `bd create "..."` (default) |
 
 ## Key Commands
