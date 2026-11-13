@@ -271,11 +271,13 @@ func runMQList(cmd *cobra.Command, args []string) error {
 		// Calculate age
 		age := formatMRAge(issue.CreatedAt)
 
-		// Truncate ID if needed
+		// NEVER truncate the ID. A bead ID is an identifier, and a prefix of one
+		// is not a shorter identifier -- it is an ambiguous one. Real IDs are 13
+		// characters, so a 12-character cut collided MR ap-wisp-osik8 with the
+		// unrelated task ap-wisp-osik6, and anything resolving the displayed value
+		// loosely could act on the wrong bead. gt mq list is the documented source
+		// of truth for the queue, so what it prints must be usable verbatim.
 		displayID := issue.ID
-		if len(displayID) > 12 {
-			displayID = displayID[:12]
-		}
 
 		// Build row with conditional GIT column
 		if mqListVerify {
@@ -311,9 +313,6 @@ func runMQList(cmd *cobra.Command, args []string) error {
 		}
 		if blockerID := beads.FirstUnresolvedBlockerID(issue); displayStatus == "blocked" && blockerID != "" {
 			displayID := issue.ID
-			if len(displayID) > 12 {
-				displayID = displayID[:12]
-			}
 			fmt.Printf("  %s %s\n", style.Dim.Render(displayID+":"),
 				style.Dim.Render(fmt.Sprintf("waiting on %s", blockerID)))
 		}
@@ -356,7 +355,7 @@ func outputJSON(data interface{}) error {
 
 func buildMQListColumns(verify bool) []style.Column {
 	columns := []style.Column{
-		{Name: "ID", Width: 12},
+		{Name: "ID", Width: 16},
 		{Name: "SCORE", Width: 7, Align: style.AlignRight},
 		{Name: "PRI", Width: 4},
 		{Name: "CONVOY", Width: 12},
