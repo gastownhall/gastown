@@ -36,6 +36,12 @@ type PatrolConfig struct {
 // Remaining stale beads are cleaned by burnPreviousPatrolWisps at cycle end.
 const maxStalePurgePerRun = 5
 
+// errPatrolRigUnsubstituted marks a patrol description that still carries the
+// UNSET_RIG sentinel. It is a distinct sentinel error so that autoSpawnPatrol can
+// treat it as fatal while leaving every other render failure as non-fatal as
+// before (dbt-as8).
+var errPatrolRigUnsubstituted = errors.New("patrol rig var was never substituted")
+
 // findActivePatrol finds an active patrol molecule for the role.
 // Returns the patrol ID, display line, and whether one was found.
 // Returns an error if discovery fails (e.g. transient bd failure),
@@ -198,6 +204,18 @@ func autoSpawnPatrol(cfg PatrolConfig) (string, error) {
 		return "", refinery.NewSafetyStoppedError(stop)
 	}
 
+	// Render the description BEFORE mutating anything, so a patrol that cannot
+	// name its own rig burns nothing and creates nothing (dbt-as8).
+	//
+	// A render FAILURE stays non-fatal, as it was: it is warned about where the
+	// description is written, below. An UNSUBSTITUTED RIG is fatal, because that
+	// wisp is not merely bare — it is ~25KB of instructions naming a rig that
+	// does not exist, and every command inside it fails in a way nothing checks.
+	desc, descErr := renderPatrolWispDescription(cfg)
+	if descErr != nil && errors.Is(descErr, errPatrolRigUnsubstituted) {
+		return "", descErr
+	}
+
 	// Resolve the beads directory following redirects.
 	// This ensures bd targets the correct database (e.g., rig database
 	// instead of HQ) regardless of inherited BEADS_DIR. See gt-ctir.
@@ -244,8 +262,11 @@ func autoSpawnPatrol(cfg PatrolConfig) (string, error) {
 	// Create the patrol wisp (root only — steps are read inline at prime time,
 	// not tracked as individual DB rows). Child wisps are reserved for pour=true
 	// formulas like releases where checkpoint recovery matters.
+	// The wisp is created with the SAME var set the description is rendered from
+	// (patrolFormulaVars), so the stored vars and the instructions the agent
+	// reads can never disagree about which rig this patrol belongs to (dbt-as8).
 	spawnArgs := []string{"mol", "wisp", "create", protoID, "--root-only", "--actor", cfg.RoleName}
-	for _, v := range cfg.ExtraVars {
+	for _, v := range patrolFormulaVars(cfg) {
 		spawnArgs = append(spawnArgs, "--var", v)
 	}
 	cmdSpawn := BdCmd(spawnArgs...).
@@ -300,9 +321,8 @@ func autoSpawnPatrol(cfg PatrolConfig) (string, error) {
 		return patrolID, fmt.Errorf("created wisp %s but failed to hook", patrolID)
 	}
 
-	desc, err := renderPatrolWispDescription(cfg)
-	if err != nil {
-		style.PrintWarning("could not render patrol description for %s: %v", patrolID, err)
+	if descErr != nil {
+		style.PrintWarning("could not render patrol description for %s: %v", patrolID, descErr)
 	} else if err := updatePatrolWispDescription(cfg, resolvedBeadsDir, patrolID, desc); err != nil {
 		style.PrintWarning("could not write patrol description for %s: %v", patrolID, err)
 	}
@@ -310,9 +330,16 @@ func autoSpawnPatrol(cfg PatrolConfig) (string, error) {
 	return patrolID, nil
 }
 
-func renderPatrolWispDescription(cfg PatrolConfig) (string, error) {
-	rigName := patrolRigName(cfg)
-	ctx := RoleContext{TownRoot: cfg.BeadsDir, Rig: rigName}
+// patrolFormulaVars returns the full --var set a patrol wisp must be minted
+// with: the role's own derived vars first, then any caller-supplied ExtraVars,
+// which win on conflict (later entries override earlier ones in
+// buildFormulaVarMap).
+//
+// This must be the single source of the var set. When the description was
+// rendered from one set and the wisp created from another, a caller that forgot
+// to pass rig produced a wisp whose commands named UNSET_RIG (dbt-as8).
+func patrolFormulaVars(cfg PatrolConfig) []string {
+	ctx := RoleContext{TownRoot: cfg.BeadsDir, Rig: patrolRigName(cfg)}
 	var vars []string
 	switch cfg.PatrolMolName {
 	case constants.MolWitnessPatrol:
@@ -320,8 +347,67 @@ func renderPatrolWispDescription(cfg PatrolConfig) (string, error) {
 	case constants.MolRefineryPatrol:
 		vars = buildRefineryPatrolVars(ctx)
 	}
-	vars = append(vars, cfg.ExtraVars...)
-	return renderFormulaRootAndStepsFull(cfg.PatrolMolName, cfg.BeadsDir, rigName, vars)
+	return dedupeFormulaVars(append(vars, cfg.ExtraVars...))
+}
+
+// dedupeFormulaVars keeps the LAST assignment of each key, at the position of
+// that last assignment. Callers that pass the role's own vars through ExtraVars
+// would otherwise emit every --var twice, and last-wins is the precedence
+// buildFormulaVarMap already applies — so this changes the arg list, never the
+// resolved value.
+func dedupeFormulaVars(vars []string) []string {
+	lastIdx := make(map[string]int, len(vars))
+	for i, kv := range vars {
+		lastIdx[formulaVarKey(kv)] = i
+	}
+	out := make([]string, 0, len(vars))
+	for i, kv := range vars {
+		if lastIdx[formulaVarKey(kv)] == i {
+			out = append(out, kv)
+		}
+	}
+	return out
+}
+
+func formulaVarKey(kv string) string {
+	if idx := strings.IndexByte(kv, '='); idx > 0 {
+		return kv[:idx]
+	}
+	return kv
+}
+
+func renderPatrolWispDescription(cfg PatrolConfig) (string, error) {
+	desc, err := renderFormulaRootAndStepsFull(cfg.PatrolMolName, cfg.BeadsDir, patrolRigName(cfg), patrolFormulaVars(cfg))
+	if err != nil {
+		return "", err
+	}
+	if err := assertPatrolRigSubstituted(cfg, desc); err != nil {
+		return "", err
+	}
+	return desc, nil
+}
+
+// assertPatrolRigSubstituted refuses a patrol description that still carries the
+// UNSET_RIG sentinel.
+//
+// A rig-scoped patrol formula declares `rig` with an UNSET_RIG default, so a
+// caller that never supplies it does not fail — it renders ~25KB of shell
+// instructions addressed to a rig that does not exist, and the commands inside
+// then fail one at a time in ways nothing checks: `gt agents resolve --rig
+// UNSET_RIG` returns no bead, so idle/backoff/heartbeat tracking silently
+// no-ops and the patrol never backs off (dbt-as8).
+//
+// The check is on the RENDERED TEXT rather than on the formula name, so it says
+// SAFE for formulas that have no rig var at all (the deacon patrol) and speaks
+// only when a substitution that was supposed to happen did not.
+func assertPatrolRigSubstituted(cfg PatrolConfig, desc string) error {
+	if !strings.Contains(desc, constants.UnsetRigSentinel) {
+		return nil
+	}
+	return fmt.Errorf("%w: %s still carries %s after rendering (assignee %q yielded rig %q) — "+
+		"refusing to cook a patrol wisp that cannot name its own rig",
+		errPatrolRigUnsubstituted, cfg.PatrolMolName, constants.UnsetRigSentinel,
+		cfg.Assignee, patrolRigName(cfg))
 }
 
 func patrolRigName(cfg PatrolConfig) string {
