@@ -72,7 +72,7 @@ When `await-signal` outputs `EFFORT: full`, run all steps thoroughly (normal mod
 
 The goal: idle cycles should burn ~10% of the tokens a full patrol uses."""
 formula = "mol-deacon-patrol"
-version = 14
+version = 15
 
 [vars]
 [vars.wisp_type]
@@ -105,16 +105,74 @@ id = "inbox-check"
 title = "Handle callbacks from agents"
 needs = ["heartbeat"]
 description = """
-First, clean up CLOSED wisps from previous cycles:
-```bash
-bd mol wisp gc --closed --force
-```
+REMOVED (si-e90, 2026-07-27): this step used to run `bd mol wisp gc --closed --force`
+on every cycle. IT IS GONE. DO NOT RESTORE IT, AND DO NOT ADD AN EQUIVALENT UNDER A
+DIFFERENT SPELLING — the reasons below apply to ANY predicate that reaches closed wisps,
+not only to that one flag. This note exists because a silent deletion is how the command
+comes back: deacon is the reaper, so "clean up wisps here" is exactly the step someone
+will reasonably propose adding, and nothing else in this file would tell them not to.
 
-> **Warning (hq-3pp):** Do not run unscoped age-based wisp GC from inside
-> this patrol. Active patrol step wisps can be older than 1h before they run;
-> age cleanup can reap this molecule's open steps and make the patrol appear
-> complete early. Use closed-only cleanup here; stale open-wisp cleanup belongs
-> outside active patrol molecules.
+First, clean up ABANDONED wisps from previous cycles.
+
+*** NEVER RUN `--closed`, `--all`, OR ANY PREDICATE THAT INCLUDES CLOSED WISPS. ***
+A rig's ENTIRE merge audit trail is closed wisps. On 2026-07-25 silicon's whole merge
+history was four rows, all closed, all `Merge:` titles recording beads in an open P0.
+A `--closed` sweep in a rig is TOTAL loss, not partial. Nothing in the tool guards this.
+
+*** DO NOT RUN AN UNBOUNDED `--age` SWEEP EITHER. IT IS NOT THE "SAFE FORM". ***
+`--age` does exclude CLOSED wisps, so it cannot reach the closed merge trail. But it
+targets OPEN wisps BY CONSTRUCTION ("abandoned" = not updated in the window AND NOT
+closed), and it deletes them WITHOUT CREATING A DIGEST. Two consequences:
+  - an in-flight merge request idle past the threshold is exactly what it selects. A
+    stalled MR is the case where you most want the record. (Measured 2026-07-26: 0 open
+    `Merge:%` wisps in hq/silicon/rev, so this is LATENT, not firing. Re-measure; do not
+    assume it is still 0.)
+  - at hq scale it is a mass deletion. Measured 2026-07-26: `--age 1h` would have taken
+    17,959 wisps in one patrol cycle, silently and with no digest.
+
+Draining the backlog may well be desirable, but it must be a DECIDED action with a stated
+method — not a side effect of a patrol step. So this step does NOT sweep. It MEASURES and
+reports:
+```bash
+# how many would an age sweep take right now, and are any of them merge records?
+dolt --data-dir ~/gt/.dolt-data sql -q \\
+  "USE hq; SELECT COUNT(*) targets FROM wisps
+   WHERE status NOT IN ('closed') AND updated_at < DATE_SUB(NOW(), INTERVAL 1 HOUR);"
+dolt --data-dir ~/gt/.dolt-data sql -q \\
+  "USE hq; SELECT COUNT(*) merge_at_risk FROM wisps
+   WHERE status NOT IN ('closed') AND title LIKE 'Merge:%';"
+```
+STOP AND REPORT if `merge_at_risk` > 0 — an open MR would be destroyed and there is no
+flag that excludes by title or label (si-1vxl). Otherwise report `targets` to the Mayor
+and await a decision. Run a sweep only with an explicitly stated method and scope.
+
+*** AFTER EVERY `gt upgrade` OR RIG PROVISION: RUN THE TRIPWIRE. ***
+The procedure is deliberately NOT in this file. A reinstall overwrites this file and
+would delete the check along with the fix — which is the exact failure the check
+detects (se-7yu). The control lives in the setup repo, under version control:
+    setup/docs/05-provisioning-guards.md
+
+If a bounded cleanup is authorised, prefer an explicit ID list generated from SQL over any
+predicate — delete by ID, never by predicate.
+
+BEFORE ANY SWEEP, run BOTH controls in the rig being swept and quote both numbers:
+```bash
+# (a) the guarded predicate must delete NOTHING protected -> expect 0
+dolt --data-dir ~/gt/.dolt-data sql -q \\
+  "USE <rig>; SELECT COUNT(*) FROM wisps WHERE status='closed' AND title NOT LIKE 'Merge:%';"
+
+# (b) the SAME predicate broadened MUST catch them -> expect NON-ZERO
+dolt --data-dir ~/gt/.dolt-data sql -q \\
+  "USE <rig>; SELECT COUNT(*) FROM wisps WHERE status='closed';"
+```
+BOTH readings are required. (a) alone is worthless: a predicate returning 0 because it is
+BROKEN looks identical to one returning 0 because it is correctly excluding. (b) proves the
+instrument can return non-zero at all. 0 and non-zero together mean the guard discriminates;
+0 and 0 mean it is BLIND and the sweep DOES NOT PROCEED.
+
+Known: the `--closed` form is also all-or-nothing and rolls back completely at scale
+(recompute is_blocked timeout), so it makes zero progress even when run. Do not retry it.
+(The executable form is deliberately not written anywhere in this runbook.)
 
 Then handle callbacks from agents.
 
