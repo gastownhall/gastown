@@ -1239,3 +1239,47 @@ func GetACPConfigFromRuntime(rc *RuntimeConfig) *ACPConfig {
 	}
 	return nil
 }
+
+// RuntimeProcessNames returns the process names to use for liveness detection of
+// an already-resolved agent configuration.
+//
+// It prefers rc.Tmux.ProcessNames. fillRuntimeDefaults/normalizeRuntimeConfig
+// populate that field from the agent's *provider* preset (or from an explicit
+// tmux.process_names override in settings), and the provider is the only thing
+// that identifies what a custom agent actually runs. ResolveProcessNames sees
+// just a name and a command, so for a custom agent whose command is a wrapper
+// script that execs the real binary — e.g. "claude-gastown" ending in
+// `exec claude "$@"` — it yields the wrapper's name, which no live process ever
+// carries after the exec. Writing that into GT_PROCESS_NAMES makes every
+// IsAgentAlive check report a healthy session as agent-dead (hq-io5).
+//
+// The command basename is unioned in so a fully custom binary (one that execs
+// nothing) still matches, and so a wrapper is matched during the window before
+// it execs.
+//
+// Falls back to ResolveProcessNames when rc carries no tmux process names.
+func RuntimeProcessNames(rc *RuntimeConfig) []string {
+	if rc == nil {
+		return nil
+	}
+	if rc.Tmux == nil || len(rc.Tmux.ProcessNames) == 0 {
+		return ResolveProcessNames(rc.ResolvedAgent, rc.Command, rc.Args...)
+	}
+
+	seen := make(map[string]bool, len(rc.Tmux.ProcessNames)+1)
+	names := make([]string, 0, len(rc.Tmux.ProcessNames)+1)
+	add := func(n string) {
+		if n == "" || seen[n] {
+			return
+		}
+		seen[n] = true
+		names = append(names, n)
+	}
+	for _, n := range rc.Tmux.ProcessNames {
+		add(n)
+	}
+	if rc.Command != "" {
+		add(filepath.Base(rc.Command))
+	}
+	return names
+}

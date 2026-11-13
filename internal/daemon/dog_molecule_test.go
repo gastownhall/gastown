@@ -2,6 +2,7 @@ package daemon
 
 import (
 	"reflect"
+	"strings"
 	"testing"
 )
 
@@ -187,13 +188,98 @@ func TestParseChildrenJSON(t *testing.T) {
 
 func TestDogMolGracefulDegradation(t *testing.T) {
 	// A dogMol with empty rootID should be a no-op for all operations.
-	dm := &dogMol{
-		rootID:  "",
-		stepIDs: make(map[string]string),
-	}
+	dm := &dogMol{rootID: ""}
 
 	// These should not panic or error — graceful degradation.
 	dm.closeStep("scan")
 	dm.failStep("scan", "test failure")
 	dm.close()
+
+	// Nothing is recorded without a root wisp, so there is nothing to report.
+	if len(dm.steps) != 0 {
+		t.Errorf("steps recorded without a root wisp: %v", dm.steps)
+	}
+	if got := dm.stepSummary(); got != "" {
+		t.Errorf("stepSummary() = %q, want empty", got)
+	}
+}
+
+func TestDogMolStepSummary(t *testing.T) {
+	tests := []struct {
+		name string
+		run  func(dm *dogMol)
+		want string
+	}{
+		{
+			name: "no steps",
+			run:  func(*dogMol) {},
+			want: "",
+		},
+		{
+			name: "all steps ok, in call order",
+			run: func(dm *dogMol) {
+				dm.closeStep("scan")
+				dm.closeStep("reap")
+				dm.closeStep("report")
+			},
+			want: "scan ok, reap ok, report ok",
+		},
+		{
+			name: "failure carries its reason",
+			run: func(dm *dogMol) {
+				dm.closeStep("inspect")
+				dm.failStep("compact", "2 databases had errors")
+			},
+			want: "inspect ok, compact failed (2 databases had errors)",
+		},
+		{
+			name: "failure without a reason",
+			run: func(dm *dogMol) {
+				dm.failStep("sync", "")
+			},
+			want: "sync failed",
+		},
+		{
+			name: "retried step reports its final outcome once",
+			run: func(dm *dogMol) {
+				dm.failStep("push", "transient")
+				dm.closeStep("push")
+			},
+			want: "push ok",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dm := &dogMol{rootID: "hq-wisp-abc123"}
+			tt.run(dm)
+			if got := dm.stepSummary(); got != tt.want {
+				t.Errorf("stepSummary() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestDogMolStepSummaryTruncates(t *testing.T) {
+	dm := &dogMol{rootID: "hq-wisp-abc123"}
+	dm.failStep("export", strings.Repeat("x", dogSummaryMaxLen*2))
+
+	got := dm.stepSummary()
+	if runes := []rune(got); len(runes) != dogSummaryMaxLen+1 {
+		t.Errorf("stepSummary() length = %d runes, want %d", len(runes), dogSummaryMaxLen+1)
+	}
+	if !strings.HasSuffix(got, "…") {
+		t.Errorf("stepSummary() = %q, want an ellipsis suffix", got)
+	}
+}
+
+func TestTruncateSummaryCountsRunesNotBytes(t *testing.T) {
+	// A multi-byte summary must not be cut mid-rune.
+	s := strings.Repeat("é", 10)
+	if got := truncateSummary(s, 10); got != s {
+		t.Errorf("truncateSummary(10 runes, max 10) = %q, want unchanged", got)
+	}
+	if got := truncateSummary(s, 4); got != strings.Repeat("é", 4)+"…" {
+		t.Errorf("truncateSummary(10 runes, max 4) = %q, want 4 runes plus ellipsis", got)
+	}
 }

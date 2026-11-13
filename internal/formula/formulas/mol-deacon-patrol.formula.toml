@@ -110,11 +110,12 @@ First, clean up CLOSED wisps from previous cycles:
 bd mol wisp gc --closed --force
 ```
 
-> **Warning (hq-3pp):** Do not run unscoped age-based wisp GC from inside
-> this patrol. Active patrol step wisps can be older than 1h before they run;
-> age cleanup can reap this molecule's open steps and make the patrol appear
-> complete early. Use closed-only cleanup here; stale open-wisp cleanup belongs
-> outside active patrol molecules.
+> **Warning (hq-675, hq-3pp):** Do not run unscoped age-based wisp GC from
+> inside this patrol. `bd mol wisp gc --age` has no ownership scope and does
+> not exclude HOOKED wisps, so it deletes live work town-wide: this patrol's
+> own open step wisps (making the cycle appear complete early) and other
+> agents' active molecules. Use closed-only cleanup here; age-based cleanup of
+> open wisps belongs to the reaper, outside active patrol molecules.
 
 Then handle callbacks from agents.
 

@@ -18,7 +18,8 @@ Organizational chain for cross-rig coordination:
 - Mayor mail and messages
 - Convoy coordination (batch work across rigs)
 - Strategic issues and decisions
-- **Town-level agent beads** (Mayor, Deacon)
+- **All agent beads** — town-level (Mayor, Deacon) *and* rig-level
+  (Witness, Refinery, Polecats, Crew)
 - **Role definition beads** (global templates)
 
 ### Rig-Level Beads (`<rig>/mayor/rig/.beads/`)
@@ -27,12 +28,17 @@ Project chain for implementation work:
 - Bugs, features, tasks for the project
 - Merge requests and code reviews
 - Project-specific molecules
-- **Rig-level agent beads** (Witness, Refinery, Polecats)
+
+Note: rig **agent** beads carry the project prefix but are *stored* in the town
+database — see [Agent Bead Storage](#agent-bead-storage).
 
 ## Agent Bead Storage
 
-Agent beads track lifecycle state for each agent. Storage location depends on
-the agent's scope.
+Agent beads track lifecycle state for each agent. **Every agent bead lives in
+the town database**, whatever the agent's scope: agent identity is one registry
+so `gt doctor`, `gt patrol scan`, and cross-rig agent queries can see all agents
+at once. Only the *ID prefix* is scoped — a rig agent's bead carries the rig
+prefix but is stored in `~/gt/.beads/`.
 
 | Agent Type | Scope | Bead Location | Bead ID Format |
 |------------|-------|---------------|----------------|
@@ -40,10 +46,36 @@ the agent's scope.
 | Deacon | Town | `~/gt/.beads/` | `hq-deacon` |
 | Boot | Town | `~/gt/.beads/` | `hq-boot` |
 | Dogs | Town | `~/gt/.beads/` | `hq-dog-<name>` |
-| Witness | Rig | `<rig>/.beads/` | `<prefix>-<rig>-witness` |
-| Refinery | Rig | `<rig>/.beads/` | `<prefix>-<rig>-refinery` |
-| Polecats | Rig | `<rig>/.beads/` | `<prefix>-<rig>-polecat-<name>` |
-| Crew | Rig | `<rig>/.beads/` | `<prefix>-<rig>-crew-<name>` |
+| Witness | Rig | `~/gt/.beads/` | `<prefix>-<rig>-witness` |
+| Refinery | Rig | `~/gt/.beads/` | `<prefix>-<rig>-refinery` |
+| Polecats | Rig | `~/gt/.beads/` | `<prefix>-<rig>-polecat-<name>` |
+| Crew | Rig | `~/gt/.beads/` | `<prefix>-<rig>-crew-<name>` |
+
+### Reading an agent bead from a rig directory
+
+The rig prefix on a rig agent's bead ID *agrees* with the rig database's prefix,
+so a plain prefix-routed lookup from a rig working directory finds a
+structurally valid database, finds no such bead in it, and reports a clean "no
+issue found" rather than a routing error. That silent failure is hq-5z6: the
+Witness never persisted its idle counter, backoff window, or heartbeat, so it
+never reached abbreviated patrol effort and burned full-effort tokens every
+cycle.
+
+gt resolves agent beads against **the database the cwd resolves to, then the
+town database** — `resolveAgentBeadDir` in `internal/cmd/agent_tracking_beads.go`
+tries the cwd-local database first and falls back to town, while
+`Beads.ForAgentBead` in `internal/beads/beads.go` re-roots straight at town and
+disables prefix routing. Rigs that still hold a rig-local agent bead keep using
+it; everyone else lands on town. `gt doctor` asserts the invariant per agent via
+the `agent-bead-reachable` check, which flags any agent bead that lives in a
+database its owning agent never consults.
+
+Raw `bd` has no such fallback. To read an agent bead by hand from a rig
+directory, point it at the town database:
+
+```bash
+BEADS_DIR=~/gt/.beads bd show <prefix>-<rig>-witness
+```
 
 ### Role Beads
 

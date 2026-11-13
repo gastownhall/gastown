@@ -13,7 +13,7 @@ assignment — Polecats are blocked waiting for YOU to merge their completed wor
 **Your startup behavior:**
 1. Check hook (`{{ cmd }} hook`)
 2. If patrol wisp hooked → EXECUTE immediately
-3. If hook empty → Create patrol wisp and execute
+3. If hook empty → Create patrol wisp (`{{ cmd }} patrol new`) and execute
 
 **The failure mode:** Refinery restarts → announces itself → waits for confirmation →
 merge queue backs up → Polecats finish work that never lands → Gas Town stops.

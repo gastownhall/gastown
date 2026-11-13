@@ -321,7 +321,27 @@ func renderPatrolWispDescription(cfg PatrolConfig) (string, error) {
 		vars = buildRefineryPatrolVars(ctx)
 	}
 	vars = append(vars, cfg.ExtraVars...)
-	return renderFormulaRootAndStepsFull(cfg.PatrolMolName, cfg.BeadsDir, rigName, vars)
+	body, err := renderFormulaRootAndStepsFull(cfg.PatrolMolName, cfg.BeadsDir, rigName, vars)
+	if err != nil {
+		return "", err
+	}
+
+	// Prefix the attachment marker so readers that resolve steps from metadata
+	// (gt hook, bd mol current) can find the formula instead of falling back to
+	// "No molecule attached". Sling-created wisps carry this marker; before
+	// hq-12a the patrol constructors wrote the rendered prose alone, so a
+	// patrol wisp minted by gt patrol new/report was readable only as prose.
+	marker := beads.FormatAttachmentFields(&beads.AttachmentFields{
+		AttachedFormula: cfg.PatrolMolName,
+		AttachedVars:    cfg.ExtraVars,
+	})
+	if marker == "" {
+		return body, nil
+	}
+	if body == "" {
+		return marker, nil
+	}
+	return marker + "\n\n" + body, nil
 }
 
 func patrolRigName(cfg PatrolConfig) string {

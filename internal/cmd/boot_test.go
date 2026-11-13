@@ -148,3 +148,71 @@ func TestExecuteWarrants_IgnoresNonWarrantFiles(t *testing.T) {
 	tm := tmux.NewTmux()
 	executeWarrants(warrantDir, tm) // should not panic or error
 }
+
+// =============================================================================
+// Onboarding detection tests (hq-jri)
+// =============================================================================
+
+// bootedPane is what a Deacon that actually reached a prompt looks like. It
+// contains the startup banner — including "Welcome to Claude Code" — which is
+// exactly why that string alone must never trigger a restart.
+const bootedPane = `╭───────────────────────────────────────────╮
+│ ✻ Welcome to Claude Code!                 │
+│   /help for help, /status for your setup  │
+╰───────────────────────────────────────────╯
+
+GAS TOWN role:deacon pid:29471
+Deacon heartbeat cycle 41 - patrol complete
+> `
+
+func TestPaneShowsOnboarding(t *testing.T) {
+	tests := []struct {
+		name string
+		pane string
+		want bool
+	}{
+		{
+			name: "booted session with welcome banner is not onboarding",
+			pane: bootedPane,
+			want: false,
+		},
+		{
+			name: "empty pane is not onboarding",
+			pane: "",
+			want: false,
+		},
+		{
+			name: "login method select",
+			pane: "Select login method:\n\n> 1. Claude account with subscription\n  2. Anthropic Console account",
+			want: true,
+		},
+		{
+			name: "theme picker",
+			pane: "Choose the text style that looks best with your terminal:\n\n> 1. Dark mode",
+			want: true,
+		},
+		{
+			name: "welcome plus get started",
+			pane: "✻ Welcome to Claude Code!\n\n  Let's get started.\n\n> 1. Dark mode",
+			want: true,
+		},
+		{
+			name: "welcome without get started is not onboarding",
+			pane: "✻ Welcome to Claude Code!\n\n> ",
+			want: false,
+		},
+		{
+			name: "typographic apostrophe still matches",
+			pane: "✻ Welcome to Claude Code!\n\n  Let’s get started.\n",
+			want: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := paneShowsOnboarding(tt.pane); got != tt.want {
+				t.Errorf("paneShowsOnboarding() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}

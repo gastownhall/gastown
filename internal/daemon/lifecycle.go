@@ -409,6 +409,24 @@ func (d *Daemon) restartSession(sessionName, identity string) error {
 	})
 	config.SanitizeAgentEnv(envVars, map[string]string{})
 
+	// Credential preflight. A dead OAuth token does not make Claude Code exit —
+	// it drops into the interactive onboarding flow and parks there. The tmux
+	// session exists and the process runs, so every liveness check passes while
+	// the agent never reaches a prompt and never heartbeats. Restarting into
+	// that state just replaces one silent zombie with another (hq-ac0, hq-jri).
+	//
+	// Skipped when the session is already up with a live agent:
+	// EnsureSessionFreshWithCommandAndEnv short-circuits that case anyway, and
+	// a healthy agent should not be reported as a credential failure.
+	if !d.hasLiveAgent(sessionName) {
+		if warning, err := config.PreflightAgentAuth(rc, d.runtimeConfigDir()); err != nil {
+			d.logger.Printf("Skipping session restart for %s: %v", identity, err)
+			return fmt.Errorf("credential preflight for %s: %w", identity, err)
+		} else if warning != "" {
+			d.logger.Printf("Credential warning for %s: %s", identity, warning)
+		}
+	}
+
 	// Create session with command as initial process (replaces EnsureSessionFresh + SendKeys).
 	// EnsureSessionFreshWithCommandAndEnv kills zombie sessions and creates a new one atomically,
 	// seeding env via -e flags before the shell starts (gt-xyr defense-in-depth).
@@ -569,16 +587,32 @@ func (d *Daemon) getStartCommand(roleConfig *beads.RoleConfig, parsed *ParsedIde
 	return config.PrependEnv("exec "+runtimeConfig.BuildCommandWithPrompt(prompt), envVars)
 }
 
+// hasLiveAgent reports whether a tmux session exists and still has a running
+// agent in it. Used to keep restart-path guards from firing on healthy agents.
+func (d *Daemon) hasLiveAgent(sessionName string) bool {
+	exists, err := d.tmux.HasSession(sessionName)
+	if err != nil || !exists {
+		return false
+	}
+	return d.tmux.IsAgentAlive(sessionName)
+}
+
+// runtimeConfigDir resolves CLAUDE_CONFIG_DIR from accounts.json so
+// daemon-restarted sessions use the correct account. Mirrors the crew startup
+// path (start.go). Falls back to the daemon's own environment.
+func (d *Daemon) runtimeConfigDir() string {
+	accountsPath := constants.MayorAccountsPath(d.config.TownRoot)
+	dir, _, _ := config.ResolveAccountConfigDir(accountsPath, "")
+	if dir == "" {
+		dir = os.Getenv(config.ClaudeConfigDirEnv)
+	}
+	return dir
+}
+
 // setSessionEnvironment sets environment variables for the tmux session.
 // Uses centralized AgentEnv for consistency, plus custom env vars from role config if available.
 func (d *Daemon) setSessionEnvironment(sessionName string, roleConfig *beads.RoleConfig, parsed *ParsedIdentity) {
-	// Resolve CLAUDE_CONFIG_DIR from accounts.json so daemon-restarted sessions
-	// use the correct account. Mirrors the crew startup path (start.go).
-	accountsPath := constants.MayorAccountsPath(d.config.TownRoot)
-	runtimeConfigDir, _, _ := config.ResolveAccountConfigDir(accountsPath, "")
-	if runtimeConfigDir == "" {
-		runtimeConfigDir = os.Getenv("CLAUDE_CONFIG_DIR")
-	}
+	runtimeConfigDir := d.runtimeConfigDir()
 
 	// Use centralized AgentEnv for base environment variables
 	envVars := config.AgentEnv(config.AgentEnvConfig{

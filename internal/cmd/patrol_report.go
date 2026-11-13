@@ -30,7 +30,9 @@ This replaces the old squash+new pattern with a single command that:
 
 The summary is stored on the patrol root wisp for audit purposes.
 The --steps flag records which patrol steps were executed vs skipped,
-making shortcutting visible in the ledger.
+making shortcutting visible in the ledger. Step ids must match the patrol
+formula's ids exactly; an unrecognized id is rejected rather than recorded,
+because the ledger entry it produces cannot be corrected afterwards.
 
 Examples:
   gt patrol report --summary "All clear, no issues" --steps "heartbeat:OK,inbox-check:OK,health-scan:OK"
@@ -40,7 +42,7 @@ Examples:
 
 func init() {
 	patrolReportCmd.Flags().StringVar(&patrolReportSummary, "summary", "", "Brief summary of patrol observations (required)")
-	patrolReportCmd.Flags().StringVar(&patrolReportSteps, "steps", "", "Step audit: comma-separated step:STATUS pairs (e.g., heartbeat:OK,inbox-check:OK)")
+	patrolReportCmd.Flags().StringVar(&patrolReportSteps, "steps", "", "Step audit: comma-separated step:STATUS pairs using the formula's step ids verbatim (e.g., heartbeat:OK,inbox-check:OK)")
 	_ = patrolReportCmd.MarkFlagRequired("summary")
 }
 
@@ -82,6 +84,14 @@ func runPatrolReport(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("unsupported role for patrol report: %q", roleName)
 	}
 
+	// Build the step audit checklist before touching any state: an unknown step
+	// id is a typo in the audit, and a patrol report is a permanent ledger entry
+	// that cannot be corrected after the fact (hq-6jz).
+	stepAudit, err := buildStepAudit(cfg.PatrolMolName, patrolReportSteps)
+	if err != nil {
+		return err
+	}
+
 	// Find the active patrol
 	patrolID, _, hasPatrol, findErr := findActivePatrol(cfg)
 	if findErr != nil {
@@ -96,9 +106,6 @@ func runPatrolReport(cmd *cobra.Command, args []string) error {
 	if b == nil {
 		b = beads.New(cfg.BeadsDir)
 	}
-
-	// Build step audit checklist
-	stepAudit := buildStepAudit(cfg.PatrolMolName, patrolReportSteps)
 
 	// Update the description with the patrol summary and step audit
 	desc := fmt.Sprintf("Patrol report: %s\n\n%s", patrolReportSummary, stepAudit)
@@ -169,42 +176,63 @@ func stampDeaconHeartbeatOnReport(townRoot, summary string) {
 //	Steps: heartbeat OK | inbox-check OK | orphan-cleanup SKIP | ... (14/25)
 //
 // If stepsFlag is empty, returns a line indicating the audit was not reported.
-func buildStepAudit(formulaName string, stepsFlag string) string {
+//
+// Reported step ids that don't appear in the formula are an error: silently
+// dropping them would record every step they were meant to cover as SKIP,
+// writing a false low-compliance patrol to the permanent ledger (hq-6jz).
+func buildStepAudit(formulaName string, stepsFlag string) (string, error) {
 	// Load the formula to get the canonical step list
 	content, err := formula.GetEmbeddedFormulaContent(formulaName)
 	if err != nil {
 		if stepsFlag == "" {
-			return "Steps: NOT REPORTED (formula not found)"
+			return "Steps: NOT REPORTED (formula not found)", nil
 		}
 		// Can't validate without the formula, but still show what was reported
-		return fmt.Sprintf("Steps: %s (unvalidated — formula not found)", stepsFlag)
+		return fmt.Sprintf("Steps: %s (unvalidated — formula not found)", stepsFlag), nil
 	}
 
 	f, err := formula.Parse(content)
 	if err != nil {
 		if stepsFlag == "" {
-			return "Steps: NOT REPORTED (formula parse error)"
+			return "Steps: NOT REPORTED (formula parse error)", nil
 		}
-		return fmt.Sprintf("Steps: %s (unvalidated — formula parse error)", stepsFlag)
+		return fmt.Sprintf("Steps: %s (unvalidated — formula parse error)", stepsFlag), nil
 	}
 
 	allStepIDs := f.GetAllIDs()
 	if len(allStepIDs) == 0 {
-		return ""
+		return "", nil
 	}
 
 	if stepsFlag == "" {
-		return fmt.Sprintf("Steps: NOT REPORTED (?/%d)", len(allStepIDs))
+		return fmt.Sprintf("Steps: NOT REPORTED (?/%d)", len(allStepIDs)), nil
 	}
 
 	// Parse the reported step results
 	reported := parseStepResults(stepsFlag)
 
+	known := make(map[string]bool, len(allStepIDs))
+	for _, stepID := range allStepIDs {
+		known[stepID] = true
+	}
+	var rejected []string
+	for _, stepID := range reported.order {
+		if !known[stepID] {
+			rejected = append(rejected, stepID)
+		}
+	}
+	rejected = append(rejected, reported.malformed...)
+	if len(rejected) > 0 {
+		return "", fmt.Errorf("unrecognized entries in --steps: %s\n\nvalid step ids for %s:\n  %s\n\nUse these ids verbatim, as id:STATUS pairs. An entry that doesn't match is not recorded, "+
+			"and its step lands in the permanent patrol ledger as SKIP",
+			strings.Join(rejected, ", "), formulaName, strings.Join(allStepIDs, "\n  "))
+	}
+
 	// Build the audit line: map each formula step to its reported status
 	var parts []string
 	okCount := 0
 	for _, stepID := range allStepIDs {
-		status, ok := reported[stepID]
+		status, ok := reported.status[stepID]
 		if !ok {
 			status = "SKIP"
 		}
@@ -214,23 +242,40 @@ func buildStepAudit(formulaName string, stepsFlag string) string {
 		parts = append(parts, stepID+" "+status)
 	}
 
-	return fmt.Sprintf("Steps: %s (%d/%d)", strings.Join(parts, " | "), okCount, len(allStepIDs))
+	return fmt.Sprintf("Steps: %s (%d/%d)", strings.Join(parts, " | "), okCount, len(allStepIDs)), nil
+}
+
+// stepReport is the parsed form of the --steps flag.
+type stepReport struct {
+	// status maps step ID to uppercase status.
+	status map[string]string
+	// order lists the reported step IDs in input order, deduplicated, so
+	// diagnostics echo them back the way the caller wrote them.
+	order []string
+	// malformed holds entries with no "id:STATUS" separator. They carry no
+	// status, so they can only be reported, never recorded.
+	malformed []string
 }
 
 // parseStepResults parses a comma-separated string of step:STATUS pairs.
-// Returns a map of step ID to uppercase status.
 // Example input: "heartbeat:OK,inbox-check:OK,orphan-cleanup:SKIP"
-func parseStepResults(stepsFlag string) map[string]string {
-	results := make(map[string]string)
+func parseStepResults(stepsFlag string) stepReport {
+	report := stepReport{status: make(map[string]string)}
 	for _, entry := range strings.Split(stepsFlag, ",") {
 		entry = strings.TrimSpace(entry)
 		if entry == "" {
 			continue
 		}
 		parts := strings.SplitN(entry, ":", 2)
-		if len(parts) == 2 {
-			results[strings.TrimSpace(parts[0])] = strings.ToUpper(strings.TrimSpace(parts[1]))
+		if len(parts) != 2 {
+			report.malformed = append(report.malformed, entry)
+			continue
 		}
+		id := strings.TrimSpace(parts[0])
+		if _, seen := report.status[id]; !seen {
+			report.order = append(report.order, id)
+		}
+		report.status[id] = strings.ToUpper(strings.TrimSpace(parts[1]))
 	}
-	return results
+	return report
 }

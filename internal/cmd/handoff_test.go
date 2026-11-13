@@ -799,7 +799,7 @@ func TestWarnHandoffGitStatus(t *testing.T) {
 }
 
 func TestHandoffProcessNames(t *testing.T) {
-	t.Run("same-agent restart preserves GT_PROCESS_NAMES from env", func(t *testing.T) {
+	t.Run("same-agent restart keeps the agent's own process names", func(t *testing.T) {
 		setupHandoffTestRegistry(t)
 
 		tmpTown := t.TempDir()
@@ -814,13 +814,14 @@ func TestHandoffProcessNames(t *testing.T) {
 		os.Chdir(os.TempDir())
 		t.Cleanup(func() { os.Chdir(origCwd) })
 
-		// Same-agent restart should preserve existing process names from env
+		// Same-agent restart must still yield the agent's process names,
+		// whether they come from the config or from the inherited env.
 		cmd, err := buildRestartCommand("gt-crew-propane")
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
 		if !strings.Contains(cmd, "GT_PROCESS_NAMES") || !strings.Contains(cmd, "node,claude") {
-			t.Errorf("expected GT_PROCESS_NAMES=node,claude preserved from env, got: %q", cmd)
+			t.Errorf("expected GT_PROCESS_NAMES=node,claude, got: %q", cmd)
 		}
 	})
 
@@ -848,6 +849,69 @@ func TestHandoffProcessNames(t *testing.T) {
 		// Claude's default process names are "node,claude"
 		if !strings.Contains(cmd, "GT_PROCESS_NAMES") || !strings.Contains(cmd, "node,claude") {
 			t.Errorf("expected GT_PROCESS_NAMES=node,claude computed from config, got: %q", cmd)
+		}
+	})
+
+	// hq-io5: a session spawned before the RuntimeProcessNames fix carries a
+	// wrapper-only GT_PROCESS_NAMES (e.g. "claude-gastown"), which no live
+	// process matches once the wrapper execs the real binary. Handoff must
+	// recompute from the agent config rather than propagate the bad value into
+	// every successor session, otherwise gt witness status / gt rig status keep
+	// reporting a healthy witness as stopped forever.
+	t.Run("stale wrapper-only GT_PROCESS_NAMES is healed from config", func(t *testing.T) {
+		setupHandoffTestRegistry(t)
+
+		tmpTown := t.TempDir()
+		mayorDir := filepath.Join(tmpTown, "mayor")
+		os.MkdirAll(mayorDir, 0755)
+		os.WriteFile(filepath.Join(mayorDir, "town.json"), []byte(`{"name":"test"}`), 0644)
+
+		// The wrapper agent has to be visible from both the town settings and
+		// the rig the target session belongs to, since handoff resolves the
+		// override against the rig path.
+		wrapperAgent := `"agents": {
+    "claude-wrapper": {
+      "provider": "claude",
+      "command": "/nonexistent/bin/claude-wrapper",
+      "args": ["--dangerously-skip-permissions"],
+      "process_names": ["node", "claude"]
+    }
+  }`
+		settingsDir := filepath.Join(tmpTown, "settings")
+		os.MkdirAll(settingsDir, 0755)
+		os.WriteFile(filepath.Join(settingsDir, "config.json"), []byte(`{
+  "type": "town-settings",
+  "version": 1,
+  "default_agent": "claude-wrapper",
+  `+wrapperAgent+`
+}`), 0644)
+
+		rigSettingsDir := filepath.Join(tmpTown, "gastown", "settings")
+		os.MkdirAll(rigSettingsDir, 0755)
+		os.WriteFile(filepath.Join(rigSettingsDir, "config.json"), []byte(`{
+  "type": "rig-settings",
+  "version": 1,
+  "agent": "claude-wrapper",
+  `+wrapperAgent+`
+}`), 0644)
+
+		// GT_TOWN_ROOT is consulted before GT_ROOT; leaving a real town's value
+		// in place would resolve the agent against that town, not this fixture.
+		t.Setenv("GT_TOWN_ROOT", tmpTown)
+		t.Setenv("GT_ROOT", tmpTown)
+		t.Setenv("GT_AGENT", "claude-wrapper")
+		// The bad value a pre-fix spawn baked into the tmux session env.
+		t.Setenv("GT_PROCESS_NAMES", "claude-wrapper")
+		origCwd, _ := os.Getwd()
+		os.Chdir(os.TempDir())
+		t.Cleanup(func() { os.Chdir(origCwd) })
+
+		cmd, err := buildRestartCommand("gt-crew-propane")
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if !strings.Contains(cmd, "GT_PROCESS_NAMES=node,claude,claude-wrapper") {
+			t.Errorf("expected stale GT_PROCESS_NAMES healed to node,claude,claude-wrapper, got: %q", cmd)
 		}
 	})
 }

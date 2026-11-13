@@ -1,6 +1,7 @@
 package dog
 
 import (
+	"errors"
 	"testing"
 	"time"
 
@@ -409,5 +410,185 @@ func TestNeedsAttentionCount(t *testing.T) {
 
 	if got := NeedsAttentionCount(nil); got != 0 {
 		t.Errorf("NeedsAttentionCount(nil) = %d, want 0", got)
+	}
+}
+
+// =============================================================================
+// Stranded dogs (hq-xgq)
+// =============================================================================
+
+// mockHookedWorkFinder implements HookedWorkFinder for testing.
+type mockHookedWorkFinder struct {
+	work map[string]*HookedWork // dog name -> hooked work
+	err  error
+}
+
+func (m *mockHookedWorkFinder) HookedWork(dogName string) (*HookedWork, error) {
+	if m.err != nil {
+		return nil, m.err
+	}
+	return m.work[dogName], nil
+}
+
+// TestHealth_IdleDog_StrandedWork is the regression test for hq-xgq: a wisp is
+// hooked to a dog, the town halts, and the dog comes back idle with no session.
+// health-check must report it instead of "all dogs healthy".
+func TestHealth_IdleDog_StrandedWork(t *testing.T) {
+	m, _ := testManager(t)
+	now := time.Now()
+	setupDogWithState(t, m, "alpha", &DogState{
+		Name: "alpha", State: StateIdle, LastActive: now,
+		CreatedAt: now, UpdatedAt: now,
+	})
+
+	mc := newMockChecker() // no session
+	hc := NewHealthChecker(m, mc).WithHookedWorkFinder(&mockHookedWorkFinder{
+		work: map[string]*HookedWork{
+			"alpha": {ID: "hq-wisp-03ph", Formula: "mol-dog-reaper"},
+		},
+	})
+
+	d, _ := m.Get("alpha")
+	r := hc.Check(d, 30*time.Minute, false)
+
+	if !r.NeedsAttention {
+		t.Error("idle dog holding hooked work should need attention")
+	}
+	if r.SessionStatus != "stranded" {
+		t.Errorf("session_status = %q, want 'stranded'", r.SessionStatus)
+	}
+	if r.HookedWork != "hq-wisp-03ph" {
+		t.Errorf("hooked_work = %q, want 'hq-wisp-03ph'", r.HookedWork)
+	}
+	if r.Recommendation == "" {
+		t.Error("stranded dog should carry a recommendation")
+	}
+	if NeedsAttentionCount([]DogHealthResult{r}) != 1 {
+		t.Error("stranded dog should count toward needs-attention (exit code 2)")
+	}
+}
+
+// TestHealth_StrandedDog_NeverAutoCleared verifies --auto-clear does not
+// silently discard hooked work: unhooking is the Deacon's call.
+func TestHealth_StrandedDog_NeverAutoCleared(t *testing.T) {
+	m, _ := testManager(t)
+	now := time.Now()
+	setupDogWithState(t, m, "alpha", &DogState{
+		Name: "alpha", State: StateIdle, LastActive: now,
+		CreatedAt: now, UpdatedAt: now,
+	})
+
+	mc := newMockChecker()
+	hc := NewHealthChecker(m, mc).WithHookedWorkFinder(&mockHookedWorkFinder{
+		work: map[string]*HookedWork{"alpha": {ID: "hq-wisp-03ph"}},
+	})
+
+	d, _ := m.Get("alpha")
+	r := hc.Check(d, 30*time.Minute, true)
+
+	if r.AutoCleared {
+		t.Error("stranded dog must not be auto-cleared")
+	}
+	if !r.NeedsAttention {
+		t.Error("stranded dog should still need attention with --auto-clear")
+	}
+	if len(mc.killedSessions) != 0 {
+		t.Errorf("no session should be killed for a stranded dog, got %v", mc.killedSessions)
+	}
+}
+
+// TestHealth_IdleDog_NoHookedWork verifies the common case stays healthy — the
+// stranded check must not turn every idle dog into a warning.
+func TestHealth_IdleDog_NoHookedWork(t *testing.T) {
+	m, _ := testManager(t)
+	now := time.Now()
+	setupDogWithState(t, m, "alpha", &DogState{
+		Name: "alpha", State: StateIdle, LastActive: now,
+		CreatedAt: now, UpdatedAt: now,
+	})
+
+	mc := newMockChecker()
+	hc := NewHealthChecker(m, mc).WithHookedWorkFinder(&mockHookedWorkFinder{
+		work: map[string]*HookedWork{},
+	})
+
+	d, _ := m.Get("alpha")
+	r := hc.Check(d, 30*time.Minute, false)
+
+	if r.NeedsAttention {
+		t.Error("idle dog with nothing hooked should stay healthy")
+	}
+	if r.SessionStatus != "none" {
+		t.Errorf("session_status = %q, want 'none'", r.SessionStatus)
+	}
+}
+
+// TestHealth_OrphanSession_TakesPrecedence verifies an idle dog with a live
+// session is still reported as an orphan, not as stranded.
+func TestHealth_OrphanSession_TakesPrecedence(t *testing.T) {
+	m, _ := testManager(t)
+	now := time.Now()
+	setupDogWithState(t, m, "alpha", &DogState{
+		Name: "alpha", State: StateIdle, LastActive: now,
+		CreatedAt: now, UpdatedAt: now,
+	})
+
+	mc := newMockChecker()
+	mc.sessionsAlive["hq-dog-alpha"] = true
+	hc := NewHealthChecker(m, mc).WithHookedWorkFinder(&mockHookedWorkFinder{
+		work: map[string]*HookedWork{"alpha": {ID: "hq-wisp-03ph"}},
+	})
+
+	d, _ := m.Get("alpha")
+	r := hc.Check(d, 30*time.Minute, false)
+
+	if r.SessionStatus != "orphan" {
+		t.Errorf("session_status = %q, want 'orphan'", r.SessionStatus)
+	}
+}
+
+// TestHealth_StrandedCheck_BeadsFailure verifies a beads outage degrades
+// gracefully: the dog is reported as unchecked rather than crashing the sweep.
+func TestHealth_StrandedCheck_BeadsFailure(t *testing.T) {
+	m, _ := testManager(t)
+	now := time.Now()
+	setupDogWithState(t, m, "alpha", &DogState{
+		Name: "alpha", State: StateIdle, LastActive: now,
+		CreatedAt: now, UpdatedAt: now,
+	})
+
+	mc := newMockChecker()
+	hc := NewHealthChecker(m, mc).WithHookedWorkFinder(&mockHookedWorkFinder{
+		err: errors.New("dolt unreachable"),
+	})
+
+	d, _ := m.Get("alpha")
+	r := hc.Check(d, 30*time.Minute, false)
+
+	if r.CheckError == "" {
+		t.Error("beads failure should be surfaced in CheckError")
+	}
+	if r.NeedsAttention {
+		t.Error("a failed stranded check should not fabricate a problem")
+	}
+}
+
+// TestHealth_NoHookedWorkFinder_SkipsStranded verifies the check is optional so
+// callers without beads access keep working.
+func TestHealth_NoHookedWorkFinder_SkipsStranded(t *testing.T) {
+	m, _ := testManager(t)
+	now := time.Now()
+	setupDogWithState(t, m, "alpha", &DogState{
+		Name: "alpha", State: StateIdle, LastActive: now,
+		CreatedAt: now, UpdatedAt: now,
+	})
+
+	hc := NewHealthChecker(m, newMockChecker())
+
+	d, _ := m.Get("alpha")
+	r := hc.Check(d, 30*time.Minute, false)
+
+	if r.NeedsAttention || r.SessionStatus != "none" {
+		t.Errorf("without a finder the stranded check must be skipped, got %+v", r)
 	}
 }

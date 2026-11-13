@@ -174,3 +174,142 @@ esac
 		}
 	}
 }
+
+// TestResolveAgentBeadDirFallsBackToTown pins the fix for hq-5z6: agent beads
+// carry a rig prefix but live in the town database, so a rig agent whose cwd
+// resolves to the rig database must still find its own bead.
+func TestResolveAgentBeadDirFallsBackToTown(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("uses a POSIX shell fake bd")
+	}
+
+	tmp := t.TempDir()
+	townRoot := filepath.Join(tmp, "gt")
+	townBeads := filepath.Join(townRoot, ".beads")
+	rigWorkDir := filepath.Join(townRoot, "alphaprime2", "witness")
+	rigBeads := filepath.Join(townRoot, "alphaprime2", ".beads")
+
+	for _, dir := range []string{townBeads, rigWorkDir, rigBeads} {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatalf("mkdir %s: %v", dir, err)
+		}
+	}
+	// FindTownRoot keys off mayor/town.json.
+	mayorDir := filepath.Join(townRoot, "mayor")
+	if err := os.MkdirAll(mayorDir, 0o755); err != nil {
+		t.Fatalf("mkdir mayor: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(mayorDir, "town.json"), []byte(`{"name":"gt"}`), 0o644); err != nil {
+		t.Fatalf("write town.json: %v", err)
+	}
+
+	// Fake bd: only the town database knows the agent bead.
+	binDir := filepath.Join(tmp, "bin")
+	if err := os.MkdirAll(binDir, 0o755); err != nil {
+		t.Fatalf("mkdir bin: %v", err)
+	}
+	bdScript := `#!/bin/sh
+if [ "${BEADS_DIR-}" = "$TOWN_BEADS" ]; then
+  printf '[{"labels":["gt:agent","idle:2"]}]\n'
+  exit 0
+fi
+printf 'issue not found: %s\n' "$2" >&2
+exit 1
+`
+	if err := os.WriteFile(filepath.Join(binDir, "bd"), []byte(bdScript), 0o755); err != nil {
+		t.Fatalf("write fake bd: %v", err)
+	}
+	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	t.Setenv("TOWN_BEADS", townBeads)
+	t.Setenv("BEADS_DIR", "")
+
+	oldWd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("getwd: %v", err)
+	}
+	defer func() { _ = os.Chdir(oldWd) }()
+	if err := os.Chdir(rigWorkDir); err != nil {
+		t.Fatalf("chdir rig work dir: %v", err)
+	}
+
+	got, err := resolveAgentBeadDir("al-alphaprime2-witness")
+	if err != nil {
+		t.Fatalf("resolveAgentBeadDir() error = %v", err)
+	}
+	if got != townBeads {
+		t.Fatalf("resolveAgentBeadDir() = %q, want town beads %q", got, townBeads)
+	}
+
+	// An empty agent bead keeps the cwd-local database — nothing to look up.
+	gotLocal, err := resolveAgentBeadDir("")
+	if err != nil {
+		t.Fatalf("resolveAgentBeadDir(\"\") error = %v", err)
+	}
+	if gotLocal != rigBeads {
+		t.Fatalf("resolveAgentBeadDir(\"\") = %q, want rig beads %q", gotLocal, rigBeads)
+	}
+}
+
+// TestResolveAgentBeadDirPrefersRigLocalBead keeps rigs that really do hold a
+// rig-local agent bead pointed at their own database.
+func TestResolveAgentBeadDirPrefersRigLocalBead(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("uses a POSIX shell fake bd")
+	}
+
+	tmp := t.TempDir()
+	townRoot := filepath.Join(tmp, "gt")
+	townBeads := filepath.Join(townRoot, ".beads")
+	rigWorkDir := filepath.Join(townRoot, "alphaprime2", "witness")
+	rigBeads := filepath.Join(townRoot, "alphaprime2", ".beads")
+
+	for _, dir := range []string{townBeads, rigWorkDir, rigBeads, filepath.Join(townRoot, "mayor")} {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatalf("mkdir %s: %v", dir, err)
+		}
+	}
+	if err := os.WriteFile(filepath.Join(townRoot, "mayor", "town.json"), []byte(`{"name":"gt"}`), 0o644); err != nil {
+		t.Fatalf("write town.json: %v", err)
+	}
+
+	binDir := filepath.Join(tmp, "bin")
+	if err := os.MkdirAll(binDir, 0o755); err != nil {
+		t.Fatalf("mkdir bin: %v", err)
+	}
+	logPath := filepath.Join(tmp, "bd.log")
+	bdScript := `#!/bin/sh
+printf '%s\n' "${BEADS_DIR-}" >> "$BD_LOG"
+printf '[{"labels":["gt:agent"]}]\n'
+`
+	if err := os.WriteFile(filepath.Join(binDir, "bd"), []byte(bdScript), 0o755); err != nil {
+		t.Fatalf("write fake bd: %v", err)
+	}
+	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	t.Setenv("BD_LOG", logPath)
+	t.Setenv("BEADS_DIR", "")
+
+	oldWd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("getwd: %v", err)
+	}
+	defer func() { _ = os.Chdir(oldWd) }()
+	if err := os.Chdir(rigWorkDir); err != nil {
+		t.Fatalf("chdir rig work dir: %v", err)
+	}
+
+	got, err := resolveAgentBeadDir("al-alphaprime2-witness")
+	if err != nil {
+		t.Fatalf("resolveAgentBeadDir() error = %v", err)
+	}
+	if got != rigBeads {
+		t.Fatalf("resolveAgentBeadDir() = %q, want rig beads %q", got, rigBeads)
+	}
+
+	data, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatalf("read fake bd log: %v", err)
+	}
+	if strings.Contains(string(data), townBeads) {
+		t.Errorf("town database was queried even though the rig database holds the bead:\n%s", data)
+	}
+}
