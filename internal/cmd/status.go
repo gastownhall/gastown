@@ -1544,8 +1544,10 @@ func capitalizeFirst(s string) string {
 func discoverRigHooks(r *rig.Rig, crews []string) []AgentHookInfo {
 	var hooks []AgentHookInfo
 
-	// Create beads instance for the rig
-	b := beads.New(r.Path)
+	// Handoff beads live in the town database but carry rig prefixes, so prefix
+	// routing sends lookups to the rig database where they do not exist, and
+	// every agent read as unhooked. ForAgentBead re-roots and disables routing.
+	b := beads.New(r.Path).ForAgentBead()
 
 	// Batch-fetch all handoff beads in one bd call
 	allHandoffs, err := b.FindAllHandoffBeads()
