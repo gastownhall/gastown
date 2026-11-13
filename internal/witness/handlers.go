@@ -342,10 +342,13 @@ func notifyRefineryMergeReady(workDir, rigName string, result *HandlerResult) {
 	townRoot, _ := workspace.Find(workDir)
 	// Emit file-based event so refinery's await-event unblocks instantly.
 	if townRoot != "" {
-		_, _ = channelevents.EmitToTown(townRoot, "refinery", "MERGE_READY", []string{
+		if _, err := channelevents.EmitToTown(townRoot, "refinery", "MERGE_READY", []string{
 			"source=witness",
 			"rig=" + rigName,
-		})
+		}); err != nil {
+			// Log emit failure but continue; witness nudge is the fallback.
+			Logger.Printf("warning: failed to emit MERGE_READY for refinery: %v", err)
+		}
 	}
 	if nudgeErr := nudgeRefinery(townRoot, rigName); nudgeErr != nil {
 		if result.Error == nil {
@@ -2528,8 +2531,17 @@ func processDiscoveredCompletion(bd *BdCli, workDir, rigName string, payload *Po
 			discovery.Error = fmt.Errorf("updating wisp state: %w", err)
 		}
 
-		// Nudge refinery to check merge queue (no permanent mail needed).
+		// Emit MERGE_READY event and nudge refinery to check merge queue (no permanent mail needed).
 		townRoot, _ := workspace.Find(workDir)
+		if townRoot != "" {
+			if _, err := channelevents.EmitToTown(townRoot, "refinery", "MERGE_READY", []string{
+				"source=witness",
+				"rig=" + rigName,
+			}); err != nil {
+				// Log emit failure but continue; witness nudge is the fallback.
+				Logger.Printf("warning: failed to emit MERGE_READY for refinery: %v", err)
+			}
+		}
 		if nudgeErr := nudgeRefinery(townRoot, rigName); nudgeErr != nil {
 			if discovery.Error == nil {
 				discovery.Error = fmt.Errorf("nudging refinery: %w (non-fatal)", nudgeErr)

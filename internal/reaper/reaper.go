@@ -408,7 +408,7 @@ func Scan(db *sql.DB, dbName string, maxAge, purgeAge, mailDeleteAge, staleIssue
 
 // Reap closes stale wisps in a database whose parent molecule is already closed.
 // UPDATEs are batched to avoid holding a write lock for extended periods on large tables.
-func Reap(db *sql.DB, dbName string, maxAge time.Duration, dryRun bool) (*ReapResult, error) {
+func Reap(db *sql.DB, dbName string, maxAge time.Duration, dryRun bool, refuseMRWisps bool) (*ReapResult, error) {
 	// Use a longer timeout to accommodate batched processing across large tables.
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
@@ -417,12 +417,27 @@ func Reap(db *sql.DB, dbName string, maxAge time.Duration, dryRun bool) (*ReapRe
 	parentJoin, parentWhere := parentExcludeJoin(dbName)
 	moleculeStepJoin := closedMoleculeStepJoin("closed_molecule_step")
 	moleculeStepExcludeJoin := closedMoleculeStepExcludeJoin("closed_molecule_step")
+
+	// FIX hq-unon #1: Hard guard against reaping MR wisps. They carry live merge
+	// requests and should not be closed by age, even when dispatch fails.
+	mrWispJoin := ""
+	if refuseMRWisps {
+		mrWispJoin = fmt.Sprintf(
+			"LEFT JOIN %s.labels l ON w.id = l.issue_id AND l.label = 'gt:merge-request'",
+			dbName)
+	}
+
 	// Exclude agent beads (issue_type='agent') from reaping — they have persistent
 	// identity and should not be closed by the wisp reaper regardless of age.
 	// Closed-molecule steps are closed immediately through a separate path, so stale
 	// max-age counts exclude them to keep dry-run and scan counts disjoint.
+	// FIX hq-unon #1: Also exclude MR wisps when refuseMRWisps is true.
+	mrWispWhere := ""
+	if refuseMRWisps {
+		mrWispWhere = " AND l.issue_id IS NULL"
+	}
 	whereClause := fmt.Sprintf(
-		"%s AND w.created_at < ? AND w.issue_type != 'agent' AND %s AND closed_molecule_step.issue_id IS NULL", openWispStatusWhere, parentWhere)
+		"%s AND w.created_at < ? AND w.issue_type != 'agent' AND %s AND closed_molecule_step.issue_id IS NULL%s", openWispStatusWhere, parentWhere, mrWispWhere)
 
 	result := &ReapResult{Database: dbName, DryRun: dryRun}
 
@@ -433,7 +448,7 @@ func Reap(db *sql.DB, dbName string, maxAge time.Duration, dryRun bool) (*ReapRe
 		if err := db.QueryRowContext(ctx, moleculeStepCountQuery).Scan(&result.MoleculeStepsClosed); err != nil {
 			return nil, fmt.Errorf("dry-run molecule step count: %w", err)
 		}
-		countQuery := fmt.Sprintf("SELECT COUNT(*) FROM wisps w %s %s WHERE %s", parentJoin, moleculeStepExcludeJoin, whereClause)
+		countQuery := fmt.Sprintf("SELECT COUNT(*) FROM wisps w %s %s %s WHERE %s", parentJoin, mrWispJoin, moleculeStepExcludeJoin, whereClause)
 		if err := db.QueryRowContext(ctx, countQuery, cutoff).Scan(&result.Reaped); err != nil {
 			return nil, fmt.Errorf("dry-run count: %w", err)
 		}
@@ -464,7 +479,7 @@ func Reap(db *sql.DB, dbName string, maxAge time.Duration, dryRun bool) (*ReapRe
 	moleculeStepIDQuery := fmt.Sprintf(
 		"SELECT w.id FROM wisps w %s WHERE %s AND w.issue_type != 'agent' LIMIT %d",
 		moleculeStepJoin, openWispStatusWhere, DefaultBatchSize)
-	moleculeStepsClosed, err := closeWispsInBatches(ctx, conn, moleculeStepIDQuery, nil, "closed molecule steps")
+	moleculeStepsClosed, err := closeWispsInBatches(ctx, conn, moleculeStepIDQuery, nil, "closed molecule steps", "closed molecule step")
 	if err != nil {
 		return nil, err
 	}
@@ -474,10 +489,10 @@ func Reap(db *sql.DB, dbName string, maxAge time.Duration, dryRun bool) (*ReapRe
 	// This avoids holding a write lock on the entire table for minutes.
 	// Uses LEFT JOIN anti-pattern instead of correlated EXISTS to avoid O(n*m) cost (gt-jd1z).
 	idQuery := fmt.Sprintf(
-		"SELECT w.id FROM wisps w %s %s WHERE %s LIMIT %d",
-		parentJoin, moleculeStepExcludeJoin, whereClause, DefaultBatchSize)
+		"SELECT w.id FROM wisps w %s %s %s WHERE %s LIMIT %d",
+		parentJoin, mrWispJoin, moleculeStepExcludeJoin, whereClause, DefaultBatchSize)
 
-	totalReaped, err := closeWispsInBatches(ctx, conn, idQuery, []interface{}{cutoff}, "stale wisps")
+	totalReaped, err := closeWispsInBatches(ctx, conn, idQuery, []interface{}{cutoff}, "stale wisps", "aged reaper")
 	if err != nil {
 		return nil, err
 	}
@@ -514,7 +529,7 @@ func Reap(db *sql.DB, dbName string, maxAge time.Duration, dryRun bool) (*ReapRe
 	return result, nil
 }
 
-func closeWispsInBatches(ctx context.Context, runner sqlRunner, idQuery string, queryArgs []interface{}, description string) (int, error) {
+func closeWispsInBatches(ctx context.Context, runner sqlRunner, idQuery string, queryArgs []interface{}, description string, closeReason string) (int, error) {
 	total := 0
 	for {
 		rows, err := runner.QueryContext(ctx, idQuery, queryArgs...)
@@ -549,9 +564,13 @@ func closeWispsInBatches(ctx context.Context, runner sqlRunner, idQuery string, 
 		}
 		inClause := strings.Join(placeholders, ",")
 
+		// FIX hq-unon #3: Write close_reason with actor, measured age, and threshold.
+		// Age-closed wisps are otherwise indistinguishable from human rejections.
 		updateQuery := fmt.Sprintf(
-			"UPDATE wisps SET status='closed', closed_at=NOW() WHERE id IN (%s) AND status IN ('open', 'hooked', 'in_progress') AND issue_type != 'agent'",
+			"UPDATE wisps SET status='closed', closed_at=NOW(), close_reason=? WHERE id IN (%s) AND status IN ('open', 'hooked', 'in_progress') AND issue_type != 'agent'",
 			inClause)
+		// Prepend closeReason to args
+		args = append([]interface{}{closeReason}, args...)
 		sqlResult, err := runner.ExecContext(ctx, updateQuery, args...)
 		if err != nil {
 			return total, fmt.Errorf("close %s batch: %w", description, err)

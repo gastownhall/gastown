@@ -598,7 +598,7 @@ func runPolecatList(cmd *cobra.Command, args []string) error {
 			stateStr = style.Info.Render(stateStr)
 		case polecat.StateStuck:
 			stateStr = style.Warning.Render(stateStr)
-		case polecat.StateStalled:
+		case polecat.StateStalled, polecat.StateBlocked:
 			stateStr = style.Error.Render(stateStr)
 		case polecat.StateReviewNeeded:
 			stateStr = style.Warning.Render(stateStr)
@@ -801,7 +801,7 @@ func runPolecatStatus(cmd *cobra.Command, args []string) error {
 		stateStr = style.Info.Render(stateStr)
 	case polecat.StateStuck:
 		stateStr = style.Warning.Render(stateStr)
-	case polecat.StateStalled:
+	case polecat.StateStalled, polecat.StateBlocked:
 		stateStr = style.Error.Render(stateStr)
 	case polecat.StateReviewNeeded:
 		stateStr = style.Warning.Render(stateStr)

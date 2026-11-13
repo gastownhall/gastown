@@ -62,6 +62,18 @@ const (
 	// Unlike "stuck" (polecat self-reports), stalled is detected externally.
 	StateStalled State = "stalled"
 
+	// StateBlocked means the polecat holds work and its tmux session is alive,
+	// but the agent inside it cannot act: the agent process is gone, the pane has
+	// produced no output at all for NoProgressTimeout, or the pane carries a
+	// provider error (expired credential, exhausted quota) that will refuse every
+	// prompt. Detected externally, like "stalled", but the remedy differs — the
+	// session does not need respawning, the operator needs to unblock the agent.
+	//
+	// This exists because a session that EXISTS is not a session that WORKS
+	// (hq-3l8r): three rho polecats sat at an idle prompt on a dead Codex token
+	// for six hours while `gt polecat list` reported all of them working.
+	StateBlocked State = "blocked"
+
 	// StateZombie means a tmux session exists but has no corresponding worktree directory.
 	// This is a detected condition: the polecat was incompletely nuked or has a
 	// session naming mismatch, leaving an orphaned tmux session.

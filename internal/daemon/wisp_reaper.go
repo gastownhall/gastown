@@ -114,8 +114,9 @@ func (d *Daemon) reapWisps() {
 
 	// Try dispatching to a Dog for formula-driven execution.
 	if err := d.dispatchReaperDog(vars); err != nil {
-		d.logger.Printf("wisp_reaper: Dog dispatch failed (%v), running inline fallback", err)
-		d.reapWispsInline(config, maxAge, deleteAge, mol)
+		// FIX hq-unon #4: Log clearly when inline fallback is entered, including dispatch error.
+		d.logger.Printf("wisp_reaper: DISPATCH FAILED (%v), running inline fallback (bypassing formula guards)", err)
+		d.reapWispsInline(config, maxAge, deleteAge, mol, true)
 		return
 	}
 
@@ -143,7 +144,10 @@ func (d *Daemon) dispatchReaperDog(vars map[string]string) error {
 
 // reapWispsInline is the fallback that runs the reaper cycle inline when
 // Dog dispatch is unavailable. Delegates to the reaper package for SQL execution.
-func (d *Daemon) reapWispsInline(config *WispReaperConfig, maxAge, deleteAge time.Duration, mol *dogMol) {
+// FIX hq-unon #2: When dispatchFailed is true (host on fire), honor dryRun as a guard
+// even if config.DryRun is false — we cannot distinguish "I am running because it is time"
+// from "I am running because dispatch failed" unless the caller tells us.
+func (d *Daemon) reapWispsInline(config *WispReaperConfig, maxAge, deleteAge time.Duration, mol *dogMol, dispatchFailed bool) {
 	databases := config.Databases
 	host := d.doltServerHost()
 	if len(databases) == 0 {
@@ -158,7 +162,9 @@ func (d *Daemon) reapWispsInline(config *WispReaperConfig, maxAge, deleteAge tim
 	mol.closeStep("scan")
 
 	port := d.doltServerPort()
-	dryRun := config.DryRun
+	// FIX hq-unon #2: When dispatch failed, force dryRun to log what we WOULD reap, reap nothing.
+	dryRun := config.DryRun || dispatchFailed
+	refuseMRWisps := true
 	var totalReaped, totalMoleculeSteps, totalOpen, totalPurged, totalMailPurged, totalAutoClosed int
 
 	// Step 2: Reap
@@ -178,7 +184,7 @@ func (d *Daemon) reapWispsInline(config *WispReaperConfig, maxAge, deleteAge tim
 			db.Close()
 			continue
 		}
-		result, err := reaper.Reap(db, dbName, maxAge, dryRun)
+		result, err := reaper.Reap(db, dbName, maxAge, dryRun, refuseMRWisps)
 		db.Close()
 		if err != nil {
 			d.logger.Printf("wisp_reaper: %s: reap error: %v", dbName, err)

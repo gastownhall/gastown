@@ -439,6 +439,22 @@ var DefaultRateLimitPatterns = []string{
 	`OAuth token has expired`,                        // Token expired — needs fresh auth
 }
 
+// AgentBlockedPatterns are provider messages that end a session's ability to
+// act at all: the agent process is alive and its TUI may still redraw, but
+// every prompt it receives will be refused until a human intervenes.
+//
+// Every string here was copied verbatim from a pane during hq-3l8r, where three
+// rho polecats sat on a dead Codex token for six hours while every status
+// surface reported them "working". Matched with (?i) against the bottom of a
+// pane, and only ever as a SECOND trigger: the primary detector is cause-blind
+// (no pane output at all), so an error not listed here is still caught.
+var AgentBlockedPatterns = []string{
+	`access token could not be refreshed`, // Codex: stale token, or signed in elsewhere
+	`refresh token was revoked`,           // Codex: refresh token revoked
+	`please (log out and )?sign in again`, // Codex/Claude: re-auth required
+	`usage limit reset available`,         // Codex: quota exhausted, manual reset offered
+}
+
 // DefaultNearLimitPatterns are patterns that indicate a session is approaching
 // its rate limit but hasn't hit it yet. These enable proactive rotation before
 // the hard 429. Matched with (?i) for case-insensitive matching.
