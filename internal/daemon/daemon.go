@@ -2912,6 +2912,15 @@ func (d *Daemon) reapIdlePolecat(rigName, polecatName string, timeout time.Durat
 		return
 	}
 
+	// A reused polecat can briefly expose the previous session's stale
+	// heartbeat (including state=exiting) after the new tmux session is
+	// created. Its own creation time is authoritative for this lower bound: a
+	// session younger than the idle threshold cannot yet be idle long enough
+	// to reap, regardless of persisted heartbeat state.
+	if created, err := d.tmux.GetSessionCreatedTime(sessionName); err == nil && time.Since(created) < timeout {
+		return
+	}
+
 	// Read heartbeat to check state and idle duration
 	hb := polecat.ReadSessionHeartbeat(d.config.TownRoot, sessionName)
 	if hb == nil {
