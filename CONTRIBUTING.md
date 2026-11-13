@@ -9,6 +9,33 @@ Thanks for your interest in contributing! Gas Town is experimental software, and
 3. Install prerequisites (see README.md)
 4. Build and test: `go build -o gt ./cmd/gt && go test ./...`
 
+### If the build fails with `'unicode/regex.h' file not found`
+
+Gas Town depends on Dolt, which pulls in `go-icu-regex`, a cgo package that
+needs the ICU headers and libraries. Nothing in this repo builds until cgo can
+find them, so this failure looks like a broken checkout rather than a missing
+system dependency:
+
+```
+# github.com/dolthub/go-icu-regex/internal/icu
+file.cpp:3:10: fatal error: 'unicode/regex.h' file not found
+```
+
+Install ICU (`brew install icu4c` on macOS), then point cgo at it. **Match the
+prefix to your Go toolchain's architecture, not to your CPU** — a `GOARCH=amd64`
+toolchain on Apple Silicon needs the x86_64 build under `/usr/local`, and
+pointing it at the arm64 build under `/opt/homebrew` gets you past the header
+error only to fail at link time with `symbol(s) not found for architecture`.
+
+```bash
+go env GOARCH                       # amd64 -> /usr/local, arm64 -> /opt/homebrew
+export CGO_CPPFLAGS="-I/usr/local/opt/icu4c/include"
+export CGO_LDFLAGS="-L/usr/local/opt/icu4c/lib"
+```
+
+Use `CGO_CPPFLAGS`, not `CGO_CFLAGS`: the package compiles both C and C++, and
+only `CGO_CPPFLAGS` reaches both.
+
 ## Setting up a rig to contribute to Gas Town
 
 If you run a Gas Town rig against this repo, you don't own the canonical
