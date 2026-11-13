@@ -24,7 +24,7 @@ This is infrastructure cleanup work:
 | stale_issue_age | config | Max issue staleness before auto-close (default 30d) |
 | mail_delete_age | config | Max closed mail age before purging (default 7d) |
 | alert_threshold | config | Open wisp count that triggers escalation (default 3000) |
-| dry_run | config | If "true", report without acting |
+| dry_run_flag | config | Empty = LIVE (default). Set to the literal `--dry-run` for a rehearsal. No other value is valid. |
 | databases | config | Comma-separated DB list (default: auto-discover) |
 | db_delay | config | Delay between databases to reduce Dolt load (default 250ms) |
 
@@ -99,7 +99,7 @@ step-wisps immediately when their parent molecule is already closed.
 **1. For each database with `reap_candidates` or `molecule_step_candidates`:**
 ```bash
 gt reaper reap --db=<name> \\
-  --max-age={{max_age}} --db-delay={{db_delay}} {{#if dry_run}}--dry-run{{/if}} --json
+  --max-age={{max_age}} --db-delay={{db_delay}} {{dry_run_flag}} --json
 ```
 
 **2. Inspect results:**
@@ -127,7 +127,7 @@ Delete closed wisps past purge_age and closed mail past mail_delete_age.
 gt reaper purge --db=<name> \\
   --purge-age={{purge_age}} --mail-age={{mail_delete_age}} \\
   --db-delay={{db_delay}} \\
-  {{#if dry_run}}--dry-run{{/if}} --json
+  {{dry_run_flag}} --json
 ```
 
 **2. Inspect results for anomalies:**
@@ -152,7 +152,7 @@ Close issues that have been open with no status change past stale_issue_age.
 gt reaper auto-close --db=<name> \\
   --stale-age={{stale_issue_age}} \\
   --db-delay={{db_delay}} \\
-  {{#if dry_run}}--dry-run{{/if}} --json
+  {{dry_run_flag}} --json
 ```
 
 **2. Inspect results:**
@@ -177,7 +177,7 @@ convoy open with nothing left to track. This step bridges that gap.
 
 **1. Run convoy check (cross-prefix aware, town-level):**
 ```bash
-gt convoy check {{#if dry_run}}# dry_run set: run 'gt convoy list' and report instead of closing{{/if}}
+gt convoy check {{dry_run_flag}}
 ```
 
 `gt convoy check` closes every open convoy whose tracked issues are all
@@ -241,8 +241,8 @@ default = "168h"
 description = "Open wisp count that triggers escalation warning"
 default = "3000"
 
-[vars.dry_run]
-description = "If 'true', report without modifying data"
+[vars.dry_run_flag]
+description = "Rehearsal switch. Empty = LIVE run (default, matches historical behaviour). Set to the literal string --dry-run to preview without modifying data. Passed verbatim to gt reaper reap/purge/auto-close and gt convoy check, all of which accept --dry-run."
 default = ""
 
 [vars.databases]
