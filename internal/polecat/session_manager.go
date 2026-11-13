@@ -809,7 +809,22 @@ func (m *SessionManager) CaptureSession(sessionID string, lines int) (string, er
 	return m.tmux.CapturePane(sessionID, lines)
 }
 
-// Inject sends a message to a polecat session.
+// Inject sends a message to a polecat session, VERIFIED.
+//
+// It used to call SendKeysDebounced, which types the text and Enter and returns
+// whatever tmux returned. tmux exits 0 whether or not the TUI consumed the keys,
+// so a message swallowed by a busy composer was reported as delivered and the
+// caller was told "Message sent". Instructions were lost silently, with a success
+// line printed over the loss.
+//
+// NudgeSession sends the same text and then submits through submitComposer, which
+// probes for the message actually LEAVING the composer and recovers or reports a
+// strand. That path already existed and was already proven; inject simply was not
+// using it.
+//
+// This reaches further than polecats: PolecatSessionName is a bare prefix-name
+// join, so `gt session inject alphaprime/refinery` resolves to the refinery's own
+// session. Every agent in the town could lose an injected instruction this way.
 func (m *SessionManager) Inject(polecat, message string) error {
 	sessionID := m.SessionName(polecat)
 
@@ -821,12 +836,7 @@ func (m *SessionManager) Inject(polecat, message string) error {
 		return ErrSessionNotFound
 	}
 
-	debounceMs := 200 + (len(message)/1024)*100
-	if debounceMs > 1500 {
-		debounceMs = 1500
-	}
-
-	return m.tmux.SendKeysDebounced(sessionID, message, debounceMs)
+	return m.tmux.NudgeSession(sessionID, message)
 }
 
 // StopAll terminates all polecat sessions for this rig.
