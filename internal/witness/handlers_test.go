@@ -2714,8 +2714,8 @@ func TestNotifyRefineryMergeReady_EmitsChannelEvent(t *testing.T) {
 	// notifyRefineryMergeReady takes workDir and calls workspace.Find(workDir) internally
 	notifyRefineryMergeReady(townRoot, "dashboard", result)
 
-	// Verify that a MERGE_READY event file was created in the refinery channel
-	eventDir := filepath.Join(townRoot, "events", "refinery")
+	// Verify that a MERGE_READY event file was created in the rig-scoped refinery channel
+	eventDir := filepath.Join(townRoot, "events", "dashboard", "refinery")
 	entries, err := os.ReadDir(eventDir)
 	if err != nil {
 		t.Fatalf("reading event dir: %v", err)
@@ -2729,7 +2729,7 @@ func TestNotifyRefineryMergeReady_EmitsChannelEvent(t *testing.T) {
 	}
 
 	if len(eventFiles) == 0 {
-		t.Fatal("expected at least one .event file in ~/gt/events/refinery/, got none")
+		t.Fatal("expected at least one .event file in ~/gt/events/dashboard/refinery/, got none")
 	}
 
 	// Read and verify the event content
@@ -2746,8 +2746,8 @@ func TestNotifyRefineryMergeReady_EmitsChannelEvent(t *testing.T) {
 	if event["type"] != "MERGE_READY" {
 		t.Errorf("event type = %v, want MERGE_READY", event["type"])
 	}
-	if event["channel"] != "refinery" {
-		t.Errorf("event channel = %v, want refinery", event["channel"])
+	if event["channel"] != "dashboard/refinery" {
+		t.Errorf("event channel = %v, want dashboard/refinery", event["channel"])
 	}
 
 	payload, ok := event["payload"].(map[string]interface{})

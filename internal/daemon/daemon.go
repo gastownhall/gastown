@@ -23,6 +23,7 @@ import (
 	beadsdk "github.com/steveyegge/beads"
 	"github.com/steveyegge/gastown/internal/beads"
 	"github.com/steveyegge/gastown/internal/boot"
+	"github.com/steveyegge/gastown/internal/channelevents"
 	agentconfig "github.com/steveyegge/gastown/internal/config"
 	"github.com/steveyegge/gastown/internal/constants"
 	"github.com/steveyegge/gastown/internal/deacon"
@@ -1842,7 +1843,8 @@ func (d *Daemon) ensureRefineryRunning(rigName string) {
 	// If a refinery session is already running, Start() returns ErrAlreadyRunning (cheap).
 	// But spawning a NEW session with an empty queue burns API credits for nothing.
 	// The refinery formula uses await-event internally, so it will wake when events appear.
-	if !d.hasPendingEvents("refinery") {
+	// Check the rig-scoped channel so cross-rig refineries never see each other's events.
+	if !d.hasPendingEvents(channelevents.Scoped(rigName, "refinery")) {
 		// Check if session already exists before skipping — let running sessions continue
 		r := &rig.Rig{
 			Name: rigName,

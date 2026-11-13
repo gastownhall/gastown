@@ -4,9 +4,11 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
 
 	"github.com/spf13/cobra"
 	"github.com/steveyegge/gastown/internal/channelevents"
+	"github.com/steveyegge/gastown/internal/workspace"
 )
 
 var (
@@ -65,7 +67,14 @@ func init() {
 }
 
 func runMoleculeEmitEvent(cmd *cobra.Command, args []string) error {
-	path, err := channelevents.Emit(emitEventChannel, emitEventType, emitEventPayload)
+	townRoot, ferr := workspace.FindFromCwd()
+	if ferr != nil {
+		home, _ := os.UserHomeDir()
+		townRoot = filepath.Join(home, "gt")
+	}
+	effectiveChannel := channelevents.Scoped(channelevents.ResolveRigFromContext(townRoot), emitEventChannel)
+
+	path, err := channelevents.EmitToTown(townRoot, effectiveChannel, emitEventType, emitEventPayload)
 	if err != nil {
 		return err
 	}
@@ -75,7 +84,7 @@ func runMoleculeEmitEvent(cmd *cobra.Command, args []string) error {
 		enc.SetIndent("", "  ")
 		return enc.Encode(EmitEventResult{
 			Path:    path,
-			Channel: emitEventChannel,
+			Channel: effectiveChannel,
 			Type:    emitEventType,
 		})
 	}
