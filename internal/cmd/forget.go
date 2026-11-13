@@ -1,86 +1,80 @@
 package cmd
 
 import (
+	"bytes"
 	"fmt"
+	"os/exec"
 	"strings"
 
 	"github.com/spf13/cobra"
 	"github.com/steveyegge/gastown/internal/style"
 )
 
+// legacyMemPrefix is the prefix gt used when storing memories in the
+// beads KV store (memory.<type>.<key>). bd's first-class memory keys
+// are untyped; the legacy prefix is stripped from user input so old
+// references still resolve.
+const legacyMemPrefix = "memory."
+
+var forgetCmd = &cobra.Command{
+	Use:   "forget <key>",
+	Short: "Delete a stored memory",
+	Long: `Delete a persistent memory from the beads memory store (bd forget).
+
+The key is the same one shown by 'gt memories'. For backward
+compatibility, legacy 'memory.<type>.<key>' KV keys and '<type>/<key>'
+paths are accepted and reduced to their plain key.
+
+Examples:
+  gt forget refinery-worktree
+  gt forget memory.feedback.dont-mock-db
+  gt forget feedback/dont-mock-db`,
+	Args: cobra.ExactArgs(1),
+	RunE: runForget,
+}
+
 func init() {
 	forgetCmd.GroupID = GroupWork
 	rootCmd.AddCommand(forgetCmd)
 }
 
-var forgetCmd = &cobra.Command{
-	Use:   "forget <key>",
-	Short: "Remove a stored memory",
-	Long: `Remove a memory from the beads key-value store.
-
-The key should match the short name shown by 'gt memories'.
-For typed memories, use type/key format or just the key (searches all types).
-
-Examples:
-  gt forget refinery-worktree
-  gt forget feedback/dont-mock-db
-  gt forget hooks-package-structure`,
-	Args: cobra.ExactArgs(1),
-	RunE: runForget,
-}
-
 func runForget(cmd *cobra.Command, args []string) error {
-	key := args[0]
-
-	// Strip memory. prefix if the user included it
-	key = strings.TrimPrefix(key, memoryKeyPrefix)
-
-	// Support type/key format (e.g., "feedback/dont-mock-db")
-	if slashIdx := strings.Index(key, "/"); slashIdx > 0 {
-		memType := key[:slashIdx]
-		shortKey := key[slashIdx+1:]
-		if _, ok := validMemoryTypes[memType]; ok {
-			fullKey := memoryKeyPrefix + memType + "." + shortKey
-			existing, err := bdKvGet(fullKey)
-			if err != nil || existing == "" {
-				return fmt.Errorf("memory %q not found", key)
-			}
-			if err := bdKvClear(fullKey); err != nil {
-				return fmt.Errorf("removing memory: %w", err)
-			}
-			fmt.Printf("%s Forgot memory: %s\n", style.Success.Render("✓"), style.Bold.Render(key))
-			return nil
-		}
+	key := normalizeMemoryKey(args[0])
+	if key == "" {
+		return fmt.Errorf("invalid memory key: %s", args[0])
 	}
 
-	// Try typed key first (memory.<type>.<key> for each known type)
-	for _, t := range memoryTypeOrder {
-		fullKey := memoryKeyPrefix + t + "." + key
-		existing, _ := bdKvGet(fullKey)
-		if existing != "" {
-			if err := bdKvClear(fullKey); err != nil {
-				return fmt.Errorf("removing memory: %w", err)
-			}
-			displayKey := key
-			if t != "general" {
-				displayKey = t + "/" + key
-			}
-			fmt.Printf("%s Forgot memory: %s\n", style.Success.Render("✓"), style.Bold.Render(displayKey))
-			return nil
-		}
-	}
-
-	// Try legacy untyped key (memory.<key>)
-	fullKey := memoryKeyPrefix + key
-	existing, err := bdKvGet(fullKey)
-	if err != nil || existing == "" {
-		return fmt.Errorf("memory %q not found", key)
-	}
-
-	if err := bdKvClear(fullKey); err != nil {
-		return fmt.Errorf("removing memory: %w", err)
+	var out, errOut bytes.Buffer
+	bdCmd := exec.Command("bd", "forget", key)
+	bdCmd.Stdout = &out
+	bdCmd.Stderr = &errOut
+	if err := bdCmd.Run(); err != nil {
+		return forgetError(key, err, &out, &errOut)
 	}
 
 	fmt.Printf("%s Forgot memory: %s\n", style.Success.Render("✓"), style.Bold.Render(key))
 	return nil
+}
+
+// normalizeMemoryKey strips the legacy 'memory.' prefix and any
+// 'type/key' path form, then applies the same sanitization gt remember
+// uses, so old KV-era references resolve to the plain bd key.
+func normalizeMemoryKey(key string) string {
+	key = strings.TrimPrefix(key, legacyMemPrefix)
+	if idx := strings.LastIndex(key, "/"); idx >= 0 {
+		key = key[idx+1:]
+	}
+	return sanitizeKey(key)
+}
+
+// forgetError renders a bd forget failure, preferring bd's own message
+// over the generic exit status.
+func forgetError(key string, err error, out, errOut *bytes.Buffer) error {
+	if msg := strings.TrimSpace(errOut.String()); msg != "" {
+		return fmt.Errorf("forgetting memory %s: %s", key, msg)
+	}
+	if msg := strings.TrimSpace(out.String()); msg != "" {
+		return fmt.Errorf("forgetting memory %s: %s", key, msg)
+	}
+	return fmt.Errorf("forgetting memory %s: %w", key, err)
 }

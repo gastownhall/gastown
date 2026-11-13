@@ -157,7 +157,7 @@ func ArgsAreReadOnly(args []string) bool {
 		return false
 	}
 	switch args[0] {
-	case "show", "list", "ready", "blocked", "stats", "stale", "orphans", "activity", "query", "search", "version", "help":
+	case "show", "list", "ready", "blocked", "stats", "stale", "orphans", "activity", "query", "search", "version", "help", "memories", "recall":
 		return true
 	case "dep":
 		return len(args) > 1 && args[1] == "list"
