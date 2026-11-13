@@ -15,6 +15,7 @@ import (
 	"github.com/steveyegge/gastown/internal/beads"
 	"github.com/steveyegge/gastown/internal/config"
 	"github.com/steveyegge/gastown/internal/polecat"
+	"github.com/steveyegge/gastown/internal/session"
 	"github.com/steveyegge/gastown/internal/tmux"
 )
 
@@ -2816,5 +2817,184 @@ func TestHandleZombieRestart_RestartsWhenBranchNotMerged(t *testing.T) {
 	// Should NOT take the archive path.
 	if strings.Contains(z.Action, "work-already-merged") {
 		t.Errorf("action = %q, should not archive when work is not merged", z.Action)
+	}
+}
+
+// --- gt-czb: stall detection must not fire on working agents ---
+
+// writeStallTestConfig writes a town settings file with the witness stall
+// thresholds turned down so a few seconds of session age counts as "past
+// startup". This isolates the activity signal as the thing under test.
+func writeStallTestConfig(t *testing.T, townRoot, stallThreshold, activityGrace string) {
+	t.Helper()
+	settingsDir := filepath.Join(townRoot, "settings")
+	if err := os.MkdirAll(settingsDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	settings := map[string]any{
+		"type":    "town-settings",
+		"version": 1,
+		"operational": map[string]any{
+			"witness": map[string]any{
+				"startup_stall_threshold": stallThreshold,
+				"startup_activity_grace":  activityGrace,
+			},
+		},
+	}
+	data, err := json.Marshal(settings)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(settingsDir, "config.json"), data, 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// startStallTestPolecat creates the polecat directory and a live tmux session
+// running command, returning the session name. The session is killed on cleanup.
+func startStallTestPolecat(t *testing.T, townRoot, rigName, polecatName, command string) string {
+	t.Helper()
+	if _, err := exec.LookPath("tmux"); err != nil {
+		t.Skip("tmux not installed")
+	}
+	if err := os.MkdirAll(filepath.Join(townRoot, rigName, "polecats", polecatName), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	// The session name depends on the prefix registry, which DetectStalledPolecats
+	// initializes from the town root. Prime it so the name computed here is the
+	// same one the detector will look for.
+	DetectStalledPolecats(townRoot, rigName)
+	sessionName := session.PolecatSessionName(session.PrefixFor(rigName), polecatName)
+
+	tm := tmux.NewTmux()
+	_ = tm.KillSession(sessionName)
+	env := map[string]string{"GT_PROCESS_NAMES": "bash,sleep"}
+	if err := tm.NewSessionWithCommandAndEnv(sessionName, townRoot, command, env); err != nil {
+		t.Fatalf("creating test session %s: %v", sessionName, err)
+	}
+	t.Cleanup(func() { _ = tm.KillSession(sessionName) })
+
+	if !tm.IsAgentAlive(sessionName) {
+		t.Skipf("test harness: session %s not recognized as a live agent", sessionName)
+	}
+	return sessionName
+}
+
+// TestDetectStalledPolecats_ActiveSessionNotStalled is the regression test for
+// gt-czb: a polecat that is producing output must never be classified as
+// stalled, no matter how long it has been running.
+//
+// Before the fix, activity came from tmux's #{session_activity}, which is frozen
+// at session creation. Every polecat older than the grace period was therefore a
+// permanent "startup-stall", and each patrol scan injected Enter/Down/Enter into
+// its live TUI.
+func TestDetectStalledPolecats_ActiveSessionNotStalled(t *testing.T) {
+	tmpDir := t.TempDir()
+	rigName := "czbrig"
+	polecatName := "czbactive"
+
+	writeStallTestConfig(t, tmpDir, "1s", "3s")
+	// A pane printing once a second — what a working agent looks like to tmux.
+	startStallTestPolecat(t, tmpDir, rigName, polecatName,
+		"while true; do echo working; sleep 1; done")
+
+	// Age the session well past the stall threshold while it keeps working.
+	time.Sleep(4 * time.Second)
+
+	result := DetectStalledPolecats(tmpDir, rigName)
+
+	if result.Checked != 1 {
+		t.Fatalf("Checked = %d, want 1 (errors: %v)", result.Checked, result.Errors)
+	}
+	if len(result.Stalled) != 0 {
+		t.Errorf("Stalled = %+v, want none: an actively working session must not be "+
+			"classified as a startup stall (gt-czb)", result.Stalled)
+	}
+}
+
+// TestDetectStalledPolecats_QuietSessionReportedNotDismissed covers the second
+// half of gt-czb: when the timers do say "stalled" but the pane is not showing a
+// startup dialog, the witness reports the suspicion and injects nothing.
+func TestDetectStalledPolecats_QuietSessionReportedNotDismissed(t *testing.T) {
+	tmpDir := t.TempDir()
+	rigName := "czbrig"
+	polecatName := "czbquiet"
+
+	writeStallTestConfig(t, tmpDir, "1s", "1s")
+	// A pane that produces no output at all: stale by both timers, but plainly
+	// not parked on a trust dialog.
+	startStallTestPolecat(t, tmpDir, rigName, polecatName, "sleep 600")
+
+	time.Sleep(3 * time.Second)
+
+	result := DetectStalledPolecats(tmpDir, rigName)
+
+	if len(result.Stalled) != 1 {
+		t.Fatalf("Stalled = %+v, want 1 suspected stall (errors: %v)", result.Stalled, result.Errors)
+	}
+	s := result.Stalled[0]
+	if s.StallType != "suspected-stall" {
+		t.Errorf("StallType = %q, want %q: no dialog on screen means the stall is "+
+			"unconfirmed (gt-czb)", s.StallType, "suspected-stall")
+	}
+	if s.Action != "reported" {
+		t.Errorf("Action = %q, want %q: keystrokes must not be injected without "+
+			"evidence of a startup dialog (gt-czb)", s.Action, "reported")
+	}
+}
+
+// TestHeartbeatRulesOutStartupStall covers the heartbeat half of gt-czb: a
+// heartbeat that is stale but clearly postdates session creation proves the
+// agent got past startup, so the 3-minute staleness threshold must not be the
+// only thing keeping a busy agent out of startup-stall detection.
+func TestHeartbeatRulesOutStartupStall(t *testing.T) {
+	t.Parallel()
+	now := time.Now()
+	sessionStart := now.Add(-2 * time.Hour)
+
+	tests := []struct {
+		name string
+		hb   *polecat.SessionHeartbeat
+		want bool
+	}{
+		{
+			name: "no heartbeat file",
+			hb:   nil,
+			want: false,
+		},
+		{
+			name: "fresh v2 heartbeat",
+			hb:   &polecat.SessionHeartbeat{Timestamp: now.Add(-10 * time.Second), State: polecat.HeartbeatWorking},
+			want: true,
+		},
+		{
+			// The gt-czb case: heads-down agent, hours into its session, last gt
+			// command 20 minutes ago. Stale, but plainly past startup.
+			name: "stale heartbeat written long after session start",
+			hb:   &polecat.SessionHeartbeat{Timestamp: now.Add(-20 * time.Minute), State: polecat.HeartbeatWorking},
+			want: true,
+		},
+		{
+			// A session parked on a trust dialog: its only heartbeat is the one
+			// the session manager wrote at spawn. Still eligible for detection.
+			name: "spawn-time heartbeat only",
+			hb:   &polecat.SessionHeartbeat{Timestamp: sessionStart.Add(2 * time.Second), State: polecat.HeartbeatWorking},
+			want: false,
+		},
+		{
+			name: "v1 heartbeat written long after session start",
+			hb:   &polecat.SessionHeartbeat{Timestamp: now.Add(-20 * time.Minute)},
+			want: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			if got := heartbeatRulesOutStartupStall(tt.hb, sessionStart, now); got != tt.want {
+				t.Errorf("heartbeatRulesOutStartupStall() = %v, want %v", got, tt.want)
+			}
+		})
 	}
 }
