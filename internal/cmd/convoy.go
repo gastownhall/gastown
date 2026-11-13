@@ -20,6 +20,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/spf13/cobra"
+	"github.com/steveyegge/gastown/internal/agentaddr"
 	"github.com/steveyegge/gastown/internal/beads"
 	"github.com/steveyegge/gastown/internal/config"
 	convoyops "github.com/steveyegge/gastown/internal/convoy"
@@ -2849,18 +2850,20 @@ func parseWorkerFromAgentBead(agentID string) string {
 		return ""
 	}
 
-	// Build path from parsed components
-	if rig == "" {
-		// Town-level
-		if name != "" {
-			return role + "/" + name
-		}
-		return role
+	// Rebuild the path, then canonicalize it. Concatenating the components is
+	// how this drifted from the other address builders in the first place.
+	var path string
+	switch {
+	case rig == "" && name != "":
+		path = role + "/" + name
+	case rig == "":
+		path = role
+	case name != "":
+		path = rig + "/" + role + "/" + name
+	default:
+		path = rig + "/" + role
 	}
-	if name != "" {
-		return rig + "/" + role + "/" + name
-	}
-	return rig + "/" + role
+	return agentaddr.Normalize(path)
 }
 
 // formatWorkerAge formats a duration as a short string (e.g., "5m", "2h", "1d")

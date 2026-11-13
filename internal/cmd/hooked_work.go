@@ -71,6 +71,35 @@ func listAssignedActiveWorkAcrossStatuses(b *beads.Beads, assignee string) ([]*b
 	return mergeBeadLists(assigned, nil), nil
 }
 
+// listActiveWorkForAnyAssignee returns active work assigned under any of the
+// given assignee spellings, deduplicated.
+//
+// Reads have to be liberal where writes are strict. An agent's beads may have
+// been written under several spellings over time — "deacon" from patrol,
+// "deacon/" from sling — and an exact-match lookup for one silently skips the
+// other. Passing agentaddr.Variants here makes the lookup see all of them.
+func listActiveWorkForAnyAssignee(b *beads.Beads, assignees []string) ([]*beads.Issue, error) {
+	var found []*beads.Issue
+	seen := make(map[string]bool)
+	for _, assignee := range assignees {
+		if assignee == "" {
+			continue
+		}
+		issues, err := listAssignedActiveWorkAcrossStatuses(b, assignee)
+		if err != nil {
+			return nil, err
+		}
+		for _, issue := range issues {
+			if issue == nil || seen[issue.ID] {
+				continue
+			}
+			seen[issue.ID] = true
+			found = append(found, issue)
+		}
+	}
+	return found, nil
+}
+
 func listChildrenAcrossTables(b *beads.Beads, parentID string) ([]*beads.Issue, error) {
 	return listBeadsAcrossTables(b, beads.ListOptions{
 		Parent:   parentID,

@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/steveyegge/gastown/internal/agentaddr"
 	"github.com/steveyegge/gastown/internal/session"
 	"github.com/steveyegge/gastown/internal/tmux"
 	"github.com/steveyegge/gastown/internal/workspace"
@@ -56,19 +57,13 @@ func sessionToAgentID(sessionName string) string {
 }
 
 // canonicalAssigneeAddress returns the address used for bead assignees and
-// hook-status queries. This matches the form emitted by resolveSelfTarget and
-// buildAgentIdentity: town-level agents (mayor, deacon) get a trailing slash.
-// session.AgentIdentity.Address() returns the bare name for those roles, which
-// causes the read/write mismatch in GH#3699.
+// hook-status queries.
+//
+// session.AgentIdentity.Address() returns the bare name for town-level agents,
+// which is what caused the read/write mismatch in GH#3699. Routing it through
+// agentaddr gives every write site the one canonical spelling.
 func canonicalAssigneeAddress(identity *session.AgentIdentity) string {
-	addr := identity.Address()
-	switch identity.Role {
-	case session.RoleMayor, session.RoleDeacon:
-		if !strings.HasSuffix(addr, "/") {
-			return addr + "/"
-		}
-	}
-	return addr
+	return agentaddr.Normalize(identity.Address())
 }
 
 // resolveSelfTarget determines agent identity, pane, and hook root for slinging to self.
@@ -78,28 +73,13 @@ func resolveSelfTarget() (agentID string, pane string, hookRoot string, err erro
 		return "", "", "", fmt.Errorf("detecting role: %w", err)
 	}
 
-	// Build agent identity from role
-	// Town-level agents use trailing slash to match addressToIdentity() normalization
-	switch roleInfo.Role {
-	case RoleMayor:
-		agentID = "mayor/"
-	case RoleDeacon:
-		agentID = "deacon/"
-	case RoleBoot:
-		agentID = "deacon/boot"
-	case RoleWitness:
-		agentID = fmt.Sprintf("%s/witness", roleInfo.Rig)
-	case RoleRefinery:
-		agentID = fmt.Sprintf("%s/refinery", roleInfo.Rig)
-	case RolePolecat:
-		agentID = fmt.Sprintf("%s/polecats/%s", roleInfo.Rig, roleInfo.Polecat)
-	case RoleCrew:
-		agentID = fmt.Sprintf("%s/crew/%s", roleInfo.Rig, roleInfo.Polecat)
-	case RoleDog:
-		agentID = fmt.Sprintf("deacon/dogs/%s", roleInfo.Polecat)
-	default:
+	// Build the agent identity from the role. agentaddr renders the one
+	// canonical spelling, so this write site cannot drift from the others.
+	addr, ok := addressForRole(roleInfo.Role, roleInfo.Rig, roleInfo.Polecat)
+	if !ok {
 		return "", "", "", fmt.Errorf("cannot determine agent identity (role: %s)", roleInfo.Role)
 	}
+	agentID = addr.String()
 
 	pane = os.Getenv("TMUX_PANE")
 	hookRoot = roleInfo.Home
@@ -341,4 +321,47 @@ func missingPolecatTargetRig(target string, allowShorthand bool, townRoot string
 		}
 	}
 	return parts[0], true
+}
+
+// addressForRole converts a detected role context into a canonical address.
+// The second return value is false when the role does not identify one agent —
+// an unknown role, or a rig-scoped role detected without its rig.
+func addressForRole(role Role, rigName, workerName string) (agentaddr.Address, bool) {
+	var addr agentaddr.Address
+	switch role {
+	case RoleMayor:
+		addr = agentaddr.Address{Role: agentaddr.RoleMayor}
+	case RoleDeacon:
+		addr = agentaddr.Address{Role: agentaddr.RoleDeacon}
+	case RoleBoot:
+		addr = agentaddr.Address{Role: agentaddr.RoleBoot}
+	case RoleWitness:
+		addr = agentaddr.Address{Rig: rigName, Role: agentaddr.RoleWitness}
+	case RoleRefinery:
+		addr = agentaddr.Address{Rig: rigName, Role: agentaddr.RoleRefinery}
+	case RolePolecat:
+		addr = agentaddr.Address{Rig: rigName, Role: agentaddr.RolePolecat, Name: workerName}
+	case RoleCrew:
+		addr = agentaddr.Address{Rig: rigName, Role: agentaddr.RoleCrew, Name: workerName}
+	case RoleDog:
+		addr = agentaddr.Address{Role: agentaddr.RoleDog, Name: workerName}
+	default:
+		return agentaddr.Address{}, false
+	}
+	return addr, addr.IsComplete()
+}
+
+// assigneeFlag renders the `--assignee` flag for a `bd update`, canonicalizing
+// the address on the way through.
+//
+// Every write site used to interpolate whatever string it happened to hold, so
+// the same agent landed in storage under several spellings and exact-match
+// lookups missed rows that plainly existed (gt-cw1). Routing the flag through
+// one helper means a new write site cannot reintroduce the split by accident.
+//
+// Normalize leaves unrecognised or incomplete input untouched apart from
+// trimming, so a write site that holds something this package cannot parse
+// still stores what the caller meant rather than a guess.
+func assigneeFlag(addr string) string {
+	return "--assignee=" + agentaddr.Normalize(addr)
 }

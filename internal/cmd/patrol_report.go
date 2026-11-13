@@ -7,7 +7,6 @@ import (
 
 	"github.com/spf13/cobra"
 	"github.com/steveyegge/gastown/internal/beads"
-	"github.com/steveyegge/gastown/internal/constants"
 	"github.com/steveyegge/gastown/internal/deacon"
 	"github.com/steveyegge/gastown/internal/formula"
 	"github.com/steveyegge/gastown/internal/style"
@@ -51,35 +50,12 @@ func runPatrolReport(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("detecting role: %w", err)
 	}
 
-	roleName := string(roleInfo.Role)
-
-	// Build config based on role
-	var cfg PatrolConfig
-	switch roleInfo.Role {
-	case RoleDeacon:
-		cfg = PatrolConfig{
-			RoleName:      "deacon",
-			PatrolMolName: constants.MolDeaconPatrol,
-			BeadsDir:      roleInfo.TownRoot,
-			Assignee:      "deacon",
-		}
-	case RoleWitness:
-		cfg = PatrolConfig{
-			RoleName:      "witness",
-			PatrolMolName: constants.MolWitnessPatrol,
-			BeadsDir:      roleInfo.TownRoot,
-			Assignee:      roleInfo.Rig + "/witness",
-		}
-	case RoleRefinery:
-		cfg = PatrolConfig{
-			RoleName:      "refinery",
-			PatrolMolName: constants.MolRefineryPatrol,
-			BeadsDir:      roleInfo.TownRoot,
-			Assignee:      roleInfo.Rig + "/refinery",
-			ExtraVars:     buildRefineryPatrolVars(roleInfo),
-		}
-	default:
-		return fmt.Errorf("unsupported role for patrol report: %q", roleName)
+	// Build config based on role. gt patrol new builds the same config from the
+	// same function, so the assignee matched here is byte-identical to the one
+	// written when the patrol was hooked.
+	cfg, err := buildPatrolConfig(roleInfo.Role, roleInfo)
+	if err != nil {
+		return err
 	}
 
 	// Find the active patrol
