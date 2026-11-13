@@ -161,9 +161,13 @@ func (d *Daemon) syncJsonlGitBackup() {
 	removed := d.applyPollutionFilter(gitRepo, databases)
 	if removed > 0 {
 		d.logger.Printf("jsonl_git_backup: filtered %d total test-pollution record(s)", removed)
-		// Recount after filtering so spike detection uses accurate numbers.
-		recountAfterFilter(gitRepo, databases, counts)
 	}
+	// Always recount from issues.jsonl, not only after filtering: counts from
+	// exportDatabaseToJsonl are totals across every exported table, while
+	// verifyExportCounts compares against the issues.jsonl line count in HEAD.
+	// Without this, a database with a large events table trips the spike
+	// detector on every run that follows a successful commit.
+	recountAfterFilter(gitRepo, databases, counts)
 
 	// Post-scrub verification: re-scan output for any remaining pollution.
 	if remaining := d.verifyNoPollution(gitRepo, databases); remaining > 0 {
