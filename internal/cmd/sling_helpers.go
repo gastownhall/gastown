@@ -1060,7 +1060,7 @@ func InstantiateFormulaOnBead(ctx context.Context, formulaName, beadID, title, h
 		telemetry.RecordMolCook(ctx, formulaName, nil)
 	}
 
-	formulaVars := formulaVarsForBead(formulaName, beadID, title, extraVars)
+	formulaVars := formulaVarsForBead(formulaName, beadID, title, extraVars, townRoot)
 	wispRootID, err := bondFormulaDirect(resolvedFormula, formulaName, beadID, formulaWorkDir, townRoot, formulaVars)
 	if err != nil {
 		return nil, fmt.Errorf("bonding formula %s to bead %s: %w", formulaName, beadID, err)
@@ -1074,13 +1074,30 @@ func InstantiateFormulaOnBead(ctx context.Context, formulaName, beadID, title, h
 	}, nil
 }
 
-func formulaVarsForBead(formulaName, beadID, title string, extraVars []string) []string {
+func formulaVarsForBead(formulaName, beadID, title string, extraVars []string, townRoot string) []string {
 	formulaVars := []string{
 		fmt.Sprintf("feature=%s", title),
 		fmt.Sprintf("issue=%s", beadID),
 	}
 	formulaVars = append(formulaVars, extraVars...)
-	return ensureFormulaRequiredVars(formulaName, formulaVars)
+	return ensureFormulaRequiredVars(formulaName, formulaVars, resolveFormulaBaseBranch(townRoot, beadID))
+}
+
+// resolveFormulaBaseBranch returns the configured default branch of the rig that
+// owns beadID, falling back to constants.BranchMain when no rig config is
+// available. It mirrors the default-branch resolution already used by
+// polecat/manager.go, cmd/rig.go, and cmd/prime_molecule.go, so a formula var
+// default never points a rig whose default branch is not "main" at a
+// nonexistent branch (issue #4586).
+func resolveFormulaBaseBranch(townRoot, beadID string) string {
+	rigPath := beads.GetRigPathForPrefix(townRoot, beads.ExtractPrefix(beadID))
+	if rigPath == "" {
+		return constants.BranchMain
+	}
+	if rigCfg, err := rigpkg.LoadRigConfig(rigPath); err == nil && rigCfg.DefaultBranch != "" {
+		return rigCfg.DefaultBranch
+	}
+	return constants.BranchMain
 }
 
 // bondFormulaDirect attaches a formula to a bead through bd's canonical bond path.
@@ -1156,10 +1173,14 @@ func parseBondSpawnRootIDWithStatus(bondOut []byte, formulaName, beadID, fallbac
 
 // ensureFormulaRequiredVars appends missing required vars for formulas that enforce
 // strict var presence on direct bond paths.
-func ensureFormulaRequiredVars(formulaName string, vars []string) []string {
+func ensureFormulaRequiredVars(formulaName string, vars []string, defaultBranch string) []string {
 	// Currently only mol-polecat-work has strict required vars on bond.
 	if formulaName != "mol-polecat-work" && formulaName != "polecat-work" {
 		return vars
+	}
+
+	if defaultBranch == "" {
+		defaultBranch = constants.BranchMain
 	}
 
 	seen := make(map[string]bool, len(vars))
@@ -1173,7 +1194,7 @@ func ensureFormulaRequiredVars(formulaName string, vars []string) []string {
 		Key   string
 		Value string
 	}{
-		{"base_branch", "main"},
+		{"base_branch", defaultBranch},
 		{"setup_command", ""},
 		{"typecheck_command", ""},
 		{"lint_command", ""},
