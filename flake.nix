@@ -28,7 +28,7 @@
             pname = "gt";
             version = "1.0.0";
             src = ./.;
-            vendorHash = "sha256-jmdbrHBPGQiLueX2da9e1+/zTJniLOa2NGA9ksHD2x4=";
+            vendorHash = "sha256-jaMKssYPF74R+PY0dazrIFpHAYetFN149HjFWzlFgXw=";
 
             ldflags = [
               "-X github.com/gastownhall/gastown/internal/cmd.Build=nix"
