@@ -14,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	llmprices "github.com/Mattbusel/llm-prices/go"
 	"github.com/spf13/cobra"
 	"github.com/steveyegge/gastown/internal/config"
 	"github.com/steveyegge/gastown/internal/constants"
@@ -180,23 +181,32 @@ type TranscriptMessageBody struct {
 
 // TranscriptUsage contains token usage information.
 type TranscriptUsage struct {
-	InputTokens              int `json:"input_tokens"`
-	CacheCreationInputTokens int `json:"cache_creation_input_tokens"`
-	CacheReadInputTokens     int `json:"cache_read_input_tokens"`
-	OutputTokens             int `json:"output_tokens"`
+	InputTokens              int                    `json:"input_tokens"`
+	CacheCreationInputTokens int                    `json:"cache_creation_input_tokens"`
+	CacheReadInputTokens     int                    `json:"cache_read_input_tokens"`
+	OutputTokens             int                    `json:"output_tokens"`
+	CacheCreation            *TranscriptCacheCreate `json:"cache_creation,omitempty"`
 }
 
-// TokenUsage aggregates token usage across a session.
+// TranscriptCacheCreate splits cache writes by cache lifetime. The two
+// lifetimes are billed at different rates (1.25x and 2x the input price).
+type TranscriptCacheCreate struct {
+	Ephemeral5mInputTokens int `json:"ephemeral_5m_input_tokens"`
+	Ephemeral1hInputTokens int `json:"ephemeral_1h_input_tokens"`
+}
+
+// TokenUsage holds the token usage of one assistant message.
 type TokenUsage struct {
 	Model                    string
 	InputTokens              int
-	CacheCreationInputTokens int
+	CacheCreationInputTokens int // all cache writes, both lifetimes
+	CacheCreation1hTokens    int // the part of CacheCreationInputTokens written with a 1-hour lifetime
 	CacheReadInputTokens     int
 	OutputTokens             int
 }
 
-// Model pricing per million tokens (as of Jan 2025).
-// See: https://www.anthropic.com/pricing
+// modelPricing is the fallback for models the llm-prices table does not list
+// (see calculateCost). Prices are USD per million tokens.
 var modelPricing = map[string]struct {
 	InputPerMillion       float64
 	OutputPerMillion      float64
@@ -731,15 +741,17 @@ func findLatestTranscript(projectDir string) (string, error) {
 	return latestPath, nil
 }
 
-// parseTranscriptUsage reads a transcript file and sums token usage from assistant messages.
-func parseTranscriptUsage(transcriptPath string) (*TokenUsage, error) {
+// parseTranscriptUsages reads a transcript file and returns the token usage of
+// each assistant message, in file order. Each entry carries its own model, so a
+// session that switches models is priced per message.
+func parseTranscriptUsages(transcriptPath string) ([]TokenUsage, error) {
 	file, err := os.Open(transcriptPath)
 	if err != nil {
 		return nil, err
 	}
 	defer file.Close()
 
-	usage := &TokenUsage{}
+	var usages []TokenUsage
 	scanner := bufio.NewScanner(file)
 	// Increase buffer for potentially large JSON lines
 	buf := make([]byte, 0, 256*1024)
@@ -761,30 +773,55 @@ func parseTranscriptUsage(transcriptPath string) (*TokenUsage, error) {
 			continue
 		}
 
-		// Capture the model (use first one found, they should all be the same)
-		if usage.Model == "" && msg.Message.Model != "" {
-			usage.Model = msg.Message.Model
-		}
-
-		// Sum token usage
 		u := msg.Message.Usage
-		usage.InputTokens += u.InputTokens
-		usage.CacheCreationInputTokens += u.CacheCreationInputTokens
-		usage.CacheReadInputTokens += u.CacheReadInputTokens
-		usage.OutputTokens += u.OutputTokens
+		var cache1h int
+		if u.CacheCreation != nil {
+			cache1h = u.CacheCreation.Ephemeral1hInputTokens
+		}
+		usages = append(usages, TokenUsage{
+			Model:                    msg.Message.Model,
+			InputTokens:              u.InputTokens,
+			CacheCreationInputTokens: u.CacheCreationInputTokens,
+			CacheCreation1hTokens:    cache1h,
+			CacheReadInputTokens:     u.CacheReadInputTokens,
+			OutputTokens:             u.OutputTokens,
+		})
 	}
 
 	if err := scanner.Err(); err != nil {
 		return nil, err
 	}
 
-	return usage, nil
+	return usages, nil
 }
 
 // calculateCost converts token usage to USD cost based on model pricing.
+//
+// Prices come from the llm-prices table (Anthropic's published rates, with
+// cache read, 5-minute and 1-hour cache write prices and long-context tiers),
+// so new Claude models are priced without a code change here. Models the
+// table does not list fall back to modelPricing.
+//
+// Long-context tiers apply per request, so pass the usage of one message,
+// not a session total, when the model has one (claude-haiku-5-5 above 100K
+// prompt tokens).
 func calculateCost(usage *TokenUsage) float64 {
 	if usage == nil {
 		return 0.0
+	}
+
+	if p, ok := llmprices.LookupProvider("anthropic", usage.Model); ok {
+		cache1h := min(max(usage.CacheCreation1hTokens, 0), usage.CacheCreationInputTokens)
+		c, ok := p.CostUsage(llmprices.Usage{
+			Input:        int64(usage.InputTokens),
+			Output:       int64(usage.OutputTokens),
+			CacheRead:    int64(usage.CacheReadInputTokens),
+			CacheWrite5m: int64(usage.CacheCreationInputTokens - cache1h),
+			CacheWrite1h: int64(cache1h),
+		})
+		if ok {
+			return c.Total
+		}
 	}
 
 	// Look up pricing for the model
@@ -815,12 +852,18 @@ func extractCostFromWorkDir(workDir string) (float64, error) {
 		return 0, fmt.Errorf("finding transcript: %w", err)
 	}
 
-	usage, err := parseTranscriptUsage(transcriptPath)
+	usages, err := parseTranscriptUsages(transcriptPath)
 	if err != nil {
 		return 0, fmt.Errorf("parsing transcript: %w", err)
 	}
 
-	return calculateCost(usage), nil
+	// Price each message on its own: a session can switch models, and
+	// long-context prices depend on the size of each request.
+	var cost float64
+	for i := range usages {
+		cost += calculateCost(&usages[i])
+	}
+	return cost, nil
 }
 
 // getTmuxSessionWorkDir gets the current working directory of a tmux session.
