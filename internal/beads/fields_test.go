@@ -125,6 +125,36 @@ func TestParseAttachmentFieldsDoesNotConsumeAdjacentKeyValueLines(t *testing.T) 
 	}
 }
 
+func TestClearMissingMoleculeFieldsPreservesExternalPRState(t *testing.T) {
+	fields := &AttachmentFields{
+		AttachedMolecule: "gt-wisp-deleted",
+		AttachedFormula:  "mol-polecat-work",
+		AttachedAt:       "2026-07-22T00:00:00Z",
+		AttachedArgs:     "review upstream PR",
+		AttachedVars:     []string{"issue=gt-123"},
+		FormulaVars:      "base_branch=main",
+		DispatchedBy:     "mayor",
+		NoMerge:          true,
+		ReviewOnly:       true,
+		ConvoyID:         "hq-cv-123",
+		MergeStrategy:    "local",
+		ConvoyOwned:      true,
+	}
+
+	clearMissingMoleculeFields(fields)
+
+	if fields.AttachedMolecule != "" || fields.AttachedFormula != "" ||
+		fields.AttachedAt != "" || fields.AttachedArgs != "" ||
+		len(fields.AttachedVars) != 0 || fields.FormulaVars != "" {
+		t.Fatalf("workflow attachment state was not cleared: %+v", fields)
+	}
+	if !fields.NoMerge || !fields.ReviewOnly || !fields.ConvoyOwned ||
+		fields.ConvoyID != "hq-cv-123" || fields.MergeStrategy != "local" ||
+		fields.DispatchedBy != "mayor" {
+		t.Fatalf("external-PR routing state was not preserved: %+v", fields)
+	}
+}
+
 func TestSetAttachmentFieldsPreservesAdjacentKeyValueLines(t *testing.T) {
 	issue := &Issue{Description: "formula_vars: old=1\nissue=old\nbase_branch=old\nexample=value\n\nBody"}
 	fields := &AttachmentFields{FormulaVars: "feature=New\nissue=gt-new"}
