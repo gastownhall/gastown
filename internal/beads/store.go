@@ -10,6 +10,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
 	"strings"
 	"time"
 
@@ -573,6 +574,63 @@ func (b *Beads) storeRemoveDependency(issue, dependsOn string) error {
 	defer cancel()
 
 	return b.store.RemoveDependency(ctx, issue, dependsOn, b.getActor())
+}
+
+type wispPromoter interface {
+	PromoteFromEphemeral(context.Context, string, string) error
+}
+
+type commentEventStore interface {
+	AddComment(context.Context, string, string, string) error
+}
+
+// PromoteWisp promotes an ephemeral wisp through the in-process Beads storage
+// path. This keeps gt compact on the SDK's typed dependency promotion logic
+// instead of shelling out to whichever bd binary is on PATH.
+func (b *Beads) PromoteWisp(id, reason string) error {
+	ctx, cancel := storeCtx()
+	defer cancel()
+
+	store := b.store
+	cleanup := func() {}
+	if store == nil {
+		var err error
+		store, cleanup, err = b.OpenStore(ctx)
+		if err != nil {
+			return fmt.Errorf("open store for wisp promotion: %w", err)
+		}
+	}
+	defer cleanup()
+
+	promoter, ok := store.(wispPromoter)
+	if !ok {
+		return fmt.Errorf("beads store does not support wisp promotion")
+	}
+
+	actor := b.getActor()
+	if actor == "" {
+		actor = "unknown"
+	}
+
+	if err := promoter.PromoteFromEphemeral(ctx, id, actor); err != nil {
+		return fmt.Errorf("promote wisp %s: %w", id, err)
+	}
+
+	commenter, ok := store.(commentEventStore)
+	if !ok {
+		fmt.Fprintf(os.Stderr, "Warning: beads store does not support promotion comments for %s\n", id)
+		return nil
+	}
+
+	comment := "Promoted from Level 0"
+	if reason != "" {
+		comment += ": " + reason
+	}
+	if err := commenter.AddComment(ctx, id, actor, comment); err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: failed to add promotion comment to %s: %v\n", id, err)
+	}
+
+	return nil
 }
 
 // storeAddLabel implements AddLabel using the in-process store.
