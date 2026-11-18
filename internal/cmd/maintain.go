@@ -27,6 +27,9 @@ const (
 	maintainBackupTimeout = 2 * time.Minute
 	// maintainQueryTimeout is the timeout for individual SQL queries during flatten.
 	maintainQueryTimeout = 30 * time.Second
+
+	// maintainPushTimeout bounds the force-push that publishes a flattened database.
+	maintainPushTimeout = 5 * time.Minute
 )
 
 var (
@@ -189,6 +192,7 @@ func runMaintain(cmd *cobra.Command, args []string) error {
 
 	// Phase 4: Flatten (server up).
 	totalFlattened := 0
+	totalPushFailed := 0
 	if flattenCount > 0 {
 		fmt.Printf("\n%s Flattening databases...\n", style.Bold.Render("●"))
 		for _, db := range dbInfos {
@@ -202,6 +206,12 @@ func runMaintain(cmd *cobra.Command, args []string) error {
 				postCount, _ := maintainCountCommits(config, db.name)
 				fmt.Printf("  %s %s: %d → %d commits\n", style.Bold.Render("✓"), db.name, preCount, postCount)
 				totalFlattened++
+				// Flatten rewrote the commit graph; publish it or the DB is forked.
+				if err := maintainForcePush(config, db.name); err != nil {
+					fmt.Printf("  %s %s: FLATTENED BUT NOT PUSHED — database is now forked from its remote: %v\n",
+						style.Bold.Render("✗"), db.name, err)
+					totalPushFailed++
+				}
 			}
 		}
 	}
@@ -225,6 +235,15 @@ func runMaintain(cmd *cobra.Command, args []string) error {
 	fmt.Printf("  Wisps reaped: %d\n", totalReaped)
 	fmt.Printf("  Databases flattened: %d\n", totalFlattened)
 	fmt.Printf("  Databases gc'd: %d\n", gcCount)
+
+	// A flatten that was not published leaves the database forked from its remote.
+	// Report it in the summary and fail the run — a silent divergence is how a rig
+	// stayed unpushable for 36 hours.
+	if totalPushFailed > 0 {
+		fmt.Printf("  %s Databases FLATTENED BUT NOT PUSHED: %d — these are now forked from their remotes\n",
+			style.Bold.Render("✗"), totalPushFailed)
+		return fmt.Errorf("%d database(s) were flattened but could not be pushed; they are forked from their remotes", totalPushFailed)
+	}
 
 	return nil
 }
@@ -304,6 +323,42 @@ func maintainOpenDB(config *doltserver.Config, dbName string) (*sql.DB, error) {
 // Uses direct SQL on the running server — no branches, no downtime.
 // Per Tim Sehn (2026-02-28): DOLT_RESET --soft + DOLT_COMMIT is safe on a
 // running server. Concurrent writes during flatten are safe.
+// maintainForcePush publishes a flattened database to its remote.
+//
+// Flatten rewrites the commit graph, so a standard push can never fast-forward
+// and the database silently diverges from its remote until someone force-pushes
+// by hand. That is not hypothetical: it forked a production rig on 2026-07-26
+// and went undetected for 36 hours.
+//
+// Returns nil when no remote is configured — a local-only database cannot fork.
+// A push FAILURE is returned, never swallowed: if the graph was rewritten and the
+// remote was not updated, the maintenance run has not succeeded.
+func maintainForcePush(config *doltserver.Config, dbName string) error {
+	db, err := maintainOpenDB(config, dbName)
+	if err != nil {
+		return err
+	}
+	defer db.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), maintainQueryTimeout)
+	defer cancel()
+
+	var remoteName string
+	err = db.QueryRowContext(ctx, "SELECT name FROM dolt_remotes LIMIT 1").Scan(&remoteName)
+	if err != nil || strings.TrimSpace(remoteName) == "" {
+		return nil // No remote configured — nothing to diverge from.
+	}
+
+	pushCtx, pushCancel := context.WithTimeout(context.Background(), maintainPushTimeout)
+	defer pushCancel()
+
+	if _, err := db.ExecContext(pushCtx,
+		"CALL DOLT_PUSH('--force', '--set-upstream', ?, 'main')", remoteName); err != nil {
+		return fmt.Errorf("force-push to %s: %w", remoteName, err)
+	}
+	return nil
+}
+
 func maintainFlattenDB(config *doltserver.Config, dbName string) error {
 	db, err := maintainOpenDB(config, dbName)
 	if err != nil {
