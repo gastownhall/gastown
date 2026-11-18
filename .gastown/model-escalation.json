@@ -1,0 +1,50 @@
+{
+  "type": "model-escalation",
+  "version": 1,
+  "enabled": true,
+  "rules": [
+    {
+      "from_agent": "opencode-local",
+      "to_agent": "opencode-go",
+      "promote_after_failures": 1
+    }
+  ],
+  "validation_failure": {
+    "enabled": true,
+    "local_agent": "opencode-local",
+    "max_local_attempts": 1,
+    "to_agent": "opencode-go",
+    "max_hosted_attempts": 1,
+    "repair_priority": 1
+  },
+  "recovery": {
+    "nudge_after": "15m",
+    "local_restart_after": "30m",
+    "go_escalate_after": "60m",
+    "max_local_restarts": 1,
+    "max_go_attempts": 1,
+    "break_glass": {
+      "enabled": true,
+      "scope": "infrastructure-only",
+      "agents": [
+        "claude",
+        "codex"
+      ],
+      "max_attempts_per_agent": 1,
+      "timeout": "10m",
+      "automatic": true,
+      "tier_policy": {
+        "claude": {
+          "max_attempts": 1,
+          "timeout": "10m",
+          "mode": "automatic"
+        },
+        "codex": {
+          "max_attempts": 1,
+          "timeout": "10m",
+          "mode": "automatic"
+        }
+      }
+    }
+  }
+}

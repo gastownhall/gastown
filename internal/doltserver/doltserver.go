@@ -1449,8 +1449,99 @@ func ReapOwnedTestServers(townRoot string) (int, error) {
 			stopped++
 		}
 	}
+	if stopped > 0 {
+		_ = os.Remove(testServerOwnerMetadataPath(config.DataDir))
+	}
 
 	return stopped, nil
+}
+
+// TestServerOwnerMetadata makes native Dolt processes started by tests
+// attributable without relying on a port or a broad process-name match.
+type TestServerOwnerMetadata struct {
+	PID       int       `json:"pid"`
+	ParentPID int       `json:"parent_pid"`
+	TownRoot  string    `json:"town_root"`
+	DataDir   string    `json:"data_dir"`
+	Owner     string    `json:"owner"`
+	StartedAt time.Time `json:"started_at"`
+}
+
+func testServerOwnerMetadataPath(dataDir string) string {
+	return filepath.Join(dataDir, "test-server-owner.json")
+}
+
+func isTempOwnedRoot(root string) bool {
+	absRoot, err := filepath.Abs(root)
+	if err != nil {
+		return false
+	}
+	absTemp, err := filepath.Abs(os.TempDir())
+	if err != nil {
+		return false
+	}
+	rel, err := filepath.Rel(absTemp, absRoot)
+	return err == nil && rel != "." && !strings.HasPrefix(rel, "..") && !filepath.IsAbs(rel)
+}
+
+func writeTestServerOwnerMetadata(townRoot string, config *Config, pid int) error {
+	if !isTempOwnedRoot(townRoot) {
+		return nil
+	}
+	owner := os.Getenv("GT_TEST_OWNER")
+	if owner == "" {
+		owner = filepath.Base(os.Args[0])
+	}
+	metadata := TestServerOwnerMetadata{
+		PID:       pid,
+		ParentPID: os.Getpid(),
+		TownRoot:  townRoot,
+		DataDir:   config.DataDir,
+		Owner:     owner,
+		StartedAt: time.Now().UTC(),
+	}
+	data, err := json.MarshalIndent(metadata, "", "  ")
+	if err != nil {
+		return err
+	}
+	return atomicfile.WriteFile(testServerOwnerMetadataPath(config.DataDir), data, 0o600)
+}
+
+// StaleOwnedTestServers returns only processes whose exact config path and
+// durable metadata agree and whose test parent is no longer alive.
+func StaleOwnedTestServers() []TestServerOwnerMetadata {
+	return staleOwnedTestServersFromPS(processList(), processIsAlive)
+}
+
+func staleOwnedTestServersFromPS(output string, isAlive func(int) bool) []TestServerOwnerMetadata {
+	var stale []TestServerOwnerMetadata
+	for _, line := range strings.Split(output, "\n") {
+		fields := strings.Fields(strings.TrimSpace(line))
+		if len(fields) < 4 {
+			continue
+		}
+		pid, err := strconv.Atoi(fields[0])
+		if err != nil || !isDoltSQLServerArgs(fields[1:]) {
+			continue
+		}
+		configPath := getDoltFlagFromArgs(fields[1:], "--config")
+		if configPath == "" {
+			continue
+		}
+		var metadata TestServerOwnerMetadata
+		data, err := os.ReadFile(testServerOwnerMetadataPath(filepath.Dir(configPath))) //nolint:gosec // path comes from proven process args
+		if err != nil || json.Unmarshal(data, &metadata) != nil {
+			continue
+		}
+		if metadata.PID != pid || metadata.DataDir != filepath.Dir(configPath) ||
+			!isTempOwnedRoot(metadata.TownRoot) {
+			continue
+		}
+		if metadata.ParentPID <= 0 || !isAlive(metadata.ParentPID) {
+			stale = append(stale, metadata)
+		}
+	}
+	return stale
 }
 
 func ownedDoltTestServerCandidates(townRoot string, config *Config) []int {
@@ -1917,6 +2008,11 @@ func Start(townRoot string) error {
 		_ = cmd.Process.Kill()
 		return fmt.Errorf("writing PID file: %w", err)
 	}
+	if err := writeTestServerOwnerMetadata(townRoot, config, cmd.Process.Pid); err != nil {
+		_ = cmd.Process.Kill()
+		_ = os.Remove(config.PidFile)
+		return fmt.Errorf("writing test Dolt ownership metadata: %w", err)
+	}
 
 	// Save state
 	state := &State{
@@ -2127,6 +2223,7 @@ func Stop(townRoot string) error {
 
 	// Clean up PID file
 	_ = os.Remove(config.PidFile)
+	_ = os.Remove(testServerOwnerMetadataPath(config.DataDir))
 
 	// Update state - preserve historical info
 	state, _ := LoadState(townRoot)

@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"sync"
 	"time"
+
+	"github.com/steveyegge/gastown/internal/atomicfile"
 )
 
 // RestartTrackerConfig holds configurable parameters for restart tracking.
@@ -38,18 +40,24 @@ type RestartTrackerConfig struct {
 	// quota_dog patrol to rotate accounts (5m cadence), short enough to
 	// recover quickly when the limit resets.
 	PauseBackoff time.Duration `json:"pause_backoff,omitempty"`
+
+	// CrashLoopProbeInterval is the minimum time between local watchdog
+	// probes after a crash-loop latch (default 30m). These probes never
+	// authorize hosted-agent promotion.
+	CrashLoopProbeInterval time.Duration `json:"crash_loop_probe_interval,omitempty"`
 }
 
 // DefaultRestartTrackerConfig returns the default restart tracker configuration.
 func DefaultRestartTrackerConfig() RestartTrackerConfig {
 	return RestartTrackerConfig{
-		InitialBackoff:    30 * time.Second,
-		MaxBackoff:        10 * time.Minute,
-		BackoffMultiplier: 2.0,
-		CrashLoopWindow:   15 * time.Minute,
-		CrashLoopCount:    5,
-		StabilityPeriod:   30 * time.Minute,
-		PauseBackoff:      60 * time.Second,
+		InitialBackoff:         30 * time.Second,
+		MaxBackoff:             10 * time.Minute,
+		BackoffMultiplier:      2.0,
+		CrashLoopWindow:        15 * time.Minute,
+		CrashLoopCount:         5,
+		StabilityPeriod:        30 * time.Minute,
+		PauseBackoff:           60 * time.Second,
+		CrashLoopProbeInterval: 30 * time.Minute,
 	}
 }
 
@@ -77,6 +85,9 @@ func (c RestartTrackerConfig) withDefaults() RestartTrackerConfig {
 	if c.PauseBackoff <= 0 {
 		c.PauseBackoff = d.PauseBackoff
 	}
+	if c.CrashLoopProbeInterval <= 0 {
+		c.CrashLoopProbeInterval = d.CrashLoopProbeInterval
+	}
 	return c
 }
 
@@ -87,6 +98,8 @@ type RestartTracker struct {
 	townRoot string
 	config   RestartTrackerConfig
 	state    *RestartState
+	now      func() time.Time
+	loadErr  error
 }
 
 // RestartState persists restart tracking data.
@@ -96,19 +109,30 @@ type RestartState struct {
 
 // AgentRestartInfo tracks restart info for a single agent.
 type AgentRestartInfo struct {
-	LastRestart    time.Time `json:"last_restart"`
-	RestartCount   int       `json:"restart_count"`
-	BackoffUntil   time.Time `json:"backoff_until"`
-	CrashLoopSince time.Time `json:"crash_loop_since,omitempty"`
+	LastRestart           time.Time   `json:"last_restart"`
+	RestartCount          int         `json:"restart_count"`
+	RecentRestarts        []time.Time `json:"recent_restarts,omitempty"`
+	BackoffUntil          time.Time   `json:"backoff_until"`
+	CrashLoopSince        time.Time   `json:"crash_loop_since,omitempty"`
+	LastWatchdogProbe     time.Time   `json:"last_watchdog_probe,omitempty"`
+	CrashLoopAlertPending bool        `json:"crash_loop_alert_pending,omitempty"`
 }
 
 // NewRestartTracker creates a new restart tracker with the given config.
 // Zero-valued config fields are filled with defaults.
 func NewRestartTracker(townRoot string, cfg RestartTrackerConfig) *RestartTracker {
+	return newRestartTrackerWithClock(townRoot, cfg, time.Now)
+}
+
+func newRestartTrackerWithClock(townRoot string, cfg RestartTrackerConfig, now func() time.Time) *RestartTracker {
+	if now == nil {
+		now = time.Now
+	}
 	return &RestartTracker{
 		townRoot: townRoot,
 		config:   cfg.withDefaults(),
 		state:    &RestartState{Agents: make(map[string]*AgentRestartInfo)},
+		now:      now,
 	}
 }
 
@@ -125,25 +149,56 @@ func (rt *RestartTracker) Load() error {
 	data, err := os.ReadFile(rt.restartStateFile())
 	if err != nil {
 		if os.IsNotExist(err) {
+			rt.state = &RestartState{Agents: make(map[string]*AgentRestartInfo)}
+			rt.loadErr = nil
 			return nil // No state file yet
 		}
+		rt.loadErr = err
 		return err
 	}
 
-	return json.Unmarshal(data, rt.state)
+	// Decode into a temporary value so malformed JSON cannot partially mutate
+	// live restart authorization state.
+	var next *RestartState
+	if err := json.Unmarshal(data, &next); err != nil {
+		rt.loadErr = err
+		return err
+	}
+	if next == nil {
+		err := fmt.Errorf("restart state is null")
+		rt.loadErr = err
+		return err
+	}
+	if next.Agents == nil {
+		next.Agents = make(map[string]*AgentRestartInfo)
+	}
+	for agentID, info := range next.Agents {
+		if info == nil {
+			err := fmt.Errorf("restart state for agent %q is null", agentID)
+			rt.loadErr = err
+			return err
+		}
+	}
+	rt.state = next
+	rt.loadErr = nil
+	return nil
 }
 
 // Save persists the restart state to disk.
 func (rt *RestartTracker) Save() error {
 	rt.mu.RLock()
 	defer rt.mu.RUnlock()
+	return rt.saveLocked()
+}
 
-	data, err := json.MarshalIndent(rt.state, "", "  ")
-	if err != nil {
+func (rt *RestartTracker) saveLocked() error {
+	if rt.loadErr != nil {
+		return fmt.Errorf("restart state unavailable after failed load: %w", rt.loadErr)
+	}
+	if err := os.MkdirAll(filepath.Dir(rt.restartStateFile()), 0o700); err != nil {
 		return err
 	}
-
-	return os.WriteFile(rt.restartStateFile(), data, 0600)
+	return atomicfile.WriteJSONWithPerm(rt.restartStateFile(), rt.state, 0o600)
 }
 
 // CanRestart checks if an agent can be restarted (not in backoff).
@@ -151,6 +206,9 @@ func (rt *RestartTracker) CanRestart(agentID string) bool {
 	rt.mu.RLock()
 	defer rt.mu.RUnlock()
 
+	if rt.loadErr != nil {
+		return false
+	}
 	info, exists := rt.state.Agents[agentID]
 	if !exists {
 		return true
@@ -162,15 +220,17 @@ func (rt *RestartTracker) CanRestart(agentID string) bool {
 	}
 
 	// Check backoff period
-	return time.Now().After(info.BackoffUntil)
+	return !rt.now().Before(info.BackoffUntil)
 }
 
-// RecordRestart records a restart attempt and calculates next backoff.
-func (rt *RestartTracker) RecordRestart(agentID string) {
+// RecordRestart records a restart attempt and calculates next backoff. It
+// returns true only when this call newly latches a crash loop, allowing the
+// caller to emit one deduplicated alert.
+func (rt *RestartTracker) RecordRestart(agentID string) bool {
 	rt.mu.Lock()
 	defer rt.mu.Unlock()
 
-	now := time.Now()
+	now := rt.now()
 	info, exists := rt.state.Agents[agentID]
 	if !exists {
 		info = &AgentRestartInfo{}
@@ -178,14 +238,28 @@ func (rt *RestartTracker) RecordRestart(agentID string) {
 	}
 
 	// Check if previous restart was stable (long ago)
-	if !info.LastRestart.IsZero() && now.Sub(info.LastRestart) > rt.config.StabilityPeriod {
+	// A crash-loop latch is persistent: the 30-minute local probes must not
+	// clear it merely because they are intentionally far apart.
+	if info.CrashLoopSince.IsZero() &&
+		!info.LastRestart.IsZero() &&
+		now.Sub(info.LastRestart) > rt.config.StabilityPeriod {
 		// Reset backoff - agent was stable
 		info.RestartCount = 0
-		info.CrashLoopSince = time.Time{}
+		info.RecentRestarts = nil
 	}
 
 	info.LastRestart = now
 	info.RestartCount++
+	if info.CrashLoopSince.IsZero() {
+		cutoff := now.Add(-rt.config.CrashLoopWindow)
+		recent := info.RecentRestarts[:0]
+		for _, restart := range info.RecentRestarts {
+			if restart.After(cutoff) {
+				recent = append(recent, restart)
+			}
+		}
+		info.RecentRestarts = append(recent, now)
+	}
 
 	// Calculate backoff with exponential increase
 	backoffDuration := rt.config.InitialBackoff
@@ -198,12 +272,13 @@ func (rt *RestartTracker) RecordRestart(agentID string) {
 	info.BackoffUntil = now.Add(backoffDuration)
 
 	// Check for crash loop
-	if info.RestartCount >= rt.config.CrashLoopCount {
-		windowStart := now.Add(-rt.config.CrashLoopWindow)
-		if info.LastRestart.After(windowStart) {
-			info.CrashLoopSince = now
-		}
+	newlyLatched := false
+	if info.CrashLoopSince.IsZero() && len(info.RecentRestarts) >= rt.config.CrashLoopCount {
+		info.CrashLoopSince = now
+		info.CrashLoopAlertPending = true
+		newlyLatched = true
 	}
+	return newlyLatched
 }
 
 // RecordPause records that an agent is paused due to a transient external
@@ -218,7 +293,7 @@ func (rt *RestartTracker) RecordPause(agentID string) {
 	rt.mu.Lock()
 	defer rt.mu.Unlock()
 
-	now := time.Now()
+	now := rt.now()
 	info, exists := rt.state.Agents[agentID]
 	if !exists {
 		info = &AgentRestartInfo{}
@@ -241,10 +316,12 @@ func (rt *RestartTracker) RecordSuccess(agentID string) {
 	}
 
 	// If agent has been stable for the stability period, reset tracking
-	if time.Since(info.LastRestart) > rt.config.StabilityPeriod {
+	if rt.now().Sub(info.LastRestart) >= rt.config.StabilityPeriod {
 		info.RestartCount = 0
+		info.RecentRestarts = nil
 		info.CrashLoopSince = time.Time{}
 		info.BackoffUntil = time.Time{}
+		info.LastWatchdogProbe = time.Time{}
 	}
 }
 
@@ -253,6 +330,11 @@ func (rt *RestartTracker) IsInCrashLoop(agentID string) bool {
 	rt.mu.RLock()
 	defer rt.mu.RUnlock()
 
+	// Unknown persisted state is an authorization failure, including for
+	// hosted Boot suppression paths that consult only the crash-loop latch.
+	if rt.loadErr != nil {
+		return true
+	}
 	info, exists := rt.state.Agents[agentID]
 	if !exists {
 		return false
@@ -270,11 +352,91 @@ func (rt *RestartTracker) GetBackoffRemaining(agentID string) time.Duration {
 		return 0
 	}
 
-	remaining := time.Until(info.BackoffUntil)
+	remaining := info.BackoffUntil.Sub(rt.now())
 	if remaining < 0 {
 		return 0
 	}
 	return remaining
+}
+
+// TakeWatchdogProbe atomically consumes one local-only recovery probe for a
+// crash-looping agent when its cooldown has elapsed. It never clears the latch
+// and carries no model or hosted-promotion semantics.
+func (rt *RestartTracker) TakeWatchdogProbe(agentID string) bool {
+	rt.mu.Lock()
+	defer rt.mu.Unlock()
+
+	if rt.loadErr != nil {
+		return false
+	}
+	info, exists := rt.state.Agents[agentID]
+	if !exists || info.CrashLoopSince.IsZero() {
+		return false
+	}
+
+	last := info.LastWatchdogProbe
+	if last.IsZero() {
+		last = info.CrashLoopSince
+	}
+	now := rt.now()
+	if now.Before(last.Add(rt.config.CrashLoopProbeInterval)) {
+		return false
+	}
+	info.LastWatchdogProbe = now
+	return true
+}
+
+// TakeWatchdogProbePersisted consumes a probe only if the updated gate can be
+// durably saved. Persistence failure rolls the in-memory timestamp back so the
+// daemon fails closed without starting a local probe.
+func (rt *RestartTracker) TakeWatchdogProbePersisted(agentID string) (bool, error) {
+	rt.mu.Lock()
+	defer rt.mu.Unlock()
+
+	if rt.loadErr != nil {
+		return false, fmt.Errorf("restart state unavailable after failed load: %w", rt.loadErr)
+	}
+	info, exists := rt.state.Agents[agentID]
+	if !exists || info.CrashLoopSince.IsZero() {
+		return false, nil
+	}
+	last := info.LastWatchdogProbe
+	if last.IsZero() {
+		last = info.CrashLoopSince
+	}
+	now := rt.now()
+	if now.Before(last.Add(rt.config.CrashLoopProbeInterval)) {
+		return false, nil
+	}
+	previous := info.LastWatchdogProbe
+	info.LastWatchdogProbe = now
+	if err := rt.saveLocked(); err != nil {
+		info.LastWatchdogProbe = previous
+		return false, err
+	}
+	return true, nil
+}
+
+func (rt *RestartTracker) CrashLoopAlertPending(agentID string) bool {
+	rt.mu.RLock()
+	defer rt.mu.RUnlock()
+	info := rt.state.Agents[agentID]
+	return info != nil && info.CrashLoopAlertPending
+}
+
+func (rt *RestartTracker) MarkCrashLoopAlertDeliveredPersisted(agentID string) error {
+	rt.mu.Lock()
+	defer rt.mu.Unlock()
+	info := rt.state.Agents[agentID]
+	if info == nil || !info.CrashLoopAlertPending {
+		return nil
+	}
+	info.CrashLoopAlertPending = false
+	if err := rt.saveLocked(); err != nil {
+		info.CrashLoopAlertPending = true
+		return err
+	}
+	return nil
 }
 
 // ClearCrashLoop manually clears the crash loop state for an agent.
@@ -286,7 +448,10 @@ func (rt *RestartTracker) ClearCrashLoop(agentID string) {
 	if exists {
 		info.CrashLoopSince = time.Time{}
 		info.RestartCount = 0
+		info.RecentRestarts = nil
 		info.BackoffUntil = time.Time{}
+		info.LastWatchdogProbe = time.Time{}
+		info.CrashLoopAlertPending = false
 	}
 }
 

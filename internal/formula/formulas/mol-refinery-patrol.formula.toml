@@ -550,29 +550,36 @@ If any check or test FAILED:
 1. Diagnose: Is this a branch regression or pre-existing on the target branch?
 2. If branch caused it:
    - Abort merge (clean up temp branch)
-   - **Send FIX_NEEDED directly to the polecat** (event-driven lifecycle):
+   - **Report the confirmed regression to Deacon's validation recovery path**:
      ```bash
-     gt mail send <rig>/polecats/<polecat-name> -s "FIX_NEEDED <polecat-name>" --stdin <<'BODY'
-     Branch: <branch>
-     Issue: <issue-id>
-     Polecat: <polecat-name>
-     Rig: <rig>
-     Target: <target-branch>
-     Failed-At: $(date -u +%Y-%m-%dT%H:%M:%SZ)
-     Failure-Type: <tests|build|lint|typecheck>
-     Error: <failure description/output>
-     MR-Bead-ID: <mr-bead-id>
-     Attempt-Number: <N>
-     BODY
+     evidence_file="$(mktemp)"
+     printf '%s\n' '<failure description/output>' >"$evidence_file"
+     gt validation report \
+       --rig <rig> \
+       --phase pre-merge \
+       --kind <test|build|lint|typecheck> \
+       --summary '<concise failure summary>' \
+       --source-issue <issue-id> \
+       --merge-request <mr-bead-id> \
+       --branch <branch> \
+       --commit <branch-head-sha> \
+       --command '<failing command>' \
+       --exit-code <exit-code> \
+       --evidence-file "$evidence_file"
+     rm -f "$evidence_file"
      ```
+   - This preserves the MR and branch, shuts down the failed local polecat,
+     and re-slings the source issue on that branch with the configured hosted
+     relief-valve agent. An exact repeat is deduplicated. A distinct failure
+     after the hosted attempt escalates to Mayor instead of dispatching again.
    - **Update the bead** with failure details so they survive session death:
      ```bash
      bd update <issue-id> --notes "Merge failure (attempt <N>): <failure-type> - <error summary>"
      ```
    - **Do NOT close the MR bead** — the polecat will resubmit
-   - **Do NOT delete the branch** — the polecat needs it for the fix
-   - **Do NOT reopen the source issue** — the polecat is still working on it
-   - **Do NOT send MERGE_FAILED to witness** — FIX_NEEDED goes to polecat directly
+   - **Do NOT delete the branch** — the hosted repair polecat needs it
+   - **Do NOT send FIX_NEEDED to the failed local polecat**
+   - **Do NOT send MERGE_FAILED to witness** — Deacon owns validation recovery
    - Clean up temp branch and skip to loop-check:
      ```bash
      git checkout {{target_branch}}
@@ -591,8 +598,8 @@ If any check or test FAILED:
    - FORBIDDEN: Writing code to fix quality check or test failures. You merge branches, you do not develop.
    - Proceed with the merge if the failure is pre-existing (not caused by the branch).
 
-**FIX_NEEDED CHECKLIST** (all required before skipping to loop-check):
-- [ ] FIX_NEEDED sent to polecat (with failure details)
+**VALIDATION RECOVERY CHECKLIST** (all required before skipping to loop-check):
+- [ ] `gt validation report` completed (dispatched, deduplicated, or escalated)
 - [ ] Bead updated with failure notes
 - [ ] Temp branch cleaned up (NOT the polecat branch!)
 - [ ] MERGE_READY message archived
@@ -804,6 +811,7 @@ deleting the remote polecat branch (respects delete_merged_branches config):
 # Otherwise, omit the flag.
 gt mq post-merge <rig> <mr-bead-id>            # normal (no open PR)
 gt mq post-merge <rig> <mr-bead-id> --skip-branch-delete  # open PR exists
+gt validation resolve --rig <rig> --source-issue <issue-id> --phase pre-merge
 ```
 
 The MR bead ID was in the MERGE_READY message or find via:

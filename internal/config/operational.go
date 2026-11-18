@@ -395,6 +395,14 @@ func (d *DaemonThresholds) BootIdleSuppressionD() time.Duration {
 	return DefaultBootIdleSuppression
 }
 
+// BootAutoSpawnV reports whether daemon heartbeats may spawn AI Boot sessions.
+func (d *DaemonThresholds) BootAutoSpawnV() bool {
+	if d != nil && d.BootAutoSpawn != nil {
+		return *d.BootAutoSpawn
+	}
+	return true
+}
+
 // DeaconGracePeriodD returns the configured or default deacon grace period.
 func (d *DaemonThresholds) DeaconGracePeriodD() time.Duration {
 	if d != nil {

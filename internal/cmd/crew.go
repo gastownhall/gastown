@@ -395,6 +395,7 @@ func init() {
 	crewRestartCmd.Flags().StringVar(&crewRig, "rig", "", "Rig to use (filter when using --all)")
 	crewRestartCmd.Flags().BoolVar(&crewAll, "all", false, "Restart all running crew sessions")
 	crewRestartCmd.Flags().BoolVar(&crewDryRun, "dry-run", false, "Show what would be restarted without restarting")
+	crewRestartCmd.Flags().StringVar(&crewAgentOverride, "agent", "", "Agent alias to run restarted crew with (overrides rig/town default)")
 
 	crewStartCmd.Flags().StringVar(&crewRig, "rig", "", "Rig to start crew in (alternative to positional rig arg)")
 	crewStartCmd.Flags().BoolVar(&crewAll, "all", false, "Start all crew members in the rig")
