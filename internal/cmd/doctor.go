@@ -316,6 +316,15 @@ func newDoctorForCommand(rig string) *doctor.Doctor {
 	// Worktree gitdir validity (runs across all rigs, or specific rig with --rig)
 	d.Register(doctor.NewWorktreeGitdirCheck())
 
+	// Worktree ref safety (si-mefr): two live worktrees on one branch, and the
+	// mass staged deletion a rebase under a shared ref leaves armed. Both states
+	// accumulate silently and the armed delta GROWS while unobserved.
+	d.Register(doctor.NewWorktreeSharedRefCheck())
+	d.Register(doctor.NewWorktreeArmedStagingCheck())
+	// And the durable record of an auto-save that refused (si-9wu1): the refusal
+	// prints at session end, when nobody is reading stdout.
+	d.Register(doctor.NewAutosaveRefusalCheck())
+
 	// Rig-specific checks (only when --rig is specified)
 	if rig != "" {
 		d.RegisterAll(doctor.RigChecks()...)
