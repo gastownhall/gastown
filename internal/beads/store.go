@@ -74,9 +74,10 @@ func (b *Beads) OpenStore(ctx context.Context) (beadsdk.Storage, func(), error) 
 	return store, cleanup, nil
 }
 
-// storeCtx returns a context with a standard timeout for store operations.
-func storeCtx() (context.Context, context.CancelFunc) {
-	return context.WithTimeout(context.Background(), 30*time.Second)
+// storeCtx returns a context with a standard timeout for store operations while
+// preserving any earlier caller deadline.
+func (b *Beads) storeCtx() (context.Context, context.CancelFunc) {
+	return b.operationContext(30 * time.Second)
 }
 
 // sdkIssueToIssue converts a beadsdk Issue (types.Issue) to the gastown
@@ -274,7 +275,7 @@ func workFilterFromListOpts(opts ListOptions) beadsdk.WorkFilter {
 
 // storeList implements List using the in-process store.
 func (b *Beads) storeList(opts ListOptions) ([]*Issue, error) {
-	ctx, cancel := storeCtx()
+	ctx, cancel := b.storeCtx()
 	defer cancel()
 
 	filter := issueFilterFromListOpts(opts)
@@ -288,7 +289,7 @@ func (b *Beads) storeList(opts ListOptions) ([]*Issue, error) {
 
 // storeShow implements Show using the in-process store.
 func (b *Beads) storeShow(id string) (*Issue, error) {
-	ctx, cancel := storeCtx()
+	ctx, cancel := b.storeCtx()
 	defer cancel()
 
 	si, err := b.store.GetIssue(ctx, id)
@@ -321,7 +322,7 @@ func (b *Beads) storeShowMultiple(ids []string) (map[string]*Issue, error) {
 		return make(map[string]*Issue), nil
 	}
 
-	ctx, cancel := storeCtx()
+	ctx, cancel := b.storeCtx()
 	defer cancel()
 
 	sdkIssues, err := b.store.GetIssuesByIDs(ctx, ids)
@@ -355,7 +356,7 @@ func (b *Beads) storeHydrateIssueDetails(ctx context.Context, issue *Issue) (*Is
 
 // storeCreate implements Create using the in-process store.
 func (b *Beads) storeCreate(opts CreateOptions) (*Issue, error) {
-	ctx, cancel := storeCtx()
+	ctx, cancel := b.storeCtx()
 	defer cancel()
 
 	sdkIssue := &beadsdk.Issue{
@@ -401,7 +402,7 @@ func (b *Beads) storeCreate(opts CreateOptions) (*Issue, error) {
 
 // storeUpdate implements Update using the in-process store.
 func (b *Beads) storeUpdate(id string, opts UpdateOptions) error {
-	ctx, cancel := storeCtx()
+	ctx, cancel := b.storeCtx()
 	defer cancel()
 
 	updates := make(map[string]interface{})
@@ -466,7 +467,7 @@ func (b *Beads) storeUpdate(id string, opts UpdateOptions) error {
 
 // storeClose implements Close using the in-process store.
 func (b *Beads) storeClose(reason, session string, ids ...string) error {
-	ctx, cancel := storeCtx()
+	ctx, cancel := b.storeCtx()
 	defer cancel()
 
 	actor := b.getActor()
@@ -481,7 +482,7 @@ func (b *Beads) storeClose(reason, session string, ids ...string) error {
 
 // storeReady implements Ready using the in-process store.
 func (b *Beads) storeReady() ([]*Issue, error) {
-	ctx, cancel := storeCtx()
+	ctx, cancel := b.storeCtx()
 	defer cancel()
 
 	sdkIssues, err := b.store.GetReadyWork(ctx, beadsdk.WorkFilter{})
@@ -494,7 +495,7 @@ func (b *Beads) storeReady() ([]*Issue, error) {
 
 // storeReadyWithFilter implements Ready with a WorkFilter using the in-process store.
 func (b *Beads) storeReadyWithFilter(filter beadsdk.WorkFilter) ([]*Issue, error) {
-	ctx, cancel := storeCtx()
+	ctx, cancel := b.storeCtx()
 	defer cancel()
 
 	sdkIssues, err := b.store.GetReadyWork(ctx, filter)
@@ -507,7 +508,7 @@ func (b *Beads) storeReadyWithFilter(filter beadsdk.WorkFilter) ([]*Issue, error
 
 // storeBlocked implements Blocked using the in-process store.
 func (b *Beads) storeBlocked() ([]*Issue, error) {
-	ctx, cancel := storeCtx()
+	ctx, cancel := b.storeCtx()
 	defer cancel()
 
 	blocked, err := b.store.GetBlockedIssues(ctx, beadsdk.WorkFilter{})
@@ -525,7 +526,7 @@ func (b *Beads) storeBlocked() ([]*Issue, error) {
 
 // storeSearch implements Search using the in-process store.
 func (b *Beads) storeSearch(opts SearchOptions) ([]*Issue, error) {
-	ctx, cancel := storeCtx()
+	ctx, cancel := b.storeCtx()
 	defer cancel()
 
 	filter := beadsdk.IssueFilter{
@@ -555,7 +556,7 @@ func (b *Beads) storeSearch(opts SearchOptions) ([]*Issue, error) {
 
 // storeAddDependency implements AddDependency using the in-process store.
 func (b *Beads) storeAddDependency(issue, dependsOn string) error {
-	ctx, cancel := storeCtx()
+	ctx, cancel := b.storeCtx()
 	defer cancel()
 
 	dep := &beadsdk.Dependency{
@@ -569,7 +570,7 @@ func (b *Beads) storeAddDependency(issue, dependsOn string) error {
 
 // storeRemoveDependency implements RemoveDependency using the in-process store.
 func (b *Beads) storeRemoveDependency(issue, dependsOn string) error {
-	ctx, cancel := storeCtx()
+	ctx, cancel := b.storeCtx()
 	defer cancel()
 
 	return b.store.RemoveDependency(ctx, issue, dependsOn, b.getActor())
@@ -577,7 +578,7 @@ func (b *Beads) storeRemoveDependency(issue, dependsOn string) error {
 
 // storeAddLabel implements AddLabel using the in-process store.
 func (b *Beads) storeAddLabel(id, label string) error {
-	ctx, cancel := storeCtx()
+	ctx, cancel := b.storeCtx()
 	defer cancel()
 
 	return b.store.AddLabel(ctx, id, label, b.getActor())
@@ -585,7 +586,7 @@ func (b *Beads) storeAddLabel(id, label string) error {
 
 // storeRemoveLabel implements RemoveLabel using the in-process store.
 func (b *Beads) storeRemoveLabel(id, label string) error {
-	ctx, cancel := storeCtx()
+	ctx, cancel := b.storeCtx()
 	defer cancel()
 
 	return b.store.RemoveLabel(ctx, id, label, b.getActor())
@@ -593,7 +594,7 @@ func (b *Beads) storeRemoveLabel(id, label string) error {
 
 // storeGetLabels implements GetLabels using the in-process store.
 func (b *Beads) storeGetLabels(id string) ([]string, error) {
-	ctx, cancel := storeCtx()
+	ctx, cancel := b.storeCtx()
 	defer cancel()
 
 	return b.store.GetLabels(ctx, id)
@@ -603,7 +604,7 @@ func (b *Beads) storeGetLabels(id string) ([]string, error) {
 // "delegated_from" key. Merges with any existing metadata to avoid clobbering
 // other keys.
 func (b *Beads) storeDelegationSet(childID string, d *Delegation) error {
-	ctx, cancel := storeCtx()
+	ctx, cancel := b.storeCtx()
 	defer cancel()
 
 	actor := b.getActor()
@@ -624,7 +625,7 @@ func (b *Beads) storeDelegationSet(childID string, d *Delegation) error {
 
 // storeDelegationClear removes the "delegated_from" key from the issue's metadata.
 func (b *Beads) storeDelegationClear(childID string) error {
-	ctx, cancel := storeCtx()
+	ctx, cancel := b.storeCtx()
 	defer cancel()
 
 	actor := b.getActor()

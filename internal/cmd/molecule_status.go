@@ -1,7 +1,9 @@
 package cmd
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -16,6 +18,33 @@ import (
 	"github.com/steveyegge/gastown/internal/style"
 	"github.com/steveyegge/gastown/internal/workspace"
 )
+
+var hookStatusTimeout = 5 * time.Second
+
+type hookStatusStage struct {
+	name    string
+	started time.Time
+}
+
+func (s *hookStatusStage) begin(name string) {
+	s.name = name
+	s.started = time.Now()
+}
+
+func (s *hookStatusStage) wrap(ctx context.Context, err error) error {
+	if err == nil {
+		err = ctx.Err()
+	}
+	elapsed := time.Since(s.started).Round(time.Millisecond)
+	if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+		return fmt.Errorf("gt hook timed out after %s during %s (stage elapsed %s): %w",
+			hookStatusTimeout, s.name, elapsed, err)
+	}
+	if errors.Is(ctx.Err(), context.Canceled) {
+		return fmt.Errorf("gt hook canceled during %s (stage elapsed %s): %w", s.name, elapsed, err)
+	}
+	return fmt.Errorf("%s: %w", s.name, err)
+}
 
 // Note: Agent field parsing is now in internal/beads/fields.go (AgentFields, ParseAgentFields)
 
@@ -316,6 +345,14 @@ func extractMoleculeID(description string) string {
 }
 
 func runMoleculeStatus(cmd *cobra.Command, args []string) error {
+	parentCtx := context.Background()
+	if cmd != nil && cmd.Context() != nil {
+		parentCtx = cmd.Context()
+	}
+	ctx, cancel := context.WithTimeout(parentCtx, hookStatusTimeout)
+	defer cancel()
+	stage := &hookStatusStage{}
+
 	cwd, err := os.Getwd()
 	if err != nil {
 		return fmt.Errorf("getting current directory: %w", err)
@@ -377,7 +414,7 @@ func runMoleculeStatus(cmd *cobra.Command, args []string) error {
 		workDir = resolveHookLookupWorkDir(workDir, target, townRoot)
 	}
 
-	b := beads.New(workDir)
+	b := beads.New(workDir).WithContext(ctx)
 
 	// Build status info
 	status := MoleculeStatusInfo{
@@ -387,32 +424,30 @@ func runMoleculeStatus(cmd *cobra.Command, args []string) error {
 
 	// lookupHookedWork performs the full multi-step hook lookup for target.
 	// Called in a retry loop for polecats to handle Dolt propagation lag.
-	lookupHookedWork := func() *beads.Issue {
+	lookupHookedWork := func() (*beads.Issue, error) {
 		// Resolve agent bead ID for display purposes only.
 		// Agent bead's hook_bead field is no longer maintained (updateAgentHookBead is
-		// a no-op since hq-l6mm5), so reading it returns stale data. See GH#2371.
+		// a no-op since hq-l6mm5), so reading the bead adds a database round-trip
+		// without contributing to hook resolution. See GH#2371.
 		agentBeadID := buildAgentBeadID(target, roleCtx.Role, townRoot)
 		if agentBeadID != "" {
-			agentBeadPath := beads.ResolveHookDir(townRoot, agentBeadID, workDir)
-			agentB := b
-			if agentBeadPath != workDir {
-				agentB = beads.New(agentBeadPath)
-			}
-			agentBead, err := agentB.Show(agentBeadID)
-			if err == nil && beads.IsAgentBead(agentBead) {
-				status.AgentBeadID = agentBeadID
-			}
+			status.AgentBeadID = agentBeadID
 		}
 
 		// Query for active work using the authoritative source: bead status + assignee.
+		stage.begin(fmt.Sprintf("rig active-work query: bd list/query --assignee=%s", target))
 		hookedBeads, err := listAssignedActiveWork(b, target)
 		if err != nil {
-			return nil
+			return nil, stage.wrap(ctx, err)
 		}
 
 		// For town-level roles (mayor, deacon), scan all rigs if nothing found locally
 		if len(hookedBeads) == 0 && isTownLevelRole(target) {
-			hookedBeads = scanAllRigsForHookedBeads(townRoot, target)
+			stage.begin(fmt.Sprintf("cross-rig active-work query: bd list/query --assignee=%s", target))
+			hookedBeads, err = scanAllRigsForHookedBeadsContext(ctx, townRoot, target)
+			if err != nil {
+				return nil, stage.wrap(ctx, err)
+			}
 		}
 
 		// For rig-level agents (polecats, crew), also search town-level beads.
@@ -420,16 +455,21 @@ func runMoleculeStatus(cmd *cobra.Command, args []string) error {
 		// townRoot/.beads, not the rig's .beads database.
 		// See: https://github.com/steveyegge/gastown/issues/1438
 		if len(hookedBeads) == 0 && !isTownLevelRole(target) && townRoot != "" {
-			townB := beads.New(filepath.Join(townRoot, ".beads"))
-			if townWork, err := listAssignedActiveWork(townB, target); err == nil && len(townWork) > 0 {
+			stage.begin(fmt.Sprintf("town active-work query: bd list/query --assignee=%s", target))
+			townB := beads.New(filepath.Join(townRoot, ".beads")).WithContext(ctx)
+			townWork, townErr := listAssignedActiveWork(townB, target)
+			if townErr != nil {
+				return nil, stage.wrap(ctx, townErr)
+			}
+			if len(townWork) > 0 {
 				hookedBeads = townWork
 			}
 		}
 
 		if len(hookedBeads) > 0 {
-			return hookedBeads[0]
+			return hookedBeads[0], nil
 		}
-		return nil
+		return nil, nil
 	}
 
 	// Run the lookup. In polecat context, retry with backoff to handle Dolt
@@ -442,15 +482,28 @@ func runMoleculeStatus(cmd *cobra.Command, args []string) error {
 			return r == RolePolecat
 		}())
 
-	hookBead = lookupHookedWork()
+	hookBead, err = lookupHookedWork()
+	if err != nil {
+		return err
+	}
 	if hookBead == nil && isPolecat {
 		const maxRetries = 5
 		const baseBackoff = 500 * time.Millisecond
 		const maxBackoff = 8 * time.Second
 		for attempt := 1; attempt <= maxRetries; attempt++ {
 			backoff := slingBackoff(attempt, baseBackoff, maxBackoff)
-			time.Sleep(backoff)
-			hookBead = lookupHookedWork()
+			stage.begin(fmt.Sprintf("propagation retry backoff %d/%d", attempt, maxRetries))
+			timer := time.NewTimer(backoff)
+			select {
+			case <-timer.C:
+			case <-ctx.Done():
+				timer.Stop()
+				return stage.wrap(ctx, ctx.Err())
+			}
+			hookBead, err = lookupHookedWork()
+			if err != nil {
+				return err
+			}
 			if hookBead != nil {
 				break
 			}
@@ -474,11 +527,19 @@ func runMoleculeStatus(cmd *cobra.Command, args []string) error {
 				strings.Contains(hookBead.Description, "is_wisp: true")
 
 			if attachment.AttachedMolecule != "" {
+				stage.begin("molecule progress query: bd show/list " + attachment.AttachedMolecule)
 				progress, _ := getMoleculeProgressInfo(b, attachment.AttachedMolecule)
+				if ctx.Err() != nil {
+					return stage.wrap(ctx, ctx.Err())
+				}
 				status.Progress = progress
 				status.NextAction = determineNextAction(status)
 			} else if attachment.AttachedFormula != "" {
+				stage.begin("formula progress query: bd show/list " + hookBead.ID)
 				progress, _ := getMoleculeProgressInfo(b, hookBead.ID)
+				if ctx.Err() != nil {
+					return stage.wrap(ctx, ctx.Err())
+				}
 				status.Progress = progress
 				status.NextAction = determineNextAction(status)
 			}
@@ -1165,11 +1226,19 @@ func extractMailSender(labels []string) string {
 // assigned to the target agent. Used for town-level roles that may have
 // work hooked in any rig.
 func scanAllRigsForHookedBeads(townRoot, target string) []*beads.Issue {
+	hooked, _ := scanAllRigsForHookedBeadsContext(context.Background(), townRoot, target)
+	return hooked
+}
+
+// scanAllRigsForHookedBeadsContext is the bounded variant used by gt hook.
+// It stops scanning as soon as the command deadline expires instead of allowing
+// each rig query to consume a fresh subprocess timeout.
+func scanAllRigsForHookedBeadsContext(ctx context.Context, townRoot, target string) ([]*beads.Issue, error) {
 	// Load routes from town beads
 	townBeadsDir := filepath.Join(townRoot, ".beads")
 	routes, err := beads.LoadRoutes(townBeadsDir)
 	if err != nil {
-		return nil
+		return nil, err
 	}
 
 	// Scan each rig's beads directory
@@ -1186,16 +1255,19 @@ func scanAllRigsForHookedBeads(townRoot, target string) []*beads.Issue {
 			continue
 		}
 
-		b := beads.New(rigBeadsDir)
+		b := beads.New(rigBeadsDir).WithContext(ctx)
 		hookedBeads, err := listAssignedActiveWork(b, target)
 		if err != nil {
+			if ctx.Err() != nil {
+				return nil, err
+			}
 			continue
 		}
 
 		if len(hookedBeads) > 0 {
-			return hookedBeads
+			return hookedBeads, nil
 		}
 	}
 
-	return nil
+	return nil, ctx.Err()
 }
