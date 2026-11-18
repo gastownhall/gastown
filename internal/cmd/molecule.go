@@ -243,6 +243,7 @@ func init() {
 
 	// Burn flags
 	moleculeBurnCmd.Flags().BoolVar(&moleculeJSON, "json", false, "Output as JSON")
+	registerOrphanBurnFlags()
 
 	// Squash flags
 	moleculeSquashCmd.Flags().BoolVar(&moleculeJSON, "json", false, "Output as JSON")
@@ -258,6 +259,7 @@ func init() {
 	moleculeCmd.AddCommand(moleculeStatusCmd)
 	moleculeCmd.AddCommand(moleculeCurrentCmd)
 	moleculeCmd.AddCommand(moleculeBurnCmd)
+	moleculeCmd.AddCommand(moleculeBurnOrphansCmd)
 	moleculeCmd.AddCommand(moleculeSquashCmd)
 	moleculeCmd.AddCommand(moleculeProgressCmd)
 	moleculeCmd.AddCommand(moleculeDagCmd)
