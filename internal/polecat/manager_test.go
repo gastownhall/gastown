@@ -1688,6 +1688,25 @@ func TestAddWithOptions_ResumeBranch(t *testing.T) {
 		t.Fatalf("update-ref origin/%s: %v\n%s", prBranch, err, out)
 	}
 
+	// Return the repo base to main. createStalePolecatCommit builds the marker
+	// commit by CHECKING OUT the branch here and never switching back, which
+	// parks the repo base itself on the branch we are about to resume.
+	//
+	// That state does not exist in production: repoBase() prefers the bare
+	// .repo.git, which has no working tree and therefore holds no branch (the
+	// live rig confirms it — si-d6kw measured polecat git-dirs as
+	// .repo.git/worktrees/silicon7). mayor/rig is the legacy fallback this
+	// scaffolding happens to use.
+	//
+	// Leaving it parked would make this test assert that a polecat may attach to
+	// a branch a live working tree already has checked out — which is exactly
+	// the si-d6kw defect, and the si-d6kw guard now correctly refuses it.
+	cmd = exec.Command("git", "checkout", "main")
+	cmd.Dir = mayorRig
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("return repo base to main: %v\n%s", err, out)
+	}
+
 	polecat, err := mgr.AddWithOptions("toast", AddOptions{ResumeBranch: prBranch})
 	if err != nil {
 		t.Fatalf("AddWithOptions with ResumeBranch: %v", err)
