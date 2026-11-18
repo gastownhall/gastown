@@ -80,6 +80,20 @@ func TestCleanGTEnv_ExtraEnv(t *testing.T) {
 	}
 }
 
+func TestCleanGTEnv_StripsDoltTargetSelectors(t *testing.T) {
+	for _, key := range doltTargetSelectorEnvVars {
+		t.Setenv(key, "production")
+	}
+
+	env := CleanGTEnv()
+	for _, entry := range env {
+		key, _, _ := strings.Cut(entry, "=")
+		if isDoltTargetSelector(key) {
+			t.Errorf("CleanGTEnv leaked production selector %q", entry)
+		}
+	}
+}
+
 func TestNewBDCommand_InheritsEnv(t *testing.T) {
 	t.Setenv("GT_DOLT_PORT", "13307")
 

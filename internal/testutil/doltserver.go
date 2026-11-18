@@ -113,9 +113,29 @@ func startSharedDoltContainer() {
 
 	doltCtr = ctr
 	doltCtrPort = p.Port()
-	os.Setenv("GT_DOLT_PORT", doltCtrPort)    //nolint:tenv // intentional process-wide env
-	os.Setenv("BEADS_DOLT_PORT", doltCtrPort) //nolint:tenv // intentional process-wide env
-	os.Setenv("GT_TEST_EXTERNAL_DOLT", "1")   //nolint:tenv // integration tests reuse this container
+	configureDoltTestProcessEnv(doltCtrPort)
+}
+
+// configureDoltTestProcessEnv replaces every supported Dolt endpoint alias and
+// clears selectors inherited from the invoking Gas Town session. Setting only
+// GT_DOLT_PORT is insufficient: bd gives BEADS_DOLT_SERVER_PORT and database
+// selectors precedence, which previously let integration tests create fixture
+// databases on the production server at 127.0.0.1:3307.
+func configureDoltTestProcessEnv(port string) {
+	for _, key := range doltTargetSelectorEnvVars {
+		_ = os.Unsetenv(key)
+	}
+	for key, value := range map[string]string{
+		"GT_DOLT_HOST":           "127.0.0.1",
+		"GT_DOLT_PORT":           port,
+		"BEADS_DOLT_SERVER_HOST": "127.0.0.1",
+		"BEADS_DOLT_SERVER_PORT": port,
+		"BEADS_DOLT_PORT":        port,
+		"BEADS_DOLT_AUTO_START":  "0",
+		"GT_TEST_EXTERNAL_DOLT":  "1",
+	} {
+		_ = os.Setenv(key, value) //nolint:tenv // intentional TestMain process boundary
+	}
 }
 
 // StartIsolatedDoltContainer starts a per-test Dolt container and returns the
@@ -147,7 +167,19 @@ func StartIsolatedDoltContainer(t *testing.T) string {
 	}
 
 	portStr := port.Port()
+	for _, key := range doltTargetSelectorEnvVars {
+		t.Setenv(key, "")
+		if err := os.Unsetenv(key); err != nil {
+			t.Fatalf("clear inherited Dolt selector %s: %v", key, err)
+		}
+	}
+	t.Setenv("GT_DOLT_HOST", "127.0.0.1")
 	t.Setenv("GT_DOLT_PORT", portStr)
+	t.Setenv("BEADS_DOLT_SERVER_HOST", "127.0.0.1")
+	t.Setenv("BEADS_DOLT_SERVER_PORT", portStr)
+	t.Setenv("BEADS_DOLT_PORT", portStr)
+	t.Setenv("BEADS_DOLT_AUTO_START", "0")
+	t.Setenv("GT_TEST_EXTERNAL_DOLT", "1")
 	return portStr
 }
 
@@ -155,11 +187,19 @@ func StartIsolatedDoltContainer(t *testing.T) string {
 // TestMain functions. Call TerminateDoltContainer() after m.Run() to clean up.
 // Sets both GT_DOLT_PORT and BEADS_DOLT_PORT process-wide.
 func EnsureDoltContainerForTestMain() error {
+	// Establish a fail-closed boundary before probing Docker. Packages such as
+	// daemon intentionally continue with non-Dolt tests when Docker is absent;
+	// an unreachable port prevents their subprocesses from falling back to an
+	// inherited production endpoint during that degraded run.
+	configureDoltTestProcessEnv("0")
 	if !isDockerAvailable() {
 		return fmt.Errorf("Docker not available")
 	}
 
 	doltCtrOnce.Do(startSharedDoltContainer)
+	if doltCtrErr == nil && doltCtrPort != "" {
+		configureDoltTestProcessEnv(doltCtrPort)
+	}
 	return doltCtrErr
 }
 
