@@ -515,5 +515,4 @@ required = true
 
 [vars.requester]
 description = "Who filed the warrant (deacon, witness, mayor)"
-required = true
 default = "deacon"
