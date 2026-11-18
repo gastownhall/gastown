@@ -249,10 +249,15 @@ func TestOpenCodeTemplateFailureDiagnostics(t *testing.T) {
 		"timeout 10s ${gtCommand()} dolt status 2>&1",
 		"dolt_status_tail:",
 		"suggested_recovery:",
+		"`gt dolt dump`",
+		"Never send SIGQUIT",
 	} {
 		if !strings.Contains(content, want) {
 			t.Fatalf("opencode template missing diagnostic field %q", want)
 		}
+	}
+	if strings.Contains(content, "capture SIGQUIT") {
+		t.Fatal("opencode template must not recommend destructive SIGQUIT diagnostics")
 	}
 }
 
