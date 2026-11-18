@@ -108,10 +108,6 @@ func runAgentsResolve(cmd *cobra.Command, _ []string) error {
 		}
 		return fmt.Errorf("%s", message)
 	}
-	if rig != "" && agentBeadSourceIsTown(match.Source) && !agentsResolveJSON {
-		return fmt.Errorf("agent bead %s was found only in %s; patrol await/state commands require a rig-local agent bead", match.ID, match.Source)
-	}
-
 	if agentsResolveJSON {
 		return json.NewEncoder(cmd.OutOrStdout()).Encode(agentsResolveResult{
 			ID:       match.ID,
@@ -271,8 +267,4 @@ func agentBeadSourceRank(source agentBeadSource) int {
 	default:
 		return 99
 	}
-}
-
-func agentBeadSourceIsTown(source agentBeadSource) bool {
-	return source == agentSourceTownWisps || source == agentSourceTownIssues
 }
