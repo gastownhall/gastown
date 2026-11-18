@@ -2278,7 +2278,20 @@ func detectQueueAnomalies(
 			continue
 		}
 		fields := beads.ParseMRFields(issue)
-		if fields == nil || fields.Branch == "" {
+		if fields == nil {
+			anomalies = append(anomalies, &MRAnomaly{
+				ID:     issue.ID,
+				Type:   "malformed-mr",
+				Detail: "MR bead has no parseable merge-request fields",
+			})
+			continue
+		}
+		if strings.TrimSpace(fields.Branch) == "" {
+			anomalies = append(anomalies, &MRAnomaly{
+				ID:     issue.ID,
+				Type:   "malformed-mr",
+				Detail: "MR bead is missing branch",
+			})
 			continue
 		}
 
