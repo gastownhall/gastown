@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/spf13/cobra"
+	"github.com/steveyegge/gastown/internal/mail"
 )
 
 func TestRunMailDirectory_WellKnownAddresses(t *testing.T) {
@@ -36,8 +37,11 @@ func TestRunMailDirectory_WellKnownAddresses(t *testing.T) {
 		}
 	}
 
-	// Should contain special addresses
-	for _, addr := range []string{"@town", "@crew", "@witnesses", "@overseer"} {
+	// Should contain every group address — DERIVED from the vocabulary ([si-zgo]), not listed
+	// here. This block used to name @town/@crew/@witnesses/@overseer, which was a second copy of
+	// the set: it asserted the bare `@crew` the send path rejects, and it never noticed that
+	// @dogs/@refineries/@deacons were advertised nowhere.
+	for _, addr := range mail.GroupAddresses() {
 		if !strings.Contains(output, addr) {
 			t.Errorf("output should contain %q, got:\n%s", addr, output)
 		}
@@ -80,7 +84,15 @@ func TestRunMailDirectory_JSONOutput(t *testing.T) {
 		addrSet[e.Address] = e.Type
 	}
 
-	for _, addr := range []string{"--human", "--self", "@town", "@crew"} {
+	for _, addr := range []string{"--human", "--self"} {
+		if _, ok := addrSet[addr]; !ok {
+			t.Errorf("JSON output missing address %q", addr)
+		}
+	}
+	// Group addresses derived, same reason as above ([si-zgo]). Note this is an EXACT-key check,
+	// which is why it caught the change the substring check above missed: "@crew/<rig>" contains
+	// "@crew", so a Contains assertion passes on both the correct and the defective rendering.
+	for _, addr := range mail.GroupAddresses() {
 		if _, ok := addrSet[addr]; !ok {
 			t.Errorf("JSON output missing address %q", addr)
 		}
