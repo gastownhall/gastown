@@ -1,6 +1,7 @@
 package formula
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -928,6 +929,48 @@ func TestResolveFormulaContent(t *testing.T) {
 		}
 	})
 
+	t.Run("route-resolved rig formula shadows direct rig and town", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		beadsDir := filepath.Join(tmpDir, ".beads")
+		if err := os.MkdirAll(beadsDir, 0755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(beadsDir, "routes.jsonl"), []byte(`{"prefix":"rt-","path":"routed/mayor/rig"}`+"\n"), 0644); err != nil {
+			t.Fatal(err)
+		}
+
+		formulaName := "mol-routed-test"
+		routedFormulasDir := filepath.Join(tmpDir, "routed", "mayor", "rig", ".beads", "formulas")
+		directFormulasDir := filepath.Join(tmpDir, "routed", ".beads", "formulas")
+		townFormulasDir := filepath.Join(tmpDir, ".beads", "formulas")
+		for _, dir := range []string{routedFormulasDir, directFormulasDir, townFormulasDir} {
+			if err := os.MkdirAll(dir, 0755); err != nil {
+				t.Fatal(err)
+			}
+		}
+
+		routedContent := []byte("formula = \"mol-routed-test\"\nversion = 3\n")
+		directContent := []byte("formula = \"mol-routed-test\"\nversion = 2\n")
+		townContent := []byte("formula = \"mol-routed-test\"\nversion = 1\n")
+		for path, content := range map[string][]byte{
+			filepath.Join(routedFormulasDir, formulaName+".formula.toml"): routedContent,
+			filepath.Join(directFormulasDir, formulaName+".formula.toml"): directContent,
+			filepath.Join(townFormulasDir, formulaName+".formula.toml"):   townContent,
+		} {
+			if err := os.WriteFile(path, content, 0644); err != nil {
+				t.Fatal(err)
+			}
+		}
+
+		content, err := ResolveFormulaContent(formulaName, tmpDir, "routed")
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if !bytes.Equal(content, routedContent) {
+			t.Fatalf("expected route-resolved rig content, got %q", string(content))
+		}
+	})
+
 	t.Run("falls back to town when rig has no override", func(t *testing.T) {
 		tmpDir := t.TempDir()
 		townFormulasDir := filepath.Join(tmpDir, ".beads", "formulas")
@@ -945,6 +988,37 @@ func TestResolveFormulaContent(t *testing.T) {
 		}
 		if string(content) != string(townContent) {
 			t.Error("expected town-level content when rig has no override")
+		}
+	})
+
+	t.Run("falls back to embedded when disk tiers miss", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		for _, dir := range []string{
+			filepath.Join(tmpDir, ".beads", "formulas"),
+			filepath.Join(tmpDir, "myrig", ".beads", "formulas"),
+		} {
+			if err := os.MkdirAll(dir, 0755); err != nil {
+				t.Fatal(err)
+			}
+		}
+
+		content, err := ResolveFormulaContent("mol-polecat-work", tmpDir, "myrig")
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		embedded, err := GetEmbeddedFormulaContent("mol-polecat-work")
+		if err != nil {
+			t.Fatalf("unexpected embedded error: %v", err)
+		}
+		if !bytes.Equal(content, embedded) {
+			t.Fatal("expected embedded content after disk tiers miss")
+		}
+	})
+
+	t.Run("rejects path-like rig names", func(t *testing.T) {
+		_, err := ResolveFormulaContent("mol-polecat-work", t.TempDir(), "../outside")
+		if err == nil {
+			t.Fatal("expected error for path-like rig name")
 		}
 	})
 

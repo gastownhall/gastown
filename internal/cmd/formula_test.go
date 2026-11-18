@@ -131,6 +131,17 @@ func TestAutoInferRig(t *testing.T) {
 	})
 }
 
+func TestValidateFormulaRunRigNameRejectsPathLike(t *testing.T) {
+	for _, rigName := range []string{"", "../outside", "rig/other", `rig\other`, "/tmp/rig"} {
+		if err := validateFormulaRunRigName(rigName); err == nil {
+			t.Fatalf("validateFormulaRunRigName(%q) = nil, want error", rigName)
+		}
+	}
+	if err := validateFormulaRunRigName("gastown"); err != nil {
+		t.Fatalf("validateFormulaRunRigName(gastown) error: %v", err)
+	}
+}
+
 func TestBuildConvoyLegSlingArgs_AlwaysIncludesNoConvoy(t *testing.T) {
 	t.Parallel()
 
