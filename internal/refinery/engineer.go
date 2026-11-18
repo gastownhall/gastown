@@ -315,13 +315,68 @@ func (e *Engineer) SetOutput(w io.Writer) {
 	e.output = w
 }
 
-// LoadConfig loads merge queue configuration from the rig's config.json.
+// resolveConfigPath returns the path the refinery loads its merge_queue
+// configuration from. The canonical source of truth is settings/config.json —
+// the same file written by `gt rig settings set` and read by the rest of the
+// config-loader subsystem. For backward compatibility with rigs that still have
+// an operator-edited rig-root config.json (e.g. earlier hand-patched stopgaps),
+// fall back to <rig>/config.json when settings/config.json does not exist.
+//
+// Returning ("", nil) means no config file exists at all (use defaults).
+func (e *Engineer) resolveConfigPath() (string, error) {
+	settingsPath := filepath.Join(e.rig.Path, "settings", "config.json")
+	if _, err := os.Stat(settingsPath); err == nil {
+		return settingsPath, nil
+	} else if !os.IsNotExist(err) {
+		return "", fmt.Errorf("stat settings config: %w", err)
+	}
+
+	// Legacy fallback: rig-root config.json.
+	legacyPath := filepath.Join(e.rig.Path, "config.json")
+	if _, err := os.Stat(legacyPath); err == nil {
+		return legacyPath, nil
+	} else if !os.IsNotExist(err) {
+		return "", fmt.Errorf("stat legacy config: %w", err)
+	}
+
+	return "", nil
+}
+
+// LoadConfig loads merge queue configuration from the rig's settings/config.json
+// (canonical), falling back to the legacy rig-root config.json. This is the same
+// file that `gt rig settings set merge_queue.*` writes, so operator settings now
+// take effect in the refinery.
+//
+// EffectiveConfig loads and returns the merge_queue configuration exactly as the
+// refinery's LoadConfig would resolve it for the given rig, along with the file
+// path it was sourced from (empty when no config file exists and pure defaults
+// apply). This powers `gt rig settings show --effective` so operators can see
+// what the refinery will actually use. It performs no network or beads access.
+func EffectiveConfig(r *rig.Rig) (*MergeQueueConfig, string, error) {
+	e := &Engineer{rig: r, config: DefaultMergeQueueConfig()}
+	path, err := e.resolveConfigPath()
+	if err != nil {
+		return nil, "", err
+	}
+	if err := e.LoadConfig(); err != nil {
+		return nil, path, err
+	}
+	return e.config, path, nil
+}
+
 func (e *Engineer) LoadConfig() error {
-	configPath := filepath.Join(e.rig.Path, "config.json")
+	configPath, err := e.resolveConfigPath()
+	if err != nil {
+		return err
+	}
+	if configPath == "" {
+		// No config file anywhere: use defaults.
+		return nil
+	}
 	data, err := os.ReadFile(configPath)
 	if err != nil {
 		if os.IsNotExist(err) {
-			// Use defaults if no config file
+			// Use defaults if no config file (race: removed after stat).
 			return nil
 		}
 		return fmt.Errorf("reading config: %w", err)
@@ -447,7 +502,9 @@ func (e *Engineer) LoadConfig() error {
 	}
 
 	// Initialize the PR provider when merge_strategy=pr.
-	if e.config.MergeStrategy == "pr" {
+	// Skipped when e.git is nil (read-only config inspection via
+	// EffectiveConfig), since provider construction needs a git remote.
+	if e.config.MergeStrategy == "pr" && e.git != nil {
 		if err := e.initPRProvider(); err != nil {
 			return fmt.Errorf("initializing PR provider: %w", err)
 		}

@@ -14,6 +14,8 @@ import (
 
 	"github.com/spf13/cobra"
 	"github.com/steveyegge/gastown/internal/config"
+	"github.com/steveyegge/gastown/internal/refinery"
+	"github.com/steveyegge/gastown/internal/rig"
 	"github.com/steveyegge/gastown/internal/style"
 )
 
@@ -35,6 +37,8 @@ Use dot notation to access nested keys (e.g., role_agents.witness).`,
 	RunE: requireSubcommand,
 }
 
+var rigSettingsShowEffective bool
+
 var rigSettingsShowCmd = &cobra.Command{
 	Use:     "show <rig>",
 	Aliases: []string{"get"},
@@ -43,8 +47,18 @@ var rigSettingsShowCmd = &cobra.Command{
 
 Shows the complete settings/config.json file as formatted JSON.
 
-Example:
-  gt rig settings show gastown`,
+With --effective, shows the merge_queue configuration exactly as the refinery
+will resolve it via LoadConfig (canonical settings/config.json, falling back to
+the legacy rig-root config.json), including defaults for unset fields. Use this
+to confirm that 'gt rig settings set merge_queue.*' values actually reach the
+refinery.
+
+Note: the legacy file <rig>/.gastown/settings.json is deprecated and read by
+nothing; it is ignored.
+
+Examples:
+  gt rig settings show gastown
+  gt rig settings show gastown --effective`,
 	Args: cobra.ExactArgs(1),
 	RunE: runRigSettingsShow,
 }
@@ -93,6 +107,9 @@ func init() {
 	rigSettingsCmd.AddCommand(rigSettingsShowCmd)
 	rigSettingsCmd.AddCommand(rigSettingsSetCmd)
 	rigSettingsCmd.AddCommand(rigSettingsUnsetCmd)
+
+	rigSettingsShowCmd.Flags().BoolVar(&rigSettingsShowEffective, "effective", false,
+		"Show the merge_queue config the refinery will load (resolved + defaults)")
 }
 
 func runRigSettingsShow(cmd *cobra.Command, args []string) error {
@@ -101,6 +118,10 @@ func runRigSettingsShow(cmd *cobra.Command, args []string) error {
 	_, r, err := getRig(rigName)
 	if err != nil {
 		return err
+	}
+
+	if rigSettingsShowEffective {
+		return runRigSettingsShowEffective(r)
 	}
 
 	settingsPath := filepath.Join(r.Path, "settings", "config.json")
@@ -120,6 +141,31 @@ func runRigSettingsShow(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("formatting settings: %w", err)
 	}
 
+	fmt.Println(string(data))
+	return nil
+}
+
+// runRigSettingsShowEffective prints the merge_queue configuration exactly as
+// the refinery resolves it via Engineer.LoadConfig (canonical
+// settings/config.json with legacy rig-root config.json fallback), with defaults
+// applied for unset fields. This lets operators confirm that values written by
+// 'gt rig settings set merge_queue.*' actually reach the refinery.
+func runRigSettingsShowEffective(r *rig.Rig) error {
+	cfg, srcPath, err := refinery.EffectiveConfig(r)
+	if err != nil {
+		return fmt.Errorf("resolving effective merge_queue config: %w", err)
+	}
+
+	if srcPath == "" {
+		fmt.Println("# source: (none — compiled-in defaults)")
+	} else {
+		fmt.Printf("# source: %s\n", srcPath)
+	}
+
+	data, err := json.MarshalIndent(cfg, "", "  ")
+	if err != nil {
+		return fmt.Errorf("formatting effective config: %w", err)
+	}
 	fmt.Println(string(data))
 	return nil
 }
