@@ -1995,8 +1995,8 @@ func (t *Tmux) CheckStartupBlocked(session string) error {
 
 // AcceptWorkspaceTrustDialog dismisses workspace trust dialogs for supported
 // agents. Claude shows "Quick safety check"; Codex shows
-// "Do you trust the contents of this directory?". In both cases the safe
-// continue option is pre-selected, so Enter accepts the dialog.
+// "Do you trust the contents of this directory?". See workspaceTrustAcceptKeys
+// for the keys that select the trust option.
 //
 // Uses a polling loop instead of a single check to handle the race condition where
 // the agent hasn't rendered the dialog yet when we first check. Exits early if the
@@ -2014,9 +2014,13 @@ func (t *Tmux) AcceptWorkspaceTrustDialog(session string) error {
 		// Codex trust screens include a leading ">" banner line, so prompt
 		// detection alone would exit too early.
 		if containsWorkspaceTrustDialog(content) {
-			// Dialog found — accept it (option 1 is pre-selected, just press Enter)
-			if _, err := t.run("send-keys", "-t", session, "Enter"); err != nil {
-				return err
+			for i, key := range workspaceTrustAcceptKeys(content) {
+				if i > 0 {
+					time.Sleep(200 * time.Millisecond)
+				}
+				if _, err := t.run("send-keys", "-t", session, key); err != nil {
+					return err
+				}
 			}
 			// Wait for dialog to dismiss before proceeding
 			time.Sleep(500 * time.Millisecond)
@@ -2041,6 +2045,21 @@ func containsWorkspaceTrustDialog(content string) bool {
 	return strings.Contains(content, "trust this folder") ||
 		strings.Contains(content, "Quick safety check") ||
 		strings.Contains(content, "Do you trust the contents of this directory?")
+}
+
+// workspaceTrustAcceptKeys returns the keys that accept the trust dialog in
+// content. Older Claude and Codex dialogs pre-select the trust option, so
+// Enter accepts. Claude Code 2.1.318 lists "No, exit" first and pre-selects
+// it, so Enter alone would quit the agent; Down moves to
+// "Yes, I trust this folder" first.
+func workspaceTrustAcceptKeys(content string) []string {
+	for _, line := range strings.Split(content, "\n") {
+		selected := strings.TrimSpace(line)
+		if strings.HasPrefix(selected, "❯") && strings.Contains(selected, "No, exit") {
+			return []string{"Down", "Enter"}
+		}
+	}
+	return []string{"Enter"}
 }
 
 func containsBlockingStartupDialog(content string) (string, bool) {

@@ -1,9 +1,33 @@
 package tmux
 
 import (
+	"os"
+	"path/filepath"
+	"reflect"
+	"strings"
 	"testing"
 	"time"
 )
+
+// claudeTrustDialog2_1_318 is the workspace trust dialog captured from
+// Claude Code 2.1.318 in a 200-column tmux pane. "No, exit" is listed first
+// and pre-selected.
+const claudeTrustDialog2_1_318 = `────────────────────────────────────────────────────────────────────────────────
+ Accessing workspace:
+
+ /home/user/project
+
+ Quick safety check: Is this a project you created or one you trust? (Like your own code, a well-known open source project, or work from your team). If not, take a moment to review what's in this
+ folder first.
+
+ Claude Code'll be able to read, edit, and execute files here.
+
+ Security guide
+
+ ❯ No, exit
+   Yes, I trust this folder
+
+ Enter to confirm · Esc to cancel`
 
 // TestAcceptWorkspaceTrustDialog_NoDialog verifies that when no trust dialog
 // is present (agent prompt visible), the function returns quickly without error.
@@ -80,6 +104,92 @@ func TestAcceptWorkspaceTrustDialog_DetectsCodexDialog(t *testing.T) {
 
 	if err := tm.AcceptWorkspaceTrustDialog(sessionName); err != nil {
 		t.Fatalf("AcceptWorkspaceTrustDialog: %v", err)
+	}
+}
+
+// TestAcceptWorkspaceTrustDialog_SelectsYesWhenNoIsPreselected drives a
+// stand-in for the Claude Code 2.1.318 dialog, which starts on "No, exit",
+// and checks that the trust option is the one confirmed.
+func TestAcceptWorkspaceTrustDialog_SelectsYesWhenNoIsPreselected(t *testing.T) {
+	tm := newTestTmux(t)
+	sessionName := "gt-test-trust-noexit-" + t.Name()
+
+	dir := t.TempDir()
+	dialog := filepath.Join(dir, "dialog.txt")
+	if err := os.WriteFile(dialog, []byte(claudeTrustDialog2_1_318+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	result := filepath.Join(dir, "result")
+	// Tracks the selection like the real menu: Down moves to Yes, Up back to
+	// No, and Enter records whichever option is selected.
+	script := filepath.Join(dir, "fake-trust-dialog.sh")
+	body := `#!/usr/bin/env bash
+clear
+cat "$1"
+sel=no
+while IFS= read -rsn1 k; do
+  case "$k" in
+    $'\e') read -rsn2 rest
+          case "$rest" in "[B"|"OB") sel=yes ;; "[A"|"OA") sel=no ;; esac ;;
+    "") echo "$sel" > "$2"; exec sleep 60 ;;
+  esac
+done
+`
+	if err := os.WriteFile(script, []byte(body), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	_ = tm.KillSession(sessionName)
+	if err := tm.NewSessionWithCommand(sessionName, dir, "bash "+script+" "+dialog+" "+result); err != nil {
+		t.Fatalf("NewSessionWithCommand: %v", err)
+	}
+	defer func() { _ = tm.KillSession(sessionName) }()
+
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		content, _ := tm.CapturePane(sessionName, 30)
+		if strings.Contains(content, "Enter to confirm") {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("fake dialog never rendered; pane:\n%s", content)
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+
+	if err := tm.AcceptWorkspaceTrustDialog(sessionName); err != nil {
+		t.Fatalf("AcceptWorkspaceTrustDialog: %v", err)
+	}
+
+	var chosen []byte
+	for deadline = time.Now().Add(5 * time.Second); time.Now().Before(deadline); time.Sleep(100 * time.Millisecond) {
+		if b, err := os.ReadFile(result); err == nil {
+			chosen = b
+			break
+		}
+	}
+	if got := strings.TrimSpace(string(chosen)); got != "yes" {
+		t.Fatalf("confirmed option = %q, want %q", got, "yes")
+	}
+}
+
+func TestWorkspaceTrustAcceptKeys(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name    string
+		content string
+		want    []string
+	}{
+		{"claude 2.1.318 preselects no", claudeTrustDialog2_1_318, []string{"Down", "Enter"}},
+		{"older claude preselects yes", "Quick safety check\n ❯ 1. Yes, I trust this folder\n   2. No, exit", []string{"Enter"}},
+		{"codex trust prompt", "> You are in /tmp/demo\nDo you trust the contents of this directory?", []string{"Enter"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := workspaceTrustAcceptKeys(tt.content); !reflect.DeepEqual(got, tt.want) {
+				t.Errorf("workspaceTrustAcceptKeys() = %v, want %v", got, tt.want)
+			}
+		})
 	}
 }
 
@@ -209,6 +319,7 @@ func TestContainsWorkspaceTrustDialog(t *testing.T) {
 		want    bool
 	}{
 		{"claude trust prompt", "Quick safety check\nDo you trust this folder?", true},
+		{"claude 2.1.318 trust prompt", claudeTrustDialog2_1_318, true},
 		{"codex trust prompt", "> You are in /tmp/demo\nDo you trust the contents of this directory?", true},
 		{"bypass dialog", "Bypass Permissions mode\n1. No\n2. Yes, I accept", false},
 		{"shell prompt", "user@host:~$", false},
