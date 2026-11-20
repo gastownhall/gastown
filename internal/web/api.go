@@ -227,6 +227,11 @@ func (h *APIHandler) handleCommands(w http.ResponseWriter, _ *http.Request) {
 	_ = json.NewEncoder(w).Encode(resp)
 }
 
+// mailInboxOptionsTimeout bounds the `gt mail inbox` call made by handleOptions.
+// mail inbox runs a Dolt SQL query with higher baseline latency than the other
+// options fetches (often 2.8-3.8s), so it needs more than the 3s used for them.
+const mailInboxOptionsTimeout = 6 * time.Second
+
 // runGtCommand executes a gt command with the given args.
 func (h *APIHandler) runGtCommand(ctx context.Context, timeout time.Duration, args []string) (string, error) {
 	// Apply timeout first so it bounds both semaphore wait and command execution.
@@ -782,7 +787,7 @@ func (h *APIHandler) handleOptions(w http.ResponseWriter, r *http.Request) {
 	// Fetch mail messages
 	go func() {
 		defer wg.Done()
-		if output, err := h.runGtCommand(r.Context(), 3*time.Second, []string{"mail", "inbox"}); err == nil {
+		if output, err := h.runGtCommand(r.Context(), mailInboxOptionsTimeout, []string{"mail", "inbox"}); err == nil {
 			mu.Lock()
 			resp.Messages = parseMailInboxOutput(output)
 			mu.Unlock()

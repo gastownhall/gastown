@@ -1457,3 +1457,65 @@ func TestPaneCurrentCommandIsAgent(t *testing.T) {
 		}
 	}
 }
+
+// TestHandleOptionsMailInboxSurvivesSlowResponse guards against regressing the
+// mail inbox budget in handleOptions: a response slower than the old 3s limit
+// but within the current budget must still populate Messages.
+func TestHandleOptionsMailInboxSurvivesSlowResponse(t *testing.T) {
+	if mailInboxOptionsTimeout <= 4*time.Second {
+		t.Fatalf("mailInboxOptionsTimeout = %v, want > 4s", mailInboxOptionsTimeout)
+	}
+
+	binDir := t.TempDir()
+	gtPath := filepath.Join(binDir, "gt")
+	gtScript := `#!/usr/bin/env sh
+set -eu
+case "$*" in
+  "rig list --json")
+    printf '[]\n'
+    ;;
+  "polecat list --all --json"|"hooks list"|"crew list --all")
+    printf '\n'
+    ;;
+  "mail inbox")
+    sleep 4
+    printf 'msg-slow  alice  subject\n'
+    ;;
+  *)
+    printf 'unexpected gt args: %s\n' "$*" >&2
+    exit 2
+    ;;
+esac
+`
+	if err := os.WriteFile(gtPath, []byte(gtScript), 0o755); err != nil {
+		t.Fatalf("write fake gt: %v", err)
+	}
+	bdPath := filepath.Join(binDir, "bd")
+	if err := os.WriteFile(bdPath, []byte("#!/usr/bin/env sh\nprintf '[]\n'\n"), 0o755); err != nil {
+		t.Fatalf("write fake bd: %v", err)
+	}
+	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	h := &APIHandler{
+		gtPath:            gtPath,
+		workDir:           t.TempDir(),
+		defaultRunTimeout: 5 * time.Second,
+		maxRunTimeout:     10 * time.Second,
+		cmdSem:            make(chan struct{}, maxConcurrentCommands),
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/api/options?type=rigs", nil)
+	w := httptest.NewRecorder()
+	h.handleOptions(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("handleOptions returned status %d: %s", w.Code, w.Body.String())
+	}
+	var resp OptionsResponse
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("parse response: %v\nbody=%s", err, w.Body.String())
+	}
+	if len(resp.Messages) != 1 || resp.Messages[0] != "msg-slow" {
+		t.Errorf("Messages = %v, want [msg-slow] (mail inbox timed out?)", resp.Messages)
+	}
+}
