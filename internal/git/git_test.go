@@ -2218,6 +2218,10 @@ func TestIsGasTownRuntimePath(t *testing.T) {
 		{".opencode/", true},
 		{".opencode/plugins/gastown.js", true},
 		{".opencode/commands/handoff.md", true},
+		{".cursor/", true},
+		{".cursor/commands/done.md", true},
+		{".cursor/commands/handoff.md", true},
+		{".cursor", true},
 		{".beads/", true},
 		{".beads/db.json", true},
 		{".beads\\db.json", true},
@@ -2380,6 +2384,8 @@ func TestRuntimeArtifactPaths(t *testing.T) {
 		},
 		UntrackedFiles: []string{
 			".opencode/plugins/gastown.js",
+			".cursor/commands/done.md",
+			".cursor/commands/review.md",
 			"services/cyrus/workflow-cyrus-edge/node_modules/pkg/index.js",
 			"services/cyrus/workflow-cyrus-edge/node_modules/pkg/package.json",
 			"dashboard/public/meridian-dashboard/.vite/vitest/hash/results.json",
@@ -2393,6 +2399,7 @@ func TestRuntimeArtifactPaths(t *testing.T) {
 	want := []string{
 		"services/workflows/collateral-internal/execution_log.db",
 		".opencode/",
+		".cursor/",
 		"services/cyrus/workflow-cyrus-edge/node_modules/",
 		"dashboard/public/meridian-dashboard/.vite/",
 		"api/.pytest_cache/",
