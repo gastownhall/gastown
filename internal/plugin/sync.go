@@ -179,8 +179,13 @@ func copyFile(src, dst string) error {
 // FindGastownSource locates the gastown source repo's plugins directory.
 // Search order:
 //  1. Walk up from CWD for a gastown go.mod with plugins/
-//  2. <townRoot>/gastown/crew/den/plugins/
+//  2. <townRoot>/gastown/mayor/rig/plugins/
 //  3. <townRoot>/gastown/plugins/
+//
+// The town fallbacks never name a crew or polecat worktree. Those belong to
+// whoever is working in them: they sit on feature branches, go stale, and can
+// hold plugins the town removed, so they must not seed town-wide plugins
+// unless the caller is standing in one (step 1) or passes it explicitly.
 func FindGastownSource(townRoot string) (string, error) {
 	if cwd, err := os.Getwd(); err == nil {
 		if src := findSourceFromDir(cwd); src != "" {
@@ -189,7 +194,7 @@ func FindGastownSource(townRoot string) (string, error) {
 	}
 
 	candidates := []string{
-		filepath.Join(townRoot, "gastown", "crew", "den", "plugins"),
+		filepath.Join(townRoot, "gastown", "mayor", "rig", "plugins"),
 		filepath.Join(townRoot, "gastown", "plugins"),
 	}
 	for _, candidate := range candidates {
