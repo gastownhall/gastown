@@ -425,8 +425,10 @@ func (c *PatrolPluginsAccessibleCheck) Fix(ctx *CheckContext) error {
 // PatrolPluginDriftCheck detects when runtime plugins are out of sync with source.
 type PatrolPluginDriftCheck struct {
 	FixableCheck
+	townRoot  string
 	sourceDir string
 	targetDir string
+	disabled  []plugin.DisabledPlugin
 }
 
 // NewPatrolPluginDriftCheck creates a new plugin drift check.
@@ -444,6 +446,7 @@ func NewPatrolPluginDriftCheck() *PatrolPluginDriftCheck {
 
 // Run checks for plugin drift between source and runtime.
 func (c *PatrolPluginDriftCheck) Run(ctx *CheckContext) *CheckResult {
+	c.townRoot = ctx.TownRoot
 	c.targetDir = filepath.Join(ctx.TownRoot, "plugins")
 
 	sourceDir, err := plugin.FindGastownSource(ctx.TownRoot)
@@ -467,7 +470,7 @@ func (c *PatrolPluginDriftCheck) Run(ctx *CheckContext) *CheckResult {
 		}
 	}
 
-	report, err := plugin.DetectDrift(sourceDir, c.targetDir)
+	report, err := plugin.DetectDrift(ctx.TownRoot, sourceDir, c.targetDir)
 	if err != nil {
 		return &CheckResult{
 			Name:    c.Name(),
@@ -476,16 +479,30 @@ func (c *PatrolPluginDriftCheck) Run(ctx *CheckContext) *CheckResult {
 			Details: []string{err.Error()},
 		}
 	}
+	c.disabled = report.Disabled
+
+	var disabledDetails []string
+	for _, d := range report.Disabled {
+		if d.Installed {
+			disabledDetails = append(disabledDetails,
+				fmt.Sprintf("%s: installed but on the skip-list; marker %s/%s may be stale, %s is frozen at its installed version",
+					d.Name, plugin.DisabledPluginsDir, d.Marker, d.Name))
+			continue
+		}
+		disabledDetails = append(disabledDetails,
+			fmt.Sprintf("%s: not synced, disabled town-wide by %s/%s", d.Name, plugin.DisabledPluginsDir, d.Marker))
+	}
 
 	if !report.HasDrift() {
 		return &CheckResult{
 			Name:    c.Name(),
 			Status:  StatusOK,
 			Message: "Runtime plugins match source",
+			Details: disabledDetails,
 		}
 	}
 
-	var details []string
+	details := disabledDetails
 	for _, d := range report.Drifted {
 		details = append(details, fmt.Sprintf("%s: content differs", d.Name))
 	}
@@ -507,7 +524,20 @@ func (c *PatrolPluginDriftCheck) Fix(ctx *CheckContext) error {
 	if c.sourceDir == "" || c.targetDir == "" {
 		return fmt.Errorf("drift check did not run; cannot fix")
 	}
-	_, err := plugin.SyncPlugins(c.sourceDir, c.targetDir, false)
+	result, err := plugin.SyncPlugins(c.townRoot, c.sourceDir, c.targetDir, false)
+	if result != nil {
+		// This fix runs unattended (patrol formulas reach it via
+		// 'gt doctor --fix'), so name every veto in the transcript.
+		for _, d := range result.Disabled {
+			if d.Installed {
+				fmt.Fprintf(os.Stderr, "patrol-plugin-drift: WARNING: %s is on the skip-list but is currently installed; marker %s/%s may be stale and %s is frozen at its installed version\n",
+					d.Name, plugin.DisabledPluginsDir, d.Marker, d.Name)
+				continue
+			}
+			fmt.Fprintf(os.Stderr, "patrol-plugin-drift: skipped %s (disabled town-wide by %s/%s)\n",
+				d.Name, plugin.DisabledPluginsDir, d.Marker)
+		}
+	}
 	return err
 }
 

@@ -65,6 +65,20 @@ The Deacon (agent) evaluates gates and decides whether to dispatch. Go code prov
 
 The Deacon scans both locations during patrol.
 
+**Disabled town-wide** (`~/gt/.disabled-plugins/`): `gt plugin sync` and the
+doctor's plugin drift fix never install a plugin named here, whichever source
+they sync from. An entry disables the plugin whose name is the part before the
+first dot, so the usual way to disable a plugin is to move it aside under a name
+that records where it came from and when:
+
+```bash
+mv ~/gt/plugins/rebuild-gt ~/gt/.disabled-plugins/rebuild-gt.town.20260806
+```
+
+Remove the entry to let sync install the plugin again. An entry only withholds
+installs and updates: a plugin that is still in `~/gt/plugins/` keeps running,
+and sync warns that its entry may be stale.
+
 ### Execution Model: Dog Dispatch
 
 **Key insight**: Plugin execution should not block Deacon patrol.
