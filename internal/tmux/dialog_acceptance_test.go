@@ -3,6 +3,8 @@ package tmux
 import (
 	"testing"
 	"time"
+
+	"github.com/steveyegge/gastown/internal/constants"
 )
 
 // TestAcceptWorkspaceTrustDialog_NoDialog verifies that when no trust dialog
@@ -163,11 +165,19 @@ func TestAcceptStartupDialogs_NoDialogs(t *testing.T) {
 func TestAcceptWorkspaceTrustDialog_InvalidSession(t *testing.T) {
 	tm := newTestTmux(t)
 
-	// Should not panic or hang — should return nil after timeout
+	// A session that does not exist will never render a dialog, so the acceptor
+	// reports it as gone instead of polling it for the full timeout and then
+	// returning nil as if a dialog-free session had been confirmed.
+	start := time.Now()
 	err := tm.AcceptWorkspaceTrustDialog("gt-nonexistent-session-xyz")
-	// CapturePane errors are retried until timeout, then returns nil
-	if err != nil {
-		t.Fatalf("expected nil error for nonexistent session, got: %v", err)
+	elapsed := time.Since(start)
+
+	if !IsSessionGone(err) {
+		t.Fatalf("expected a session-gone error for nonexistent session, got: %v", err)
+	}
+	if elapsed >= constants.DialogPollTimeout {
+		t.Errorf("took %v, expected to fail fast (under the %v poll timeout)",
+			elapsed, constants.DialogPollTimeout)
 	}
 }
 
