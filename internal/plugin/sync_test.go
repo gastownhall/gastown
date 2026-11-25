@@ -256,3 +256,94 @@ func TestDetectDrift_ExtraInTarget(t *testing.T) {
 		t.Errorf("expected orphan in extra, got %v", report.Extra)
 	}
 }
+
+// findSourceFromScratchCwd runs FindGastownSource from a directory that is not
+// inside any gastown checkout, so the result comes from the town fallbacks and
+// not from this repo's own plugins/ directory.
+func findSourceFromScratchCwd(t *testing.T, townRoot string) (string, error) {
+	t.Helper()
+	t.Chdir(t.TempDir())
+	return FindGastownSource(townRoot)
+}
+
+func TestFindGastownSource_PrefersMayorRigClone(t *testing.T) {
+	townRoot := t.TempDir()
+	mayorRig := filepath.Join(townRoot, "gastown", "mayor", "rig", "plugins")
+	rigLevel := filepath.Join(townRoot, "gastown", "plugins")
+	crew := filepath.Join(townRoot, "gastown", "crew", "den", "plugins")
+	for _, dir := range []string{mayorRig, rigLevel, crew} {
+		createTestPlugin(t, dir, "my-plugin", "+++\nname = \"my-plugin\"\n+++\ndo stuff", nil)
+	}
+
+	got, err := findSourceFromScratchCwd(t, townRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != mayorRig {
+		t.Errorf("FindGastownSource = %s, want the rig's mayor clone %s", got, mayorRig)
+	}
+}
+
+func TestFindGastownSource_FallsBackToRigPlugins(t *testing.T) {
+	townRoot := t.TempDir()
+	rigLevel := filepath.Join(townRoot, "gastown", "plugins")
+	createTestPlugin(t, rigLevel, "my-plugin", "+++\nname = \"my-plugin\"\n+++\ndo stuff", nil)
+
+	got, err := findSourceFromScratchCwd(t, townRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != rigLevel {
+		t.Errorf("FindGastownSource = %s, want %s", got, rigLevel)
+	}
+}
+
+// TestFindGastownSource_NeverDefaultsToCrewWorktree is the negative case: a
+// town whose only plugins/ directory is in a crew worktree has no default
+// source. The caller must name it with --source or run from inside it.
+func TestFindGastownSource_NeverDefaultsToCrewWorktree(t *testing.T) {
+	townRoot := t.TempDir()
+	for _, crew := range []string{"den", "max"} {
+		dir := filepath.Join(townRoot, "gastown", "crew", crew, "plugins")
+		createTestPlugin(t, dir, "my-plugin", "+++\nname = \"my-plugin\"\n+++\ndo stuff", nil)
+	}
+
+	got, err := findSourceFromScratchCwd(t, townRoot)
+	if err == nil {
+		t.Fatalf("FindGastownSource picked %s; a crew worktree must not be a default source", got)
+	}
+}
+
+// TestFindGastownSource_CwdCheckoutStillWins pins that the change is limited to
+// the fallbacks: running from inside a gastown checkout, crew worktrees
+// included, still syncs from that checkout.
+func TestFindGastownSource_CwdCheckoutStillWins(t *testing.T) {
+	townRoot := t.TempDir()
+	mayorRig := filepath.Join(townRoot, "gastown", "mayor", "rig", "plugins")
+	createTestPlugin(t, mayorRig, "my-plugin", "+++\nname = \"my-plugin\"\n+++\ndo stuff", nil)
+
+	checkout := filepath.Join(townRoot, "gastown", "crew", "den")
+	crewPlugins := filepath.Join(checkout, "plugins")
+	createTestPlugin(t, crewPlugins, "my-plugin", "+++\nname = \"my-plugin\"\n+++\ndo stuff", nil)
+	goMod := "module github.com/steveyegge/gastown\n\ngo 1.26\n"
+	if err := os.WriteFile(filepath.Join(checkout, "go.mod"), []byte(goMod), 0644); err != nil {
+		t.Fatal(err)
+	}
+	nested := filepath.Join(checkout, "internal", "plugin")
+	if err := os.MkdirAll(nested, 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	t.Chdir(nested)
+	got, err := FindGastownSource(townRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Getwd may report a symlink-resolved path (macOS /private/var), so
+	// compare resolved paths.
+	wantResolved, _ := filepath.EvalSymlinks(crewPlugins)
+	gotResolved, _ := filepath.EvalSymlinks(got)
+	if gotResolved != wantResolved {
+		t.Errorf("FindGastownSource = %s, want the checkout being stood in %s", got, crewPlugins)
+	}
+}
