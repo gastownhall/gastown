@@ -471,6 +471,52 @@ func (m *Manager) ClearWorkIfMatches(name, expectedWork string, expectedStartedA
 	return true, m.saveState(name, state)
 }
 
+// RollbackWork undoes a work assignment that never actually started, restoring
+// the LastActive the dog had before the assignment instead of stamping "now".
+//
+// This exists because a failed dispatch is not activity. AssignWork stamps
+// LastActive, and ClearWork stamps it again on the rollback, so a dog whose
+// session start fails every cycle looks freshly active every cycle. Both
+// age-based detectors key on LastActive — detectStaleWorkingDogs on a working
+// dog's, reapIdleDogs on an idle dog's — so a dispatch loop retrying faster than
+// either threshold keeps resetting the clocks it is supposed to be running out.
+// A dog failing to start every 18s never accrues age, and nothing fires. That is
+// how hq-bcowvq stayed invisible for 42 days.
+//
+// Like ClearWorkIfMatches, the compare-and-restore happens under the dog lock so
+// a late rollback cannot erase a newer assignment. Returns false when the
+// assignment has moved on and nothing was changed.
+func (m *Manager) RollbackWork(name, expectedWork string, expectedStartedAt, restoreLastActive time.Time) (bool, error) {
+	if err := validateDogName(name); err != nil {
+		return false, err
+	}
+	if !m.exists(name) {
+		return false, ErrDogNotFound
+	}
+
+	fl, err := m.lockDog(name)
+	if err != nil {
+		return false, err
+	}
+	defer func() { _ = fl.Unlock() }()
+
+	state, err := m.loadState(name)
+	if err != nil {
+		return false, fmt.Errorf("loading state: %w", err)
+	}
+	if state.Work != expectedWork || !state.WorkStartedAt.Equal(expectedStartedAt) {
+		return false, nil
+	}
+
+	state.State = StateIdle
+	state.Work = ""
+	state.WorkStartedAt = time.Time{}
+	state.LastActive = restoreLastActive
+	state.UpdatedAt = time.Now()
+
+	return true, m.saveState(name, state)
+}
+
 // Refresh recreates all worktrees for a dog with fresh branches.
 // This is useful when worktrees have drifted or become stale.
 // Each rig is refreshed atomically with a state save, so a failure at rig N
