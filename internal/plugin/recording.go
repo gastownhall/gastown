@@ -5,6 +5,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"sort"
+	"strings"
 	"time"
 
 	"github.com/steveyegge/gastown/internal/beads"
@@ -105,7 +107,7 @@ func (r *Recorder) RecordRun(record PluginRunRecord) (string, error) {
 	}
 
 	// Close the receipt immediately — it exists for audit/cooldown-gate queries
-	// (which use --all to include closed beads) but should not stay open.
+	// (which read closed beads too) but should not stay open.
 	closeCtx, closeCancel := context.WithTimeout(context.Background(), constants.BdCommandTimeout)
 	defer closeCancel()
 	closeCmd := beads.CommandContext(closeCtx, r.townRoot, townBeads, beads.MutationPinned, "close", result.ID, "--reason", "plugin run recorded")
@@ -133,8 +135,51 @@ func (r *Recorder) GetRunsSince(pluginName string, since string) ([]*PluginRunBe
 	return r.queryRuns(pluginName, 0, since)
 }
 
-// queryRuns queries plugin run beads from the ledger.
+// queryRuns returns a plugin's run receipts, newest first.
+//
+// Receipts live in two places. RecordRun has always created them with
+// --ephemeral, and bd now stores ephemeral beads in the wisps table, which
+// `bd list` does not read. Receipts written before that change are in the
+// issues table. A reader that asks only `bd list` therefore sees no receipt
+// newer than the changeover, finds no recent run, and every cooldown gate reads
+// open. Both stores are read here and merged.
+//
+// Any bead labeled type:plugin-run and plugin:<name> is a receipt, whatever its
+// title: RecordRun takes the title from the caller, and plugin scripts record
+// their outcome as the title ("compactor-dog: all 15 DBs below threshold").
+// "Plugin run: <name>" is only the default.
 func (r *Recorder) queryRuns(pluginName string, limit int, since string) ([]*PluginRunBead, error) {
+	var cutoff time.Time
+	if since != "" {
+		// Parse as Go duration and compute an absolute cutoff.
+		// bd's compact duration uses "m" for months, but plugin gate
+		// durations use Go's time.ParseDuration where "m" means minutes.
+		// Passing an absolute timestamp avoids this unit mismatch.
+		d, err := time.ParseDuration(since)
+		if err != nil {
+			return nil, fmt.Errorf("parsing duration %q: %w", since, err)
+		}
+		cutoff = time.Now().Add(-d).UTC()
+	}
+
+	issueRuns, err := r.queryIssueRuns(pluginName, limit, cutoff)
+	if err != nil {
+		return nil, err
+	}
+	// A failed wisp read is an error, not an empty result. Reporting "no runs"
+	// when the store holding every recent receipt could not be read is how a
+	// cooldown gate ends up open; callers decide what an unknown answer means.
+	wispRuns, err := r.queryWispRuns(pluginName, limit, cutoff)
+	if err != nil {
+		return nil, err
+	}
+
+	return mergeRuns(issueRuns, wispRuns, limit, cutoff), nil
+}
+
+// queryIssueRuns reads receipts from the issues table via `bd list`. These are
+// the receipts recorded before bd moved ephemeral beads to the wisps table.
+func (r *Recorder) queryIssueRuns(pluginName string, limit int, cutoff time.Time) ([]*PluginRunBead, error) {
 	args := []string{
 		"list",
 		"--json",
@@ -145,17 +190,8 @@ func (r *Recorder) queryRuns(pluginName string, limit int, since string) ([]*Plu
 	if limit > 0 {
 		args = append(args, fmt.Sprintf("--limit=%d", limit))
 	}
-	if since != "" {
-		// Parse as Go duration and compute an absolute RFC3339 cutoff.
-		// bd's compact duration uses "m" for months, but plugin gate
-		// durations use Go's time.ParseDuration where "m" means minutes.
-		// Passing an absolute timestamp avoids this unit mismatch.
-		d, err := time.ParseDuration(since)
-		if err != nil {
-			return nil, fmt.Errorf("parsing duration %q: %w", since, err)
-		}
-		cutoff := time.Now().Add(-d).UTC().Format(time.RFC3339)
-		args = append(args, "--created-after="+cutoff)
+	if !cutoff.IsZero() {
+		args = append(args, "--created-after="+cutoff.Format(time.RFC3339))
 	}
 	args = beads.InjectFlatForListJSON(args)
 
@@ -176,13 +212,13 @@ func (r *Recorder) queryRuns(pluginName string, limit int, since string) ([]*Plu
 	}
 
 	// Parse JSON output
-	var beads []struct {
+	var rows []struct {
 		ID        string   `json:"id"`
 		Title     string   `json:"title"`
 		CreatedAt string   `json:"created_at"`
 		Labels    []string `json:"labels"`
 	}
-	if err := json.Unmarshal(stdout.Bytes(), &beads); err != nil {
+	if err := json.Unmarshal(stdout.Bytes(), &rows); err != nil {
 		// Empty array is valid
 		if stdout.String() == "[]\n" || stdout.Len() == 0 {
 			return nil, nil
@@ -190,32 +226,156 @@ func (r *Recorder) queryRuns(pluginName string, limit int, since string) ([]*Plu
 		return nil, fmt.Errorf("parsing bd list output: %w", err)
 	}
 
-	// Convert to PluginRunBead with parsed result
-	runs := make([]*PluginRunBead, 0, len(beads))
-	for _, b := range beads {
-		run := &PluginRunBead{
-			ID:     b.ID,
-			Title:  b.Title,
-			Labels: b.Labels,
-		}
+	runs := make([]*PluginRunBead, 0, len(rows))
+	for _, row := range rows {
+		runs = append(runs, newPluginRunBead(row.ID, row.Title, row.CreatedAt, row.Labels))
+	}
+	return runs, nil
+}
 
-		// Parse created_at
-		if t, err := time.Parse(time.RFC3339, b.CreatedAt); err == nil {
-			run.CreatedAt = t
-		}
-
-		// Extract result from labels
-		for _, label := range b.Labels {
-			if len(label) > 7 && label[:7] == "result:" {
-				run.Result = RunResult(label[7:])
-				break
-			}
-		}
-
-		runs = append(runs, run)
+// queryWispRuns reads receipts from the wisps table. `bd list` cannot enumerate
+// wisps, so this goes through `bd sql`, the same route the mail package uses
+// for wisp-backed messages.
+func (r *Recorder) queryWispRuns(pluginName string, limit int, cutoff time.Time) ([]*PluginRunBead, error) {
+	query := "SELECT w.id, w.title, w.created_at, GROUP_CONCAT(DISTINCT al.label) AS labels_csv " +
+		"FROM wisps w " +
+		"JOIN wisp_labels tl ON tl.issue_id = w.id AND tl.label = 'type:plugin-run' " +
+		"JOIN wisp_labels pl ON pl.issue_id = w.id AND pl.label = '" + escapeSQLString("plugin:"+pluginName) + "' " +
+		"JOIN wisp_labels al ON al.issue_id = w.id"
+	if !cutoff.IsZero() {
+		// Managed Dolt servers run in UTC and created_at is a zoneless
+		// DATETIME, so the cutoff is compared as a bare UTC timestamp.
+		query += " WHERE w.created_at > '" + cutoff.Format(wispSQLTimeLayout) + "'"
+	}
+	query += " GROUP BY w.id, w.title, w.created_at ORDER BY w.created_at DESC"
+	if limit > 0 {
+		query += fmt.Sprintf(" LIMIT %d", limit)
 	}
 
+	ctx, cancel := context.WithTimeout(context.Background(), constants.BdCommandTimeout)
+	defer cancel()
+	cmd := beads.CommandContext(ctx, r.townRoot, beads.ResolveBeadsDir(r.townRoot), beads.ReadOnlyPinned, "sql", "--json", query)
+
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+
+	if err := cmd.Run(); err != nil {
+		output := stdout.String() + stderr.String()
+		if wispTablesMissing(output) {
+			// A database that predates the wisps tables holds every receipt
+			// in the issues table, so there is nothing more to read.
+			return nil, nil
+		}
+		return nil, fmt.Errorf("querying plugin run wisps: %s: %w", strings.TrimSpace(output), err)
+	}
+
+	var rows []struct {
+		ID        string `json:"id"`
+		Title     string `json:"title"`
+		CreatedAt string `json:"created_at"`
+		LabelsCSV string `json:"labels_csv"`
+	}
+	if err := json.Unmarshal(stdout.Bytes(), &rows); err != nil {
+		return nil, fmt.Errorf("parsing bd sql output for plugin run wisps: %w", err)
+	}
+
+	runs := make([]*PluginRunBead, 0, len(rows))
+	for _, row := range rows {
+		var labels []string
+		if row.LabelsCSV != "" {
+			labels = strings.Split(row.LabelsCSV, ",")
+		}
+		runs = append(runs, newPluginRunBead(row.ID, row.Title, row.CreatedAt, labels))
+	}
 	return runs, nil
+}
+
+// wispSQLTimeLayout is the zoneless DATETIME form Dolt compares created_at against.
+const wispSQLTimeLayout = "2006-01-02 15:04:05"
+
+// wispTablesMissing reports whether a failed `bd sql` says the wisps tables do
+// not exist, as opposed to failing for a reason that leaves the answer unknown.
+func wispTablesMissing(output string) bool {
+	if !strings.Contains(output, "wisp") {
+		return false
+	}
+	return strings.Contains(output, "table not found") || // Dolt
+		strings.Contains(output, "no such table") // SQLite
+}
+
+// escapeSQLString escapes backslashes and single quotes for Dolt/MySQL SQL string literals.
+func escapeSQLString(s string) string {
+	s = strings.ReplaceAll(s, `\`, `\\`)
+	return strings.ReplaceAll(s, "'", "''")
+}
+
+// newPluginRunBead builds a receipt from the fields both stores return.
+func newPluginRunBead(id, title, createdAt string, labels []string) *PluginRunBead {
+	run := &PluginRunBead{
+		ID:     id,
+		Title:  title,
+		Labels: labels,
+	}
+	if t, ok := parseRunTimestamp(createdAt); ok {
+		run.CreatedAt = t
+	}
+	// Extract result from labels
+	for _, label := range labels {
+		if len(label) > 7 && label[:7] == "result:" {
+			run.Result = RunResult(label[7:])
+			break
+		}
+	}
+	return run
+}
+
+// parseRunTimestamp parses created_at as `bd list` emits it (RFC3339) and as
+// `bd sql` may emit a DATETIME column. Bare timestamps are UTC.
+func parseRunTimestamp(value string) (time.Time, bool) {
+	value = strings.TrimSpace(value)
+	for _, layout := range []string{
+		time.RFC3339,
+		"2006-01-02 15:04:05 -0700 MST",
+		wispSQLTimeLayout,
+	} {
+		if t, err := time.Parse(layout, value); err == nil {
+			return t.UTC(), true
+		}
+	}
+	return time.Time{}, false
+}
+
+// mergeRuns combines receipts from both stores, newest first, without
+// duplicates, keeping only those created after cutoff (when set) and at most
+// limit of them (when positive).
+//
+// The cutoff is applied here as well as in each query so the window does not
+// depend on a backend honoring the filter it was sent. A receipt whose
+// timestamp could not be parsed is kept: the query that returned it already
+// placed it inside the window, and dropping it would open the gate.
+func mergeRuns(issueRuns, wispRuns []*PluginRunBead, limit int, cutoff time.Time) []*PluginRunBead {
+	seen := make(map[string]bool, len(issueRuns)+len(wispRuns))
+	runs := make([]*PluginRunBead, 0, len(issueRuns)+len(wispRuns))
+	for _, source := range [][]*PluginRunBead{wispRuns, issueRuns} {
+		for _, run := range source {
+			if seen[run.ID] {
+				continue
+			}
+			if !cutoff.IsZero() && !run.CreatedAt.IsZero() && !run.CreatedAt.After(cutoff) {
+				continue
+			}
+			seen[run.ID] = true
+			runs = append(runs, run)
+		}
+	}
+	sort.SliceStable(runs, func(i, j int) bool {
+		return runs[i].CreatedAt.After(runs[j].CreatedAt)
+	})
+	if limit > 0 && len(runs) > limit {
+		runs = runs[:limit]
+	}
+	return runs
 }
 
 // CountRunsSince returns the count of runs for a plugin since the given duration.
