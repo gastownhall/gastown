@@ -64,6 +64,9 @@ type APIHandler struct {
 	cmdSem chan struct{}
 	// csrfToken is validated on POST requests to prevent cross-site request forgery.
 	csrfToken string
+	// hashPoller computes the SSE change-detection hash once for all clients.
+	hashPoller     *dashboardHashPoller
+	hashPollerOnce sync.Once
 }
 
 const optionsCacheTTL = 30 * time.Second
@@ -2178,8 +2181,8 @@ func parseCommandArgs(command string) []string {
 }
 
 // handleSSE streams Server-Sent Events to the dashboard client.
-// It polls key dashboard state every 2 seconds and sends an event when
-// changes are detected, allowing the client to trigger a re-render.
+// It sends an event whenever the shared dashboardHashPoller detects a state
+// change, allowing the client to trigger a re-render.
 // Falls through gracefully if the client disconnects.
 func (h *APIHandler) handleSSE(w http.ResponseWriter, r *http.Request) {
 	flusher, ok := w.(http.Flusher)
@@ -2199,28 +2202,34 @@ func (h *APIHandler) handleSSE(w http.ResponseWriter, r *http.Request) {
 	fmt.Fprintf(w, "event: connected\ndata: ok\n\n")
 	flusher.Flush()
 
-	var lastHash string
-	ticker := time.NewTicker(2 * time.Second)
-	defer ticker.Stop()
+	// All connections share one poller, so N open tabs cost the same as one.
+	poller := h.dashboardPoller()
+	unsubscribe := poller.subscribe()
+	defer unsubscribe()
 
 	// Send keepalive comment every 15 seconds to prevent connection timeouts
 	keepalive := time.NewTicker(15 * time.Second)
 	defer keepalive.Stop()
 
+	// lastHash starts empty, so a (re)connecting client gets an update as soon
+	// as a hash is known. The client relies on this to refresh after
+	// reconnecting (e.g. when a hidden tab becomes visible again).
+	var lastHash string
 	for {
+		hash, changed := poller.current()
+		if hash != "" && hash != lastHash {
+			lastHash = hash
+			fmt.Fprintf(w, "event: dashboard-update\ndata: %s\n\n", hash)
+			flusher.Flush()
+		}
+
 		select {
 		case <-ctx.Done():
 			return
 		case <-keepalive.C:
 			fmt.Fprintf(w, ": keepalive\n\n")
 			flusher.Flush()
-		case <-ticker.C:
-			hash := h.computeDashboardHash(ctx)
-			if hash != "" && hash != lastHash {
-				lastHash = hash
-				fmt.Fprintf(w, "event: dashboard-update\ndata: %s\n\n", hash)
-				flusher.Flush()
-			}
+		case <-changed:
 		}
 	}
 }
