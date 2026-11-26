@@ -25,10 +25,25 @@
     var sseReconnectDelay = 1000;
     var sseMaxReconnectDelay = 30000;
 
-    function connectSSE() {
+    var sseReconnectTimer = null;
+
+    function disconnectSSE() {
+        if (sseReconnectTimer) {
+            clearTimeout(sseReconnectTimer);
+            sseReconnectTimer = null;
+        }
         if (evtSource) {
             evtSource.close();
+            evtSource = null;
         }
+        window.sseConnected = false;
+    }
+
+    function connectSSE() {
+        // Hidden tabs hold no connection, so they cost the server nothing.
+        // The visibilitychange handler reconnects when the tab is shown.
+        if (document.hidden) return;
+        disconnectSSE();
 
         evtSource = new EventSource('/api/events');
 
@@ -51,8 +66,10 @@
             window.sseConnected = false;
             updateConnectionStatus('reconnecting');
             evtSource.close();
+            evtSource = null;
             // Exponential backoff reconnect
-            setTimeout(function() {
+            sseReconnectTimer = setTimeout(function() {
+                sseReconnectTimer = null;
                 sseReconnectDelay = Math.min(sseReconnectDelay * 2, sseMaxReconnectDelay);
                 connectSSE();
             }, sseReconnectDelay);
@@ -67,6 +84,10 @@
                 el.textContent = 'Live';
                 el.className = 'connection-live';
                 break;
+            case 'paused':
+                el.textContent = 'Paused';
+                el.className = 'connection-reconnecting';
+                break;
             case 'reconnecting':
                 el.textContent = 'Reconnecting...';
                 el.className = 'connection-reconnecting';
@@ -79,6 +100,19 @@
 
     // Start SSE connection
     connectSSE();
+
+    // Drop the SSE connection while the tab is hidden and reconnect when it is
+    // shown again. On reconnect the server sends a dashboard-update as soon as
+    // it has a hash, which refreshes whatever changed while the tab was hidden.
+    document.addEventListener('visibilitychange', function() {
+        if (document.hidden) {
+            disconnectSSE();
+            updateConnectionStatus('paused');
+        } else {
+            sseReconnectDelay = 1000;
+            connectSSE();
+        }
+    });
 
     // ============================================
     // EXPAND BUTTON HANDLER
